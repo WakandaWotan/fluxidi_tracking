@@ -17624,6 +17624,75 @@ GET /oauth/callback
         if (!scopedRoute.ok) return scopedRoute.response;
         const debugRaw = safeStr(url.searchParams.get("debug"), 16).toLowerCase();
         const debugEnabled = debugRaw === "1" || debugRaw === "true";
+        const debugBookingFinanceRaw = safeStr(
+          url.searchParams.get("debug_booking_finance"),
+          16,
+        ).toLowerCase();
+        const debugBookingFinance =
+          debugBookingFinanceRaw === "1" || debugBookingFinanceRaw === "true";
+        const monthParam = safeStr(url.searchParams.get("month"), 16);
+        if (monthParam && !_dashboardBookingsKpiNormalizeMonth(monthParam)) {
+          return json({ ok: false, error: "month must be YYYY-MM" }, 400);
+        }
+        const selectedMonth = _dashboardBookingsKpiNormalizeMonth(monthParam || null);
+        const bookingFinanceMonthKey = _trackingSyncScopedBookingFinanceMonthKey(
+          scopedRoute.scope,
+          selectedMonth,
+        );
+        const bookingFinanceContribPrefix = _trackingSyncScopedBookingFinanceContribPrefix(
+          scopedRoute.scope,
+        );
+        const bookingFinanceMonth = bookingFinanceMonthKey
+          ? ((await _trackingSyncGetJson(env, bookingFinanceMonthKey)) || {})
+          : {};
+        let bookingFinanceMonthIncomeCents = Number.isFinite(
+          Number(bookingFinanceMonth?.monthly_paid_bookings_income_cents),
+        )
+          ? Math.max(0, Math.round(Number(bookingFinanceMonth.monthly_paid_bookings_income_cents)))
+          : 0;
+        let bookingFinanceMonthPaidCount = Number.isFinite(
+          Number(bookingFinanceMonth?.monthly_paid_bookings_count),
+        )
+          ? Math.max(0, Math.round(Number(bookingFinanceMonth.monthly_paid_bookings_count)))
+          : 0;
+        const routeScopeMask = _bookingIntentScopeMask(scopedRoute.scope);
+        console.log(
+          `[BOOKING_FINANCE_KPI][READ_KEYS] tenant=${routeScopeMask.tenant || "-"} company=${routeScopeMask.company || "-"} month=${selectedMonth} agg_key=${_bookingIntentMask(bookingFinanceMonthKey)} contrib_prefix=${_bookingIntentMask(bookingFinanceContribPrefix)}`,
+        );
+        const routeReconcileFinance = await _trackingSyncReconcileBookingFinanceMonthFromContribsBestEffort(
+          env,
+          scopedRoute.scope,
+          selectedMonth,
+          {
+            persist: true,
+            source: "dashboard_bookings_kpis_route_read",
+            includeDebugRows: debugBookingFinance,
+            debugRowLimit: 20,
+          },
+        );
+        if (routeReconcileFinance?.ok) {
+          bookingFinanceMonthIncomeCents = Math.max(
+            bookingFinanceMonthIncomeCents,
+            Number.isFinite(Number(routeReconcileFinance.monthly_paid_bookings_income_cents))
+              ? Math.max(0, Math.round(Number(routeReconcileFinance.monthly_paid_bookings_income_cents)))
+              : 0,
+          );
+          bookingFinanceMonthPaidCount = Math.max(
+            bookingFinanceMonthPaidCount,
+            Number.isFinite(Number(routeReconcileFinance.monthly_paid_bookings_count))
+              ? Math.max(0, Math.round(Number(routeReconcileFinance.monthly_paid_bookings_count)))
+              : 0,
+          );
+        }
+        console.log(
+          `[BOOKING_FINANCE_KPI][AGG_READ] tenant=${routeScopeMask.tenant || "-"} company=${routeScopeMask.company || "-"} month=${selectedMonth} agg_key=${_bookingIntentMask(bookingFinanceMonthKey)} income_cents=${bookingFinanceMonthIncomeCents} paid_count=${bookingFinanceMonthPaidCount} reconciled=${routeReconcileFinance?.ok ? "true" : "false"} scanned=${Number.isFinite(Number(routeReconcileFinance?.booking_finance_reconcile_scanned)) ? Math.round(Number(routeReconcileFinance.booking_finance_reconcile_scanned)) : 0}`,
+        );
+        console.log(
+          `[DASHBOARD_BOOKINGS_KPI][BOOKING_FINANCE_READ] tenant=${_maskPublicDriverLoginValue(scopedRoute.scope?.tenant_id)} company=${_maskPublicDriverLoginValue(scopedRoute.scope?.company_id)} month=${selectedMonth} income_cents=${bookingFinanceMonthIncomeCents} paid_count=${bookingFinanceMonthPaidCount} key=${bookingFinanceMonthKey ? "present" : "missing"} source=route`,
+        );
+        console.log(
+          `[DASHBOARD_BOOKINGS_KPI][MONTHLY_INCOME_MERGE] tenant=${_maskPublicDriverLoginValue(scopedRoute.scope?.tenant_id)} company=${_maskPublicDriverLoginValue(scopedRoute.scope?.company_id)} month=${selectedMonth} projection_income_cents=0 booking_finance_income_cents=${bookingFinanceMonthIncomeCents} merged_income_cents=${bookingFinanceMonthIncomeCents} source=route_precompute`,
+        );
         const listIndexRead = await readCompanyBookingsListIndex(
           env,
           scopedRoute.scope,
@@ -17660,6 +17729,51 @@ GET /oauth/callback
               tenant_id: scopedRoute.scope?.tenant_id || null,
               company_id: scopedRoute.scope?.company_id || null,
               generated_at: new Date().toISOString(),
+              month: selectedMonth,
+              monthly_income_cents: bookingFinanceMonthIncomeCents,
+              monthly_income_eur: bookingFinanceMonthIncomeCents / 100,
+              booking_finance_monthly_income_cents: bookingFinanceMonthIncomeCents,
+              booking_finance_monthly_income_eur: bookingFinanceMonthIncomeCents / 100,
+              booking_finance_monthly_paid_bookings_count: bookingFinanceMonthPaidCount,
+              booking_finance_reconcile_scanned: Number.isFinite(Number(routeReconcileFinance?.booking_finance_reconcile_scanned))
+                ? Math.max(0, Math.round(Number(routeReconcileFinance.booking_finance_reconcile_scanned)))
+                : 0,
+              booking_finance_reconcile_matched_month: Number.isFinite(Number(routeReconcileFinance?.booking_finance_reconcile_matched_month))
+                ? Math.max(0, Math.round(Number(routeReconcileFinance.booking_finance_reconcile_matched_month)))
+                : 0,
+              booking_finance_reconcile_sum_cents: Number.isFinite(Number(routeReconcileFinance?.booking_finance_reconcile_sum_cents))
+                ? Math.max(0, Math.round(Number(routeReconcileFinance.booking_finance_reconcile_sum_cents)))
+                : 0,
+              booking_finance_reconcile_paid_count: Number.isFinite(Number(routeReconcileFinance?.booking_finance_reconcile_paid_count))
+                ? Math.max(0, Math.round(Number(routeReconcileFinance.booking_finance_reconcile_paid_count)))
+                : 0,
+              booking_finance_reconcile_skipped_wrong_month: Number.isFinite(Number(routeReconcileFinance?.booking_finance_reconcile_skipped_wrong_month))
+                ? Math.max(0, Math.round(Number(routeReconcileFinance.booking_finance_reconcile_skipped_wrong_month)))
+                : 0,
+              booking_finance_reconcile_skipped_unpaid: Number.isFinite(Number(routeReconcileFinance?.booking_finance_reconcile_skipped_unpaid))
+                ? Math.max(0, Math.round(Number(routeReconcileFinance.booking_finance_reconcile_skipped_unpaid)))
+                : 0,
+              booking_finance_reconcile_skipped_missing_amount: Number.isFinite(Number(routeReconcileFinance?.booking_finance_reconcile_skipped_missing_amount))
+                ? Math.max(0, Math.round(Number(routeReconcileFinance.booking_finance_reconcile_skipped_missing_amount)))
+                : 0,
+              booking_finance_reconcile_recovered_amount_count: Number.isFinite(Number(routeReconcileFinance?.booking_finance_reconcile_recovered_amount_count))
+                ? Math.max(0, Math.round(Number(routeReconcileFinance.booking_finance_reconcile_recovered_amount_count)))
+                : 0,
+              booking_finance_reconcile_recovered_amount_cents: Number.isFinite(Number(routeReconcileFinance?.booking_finance_reconcile_recovered_amount_cents))
+                ? Math.max(0, Math.round(Number(routeReconcileFinance.booking_finance_reconcile_recovered_amount_cents)))
+                : 0,
+              booking_finance_reconcile_skipped_missing_amount_unrecoverable: Number.isFinite(Number(routeReconcileFinance?.booking_finance_reconcile_skipped_missing_amount_unrecoverable))
+                ? Math.max(0, Math.round(Number(routeReconcileFinance.booking_finance_reconcile_skipped_missing_amount_unrecoverable)))
+                : 0,
+              booking_finance_reconcile_prefix_preview: safeStr(routeReconcileFinance?.booking_finance_reconcile_prefix_preview, 160) || null,
+              ...(debugBookingFinance
+                ? {
+                    booking_finance_debug_rows: Array.isArray(routeReconcileFinance?.booking_finance_reconcile_debug_rows)
+                      ? routeReconcileFinance.booking_finance_reconcile_debug_rows
+                      : [],
+                  }
+                : {}),
+              income_merge_strategy: "max_projection_vs_booking_finance",
               open_bookings_count: 0,
               considered_open: 0,
               excluded_terminal: 0,
@@ -17707,7 +17821,9 @@ GET /oauth/callback
         }
         const out = await computeDashboardBookingsKpis(env, {
           tenantScope: scopedRoute.scope,
+          month: monthParam || null,
           debug: debugEnabled,
+          debugBookingFinance,
           debugLimit: 50,
         });
         if (!out?.ok) {
@@ -17720,6 +17836,51 @@ GET /oauth/callback
                   tenant_id: scopedRoute.scope?.tenant_id || null,
                   company_id: scopedRoute.scope?.company_id || null,
                   generated_at: new Date().toISOString(),
+                  month: selectedMonth,
+                  monthly_income_cents: bookingFinanceMonthIncomeCents,
+                  monthly_income_eur: bookingFinanceMonthIncomeCents / 100,
+                  booking_finance_monthly_income_cents: bookingFinanceMonthIncomeCents,
+                  booking_finance_monthly_income_eur: bookingFinanceMonthIncomeCents / 100,
+                  booking_finance_monthly_paid_bookings_count: bookingFinanceMonthPaidCount,
+                  booking_finance_reconcile_scanned: Number.isFinite(Number(routeReconcileFinance?.booking_finance_reconcile_scanned))
+                    ? Math.max(0, Math.round(Number(routeReconcileFinance.booking_finance_reconcile_scanned)))
+                    : 0,
+                  booking_finance_reconcile_matched_month: Number.isFinite(Number(routeReconcileFinance?.booking_finance_reconcile_matched_month))
+                    ? Math.max(0, Math.round(Number(routeReconcileFinance.booking_finance_reconcile_matched_month)))
+                    : 0,
+                  booking_finance_reconcile_sum_cents: Number.isFinite(Number(routeReconcileFinance?.booking_finance_reconcile_sum_cents))
+                    ? Math.max(0, Math.round(Number(routeReconcileFinance.booking_finance_reconcile_sum_cents)))
+                    : 0,
+                  booking_finance_reconcile_paid_count: Number.isFinite(Number(routeReconcileFinance?.booking_finance_reconcile_paid_count))
+                    ? Math.max(0, Math.round(Number(routeReconcileFinance.booking_finance_reconcile_paid_count)))
+                    : 0,
+                  booking_finance_reconcile_skipped_wrong_month: Number.isFinite(Number(routeReconcileFinance?.booking_finance_reconcile_skipped_wrong_month))
+                    ? Math.max(0, Math.round(Number(routeReconcileFinance.booking_finance_reconcile_skipped_wrong_month)))
+                    : 0,
+                  booking_finance_reconcile_skipped_unpaid: Number.isFinite(Number(routeReconcileFinance?.booking_finance_reconcile_skipped_unpaid))
+                    ? Math.max(0, Math.round(Number(routeReconcileFinance.booking_finance_reconcile_skipped_unpaid)))
+                    : 0,
+                  booking_finance_reconcile_skipped_missing_amount: Number.isFinite(Number(routeReconcileFinance?.booking_finance_reconcile_skipped_missing_amount))
+                    ? Math.max(0, Math.round(Number(routeReconcileFinance.booking_finance_reconcile_skipped_missing_amount)))
+                    : 0,
+                  booking_finance_reconcile_recovered_amount_count: Number.isFinite(Number(routeReconcileFinance?.booking_finance_reconcile_recovered_amount_count))
+                    ? Math.max(0, Math.round(Number(routeReconcileFinance.booking_finance_reconcile_recovered_amount_count)))
+                    : 0,
+                  booking_finance_reconcile_recovered_amount_cents: Number.isFinite(Number(routeReconcileFinance?.booking_finance_reconcile_recovered_amount_cents))
+                    ? Math.max(0, Math.round(Number(routeReconcileFinance.booking_finance_reconcile_recovered_amount_cents)))
+                    : 0,
+                  booking_finance_reconcile_skipped_missing_amount_unrecoverable: Number.isFinite(Number(routeReconcileFinance?.booking_finance_reconcile_skipped_missing_amount_unrecoverable))
+                    ? Math.max(0, Math.round(Number(routeReconcileFinance.booking_finance_reconcile_skipped_missing_amount_unrecoverable)))
+                    : 0,
+                  booking_finance_reconcile_prefix_preview: safeStr(routeReconcileFinance?.booking_finance_reconcile_prefix_preview, 160) || null,
+                  ...(debugBookingFinance
+                    ? {
+                        booking_finance_debug_rows: Array.isArray(routeReconcileFinance?.booking_finance_reconcile_debug_rows)
+                          ? routeReconcileFinance.booking_finance_reconcile_debug_rows
+                          : [],
+                      }
+                    : {}),
+                  income_merge_strategy: "max_projection_vs_booking_finance",
                   open_bookings_count: 0,
                   considered_open: 0,
                   excluded_terminal: 0,
@@ -17775,7 +17936,9 @@ GET /oauth/callback
             if (rebuilt?.ok === true) {
               const repaired = await computeDashboardBookingsKpis(env, {
                 tenantScope: scopedRoute.scope,
+                month: monthParam || null,
                 debug: debugEnabled,
+                debugBookingFinance,
                 debugLimit: 50,
               });
               if (repaired?.ok) {
@@ -17797,6 +17960,51 @@ GET /oauth/callback
                 tenant_id: scopedRoute.scope?.tenant_id || null,
                 company_id: scopedRoute.scope?.company_id || null,
                 generated_at: new Date().toISOString(),
+                month: selectedMonth,
+                monthly_income_cents: bookingFinanceMonthIncomeCents,
+                monthly_income_eur: bookingFinanceMonthIncomeCents / 100,
+                booking_finance_monthly_income_cents: bookingFinanceMonthIncomeCents,
+                booking_finance_monthly_income_eur: bookingFinanceMonthIncomeCents / 100,
+                booking_finance_monthly_paid_bookings_count: bookingFinanceMonthPaidCount,
+                booking_finance_reconcile_scanned: Number.isFinite(Number(routeReconcileFinance?.booking_finance_reconcile_scanned))
+                  ? Math.max(0, Math.round(Number(routeReconcileFinance.booking_finance_reconcile_scanned)))
+                  : 0,
+                booking_finance_reconcile_matched_month: Number.isFinite(Number(routeReconcileFinance?.booking_finance_reconcile_matched_month))
+                  ? Math.max(0, Math.round(Number(routeReconcileFinance.booking_finance_reconcile_matched_month)))
+                  : 0,
+                booking_finance_reconcile_sum_cents: Number.isFinite(Number(routeReconcileFinance?.booking_finance_reconcile_sum_cents))
+                  ? Math.max(0, Math.round(Number(routeReconcileFinance.booking_finance_reconcile_sum_cents)))
+                  : 0,
+                booking_finance_reconcile_paid_count: Number.isFinite(Number(routeReconcileFinance?.booking_finance_reconcile_paid_count))
+                  ? Math.max(0, Math.round(Number(routeReconcileFinance.booking_finance_reconcile_paid_count)))
+                  : 0,
+                booking_finance_reconcile_skipped_wrong_month: Number.isFinite(Number(routeReconcileFinance?.booking_finance_reconcile_skipped_wrong_month))
+                  ? Math.max(0, Math.round(Number(routeReconcileFinance.booking_finance_reconcile_skipped_wrong_month)))
+                  : 0,
+                booking_finance_reconcile_skipped_unpaid: Number.isFinite(Number(routeReconcileFinance?.booking_finance_reconcile_skipped_unpaid))
+                  ? Math.max(0, Math.round(Number(routeReconcileFinance.booking_finance_reconcile_skipped_unpaid)))
+                  : 0,
+                booking_finance_reconcile_skipped_missing_amount: Number.isFinite(Number(routeReconcileFinance?.booking_finance_reconcile_skipped_missing_amount))
+                  ? Math.max(0, Math.round(Number(routeReconcileFinance.booking_finance_reconcile_skipped_missing_amount)))
+                  : 0,
+                booking_finance_reconcile_recovered_amount_count: Number.isFinite(Number(routeReconcileFinance?.booking_finance_reconcile_recovered_amount_count))
+                  ? Math.max(0, Math.round(Number(routeReconcileFinance.booking_finance_reconcile_recovered_amount_count)))
+                  : 0,
+                booking_finance_reconcile_recovered_amount_cents: Number.isFinite(Number(routeReconcileFinance?.booking_finance_reconcile_recovered_amount_cents))
+                  ? Math.max(0, Math.round(Number(routeReconcileFinance.booking_finance_reconcile_recovered_amount_cents)))
+                  : 0,
+                booking_finance_reconcile_skipped_missing_amount_unrecoverable: Number.isFinite(Number(routeReconcileFinance?.booking_finance_reconcile_skipped_missing_amount_unrecoverable))
+                  ? Math.max(0, Math.round(Number(routeReconcileFinance.booking_finance_reconcile_skipped_missing_amount_unrecoverable)))
+                  : 0,
+                booking_finance_reconcile_prefix_preview: safeStr(routeReconcileFinance?.booking_finance_reconcile_prefix_preview, 160) || null,
+                ...(debugBookingFinance
+                  ? {
+                      booking_finance_debug_rows: Array.isArray(routeReconcileFinance?.booking_finance_reconcile_debug_rows)
+                        ? routeReconcileFinance.booking_finance_reconcile_debug_rows
+                        : [],
+                    }
+                  : {}),
+                income_merge_strategy: "max_projection_vs_booking_finance",
                 open_bookings_count: 0,
                 considered_open: 0,
                 scan_complete: false,
@@ -17805,6 +18013,95 @@ GET /oauth/callback
                 projection_rebuilt: rebuilt?.ok === true,
                 projection_stale_before_rebuild: true,
                 projection_rebuild_attempted: true,
+              },
+              200,
+            );
+          }
+          if (errorCode === "dashboard_bookings_kpi_index_dirty") {
+            const degradedOpenCount = Number.isFinite(Number(out?.open_bookings_count))
+              ? Math.max(0, Math.round(Number(out.open_bookings_count)))
+              : 0;
+            console.log(
+              `[DASHBOARD_BOOKINGS_KPI][DIRTY_DEGRADED] tenant=${_maskPublicDriverLoginValue(scopedRoute.scope?.tenant_id)} company=${_maskPublicDriverLoginValue(scopedRoute.scope?.company_id)} month=${selectedMonth} reason=${errorCode} open=${degradedOpenCount} income_cents=${bookingFinanceMonthIncomeCents}`,
+            );
+            return json(
+              {
+                ok: true,
+                degraded: true,
+                degraded_reason: "dashboard_bookings_kpi_index_dirty",
+                error_reason: errorCode,
+                diagnostics: {
+                  degraded_reason: "dashboard_bookings_kpi_index_dirty",
+                  original_error: errorCode,
+                },
+                tenant_id: scopedRoute.scope?.tenant_id || null,
+                company_id: scopedRoute.scope?.company_id || null,
+                generated_at: new Date().toISOString(),
+                month: selectedMonth,
+                monthly_income_cents: bookingFinanceMonthIncomeCents,
+                monthly_income_eur: bookingFinanceMonthIncomeCents / 100,
+                booking_finance_monthly_income_cents: bookingFinanceMonthIncomeCents,
+                booking_finance_monthly_income_eur: bookingFinanceMonthIncomeCents / 100,
+                booking_finance_monthly_paid_bookings_count: bookingFinanceMonthPaidCount,
+                booking_finance_reconcile_scanned: Number.isFinite(Number(routeReconcileFinance?.booking_finance_reconcile_scanned))
+                  ? Math.max(0, Math.round(Number(routeReconcileFinance.booking_finance_reconcile_scanned)))
+                  : 0,
+                booking_finance_reconcile_matched_month: Number.isFinite(Number(routeReconcileFinance?.booking_finance_reconcile_matched_month))
+                  ? Math.max(0, Math.round(Number(routeReconcileFinance.booking_finance_reconcile_matched_month)))
+                  : 0,
+                booking_finance_reconcile_sum_cents: Number.isFinite(Number(routeReconcileFinance?.booking_finance_reconcile_sum_cents))
+                  ? Math.max(0, Math.round(Number(routeReconcileFinance.booking_finance_reconcile_sum_cents)))
+                  : 0,
+                booking_finance_reconcile_paid_count: Number.isFinite(Number(routeReconcileFinance?.booking_finance_reconcile_paid_count))
+                  ? Math.max(0, Math.round(Number(routeReconcileFinance.booking_finance_reconcile_paid_count)))
+                  : 0,
+                booking_finance_reconcile_skipped_wrong_month: Number.isFinite(Number(routeReconcileFinance?.booking_finance_reconcile_skipped_wrong_month))
+                  ? Math.max(0, Math.round(Number(routeReconcileFinance.booking_finance_reconcile_skipped_wrong_month)))
+                  : 0,
+                booking_finance_reconcile_skipped_unpaid: Number.isFinite(Number(routeReconcileFinance?.booking_finance_reconcile_skipped_unpaid))
+                  ? Math.max(0, Math.round(Number(routeReconcileFinance.booking_finance_reconcile_skipped_unpaid)))
+                  : 0,
+                booking_finance_reconcile_skipped_missing_amount: Number.isFinite(Number(routeReconcileFinance?.booking_finance_reconcile_skipped_missing_amount))
+                  ? Math.max(0, Math.round(Number(routeReconcileFinance.booking_finance_reconcile_skipped_missing_amount)))
+                  : 0,
+                booking_finance_reconcile_recovered_amount_count: Number.isFinite(Number(routeReconcileFinance?.booking_finance_reconcile_recovered_amount_count))
+                  ? Math.max(0, Math.round(Number(routeReconcileFinance.booking_finance_reconcile_recovered_amount_count)))
+                  : 0,
+                booking_finance_reconcile_recovered_amount_cents: Number.isFinite(Number(routeReconcileFinance?.booking_finance_reconcile_recovered_amount_cents))
+                  ? Math.max(0, Math.round(Number(routeReconcileFinance.booking_finance_reconcile_recovered_amount_cents)))
+                  : 0,
+                booking_finance_reconcile_skipped_missing_amount_unrecoverable: Number.isFinite(Number(routeReconcileFinance?.booking_finance_reconcile_skipped_missing_amount_unrecoverable))
+                  ? Math.max(0, Math.round(Number(routeReconcileFinance.booking_finance_reconcile_skipped_missing_amount_unrecoverable)))
+                  : 0,
+                booking_finance_reconcile_prefix_preview: safeStr(routeReconcileFinance?.booking_finance_reconcile_prefix_preview, 160) || null,
+                ...(debugBookingFinance
+                  ? {
+                      booking_finance_debug_rows: Array.isArray(routeReconcileFinance?.booking_finance_reconcile_debug_rows)
+                        ? routeReconcileFinance.booking_finance_reconcile_debug_rows
+                        : [],
+                    }
+                  : {}),
+                income_merge_strategy: "max_projection_vs_booking_finance",
+                open_bookings_count: degradedOpenCount,
+                considered_open: degradedOpenCount,
+                excluded_terminal: 0,
+                excluded_payment_failed: 0,
+                excluded_stale_payment_pending: 0,
+                excluded_hidden: 0,
+                excluded_missing_pickup_time: 0,
+                excluded_stale_past_pickup: 0,
+                excluded_non_canonical_provisional_record: 0,
+                excluded_reference_only_provisional_record: 0,
+                excluded_duplicate_identity: 0,
+                excluded_terminal_identity: 0,
+                excluded_out_of_scope: 0,
+                excluded_invalid_record: 0,
+                total_scanned: 0,
+                excluded_terminal_statuses: DASHBOARD_BOOKINGS_KPI_EXCLUDED_TERMINAL_STATUSES,
+                scan_complete: false,
+                source: "projection_degraded",
+                projection_health: "dirty",
+                projection_rebuild_attempted: false,
               },
               200,
             );
@@ -18975,7 +19272,7 @@ GET /oauth/callback
             throw loadErr;
           }
           const actorRole = _scopeText(body?.actor_role ?? body?.actorRole, 32).toLowerCase();
-          if (actorRole && !new Set(["driver", "admin", "system"]).has(actorRole)) {
+          if (actorRole && !new Set(["customer", "driver", "admin", "system"]).has(actorRole)) {
             return json({ ok: false, error: "invalid_actor_role" }, 400);
           }
           const adminAuthorized = hasValidAdminToken(request, url, env);
@@ -18983,7 +19280,11 @@ GET /oauth/callback
           if (!adminAuthorized) {
             if (actorRole === "customer") {
               const proof = _requestCustomerContactProof({ url, body });
-              if (!customerProofMatchesBooking(rec, proof)) {
+              const ownershipPassed = customerProofMatchesBooking(rec, proof);
+              console.log(
+                `[BOOKING_STATUS][CUSTOMER_CANCEL_AUTH] booking=${_bookingIntentMask(bookingId)} actor_role=customer ownership=${ownershipPassed ? "passed" : "failed"}`,
+              );
+              if (!ownershipPassed) {
                 return json({ ok: false, error: "customer ownership verification failed" }, 403);
               }
             } else if (actorRole === "driver") {
@@ -21682,6 +21983,308 @@ function paymentFieldsFromPayload(payload) {
   });
 }
 
+function _invoiceLifecycleParseBool(value) {
+  if (value === true) return true;
+  if (value === false || value == null) return false;
+  const raw = String(value).trim().toLowerCase();
+  return raw === "1" || raw === "true" || raw === "yes" || raw === "ja" || raw === "y";
+}
+
+function _invoiceLifecycleContextFromRecord(rec) {
+  const booking = rec?.booking && typeof rec.booking === "object" ? rec.booking : {};
+  const invoiceRequested = _invoiceLifecycleParseBool(
+    rec?.invoice_requested ??
+      rec?.invoiceRequested ??
+      booking?.invoice_requested ??
+      booking?.invoiceRequested,
+  );
+  const businessDetected = _invoiceLifecycleParseBool(
+    rec?.business_detected ??
+      rec?.businessDetected ??
+      booking?.business_detected ??
+      booking?.businessDetected,
+  );
+  const rawIntent = safeStr(
+    rec?.invoice_intent ??
+      rec?.invoiceIntent ??
+      booking?.invoice_intent ??
+      booking?.invoiceIntent,
+    40,
+  ).toLowerCase();
+  const invoiceIntent = rawIntent || (businessDetected ? "business_invoice" : "none");
+  const invoiceState = safeStr(
+    rec?.invoice_state ??
+      rec?.invoiceState ??
+      booking?.invoice_state ??
+      booking?.invoiceState,
+    40,
+  ).toLowerCase();
+  const invoiceSentAt = safeStr(
+    rec?.invoice_sent_at ??
+      rec?.invoiceSentAt ??
+      booking?.invoice_sent_at ??
+      booking?.invoiceSentAt,
+    80,
+  );
+  return {
+    invoiceRequested,
+    businessDetected,
+    invoiceIntent,
+    invoiceState,
+    invoiceSentAt,
+    businessInvoiceIntent:
+      invoiceIntent === "business_invoice" || (invoiceRequested && businessDetected),
+  };
+}
+
+function _applyPaymentInvoiceLifecycleToRecord(
+  rec,
+  {
+    paymentMode,
+    paymentProvider,
+    paymentStatus,
+    invoiceRequested,
+    invoiceIntent,
+    invoiceState,
+    invoiceSentAt,
+    invoiceNumber,
+  } = {},
+) {
+  const apply = (target) => {
+    if (!target || typeof target !== "object" || Array.isArray(target)) return;
+    if (paymentMode != null) {
+      target.payment_mode = paymentMode;
+      target.paymentMode = paymentMode;
+    }
+    if (paymentProvider != null) {
+      target.payment_provider = paymentProvider;
+      target.paymentProvider = paymentProvider;
+    }
+    if (paymentStatus != null) {
+      target.payment_status = paymentStatus;
+      target.paymentStatus = paymentStatus;
+    }
+    if (invoiceRequested != null) {
+      target.invoice_requested = invoiceRequested === true;
+      target.invoiceRequested = invoiceRequested === true;
+    }
+    if (invoiceIntent != null) {
+      target.invoice_intent = invoiceIntent;
+      target.invoiceIntent = invoiceIntent;
+    }
+    if (invoiceState != null) {
+      target.invoice_state = invoiceState;
+      target.invoiceState = invoiceState;
+    }
+    if (invoiceSentAt != null) {
+      target.invoice_sent_at = invoiceSentAt || null;
+      target.invoiceSentAt = invoiceSentAt || null;
+    }
+    if (invoiceNumber != null) {
+      target.invoice_number = invoiceNumber || null;
+      target.invoiceNumber = invoiceNumber || null;
+    }
+  };
+
+  apply(rec);
+  apply(rec?.booking);
+  apply(rec?.payload);
+}
+
+async function _maybeGenerateBusinessInvoiceForPaidBooking({
+  env,
+  bookingId,
+  rec,
+  source = "payment_update",
+} = {}) {
+  if (!rec || typeof rec !== "object" || Array.isArray(rec)) {
+    return { ok: false, skipped: true, reason: "missing_record", mutated: false };
+  }
+  const booking = rec?.booking && typeof rec.booking === "object" ? rec.booking : null;
+  const context = _invoiceLifecycleContextFromRecord(rec);
+  if (!context.businessInvoiceIntent) {
+    _applyPaymentInvoiceLifecycleToRecord(rec, {
+      invoiceRequested: context.invoiceRequested,
+      invoiceIntent: "none",
+      invoiceState: "none",
+    });
+    console.log(
+      `[INVOICE_LIFECYCLE][SKIP] bookingId=${safeStr(bookingId)} source=${safeStr(source)} reason=not_business_invoice_intent`,
+    );
+    return { ok: true, skipped: true, reason: "not_business_invoice_intent", mutated: true };
+  }
+
+  const paymentStatus = safeStr(
+    rec?.payment_status ??
+      rec?.paymentStatus ??
+      booking?.payment_status ??
+      booking?.paymentStatus,
+    40,
+  ).toLowerCase();
+  if (paymentStatus !== "paid") {
+    _applyPaymentInvoiceLifecycleToRecord(rec, {
+      invoiceRequested: true,
+      invoiceIntent: "business_invoice",
+      invoiceState: "pending_payment",
+    });
+    console.log(
+      `[INVOICE_LIFECYCLE][PENDING] bookingId=${safeStr(bookingId)} source=${safeStr(source)} reason=payment_not_confirmed paymentStatus=${paymentStatus || "-"}`,
+    );
+    return { ok: true, skipped: true, reason: "payment_not_confirmed", mutated: true };
+  }
+
+  const existingInvoiceNumber = safeStr(findExistingInvoiceNumber(rec), 120);
+  const alreadySent =
+    context.invoiceState === "sent" ||
+    !!context.invoiceSentAt ||
+    !!existingInvoiceNumber;
+  if (alreadySent) {
+    _applyPaymentInvoiceLifecycleToRecord(rec, {
+      invoiceRequested: true,
+      invoiceIntent: "business_invoice",
+      invoiceState: "sent",
+      invoiceSentAt: context.invoiceSentAt || new Date().toISOString(),
+      invoiceNumber: existingInvoiceNumber || null,
+    });
+    console.log(
+      `[INVOICE_LIFECYCLE][SKIP] bookingId=${safeStr(bookingId)} source=${safeStr(source)} reason=already_sent`,
+    );
+    return { ok: true, skipped: true, reason: "already_sent", mutated: true };
+  }
+
+  if (!booking) {
+    _applyPaymentInvoiceLifecycleToRecord(rec, {
+      invoiceRequested: true,
+      invoiceIntent: "business_invoice",
+      invoiceState: "ready_to_send",
+    });
+    return { ok: false, skipped: false, reason: "missing_booking_payload", mutated: true };
+  }
+
+  const pickupIso = safeStr(booking?.pickupStartIso || booking?.pickup_iso);
+  const pickupParts = brusselsDateTimePartsFromIso(pickupIso);
+  const parseNum = (value, fallback = 0) => {
+    const num = Number(value);
+    return Number.isFinite(num) ? num : fallback;
+  };
+  const customerEmail = pickFirstValidEmail(
+    booking?.custEmail,
+    booking?.customer_email,
+    booking?.customerEmail,
+    booking?.email,
+  );
+  const invoiceResult = await generateAndSendInvoice({
+    env,
+    booking: {
+      pickupStartIso: pickupIso,
+      tripDate: safeStr(booking?.tripDate || booking?.date || pickupParts.date),
+      pickupTime: safeStr(booking?.pickupTime || booking?.time || pickupParts.time),
+      bookingPublicId: safeStr(booking?.bookingId || bookingId),
+      bookingId: safeStr(booking?.booking_uuid || booking?.bookingId || bookingId),
+      tenant_id: safeStr(
+        booking?.tenant_id ??
+          booking?.tenantId ??
+          rec?.tenant_id ??
+          rec?.tenantId,
+        120,
+      ),
+      company_id: safeStr(
+        booking?.company_id ??
+          booking?.companyId ??
+          rec?.company_id ??
+          rec?.companyId,
+        120,
+      ),
+      from: safeStr(booking?.from),
+      to: safeStr(booking?.to),
+      stops: Array.isArray(booking?.stops) ? booking.stops : [],
+      returnTrip: !!booking?.return_enabled,
+      routeKm: parseNum(
+        booking?.distance_km ??
+          booking?.distanceKm ??
+          _pick(rec, ["quote", "distance_km"], null),
+        0,
+      ),
+      routeMinutes: parseNum(
+        booking?.duration_route_min ??
+          booking?.durationRouteMin ??
+          _pick(rec, ["quote", "duration_min"], null),
+        0,
+      ),
+      tier: safeStr(booking?.tier),
+      service: safeStr(booking?.service),
+      pax: parseNum(booking?.pax, 0),
+      bags: parseNum(booking?.bags, 0),
+      waitMinutes: parseNum(booking?.wait_min, 0),
+      customerName: safeStr(booking?.custName || booking?.customer_name || booking?.name),
+      customerEmail,
+      customerPhone: safeStr(booking?.custPhone || booking?.customer_phone || booking?.phone),
+      customerVat: safeStr(booking?.vat_number),
+      customerCompany: safeStr(booking?.company_name),
+      invoiceAddress: safeStr(booking?.invoice_address),
+      vat_rate: parseNum(booking?.vat_rate, 0.06),
+      subtotalEx: parseNum(
+        booking?.price_ex_vat ?? _pick(rec, ["quote", "pricing", "price_ex_vat"], 0),
+        0,
+      ),
+      vatAmount: parseNum(
+        booking?.price_vat ?? _pick(rec, ["quote", "pricing", "price_vat"], 0),
+        0,
+      ),
+      total: parseNum(
+        booking?.price_incl_vat ?? _pick(rec, ["quote", "pricing", "price_incl_vat"], 0),
+        0,
+      ),
+      priceMainIncl: parseNum(booking?.price_incl_vat_main, 0),
+      priceReturnIncl: parseNum(booking?.price_incl_vat_return, 0),
+    },
+    emailPolicy: {
+      sendCustomerEmail: true,
+      customerSkipReason: "",
+      context: source,
+    },
+  });
+
+  if (!invoiceResult?.ok) {
+    const reason =
+      safeStr(invoiceResult?.error || invoiceResult?.message, 160) ||
+      "invoice_generation_failed";
+    _applyPaymentInvoiceLifecycleToRecord(rec, {
+      invoiceRequested: true,
+      invoiceIntent: "business_invoice",
+      invoiceState: "ready_to_send",
+    });
+    console.log(
+      `[INVOICE_LIFECYCLE][ERROR] bookingId=${safeStr(bookingId)} source=${safeStr(source)} reason=${reason}`,
+    );
+    return { ok: false, skipped: false, reason, mutated: true };
+  }
+
+  const sentAt = new Date().toISOString();
+  const invoiceNumber = safeStr(
+    invoiceResult?.invoiceNumber || invoiceResult?.invoice_number || findExistingInvoiceNumber(rec),
+    120,
+  );
+  _applyPaymentInvoiceLifecycleToRecord(rec, {
+    invoiceRequested: true,
+    invoiceIntent: "business_invoice",
+    invoiceState: "sent",
+    invoiceSentAt: sentAt,
+    invoiceNumber: invoiceNumber || null,
+  });
+  console.log(
+    `[INVOICE_LIFECYCLE][SENT] bookingId=${safeStr(bookingId)} source=${safeStr(source)} invoiceNumber=${invoiceNumber || "-"}`,
+  );
+  return {
+    ok: true,
+    skipped: false,
+    sent: true,
+    invoiceResult,
+    invoiceNumber: invoiceNumber || null,
+    mutated: true,
+  };
+}
+
 const COMPLIANCE_APPEND_PATH = "/compliance/events/append";
 
 function buildComplianceAppendUrl(baseUrlRaw) {
@@ -22233,12 +22836,30 @@ async function mollieCreatePayment(payload, env, request) {
         payload?.bookingId,
       160,
     );
+    let sourceBookingLoaded = false;
+    let sourceBookingLookup = "not_requested";
     if (sourceBookingId) {
-      const loaded = await loadBookingRecord(env, sourceBookingId);
-      if (!bookingMatchesRequestedTenantScope(loaded?.rec, requestedScope)) {
-        return { ok: false, error: "forbidden" };
+      sourceBookingLookup = "requested";
+      try {
+        const loaded = await loadBookingRecord(env, sourceBookingId);
+        sourceBookingLoaded = !!loaded?.rec;
+        sourceBookingLookup = sourceBookingLoaded ? "loaded" : "missing";
+        if (!bookingMatchesRequestedTenantScope(loaded?.rec, requestedScope)) {
+          return { ok: false, error: "forbidden" };
+        }
+      } catch (loadErr) {
+        if (String(loadErr?.message || "") === "Booking not found") {
+          // /book may request checkout before canonical booking persistence.
+          sourceBookingLookup = "missing_prepersist_ok";
+          sourceBookingLoaded = false;
+        } else {
+          throw loadErr;
+        }
       }
     }
+    console.log(
+      `[MOLLIE_CREATE][BOOKING_SOURCE] booking=${_bookingIntentMask(sourceBookingId)} lookup=${sourceBookingLookup} loaded=${sourceBookingLoaded} tenant=${_bookingIntentScopeMask(requestedScope).tenant || "-"} company=${_bookingIntentScopeMask(requestedScope).company || "-"}`,
+    );
     const clientQuote = payloadClean.quote;
     const quotePayload = {
       ...payloadClean,
@@ -22345,7 +22966,7 @@ async function mollieCreatePayment(payload, env, request) {
       company_id: paymentCompanyId,
     });
     console.log(
-      `[MOLLIE_CREATE][REQ] tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} amount=${amountValue} currency=EUR hasRedirectUrl=${!!redirectUrl} hasWebhookUrl=${!!webhookUrl} mode=${safeStr(mollieConfig?.mode, 16) || "unknown"}`,
+      `[MOLLIE_CREATE][REQ] tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} amount=${amountValue} currency=EUR hasRedirectUrl=${!!redirectUrl} hasWebhookUrl=${!!webhookUrl} mode=${safeStr(mollieConfig?.mode, 16) || "unknown"} sourceBooking=${_bookingIntentMask(sourceBookingId)} sourceLoaded=${sourceBookingLoaded}`,
     );
 
     const commProfile = await resolveTenantCommunicationProfile(env, paymentTenantId, paymentCompanyId);
@@ -23199,6 +23820,8 @@ async function handleBooking(payload, env, request) {
       requestedPaymentMode === "online_payments" ||
       requestedPaymentProvider === "mollie";
     const requiresPayment = explicitOnlineCheckoutRequested;
+    const bookingPaymentMode = requiresPayment ? "mollie" : "manual";
+    const bookingPaymentProvider = requiresPayment ? "mollie" : "manual";
     const paymentFields = paymentFieldsFromPayload(payload);
     let bookingPaymentFields = paymentFields;
     if (business_detected && invoice_requested && !requiresPayment) {
@@ -23206,6 +23829,38 @@ async function handleBooking(payload, env, request) {
         status: "unpaid",
         provider: "manual",
       });
+    }
+    const bookingPaymentStatusToken = safeStr(
+      bookingPaymentFields?.payment_status ?? bookingPaymentFields?.paymentStatus,
+      40,
+    ).toLowerCase();
+    const invoice_intent = business_detected ? "business_invoice" : "none";
+    const invoice_state = invoice_intent === "business_invoice"
+      ? (bookingPaymentStatusToken === "paid" ? "ready_to_send" : "pending_payment")
+      : "none";
+    bookingPaymentFields = {
+      ...bookingPaymentFields,
+      payment_mode: bookingPaymentMode,
+      paymentMode: bookingPaymentMode,
+      payment_provider: bookingPaymentProvider,
+      paymentProvider: bookingPaymentProvider,
+      invoice_requested,
+      invoiceRequested: invoice_requested,
+      invoice_intent,
+      invoiceIntent: invoice_intent,
+      invoice_state,
+      invoiceState: invoice_state,
+    };
+    if (invoice_intent === "business_invoice" && bookingPaymentStatusToken !== "paid") {
+      const invoiceLifecycleBookingHint = safeStr(
+        payload?.__booking_id ??
+          payload?.booking_id ??
+          payload?.bookingId,
+        120,
+      ) || "-";
+      console.log(
+        `[INVOICE_LIFECYCLE][BOOK_SKIP_PENDING] booking=${_bookingIntentMask(invoiceLifecycleBookingHint)} reason=payment_not_confirmed paymentStatus=${bookingPaymentStatusToken || "-"} paymentMode=${bookingPaymentMode} paymentProvider=${bookingPaymentProvider}`,
+      );
     }
     const molliePaidConfirmed =
       payload.__mollie_paid === true && paymentFields.payment_status === "paid";
@@ -24303,6 +24958,14 @@ async function handleBooking(payload, env, request) {
             tracking_last: null,
             trip: null,
           };
+          _applyPaymentInvoiceLifecycleToRecord(provisionalRecord, {
+            paymentMode: bookingPaymentMode,
+            paymentProvider: bookingPaymentProvider,
+            paymentStatus: "pending",
+            invoiceRequested: invoice_requested,
+            invoiceIntent: invoice_intent,
+            invoiceState: invoice_intent === "business_invoice" ? "pending_payment" : "none",
+          });
           _enrichBookingRecordWithLinkedCustomer(provisionalRecord, linkedCustomerId, linkedPhoneHash);
           if (allowImplicitCustomerPhoneLink) {
             await _ensureFallbackScopedCustomerIdentityForBookingRecord({
@@ -24338,6 +25001,9 @@ async function handleBooking(payload, env, request) {
             canonicalBookingId,
             provisionalRecord,
             normalizeFleetTenantScope(tenantContext),
+          );
+          console.log(
+            `[BOOKING][ONLINE_CHECKOUT_REQUESTED] booking=${_bookingIntentMask(canonicalBookingId)} branch=calendar_configured_business_unpaid persisted=true paymentMode=${bookingPaymentMode} paymentProvider=${bookingPaymentProvider}`,
           );
           const pay = await mollieCreatePayment(
             {
@@ -24410,7 +25076,7 @@ async function handleBooking(payload, env, request) {
               normalizeFleetTenantScope(tenantContext),
             );
             console.log(
-              `[BOOKING][PAYMENT_CHECKOUT_UNAVAILABLE] booking=${_bookingIntentMask(canonicalBookingId)} payOk=${pay?.ok === true} payError=${safeStr(pay?.error || pay?.message, 80) || "-"} hasCheckout=${!!checkoutUrl} businessDetected=${business_detected === true} invoiceRequested=${invoice_requested === true} branch=calendar_configured_business_unpaid`,
+              `[BOOKING][PAYMENT_CHECKOUT_UNAVAILABLE] booking=${_bookingIntentMask(canonicalBookingId)} payOk=${pay?.ok === true} payError=${safeStr(pay?.error || pay?.message, 80) || "-"} hasCheckout=${!!checkoutUrl} businessDetected=${business_detected === true} invoiceRequested=${invoice_requested === true} branch=calendar_configured_business_unpaid persisted=true`,
             );
             return {
               ok: false,
@@ -24422,6 +25088,9 @@ async function handleBooking(payload, env, request) {
               bookingId: canonicalBookingId,
             };
           }
+          console.log(
+            `[BOOKING][ONLINE_CHECKOUT_READY] booking=${_bookingIntentMask(canonicalBookingId)} branch=calendar_configured_business_unpaid persisted=true paymentBooking=${_bookingIntentMask(safeStr(pay?.bookingId, 120))} hasCheckout=${!!checkoutUrl}`,
+          );
           const successIso = new Date().toISOString();
           provisionalRecord.payment_status = "pending";
           provisionalRecord.paymentStatus = "pending";
@@ -24561,7 +25230,18 @@ async function handleBooking(payload, env, request) {
             payment_booking_id: pay.bookingId || null,
             paymentBookingId: pay.bookingId || null,
             requiresPayment: true,
-            paymentMode: "mollie",
+            payment_mode: bookingPaymentMode,
+            paymentMode: bookingPaymentMode,
+            payment_provider: bookingPaymentProvider,
+            paymentProvider: bookingPaymentProvider,
+            payment_status: "pending",
+            paymentStatus: "pending",
+            invoice_requested,
+            invoiceRequested: invoice_requested,
+            invoice_intent,
+            invoiceIntent: invoice_intent,
+            invoice_state: invoice_intent === "business_invoice" ? "pending_payment" : "none",
+            invoiceState: invoice_intent === "business_invoice" ? "pending_payment" : "none",
             checkout_url: checkoutUrl,
             checkoutUrl: checkoutUrl,
             payment_url: checkoutUrl,
@@ -24960,6 +25640,9 @@ Retour route: ${return_from || to} → ${return_to || from}`,
 
     if ((!calendarConfigured || calendarSyncSuppressed) && requiresPayment && !molliePaidConfirmed && !calendarPaymentHandled) {
       await ensureBookingReferencesReserved();
+      console.log(
+        `[BOOKING][ONLINE_CHECKOUT_REQUESTED] booking=${_bookingIntentMask(canonicalBookingId)} branch=non_calendar_or_sync_suppressed_business_unpaid persisted=false paymentMode=${bookingPaymentMode} paymentProvider=${bookingPaymentProvider}`,
+      );
       const pay = await mollieCreatePayment(
         {
           ...payload,
@@ -24980,7 +25663,7 @@ Retour route: ${return_from || to} → ${return_to || from}`,
       const checkoutUrl = readMollieCheckoutUrlFromPaymentResult(pay);
       if (pay?.ok !== true || !checkoutUrl) {
         console.log(
-          `[BOOKING][PAYMENT_CHECKOUT_UNAVAILABLE] booking=${_bookingIntentMask(canonicalBookingId)} payOk=${pay?.ok === true} payError=${safeStr(pay?.error || pay?.message, 80) || "-"} hasCheckout=${!!checkoutUrl} businessDetected=${business_detected === true} invoiceRequested=${invoice_requested === true} branch=non_calendar_or_sync_suppressed_business_unpaid`,
+          `[BOOKING][PAYMENT_CHECKOUT_UNAVAILABLE] booking=${_bookingIntentMask(canonicalBookingId)} payOk=${pay?.ok === true} payError=${safeStr(pay?.error || pay?.message, 80) || "-"} hasCheckout=${!!checkoutUrl} businessDetected=${business_detected === true} invoiceRequested=${invoice_requested === true} branch=non_calendar_or_sync_suppressed_business_unpaid persisted=false`,
         );
         return {
           ok: false,
@@ -24992,6 +25675,9 @@ Retour route: ${return_from || to} → ${return_to || from}`,
           bookingId: canonicalBookingId,
         };
       }
+      console.log(
+        `[BOOKING][ONLINE_CHECKOUT_READY] booking=${_bookingIntentMask(canonicalBookingId)} branch=non_calendar_or_sync_suppressed_business_unpaid persisted=false paymentBooking=${_bookingIntentMask(safeStr(pay?.bookingId, 120))} hasCheckout=${!!checkoutUrl}`,
+      );
       const pendingPaymentStatus = "pending";
       const nowIso = new Date().toISOString();
       const resolvedAssignedDriverId = safeStr(
@@ -25219,6 +25905,14 @@ Retour route: ${return_from || to} → ${return_to || from}`,
         tracking_last: null,
         trip: null,
       };
+      _applyPaymentInvoiceLifecycleToRecord(provisionalRecord, {
+        paymentMode: bookingPaymentMode,
+        paymentProvider: bookingPaymentProvider,
+        paymentStatus: "pending",
+        invoiceRequested: invoice_requested,
+        invoiceIntent: invoice_intent,
+        invoiceState: invoice_intent === "business_invoice" ? "pending_payment" : "none",
+      });
       _enrichBookingRecordWithLinkedCustomer(provisionalRecord, linkedCustomerId, linkedPhoneHash);
       if (allowImplicitCustomerPhoneLink) {
         await _ensureFallbackScopedCustomerIdentityForBookingRecord({
@@ -25318,7 +26012,18 @@ Retour route: ${return_from || to} → ${return_to || from}`,
         payment_booking_id: pay.bookingId || null,
         paymentBookingId: pay.bookingId || null,
         requiresPayment: true,
-        paymentMode: "mollie",
+        payment_mode: bookingPaymentMode,
+        paymentMode: bookingPaymentMode,
+        payment_provider: bookingPaymentProvider,
+        paymentProvider: bookingPaymentProvider,
+        payment_status: "pending",
+        paymentStatus: "pending",
+        invoice_requested,
+        invoiceRequested: invoice_requested,
+        invoice_intent,
+        invoiceIntent: invoice_intent,
+        invoice_state: invoice_intent === "business_invoice" ? "pending_payment" : "none",
+        invoiceState: invoice_intent === "business_invoice" ? "pending_payment" : "none",
         checkout_url: checkoutUrl,
         checkoutUrl: checkoutUrl,
         status_url: pay.statusUrl || pay.status_url || null,
@@ -25641,6 +26346,14 @@ Retour route: ${return_from || to} → ${return_to || from}`,
       tracking_last: null,
       trip: null
     };
+    _applyPaymentInvoiceLifecycleToRecord(record, {
+      paymentMode: bookingPaymentMode,
+      paymentProvider: bookingPaymentProvider,
+      paymentStatus: bookingPaymentStatusToken || "unpaid",
+      invoiceRequested: invoice_requested,
+      invoiceIntent: invoice_intent,
+      invoiceState: invoice_state,
+    });
     _enrichBookingRecordWithLinkedCustomer(record, linkedCustomerId, linkedPhoneHash);
     if (allowImplicitCustomerPhoneLink) {
       await _ensureFallbackScopedCustomerIdentityForBookingRecord({
@@ -25760,52 +26473,9 @@ Retour route: ${return_from || to} → ${return_to || from}`,
     // Send emails (best-effort)
     const email = await sendBookingEmails({ env, booking });
 
-    // Invoice (best-effort)
+    // Booking-time invoice generation is intentionally disabled.
+    // Business invoice intent is persisted and finalized only after paid confirmation.
     let invoice = null;
-    if (invoice_requested) {
-      invoice = await generateAndSendInvoice({ env, booking: {
-        // bookkeeping / numbering
-        pickupStartIso: booking.pickupStartIso,
-        tripDate: date,
-        pickupTime: time,
-        bookingPublicId: booking.bookingId,
-        bookingId: booking.booking_uuid,
-        tenant_id: safeStr(booking.tenant_id || booking.tenantId || tenantContext?.tenant_id, 120),
-        company_id: safeStr(booking.company_id || booking.companyId || tenantContext?.company_id, 120),
-
-        // route
-        from: booking.from,
-        to: booking.to,
-        stops: Array.isArray(booking.stops) ? booking.stops : [],
-        returnTrip: !!booking.return_enabled,
-        routeKm: (typeof booking.distance_km === "number") ? booking.distance_km : null,
-        routeMinutes: (typeof booking.duration_route_min === "number") ? booking.duration_route_min : null,
-
-        // service
-        tier: booking.tier,
-        service: booking.service,
-        pax: booking.pax,
-        bags: booking.bags,
-        waitMinutes: booking.wait_min || 0,
-
-        // customer
-        customerName: booking.custName,
-        customerEmail: booking.custEmail,
-        customerPhone: booking.custPhone,
-        customerVat: booking.vat_number || "",
-        customerCompany: booking.company_name || "",
-        invoiceAddress: booking.invoice_address || "",
-
-        // totals (numbers; formatter happens in invoice renderer)
-        vat_rate: booking.vat_rate,
-        subtotalEx: booking.price_ex_vat,
-        vatAmount: booking.price_vat,
-        total: booking.price_incl_vat,
-
-        // optional split for display
-        priceMainIncl: booking.price_incl_vat_main,
-        priceReturnIncl: booking.price_incl_vat_return
-      } });    }
 
     
     // Push notification (best-effort)
@@ -25859,7 +26529,29 @@ return {
           }
         : {}),
       email,
-      invoice
+      invoice,
+      payment_mode: booking.payment_mode || booking.paymentMode || bookingPaymentMode,
+      paymentMode: booking.paymentMode || booking.payment_mode || bookingPaymentMode,
+      payment_provider: booking.payment_provider || booking.paymentProvider || bookingPaymentProvider,
+      paymentProvider: booking.paymentProvider || booking.payment_provider || bookingPaymentProvider,
+      payment_status: booking.payment_status || booking.paymentStatus || bookingPaymentStatusToken || "unpaid",
+      paymentStatus: booking.paymentStatus || booking.payment_status || bookingPaymentStatusToken || "unpaid",
+      invoice_requested,
+      invoiceRequested: invoice_requested,
+      invoice_intent,
+      invoiceIntent: invoice_intent,
+      invoice_state:
+        booking.invoice_state ||
+        booking.invoiceState ||
+        (invoice_intent === "business_invoice" ? "pending_payment" : "none"),
+      invoiceState:
+        booking.invoiceState ||
+        booking.invoice_state ||
+        (invoice_intent === "business_invoice" ? "pending_payment" : "none"),
+      invoice_sent_at: booking.invoice_sent_at || booking.invoiceSentAt || null,
+      invoiceSentAt: booking.invoiceSentAt || booking.invoice_sent_at || null,
+      invoice_number: booking.invoice_number || booking.invoiceNumber || null,
+      invoiceNumber: booking.invoiceNumber || booking.invoice_number || null,
     };
   } catch (e) {
     await releaseAllocatorReservationSafely();
@@ -26011,6 +26703,13 @@ function _trackingSyncScopedBookingFinanceContribKey(scope, bookingId) {
   return `tenant:${tenantPart}:company:${companyPart}:dashboard:booking_finance_contrib:${bookingPart}:v1`;
 }
 
+function _trackingSyncScopedBookingFinanceContribPrefix(scope) {
+  const tenantPart = _trackingSyncSafeKeyPart(scope?.tenant_id, 96);
+  const companyPart = _trackingSyncSafeKeyPart(scope?.company_id, 96);
+  if (!tenantPart || !companyPart) return "";
+  return `tenant:${tenantPart}:company:${companyPart}:dashboard:booking_finance_contrib:`;
+}
+
 function _trackingSyncMonthFromIso(value) {
   const text = safeStr(value);
   if (!text) return null;
@@ -26023,6 +26722,82 @@ function _trackingSyncAmountCents(value) {
   const n = Number(value);
   if (!Number.isFinite(n)) return null;
   return Math.round(n * 100);
+}
+
+function _trackingSyncParseAmountNumber(value) {
+  if (value == null) return null;
+  if (Number.isFinite(Number(value))) return Number(value);
+  const normalized = String(value).trim().replace(",", ".").replace(/[^0-9.\-]/g, "");
+  if (!normalized) return null;
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function _trackingSyncResolveBookingFinanceAmountFromRecord(rec) {
+  const booking = rec?.booking && typeof rec.booking === "object" ? rec.booking : {};
+  const quote = rec?.quote && typeof rec.quote === "object" ? rec.quote : {};
+  const quotePricing =
+    quote?.pricing && typeof quote.pricing === "object" ? quote.pricing : {};
+  const candidates = [];
+  const add = (source, value) => {
+    const amount = _trackingSyncParseAmountNumber(value);
+    if (!Number.isFinite(amount)) return;
+    candidates.push({
+      source: safeStr(source, 80) || "unknown",
+      amount,
+      cents: Math.round(amount * 100),
+    });
+  };
+
+  add("rec.payment_amount", rec?.payment_amount);
+  add("rec.paymentAmount", rec?.paymentAmount);
+  add("rec.mollie.amount.value", rec?.mollie?.amount?.value);
+  add("rec.mollie.amount", rec?.mollie?.amount);
+  add("rec.amount", rec?.amount);
+  add("rec.total", rec?.total);
+
+  add("booking.payment_amount", booking?.payment_amount);
+  add("booking.paymentAmount", booking?.paymentAmount);
+
+  add("booking.price_incl_vat", booking?.price_incl_vat);
+  add("booking.priceInclVat", booking?.priceInclVat);
+  add("rec.price_incl_vat", rec?.price_incl_vat);
+  add("rec.priceInclVat", rec?.priceInclVat);
+  add("booking.total_price_incl_vat", booking?.total_price_incl_vat);
+  add("booking.totalPriceInclVat", booking?.totalPriceInclVat);
+  add("rec.total_price_incl_vat", rec?.total_price_incl_vat);
+  add("rec.totalPriceInclVat", rec?.totalPriceInclVat);
+  add("booking.total_incl", booking?.total_incl);
+  add("rec.total_incl", rec?.total_incl);
+  add("booking.total_amount", booking?.total_amount);
+  add("booking.totalAmount", booking?.totalAmount);
+  add("rec.total_amount", rec?.total_amount);
+  add("rec.totalAmount", rec?.totalAmount);
+
+  add("booking.airport_fixed_fare_total", booking?.airport_fixed_fare_total);
+  add("booking.airportFixedFareTotal", booking?.airportFixedFareTotal);
+  add("rec.airport_fixed_fare_total", rec?.airport_fixed_fare_total);
+  add("rec.airportFixedFareTotal", rec?.airportFixedFareTotal);
+  add("booking.fixed_fare_total", booking?.fixed_fare_total);
+  add("booking.fixedFareTotal", booking?.fixedFareTotal);
+  add("rec.fixed_fare_total", rec?.fixed_fare_total);
+  add("rec.fixedFareTotal", rec?.fixedFareTotal);
+  add("booking.fixed_total_price", booking?.fixed_total_price);
+  add("booking.fixedTotalPrice", booking?.fixedTotalPrice);
+  add("rec.fixed_total_price", rec?.fixed_total_price);
+  add("rec.fixedTotalPrice", rec?.fixedTotalPrice);
+
+  add("quote.pricing.price_incl_vat", quotePricing?.price_incl_vat);
+  add("quote.pricing.priceInclVat", quotePricing?.priceInclVat);
+  add("quote.total_price_incl_vat", quote?.total_price_incl_vat);
+  add("quote.totalPriceInclVat", quote?.totalPriceInclVat);
+  add("quote.total_incl", quote?.total_incl);
+  add("quote.totalIncl", quote?.totalIncl);
+
+  for (const candidate of candidates) {
+    if (candidate.cents > 0) return candidate;
+  }
+  return candidates[0] || { source: "none", amount: 0, cents: 0 };
 }
 
 function _trackingSyncNormalizeTripLifecycleStatus(value) {
@@ -26147,11 +26922,10 @@ function _trackingSyncDeriveBookingFinanceContribution(bookingId, rec) {
   const paidAtMonth = _trackingSyncMonthFromIso(
     rec?.paid_at ?? rec?.paidAt ?? rec?.booking?.paid_at ?? rec?.booking?.paidAt,
   );
-  const amountCents =
-    _trackingSyncAmountCents(rec?.payment_amount ?? rec?.paymentAmount) ??
-    _trackingSyncAmountCents(rec?.price_incl_vat ?? rec?.booking?.price_incl_vat) ??
-    _trackingSyncAmountCents(_pick(rec, ["quote", "pricing", "price_incl_vat"], null)) ??
-    0;
+  const amountResolution = _trackingSyncResolveBookingFinanceAmountFromRecord(rec);
+  const amountCents = Number.isFinite(Number(amountResolution?.cents))
+    ? Math.max(0, Math.round(Number(amountResolution.cents)))
+    : 0;
   const cancelled =
     _trackingSyncIsCancelledBookingLifecycle(rec?.status) ||
     _trackingSyncIsCancelledBookingLifecycle(rec?.stage) ||
@@ -26165,35 +26939,71 @@ function _trackingSyncDeriveBookingFinanceContribution(bookingId, rec) {
     _trackingSyncIsCancelledBookingLifecycle(rec?.booking?.lifecycleStatus) ||
     _trackingSyncIsCancelledBookingLifecycle(rec?.booking?.booking_status) ||
     _trackingSyncIsCancelledBookingLifecycle(rec?.booking?.bookingStatus);
-  const monthlyPaid = paid && !!paidAtMonth;
+  const monthlyPaid = paid && !!paidAtMonth && amountCents > 0;
   return {
     booking_id: safeBookingId,
     paid_month: monthlyPaid ? paidAtMonth : null,
     monthly_paid_bookings_count: monthlyPaid ? 1 : 0,
     monthly_paid_bookings_income_cents: monthlyPaid ? amountCents : 0,
     monthly_cancelled_paid_bookings_cents: monthlyPaid && cancelled ? amountCents : 0,
+    paid: paid === true,
+    amount_source: safeStr(amountResolution?.source, 80) || "none",
+    amount_cents_raw: amountCents,
+    skip_reason: !paid
+      ? "booking_not_paid"
+      : !paidAtMonth
+        ? "missing_paid_month"
+        : amountCents <= 0
+          ? "paid_amount_missing_or_nonpositive"
+          : null,
   };
 }
 
 function _trackingSyncReadBookingFinanceContribShape(value, fallbackBookingId = null) {
   const obj = value && typeof value === "object" && !Array.isArray(value) ? value : {};
-  const bookingId = safeStr(obj.booking_id ?? fallbackBookingId, 160) || null;
-  const paidMonth = _trackingSyncSafeKeyPart(obj.paid_month, 16) || null;
-  const paidCount = Number.isFinite(Number(obj.monthly_paid_bookings_count))
-    ? Math.max(0, Math.round(Number(obj.monthly_paid_bookings_count)))
+  const bookingId = safeStr(obj.booking_id ?? obj.bookingId ?? fallbackBookingId, 160) || null;
+  const paidMonth = _trackingSyncSafeKeyPart(
+    obj.paid_month ?? obj.paidMonth ?? obj.month,
+    16,
+  ) || null;
+  const paidCount = Number.isFinite(Number(obj.monthly_paid_bookings_count ?? obj.paid_count))
+    ? Math.max(0, Math.round(Number(obj.monthly_paid_bookings_count ?? obj.paid_count)))
     : 0;
-  const paidIncome = Number.isFinite(Number(obj.monthly_paid_bookings_income_cents))
-    ? Math.round(Number(obj.monthly_paid_bookings_income_cents))
+  const paidIncome = Number.isFinite(
+    Number(
+      obj.monthly_paid_bookings_income_cents ??
+      obj.monthly_income_cents ??
+      obj.income_cents ??
+      obj.amount_cents ??
+      obj.amountCents,
+    ),
+  )
+    ? Math.round(
+      Number(
+        obj.monthly_paid_bookings_income_cents ??
+        obj.monthly_income_cents ??
+        obj.income_cents ??
+        obj.amount_cents ??
+        obj.amountCents,
+      ),
+    )
     : 0;
   const cancelledPaid = Number.isFinite(Number(obj.monthly_cancelled_paid_bookings_cents))
     ? Math.round(Number(obj.monthly_cancelled_paid_bookings_cents))
     : 0;
+  const paymentStatus = safeStr(
+    obj.payment_status ??
+    obj.paymentStatus ??
+    obj.status,
+    32,
+  ) || null;
   return {
     booking_id: bookingId,
     paid_month: paidMonth,
     monthly_paid_bookings_count: paidCount,
     monthly_paid_bookings_income_cents: paidIncome,
     monthly_cancelled_paid_bookings_cents: cancelledPaid,
+    payment_status: paymentStatus,
   };
 }
 
@@ -26388,9 +27198,25 @@ async function _trackingSyncMaterializeBookingFinanceKpiBestEffort({
   if (!env?.FLUXIDI_TRACKING || !scope?.tenant_id || !scope?.company_id) return;
   const nextRaw = _trackingSyncDeriveBookingFinanceContribution(bookingId, rec);
   if (!nextRaw?.booking_id) return;
+  console.log(
+    `[TRACKING_KPI_SYNC][AMOUNT_SOURCE] booking=${safeStr(nextRaw.booking_id)} source=${safeStr(nextRaw.amount_source, 80) || "none"} amount_cents=${Number.isFinite(Number(nextRaw.amount_cents_raw)) ? Math.round(Number(nextRaw.amount_cents_raw)) : 0} paid=${nextRaw.paid ? "true" : "false"}`,
+  );
+  if (nextRaw?.skip_reason) {
+    console.log(
+      `[TRACKING_KPI_SYNC][SKIP] reason=${safeStr(nextRaw.skip_reason, 80) || "unknown"} booking=${safeStr(nextRaw.booking_id)}`,
+    );
+  } else {
+    console.log(
+      `[TRACKING_KPI_SYNC][PAID_BOOKING_CONTRIB] booking=${safeStr(nextRaw.booking_id)} month=${safeStr(nextRaw.paid_month, 16) || "-"} income_cents=${Number.isFinite(Number(nextRaw.monthly_paid_bookings_income_cents)) ? Math.round(Number(nextRaw.monthly_paid_bookings_income_cents)) : 0}`,
+    );
+  }
   const next = _trackingSyncReadBookingFinanceContribShape(nextRaw, nextRaw.booking_id);
   const contribKey = _trackingSyncScopedBookingFinanceContribKey(scope, next.booking_id);
   if (!contribKey) return;
+  const scopeMask = _bookingIntentScopeMask(scope);
+  console.log(
+    `[BOOKING_FINANCE_KPI][WRITE_KEYS] tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} booking=${_bookingIntentMask(next.booking_id)} month=${safeStr(next.paid_month, 16) || "-"} contrib_key=${_bookingIntentMask(contribKey)} agg_key=${_bookingIntentMask(_trackingSyncScopedBookingFinanceMonthKey(scope, next.paid_month || "none"))}`,
+  );
   const prev = _trackingSyncReadBookingFinanceContribShape(
     await _trackingSyncGetJson(env, contribKey),
     next.booking_id,
@@ -26436,26 +27262,368 @@ async function _trackingSyncMaterializeBookingFinanceKpiBestEffort({
     const currentCancelled = Number.isFinite(Number(current.monthly_cancelled_paid_bookings_cents))
       ? Math.round(Number(current.monthly_cancelled_paid_bookings_cents))
       : 0;
-    await _trackingSyncPutJson(env, monthKey, {
-      month,
-      currency: "EUR",
-      monthly_paid_bookings_count: Math.max(0, currentCount + delta.monthly_paid_bookings_count),
-      monthly_paid_bookings_income_cents: Math.max(
-        0,
-        currentIncome + delta.monthly_paid_bookings_income_cents,
-      ),
-      monthly_cancelled_paid_bookings_cents: Math.max(
-        0,
-        currentCancelled + delta.monthly_cancelled_paid_bookings_cents,
-      ),
-      updated_at: new Date().toISOString(),
-    });
+    try {
+      await _trackingSyncPutJson(env, monthKey, {
+        month,
+        currency: "EUR",
+        monthly_paid_bookings_count: Math.max(0, currentCount + delta.monthly_paid_bookings_count),
+        monthly_paid_bookings_income_cents: Math.max(
+          0,
+          currentIncome + delta.monthly_paid_bookings_income_cents,
+        ),
+        monthly_cancelled_paid_bookings_cents: Math.max(
+          0,
+          currentCancelled + delta.monthly_cancelled_paid_bookings_cents,
+        ),
+        updated_at: new Date().toISOString(),
+      });
+      console.log(
+        `[BOOKING_FINANCE_KPI][AGG_PUT] tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} month=${safeStr(month, 16) || "-"} booking=${_bookingIntentMask(next.booking_id)} agg_key=${_bookingIntentMask(monthKey)} ok=true income_cents=${Math.max(0, currentIncome + delta.monthly_paid_bookings_income_cents)}`,
+      );
+    } catch (aggPutErr) {
+      console.log(
+        `[BOOKING_FINANCE_KPI][AGG_PUT] tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} month=${safeStr(month, 16) || "-"} booking=${_bookingIntentMask(next.booking_id)} agg_key=${_bookingIntentMask(monthKey)} ok=false reason=${safeStr(aggPutErr?.message || aggPutErr, 120) || "unknown"}`,
+      );
+    }
+    console.log(
+      `[BOOKING_FINANCE_KPI][AGG_WRITE] tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} month=${safeStr(month, 16) || "-"} booking=${_bookingIntentMask(next.booking_id)} agg_key=${_bookingIntentMask(monthKey)} income_cents=${Math.max(0, currentIncome + delta.monthly_paid_bookings_income_cents)}`,
+    );
   }
-  await _trackingSyncPutJson(env, contribKey, {
-    ...next,
-    updated_at: new Date().toISOString(),
-    source,
-  });
+  try {
+    await _trackingSyncPutJson(env, contribKey, {
+      ...next,
+      updated_at: new Date().toISOString(),
+      source,
+    });
+    console.log(
+      `[BOOKING_FINANCE_KPI][CONTRIB_PUT] tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} month=${safeStr(next.paid_month, 16) || "-"} booking=${_bookingIntentMask(next.booking_id)} contrib_key=${_bookingIntentMask(contribKey)} ok=true income_cents=${Number.isFinite(Number(next.monthly_paid_bookings_income_cents)) ? Math.max(0, Math.round(Number(next.monthly_paid_bookings_income_cents))) : 0}`,
+    );
+  } catch (contribPutErr) {
+    console.log(
+      `[BOOKING_FINANCE_KPI][CONTRIB_PUT] tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} month=${safeStr(next.paid_month, 16) || "-"} booking=${_bookingIntentMask(next.booking_id)} contrib_key=${_bookingIntentMask(contribKey)} ok=false reason=${safeStr(contribPutErr?.message || contribPutErr, 120) || "unknown"}`,
+    );
+  }
+}
+
+async function _trackingSyncReconcileBookingFinanceMonthFromContribsBestEffort(
+  env,
+  scope,
+  month,
+  { persist = true, source = "dashboard_bookings_kpis_read", includeDebugRows = false, debugRowLimit = 20 } = {},
+) {
+  const safeMonth = _trackingSyncSafeKeyPart(month, 16);
+  const scopeMask = _bookingIntentScopeMask(scope);
+  if (!env?.FLUXIDI_TRACKING || !safeMonth) {
+    return {
+      ok: false,
+      month: safeMonth || null,
+      monthly_paid_bookings_count: 0,
+      monthly_paid_bookings_income_cents: 0,
+      monthly_cancelled_paid_bookings_cents: 0,
+      booking_finance_reconcile_scanned: 0,
+      booking_finance_reconcile_matched_month: 0,
+      booking_finance_reconcile_sum_cents: 0,
+      booking_finance_reconcile_paid_count: 0,
+      booking_finance_reconcile_skipped_wrong_month: 0,
+      booking_finance_reconcile_skipped_unpaid: 0,
+      booking_finance_reconcile_skipped_missing_amount: 0,
+      booking_finance_reconcile_recovered_amount_count: 0,
+      booking_finance_reconcile_recovered_amount_cents: 0,
+      booking_finance_reconcile_skipped_missing_amount_unrecoverable: 0,
+      booking_finance_reconcile_prefix_preview: null,
+      booking_finance_reconcile_debug_rows: [],
+      reconciled: false,
+      key: null,
+    };
+  }
+  const contribPrefix = _trackingSyncScopedBookingFinanceContribPrefix(scope);
+  if (!contribPrefix) {
+    return {
+      ok: false,
+      month: safeMonth,
+      monthly_paid_bookings_count: 0,
+      monthly_paid_bookings_income_cents: 0,
+      monthly_cancelled_paid_bookings_cents: 0,
+      booking_finance_reconcile_scanned: 0,
+      booking_finance_reconcile_matched_month: 0,
+      booking_finance_reconcile_sum_cents: 0,
+      booking_finance_reconcile_paid_count: 0,
+      booking_finance_reconcile_skipped_wrong_month: 0,
+      booking_finance_reconcile_skipped_unpaid: 0,
+      booking_finance_reconcile_skipped_missing_amount: 0,
+      booking_finance_reconcile_recovered_amount_count: 0,
+      booking_finance_reconcile_recovered_amount_cents: 0,
+      booking_finance_reconcile_skipped_missing_amount_unrecoverable: 0,
+      booking_finance_reconcile_prefix_preview: null,
+      booking_finance_reconcile_debug_rows: [],
+      reconciled: false,
+      key: null,
+    };
+  }
+  console.log(
+    `[BOOKING_FINANCE_KPI][RECONCILE_SCAN] tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} month=${safeMonth} prefix=${_bookingIntentMask(contribPrefix)} persist=${persist ? "true" : "false"} debug=${includeDebugRows ? "true" : "false"}`,
+  );
+  let cursor = undefined;
+  let scanned = 0;
+  let matchedMonth = 0;
+  let sumCount = 0;
+  let sumIncome = 0;
+  let sumCancelled = 0;
+  let skippedWrongMonth = 0;
+  let skippedUnpaid = 0;
+  let skippedMissingAmount = 0;
+  let skippedMissingAmountUnrecoverable = 0;
+  let recoveredAmountCount = 0;
+  let recoveredAmountCentsTotal = 0;
+  const maxDebugRows = Math.max(1, Math.min(100, Number(debugRowLimit) || 20));
+  const debugRows = [];
+  do {
+    const page = await env.FLUXIDI_TRACKING.list({
+      prefix: contribPrefix,
+      limit: 1000,
+      cursor,
+    });
+    const keys = Array.isArray(page?.keys) ? page.keys : [];
+    for (const keyItem of keys) {
+      const contribKey = safeStr(keyItem?.name, 320);
+      if (!contribKey) continue;
+      scanned += 1;
+      const contrib = await _trackingSyncGetJson(env, contribKey);
+      if (!contrib || typeof contrib !== "object" || Array.isArray(contrib)) continue;
+      const parsed = _trackingSyncReadBookingFinanceContribShape(
+        contrib,
+        safeStr(
+          contrib?.booking_id ??
+            contrib?.bookingId ??
+            contribKey.split(":dashboard:booking_finance_contrib:").pop()?.replace(/:v1$/, ""),
+          160,
+        ),
+      );
+      const itemMonth = _trackingSyncSafeKeyPart(
+        parsed?.paid_month ?? contrib?.paid_month ?? contrib?.paidMonth ?? contrib?.month,
+        16,
+      ) || null;
+      const itemAmountCents = Number.isFinite(
+        Number(
+          parsed?.monthly_paid_bookings_income_cents ??
+            contrib?.monthly_income_cents ??
+            contrib?.income_cents ??
+            contrib?.amount_cents ??
+            contrib?.amountCents,
+        ),
+      )
+        ? Math.max(
+          0,
+          Math.round(
+            Number(
+              parsed?.monthly_paid_bookings_income_cents ??
+                contrib?.monthly_income_cents ??
+                contrib?.income_cents ??
+                contrib?.amount_cents ??
+                contrib?.amountCents,
+            ),
+          ),
+        )
+        : 0;
+      const itemPaidCount = Number.isFinite(
+        Number(parsed?.monthly_paid_bookings_count ?? contrib?.monthly_paid_bookings_count ?? contrib?.paid_count),
+      )
+        ? Math.max(
+          0,
+          Math.round(
+            Number(parsed?.monthly_paid_bookings_count ?? contrib?.monthly_paid_bookings_count ?? contrib?.paid_count),
+          ),
+        )
+        : 0;
+      const statusToken = safeStr(
+        parsed?.payment_status ?? contrib?.payment_status ?? contrib?.paymentStatus ?? contrib?.status,
+        32,
+      ) || null;
+      const isPaid =
+        normalizeCompliancePaymentStatus(statusToken) === "paid" ||
+        itemPaidCount > 0 ||
+        itemAmountCents > 0;
+      let include = false;
+      let skipReason = null;
+      let recovered = false;
+      let recoveredAmountCents = 0;
+      let recoverySource = null;
+      if (!itemMonth || itemMonth !== safeMonth) {
+        skippedWrongMonth += 1;
+        skipReason = "wrong_month";
+      } else {
+        matchedMonth += 1;
+        if (!isPaid) {
+          skippedUnpaid += 1;
+          skipReason = "unpaid";
+        } else if (itemAmountCents <= 0) {
+          const candidateBookingId = safeStr(parsed?.booking_id ?? contrib?.booking_id ?? contrib?.bookingId, 160);
+          if (!candidateBookingId) {
+            skippedMissingAmount += 1;
+            skippedMissingAmountUnrecoverable += 1;
+            skipReason = "missing_amount_unrecoverable";
+            console.log(
+              `[BOOKING_FINANCE_KPI][RECONCILE_RECOVER_SKIP] tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} month=${safeMonth} booking=${_bookingIntentMask(candidateBookingId)} reason=missing_amount_booking_not_found`,
+            );
+          } else {
+            try {
+              const loadedBooking = await loadBookingRecord(env, candidateBookingId);
+              if (!loadedBooking?.rec || !bookingMatchesRequestedTenantScope(loadedBooking.rec, scope)) {
+                skippedMissingAmount += 1;
+                skipReason = "missing_amount_scope_mismatch";
+                console.log(
+                  `[BOOKING_FINANCE_KPI][RECONCILE_RECOVER_SKIP] tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} month=${safeMonth} booking=${_bookingIntentMask(candidateBookingId)} reason=missing_amount_scope_mismatch`,
+                );
+              } else {
+                const recoveredPaymentStatus = normalizeCompliancePaymentStatus(
+                  loadedBooking.rec?.payment_status ??
+                    loadedBooking.rec?.paymentStatus ??
+                    loadedBooking.rec?.booking?.payment_status ??
+                    loadedBooking.rec?.booking?.paymentStatus,
+                );
+                const paidByRecord = recoveredPaymentStatus === "paid";
+                if (!paidByRecord && !isPaid) {
+                  skippedMissingAmount += 1;
+                  skippedMissingAmountUnrecoverable += 1;
+                  skipReason = "missing_amount_unrecoverable";
+                  console.log(
+                    `[BOOKING_FINANCE_KPI][RECONCILE_RECOVER_SKIP] tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} month=${safeMonth} booking=${_bookingIntentMask(candidateBookingId)} reason=missing_amount_unrecoverable`,
+                  );
+                } else {
+                  const recoveredAmount = _trackingSyncResolveBookingFinanceAmountFromRecord(
+                    loadedBooking.rec,
+                  );
+                  recoveredAmountCents = Number.isFinite(Number(recoveredAmount?.cents))
+                    ? Math.max(0, Math.round(Number(recoveredAmount.cents)))
+                    : 0;
+                  if (recoveredAmountCents > 0) {
+                    recovered = true;
+                    recoverySource = safeStr(recoveredAmount?.source, 80) || "booking_record";
+                    recoveredAmountCount += 1;
+                    recoveredAmountCentsTotal += recoveredAmountCents;
+                    include = true;
+                    sumCount += itemPaidCount > 0 ? itemPaidCount : 1;
+                    sumIncome += recoveredAmountCents;
+                    sumCancelled += Number.isFinite(Number(parsed?.monthly_cancelled_paid_bookings_cents))
+                      ? Math.max(0, Math.round(Number(parsed.monthly_cancelled_paid_bookings_cents)))
+                      : 0;
+                    try {
+                      const correctedContrib = {
+                        ...contrib,
+                        booking_id: safeStr(parsed?.booking_id ?? candidateBookingId, 160) || candidateBookingId,
+                        paid_month: safeMonth,
+                        monthly_paid_bookings_count: itemPaidCount > 0 ? itemPaidCount : 1,
+                        monthly_paid_bookings_income_cents: recoveredAmountCents,
+                        amount_cents: recoveredAmountCents,
+                        amount_source: recoverySource,
+                        recovered_amount_at: new Date().toISOString(),
+                        payment_status:
+                          safeStr(contrib?.payment_status ?? contrib?.paymentStatus, 32) ||
+                          recoveredPaymentStatus ||
+                          "paid",
+                      };
+                      await _trackingSyncPutJson(env, contribKey, correctedContrib);
+                    } catch (_) {
+                      // best effort contrib correction
+                    }
+                    console.log(
+                      `[BOOKING_FINANCE_KPI][RECONCILE_RECOVER_AMOUNT] tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} month=${safeMonth} booking=${_bookingIntentMask(candidateBookingId)} recovered_amount_cents=${recoveredAmountCents} source=${recoverySource || "-"} contrib_key=${_bookingIntentMask(contribKey)}`,
+                    );
+                  } else {
+                    skippedMissingAmount += 1;
+                    skippedMissingAmountUnrecoverable += 1;
+                    skipReason = "missing_amount_unrecoverable";
+                    console.log(
+                      `[BOOKING_FINANCE_KPI][RECONCILE_RECOVER_SKIP] tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} month=${safeMonth} booking=${_bookingIntentMask(candidateBookingId)} reason=missing_amount_unrecoverable`,
+                    );
+                  }
+                }
+              }
+            } catch (_) {
+              skippedMissingAmount += 1;
+              skipReason = "missing_amount_booking_not_found";
+              console.log(
+                `[BOOKING_FINANCE_KPI][RECONCILE_RECOVER_SKIP] tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} month=${safeMonth} booking=${_bookingIntentMask(candidateBookingId)} reason=missing_amount_booking_not_found`,
+              );
+            }
+          }
+        } else {
+          include = true;
+          sumCount += itemPaidCount > 0 ? itemPaidCount : 1;
+          sumIncome += itemAmountCents;
+          sumCancelled += Number.isFinite(Number(parsed?.monthly_cancelled_paid_bookings_cents))
+            ? Math.max(0, Math.round(Number(parsed.monthly_cancelled_paid_bookings_cents)))
+            : 0;
+        }
+      }
+      if (includeDebugRows && debugRows.length < maxDebugRows) {
+        debugRows.push({
+          booking: _bookingIntentMask(parsed?.booking_id),
+          paid_month: itemMonth,
+          amount_cents: recovered && recoveredAmountCents > 0 ? recoveredAmountCents : itemAmountCents,
+          status: statusToken,
+          included: include,
+          skip_reason: skipReason,
+          recovered,
+          recovered_amount_cents: recoveredAmountCents > 0 ? recoveredAmountCents : 0,
+          recovery_source: recoverySource,
+        });
+      }
+      console.log(
+        `[BOOKING_FINANCE_KPI][RECONCILE_ITEM] tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} month=${safeMonth} booking=${_bookingIntentMask(parsed?.booking_id)} item_month=${itemMonth || "-"} amount_cents=${itemAmountCents} status=${statusToken || "-"} included=${include ? "true" : "false"} skip_reason=${skipReason || "-"} recovered=${recovered ? "true" : "false"} recovered_amount_cents=${recoveredAmountCents} recovery_source=${recoverySource || "-"}`,
+      );
+    }
+    cursor = page?.cursor;
+    if (page?.list_complete !== false) break;
+    if (!cursor) break;
+  } while (cursor);
+
+  const monthKey = _trackingSyncScopedBookingFinanceMonthKey(scope, safeMonth);
+  if (persist && monthKey) {
+    try {
+      await _trackingSyncPutJson(env, monthKey, {
+        month: safeMonth,
+        currency: "EUR",
+        monthly_paid_bookings_count: Math.max(0, sumCount),
+        monthly_paid_bookings_income_cents: Math.max(0, sumIncome),
+        monthly_cancelled_paid_bookings_cents: Math.max(0, sumCancelled),
+        updated_at: new Date().toISOString(),
+        source,
+        reconciled_from_contrib: true,
+      });
+      console.log(
+        `[BOOKING_FINANCE_KPI][AGG_PUT] tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} month=${safeMonth} agg_key=${_bookingIntentMask(monthKey)} ok=true income_cents=${Math.max(0, sumIncome)}`,
+      );
+    } catch (reconcileAggErr) {
+      console.log(
+        `[BOOKING_FINANCE_KPI][AGG_PUT] tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} month=${safeMonth} agg_key=${_bookingIntentMask(monthKey)} ok=false reason=${safeStr(reconcileAggErr?.message || reconcileAggErr, 120) || "unknown"}`,
+      );
+    }
+  }
+  console.log(
+    `[BOOKING_FINANCE_KPI][RECONCILE_RESULT] tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} month=${safeMonth} scanned=${scanned} matched_month=${matchedMonth} sum_cents=${Math.max(0, sumIncome)} paid_count=${Math.max(0, sumCount)} recovered_count=${recoveredAmountCount} recovered_cents=${Math.max(0, recoveredAmountCentsTotal)} skipped_wrong_month=${skippedWrongMonth} skipped_unpaid=${skippedUnpaid} skipped_missing_amount=${skippedMissingAmount} skipped_missing_amount_unrecoverable=${skippedMissingAmountUnrecoverable} prefix=${_bookingIntentMask(contribPrefix)} agg_key=${_bookingIntentMask(monthKey)}`,
+  );
+  return {
+    ok: true,
+    month: safeMonth,
+    monthly_paid_bookings_count: Math.max(0, sumCount),
+    monthly_paid_bookings_income_cents: Math.max(0, sumIncome),
+    monthly_cancelled_paid_bookings_cents: Math.max(0, sumCancelled),
+    booking_finance_reconcile_scanned: scanned,
+    booking_finance_reconcile_matched_month: matchedMonth,
+    booking_finance_reconcile_sum_cents: Math.max(0, sumIncome),
+    booking_finance_reconcile_paid_count: Math.max(0, sumCount),
+    booking_finance_reconcile_skipped_wrong_month: skippedWrongMonth,
+    booking_finance_reconcile_skipped_unpaid: skippedUnpaid,
+    booking_finance_reconcile_skipped_missing_amount: skippedMissingAmount,
+    booking_finance_reconcile_recovered_amount_count: recoveredAmountCount,
+    booking_finance_reconcile_recovered_amount_cents: Math.max(0, recoveredAmountCentsTotal),
+    booking_finance_reconcile_skipped_missing_amount_unrecoverable: skippedMissingAmountUnrecoverable,
+    booking_finance_reconcile_prefix_preview: _bookingIntentMask(contribPrefix),
+    booking_finance_reconcile_debug_rows: includeDebugRows ? debugRows : [],
+    reconciled: persist === true,
+    key: monthKey || null,
+  };
 }
 
 async function syncScopedTrackingTripKpiBestEffort({
@@ -36645,11 +37813,28 @@ function _dashboardBookingsKpiProjectionStaleAfterMs(env, options = {}) {
   return normalized > 0 ? normalized : 0;
 }
 
-async function computeDashboardBookingsKpis(env, { tenantScope, debug = false, debugLimit = 50 } = {}) {
+function _dashboardBookingsKpiNormalizeMonth(monthRaw) {
+  const token = safeStr(monthRaw, 16);
+  if (!token) return new Date().toISOString().slice(0, 7);
+  const normalized = token.trim();
+  if (!/^\d{4}-\d{2}$/.test(normalized)) return null;
+  const probe = Date.parse(`${normalized}-01T00:00:00.000Z`);
+  if (!Number.isFinite(probe)) return null;
+  return normalized;
+}
+
+async function computeDashboardBookingsKpis(
+  env,
+  { tenantScope, month = null, debug = false, debugBookingFinance = false, debugLimit = 50 } = {},
+) {
   if (!tenantScope?.hasScope) return missingTenantScopeError();
   if (!env?.BOOKING_KV) throw new Error("BOOKING_KV binding is missing");
   const debugEnabled = debug === true;
   const effectiveDebugLimit = Math.max(1, Math.min(200, Number(debugLimit) || 50));
+  const selectedMonth = _dashboardBookingsKpiNormalizeMonth(month);
+  if (!selectedMonth) {
+    return { ok: false, error: "month must be YYYY-MM" };
+  }
   const loaded = await loadDashboardBookingsKpiAggregate(env, tenantScope);
   const aggregate = loaded?.aggregate && typeof loaded.aggregate === "object" ? loaded.aggregate : null;
   if (!loaded?.ok || !aggregate) {
@@ -36692,6 +37877,9 @@ async function computeDashboardBookingsKpis(env, { tenantScope, debug = false, d
   const excludedTerminalIdentity = Number(counters?.excluded_terminal_identity || 0);
   const excludedOutOfScope = Number(counters?.excluded_out_of_scope || 0);
   const excludedInvalidRecord = Number(counters?.excluded_invalid_record || 0);
+  const projectionIncomeCents = Number.isFinite(Number(counters?.monthly_income_cents))
+    ? Math.max(0, Math.round(Number(counters?.monthly_income_cents)))
+    : 0;
   const scanStats = aggregate?.scan_stats && typeof aggregate.scan_stats === "object"
     ? aggregate.scan_stats
     : {};
@@ -36702,6 +37890,68 @@ async function computeDashboardBookingsKpis(env, { tenantScope, debug = false, d
       0,
   );
   const matchedScope = Number(scanStats?.matched_scope ?? aggregate?.matched_scope ?? 0);
+  const bookingFinanceMonthKey = _trackingSyncScopedBookingFinanceMonthKey(
+    tenantScope,
+    selectedMonth,
+  );
+  const bookingFinanceContribPrefix = _trackingSyncScopedBookingFinanceContribPrefix(
+    tenantScope,
+  );
+  const scopeMask = _bookingIntentScopeMask(tenantScope);
+  console.log(
+    `[BOOKING_FINANCE_KPI][READ_KEYS] tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} month=${selectedMonth} agg_key=${_bookingIntentMask(bookingFinanceMonthKey)} contrib_prefix=${_bookingIntentMask(bookingFinanceContribPrefix)}`,
+  );
+  const bookingFinanceMonth = bookingFinanceMonthKey
+    ? ((await _trackingSyncGetJson(env, bookingFinanceMonthKey)) || {})
+    : {};
+  let bookingFinanceMonthIncomeCents = Number.isFinite(
+    Number(bookingFinanceMonth?.monthly_paid_bookings_income_cents),
+  )
+    ? Math.max(0, Math.round(Number(bookingFinanceMonth.monthly_paid_bookings_income_cents)))
+    : 0;
+  let bookingFinanceMonthPaidCount = Number.isFinite(
+    Number(bookingFinanceMonth?.monthly_paid_bookings_count),
+  )
+    ? Math.max(0, Math.round(Number(bookingFinanceMonth.monthly_paid_bookings_count)))
+    : 0;
+  const reconciledFinance = await _trackingSyncReconcileBookingFinanceMonthFromContribsBestEffort(
+    env,
+    tenantScope,
+    selectedMonth,
+    {
+      persist: true,
+      source: "dashboard_bookings_kpis_compute_read",
+      includeDebugRows: debugBookingFinance === true,
+      debugRowLimit: 20,
+    },
+  );
+  if (reconciledFinance?.ok) {
+    bookingFinanceMonthIncomeCents = Math.max(
+      bookingFinanceMonthIncomeCents,
+      Number.isFinite(Number(reconciledFinance.monthly_paid_bookings_income_cents))
+        ? Math.max(0, Math.round(Number(reconciledFinance.monthly_paid_bookings_income_cents)))
+        : 0,
+    );
+    bookingFinanceMonthPaidCount = Math.max(
+      bookingFinanceMonthPaidCount,
+      Number.isFinite(Number(reconciledFinance.monthly_paid_bookings_count))
+        ? Math.max(0, Math.round(Number(reconciledFinance.monthly_paid_bookings_count)))
+        : 0,
+    );
+  }
+  console.log(
+    `[BOOKING_FINANCE_KPI][AGG_READ] tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} month=${selectedMonth} agg_key=${_bookingIntentMask(bookingFinanceMonthKey)} income_cents=${bookingFinanceMonthIncomeCents} paid_count=${bookingFinanceMonthPaidCount} reconciled=${reconciledFinance?.ok ? "true" : "false"} scanned=${Number.isFinite(Number(reconciledFinance?.booking_finance_reconcile_scanned)) ? Math.round(Number(reconciledFinance.booking_finance_reconcile_scanned)) : 0}`,
+  );
+  const monthlyIncomeMergedCents = Math.max(
+    projectionIncomeCents,
+    bookingFinanceMonthIncomeCents,
+  );
+  console.log(
+    `[DASHBOARD_BOOKINGS_KPI][BOOKING_FINANCE_READ] tenant=${_maskPublicDriverLoginValue(tenantScope.tenant_id)} company=${_maskPublicDriverLoginValue(tenantScope.company_id)} month=${selectedMonth} income_cents=${bookingFinanceMonthIncomeCents} paid_count=${bookingFinanceMonthPaidCount} key=${bookingFinanceMonthKey ? "present" : "missing"}`,
+  );
+  console.log(
+    `[DASHBOARD_BOOKINGS_KPI][MONTHLY_INCOME_MERGE] tenant=${_maskPublicDriverLoginValue(tenantScope.tenant_id)} company=${_maskPublicDriverLoginValue(tenantScope.company_id)} month=${selectedMonth} projection_income_cents=${projectionIncomeCents} booking_finance_income_cents=${bookingFinanceMonthIncomeCents} merged_income_cents=${monthlyIncomeMergedCents}`,
+  );
 
   const response = {
     ok: true,
@@ -36722,6 +37972,44 @@ async function computeDashboardBookingsKpis(env, { tenantScope, debug = false, d
     excluded_terminal_identity: excludedTerminalIdentity,
     excluded_out_of_scope: excludedOutOfScope,
     excluded_invalid_record: excludedInvalidRecord,
+    month: selectedMonth,
+    monthly_income_cents: monthlyIncomeMergedCents,
+    monthly_income_eur: monthlyIncomeMergedCents / 100,
+    booking_finance_monthly_income_cents: bookingFinanceMonthIncomeCents,
+    booking_finance_monthly_income_eur: bookingFinanceMonthIncomeCents / 100,
+    booking_finance_monthly_paid_bookings_count: bookingFinanceMonthPaidCount,
+    booking_finance_reconcile_scanned: Number.isFinite(Number(reconciledFinance?.booking_finance_reconcile_scanned))
+      ? Math.max(0, Math.round(Number(reconciledFinance.booking_finance_reconcile_scanned)))
+      : 0,
+    booking_finance_reconcile_matched_month: Number.isFinite(Number(reconciledFinance?.booking_finance_reconcile_matched_month))
+      ? Math.max(0, Math.round(Number(reconciledFinance.booking_finance_reconcile_matched_month)))
+      : 0,
+    booking_finance_reconcile_sum_cents: Number.isFinite(Number(reconciledFinance?.booking_finance_reconcile_sum_cents))
+      ? Math.max(0, Math.round(Number(reconciledFinance.booking_finance_reconcile_sum_cents)))
+      : 0,
+    booking_finance_reconcile_paid_count: Number.isFinite(Number(reconciledFinance?.booking_finance_reconcile_paid_count))
+      ? Math.max(0, Math.round(Number(reconciledFinance.booking_finance_reconcile_paid_count)))
+      : 0,
+    booking_finance_reconcile_skipped_wrong_month: Number.isFinite(Number(reconciledFinance?.booking_finance_reconcile_skipped_wrong_month))
+      ? Math.max(0, Math.round(Number(reconciledFinance.booking_finance_reconcile_skipped_wrong_month)))
+      : 0,
+    booking_finance_reconcile_skipped_unpaid: Number.isFinite(Number(reconciledFinance?.booking_finance_reconcile_skipped_unpaid))
+      ? Math.max(0, Math.round(Number(reconciledFinance.booking_finance_reconcile_skipped_unpaid)))
+      : 0,
+    booking_finance_reconcile_skipped_missing_amount: Number.isFinite(Number(reconciledFinance?.booking_finance_reconcile_skipped_missing_amount))
+      ? Math.max(0, Math.round(Number(reconciledFinance.booking_finance_reconcile_skipped_missing_amount)))
+      : 0,
+    booking_finance_reconcile_recovered_amount_count: Number.isFinite(Number(reconciledFinance?.booking_finance_reconcile_recovered_amount_count))
+      ? Math.max(0, Math.round(Number(reconciledFinance.booking_finance_reconcile_recovered_amount_count)))
+      : 0,
+    booking_finance_reconcile_recovered_amount_cents: Number.isFinite(Number(reconciledFinance?.booking_finance_reconcile_recovered_amount_cents))
+      ? Math.max(0, Math.round(Number(reconciledFinance.booking_finance_reconcile_recovered_amount_cents)))
+      : 0,
+    booking_finance_reconcile_skipped_missing_amount_unrecoverable: Number.isFinite(Number(reconciledFinance?.booking_finance_reconcile_skipped_missing_amount_unrecoverable))
+      ? Math.max(0, Math.round(Number(reconciledFinance.booking_finance_reconcile_skipped_missing_amount_unrecoverable)))
+      : 0,
+    booking_finance_reconcile_prefix_preview: safeStr(reconciledFinance?.booking_finance_reconcile_prefix_preview, 160) || null,
+    income_merge_strategy: "max_projection_vs_booking_finance",
     total_scanned: Number.isFinite(totalScanned) ? Math.max(0, Math.trunc(totalScanned)) : 0,
     excluded_terminal_statuses: DASHBOARD_BOOKINGS_KPI_EXCLUDED_TERMINAL_STATUSES,
     scan_complete: projectionComplete,
@@ -36760,6 +38048,13 @@ async function computeDashboardBookingsKpis(env, { tenantScope, debug = false, d
       projection_dirty_reason: dirtyReason || null,
       stale_after_ms: staleAfterMs,
     };
+    if (debugBookingFinance === true) {
+      response.booking_finance_debug_rows = Array.isArray(
+        reconciledFinance?.booking_finance_reconcile_debug_rows,
+      )
+        ? reconciledFinance.booking_finance_reconcile_debug_rows
+        : [];
+    }
   }
   console.log(
     `[DASHBOARD_KPI][PROJECTION_USED] tenant=${_maskPublicDriverLoginValue(tenantScope.tenant_id)} company=${_maskPublicDriverLoginValue(tenantScope.company_id)} open=${consideredOpen}`,
@@ -37465,254 +38760,35 @@ async function updateBookingPaymentAuthoritative(
 
   rec.updatedAt = new Date().toISOString();
 
+  const paymentMode =
+    source === "mollie" || method === "mollie" || source === "online_payment"
+      ? "mollie"
+      : "manual";
+  const paymentProvider = paymentMode === "mollie" ? "mollie" : "manual";
+  const invoiceContext = _invoiceLifecycleContextFromRecord(rec);
+  _applyPaymentInvoiceLifecycleToRecord(rec, {
+    paymentMode,
+    paymentProvider,
+    paymentStatus: normalizedStatus,
+    invoiceRequested:
+      invoiceContext.businessInvoiceIntent ? true : invoiceContext.invoiceRequested,
+    invoiceIntent: invoiceContext.businessInvoiceIntent ? "business_invoice" : invoiceContext.invoiceIntent,
+    invoiceState:
+      normalizedStatus === "paid"
+        ? (invoiceContext.businessInvoiceIntent ? "ready_to_send" : "none")
+        : (invoiceContext.businessInvoiceIntent ? "pending_payment" : "none"),
+  });
+
   if (normalizedStatus === "paid" && !wasAlreadyPaid) {
-    let shouldLogInvoiceCustomerErrors = false;
-    try {
-      const booking = rec?.booking && typeof rec.booking === "object" ? rec.booking : null;
-      const commTenantId = safeStr(
-        rec?.tenant_id ??
-          rec?.tenantId ??
-          booking?.tenant_id ??
-          booking?.tenantId ??
-          tenantScope?.tenant_id ??
-          tenantScope?.tenantId,
-        80,
-      );
-      const commCompanyId = safeStr(
-        rec?.company_id ??
-          rec?.companyId ??
-          booking?.company_id ??
-          booking?.companyId ??
-          tenantScope?.company_id ??
-          tenantScope?.companyId,
-        80,
-      );
-      const profile = await resolveTenantCommunicationProfile(
-        env,
-        commTenantId,
-        commCompanyId,
-      );
-      const adminInvoiceEmail = pickFirstValidEmail(
-        profile.invoiceEmail,
-        profile.billingEmail,
-        profile.notificationEmail,
-        env.OWNER_EMAIL,
-      );
-      const customerEmail = pickFirstValidEmail(
-        booking?.custEmail,
-        booking?.customer_email,
-        booking?.customerEmail,
-        booking?.email,
-      );
-      const parseBoolFlag = (value) => {
-        if (value === true) return true;
-        if (value === false || value == null) return false;
-        const raw = String(value).trim().toLowerCase();
-        return raw === "1" || raw === "true" || raw === "yes" || raw === "ja" || raw === "y";
-      };
-      const customerCompany = safeStr(
-        booking?.company_name ||
-        booking?.companyName ||
-        booking?.customer_company ||
-        booking?.customerCompany,
-      );
-      const customerVat = safeStr(
-        booking?.vat_number ||
-        booking?.vatNumber ||
-        booking?.customer_vat ||
-        booking?.customerVat,
-      );
-      const customerInvoiceEmail = pickFirstValidEmail(
-        booking?.invoice_email,
-        booking?.invoiceEmail,
-        booking?.customer_invoice_email,
-        booking?.customerInvoiceEmail,
-      );
-      const invoiceRequested = parseBoolFlag(
-        booking?.invoice_requested ??
-        booking?.invoiceRequested ??
-        rec?.invoice_requested ??
-        rec?.invoiceRequested,
-      );
-      const businessDetected = parseBoolFlag(
-        booking?.business_detected ??
-        booking?.businessDetected ??
-        rec?.business_detected ??
-        rec?.businessDetected,
-      );
-      const businessInvoiceContext =
-        invoiceRequested ||
-        businessDetected ||
-        !!customerCompany ||
-        !!customerVat ||
-        (!!customerInvoiceEmail && (!!customerCompany || !!customerVat));
-      const sendCustomerInvoiceEmail = !!businessInvoiceContext;
-      shouldLogInvoiceCustomerErrors = sendCustomerInvoiceEmail;
-      const providerConfigured = !!safeStr(env?.RESEND_API_KEY) && !!safeStr(env?.EMAIL_FROM);
-      const hasCustomerEmail = !!customerEmail;
-      const hasInvoiceEmail = !!adminInvoiceEmail;
-      const pickupIso = safeStr(booking?.pickupStartIso || booking?.pickup_iso);
-      const pickupParts = brusselsDateTimePartsFromIso(pickupIso);
-      const parseNum = (value, fallback = 0) => {
-        const num = Number(value);
-        return Number.isFinite(num) ? num : fallback;
-      };
-
-      if (sendCustomerInvoiceEmail) {
-        console.log(
-          `[EMAIL][INVOICE_CUSTOMER][START] bookingId=${safeStr(bookingId)} providerConfigured=${providerConfigured} hasCustomerEmail=${hasCustomerEmail} source=payment_update`,
-        );
-      } else {
-        console.log(
-          `[EMAIL][INVOICE_CUSTOMER][SKIP] bookingId=${safeStr(bookingId)} reason=private_ride_manual_pdf_flow source=payment_update`,
-        );
-      }
+    const invoiceLifecycle = await _maybeGenerateBusinessInvoiceForPaidBooking({
+      env,
+      bookingId,
+      rec,
+      source: "payment_update",
+    });
+    if (invoiceLifecycle?.ok !== true && invoiceLifecycle?.skipped !== true) {
       console.log(
-        `[EMAIL][INVOICE_ADMIN][START] bookingId=${safeStr(bookingId)} providerConfigured=${providerConfigured} hasInvoiceEmail=${hasInvoiceEmail} source=payment_update`,
-      );
-
-      if (!booking) {
-        if (sendCustomerInvoiceEmail) {
-          console.log(
-            `[EMAIL][INVOICE_CUSTOMER][ERROR] bookingId=${safeStr(bookingId)} reason=missing_booking_payload`,
-          );
-        }
-        console.log(
-          `[EMAIL][INVOICE_ADMIN][ERROR] bookingId=${safeStr(bookingId)} reason=missing_booking_payload`,
-        );
-      } else {
-        if (sendCustomerInvoiceEmail && !hasCustomerEmail) {
-          console.log(
-            `[EMAIL][INVOICE_CUSTOMER][ERROR] bookingId=${safeStr(bookingId)} reason=missing_customer_email`,
-          );
-        }
-        const invoiceResult = await generateAndSendInvoice({
-          env,
-          booking: {
-            pickupStartIso: pickupIso,
-            tripDate: safeStr(booking?.tripDate || booking?.date || pickupParts.date),
-            pickupTime: safeStr(booking?.pickupTime || booking?.time || pickupParts.time),
-            bookingPublicId: safeStr(booking?.bookingId || bookingId),
-            bookingId: safeStr(booking?.booking_uuid || booking?.bookingId || bookingId),
-            tenant_id: safeStr(
-              booking?.tenant_id ??
-                booking?.tenantId ??
-                rec?.tenant_id ??
-                rec?.tenantId,
-              120,
-            ),
-            company_id: safeStr(
-              booking?.company_id ??
-                booking?.companyId ??
-                rec?.company_id ??
-                rec?.companyId,
-              120,
-            ),
-            from: safeStr(booking?.from),
-            to: safeStr(booking?.to),
-            stops: Array.isArray(booking?.stops) ? booking.stops : [],
-            returnTrip: !!booking?.return_enabled,
-            routeKm: parseNum(
-              booking?.distance_km ??
-              booking?.distanceKm ??
-              _pick(rec, ["quote", "distance_km"], null),
-              0,
-            ),
-            routeMinutes: parseNum(
-              booking?.duration_route_min ??
-              booking?.durationRouteMin ??
-              _pick(rec, ["quote", "duration_min"], null),
-              0,
-            ),
-            tier: safeStr(booking?.tier),
-            service: safeStr(booking?.service),
-            pax: parseNum(booking?.pax, 0),
-            bags: parseNum(booking?.bags, 0),
-            waitMinutes: parseNum(booking?.wait_min, 0),
-            customerName: safeStr(booking?.custName || booking?.customer_name || booking?.name),
-            customerEmail,
-            customerPhone: safeStr(booking?.custPhone || booking?.customer_phone || booking?.phone),
-            customerVat: safeStr(booking?.vat_number),
-            customerCompany: safeStr(booking?.company_name),
-            invoiceAddress: safeStr(booking?.invoice_address),
-            vat_rate: parseNum(booking?.vat_rate, 0.06),
-            subtotalEx: parseNum(
-              booking?.price_ex_vat ?? _pick(rec, ["quote", "pricing", "price_ex_vat"], 0),
-              0,
-            ),
-            vatAmount: parseNum(
-              booking?.price_vat ?? _pick(rec, ["quote", "pricing", "price_vat"], 0),
-              0,
-            ),
-            total: parseNum(
-              booking?.price_incl_vat ?? _pick(rec, ["quote", "pricing", "price_incl_vat"], 0),
-              0,
-            ),
-            priceMainIncl: parseNum(booking?.price_incl_vat_main, 0),
-            priceReturnIncl: parseNum(booking?.price_incl_vat_return, 0),
-          },
-          emailPolicy: {
-            sendCustomerEmail: sendCustomerInvoiceEmail,
-            customerSkipReason: sendCustomerInvoiceEmail ? "" : "private_ride_manual_pdf_flow",
-          },
-        });
-
-        if (invoiceResult?.ok) {
-          if (sendCustomerInvoiceEmail) {
-            console.log(
-              `[EMAIL][INVOICE_CUSTOMER][OK] bookingId=${safeStr(bookingId)} invoiceNumber=${safeStr(invoiceResult?.invoiceNumber)}`,
-            );
-          }
-          const customerInvoiceSent = invoiceResult?.email?.customer?.sent === true;
-          if (customerInvoiceSent) {
-            const sentAt = new Date().toISOString();
-            const sentTo = customerEmail || "";
-            const documentType = safeStr(invoiceResult?.documentType || "receipt");
-            rec.receipt_email_sent_at = sentAt;
-            rec.receipt_email_sent_to = sentTo;
-            rec.receipt_email_sent_source = "payment_update_auto";
-            rec.receipt_email_document_type = documentType;
-            rec.receipt_email_send_context = "automatic_payment_update";
-            if (rec.booking && typeof rec.booking === "object") {
-              rec.booking.receipt_email_sent_at = sentAt;
-              rec.booking.receipt_email_sent_to = sentTo;
-              rec.booking.receipt_email_sent_source = "payment_update_auto";
-              rec.booking.receipt_email_document_type = documentType;
-              rec.booking.receipt_email_send_context = "automatic_payment_update";
-            }
-          }
-          const adminCopySent = invoiceResult?.email?.admin_copy?.sent === true;
-          if (adminCopySent || !hasInvoiceEmail) {
-            const adminReason = adminCopySent ? "admin_copy_sent" : "missing_admin_recipient";
-            const adminTag = adminCopySent ? "OK" : "ERROR";
-            console.log(
-              `[EMAIL][INVOICE_ADMIN][${adminTag}] bookingId=${safeStr(bookingId)} invoiceNumber=${safeStr(invoiceResult?.invoiceNumber)} reason=${adminReason}`,
-            );
-          } else {
-            console.log(
-              `[EMAIL][INVOICE_ADMIN][ERROR] bookingId=${safeStr(bookingId)} invoiceNumber=${safeStr(invoiceResult?.invoiceNumber)} reason=admin_copy_not_sent`,
-            );
-          }
-        } else {
-          const invoiceReason = safeStr(invoiceResult?.error || "invoice_generation_failed").slice(0, 160) || "invoice_generation_failed";
-          if (sendCustomerInvoiceEmail) {
-            console.log(
-              `[EMAIL][INVOICE_CUSTOMER][ERROR] bookingId=${safeStr(bookingId)} reason=${invoiceReason}`,
-            );
-          }
-          console.log(
-            `[EMAIL][INVOICE_ADMIN][ERROR] bookingId=${safeStr(bookingId)} reason=${invoiceReason}`,
-          );
-        }
-      }
-    } catch (invoiceErr) {
-      if (shouldLogInvoiceCustomerErrors) {
-        console.log(
-          `[EMAIL][INVOICE_CUSTOMER][ERROR] bookingId=${safeStr(bookingId)} reason=${safeStr(invoiceErr?.message || invoiceErr).slice(0, 160)}`,
-        );
-      }
-      console.log(
-        `[EMAIL][INVOICE_ADMIN][ERROR] bookingId=${safeStr(bookingId)} reason=${safeStr(invoiceErr?.message || invoiceErr).slice(0, 160)}`,
+        `[INVOICE_LIFECYCLE][ERROR] bookingId=${safeStr(bookingId)} source=payment_update reason=${safeStr(invoiceLifecycle?.reason || "unknown", 160) || "unknown"}`,
       );
     }
   }
@@ -37758,12 +38834,26 @@ async function updateBookingPaymentAuthoritative(
     booking_id: bookingId,
     payment_status: rec.payment_status,
     paymentStatus: rec.paymentStatus,
+    payment_mode: rec.payment_mode || rec.paymentMode || null,
+    paymentMode: rec.paymentMode || rec.payment_mode || null,
+    payment_provider: rec.payment_provider || rec.paymentProvider || null,
+    paymentProvider: rec.paymentProvider || rec.payment_provider || null,
     paid_at: rec.paid_at || null,
     paidAt: rec.paidAt || null,
     payment_method: rec.payment_method || null,
     paymentMethod: rec.paymentMethod || null,
     payment_source: rec.payment_source || null,
     paymentSource: rec.paymentSource || null,
+    invoice_requested: rec.invoice_requested === true,
+    invoiceRequested: rec.invoiceRequested === true,
+    invoice_intent: rec.invoice_intent || rec.invoiceIntent || null,
+    invoiceIntent: rec.invoiceIntent || rec.invoice_intent || null,
+    invoice_state: rec.invoice_state || rec.invoiceState || null,
+    invoiceState: rec.invoiceState || rec.invoice_state || null,
+    invoice_sent_at: rec.invoice_sent_at || rec.invoiceSentAt || null,
+    invoiceSentAt: rec.invoiceSentAt || rec.invoice_sent_at || null,
+    invoice_number: rec.invoice_number || rec.invoiceNumber || null,
+    invoiceNumber: rec.invoiceNumber || rec.invoice_number || null,
   };
 }
 
@@ -40808,6 +41898,57 @@ function _payStatusBookingIdCandidates(data, id, includeRawId = false) {
   return out;
 }
 
+function _payStatusLooksCanonicalPublicBookingId(value) {
+  const token = safeStr(value, 160);
+  if (!token) return false;
+  if (/^[0-9]{4}-[0-9]{2}-[0-9]{3,}$/i.test(token)) return true;
+  return false;
+}
+
+function _payStatusResolveCanonicalInvoiceBookingId(data) {
+  const candidates = [];
+  const seen = new Set();
+  const push = (value, source, canonicalOnly = false) => {
+    const token = safeStr(value, 160);
+    if (!token) return;
+    if (canonicalOnly && !_payStatusLooksCanonicalPublicBookingId(token)) return;
+    if (seen.has(token)) return;
+    seen.add(token);
+    candidates.push({ bookingId: token, source: safeStr(source, 80) || "unknown" });
+  };
+
+  push(data?.public_booking_id, "data.public_booking_id");
+  push(data?.publicBookingId, "data.publicBookingId");
+  push(data?.payload?.__booking_id, "data.payload.__booking_id");
+  push(data?.payload?.booking_id, "data.payload.booking_id", true);
+  push(data?.payload?.bookingId, "data.payload.bookingId", true);
+
+  const metadataSources = [
+    { obj: data?.metadata, label: "data.metadata" },
+    { obj: data?.payload?.metadata, label: "data.payload.metadata" },
+    { obj: data?.mollie?.metadata, label: "data.mollie.metadata" },
+    { obj: data?.payload?.mollie?.metadata, label: "data.payload.mollie.metadata" },
+  ];
+  for (const meta of metadataSources) {
+    const entry = meta?.obj && typeof meta.obj === "object" ? meta.obj : null;
+    if (!entry) continue;
+    push(entry?.public_booking_id, `${meta.label}.public_booking_id`);
+    push(entry?.publicBookingId, `${meta.label}.publicBookingId`);
+    push(entry?.__booking_id, `${meta.label}.__booking_id`);
+    push(entry?.public_reference, `${meta.label}.public_reference`);
+    push(entry?.publicReference, `${meta.label}.publicReference`);
+    push(entry?.public_booking_reference, `${meta.label}.public_booking_reference`);
+    push(entry?.publicBookingReference, `${meta.label}.publicBookingReference`);
+    push(entry?.booking_public_id, `${meta.label}.booking_public_id`);
+    push(entry?.bookingPublicId, `${meta.label}.bookingPublicId`);
+    push(entry?.booking_id, `${meta.label}.booking_id`, true);
+    push(entry?.bookingId, `${meta.label}.bookingId`, true);
+  }
+
+  if (candidates.length > 0) return candidates[0];
+  return { bookingId: "", source: "none" };
+}
+
 function _payStatusFirstScope(scopes = []) {
   for (const scope of scopes) {
     if (scope?.hasScope) return scope;
@@ -41054,6 +42195,132 @@ async function payStatus(request, env, requestedScopeOverride = null) {
         finalizeAttempted = true;
         const result = await finalizeBookingFromStored(data, env, request, { bypassLock: true });
         data = result?.updatedStored || data;
+      }
+    }
+
+    const paidConfirmedForInvoice =
+      String(data?.payment_status || data?.paymentStatus || "").toLowerCase() === "paid" &&
+      !!data?.confirmed_at;
+    if (paidConfirmedForInvoice) {
+      const paymentBookingId = safeStr(id, 160) || id;
+      const canonicalResolution = _payStatusResolveCanonicalInvoiceBookingId(data);
+      let invoiceRecordInfo = null;
+      if (canonicalResolution?.bookingId) {
+        try {
+          const loadedCanonical = await loadBookingRecord(env, canonicalResolution.bookingId);
+          if (
+            loadedCanonical?.rec &&
+            bookingMatchesRequestedTenantScope(loadedCanonical.rec, effectiveScope)
+          ) {
+            invoiceRecordInfo = {
+              booking_id: canonicalResolution.bookingId,
+              key: loadedCanonical.key,
+              rec: loadedCanonical.rec,
+            };
+          }
+        } catch (_) {
+          // Fall back to existing linked booking behavior below.
+        }
+      }
+      console.log(
+        `[INVOICE_LIFECYCLE][CANONICAL_RESOLVE] paymentBookingId=${_bookingIntentMask(paymentBookingId)} canonicalBookingId=${_bookingIntentMask(canonicalResolution?.bookingId)} source=${safeStr(canonicalResolution?.source, 80) || "-"} canonicalFound=${invoiceRecordInfo?.rec ? "true" : "false"}`,
+      );
+
+      const invoiceBookingIdFallback =
+        safeStr(
+          linkedBooking?.booking_id ||
+            data?.booking_id ||
+            data?.public_booking_id ||
+            data?.payload?.__booking_id ||
+            data?.payload?.booking_id ||
+            data?.payload?.bookingId ||
+            id,
+          160,
+        ) || id;
+      if (!invoiceRecordInfo?.rec) {
+        console.log(
+          `[INVOICE_LIFECYCLE][CANONICAL_FALLBACK] paymentBookingId=${_bookingIntentMask(paymentBookingId)} canonicalBookingId=${_bookingIntentMask(canonicalResolution?.bookingId)} fallbackBookingId=${_bookingIntentMask(invoiceBookingIdFallback)} source=${safeStr(canonicalResolution?.source, 80) || "-"} reason=canonical_not_found_or_scope_mismatch`,
+        );
+        if (
+          linkedBooking?.rec &&
+          linkedBooking?.booking_id &&
+          bookingMatchesRequestedTenantScope(linkedBooking.rec, effectiveScope)
+        ) {
+          invoiceRecordInfo = {
+            booking_id: linkedBooking.booking_id,
+            key: linkedBooking.key,
+            rec: linkedBooking.rec,
+          };
+        } else {
+          try {
+            const loadedFallback = await loadBookingRecord(env, invoiceBookingIdFallback);
+            if (
+              loadedFallback?.rec &&
+              bookingMatchesRequestedTenantScope(loadedFallback.rec, effectiveScope)
+            ) {
+              invoiceRecordInfo = {
+                booking_id: invoiceBookingIdFallback,
+                key: loadedFallback.key,
+                rec: loadedFallback.rec,
+              };
+            }
+          } catch (_) {
+            // Keep existing behavior: lifecycle remains best-effort in payStatus.
+          }
+        }
+      }
+      try {
+        if (invoiceRecordInfo?.rec) {
+          const invoiceLifecycle = await _maybeGenerateBusinessInvoiceForPaidBooking({
+            env,
+            bookingId: invoiceRecordInfo.booking_id,
+            rec: invoiceRecordInfo.rec,
+            source: "mollie_pay_status",
+          });
+          if (invoiceLifecycle?.mutated) {
+            await env.BOOKING_KV.put(invoiceRecordInfo.key, JSON.stringify(invoiceRecordInfo.rec));
+            await upsertCompanyBookingsListIndexBestEffort(
+              env,
+              invoiceRecordInfo.booking_id,
+              invoiceRecordInfo.rec,
+              normalizeFleetTenantScope(effectiveScope),
+            );
+            await upsertDashboardBookingsKpiProjectionBestEffort(
+              env,
+              invoiceRecordInfo.booking_id,
+              invoiceRecordInfo.rec,
+              normalizeFleetTenantScope(effectiveScope),
+            );
+          }
+          data.invoice_state =
+            invoiceRecordInfo.rec?.invoice_state ??
+            invoiceRecordInfo.rec?.invoiceState ??
+            data.invoice_state;
+          data.invoiceState =
+            invoiceRecordInfo.rec?.invoiceState ??
+            invoiceRecordInfo.rec?.invoice_state ??
+            data.invoiceState;
+          data.invoice_sent_at =
+            invoiceRecordInfo.rec?.invoice_sent_at ??
+            invoiceRecordInfo.rec?.invoiceSentAt ??
+            data.invoice_sent_at;
+          data.invoiceSentAt =
+            invoiceRecordInfo.rec?.invoiceSentAt ??
+            invoiceRecordInfo.rec?.invoice_sent_at ??
+            data.invoiceSentAt;
+          data.invoice_number =
+            invoiceRecordInfo.rec?.invoice_number ??
+            invoiceRecordInfo.rec?.invoiceNumber ??
+            data.invoice_number;
+          data.invoiceNumber =
+            invoiceRecordInfo.rec?.invoiceNumber ??
+            invoiceRecordInfo.rec?.invoice_number ??
+            data.invoiceNumber;
+        }
+      } catch (invoiceLifecycleErr) {
+        console.log(
+          `[INVOICE_LIFECYCLE][ERROR] bookingId=${safeStr(invoiceRecordInfo?.booking_id || invoiceBookingIdFallback)} source=mollie_pay_status reason=${safeStr(invoiceLifecycleErr?.message || invoiceLifecycleErr, 160) || "unknown"}`,
+        );
       }
     }
 
