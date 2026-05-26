@@ -1151,6 +1151,7 @@ const TENANT_BUSINESS_PROFILE_KEY = "tenant:business_profile:v1";
 const TENANT_TAX_PROFILE_KEY = "tenant:tax_profile:v1";
 const TENANT_SUBSCRIPTION_PROFILE_KEY = "tenant:subscription:v1";
 const TENANT_COMMUNICATION_TEMPLATES_KEY = "tenant:communication_templates:v1";
+const TENANT_CANCELLATION_POLICY_PROFILE_KEY = "tenant:cancellation_policy:v1";
 
 const DEFAULT_BUSINESS_PROFILE = {
   version: 1,
@@ -1292,6 +1293,16 @@ const DEFAULT_COMMUNICATION_TEMPLATES = {
       footerDisclaimerText: "{companyName} - gracias por tu confianza.",
     },
   },
+};
+
+const DEFAULT_CANCELLATION_POLICY_PROFILE = {
+  version: 1,
+  allow_customer_online_cancellation: true,
+  taxi_cutoff_minutes: 120,
+  airport_cutoff_minutes: 1440,
+  business_cutoff_minutes: 1440,
+  paid_booking_cancellation_mode: "review_required",
+  updated_at: "",
 };
 
 const TENANT_TEMPLATE_LANGUAGES = ["nl", "en", "fr", "es"];
@@ -1598,6 +1609,183 @@ function normalizeCommunicationTemplates(input = {}) {
   return out;
 }
 
+function _customerCancellationPolicyDefaults() {
+  return {
+    version: 1,
+    allow_customer_online_cancellation:
+      DEFAULT_CANCELLATION_POLICY_PROFILE.allow_customer_online_cancellation === true,
+    taxi_cutoff_minutes: DEFAULT_CANCELLATION_POLICY_PROFILE.taxi_cutoff_minutes,
+    airport_cutoff_minutes: DEFAULT_CANCELLATION_POLICY_PROFILE.airport_cutoff_minutes,
+    business_cutoff_minutes: DEFAULT_CANCELLATION_POLICY_PROFILE.business_cutoff_minutes,
+    paid_booking_cancellation_mode:
+      DEFAULT_CANCELLATION_POLICY_PROFILE.paid_booking_cancellation_mode,
+    updated_at: "",
+  };
+}
+
+function _normalizeCancellationPolicyProfile(raw = {}) {
+  const source = raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
+  const defaults = _customerCancellationPolicyDefaults();
+  const readAny = (keys, fallback) => {
+    for (const key of keys) {
+      if (!Object.prototype.hasOwnProperty.call(source, key)) continue;
+      const value = source[key];
+      if (value == null) continue;
+      if (typeof value === "string" && !value.trim()) continue;
+      return value;
+    }
+    return fallback;
+  };
+  const boolish = (value, fallback) => {
+    if (typeof value === "boolean") return value;
+    if (typeof value === "number") return Number.isFinite(value) ? value !== 0 : fallback;
+    const rawText = sanitizeTenantString(value, 32).toLowerCase();
+    if (["true", "1", "yes", "on"].includes(rawText)) return true;
+    if (["false", "0", "no", "off"].includes(rawText)) return false;
+    return fallback;
+  };
+  const cutoffInt = (value, fallback) => {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return fallback;
+    return Math.max(0, Math.min(10080, Math.trunc(n)));
+  };
+  const paidModeRaw = sanitizeTenantString(
+    readAny(
+      [
+        "paid_booking_cancellation_mode",
+        "paidBookingCancellationMode",
+        "paid_cancel_mode",
+        "paidCancelMode",
+      ],
+      defaults.paid_booking_cancellation_mode,
+    ),
+    64,
+  ).toLowerCase();
+  const allowedPaidModes = new Set(["review_required", "disabled", "refund_required"]);
+  const paidMode = allowedPaidModes.has(paidModeRaw)
+    ? paidModeRaw
+    : defaults.paid_booking_cancellation_mode;
+  const updatedAt = sanitizeTenantString(
+    readAny(["updated_at", "updatedAt"], defaults.updated_at),
+    80,
+  );
+  return {
+    version: 1,
+    allow_customer_online_cancellation: boolish(
+      readAny(
+        [
+          "allow_customer_online_cancellation",
+          "allowCustomerOnlineCancellation",
+        ],
+        defaults.allow_customer_online_cancellation,
+      ),
+      defaults.allow_customer_online_cancellation,
+    ),
+    taxi_cutoff_minutes: cutoffInt(
+      readAny(
+        [
+          "taxi_cutoff_minutes",
+          "taxiCutoffMinutes",
+          "private_cancel_cutoff_minutes",
+          "privateCancelCutoffMinutes",
+        ],
+        defaults.taxi_cutoff_minutes,
+      ),
+      defaults.taxi_cutoff_minutes,
+    ),
+    airport_cutoff_minutes: cutoffInt(
+      readAny(
+        [
+          "airport_cutoff_minutes",
+          "airportCutoffMinutes",
+          "airport_cancel_cutoff_minutes",
+          "airportCancelCutoffMinutes",
+        ],
+        defaults.airport_cutoff_minutes,
+      ),
+      defaults.airport_cutoff_minutes,
+    ),
+    business_cutoff_minutes: cutoffInt(
+      readAny(
+        [
+          "business_cutoff_minutes",
+          "businessCutoffMinutes",
+          "business_cancel_cutoff_minutes",
+          "businessCancelCutoffMinutes",
+        ],
+        defaults.business_cutoff_minutes,
+      ),
+      defaults.business_cutoff_minutes,
+    ),
+    paid_booking_cancellation_mode: paidMode,
+    updated_at: updatedAt,
+  };
+}
+
+function _validateCancellationPolicyProfile(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return {
+      ok: false,
+      details: [{ field: "cancellation_policy_profile", error: "must be an object" }],
+    };
+  }
+  const details = [];
+  const pushErr = (field, error) => details.push({ field, error });
+  const readAny = (keys) => {
+    for (const key of keys) {
+      if (!Object.prototype.hasOwnProperty.call(raw, key)) continue;
+      return raw[key];
+    }
+    return undefined;
+  };
+  const validateCutoff = (field, keys) => {
+    const value = readAny(keys);
+    if (value == null || (typeof value === "string" && !value.trim())) return;
+    const n = Number(value);
+    if (!Number.isFinite(n) || !Number.isInteger(n)) {
+      pushErr(field, "must be an integer");
+      return;
+    }
+    if (n < 0 || n > 10080) {
+      pushErr(field, "must be between 0 and 10080");
+    }
+  };
+  validateCutoff("taxi_cutoff_minutes", [
+    "taxi_cutoff_minutes",
+    "taxiCutoffMinutes",
+    "private_cancel_cutoff_minutes",
+    "privateCancelCutoffMinutes",
+  ]);
+  validateCutoff("airport_cutoff_minutes", [
+    "airport_cutoff_minutes",
+    "airportCutoffMinutes",
+    "airport_cancel_cutoff_minutes",
+    "airportCancelCutoffMinutes",
+  ]);
+  validateCutoff("business_cutoff_minutes", [
+    "business_cutoff_minutes",
+    "businessCutoffMinutes",
+    "business_cancel_cutoff_minutes",
+    "businessCancelCutoffMinutes",
+  ]);
+  const paidModeValue = readAny([
+    "paid_booking_cancellation_mode",
+    "paidBookingCancellationMode",
+    "paid_cancel_mode",
+    "paidCancelMode",
+  ]);
+  if (paidModeValue != null && String(paidModeValue).trim()) {
+    const normalized = sanitizeTenantString(paidModeValue, 64).toLowerCase();
+    if (!["review_required", "disabled", "refund_required"].includes(normalized)) {
+      pushErr(
+        "paid_booking_cancellation_mode",
+        "must be review_required, disabled or refund_required",
+      );
+    }
+  }
+  return details.length ? { ok: false, details } : { ok: true, details: [] };
+}
+
 function resolveAdminSettingsScope({ request, url, body = null } = {}) {
   const tenantFromQuery = sanitizeTenantString(
     url?.searchParams?.get("tenant_id") ?? url?.searchParams?.get("tenantId"),
@@ -1646,6 +1834,7 @@ function buildScopedSettingsKeys(scope) {
     taxProfileKey: `tenant:${tenantId}:company:${companyId}:tax_profile:v1`,
     pricingProfileKey: `tenant:${tenantId}:company:${companyId}:pricing:v1`,
     subscriptionProfileKey: `tenant:${tenantId}:company:${companyId}:subscription:v1`,
+    cancellationPolicyKey: `tenant:${tenantId}:company:${companyId}:cancellation_policy:v1`,
   };
 }
 
@@ -1929,6 +2118,60 @@ async function saveSubscriptionProfile(
     created_at: normalized.created_at || nowIso,
     updated_at: nowIso,
   };
+}
+
+async function loadCancellationPolicyProfile(
+  env,
+  scope = null,
+  { allowTenantLegacyFallback = false } = {},
+) {
+  if (!env?.BOOKING_KV) return _customerCancellationPolicyDefaults();
+  const scopedKeys = buildScopedSettingsKeys(scope);
+  let raw = null;
+  if (scopedKeys?.cancellationPolicyKey) {
+    raw = await env.BOOKING_KV.get(scopedKeys.cancellationPolicyKey, { type: "json" });
+  }
+  if (!raw && allowTenantLegacyFallback) {
+    raw = await env.BOOKING_KV.get(TENANT_CANCELLATION_POLICY_PROFILE_KEY, { type: "json" });
+  }
+  const source = raw && typeof raw === "object"
+    ? (raw.cancellation_policy_profile && typeof raw.cancellation_policy_profile === "object"
+      ? raw.cancellation_policy_profile
+      : raw)
+    : null;
+  return _normalizeCancellationPolicyProfile(source ?? _customerCancellationPolicyDefaults());
+}
+
+async function saveCancellationPolicyProfile(
+  env,
+  scope = null,
+  raw = {},
+  { allowTenantLegacyWrite = false } = {},
+) {
+  if (!env?.BOOKING_KV) throw new Error("BOOKING_KV binding is missing");
+  const scopedKeys = buildScopedSettingsKeys(scope);
+  const targetKey = scopedKeys?.cancellationPolicyKey ||
+    (allowTenantLegacyWrite ? TENANT_CANCELLATION_POLICY_PROFILE_KEY : "");
+  if (!targetKey) throw new Error("missing_tenant_scope");
+  const nowIso = new Date().toISOString();
+  const normalized = _normalizeCancellationPolicyProfile({
+    ...(raw && typeof raw === "object" ? raw : {}),
+    updated_at: nowIso,
+  });
+  const persisted = {
+    ...normalized,
+    version: 1,
+    updated_at: nowIso,
+  };
+  await env.BOOKING_KV.put(
+    targetKey,
+    JSON.stringify({
+      version: 1,
+      updated_at: nowIso,
+      cancellation_policy_profile: persisted,
+    }),
+  );
+  return persisted;
 }
 
 async function loadCommunicationTemplates(
@@ -18417,6 +18660,88 @@ GET /oauth/callback
         }, 200);
       }
 
+      if (url.pathname === "/admin/cancellation-policy/profile" && request.method === "GET") {
+        _requireAdmin(request, url, env);
+        const explicitScope = resolveAdminExplicitTenantCompanyScope({ request, url });
+        if (!explicitScope?.hasScope) {
+          return json(missingTenantScopeError(), 400);
+        }
+        const scopedKeys = buildScopedSettingsKeys(explicitScope);
+        const profile = await loadCancellationPolicyProfile(env, explicitScope, {
+          allowTenantLegacyFallback: false,
+        });
+        return json({
+          ok: true,
+          key: scopedKeys?.cancellationPolicyKey || TENANT_CANCELLATION_POLICY_PROFILE_KEY,
+          cancellation_policy_profile: profile,
+        }, 200);
+      }
+
+      if (url.pathname === "/admin/cancellation-policy/profile" && request.method === "POST") {
+        _requireAdmin(request, url, env);
+        if (!env.BOOKING_KV) return json({ ok: false, error: "BOOKING_KV binding is missing" }, 500);
+        const body = await safeJson(request);
+        const explicitScope = resolveAdminExplicitTenantCompanyScope({ request, url, body });
+        if (!explicitScope?.hasScope) {
+          return json(missingTenantScopeError(), 400);
+        }
+        const incoming =
+          body?.cancellation_policy_profile && typeof body.cancellation_policy_profile === "object"
+            ? body.cancellation_policy_profile
+            : body;
+        const bodyScopeCheck = _validateSettingsPayloadScope(body, explicitScope);
+        if (!bodyScopeCheck.ok) return json(bodyScopeCheck, 400);
+        const incomingScopeCheck = _validateSettingsPayloadScope(incoming, explicitScope);
+        if (!incomingScopeCheck.ok) return json(incomingScopeCheck, 400);
+        const validated = _validateCancellationPolicyProfile(incoming);
+        if (!validated.ok) {
+          return json(
+            {
+              ok: false,
+              error: "invalid_cancellation_policy_profile",
+              details: validated.details,
+            },
+            400,
+          );
+        }
+        const scopedKeys = buildScopedSettingsKeys(explicitScope);
+        const normalizedIncoming = _normalizeCancellationPolicyProfile(incoming);
+        const existingNormalized = await loadCancellationPolicyProfile(env, explicitScope, {
+          allowTenantLegacyFallback: false,
+        });
+        const scopeMasked =
+          `${_maskPublicDriverLoginValue(explicitScope.tenant_id)}:${_maskPublicDriverLoginValue(explicitScope.company_id)}`;
+        if (kvComparableEqual(existingNormalized, normalizedIncoming)) {
+          console.log(
+            `[KV_WRITE][SKIP_UNCHANGED] route=/admin/cancellation-policy/profile scope=${scopeMasked}`,
+          );
+          return json(
+            {
+              ok: true,
+              changed: false,
+              key: scopedKeys?.cancellationPolicyKey || TENANT_CANCELLATION_POLICY_PROFILE_KEY,
+              cancellation_policy_profile: existingNormalized,
+            },
+            200,
+          );
+        }
+        const saved = await saveCancellationPolicyProfile(env, explicitScope, incoming, {
+          allowTenantLegacyWrite: false,
+        });
+        console.log(
+          `[KV_WRITE][PUT] route=/admin/cancellation-policy/profile changed=true scope=${scopeMasked}`,
+        );
+        return json(
+          {
+            ok: true,
+            changed: true,
+            key: scopedKeys?.cancellationPolicyKey || TENANT_CANCELLATION_POLICY_PROFILE_KEY,
+            cancellation_policy_profile: saved,
+          },
+          200,
+        );
+      }
+
       if (url.pathname === "/admin/pricing/airport-fixed-fares" && request.method === "GET") {
         _requireAdmin(request, url, env);
         if (!env.BOOKING_KV) return json({ ok: false, error: "BOOKING_KV binding is missing" }, 500);
@@ -19246,7 +19571,14 @@ GET /oauth/callback
           return json({ ok: false, error: "forbidden" }, 403);
         }
         const now = new Date();
-        const evaluated = _evaluateCustomerCancellationPolicy(rec, now);
+        const cancellationPolicyProfile = await loadCancellationPolicyProfile(env, tenantScope, {
+          allowTenantLegacyFallback: false,
+        });
+        const evaluated = _evaluateCustomerCancellationPolicy(
+          rec,
+          now,
+          cancellationPolicyProfile,
+        );
         const publicBookingReference = safeStr(
           rec?.public_booking_reference ??
             rec?.publicBookingReference ??
@@ -19379,7 +19711,14 @@ GET /oauth/callback
                 `[BOOKING_STATUS][CUSTOMER_CANCEL_POLICY_SKIP] booking=${_bookingIntentMask(bookingId)} actor_role=customer raw_status=${safeStr(rawRequestedStatus, 40) || "-"} normalized_status=${safeStr(normalizedRequestedStatus, 40) || "-"} reason=status_not_cancellation_like route=bookings_status`,
               );
             } else {
-              const policyDecision = _evaluateCustomerCancellationPolicy(rec, new Date());
+              const cancellationPolicyProfile = await loadCancellationPolicyProfile(env, tenantScope, {
+                allowTenantLegacyFallback: false,
+              });
+              const policyDecision = _evaluateCustomerCancellationPolicy(
+                rec,
+                new Date(),
+                cancellationPolicyProfile,
+              );
               const decisionReason = safeStr(
                 policyDecision.reason,
                 80,
@@ -19867,7 +20206,14 @@ GET /oauth/callback
                 `[BOOKING_STATUS][CUSTOMER_CANCEL_POLICY_SKIP] booking=${_bookingIntentMask(bookingId)} actor_role=customer raw_status=${safeStr(rawRequestedStatus, 40) || "-"} normalized_status=${safeStr(normalizedRequestedStatus, 40) || "-"} reason=status_not_cancellation_like route=track_booking_status`,
               );
             } else {
-              const policyDecision = _evaluateCustomerCancellationPolicy(rec, new Date());
+              const cancellationPolicyProfile = await loadCancellationPolicyProfile(env, tenantScope, {
+                allowTenantLegacyFallback: false,
+              });
+              const policyDecision = _evaluateCustomerCancellationPolicy(
+                rec,
+                new Date(),
+                cancellationPolicyProfile,
+              );
               console.log(
                 `[BOOKING_STATUS][CUSTOMER_CANCEL_POLICY] booking=${_bookingIntentMask(bookingId)} route=track_booking_status bucket=${policyDecision.bucket || "-"} payment_class=${policyDecision.payment_class || "-"} pickup_iso=${safeStr(policyDecision.pickup_iso, 40) || "-"} minutes_until_pickup=${Number.isFinite(Number(policyDecision.minutes_until_pickup)) ? Math.round(Number(policyDecision.minutes_until_pickup)) : -1} cutoff_minutes=${Number.isFinite(Number(policyDecision.cutoff_minutes)) ? Math.max(0, Math.round(Number(policyDecision.cutoff_minutes))) : 0} decision=${policyDecision.allowed ? "allow" : "deny"} reason=${policyDecision.reason || "-"}`,
               );
@@ -21533,11 +21879,13 @@ function customerProofMatchesBooking(rec, proof) {
 }
 
 function _normalizeCustomerCancellationPolicyDefaults() {
+  const profile = _customerCancellationPolicyDefaults();
   return {
-    private_cancel_cutoff_minutes: 120,
-    business_cancel_cutoff_minutes: 1440,
-    airport_cancel_cutoff_minutes: 1440,
-    paid_cancel_mode: "review_required",
+    private_cancel_cutoff_minutes: profile.taxi_cutoff_minutes,
+    business_cancel_cutoff_minutes: profile.business_cutoff_minutes,
+    airport_cancel_cutoff_minutes: profile.airport_cutoff_minutes,
+    paid_cancel_mode: profile.paid_booking_cancellation_mode,
+    allow_customer_online_cancellation: profile.allow_customer_online_cancellation,
   };
 }
 
@@ -21551,6 +21899,9 @@ function _customerCancellationPolicyMessage(reason) {
   }
   if (token === "cancellation_requires_review") {
     return "Deze boeking kan niet direct online geannuleerd worden. Neem contact op met support.";
+  }
+  if (token === "customer_cancellation_disabled") {
+    return "Deze boeking kan momenteel niet online geannuleerd worden. Neem contact op met support.";
   }
   return "Deze boeking kan momenteel niet online geannuleerd worden.";
 }
@@ -21798,21 +22149,43 @@ function _parseCustomerCancellationPickupMs(pickupIso) {
   return Number.isFinite(parsed) ? parsed : Number.NaN;
 }
 
-function _evaluateCustomerCancellationPolicy(rec, now = new Date()) {
-  const defaults = _normalizeCustomerCancellationPolicyDefaults();
+function _evaluateCustomerCancellationPolicy(rec, now = new Date(), policyProfile = null) {
+  const normalizedPolicy = _normalizeCancellationPolicyProfile(
+    policyProfile && typeof policyProfile === "object"
+      ? policyProfile
+      : _customerCancellationPolicyDefaults(),
+  );
   const classification = _classifyCustomerCancellationBucket(rec);
   const pickupDetails = _resolveCustomerCancellationPickupDetails(rec);
   const pickupIso = pickupDetails.pickup_iso;
   const bucket = classification.bucket;
   const paymentClass = classification.paymentClass;
+  if (normalizedPolicy.allow_customer_online_cancellation !== true) {
+    return {
+      allowed: false,
+      reason: "customer_cancellation_disabled",
+      bucket,
+      payment_class: paymentClass,
+      cutoff_minutes: null,
+      pickup_iso: pickupIso,
+      minutes_until_pickup: null,
+      pickup_source: pickupDetails.pickup_source || "none",
+      pickup_candidates_present: pickupDetails.pickup_candidates_present || [],
+      parsed_pickup_ms: null,
+      now_ms: now instanceof Date ? now.getTime() : null,
+    };
+  }
   const cutoffMinutes = bucket === "airport"
-    ? defaults.airport_cancel_cutoff_minutes
+    ? normalizedPolicy.airport_cutoff_minutes
     : (bucket === "business"
-      ? defaults.business_cancel_cutoff_minutes
-      : defaults.private_cancel_cutoff_minutes);
-  const paidCancelReason = defaults.paid_cancel_mode === "review_required"
-    ? "cancellation_requires_review"
-    : "cancellation_refund_required";
+      ? normalizedPolicy.business_cutoff_minutes
+      : normalizedPolicy.taxi_cutoff_minutes);
+  const paidCancelReason =
+    normalizedPolicy.paid_booking_cancellation_mode === "refund_required"
+      ? "cancellation_refund_required"
+      : (normalizedPolicy.paid_booking_cancellation_mode === "disabled"
+        ? "customer_cancellation_disabled"
+        : "cancellation_requires_review");
 
   if (new Set(["paid", "prepaid", "mollie"]).has(paymentClass)) {
     return {
