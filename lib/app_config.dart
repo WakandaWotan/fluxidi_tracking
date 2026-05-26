@@ -624,6 +624,11 @@ class BackendCancellationPolicyProfile {
   final int airportCutoffMinutes;
   final int businessCutoffMinutes;
   final String paidBookingCancellationMode;
+  final bool blockWhenDriverEnRoute;
+  final int driverEnRouteEtaCutoffMinutes;
+  final double driverEnRouteDistanceCutoffKm;
+  final int driverLocationFreshnessSeconds;
+  final int driverHandoffBufferMinutes;
   final String updatedAt;
 
   const BackendCancellationPolicyProfile({
@@ -633,6 +638,11 @@ class BackendCancellationPolicyProfile {
     required this.airportCutoffMinutes,
     required this.businessCutoffMinutes,
     required this.paidBookingCancellationMode,
+    required this.blockWhenDriverEnRoute,
+    required this.driverEnRouteEtaCutoffMinutes,
+    required this.driverEnRouteDistanceCutoffKm,
+    required this.driverLocationFreshnessSeconds,
+    required this.driverHandoffBufferMinutes,
     required this.updatedAt,
   });
 
@@ -644,6 +654,11 @@ class BackendCancellationPolicyProfile {
         airportCutoffMinutes: 1440,
         businessCutoffMinutes: 1440,
         paidBookingCancellationMode: 'review_required',
+        blockWhenDriverEnRoute: false,
+        driverEnRouteEtaCutoffMinutes: 15,
+        driverEnRouteDistanceCutoffKm: 10,
+        driverLocationFreshnessSeconds: 300,
+        driverHandoffBufferMinutes: 15,
         updatedAt: '',
       );
 
@@ -655,6 +670,18 @@ class BackendCancellationPolicyProfile {
       final n = raw is num ? raw.toInt() : int.tryParse(raw?.toString() ?? '');
       if (n == null || n < 0) return fallbackValue;
       return n;
+    }
+
+    int boundedIntValue(
+      String snake,
+      String camel,
+      int fallbackValue, {
+      required int min,
+      required int max,
+    }) {
+      final value = intValue(snake, camel, fallbackValue);
+      if (value < min || value > max) return fallbackValue;
+      return value;
     }
 
     bool boolValue(String snake, String camel, bool fallbackValue) {
@@ -671,6 +698,22 @@ class BackendCancellationPolicyProfile {
           .toString()
           .trim();
       return text.isEmpty ? fallbackValue : text;
+    }
+
+    double boundedDoubleValue(
+      String snake,
+      String camel,
+      double fallbackValue, {
+      required double min,
+      required double max,
+    }) {
+      final raw = json[snake] ?? json[camel];
+      final parsed = raw is num
+          ? raw.toDouble()
+          : double.tryParse((raw ?? '').toString().replaceAll(',', '.'));
+      if (parsed == null || !parsed.isFinite) return fallbackValue;
+      if (parsed < min || parsed > max) return fallbackValue;
+      return parsed;
     }
 
     final mode = textValue(
@@ -704,6 +747,39 @@ class BackendCancellationPolicyProfile {
       paidBookingCancellationMode: mode.isEmpty
           ? fallback.paidBookingCancellationMode
           : mode,
+      blockWhenDriverEnRoute: boolValue(
+        'block_when_driver_en_route',
+        'blockWhenDriverEnRoute',
+        fallback.blockWhenDriverEnRoute,
+      ),
+      driverEnRouteEtaCutoffMinutes: boundedIntValue(
+        'driver_en_route_eta_cutoff_minutes',
+        'driverEnRouteEtaCutoffMinutes',
+        fallback.driverEnRouteEtaCutoffMinutes,
+        min: 0,
+        max: 240,
+      ),
+      driverEnRouteDistanceCutoffKm: boundedDoubleValue(
+        'driver_en_route_distance_cutoff_km',
+        'driverEnRouteDistanceCutoffKm',
+        fallback.driverEnRouteDistanceCutoffKm,
+        min: 0,
+        max: 100,
+      ),
+      driverLocationFreshnessSeconds: boundedIntValue(
+        'driver_location_freshness_seconds',
+        'driverLocationFreshnessSeconds',
+        fallback.driverLocationFreshnessSeconds,
+        min: 30,
+        max: 3600,
+      ),
+      driverHandoffBufferMinutes: boundedIntValue(
+        'driver_handoff_buffer_minutes',
+        'driverHandoffBufferMinutes',
+        fallback.driverHandoffBufferMinutes,
+        min: 0,
+        max: 120,
+      ),
       updatedAt: textValue('updated_at', 'updatedAt', fallback.updatedAt),
     );
   }
@@ -720,6 +796,16 @@ class BackendCancellationPolicyProfile {
     'businessCutoffMinutes': businessCutoffMinutes,
     'paid_booking_cancellation_mode': paidBookingCancellationMode,
     'paidBookingCancellationMode': paidBookingCancellationMode,
+    'block_when_driver_en_route': blockWhenDriverEnRoute,
+    'blockWhenDriverEnRoute': blockWhenDriverEnRoute,
+    'driver_en_route_eta_cutoff_minutes': driverEnRouteEtaCutoffMinutes,
+    'driverEnRouteEtaCutoffMinutes': driverEnRouteEtaCutoffMinutes,
+    'driver_en_route_distance_cutoff_km': driverEnRouteDistanceCutoffKm,
+    'driverEnRouteDistanceCutoffKm': driverEnRouteDistanceCutoffKm,
+    'driver_location_freshness_seconds': driverLocationFreshnessSeconds,
+    'driverLocationFreshnessSeconds': driverLocationFreshnessSeconds,
+    'driver_handoff_buffer_minutes': driverHandoffBufferMinutes,
+    'driverHandoffBufferMinutes': driverHandoffBufferMinutes,
     'updated_at': updatedAt,
     'updatedAt': updatedAt,
   };
@@ -730,6 +816,11 @@ class BackendCancellationPolicyProfile {
     'airport_cutoff_minutes': airportCutoffMinutes,
     'business_cutoff_minutes': businessCutoffMinutes,
     'paid_booking_cancellation_mode': paidBookingCancellationMode,
+    'block_when_driver_en_route': blockWhenDriverEnRoute,
+    'driver_en_route_eta_cutoff_minutes': driverEnRouteEtaCutoffMinutes,
+    'driver_en_route_distance_cutoff_km': driverEnRouteDistanceCutoffKm,
+    'driver_location_freshness_seconds': driverLocationFreshnessSeconds,
+    'driver_handoff_buffer_minutes': driverHandoffBufferMinutes,
   };
 }
 

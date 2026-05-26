@@ -121,6 +121,10 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
   final _cancellationTaxiCutoffCtrl = TextEditingController();
   final _cancellationAirportCutoffCtrl = TextEditingController();
   final _cancellationBusinessCutoffCtrl = TextEditingController();
+  final _driverEnRouteEtaCutoffCtrl = TextEditingController();
+  final _driverEnRouteDistanceCutoffCtrl = TextEditingController();
+  final _driverLocationFreshnessCtrl = TextEditingController();
+  final _driverHandoffBufferCtrl = TextEditingController();
 
   late AppLanguage _defaultLanguage;
   late String _defaultCurrency;
@@ -152,6 +156,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
   String _publicPartnerProfilePublishStatus = '';
   bool _allowCustomerOnlineCancellation = true;
   String _paidBookingCancellationMode = 'review_required';
+  bool _blockWhenDriverEnRoute = false;
   String? _googleCalendarStatusError;
   Map<String, dynamic>? _googleCalendarStatus;
   bool _showAdvancedLogoPath = false;
@@ -260,7 +265,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     companyProfileNotifier.addListener(_onLogoSanitizationListeners);
     businessSettingsNotifier.addListener(_onLogoSanitizationListeners);
     _hydrateFromSettings(businessSettingsNotifier.value);
-    // Prefer locally cached "OfficiÃ«le bedrijfsgegevens" so user-entered values
+    // Prefer locally cached "Officiële bedrijfsgegevens" so user-entered values
     // survive app restarts even when the backend is offline. Falls back to the
     // existing defaults+local-CompanyProfile preview when no cache exists yet.
     final cachedBackendProfile = localBackendBusinessProfileNotifier.value;
@@ -351,6 +356,10 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     _cancellationTaxiCutoffCtrl.dispose();
     _cancellationAirportCutoffCtrl.dispose();
     _cancellationBusinessCutoffCtrl.dispose();
+    _driverEnRouteEtaCutoffCtrl.dispose();
+    _driverEnRouteDistanceCutoffCtrl.dispose();
+    _driverLocationFreshnessCtrl.dispose();
+    _driverHandoffBufferCtrl.dispose();
     super.dispose();
   }
 
@@ -459,34 +468,98 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     final safeTaxi = p.taxiCutoffMinutes.clamp(0, 10080).toInt();
     final safeAirport = p.airportCutoffMinutes.clamp(0, 10080).toInt();
     final safeBusiness = p.businessCutoffMinutes.clamp(0, 10080).toInt();
+    final safeEta = p.driverEnRouteEtaCutoffMinutes.clamp(0, 240).toInt();
+    final safeDistance = p.driverEnRouteDistanceCutoffKm.clamp(0, 100);
+    final safeFreshness = p.driverLocationFreshnessSeconds
+        .clamp(30, 3600)
+        .toInt();
+    final safeHandoff = p.driverHandoffBufferMinutes.clamp(0, 120).toInt();
     _allowCustomerOnlineCancellation = p.allowCustomerOnlineCancellation;
     _cancellationTaxiCutoffCtrl.text = safeTaxi.toString();
     _cancellationAirportCutoffCtrl.text = safeAirport.toString();
     _cancellationBusinessCutoffCtrl.text = safeBusiness.toString();
+    _blockWhenDriverEnRoute = p.blockWhenDriverEnRoute;
+    _driverEnRouteEtaCutoffCtrl.text = safeEta.toString();
+    _driverEnRouteDistanceCutoffCtrl.text = safeDistance % 1 == 0
+        ? safeDistance.toStringAsFixed(0)
+        : safeDistance.toStringAsFixed(2);
+    _driverLocationFreshnessCtrl.text = safeFreshness.toString();
+    _driverHandoffBufferCtrl.text = safeHandoff.toString();
     _paidBookingCancellationMode = 'review_required';
   }
 
-  int? _parseCancellationCutoffOrNull(String raw) {
+  int? _parseCancellationIntOrNull(
+    String raw, {
+    required int min,
+    required int max,
+  }) {
     final text = raw.trim();
     if (text.isEmpty) return null;
     final parsed = int.tryParse(text);
     if (parsed == null) return null;
-    if (parsed < 0 || parsed > 10080) return null;
+    if (parsed < min || parsed > max) return null;
+    return parsed;
+  }
+
+  double? _parseCancellationDoubleOrNull(
+    String raw, {
+    required double min,
+    required double max,
+  }) {
+    final text = raw.trim();
+    if (text.isEmpty) return null;
+    final parsed = double.tryParse(text.replaceAll(',', '.'));
+    if (parsed == null || !parsed.isFinite) return null;
+    if (parsed < min || parsed > max) return null;
     return parsed;
   }
 
   BackendCancellationPolicyProfile? _cancellationPolicyProfileFromFormOrNull() {
     final defaults = BackendCancellationPolicyProfile.defaults();
-    final taxi = _parseCancellationCutoffOrNull(
+    final taxi = _parseCancellationIntOrNull(
       _cancellationTaxiCutoffCtrl.text,
+      min: 0,
+      max: 10080,
     );
-    final airport = _parseCancellationCutoffOrNull(
+    final airport = _parseCancellationIntOrNull(
       _cancellationAirportCutoffCtrl.text,
+      min: 0,
+      max: 10080,
     );
-    final business = _parseCancellationCutoffOrNull(
+    final business = _parseCancellationIntOrNull(
       _cancellationBusinessCutoffCtrl.text,
+      min: 0,
+      max: 10080,
     );
-    if (taxi == null || airport == null || business == null) return null;
+    final etaCutoff = _parseCancellationIntOrNull(
+      _driverEnRouteEtaCutoffCtrl.text,
+      min: 0,
+      max: 240,
+    );
+    final distanceCutoff = _parseCancellationDoubleOrNull(
+      _driverEnRouteDistanceCutoffCtrl.text,
+      min: 0,
+      max: 100,
+    );
+    final freshnessSeconds = _parseCancellationIntOrNull(
+      _driverLocationFreshnessCtrl.text,
+      min: 30,
+      max: 3600,
+    );
+    final handoffMinutes = _parseCancellationIntOrNull(
+      _driverHandoffBufferCtrl.text,
+      min: 0,
+      max: 120,
+    );
+    if (taxi == null ||
+        airport == null ||
+        business == null ||
+        etaCutoff == null ||
+        distanceCutoff == null ||
+        freshnessSeconds == null ||
+        handoffMinutes == null) {
+      return null;
+    }
     return BackendCancellationPolicyProfile(
       version: defaults.version,
       allowCustomerOnlineCancellation: _allowCustomerOnlineCancellation,
@@ -494,6 +567,11 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
       airportCutoffMinutes: airport,
       businessCutoffMinutes: business,
       paidBookingCancellationMode: 'review_required',
+      blockWhenDriverEnRoute: _blockWhenDriverEnRoute,
+      driverEnRouteEtaCutoffMinutes: etaCutoff,
+      driverEnRouteDistanceCutoffKm: distanceCutoff,
+      driverLocationFreshnessSeconds: freshnessSeconds,
+      driverHandoffBufferMinutes: handoffMinutes,
       updatedAt: '',
     );
   }
@@ -504,10 +582,10 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     final profile = _cancellationPolicyProfileFromFormOrNull();
     if (profile == null) {
       final msg = _t(
-        nl: 'Ongeldige waarde. Gebruik minuten van 0 tot en met 10080.',
-        en: 'Invalid value. Use minutes between 0 and 10080.',
-        fr: 'Valeur invalide. Utilisez des minutes entre 0 et 10080.',
-        es: 'Valor invalido. Usa minutos entre 0 y 10080.',
+        nl: 'Ongeldige waarde. Controleer de ingestelde limieten.',
+        en: 'Invalid value. Please check the configured limits.',
+        fr: 'Valeur invalide. Verifiez les limites configurees.',
+        es: 'Valor invalido. Revisa los limites configurados.',
       );
       setState(() {
         _cancellationPolicyError = msg;
@@ -920,7 +998,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         return _t(
           nl: 'Verbonden',
           en: 'Connected',
-          fr: 'ConnectÃ©',
+          fr: 'Connecté',
           es: 'Conectado',
         );
       case 'auth_required':
@@ -929,27 +1007,27 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
           nl: 'Opnieuw koppelen vereist',
           en: 'Reconnect required',
           fr: 'Reconnexion requise',
-          es: 'Requiere reconexiÃ³n',
+          es: 'Requiere reconexión',
         );
       case 'legacy_global':
         return _t(
           nl: 'Legacy-koppeling actief',
           en: 'Legacy connection active',
-          fr: 'Connexion hÃ©ritÃ©e active',
-          es: 'ConexiÃ³n heredada activa',
+          fr: 'Connexion héritée active',
+          es: 'Conexión heredada activa',
         );
       case 'disconnected':
         return _t(
           nl: 'Losgekoppeld',
           en: 'Disconnected',
-          fr: 'DÃ©connectÃ©',
+          fr: 'Déconnecté',
           es: 'Desconectado',
         );
       case 'not_configured':
         return _t(
           nl: 'Niet geconfigureerd',
           en: 'Not configured',
-          fr: 'Non configurÃ©',
+          fr: 'Non configuré',
           es: 'No configurado',
         );
       case 'check_failed':
@@ -957,8 +1035,8 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         return _t(
           nl: 'Controle mislukt',
           en: 'Check failed',
-          fr: 'Ã‰chec du contrÃ´le',
-          es: 'Error de comprobaciÃ³n',
+          fr: 'Échec du contrôle',
+          es: 'Error de comprobación',
         );
     }
   }
@@ -969,22 +1047,22 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         return _t(
           nl: 'Google Calendar is gekoppeld voor dit bedrijf.',
           en: 'Google Calendar is connected for this company.',
-          fr: 'Google Agenda est connectÃ© pour cette entreprise.',
-          es: 'Google Calendar estÃ¡ conectado para esta empresa.',
+          fr: 'Google Agenda est connecté pour cette entreprise.',
+          es: 'Google Calendar está conectado para esta empresa.',
         );
       case 'legacy_global':
         return _t(
           nl: 'Deze koppeling gebruikt nog de legacy globale configuratie. Koppel Google Calendar opnieuw voor dit bedrijf.',
           en: 'This connection still uses the legacy global configuration. Reconnect Google Calendar for this company.',
-          fr: 'Cette connexion utilise encore la configuration globale hÃ©ritÃ©e. Reconnectez Google Agenda pour cette entreprise.',
-          es: 'Esta conexiÃ³n aÃºn usa la configuraciÃ³n global heredada. Vuelve a conectar Google Calendar para esta empresa.',
+          fr: 'Cette connexion utilise encore la configuration globale héritée. Reconnectez Google Agenda pour cette entreprise.',
+          es: 'Esta conexión aún usa la configuración global heredada. Vuelve a conectar Google Calendar para esta empresa.',
         );
       case 'disconnected':
         return _t(
           nl: 'Google Calendar is losgekoppeld voor dit bedrijf. Nieuwe boekingen worden niet meer automatisch in de agenda geplaatst.',
           en: 'Google Calendar is disconnected for this company. New bookings will no longer be added automatically to the calendar.',
-          fr: 'Google Agenda est dÃ©connectÃ© pour cette entreprise. Les nouvelles rÃ©servations ne seront plus ajoutÃ©es automatiquement au calendrier.',
-          es: 'Google Calendar estÃ¡ desconectado para esta empresa. Las nuevas reservas ya no se aÃ±adirÃ¡n automÃ¡ticamente al calendario.',
+          fr: 'Google Agenda est déconnecté pour cette entreprise. Les nouvelles réservations ne seront plus ajoutées automatiquement au calendrier.',
+          es: 'Google Calendar está desconectado para esta empresa. Las nuevas reservas ya no se añadirán automáticamente al calendario.',
         );
       case 'auth_required':
       case 'failed':
@@ -1051,7 +1129,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
               _t(
                 nl: 'Google Calendar status kon niet geladen worden.',
                 en: 'Google Calendar status could not be loaded.',
-                fr: 'Le statut Google Agenda nâ€™a pas pu Ãªtre chargÃ©.',
+                fr: 'Le statut Google Agenda n’a pas pu être chargé.',
                 es: 'No se pudo cargar el estado de Google Calendar.',
               ),
             ),
@@ -1090,7 +1168,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
               nl: 'Google OAuth geopend. Rond de koppeling af in je browser.',
               en: 'Google OAuth opened. Finish the connection in your browser.',
               fr: 'OAuth Google ouvert. Terminez la connexion dans votre navigateur.',
-              es: 'OAuth de Google abierto. Termina la conexiÃ³n en tu navegador.',
+              es: 'OAuth de Google abierto. Termina la conexión en tu navegador.',
             ),
           ),
         ),
@@ -1104,8 +1182,8 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
             _t(
               nl: 'Google Calendar koppeling kon niet gestart worden.',
               en: 'Google Calendar connection could not be started.',
-              fr: 'La connexion Google Agenda nâ€™a pas pu Ãªtre dÃ©marrÃ©e.',
-              es: 'No se pudo iniciar la conexiÃ³n de Google Calendar.',
+              fr: 'La connexion Google Agenda n’a pas pu être démarrée.',
+              es: 'No se pudo iniciar la conexión de Google Calendar.',
             ),
           ),
         ),
@@ -1126,16 +1204,16 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
             _t(
               nl: 'Google Calendar loskoppelen?',
               en: 'Disconnect Google Calendar?',
-              fr: 'DÃ©connecter Google Agenda ?',
-              es: 'Â¿Desconectar Google Calendar?',
+              fr: 'Déconnecter Google Agenda ?',
+              es: '¿Desconectar Google Calendar?',
             ),
           ),
           content: Text(
             _t(
               nl: 'Nieuwe boekingen worden niet meer automatisch in Google Calendar geplaatst tot je opnieuw koppelt. Bestaande boekingen en agenda-items blijven behouden.',
               en: 'New bookings will no longer be added automatically to Google Calendar until you reconnect. Existing bookings and calendar events remain unchanged.',
-              fr: 'Les nouvelles rÃ©servations ne seront plus ajoutÃ©es automatiquement Ã  Google Agenda jusquâ€™Ã  reconnexion. Les rÃ©servations et Ã©vÃ©nements existants restent inchangÃ©s.',
-              es: 'Las nuevas reservas ya no se aÃ±adirÃ¡n automÃ¡ticamente a Google Calendar hasta que vuelvas a conectar. Las reservas y eventos existentes permanecen sin cambios.',
+              fr: 'Les nouvelles réservations ne seront plus ajoutées automatiquement à Google Agenda jusqu’à reconnexion. Les réservations et événements existants restent inchangés.',
+              es: 'Las nuevas reservas ya no se añadirán automáticamente a Google Calendar hasta que vuelvas a conectar. Las reservas y eventos existentes permanecen sin cambios.',
             ),
           ),
           actions: [
@@ -1156,7 +1234,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                 _t(
                   nl: 'Loskoppelen',
                   en: 'Disconnect',
-                  fr: 'DÃ©connecter',
+                  fr: 'Déconnecter',
                   es: 'Desconectar',
                 ),
               ),
@@ -1185,8 +1263,8 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
             _t(
               nl: 'Google Calendar is losgekoppeld.',
               en: 'Google Calendar is disconnected.',
-              fr: 'Google Agenda est dÃ©connectÃ©.',
-              es: 'Google Calendar estÃ¡ desconectado.',
+              fr: 'Google Agenda est déconnecté.',
+              es: 'Google Calendar está desconectado.',
             ),
           ),
         ),
@@ -1200,7 +1278,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
             _t(
               nl: 'Google Calendar kon niet worden losgekoppeld.',
               en: 'Google Calendar could not be disconnected.',
-              fr: 'Google Agenda nâ€™a pas pu Ãªtre dÃ©connectÃ©.',
+              fr: 'Google Agenda n’a pas pu être déconnecté.',
               es: 'No se pudo desconectar Google Calendar.',
             ),
           ),
@@ -1234,7 +1312,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         nl: 'Kalenderkoppeling en herverbinden',
         en: 'Calendar connection and reconnect',
         fr: 'Connexion agenda et reconnexion',
-        es: 'ConexiÃ³n de calendario y reconexiÃ³n',
+        es: 'Conexión de calendario y reconexión',
       ),
       status: _googleCalendarSetupStatus(),
       child: Column(
@@ -1279,27 +1357,27 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
             ),
           if (lastConnectedAt != null)
             Text(
-              '${_t(nl: 'Laatste koppeling', en: 'Last connected', fr: 'DerniÃ¨re connexion', es: 'Ãšltima conexiÃ³n')}: $lastConnectedAt',
+              '${_t(nl: 'Laatste koppeling', en: 'Last connected', fr: 'Dernière connexion', es: 'Última conexión')}: $lastConnectedAt',
               style: const TextStyle(color: Colors.white60, fontSize: 11),
             ),
           if (lastDisconnectedAt != null)
             Text(
-              '${_t(nl: 'Laatst losgekoppeld', en: 'Last disconnected', fr: 'DerniÃ¨re dÃ©connexion', es: 'Ãšltima desconexiÃ³n')}: $lastDisconnectedAt',
+              '${_t(nl: 'Laatst losgekoppeld', en: 'Last disconnected', fr: 'Dernière déconnexion', es: 'Última desconexión')}: $lastDisconnectedAt',
               style: const TextStyle(color: Colors.white60, fontSize: 11),
             ),
           if (lastSyncAt != null)
             Text(
-              '${_t(nl: 'Laatste sync', en: 'Last sync', fr: 'DerniÃ¨re synchro', es: 'Ãšltima sincronizaciÃ³n')}: $lastSyncAt',
+              '${_t(nl: 'Laatste sync', en: 'Last sync', fr: 'Dernière synchro', es: 'Última sincronización')}: $lastSyncAt',
               style: const TextStyle(color: Colors.white60, fontSize: 11),
             ),
           if (lastErrorCode != null)
             Text(
-              '${_t(nl: 'Foutcode', en: 'Error code', fr: 'Code erreur', es: 'CÃ³digo de error')}: $lastErrorCode',
+              '${_t(nl: 'Foutcode', en: 'Error code', fr: 'Code erreur', es: 'Código de error')}: $lastErrorCode',
               style: const TextStyle(color: Colors.white60, fontSize: 11),
             ),
           if (lastErrorAt != null)
             Text(
-              '${_t(nl: 'Laatste fout', en: 'Last error', fr: 'DerniÃ¨re erreur', es: 'Ãšltimo error')}: $lastErrorAt',
+              '${_t(nl: 'Laatste fout', en: 'Last error', fr: 'Dernière erreur', es: 'Último error')}: $lastErrorAt',
               style: const TextStyle(color: Colors.white60, fontSize: 11),
             ),
           const SizedBox(height: 10),
@@ -1338,7 +1416,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                     _t(
                       nl: 'Loskoppelen',
                       en: 'Disconnect',
-                      fr: 'DÃ©connecter',
+                      fr: 'Déconnecter',
                       es: 'Desconectar',
                     ),
                   ),
@@ -1418,6 +1496,80 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
               en: 'Business rides',
               fr: 'Courses professionnelles',
               es: 'Viajes de empresa',
+            ),
+          ),
+          const SizedBox(height: 6),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: const Color(0xFF0B0B0B),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: const Color(0x22FFFFFF)),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  _t(
+                    nl: 'Slimme annulatieblokkering',
+                    en: 'Smart cancellation blocking',
+                    fr: 'Blocage intelligent des annulations',
+                    es: 'Bloqueo inteligente de cancelaciones',
+                  ),
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 12.8,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  _t(
+                    nl: 'Fluxidi bepaalt automatisch of de chauffeur al aantoonbaar onderweg is naar de klant. Is dat zo, dan kan de klant niet meer online annuleren.',
+                    en: 'Fluxidi automatically determines whether the driver is clearly already on the way to the customer. If so, the customer can no longer cancel online.',
+                    fr: 'Fluxidi détermine automatiquement si le chauffeur est déjà clairement en route vers le client. Si c’est le cas, le client ne peut plus annuler en ligne.',
+                    es: 'Fluxidi determina automáticamente si el conductor ya está claramente en camino hacia el cliente. Si es así, el cliente ya no puede cancelar en línea.',
+                  ),
+                  style: const TextStyle(color: Colors.white70, fontSize: 11.6),
+                ),
+                const SizedBox(height: 6),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  value: _blockWhenDriverEnRoute,
+                  onChanged: (v) => setState(() => _blockWhenDriverEnRoute = v),
+                  title: Text(
+                    _t(
+                      nl: 'Blokkeer annuleren wanneer chauffeur onderweg is',
+                      en: 'Block cancellation when the driver is already on the way',
+                      fr: 'Bloquer l annulation lorsque le chauffeur est deja en route',
+                      es: 'Bloquear la cancelacion cuando el conductor ya esta en camino',
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  _blockWhenDriverEnRoute
+                      ? _t(
+                          nl: 'Actief. Fluxidi gebruikt rit- en locatiegegevens om online annuleren automatisch te blokkeren wanneer de chauffeur onderweg is.',
+                          en: 'Active. Fluxidi uses ride and location data to automatically block online cancellation when the driver is on the way.',
+                          fr: 'Actif. Fluxidi utilise les données de course et de localisation pour bloquer automatiquement l’annulation en ligne lorsque le chauffeur est en route.',
+                          es: 'Activo. Fluxidi utiliza datos del viaje y ubicación para bloquear automáticamente la cancelación en línea cuando el conductor está en camino.',
+                        )
+                      : _t(
+                          nl: 'Uitgeschakeld. Klanten kunnen annuleren volgens de gewone tijdsregels.',
+                          en: 'Disabled. Customers can cancel according to the normal time rules.',
+                          fr: 'Désactivé. Les clients peuvent annuler selon les règles de temps normales.',
+                          es: 'Desactivado. Los clientes pueden cancelar según las reglas de tiempo normales.',
+                        ),
+                  style: TextStyle(
+                    color: _blockWhenDriverEnRoute
+                        ? const Color(0xFF7BE2B4)
+                        : Colors.white60,
+                    fontSize: 11.4,
+                  ),
+                ),
+              ],
             ),
           ),
           const SizedBox(height: 4),
@@ -1666,17 +1818,17 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         _hydrateBackendBusinessProfile(merged);
         _publicPartnerProfileStatus = _t(
           nl: isLogo
-              ? 'Publiek logo geÃ¼pload en opgeslagen.'
-              : 'Publieke coverfoto geÃ¼pload en opgeslagen.',
+              ? 'Publiek logo geüpload en opgeslagen.'
+              : 'Publieke coverfoto geüpload en opgeslagen.',
           en: isLogo
               ? 'Public logo uploaded and saved.'
               : 'Public cover photo uploaded and saved.',
           fr: isLogo
-              ? 'Logo public tÃ©lÃ©versÃ© et enregistrÃ©.'
-              : 'Photo de couverture publique tÃ©lÃ©versÃ©e et enregistrÃ©e.',
+              ? 'Logo public téléversé et enregistré.'
+              : 'Photo de couverture publique téléversée et enregistrée.',
           es: isLogo
-              ? 'Logo pÃºblico subido y guardado.'
-              : 'Foto de portada pÃºblica subida y guardada.',
+              ? 'Logo público subido y guardado.'
+              : 'Foto de portada pública subida y guardada.',
         );
       });
       unawaited(updateLocalBackendBusinessProfileCache(merged));
@@ -1686,8 +1838,8 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         _publicPartnerProfileError = _t(
           nl: 'Upload mislukt. Controleer of dit een JPG, PNG of WEBP-afbeelding is.',
           en: 'Upload failed. Please check that this is a JPG, PNG, or WEBP image.',
-          fr: 'Ã‰chec du tÃ©lÃ©versement. VÃ©rifiez quâ€™il sâ€™agit dâ€™une image JPG, PNG ou WEBP.',
-          es: 'La carga fallÃ³. Verifica que sea una imagen JPG, PNG o WEBP.',
+          fr: 'Échec du téléversement. Vérifiez qu’il s’agit d’une image JPG, PNG ou WEBP.',
+          es: 'La carga falló. Verifica que sea una imagen JPG, PNG o WEBP.',
         );
       });
     } finally {
@@ -1833,8 +1985,8 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
             _t(
               nl: 'Publieke media preview',
               en: 'Public media preview',
-              fr: 'AperÃ§u des mÃ©dias publics',
-              es: 'Vista previa de medios pÃºblicos',
+              fr: 'Aperçu des médias publics',
+              es: 'Vista previa de medios públicos',
             ),
             style: TextStyle(
               color: _setupGold.withOpacity(0.98),
@@ -1845,10 +1997,10 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
           if (!hasAny)
             fallbackTile(
               label: _t(
-                nl: 'Nog geen publieke media geÃ¼pload.',
+                nl: 'Nog geen publieke media geüpload.',
                 en: 'No public media uploaded yet.',
-                fr: 'Aucun mÃ©dia public tÃ©lÃ©versÃ© pour le moment.',
-                es: 'AÃºn no se ha subido ningÃºn medio pÃºblico.',
+                fr: 'Aucun média public téléversé pour le moment.',
+                es: 'Aún no se ha subido ningún medio público.',
               ),
               icon: Icons.image_not_supported_outlined,
               height: 72,
@@ -1871,7 +2023,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                             nl: 'Publieke coverfoto',
                             en: 'Public cover photo',
                             fr: 'Photo de couverture publique',
-                            es: 'Foto de portada pÃºblica',
+                            es: 'Foto de portada pública',
                           ),
                           icon: Icons.image_outlined,
                           height: 156,
@@ -1896,9 +2048,9 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                         bottom: 10,
                         child: _statusPill(
                           _t(
-                            nl: 'Cover geÃ¼pload',
+                            nl: 'Cover geüpload',
                             en: 'Cover uploaded',
-                            fr: 'Couverture tÃ©lÃ©versÃ©e',
+                            fr: 'Couverture téléversée',
                             es: 'Portada subida',
                           ),
                           _setupGold,
@@ -1941,7 +2093,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                     nl: 'Publiek logo',
                     en: 'Public logo',
                     fr: 'Logo public',
-                    es: 'Logo pÃºblico',
+                    es: 'Logo público',
                   ),
                   icon: Icons.business_outlined,
                 ),
@@ -1977,9 +2129,9 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                 if (hasLogo)
                   _statusPill(
                     _t(
-                      nl: 'Logo geÃ¼pload',
+                      nl: 'Logo geüpload',
                       en: 'Logo uploaded',
-                      fr: 'Logo tÃ©lÃ©versÃ©',
+                      fr: 'Logo téléversé',
                       es: 'Logo subido',
                     ),
                     const Color(0xFF34D29A),
@@ -1987,9 +2139,9 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                 if (hasHero)
                   _statusPill(
                     _t(
-                      nl: 'Cover geÃ¼pload',
+                      nl: 'Cover geüpload',
                       en: 'Cover uploaded',
-                      fr: 'Couverture tÃ©lÃ©versÃ©e',
+                      fr: 'Couverture téléversée',
                       es: 'Portada subida',
                     ),
                     const Color(0xFF34D29A),
@@ -2068,7 +2220,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         return _t(
           nl: 'Luchthavenvervoer',
           en: 'Airport transfer',
-          fr: 'Transfert aÃ©roport',
+          fr: 'Transfert aéroport',
           es: 'Traslado aeropuerto',
         );
       case 'business_rides':
@@ -2082,14 +2234,14 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         return _t(
           nl: 'Evenementen',
           en: 'Events',
-          fr: 'Ã‰vÃ©nements',
+          fr: 'Événements',
           es: 'Eventos',
         );
       case 'hotel_bnb_pickup':
         return _t(
           nl: 'Hotels & B&B',
           en: 'Hotels & B&B',
-          fr: 'HÃ´tels & B&B',
+          fr: 'Hôtels & B&B',
           es: 'Hoteles y B&B',
         );
       case 'online_payments':
@@ -2149,14 +2301,9 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
   String _publicPaymentOptionLabel(String id) {
     switch (id.trim().toLowerCase()) {
       case 'cash':
-        return _t(nl: 'Cash', en: 'Cash', fr: 'EspÃ¨ces', es: 'Efectivo');
+        return _t(nl: 'Cash', en: 'Cash', fr: 'Espèces', es: 'Efectivo');
       case 'qr_code':
-        return _t(
-          nl: 'QR-code',
-          en: 'QR code',
-          fr: 'Code QR',
-          es: 'CÃ³digo QR',
-        );
+        return _t(nl: 'QR-code', en: 'QR code', fr: 'Code QR', es: 'Código QR');
       case 'tikkie':
         return 'Tikkie';
       case 'bancontact':
@@ -2244,8 +2391,8 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
               _t(
                 nl: 'Locatieservices zijn uitgeschakeld op dit toestel.',
                 en: 'Location services are disabled on this device.',
-                fr: 'Les services de localisation sont dÃ©sactivÃ©s sur cet appareil.',
-                es: 'Los servicios de ubicaciÃ³n estÃ¡n desactivados en este dispositivo.',
+                fr: 'Les services de localisation sont désactivés sur cet appareil.',
+                es: 'Los servicios de ubicación están desactivados en este dispositivo.',
               ),
             ),
           ),
@@ -2265,8 +2412,8 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
               _t(
                 nl: 'Locatietoegang geweigerd.',
                 en: 'Location access denied.',
-                fr: 'AccÃ¨s Ã  la localisation refusÃ©.',
-                es: 'Acceso a la ubicaciÃ³n denegado.',
+                fr: 'Accès à la localisation refusé.',
+                es: 'Acceso a la ubicación denegado.',
               ),
             ),
           ),
@@ -2281,8 +2428,8 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
               _t(
                 nl: 'Locatietoegang permanent geweigerd. Schakel toestemming in via instellingen.',
                 en: 'Location access is permanently denied. Enable permission in settings.',
-                fr: 'Lâ€™accÃ¨s Ã  la localisation est refusÃ© dÃ©finitivement. Activez lâ€™autorisation dans les paramÃ¨tres.',
-                es: 'El acceso a la ubicaciÃ³n estÃ¡ denegado permanentemente. Activa el permiso en la configuraciÃ³n.',
+                fr: 'L’accès à la localisation est refusé définitivement. Activez l’autorisation dans les paramètres.',
+                es: 'El acceso a la ubicación está denegado permanentemente. Activa el permiso en la configuración.',
               ),
             ),
           ),
@@ -2304,8 +2451,8 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
             _t(
               nl: 'Bedrijfslocatie ingesteld. Sla op en publiceer je profiel opnieuw.',
               en: 'Business location set. Save and publish your profile again.',
-              fr: 'Emplacement professionnel dÃ©fini. Enregistrez et republiez votre profil.',
-              es: 'UbicaciÃ³n de empresa configurada. Guarda y publica tu perfil de nuevo.',
+              fr: 'Emplacement professionnel défini. Enregistrez et republiez votre profil.',
+              es: 'Ubicación de empresa configurada. Guarda y publica tu perfil de nuevo.',
             ),
           ),
         ),
@@ -2318,8 +2465,8 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
             _t(
               nl: 'Huidige locatie kon niet worden opgehaald.',
               en: 'Could not fetch current location.',
-              fr: 'Impossible de rÃ©cupÃ©rer la position actuelle.',
-              es: 'No se pudo obtener la ubicaciÃ³n actual.',
+              fr: 'Impossible de récupérer la position actuelle.',
+              es: 'No se pudo obtener la ubicación actual.',
             ),
           ),
         ),
@@ -2358,7 +2505,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
       if (city.isNotEmpty) city,
       if (postcode.isNotEmpty) postcode,
       if (country.isNotEmpty) country,
-    ].join(' â€¢ ');
+    ].join(' • ');
     final services = _mappedPublicServiceIds();
     final companyPhone = profileForm.phone.trim().isNotEmpty
         ? profileForm.phone.trim()
@@ -2706,10 +2853,10 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     final cancellationCandidate = _cancellationPolicyProfileFromFormOrNull();
     if (cancellationCandidate == null) {
       final msg = _t(
-        nl: 'Ongeldige waarde in Annulatiebeleid. Gebruik minuten van 0 tot en met 10080.',
-        en: 'Invalid value in Cancellation policy. Use minutes between 0 and 10080.',
-        fr: 'Valeur invalide dans la politique d annulation. Utilisez des minutes entre 0 et 10080.',
-        es: 'Valor invalido en Politica de cancelacion. Usa minutos entre 0 y 10080.',
+        nl: 'Ongeldige waarde in Annulatiebeleid. Controleer de ingestelde limieten.',
+        en: 'Invalid value in Cancellation policy. Please check the configured limits.',
+        fr: 'Valeur invalide dans la politique d annulation. Verifiez les limites configurees.',
+        es: 'Valor invalido en Politica de cancelacion. Revisa los limites configurados.',
       );
       setState(() {
         _cancellationPolicyError = msg;
@@ -2959,7 +3106,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     );
   }
 
-  /// When tenant profile/settings load or update, clear Fluxidi defaults from controllers â€” but do not
+  /// When tenant profile/settings load or update, clear Fluxidi defaults from controllers — but do not
   /// clobber an unsaved non-default logo path the user already picked.
   void _syncLocalTenantLogoFromNotifier() {
     if (!mounted) return;
@@ -3288,7 +3435,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
             _t(
               nl: 'Geen bedrijfslogo ingesteld',
               en: 'No company logo set',
-              fr: 'Aucun logo dâ€™entreprise dÃ©fini',
+              fr: 'Aucun logo d’entreprise défini',
               es: 'No hay logotipo de empresa configurado',
             ),
             textAlign: TextAlign.center,
@@ -3742,14 +3889,14 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         return _t(
           nl: 'Naar luchthaven',
           en: 'To airport',
-          fr: 'Vers aÃ©roport',
+          fr: 'Vers aéroport',
           es: 'Al aeropuerto',
         );
       case 'from_airport':
         return _t(
           nl: 'Van luchthaven',
           en: 'From airport',
-          fr: 'Depuis aÃ©roport',
+          fr: 'Depuis aéroport',
           es: 'Desde aeropuerto',
         );
       default:
@@ -3764,18 +3911,18 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
           nl: 'Postcode',
           en: 'Postcode',
           fr: 'Code postal',
-          es: 'CÃ³digo postal',
+          es: 'Código postal',
         );
       case 'city':
         return _t(nl: 'Stad', en: 'City', fr: 'Ville', es: 'Ciudad');
       case 'country':
-        return _t(nl: 'Land', en: 'Country', fr: 'Pays', es: 'PaÃ­s');
+        return _t(nl: 'Land', en: 'Country', fr: 'Pays', es: 'País');
       case 'radius':
         return _t(
           nl: 'Radius rond locatie',
           en: 'Radius around location',
-          fr: 'Rayon autour dâ€™un lieu',
-          es: 'Radio alrededor de ubicaciÃ³n',
+          fr: 'Rayon autour d’un lieu',
+          es: 'Radio alrededor de ubicación',
         );
       default:
         return value;
@@ -3839,7 +3986,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         _airportFixedFaresStatus = _t(
           nl: 'Luchthaventarieven geladen.',
           en: 'Airport fixed fares loaded.',
-          fr: 'Tarifs fixes aÃ©roport chargÃ©s.',
+          fr: 'Tarifs fixes aéroport chargés.',
           es: 'Tarifas fijas de aeropuerto cargadas.',
         );
         _airportFixedFaresDirty = false;
@@ -3852,7 +3999,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
             ? _t(
                 nl: 'Luchthaventarieven konden niet worden geladen.',
                 en: 'Airport fixed fares could not be loaded.',
-                fr: 'Les tarifs fixes aÃ©roport nâ€™ont pas pu Ãªtre chargÃ©s.',
+                fr: 'Les tarifs fixes aéroport n’ont pas pu être chargés.',
                 es: 'No se pudieron cargar las tarifas fijas de aeropuerto.',
               )
             : message;
@@ -3918,7 +4065,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         _airportFixedFaresStatus = _t(
           nl: 'Luchthaventarieven opgeslagen.',
           en: 'Airport fixed fares saved.',
-          fr: 'Tarifs fixes aÃ©roport enregistrÃ©s.',
+          fr: 'Tarifs fixes aéroport enregistrés.',
           es: 'Tarifas fijas de aeropuerto guardadas.',
         );
         _airportFixedFaresDirty = false;
@@ -3937,7 +4084,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
             ? _t(
                 nl: 'Opslaan van luchthaventarieven mislukt.',
                 en: 'Saving airport fixed fares failed.',
-                fr: 'Ã‰chec de lâ€™enregistrement des tarifs fixes aÃ©roport.',
+                fr: 'Échec de l’enregistrement des tarifs fixes aéroport.',
                 es: 'Error al guardar tarifas fijas de aeropuerto.',
               )
             : message;
@@ -4918,13 +5065,13 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
       title: _t(
         nl: 'Luchthaven vaste tarieven',
         en: 'Airport fixed fares',
-        fr: 'Tarifs fixes aÃ©roport',
+        fr: 'Tarifs fixes aéroport',
         es: 'Tarifas fijas aeropuerto',
       ),
       subtitle: _t(
         nl: 'Bedrijfsregels per luchthaven',
         en: 'Company rules per airport',
-        fr: 'RÃ¨gles entreprise par aÃ©roport',
+        fr: 'Règles entreprise par aéroport',
         es: 'Reglas de empresa por aeropuerto',
       ),
       status: _airportFixedFaresSetupStatus(),
@@ -4947,7 +5094,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
             Padding(
               padding: const EdgeInsets.only(bottom: 8),
               child: Text(
-                '${_t(nl: 'Laatst bijgewerkt', en: 'Last updated', fr: 'DerniÃ¨re mise Ã  jour', es: 'Ãšltima actualizaciÃ³n')}: ${_airportFixedFaresUpdatedAt ?? ''}',
+                '${_t(nl: 'Laatst bijgewerkt', en: 'Last updated', fr: 'Dernière mise à jour', es: 'Última actualización')}: ${_airportFixedFaresUpdatedAt ?? ''}',
                 style: TextStyle(
                   color: Colors.white.withOpacity(0.64),
                   fontSize: 11,
@@ -4961,8 +5108,8 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                 _t(
                   nl: 'Nog geen vaste luchthaventarieven ingesteld.',
                   en: 'No airport fixed fare rules configured yet.',
-                  fr: 'Aucune rÃ¨gle de tarif fixe aÃ©roport configurÃ©e.',
-                  es: 'AÃºn no hay reglas de tarifa fija de aeropuerto configuradas.',
+                  fr: 'Aucune règle de tarif fixe aéroport configurée.',
+                  es: 'Aún no hay reglas de tarifa fija de aeropuerto configuradas.',
                 ),
                 style: TextStyle(color: Colors.white.withOpacity(0.74)),
               ),
@@ -5009,8 +5156,8 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                       Expanded(
                         child: Text(
                           airportName.isNotEmpty
-                              ? '$airportName ($airportIata) - â‚¬ ${price.toStringAsFixed(2)} $currency'
-                              : '$airportIata - â‚¬ ${price.toStringAsFixed(2)} $currency',
+                              ? '$airportName ($airportIata) - € ${price.toStringAsFixed(2)} $currency'
+                              : '$airportIata - € ${price.toStringAsFixed(2)} $currency',
                           style: const TextStyle(
                             color: Colors.white,
                             fontWeight: FontWeight.w700,
@@ -5118,7 +5265,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                   _t(
                     nl: 'Regel toevoegen',
                     en: 'Add rule',
-                    fr: 'Ajouter une rÃ¨gle',
+                    fr: 'Ajouter une règle',
                     es: 'Agregar regla',
                   ),
                 ),
@@ -5154,7 +5301,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                   _t(
                     nl: 'Regels opslaan',
                     en: 'Save rules',
-                    fr: 'Enregistrer les rÃ¨gles',
+                    fr: 'Enregistrer les règles',
                     es: 'Guardar reglas',
                   ),
                 ),
@@ -5239,25 +5386,31 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
   Widget _cancellationCutoffField({
     required TextEditingController controller,
     required String label,
+    String? helperText,
+    bool allowDecimal = false,
   }) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
       child: TextField(
         controller: controller,
-        keyboardType: TextInputType.number,
+        keyboardType: TextInputType.numberWithOptions(decimal: allowDecimal),
         inputFormatters: <TextInputFormatter>[
-          FilteringTextInputFormatter.allow(RegExp(r'[0-9]')),
+          FilteringTextInputFormatter.allow(
+            allowDecimal ? RegExp(r'[0-9\.,]') : RegExp(r'[0-9]'),
+          ),
         ],
         style: const TextStyle(color: Colors.white),
         decoration: InputDecoration(
           labelText: label,
           labelStyle: const TextStyle(color: Colors.white70),
-          helperText: _t(
-            nl: 'Minuten voor vertrek (0-10080)',
-            en: 'Minutes before departure (0-10080)',
-            fr: 'Minutes avant depart (0-10080)',
-            es: 'Minutos antes de la salida (0-10080)',
-          ),
+          helperText:
+              helperText ??
+              _t(
+                nl: 'Minuten voor vertrek (0-10080)',
+                en: 'Minutes before departure (0-10080)',
+                fr: 'Minutes avant depart (0-10080)',
+                es: 'Minutos antes de la salida (0-10080)',
+              ),
           helperStyle: const TextStyle(color: Colors.white54, fontSize: 11.5),
           floatingLabelBehavior: FloatingLabelBehavior.always,
           contentPadding: const EdgeInsets.symmetric(
@@ -5319,11 +5472,6 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     return parsed != null && parsed.isFinite && parsed > 0;
   }
 
-  bool _validCutoffMinutes(String value) {
-    final parsed = int.tryParse(value.trim());
-    return parsed != null && parsed >= 0 && parsed <= 10080;
-  }
-
   Color get _setupGold => appConfig.primaryColor;
 
   String _statusLabel(_SetupStatus status) {
@@ -5340,7 +5488,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
           nl: 'Aandacht nodig',
           en: 'Needs attention',
           fr: 'A verifier',
-          es: 'Requiere atenciÃ³n',
+          es: 'Requiere atención',
         );
       case _SetupStatus.incomplete:
         return _t(
@@ -5353,8 +5501,8 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         return _t(
           nl: 'Binnenkort',
           en: 'Coming soon',
-          fr: 'BientÃ´t',
-          es: 'PrÃ³ximamente',
+          fr: 'Bientôt',
+          es: 'Próximamente',
         );
     }
   }
@@ -5443,17 +5591,68 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     final hasAllowFlag =
         _allowCustomerOnlineCancellation == true ||
         _allowCustomerOnlineCancellation == false;
-    final hasTaxi = _validCutoffMinutes(_cancellationTaxiCutoffCtrl.text);
-    final hasAirport = _validCutoffMinutes(_cancellationAirportCutoffCtrl.text);
-    final hasBusiness = _validCutoffMinutes(
-      _cancellationBusinessCutoffCtrl.text,
-    );
+    final hasTaxi =
+        _parseCancellationIntOrNull(
+          _cancellationTaxiCutoffCtrl.text,
+          min: 0,
+          max: 10080,
+        ) !=
+        null;
+    final hasAirport =
+        _parseCancellationIntOrNull(
+          _cancellationAirportCutoffCtrl.text,
+          min: 0,
+          max: 10080,
+        ) !=
+        null;
+    final hasBusiness =
+        _parseCancellationIntOrNull(
+          _cancellationBusinessCutoffCtrl.text,
+          min: 0,
+          max: 10080,
+        ) !=
+        null;
+    final hasBlockFlag =
+        _blockWhenDriverEnRoute == true || _blockWhenDriverEnRoute == false;
+    final hasEta =
+        _parseCancellationIntOrNull(
+          _driverEnRouteEtaCutoffCtrl.text,
+          min: 0,
+          max: 240,
+        ) !=
+        null;
+    final hasDistance =
+        _parseCancellationDoubleOrNull(
+          _driverEnRouteDistanceCutoffCtrl.text,
+          min: 0,
+          max: 100,
+        ) !=
+        null;
+    final hasFreshness =
+        _parseCancellationIntOrNull(
+          _driverLocationFreshnessCtrl.text,
+          min: 30,
+          max: 3600,
+        ) !=
+        null;
+    final hasHandoff =
+        _parseCancellationIntOrNull(
+          _driverHandoffBufferCtrl.text,
+          min: 0,
+          max: 120,
+        ) !=
+        null;
     final hasPaidMode = _paidBookingCancellationMode == 'review_required';
     final checks = <bool>[
       hasAllowFlag,
       hasTaxi,
       hasAirport,
       hasBusiness,
+      hasBlockFlag,
+      hasEta,
+      hasDistance,
+      hasFreshness,
+      hasHandoff,
       hasPaidMode,
     ];
     final score = checks.where((v) => v).length;
@@ -5484,7 +5683,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         return _t(
           nl: 'Klaar om te delen via link en QR',
           en: 'Ready to share via link and QR',
-          fr: 'PrÃªt Ã  partager via lien et QR',
+          fr: 'Prêt à partager via lien et QR',
           es: 'Listo para compartir por enlace y QR',
         );
       case _SetupStatus.attention:
@@ -5494,7 +5693,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
           nl: 'Publieke code of link ontbreekt',
           en: 'Public code or link is missing',
           fr: 'Code public ou lien manquant',
-          es: 'Falta el cÃ³digo pÃºblico o el enlace',
+          es: 'Falta el código público o el enlace',
         );
     }
   }
@@ -5512,7 +5711,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
           nl: 'Naam, adres en contact',
           en: 'Name, address and contact',
           fr: 'Nom, adresse et contact',
-          es: 'Nombre, direcciÃ³n y contacto',
+          es: 'Nombre, dirección y contacto',
         ),
         icon: Icons.business_outlined,
         status: _detailsStatus(),
@@ -5522,13 +5721,13 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
           nl: 'Facturatie & BTW',
           en: 'Billing & VAT',
           fr: 'Facturation et TVA',
-          es: 'FacturaciÃ³n e IVA',
+          es: 'Facturación e IVA',
         ),
         subtitle: _t(
           nl: 'BTW, facturatie en IBAN',
           en: 'Tax, invoicing and IBAN',
           fr: 'TVA, facturation et IBAN',
-          es: 'IVA, facturaciÃ³n e IBAN',
+          es: 'IVA, facturación e IBAN',
         ),
         icon: Icons.receipt_long_outlined,
         status: _billingVatStatus(),
@@ -5553,13 +5752,13 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         title: _t(
           nl: 'Prijsinstellingen',
           en: 'Pricing settings',
-          fr: 'ParamÃ¨tres tarifaires',
+          fr: 'Paramètres tarifaires',
           es: 'Ajustes de precio',
         ),
         subtitle: _t(
           nl: 'Basistarief en kernprijzen',
           en: 'Base fare and core prices',
-          fr: 'Tarif de base et prix clÃ©s',
+          fr: 'Tarif de base et prix clés',
           es: 'Tarifa base y precios clave',
         ),
         icon: Icons.local_offer_outlined,
@@ -5585,8 +5784,8 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         title: _t(
           nl: 'Services & tiers',
           en: 'Services & tiers',
-          fr: 'Services et catÃ©gories',
-          es: 'Servicios y categorÃ­as',
+          fr: 'Services et catégories',
+          es: 'Servicios y categorías',
         ),
         subtitle: _t(
           nl: 'Actieve ritopties',
@@ -5601,8 +5800,8 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         title: _t(
           nl: 'Publieke boekingslink',
           en: 'Public booking link',
-          fr: 'Lien de rÃ©servation public',
-          es: 'Enlace pÃºblico de reserva',
+          fr: 'Lien de réservation public',
+          es: 'Enlace público de reserva',
         ),
         subtitle: _publicLinkSetupSubtitle(),
         icon: Icons.link_outlined,
@@ -5723,7 +5922,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
               nl: 'Setup voortgang',
               en: 'Setup progress',
               fr: 'Progression de configuration',
-              es: 'Progreso de configuraciÃ³n',
+              es: 'Progreso de configuración',
             ),
             style: const TextStyle(
               color: Colors.white,
@@ -5736,7 +5935,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
             _t(
               nl: 'Maak je bedrijf klaar voor boekingen.',
               en: 'Get your business ready for bookings.',
-              fr: 'PrÃ©parez votre entreprise pour les rÃ©servations.',
+              fr: 'Préparez votre entreprise pour les réservations.',
               es: 'Prepara tu empresa para recibir reservas.',
             ),
             style: TextStyle(
@@ -5759,7 +5958,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                   _t(
                     nl: 'Instellingen overzicht',
                     en: 'Settings overview',
-                    fr: 'AperÃ§u des paramÃ¨tres',
+                    fr: 'Aperçu des paramètres',
                     es: 'Resumen de ajustes',
                   ),
                   style: const TextStyle(
@@ -5770,7 +5969,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                 ),
                 const Spacer(),
                 Text(
-                  '$completeCount/${items.length} ${_t(nl: 'voltooid', en: 'completed', fr: 'terminÃ©', es: 'completado')}',
+                  '$completeCount/${items.length} ${_t(nl: 'voltooid', en: 'completed', fr: 'terminé', es: 'completado')}',
                   style: TextStyle(
                     color: _setupGold,
                     fontSize: 12.5,
@@ -5819,7 +6018,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                       _t(
                         nl: 'Controleer de kaarten hierboven en vul ontbrekende velden in de formulieren hieronder aan.',
                         en: 'Review the cards above and complete missing fields in the forms below.',
-                        fr: 'VÃ©rifiez les cartes ci-dessus et complÃ©tez les champs manquants dans les formulaires ci-dessous.',
+                        fr: 'Vérifiez les cartes ci-dessus et complétez les champs manquants dans les formulaires ci-dessous.',
                         es: 'Revisa las tarjetas de arriba y completa los campos faltantes en los formularios de abajo.',
                       ),
                     ),
@@ -5831,7 +6030,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                 _t(
                   nl: 'Controleer ontbrekende items',
                   en: 'Check missing items',
-                  fr: 'VÃ©rifier les Ã©lÃ©ments manquants',
+                  fr: 'Vérifier les éléments manquants',
                   es: 'Revisar elementos pendientes',
                 ),
                 style: TextStyle(
@@ -5936,7 +6135,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                           ),
                           IconButton(
                             tooltip: _t(
-                              nl: 'ID kopiÃ«ren',
+                              nl: 'ID kopiëren',
                               en: 'Copy ID',
                               fr: 'Copier l ID',
                               es: 'Copiar ID',
@@ -5969,7 +6168,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                           _t(
                             nl: 'Bedrijfsstatus',
                             en: 'Company status',
-                            fr: 'Statut de l entreprise',
+                            fr: 'Statut de l’entreprise',
                             es: 'Estado de la empresa',
                           ),
                           style: const TextStyle(
@@ -6041,14 +6240,14 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                   title: _t(
                     nl: 'Publieke boekingslink',
                     en: 'Public booking link',
-                    fr: 'Lien de rÃ©servation public',
-                    es: 'Enlace pÃºblico de reserva',
+                    fr: 'Lien de réservation public',
+                    es: 'Enlace público de reserva',
                   ),
                   subtitle: _t(
                     nl: 'Web/QR-link voorbereiding',
                     en: 'Web/QR link preparation',
-                    fr: 'PrÃ©paration lien web/QR',
-                    es: 'PreparaciÃ³n de enlace web/QR',
+                    fr: 'Préparation lien web/QR',
+                    es: 'Preparación de enlace web/QR',
                   ),
                   status: _publicLinkStatus(),
                   child: ValueListenableBuilder<CompanyProfile?>(
@@ -6089,8 +6288,8 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                                     _t(
                                       nl: 'Verifieer uw bedrijf eerst om een publieke boekingslink te gebruiken.',
                                       en: 'Verify your company first to use a public booking link.',
-                                      fr: 'VÃ©rifiez dâ€™abord votre entreprise pour utiliser un lien de rÃ©servation public.',
-                                      es: 'Verifica primero tu empresa para usar un enlace pÃºblico de reserva.',
+                                      fr: 'Vérifiez d’abord votre entreprise pour utiliser un lien de réservation public.',
+                                      es: 'Verifica primero tu empresa para usar un enlace público de reserva.',
                                     ),
                                     style: const TextStyle(
                                       color: Colors.orangeAccent,
@@ -6102,8 +6301,8 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                                     _t(
                                       nl: 'Geen publieke Fluxidi-code gevonden.',
                                       en: 'No public Fluxidi code found.',
-                                      fr: 'Aucun code Fluxidi public trouvÃ©.',
-                                      es: 'No se encontrÃ³ ningÃºn cÃ³digo pÃºblico de Fluxidi.',
+                                      fr: 'Aucun code Fluxidi public trouvé.',
+                                      es: 'No se encontró ningún código público de Fluxidi.',
                                     ),
                                     style: TextStyle(
                                       color: Colors.orangeAccent.withOpacity(
@@ -6120,8 +6319,8 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                               _t(
                                 nl: 'Deel deze link of QR-code met klanten zodat zij rechtstreeks kunnen boeken.',
                                 en: 'Share this link or QR code with customers so they can book directly.',
-                                fr: 'Partagez ce lien ou ce code QR avec les clients afin quâ€™ils puissent rÃ©server directement.',
-                                es: 'Comparte este enlace o cÃ³digo QR con los clientes para que puedan reservar directamente.',
+                                fr: 'Partagez ce lien ou ce code QR avec les clients afin qu’ils puissent réserver directement.',
+                                es: 'Comparte este enlace o código QR con los clientes para que puedan reservar directamente.',
                               ),
                               style: TextStyle(
                                 color: Colors.white.withOpacity(0.78),
@@ -6153,7 +6352,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                                       nl: 'Publieke bedrijfscode',
                                       en: 'Public company code',
                                       fr: 'Code entreprise public',
-                                      es: 'CÃ³digo pÃºblico de empresa',
+                                      es: 'Código público de empresa',
                                     ),
                                     style: TextStyle(
                                       color: Colors.white.withOpacity(0.72),
@@ -6192,8 +6391,8 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                                                 _t(
                                                   nl: 'Publieke bedrijfscode gekopieerd',
                                                   en: 'Public company code copied',
-                                                  fr: 'Code entreprise public copiÃ©',
-                                                  es: 'CÃ³digo pÃºblico de empresa copiado',
+                                                  fr: 'Code entreprise public copié',
+                                                  es: 'Código público de empresa copiado',
                                                 ),
                                               ),
                                             ),
@@ -6208,7 +6407,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                                             nl: 'Kopieer code',
                                             en: 'Copy code',
                                             fr: 'Copier le code',
-                                            es: 'Copiar cÃ³digo',
+                                            es: 'Copiar código',
                                           ),
                                         ),
                                       ),
@@ -6273,8 +6472,8 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                                           _t(
                                             nl: 'Publieke boekingslink gekopieerd',
                                             en: 'Public booking link copied',
-                                            fr: 'Lien de rÃ©servation public copiÃ©',
-                                            es: 'Enlace pÃºblico de reserva copiado',
+                                            fr: 'Lien de réservation public copié',
+                                            es: 'Enlace público de reserva copiado',
                                           ),
                                         ),
                                       ),
@@ -6286,7 +6485,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                                   ),
                                   label: Text(
                                     _t(
-                                      nl: 'KopiÃ«ren',
+                                      nl: 'Kopiëren',
                                       en: 'Copy',
                                       fr: 'Copier',
                                       es: 'Copiar',
@@ -6327,8 +6526,8 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                                               _t(
                                                 nl: 'Publieke boekingslink kon niet geopend worden.',
                                                 en: 'Could not open public booking link.',
-                                                fr: 'Impossible dâ€™ouvrir le lien de rÃ©servation public.',
-                                                es: 'No se pudo abrir el enlace pÃºblico de reserva.',
+                                                fr: 'Impossible d’ouvrir le lien de réservation public.',
+                                                es: 'No se pudo abrir el enlace público de reserva.',
                                               ),
                                             ),
                                           ),
@@ -6344,8 +6543,8 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                                             _t(
                                               nl: 'Publieke boekingslink kon niet geopend worden.',
                                               en: 'Could not open public booking link.',
-                                              fr: 'Impossible dâ€™ouvrir le lien de rÃ©servation public.',
-                                              es: 'No se pudo abrir el enlace pÃºblico de reserva.',
+                                              fr: 'Impossible d’ouvrir le lien de réservation public.',
+                                              es: 'No se pudo abrir el enlace público de reserva.',
                                             ),
                                           ),
                                         ),
@@ -6372,8 +6571,8 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                               _t(
                                 nl: 'De publieke boekingspagina wordt verder gekoppeld aan deze Fluxidi-code.',
                                 en: 'The public booking page will be further connected to this Fluxidi code.',
-                                fr: 'La page de rÃ©servation publique sera davantage liÃ©e Ã  ce code Fluxidi.',
-                                es: 'La pÃ¡gina pÃºblica de reserva se vincularÃ¡ mÃ¡s a este cÃ³digo Fluxidi.',
+                                fr: 'La page de réservation publique sera davantage liée à ce code Fluxidi.',
+                                es: 'La página pública de reserva se vinculará más a este código Fluxidi.',
                               ),
                               style: TextStyle(
                                 color: Colors.white.withOpacity(0.66),
@@ -6394,16 +6593,16 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
               id: 'official_company_details',
               icon: Icons.business_outlined,
               title: _t(
-                nl: 'OfficiÃ«le bedrijfsgegevens',
+                nl: 'Officiële bedrijfsgegevens',
                 en: 'Official company details',
-                fr: 'Informations officielles de l entreprise',
+                fr: 'Informations officielles de l’entreprise',
                 es: 'Datos oficiales de la empresa',
               ),
               subtitle: _t(
                 nl: 'Juridische en factuurgegevens',
                 en: 'Legal and invoice details',
-                fr: 'DonnÃ©es juridiques et de facturation',
-                es: 'Datos legales y de facturaciÃ³n',
+                fr: 'Données juridiques et de facturation',
+                es: 'Datos legales y de facturación',
               ),
               status: _detailsStatus(),
               child: Column(
@@ -6413,7 +6612,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                     _t(
                       nl: 'Bedrijfsnaam',
                       en: 'Company name',
-                      fr: 'Nom de l entreprise',
+                      fr: 'Nom de l’entreprise',
                       es: 'Nombre de la empresa',
                     ),
                   ),
@@ -6450,7 +6649,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                       nl: 'Adres',
                       en: 'Address',
                       fr: 'Adresse',
-                      es: 'DirecciÃ³n',
+                      es: 'Dirección',
                     ),
                   ),
                   Row(
@@ -6484,8 +6683,8 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                     _t(
                       nl: 'Telefoon',
                       en: 'Phone',
-                      fr: 'TÃ©lÃ©phone',
-                      es: 'TelÃ©fono',
+                      fr: 'Téléphone',
+                      es: 'Teléfono',
                     ),
                   ),
                   _txt(
@@ -6574,9 +6773,9 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                         const SizedBox(height: 6),
                         Text(
                           _t(
-                            nl: 'Slaat alleen de officiÃ«le bedrijfsgegevens op.',
+                            nl: 'Slaat alleen de officiële bedrijfsgegevens op.',
                             en: 'Saves only the official company details.',
-                            fr: 'Enregistre uniquement les informations officielles de lâ€™entreprise.',
+                            fr: 'Enregistre uniquement les informations officielles de l’entreprise.',
                             es: 'Guarda solo los datos oficiales de la empresa.',
                           ),
                           style: const TextStyle(
@@ -6603,8 +6802,8 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
               subtitle: _t(
                 nl: 'BTW-profiel en weergavemodus',
                 en: 'VAT profile and display mode',
-                fr: 'Profil TVA et mode dâ€™affichage',
-                es: 'Perfil de IVA y modo de visualizaciÃ³n',
+                fr: 'Profil TVA et mode d’affichage',
+                es: 'Perfil de IVA y modo de visualización',
               ),
               status: _billingVatStatus(),
               child: Column(
@@ -6713,8 +6912,8 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                           _t(
                             nl: 'Slaat alleen de BTW-instellingen op.',
                             en: 'Saves only the VAT settings.',
-                            fr: 'Enregistre uniquement les paramÃ¨tres TVA.',
-                            es: 'Guarda solo la configuraciÃ³n de IVA.',
+                            fr: 'Enregistre uniquement les paramètres TVA.',
+                            es: 'Guarda solo la configuración de IVA.',
                           ),
                           style: const TextStyle(
                             color: Colors.white54,
@@ -6735,7 +6934,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                 nl: 'Publiek partnerprofiel',
                 en: 'Public partner profile',
                 fr: 'Profil partenaire public',
-                es: 'Perfil pÃºblico de socio',
+                es: 'Perfil público de socio',
               ),
               subtitle: _t(
                 nl: 'Publiceer veilige profielgegevens voor klanten',
@@ -6754,10 +6953,10 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                 children: [
                   Text(
                     _t(
-                      nl: 'Publiceer veilige bedrijfsinformatie zodat klanten je kunnen vinden via Taxiâ€™s in de buurt.',
+                      nl: 'Publiceer veilige bedrijfsinformatie zodat klanten je kunnen vinden via Taxi’s in de buurt.',
                       en: 'Publish safe company information so customers can find you through Nearby taxis.',
-                      fr: 'Publiez des informations publiques sÃ©curisÃ©es afin que les clients puissent vous trouver.',
-                      es: 'Publica informaciÃ³n segura de la empresa para que los clientes puedan encontrarte.',
+                      fr: 'Publiez des informations publiques sécurisées afin que les clients puissent vous trouver.',
+                      es: 'Publica información segura de la empresa para que los clientes puedan encontrarte.',
                     ),
                     style: const TextStyle(
                       color: Colors.white70,
@@ -6769,8 +6968,8 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                     _t(
                       nl: 'Upload een logo of coverfoto. Fluxidi maakt automatisch een publieke veilige link.',
                       en: 'Upload a logo or cover photo. Fluxidi automatically creates a safe public link.',
-                      fr: 'TÃ©lÃ©versez un logo ou une photo de couverture. Fluxidi crÃ©e automatiquement un lien public sÃ©curisÃ©.',
-                      es: 'Sube un logo o una foto de portada. Fluxidi crea automÃ¡ticamente un enlace pÃºblico seguro.',
+                      fr: 'Téléversez un logo ou une photo de couverture. Fluxidi crée automatiquement un lien public sécurisé.',
+                      es: 'Sube un logo o una foto de portada. Fluxidi crea automáticamente un enlace público seguro.',
                     ),
                     style: const TextStyle(
                       color: Colors.white60,
@@ -6784,7 +6983,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                       nl: 'Bediende postcodes',
                       en: 'Served postcodes',
                       fr: 'Codes postaux desservis',
-                      es: 'CÃ³digos postales atendidos',
+                      es: 'Códigos postales atendidos',
                     ),
                     hint: _t(
                       nl: 'Bijv. 9688, 9680, 9600, 9700',
@@ -6800,8 +6999,8 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                     _t(
                       nl: 'Gebruik komma, spatie of nieuwe lijn tussen postcodes.',
                       en: 'Use commas, spaces, or new lines between postcodes.',
-                      fr: 'Utilisez des virgules, espaces ou retours Ã  la ligne entre les codes postaux.',
-                      es: 'Usa comas, espacios o saltos de lÃ­nea entre cÃ³digos postales.',
+                      fr: 'Utilisez des virgules, espaces ou retours à la ligne entre les codes postaux.',
+                      es: 'Usa comas, espacios o saltos de línea entre códigos postales.',
                     ),
                     style: const TextStyle(
                       color: Colors.white60,
@@ -6811,10 +7010,10 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                   const SizedBox(height: 10),
                   Text(
                     _t(
-                      nl: 'Publieke dekking voor Taxiâ€™s in de buurt (optioneel).',
+                      nl: 'Publieke dekking voor Taxi’s in de buurt (optioneel).',
                       en: 'Public coverage for Taxis nearby (optional).',
-                      fr: 'Couverture publique pour Taxis Ã  proximitÃ© (optionnel).',
-                      es: 'Cobertura pÃºblica para Taxis cercanos (opcional).',
+                      fr: 'Couverture publique pour Taxis à proximité (optionnel).',
+                      es: 'Cobertura pública para Taxis cercanos (opcional).',
                     ),
                     style: const TextStyle(
                       color: Colors.white60,
@@ -6842,7 +7041,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                           nl: 'Gebruik huidige locatie als bedrijfslocatie',
                           en: 'Use current location as business location',
                           fr: 'Utiliser ma position actuelle comme adresse professionnelle',
-                          es: 'Usar mi ubicaciÃ³n actual como ubicaciÃ³n de empresa',
+                          es: 'Usar mi ubicación actual como ubicación de empresa',
                         ),
                         style: const TextStyle(fontWeight: FontWeight.w700),
                         textAlign: TextAlign.center,
@@ -6869,14 +7068,14 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                               ? _t(
                                   nl: 'Bedrijfslocatie ingesteld via GPS',
                                   en: 'Business location set via GPS',
-                                  fr: 'Emplacement professionnel dÃ©fini via GPS',
-                                  es: 'UbicaciÃ³n de empresa configurada por GPS',
+                                  fr: 'Emplacement professionnel défini via GPS',
+                                  es: 'Ubicación de empresa configurada por GPS',
                                 )
                               : _t(
                                   nl: 'Nog geen bedrijfslocatie ingesteld.',
                                   en: 'No business location set yet.',
-                                  fr: 'Aucun emplacement professionnel dÃ©fini.',
-                                  es: 'AÃºn no se ha configurado la ubicaciÃ³n de empresa.',
+                                  fr: 'Aucun emplacement professionnel défini.',
+                                  es: 'Aún no se ha configurado la ubicación de empresa.',
                                 ),
                           style: TextStyle(
                             color: _hasPublicCoverageLocationSet()
@@ -6910,7 +7109,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                     hint: _t(
                       nl: '1 t/m 100',
                       en: '1 to 100',
-                      fr: '1 Ã  100',
+                      fr: '1 à 100',
                       es: '1 a 100',
                     ),
                   ),
@@ -6919,8 +7118,8 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                     _t(
                       nl: 'Publieke services en profielzichtbaarheid',
                       en: 'Public services and profile visibility',
-                      fr: 'Services publics et visibilitÃ© du profil',
-                      es: 'Servicios pÃºblicos y visibilidad del perfil',
+                      fr: 'Services publics et visibilité du profil',
+                      es: 'Servicios públicos y visibilidad del perfil',
                     ),
                     style: const TextStyle(
                       color: Colors.white70,
@@ -6931,10 +7130,10 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                   const SizedBox(height: 6),
                   Text(
                     _t(
-                      nl: 'Dit is los van Service setup. Service setup stuurt calculator/pricing; deze toggles sturen publiek profiel en boekings-CTAâ€™s.',
+                      nl: 'Dit is los van Service setup. Service setup stuurt calculator/pricing; deze toggles sturen publiek profiel en boekings-CTA’s.',
                       en: 'This is separate from Service setup. Service setup drives calculator/pricing; these toggles drive public profile and booking CTAs.',
-                      fr: 'Ceci est sÃ©parÃ© de la configuration des services. Cette section contrÃ´le le profil public et les CTA de rÃ©servation.',
-                      es: 'Esto es independiente de la configuraciÃ³n de servicios. Estos controles afectan el perfil pÃºblico y los CTA de reserva.',
+                      fr: 'Ceci est séparé de la configuration des services. Cette section contrôle le profil public et les CTA de réservation.',
+                      es: 'Esto es independiente de la configuración de servicios. Estos controles afectan el perfil público y los CTA de reserva.',
                     ),
                     style: const TextStyle(
                       color: Colors.white60,
@@ -7071,8 +7270,8 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                                 : _t(
                                     nl: 'Upload publiek logo',
                                     en: 'Upload public logo',
-                                    fr: 'TÃ©lÃ©verser le logo public',
-                                    es: 'Subir logo pÃºblico',
+                                    fr: 'Téléverser le logo public',
+                                    es: 'Subir logo público',
                                   ),
                           ),
                         ),
@@ -7108,8 +7307,8 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                                 : _t(
                                     nl: 'Upload publieke coverfoto',
                                     en: 'Upload public cover photo',
-                                    fr: 'TÃ©lÃ©verser la couverture publique',
-                                    es: 'Subir portada pÃºblica',
+                                    fr: 'Téléverser la couverture publique',
+                                    es: 'Subir portada pública',
                                   ),
                           ),
                         ),
@@ -7128,8 +7327,8 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                       _t(
                         nl: 'Geavanceerd: handmatige publieke URL\'s (fallback)',
                         en: 'Advanced: manual public URLs (fallback)',
-                        fr: 'AvancÃ© : URLs publiques manuelles (secours)',
-                        es: 'Avanzado: URLs pÃºblicas manuales (respaldo)',
+                        fr: 'Avancé : URLs publiques manuelles (secours)',
+                        es: 'Avanzado: URLs públicas manuales (respaldo)',
                       ),
                       style: const TextStyle(
                         color: Colors.white70,
@@ -7143,7 +7342,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                           nl: 'Publieke logo-URL',
                           en: 'Public logo URL',
                           fr: 'URL du logo public',
-                          es: 'URL del logo pÃºblico',
+                          es: 'URL del logo público',
                         ),
                         onChanged: (_) => setState(() {}),
                       ),
@@ -7153,7 +7352,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                           nl: 'Publieke coverfoto-URL',
                           en: 'Public cover photo URL',
                           fr: 'URL de la photo de couverture publique',
-                          es: 'URL de la foto de portada pÃºblica',
+                          es: 'URL de la foto de portada pública',
                         ),
                         onChanged: (_) => setState(() {}),
                       ),
@@ -7163,7 +7362,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                           _t(
                             nl: 'Waarschuwing: logo-URL moet met https:// starten om gepubliceerd te worden.',
                             en: 'Warning: logo URL must start with https:// to be published.',
-                            fr: 'Avertissement : lâ€™URL du logo doit commencer par https:// pour Ãªtre publiÃ©e.',
+                            fr: 'Avertissement : l’URL du logo doit commencer par https:// pour être publiée.',
                             es: 'Advertencia: la URL del logo debe empezar con https:// para publicarse.',
                           ),
                           style: const TextStyle(
@@ -7179,7 +7378,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                           _t(
                             nl: 'Waarschuwing: coverfoto-URL moet met https:// starten om gepubliceerd te worden.',
                             en: 'Warning: cover photo URL must start with https:// to be published.',
-                            fr: 'Avertissement : lâ€™URL de couverture doit commencer par https:// pour Ãªtre publiÃ©e.',
+                            fr: 'Avertissement : l’URL de couverture doit commencer par https:// pour être publiée.',
                             es: 'Advertencia: la URL de portada debe empezar con https:// para publicarse.',
                           ),
                           style: const TextStyle(
@@ -7208,17 +7407,17 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                         nl: 'Publiek profiel publiceren',
                         en: 'Publish public profile',
                         fr: 'Publier le profil public',
-                        es: 'Publicar perfil pÃºblico',
+                        es: 'Publicar perfil público',
                       ),
                     ),
                   ),
                   const SizedBox(height: 8),
                   Text(
                     _t(
-                      nl: 'Gebruik alleen publieke HTTPS-links. Lokale fotoâ€™s worden niet gepubliceerd.',
+                      nl: 'Gebruik alleen publieke HTTPS-links. Lokale foto’s worden niet gepubliceerd.',
                       en: 'Use public HTTPS links only. Local photos are not published.',
-                      fr: 'Les photos locales ne sont pas encore publiÃ©es. Seules les images HTTPS publiques sont incluses.',
-                      es: 'Las fotos locales aÃºn no se publican. Solo se incluyen imÃ¡genes HTTPS pÃºblicas.',
+                      fr: 'Les photos locales ne sont pas encore publiées. Seules les images HTTPS publiques sont incluses.',
+                      es: 'Las fotos locales aún no se publican. Solo se incluyen imágenes HTTPS públicas.',
                     ),
                     style: const TextStyle(color: Colors.white54, fontSize: 11),
                   ),
@@ -7302,8 +7501,8 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                     _t(
                       nl: 'Support telefoon',
                       en: 'Support phone',
-                      fr: 'TÃ©lÃ©phone support',
-                      es: 'TelÃ©fono de soporte',
+                      fr: 'Téléphone support',
+                      es: 'Teléfono de soporte',
                     ),
                   ),
                   _txt(
@@ -7348,11 +7547,11 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                       ),
                       DropdownMenuItem(
                         value: AppLanguage.fr,
-                        child: Text('FranÃ§ais'),
+                        child: Text('Français'),
                       ),
                       DropdownMenuItem(
                         value: AppLanguage.es,
-                        child: Text('EspaÃ±ol'),
+                        child: Text('Español'),
                       ),
                     ],
                     onChanged: (v) {
@@ -7458,7 +7657,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
               subtitle: _t(
                 nl: 'Basistarieven en toeslagen',
                 en: 'Base rates and surcharges',
-                fr: 'Tarifs de base et supplÃ©ments',
+                fr: 'Tarifs de base et suppléments',
                 es: 'Tarifas base y recargos',
               ),
               status: _pricingStatus(),
@@ -7529,7 +7728,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                       return Padding(
                         padding: const EdgeInsets.only(bottom: 8),
                         child: Text(
-                          '${_t(nl: 'BTW wordt beheerd via BTW-instellingen hierboven.', en: 'VAT is managed in the VAT settings above.', fr: 'La TVA est gÃ©rÃ©e dans les paramÃ¨tres TVA ci-dessus.', es: 'El IVA se gestiona en los ajustes de IVA de arriba.')} (${vatPercent % 1 == 0 ? vatPercent.toStringAsFixed(0) : vatPercent.toStringAsFixed(2)}%, $vatModeLabel)',
+                          '${_t(nl: 'BTW wordt beheerd via BTW-instellingen hierboven.', en: 'VAT is managed in the VAT settings above.', fr: 'La TVA est gérée dans les paramètres TVA ci-dessus.', es: 'El IVA se gestiona en los ajustes de IVA de arriba.')} (${vatPercent % 1 == 0 ? vatPercent.toStringAsFixed(0) : vatPercent.toStringAsFixed(2)}%, $vatModeLabel)',
                           style: const TextStyle(
                             color: Colors.white70,
                             fontSize: 12,
