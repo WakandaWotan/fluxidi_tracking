@@ -19897,6 +19897,45 @@ GET /oauth/callback
                   409,
                 );
               }
+              if (cancellationPolicyProfile?.block_when_driver_en_route === true) {
+                const enRouteDecision = await _evaluateDriverEnRouteCancellationBlock(
+                  env,
+                  tenantScope,
+                  rec,
+                  cancellationPolicyProfile,
+                  new Date(),
+                );
+                if (enRouteDecision?.would_block === true) {
+                  const enRouteOriginSource = safeStr(enRouteDecision?.origin_source, 80) || "-";
+                  const enRouteDistanceKm = Number.isFinite(Number(enRouteDecision?.distance_km))
+                    ? Number(Number(enRouteDecision.distance_km).toFixed(3))
+                    : -1;
+                  const enRouteEtaMinutes = Number.isFinite(Number(enRouteDecision?.eta_minutes))
+                    ? Math.max(0, Math.round(Number(enRouteDecision.eta_minutes)))
+                    : -1;
+                  const previousDropoffOriginSource = safeStr(
+                    enRouteDecision?.previous_dropoff_origin_source,
+                    80,
+                  ) || "-";
+                  const sessionLookupSource = safeStr(enRouteDecision?.session_lookup_source, 80) || "-";
+                  console.log(
+                    `[BOOKING_CANCEL_POLICY][EN_ROUTE_CUSTOMER] booking=${_bookingIntentMask(bookingId)} bucket=${policyDecision.bucket || "-"} payment_class=${policyDecision.payment_class || "-"} enabled=true would_block=true reason=driver_already_en_route origin_source=${enRouteOriginSource} distance_km=${enRouteDistanceKm} eta_minutes=${enRouteEtaMinutes} previous_dropoff_origin_source=${previousDropoffOriginSource} session_lookup_source=${sessionLookupSource}`,
+                  );
+                  return json(
+                    {
+                      ok: false,
+                      error: "driver_already_en_route",
+                      message: _customerCancellationPolicyMessage("driver_already_en_route"),
+                      reason: "driver_already_en_route",
+                      cutoff_minutes: cutoffMinutesSafe,
+                      minutes_until_pickup: minutesUntilPickupSafe,
+                      bucket: policyDecision.bucket || "private",
+                      payment_class: policyDecision.payment_class || "unpaid",
+                    },
+                    409,
+                  );
+                }
+              }
             }
           }
           if (!adminAuthorized) {
@@ -20367,19 +20406,66 @@ GET /oauth/callback
               console.log(
                 `[BOOKING_STATUS][CUSTOMER_CANCEL_POLICY] booking=${_bookingIntentMask(bookingId)} route=track_booking_status bucket=${policyDecision.bucket || "-"} payment_class=${policyDecision.payment_class || "-"} pickup_iso=${safeStr(policyDecision.pickup_iso, 40) || "-"} minutes_until_pickup=${Number.isFinite(Number(policyDecision.minutes_until_pickup)) ? Math.round(Number(policyDecision.minutes_until_pickup)) : -1} cutoff_minutes=${Number.isFinite(Number(policyDecision.cutoff_minutes)) ? Math.max(0, Math.round(Number(policyDecision.cutoff_minutes))) : 0} decision=${policyDecision.allowed ? "allow" : "deny"} reason=${policyDecision.reason || "-"}`,
               );
+              const decisionReason = safeStr(
+                policyDecision.reason,
+                80,
+              ) || "cancellation_requires_review";
+              const cutoffMinutesSafe = Number.isFinite(Number(policyDecision.cutoff_minutes))
+                ? Math.max(0, Math.round(Number(policyDecision.cutoff_minutes)))
+                : 0;
+              const minutesUntilPickupSafe = Number.isFinite(Number(policyDecision.minutes_until_pickup))
+                ? Math.round(Number(policyDecision.minutes_until_pickup))
+                : null;
               if (!policyDecision.allowed) {
                 return json(
                   {
                     ok: false,
-                    error: policyDecision.reason || "cancellation_requires_review",
+                    error: decisionReason,
                     bucket: policyDecision.bucket || "private",
                     payment_class: policyDecision.payment_class || "unpaid",
-                    cutoff_minutes: Number.isFinite(Number(policyDecision.cutoff_minutes))
-                      ? Math.max(0, Math.round(Number(policyDecision.cutoff_minutes)))
-                      : 0,
+                    cutoff_minutes: cutoffMinutesSafe,
                   },
                   409,
                 );
+              }
+              if (cancellationPolicyProfile?.block_when_driver_en_route === true) {
+                const enRouteDecision = await _evaluateDriverEnRouteCancellationBlock(
+                  env,
+                  tenantScope,
+                  rec,
+                  cancellationPolicyProfile,
+                  new Date(),
+                );
+                if (enRouteDecision?.would_block === true) {
+                  const enRouteOriginSource = safeStr(enRouteDecision?.origin_source, 80) || "-";
+                  const enRouteDistanceKm = Number.isFinite(Number(enRouteDecision?.distance_km))
+                    ? Number(Number(enRouteDecision.distance_km).toFixed(3))
+                    : -1;
+                  const enRouteEtaMinutes = Number.isFinite(Number(enRouteDecision?.eta_minutes))
+                    ? Math.max(0, Math.round(Number(enRouteDecision.eta_minutes)))
+                    : -1;
+                  const previousDropoffOriginSource = safeStr(
+                    enRouteDecision?.previous_dropoff_origin_source,
+                    80,
+                  ) || "-";
+                  const sessionLookupSource = safeStr(enRouteDecision?.session_lookup_source, 80) || "-";
+                  console.log(
+                    `[BOOKING_CANCEL_POLICY][EN_ROUTE_CUSTOMER] booking=${_bookingIntentMask(bookingId)} bucket=${policyDecision.bucket || "-"} payment_class=${policyDecision.payment_class || "-"} enabled=true would_block=true reason=driver_already_en_route origin_source=${enRouteOriginSource} distance_km=${enRouteDistanceKm} eta_minutes=${enRouteEtaMinutes} previous_dropoff_origin_source=${previousDropoffOriginSource} session_lookup_source=${sessionLookupSource}`,
+                  );
+                  return json(
+                    {
+                      ok: false,
+                      error: "driver_already_en_route",
+                      message: _customerCancellationPolicyMessage("driver_already_en_route"),
+                      reason: "driver_already_en_route",
+                      cutoff_minutes: cutoffMinutesSafe,
+                      minutes_until_pickup: minutesUntilPickupSafe,
+                      bucket: policyDecision.bucket || "private",
+                      payment_class: policyDecision.payment_class || "unpaid",
+                    },
+                    409,
+                  );
+                }
               }
             }
           } else if (actorRole === "driver") {
