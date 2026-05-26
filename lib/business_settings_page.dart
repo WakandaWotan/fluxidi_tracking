@@ -1,4 +1,4 @@
-﻿import 'dart:async';
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -118,6 +118,9 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
   final _backendVatLabelEnCtrl = TextEditingController();
   final _backendVatLabelFrCtrl = TextEditingController();
   final _backendVatLabelEsCtrl = TextEditingController();
+  final _cancellationTaxiCutoffCtrl = TextEditingController();
+  final _cancellationAirportCutoffCtrl = TextEditingController();
+  final _cancellationBusinessCutoffCtrl = TextEditingController();
 
   late AppLanguage _defaultLanguage;
   late String _defaultCurrency;
@@ -130,6 +133,8 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
   bool _backendProfilesLoading = false;
   bool _backendBusinessSaving = false;
   bool _backendTaxSaving = false;
+  bool _cancellationPolicyLoading = false;
+  bool _cancellationPolicySaving = false;
   bool _publicPartnerProfilePublishing = false;
   bool _saveAllBusy = false;
   bool _publicLogoUploading = false;
@@ -141,8 +146,12 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
   String? _backendProfilesStatus;
   String? _publicPartnerProfileStatus;
   String? _publicPartnerProfileError;
+  String? _cancellationPolicyStatus;
+  String? _cancellationPolicyError;
   String _publicPartnerProfilePublishedAt = '';
   String _publicPartnerProfilePublishStatus = '';
+  bool _allowCustomerOnlineCancellation = true;
+  String _paidBookingCancellationMode = 'review_required';
   String? _googleCalendarStatusError;
   Map<String, dynamic>? _googleCalendarStatus;
   bool _showAdvancedLogoPath = false;
@@ -268,6 +277,9 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     _hydrateBackendTaxProfile(
       localBackendTaxProfileNotifier.value ?? BackendTaxProfile.defaults(),
     );
+    _hydrateCancellationPolicyProfile(
+      BackendCancellationPolicyProfile.defaults(),
+    );
     _mergeLocalIntoGeneralControllersIfEligible();
     _loadBackendProfiles();
     _loadGoogleCalendarStatus();
@@ -336,6 +348,9 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     _backendVatLabelEnCtrl.dispose();
     _backendVatLabelFrCtrl.dispose();
     _backendVatLabelEsCtrl.dispose();
+    _cancellationTaxiCutoffCtrl.dispose();
+    _cancellationAirportCutoffCtrl.dispose();
+    _cancellationBusinessCutoffCtrl.dispose();
     super.dispose();
   }
 
@@ -438,6 +453,115 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     );
     _vatRatePricingCtrl.text = vat.vatRate.toStringAsFixed(2);
     _pricingVatMode = vat.vatMode;
+  }
+
+  void _hydrateCancellationPolicyProfile(BackendCancellationPolicyProfile p) {
+    final safeTaxi = p.taxiCutoffMinutes.clamp(0, 10080).toInt();
+    final safeAirport = p.airportCutoffMinutes.clamp(0, 10080).toInt();
+    final safeBusiness = p.businessCutoffMinutes.clamp(0, 10080).toInt();
+    _allowCustomerOnlineCancellation = p.allowCustomerOnlineCancellation;
+    _cancellationTaxiCutoffCtrl.text = safeTaxi.toString();
+    _cancellationAirportCutoffCtrl.text = safeAirport.toString();
+    _cancellationBusinessCutoffCtrl.text = safeBusiness.toString();
+    _paidBookingCancellationMode = 'review_required';
+  }
+
+  int? _parseCancellationCutoffOrNull(String raw) {
+    final text = raw.trim();
+    if (text.isEmpty) return null;
+    final parsed = int.tryParse(text);
+    if (parsed == null) return null;
+    if (parsed < 0 || parsed > 10080) return null;
+    return parsed;
+  }
+
+  BackendCancellationPolicyProfile? _cancellationPolicyProfileFromFormOrNull() {
+    final defaults = BackendCancellationPolicyProfile.defaults();
+    final taxi = _parseCancellationCutoffOrNull(
+      _cancellationTaxiCutoffCtrl.text,
+    );
+    final airport = _parseCancellationCutoffOrNull(
+      _cancellationAirportCutoffCtrl.text,
+    );
+    final business = _parseCancellationCutoffOrNull(
+      _cancellationBusinessCutoffCtrl.text,
+    );
+    if (taxi == null || airport == null || business == null) return null;
+    return BackendCancellationPolicyProfile(
+      version: defaults.version,
+      allowCustomerOnlineCancellation: _allowCustomerOnlineCancellation,
+      taxiCutoffMinutes: taxi,
+      airportCutoffMinutes: airport,
+      businessCutoffMinutes: business,
+      paidBookingCancellationMode: 'review_required',
+      updatedAt: '',
+    );
+  }
+
+  Future<bool> _saveCancellationPolicyProfile({
+    bool showErrorSnackBar = false,
+  }) async {
+    final profile = _cancellationPolicyProfileFromFormOrNull();
+    if (profile == null) {
+      final msg = _t(
+        nl: 'Ongeldige waarde. Gebruik minuten van 0 tot en met 10080.',
+        en: 'Invalid value. Use minutes between 0 and 10080.',
+        fr: 'Valeur invalide. Utilisez des minutes entre 0 et 10080.',
+        es: 'Valor invalido. Usa minutos entre 0 y 10080.',
+      );
+      setState(() {
+        _cancellationPolicyError = msg;
+        _cancellationPolicyStatus = null;
+      });
+      if (showErrorSnackBar && mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(msg)));
+      }
+      return false;
+    }
+    setState(() {
+      _cancellationPolicySaving = true;
+      _cancellationPolicyError = null;
+      _cancellationPolicyStatus = null;
+    });
+    try {
+      final scope = _activeSettingsScope();
+      final saved = await saveBackendCancellationPolicyProfile(
+        profile,
+        tenantId: scope.tenantId,
+        companyId: scope.companyId,
+      );
+      if (!mounted) return false;
+      setState(() {
+        _hydrateCancellationPolicyProfile(saved);
+        _cancellationPolicyStatus = _t(
+          nl: 'Opgeslagen.',
+          en: 'Saved.',
+          fr: 'Enregistre.',
+          es: 'Guardado.',
+        );
+      });
+      return true;
+    } catch (e) {
+      if (!mounted) return false;
+      final msg =
+          '${_t(nl: 'Opslaan mislukt', en: 'Save failed', fr: 'Echec de l enregistrement', es: 'Error al guardar')}: $e';
+      setState(() {
+        _cancellationPolicyError = msg;
+        _cancellationPolicyStatus = null;
+      });
+      if (showErrorSnackBar && mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(msg)));
+      }
+      return false;
+    } finally {
+      if (mounted) {
+        setState(() => _cancellationPolicySaving = false);
+      }
+    }
   }
 
   void _mergeLocalIntoGeneralControllersIfEligible() {
@@ -613,6 +737,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
   Future<void> _loadBackendProfiles() async {
     setState(() {
       _backendProfilesLoading = true;
+      _cancellationPolicyLoading = true;
       _backendProfilesError = null;
       _backendProfilesStatus = null;
     });
@@ -627,10 +752,15 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
           tenantId: scope.tenantId,
           companyId: scope.companyId,
         ),
+        fetchBackendCancellationPolicyProfile(
+          tenantId: scope.tenantId,
+          companyId: scope.companyId,
+        ),
       ]);
       if (!mounted) return;
       final rawBiz = results[0] as BackendBusinessProfile;
       final rawTax = results[1] as BackendTaxProfile;
+      final rawCancellation = results[2] as BackendCancellationPolicyProfile;
       await _hydratePublicCompanyCodeFromBackendProfile(
         rawBiz,
         source: 'business_profile_get',
@@ -656,6 +786,9 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
       setState(() {
         _hydrateBackendBusinessProfile(merged);
         _hydrateBackendTaxProfile(taxForUi);
+        _hydrateCancellationPolicyProfile(rawCancellation);
+        _cancellationPolicyError = null;
+        _cancellationPolicyStatus = null;
         _mergeLocalIntoGeneralControllersIfEligible();
         _backendProfilesStatus = _t(
           nl: 'Instellingen geladen.',
@@ -684,6 +817,16 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
               ),
         );
         _hydrateBackendTaxProfile(cachedTax ?? BackendTaxProfile.defaults());
+        _hydrateCancellationPolicyProfile(
+          BackendCancellationPolicyProfile.defaults(),
+        );
+        _cancellationPolicyError = _t(
+          nl: 'Annulatiebeleid kon niet online geladen worden. Standaardwaarden blijven actief.',
+          en: 'Cancellation policy could not be loaded online. Defaults remain active.',
+          fr: 'La politique d annulation n a pas pu etre chargee en ligne. Les valeurs par defaut restent actives.',
+          es: 'No se pudo cargar la politica de cancelacion en linea. Los valores predeterminados siguen activos.',
+        );
+        _cancellationPolicyStatus = null;
         _mergeLocalIntoGeneralControllersIfEligible();
         final hasLocal =
             cached != null ||
@@ -705,7 +848,10 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
       });
     } finally {
       if (mounted) {
-        setState(() => _backendProfilesLoading = false);
+        setState(() {
+          _backendProfilesLoading = false;
+          _cancellationPolicyLoading = false;
+        });
       }
     }
   }
@@ -1212,6 +1358,138 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                 ),
               ),
             ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _cancellationPolicyCard() {
+    return _collapsibleSettingsCard(
+      id: 'cancellation_policy',
+      icon: Icons.cancel_schedule_send_outlined,
+      title: _t(
+        nl: 'Annulatiebeleid',
+        en: 'Cancellation policy',
+        fr: 'Politique d annulation',
+        es: 'Politica de cancelacion',
+      ),
+      subtitle: _t(
+        nl: 'Bepaal tot wanneer klanten hun boeking zelf online kunnen annuleren.',
+        en: 'Choose until when customers can cancel their booking online.',
+        fr: 'Definissez jusqu a quand les clients peuvent annuler leur reservation en ligne.',
+        es: 'Define hasta cuando los clientes pueden cancelar su reserva en linea.',
+      ),
+      status: _cancellationPolicySetupStatus(),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            value: _allowCustomerOnlineCancellation,
+            onChanged: (v) =>
+                setState(() => _allowCustomerOnlineCancellation = v),
+            title: Text(
+              _t(
+                nl: 'Online annuleren toestaan',
+                en: 'Allow online cancellation',
+                fr: 'Autoriser l annulation en ligne',
+                es: 'Permitir cancelacion en linea',
+              ),
+            ),
+          ),
+          _cancellationCutoffField(
+            controller: _cancellationTaxiCutoffCtrl,
+            label: _t(nl: 'Taxi', en: 'Taxi', fr: 'Taxi', es: 'Taxi'),
+          ),
+          _cancellationCutoffField(
+            controller: _cancellationAirportCutoffCtrl,
+            label: _t(
+              nl: 'Luchthavenritten',
+              en: 'Airport transfers',
+              fr: 'Transferts aeroport',
+              es: 'Traslados al aeropuerto',
+            ),
+          ),
+          _cancellationCutoffField(
+            controller: _cancellationBusinessCutoffCtrl,
+            label: _t(
+              nl: 'Zakelijke ritten',
+              en: 'Business rides',
+              fr: 'Courses professionnelles',
+              es: 'Viajes de empresa',
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            _t(
+              nl: 'Betaalde boekingen',
+              en: 'Paid bookings',
+              fr: 'Reservations payees',
+              es: 'Reservas pagadas',
+            ),
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 12.8,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+            decoration: BoxDecoration(
+              color: const Color(0xFF0B0B0B),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: const Color(0x22FFFFFF)),
+            ),
+            child: Text(
+              _t(
+                nl: 'Handmatige beoordeling vereist',
+                en: 'Manual review required',
+                fr: 'Verification manuelle requise',
+                es: 'Revision manual requerida',
+              ),
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 12.5,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+          if (_cancellationPolicyStatus != null) ...[
+            const SizedBox(height: 8),
+            Text(
+              _cancellationPolicyStatus!,
+              style: const TextStyle(color: Color(0xFF34D29A), fontSize: 11.8),
+            ),
+          ],
+          if (_cancellationPolicyError != null) ...[
+            const SizedBox(height: 8),
+            Text(
+              _cancellationPolicyError!,
+              style: const TextStyle(color: Colors.redAccent, fontSize: 11.8),
+            ),
+          ],
+          const SizedBox(height: 8),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: FilledButton.icon(
+              onPressed: _cancellationPolicyLoading || _cancellationPolicySaving
+                  ? null
+                  : () =>
+                        _saveCancellationPolicyProfile(showErrorSnackBar: true),
+              icon: _cancellationPolicySaving
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.save_outlined),
+              label: Text(
+                _t(nl: 'Opslaan', en: 'Save', fr: 'Enregistrer', es: 'Guardar'),
+              ),
+            ),
           ),
         ],
       ),
@@ -2425,6 +2703,25 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     final failedParts = <String>[];
     final saveAirportRules =
         _airportFixedFaresDirty && !_airportFixedFaresLoading;
+    final cancellationCandidate = _cancellationPolicyProfileFromFormOrNull();
+    if (cancellationCandidate == null) {
+      final msg = _t(
+        nl: 'Ongeldige waarde in Annulatiebeleid. Gebruik minuten van 0 tot en met 10080.',
+        en: 'Invalid value in Cancellation policy. Use minutes between 0 and 10080.',
+        fr: 'Valeur invalide dans la politique d annulation. Utilisez des minutes entre 0 et 10080.',
+        es: 'Valor invalido en Politica de cancelacion. Usa minutos entre 0 y 10080.',
+      );
+      setState(() {
+        _cancellationPolicyError = msg;
+        _cancellationPolicyStatus = null;
+      });
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(msg)));
+      }
+      return;
+    }
     setState(() => _saveAllBusy = true);
     try {
       updateBusinessSettings(
@@ -2548,6 +2845,20 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
             en: 'VAT profile',
             fr: 'profil TVA',
             es: 'perfil IVA',
+          ),
+        );
+      }
+
+      final cancellationSaved = await _saveCancellationPolicyProfile(
+        showErrorSnackBar: false,
+      );
+      if (!cancellationSaved) {
+        failedParts.add(
+          _t(
+            nl: 'annulatiebeleid',
+            en: 'cancellation policy',
+            fr: 'politique d annulation',
+            es: 'politica de cancelacion',
           ),
         );
       }
@@ -4925,6 +5236,49 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     );
   }
 
+  Widget _cancellationCutoffField({
+    required TextEditingController controller,
+    required String label,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: TextField(
+        controller: controller,
+        keyboardType: TextInputType.number,
+        inputFormatters: <TextInputFormatter>[
+          FilteringTextInputFormatter.allow(RegExp(r'[0-9]')),
+        ],
+        style: const TextStyle(color: Colors.white),
+        decoration: InputDecoration(
+          labelText: label,
+          labelStyle: const TextStyle(color: Colors.white70),
+          helperText: _t(
+            nl: 'Minuten voor vertrek (0-10080)',
+            en: 'Minutes before departure (0-10080)',
+            fr: 'Minutes avant depart (0-10080)',
+            es: 'Minutos antes de la salida (0-10080)',
+          ),
+          helperStyle: const TextStyle(color: Colors.white54, fontSize: 11.5),
+          floatingLabelBehavior: FloatingLabelBehavior.always,
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 14,
+            vertical: 16,
+          ),
+          filled: true,
+          fillColor: const Color(0xFF0B0B0B),
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(10),
+            borderSide: const BorderSide(color: Color(0x22FFFFFF)),
+          ),
+          enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(10),
+            borderSide: const BorderSide(color: Color(0x22FFFFFF)),
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _optionsChecklist({
     required List<AppOption> options,
     required Set<String> selected,
@@ -4965,6 +5319,11 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     return parsed != null && parsed.isFinite && parsed > 0;
   }
 
+  bool _validCutoffMinutes(String value) {
+    final parsed = int.tryParse(value.trim());
+    return parsed != null && parsed >= 0 && parsed <= 10080;
+  }
+
   Color get _setupGold => appConfig.primaryColor;
 
   String _statusLabel(_SetupStatus status) {
@@ -4980,7 +5339,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         return _t(
           nl: 'Aandacht nodig',
           en: 'Needs attention',
-          fr: 'Attention requise',
+          fr: 'A verifier',
           es: 'Requiere atenciÃ³n',
         );
       case _SetupStatus.incomplete:
@@ -5077,6 +5436,29 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     final score = checks.where((v) => v).length;
     if (score == checks.length) return _SetupStatus.complete;
     if (score >= 1) return _SetupStatus.attention;
+    return _SetupStatus.incomplete;
+  }
+
+  _SetupStatus _cancellationPolicySetupStatus() {
+    final hasAllowFlag =
+        _allowCustomerOnlineCancellation == true ||
+        _allowCustomerOnlineCancellation == false;
+    final hasTaxi = _validCutoffMinutes(_cancellationTaxiCutoffCtrl.text);
+    final hasAirport = _validCutoffMinutes(_cancellationAirportCutoffCtrl.text);
+    final hasBusiness = _validCutoffMinutes(
+      _cancellationBusinessCutoffCtrl.text,
+    );
+    final hasPaidMode = _paidBookingCancellationMode == 'review_required';
+    final checks = <bool>[
+      hasAllowFlag,
+      hasTaxi,
+      hasAirport,
+      hasBusiness,
+      hasPaidMode,
+    ];
+    final score = checks.where((v) => v).length;
+    if (score == checks.length) return _SetupStatus.complete;
+    if (score >= 3) return _SetupStatus.attention;
     return _SetupStatus.incomplete;
   }
 
@@ -5182,6 +5564,22 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         ),
         icon: Icons.local_offer_outlined,
         status: _pricingStatus(),
+      ),
+      _SetupItem(
+        title: _t(
+          nl: 'Annulatiebeleid',
+          en: 'Cancellation policy',
+          fr: 'Politique d annulation',
+          es: 'Politica de cancelacion',
+        ),
+        subtitle: _t(
+          nl: 'Online annuleren en tijdsvensters',
+          en: 'Online cancellation and cutoffs',
+          fr: 'Annulation en ligne et delais',
+          es: 'Cancelacion online y ventanas',
+        ),
+        icon: Icons.cancel_schedule_send_outlined,
+        status: _cancellationPolicySetupStatus(),
       ),
       _SetupItem(
         title: _t(
@@ -7049,69 +7447,6 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
               ),
             ),
             _collapsibleSettingsCard(
-              id: 'service_setup',
-              icon: Icons.local_taxi_outlined,
-              title: _t(
-                nl: 'Service setup',
-                en: 'Service setup',
-                fr: 'Configuration des services',
-                es: 'Configuracion de servicios',
-              ),
-              subtitle: _t(
-                nl: 'Services, tiers en opties',
-                en: 'Services, tiers and options',
-                fr: 'Services, catÃ©gories et options',
-                es: 'Servicios, categorÃ­as y opciones',
-              ),
-              status: _servicesTiersStatus(),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    _t(
-                      nl: 'Ingeschakelde services',
-                      en: 'Enabled services',
-                      fr: 'Services actifs',
-                      es: 'Servicios habilitados',
-                    ),
-                  ),
-                  _optionsChecklist(
-                    options: appConfig.enabledServices,
-                    selected: _serviceIds,
-                    onChanged: (next) => setState(() => _serviceIds = next),
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    _t(
-                      nl: 'Ingeschakelde tiers',
-                      en: 'Enabled tiers',
-                      fr: 'Categories actives',
-                      es: 'Categorias habilitadas',
-                    ),
-                  ),
-                  _optionsChecklist(
-                    options: appConfig.enabledTiers,
-                    selected: _tierIds,
-                    onChanged: (next) => setState(() => _tierIds = next),
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    _t(
-                      nl: 'Ingeschakelde extra opties',
-                      en: 'Enabled extra options',
-                      fr: 'Options extra actives',
-                      es: 'Opciones extra habilitadas',
-                    ),
-                  ),
-                  _optionsChecklist(
-                    options: appConfig.enabledExtraOptions,
-                    selected: _extraIds,
-                    onChanged: (next) => setState(() => _extraIds = next),
-                  ),
-                ],
-              ),
-            ),
-            _collapsibleSettingsCard(
               id: 'pricing_engine',
               icon: Icons.local_offer_outlined,
               title: _t(
@@ -7305,6 +7640,70 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                       fr: 'Supplement carburant',
                       es: 'Recargo de combustible',
                     ),
+                  ),
+                ],
+              ),
+            ),
+            _cancellationPolicyCard(),
+            _collapsibleSettingsCard(
+              id: 'service_setup',
+              icon: Icons.local_taxi_outlined,
+              title: _t(
+                nl: 'Service setup',
+                en: 'Service setup',
+                fr: 'Configuration des services',
+                es: 'Configuracion de servicios',
+              ),
+              subtitle: _t(
+                nl: 'Services, tiers en opties',
+                en: 'Services, tiers and options',
+                fr: 'Services, categories et options',
+                es: 'Servicios, categorias y opciones',
+              ),
+              status: _servicesTiersStatus(),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    _t(
+                      nl: 'Ingeschakelde services',
+                      en: 'Enabled services',
+                      fr: 'Services actifs',
+                      es: 'Servicios habilitados',
+                    ),
+                  ),
+                  _optionsChecklist(
+                    options: appConfig.enabledServices,
+                    selected: _serviceIds,
+                    onChanged: (next) => setState(() => _serviceIds = next),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    _t(
+                      nl: 'Ingeschakelde tiers',
+                      en: 'Enabled tiers',
+                      fr: 'Categories actives',
+                      es: 'Categorias habilitadas',
+                    ),
+                  ),
+                  _optionsChecklist(
+                    options: appConfig.enabledTiers,
+                    selected: _tierIds,
+                    onChanged: (next) => setState(() => _tierIds = next),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    _t(
+                      nl: 'Ingeschakelde extra opties',
+                      en: 'Enabled extra options',
+                      fr: 'Options extra actives',
+                      es: 'Opciones extra habilitadas',
+                    ),
+                  ),
+                  _optionsChecklist(
+                    options: appConfig.enabledExtraOptions,
+                    selected: _extraIds,
+                    onChanged: (next) => setState(() => _extraIds = next),
                   ),
                 ],
               ),

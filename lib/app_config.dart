@@ -617,6 +617,122 @@ class BackendTaxProfile {
   };
 }
 
+class BackendCancellationPolicyProfile {
+  final int version;
+  final bool allowCustomerOnlineCancellation;
+  final int taxiCutoffMinutes;
+  final int airportCutoffMinutes;
+  final int businessCutoffMinutes;
+  final String paidBookingCancellationMode;
+  final String updatedAt;
+
+  const BackendCancellationPolicyProfile({
+    required this.version,
+    required this.allowCustomerOnlineCancellation,
+    required this.taxiCutoffMinutes,
+    required this.airportCutoffMinutes,
+    required this.businessCutoffMinutes,
+    required this.paidBookingCancellationMode,
+    required this.updatedAt,
+  });
+
+  factory BackendCancellationPolicyProfile.defaults() =>
+      const BackendCancellationPolicyProfile(
+        version: 1,
+        allowCustomerOnlineCancellation: true,
+        taxiCutoffMinutes: 120,
+        airportCutoffMinutes: 1440,
+        businessCutoffMinutes: 1440,
+        paidBookingCancellationMode: 'review_required',
+        updatedAt: '',
+      );
+
+  factory BackendCancellationPolicyProfile.fromJson(Map<String, dynamic> json) {
+    final fallback = BackendCancellationPolicyProfile.defaults();
+
+    int intValue(String snake, String camel, int fallbackValue) {
+      final raw = json[snake] ?? json[camel];
+      final n = raw is num ? raw.toInt() : int.tryParse(raw?.toString() ?? '');
+      if (n == null || n < 0) return fallbackValue;
+      return n;
+    }
+
+    bool boolValue(String snake, String camel, bool fallbackValue) {
+      final raw = json[snake] ?? json[camel];
+      if (raw is bool) return raw;
+      final text = (raw ?? '').toString().trim().toLowerCase();
+      if (text == 'true' || text == '1' || text == 'yes') return true;
+      if (text == 'false' || text == '0' || text == 'no') return false;
+      return fallbackValue;
+    }
+
+    String textValue(String snake, String camel, String fallbackValue) {
+      final text = (json[snake] ?? json[camel] ?? fallbackValue)
+          .toString()
+          .trim();
+      return text.isEmpty ? fallbackValue : text;
+    }
+
+    final mode = textValue(
+      'paid_booking_cancellation_mode',
+      'paidBookingCancellationMode',
+      fallback.paidBookingCancellationMode,
+    ).toLowerCase();
+
+    return BackendCancellationPolicyProfile(
+      version: intValue('version', 'version', fallback.version),
+      allowCustomerOnlineCancellation: boolValue(
+        'allow_customer_online_cancellation',
+        'allowCustomerOnlineCancellation',
+        fallback.allowCustomerOnlineCancellation,
+      ),
+      taxiCutoffMinutes: intValue(
+        'taxi_cutoff_minutes',
+        'taxiCutoffMinutes',
+        fallback.taxiCutoffMinutes,
+      ),
+      airportCutoffMinutes: intValue(
+        'airport_cutoff_minutes',
+        'airportCutoffMinutes',
+        fallback.airportCutoffMinutes,
+      ),
+      businessCutoffMinutes: intValue(
+        'business_cutoff_minutes',
+        'businessCutoffMinutes',
+        fallback.businessCutoffMinutes,
+      ),
+      paidBookingCancellationMode: mode.isEmpty
+          ? fallback.paidBookingCancellationMode
+          : mode,
+      updatedAt: textValue('updated_at', 'updatedAt', fallback.updatedAt),
+    );
+  }
+
+  Map<String, dynamic> toJson() => <String, dynamic>{
+    'version': version,
+    'allow_customer_online_cancellation': allowCustomerOnlineCancellation,
+    'allowCustomerOnlineCancellation': allowCustomerOnlineCancellation,
+    'taxi_cutoff_minutes': taxiCutoffMinutes,
+    'taxiCutoffMinutes': taxiCutoffMinutes,
+    'airport_cutoff_minutes': airportCutoffMinutes,
+    'airportCutoffMinutes': airportCutoffMinutes,
+    'business_cutoff_minutes': businessCutoffMinutes,
+    'businessCutoffMinutes': businessCutoffMinutes,
+    'paid_booking_cancellation_mode': paidBookingCancellationMode,
+    'paidBookingCancellationMode': paidBookingCancellationMode,
+    'updated_at': updatedAt,
+    'updatedAt': updatedAt,
+  };
+
+  Map<String, dynamic> toApiPayload() => <String, dynamic>{
+    'allow_customer_online_cancellation': allowCustomerOnlineCancellation,
+    'taxi_cutoff_minutes': taxiCutoffMinutes,
+    'airport_cutoff_minutes': airportCutoffMinutes,
+    'business_cutoff_minutes': businessCutoffMinutes,
+    'paid_booking_cancellation_mode': paidBookingCancellationMode,
+  };
+}
+
 class BackendSubscriptionProfile {
   final String tenantId;
   final String companyId;
@@ -1702,14 +1818,14 @@ BusinessSettingsState _decodeBusinessSettings(
   Map<String, dynamic> m, {
   required BusinessSettingsState fallback,
 }) {
-  Set<String> _setOf(dynamic v, Set<String> fb) {
+  Set<String> setOf(dynamic v, Set<String> fb) {
     if (v is List) {
       return v.map((e) => e.toString()).toSet();
     }
     return fb;
   }
 
-  double _toDouble(dynamic v, double fb) {
+  double toDouble(dynamic v, double fb) {
     if (v is num) return v.toDouble();
     final parsed = double.tryParse((v ?? '').toString());
     return parsed ?? fb;
@@ -1733,74 +1849,74 @@ BusinessSettingsState _decodeBusinessSettings(
     use24HourTime: (m['use24HourTime'] is bool)
         ? m['use24HourTime'] as bool
         : fallback.use24HourTime,
-    enabledServiceIds: _setOf(
+    enabledServiceIds: setOf(
       m['enabledServiceIds'],
       fallback.enabledServiceIds,
     ),
-    enabledTierIds: _setOf(m['enabledTierIds'], fallback.enabledTierIds),
-    enabledExtraOptionIds: _setOf(
+    enabledTierIds: setOf(m['enabledTierIds'], fallback.enabledTierIds),
+    enabledExtraOptionIds: setOf(
       m['enabledExtraOptionIds'],
       fallback.enabledExtraOptionIds,
     ),
     bookingSender: (m['bookingSender'] ?? fallback.bookingSender).toString(),
     bookingReplyTo: (m['bookingReplyTo'] ?? fallback.bookingReplyTo).toString(),
     whatsappNumber: (m['whatsappNumber'] ?? fallback.whatsappNumber).toString(),
-    pricingBaseFare: _toDouble(m['pricingBaseFare'], fallback.pricingBaseFare),
-    pricingPerKm: _toDouble(m['pricingPerKm'], fallback.pricingPerKm),
-    pricingPerMinute: _toDouble(
+    pricingBaseFare: toDouble(m['pricingBaseFare'], fallback.pricingBaseFare),
+    pricingPerKm: toDouble(m['pricingPerKm'], fallback.pricingPerKm),
+    pricingPerMinute: toDouble(
       m['pricingPerMinute'],
       fallback.pricingPerMinute,
     ),
-    pricingMinimumFare: _toDouble(
+    pricingMinimumFare: toDouble(
       m['pricingMinimumFare'],
       fallback.pricingMinimumFare,
     ),
-    pricingWaitPerMinute: _toDouble(
+    pricingWaitPerMinute: toDouble(
       m['pricingWaitPerMinute'],
       fallback.pricingWaitPerMinute,
     ),
     pricingReturnEnabled: (m['pricingReturnEnabled'] is bool)
         ? m['pricingReturnEnabled'] as bool
         : fallback.pricingReturnEnabled,
-    pricingReturnFee: _toDouble(
+    pricingReturnFee: toDouble(
       m['pricingReturnFee'],
       fallback.pricingReturnFee,
     ),
-    pricingFuelSurcharge: _toDouble(
+    pricingFuelSurcharge: toDouble(
       m['pricingFuelSurcharge'],
       fallback.pricingFuelSurcharge,
     ),
-    pricingVatRate: _toDouble(m['pricingVatRate'], fallback.pricingVatRate),
+    pricingVatRate: toDouble(m['pricingVatRate'], fallback.pricingVatRate),
     pricingVatMode: (m['pricingVatMode'] ?? fallback.pricingVatMode).toString(),
-    pricingBagFeeEach: _toDouble(
+    pricingBagFeeEach: toDouble(
       m['pricingBagFeeEach'],
       fallback.pricingBagFeeEach,
     ),
-    pricingStopFeeEach: _toDouble(
+    pricingStopFeeEach: toDouble(
       m['pricingStopFeeEach'],
       fallback.pricingStopFeeEach,
     ),
-    pricingTierFeeComfort: _toDouble(
+    pricingTierFeeComfort: toDouble(
       m['pricingTierFeeComfort'],
       fallback.pricingTierFeeComfort,
     ),
-    pricingTierFeePrivate: _toDouble(
+    pricingTierFeePrivate: toDouble(
       m['pricingTierFeePrivate'],
       fallback.pricingTierFeePrivate,
     ),
-    pricingTierFeePremium: _toDouble(
+    pricingTierFeePremium: toDouble(
       m['pricingTierFeePremium'],
       fallback.pricingTierFeePremium,
     ),
-    pricingNightSurchargeRate: _toDouble(
+    pricingNightSurchargeRate: toDouble(
       m['pricingNightSurchargeRate'],
       fallback.pricingNightSurchargeRate,
     ),
-    pricingWeekendSurchargeRate: _toDouble(
+    pricingWeekendSurchargeRate: toDouble(
       m['pricingWeekendSurchargeRate'],
       fallback.pricingWeekendSurchargeRate,
     ),
-    pricingSurchargeCapRate: _toDouble(
+    pricingSurchargeCapRate: toDouble(
       m['pricingSurchargeCapRate'],
       fallback.pricingSurchargeCapRate,
     ),
@@ -1860,12 +1976,12 @@ VehicleProfile _decodeVehicle(
   Map<String, dynamic> m, {
   required VehicleProfile fallback,
 }) {
-  int _toInt(dynamic v, int fb) {
+  int toInt(dynamic v, int fb) {
     if (v is int) return v;
     return int.tryParse(v?.toString() ?? '') ?? fb;
   }
 
-  List<String> _toStringList(dynamic v) {
+  List<String> toStringList(dynamic v) {
     if (v is List) {
       return v
           .map((e) => e.toString())
@@ -1880,7 +1996,7 @@ VehicleProfile _decodeVehicle(
   // - new shape has primaryPhotoRef + galleryPhotoRefs
   final legacyPhoto = (m['photoRef'] ?? fallback.primaryPhotoRef).toString();
   final primaryPhoto = (m['primaryPhotoRef'] ?? legacyPhoto).toString();
-  final gallery = _toStringList(m['galleryPhotoRefs']);
+  final gallery = toStringList(m['galleryPhotoRefs']);
   final String? publicPhotoUrl = () {
     final raw = m['publicPhotoUrl'];
     if (raw == null) return null;
@@ -1908,11 +2024,11 @@ VehicleProfile _decodeVehicle(
         (m['vehicleRegistrationNumber'] ?? fallback.vehicleRegistrationNumber)
             .toString(),
     color: (m['color'] ?? fallback.color).toString(),
-    passengerCapacity: _toInt(
+    passengerCapacity: toInt(
       m['passengerCapacity'],
       fallback.passengerCapacity,
     ),
-    luggageCapacity: _toInt(m['luggageCapacity'], fallback.luggageCapacity),
+    luggageCapacity: toInt(m['luggageCapacity'], fallback.luggageCapacity),
     tierId: (m['tierId'] ?? fallback.tierId).toString(),
     isActive: (m['isActive'] is bool)
         ? m['isActive'] as bool
@@ -3404,6 +3520,66 @@ Future<BackendTaxProfile> saveBackendTaxProfile(
   final saved = decoded['tax_profile'];
   if (saved is! Map) throw Exception('Missing tax_profile');
   return BackendTaxProfile.fromJson(Map<String, dynamic>.from(saved));
+}
+
+Future<BackendCancellationPolicyProfile> fetchBackendCancellationPolicyProfile({
+  String? tenantId,
+  String? companyId,
+}) async {
+  final endpoint = _withAdminTenantCompanyScope(
+    Uri.parse('${appConfig.bookingBaseUrl}/admin/cancellation-policy/profile'),
+    tenantId: tenantId,
+    companyId: companyId,
+  );
+  final res = await http
+      .get(endpoint, headers: _adminJsonHeaders())
+      .timeout(const Duration(seconds: 12));
+  if (res.statusCode < 200 || res.statusCode >= 300) {
+    throw Exception('HTTP ${res.statusCode}: ${res.body}');
+  }
+  final decoded = jsonDecode(res.body);
+  if (decoded is! Map) throw Exception('Invalid response');
+  final profile = decoded['cancellation_policy_profile'];
+  if (profile is! Map) throw Exception('Missing cancellation_policy_profile');
+  return BackendCancellationPolicyProfile.fromJson(
+    Map<String, dynamic>.from(profile),
+  );
+}
+
+Future<BackendCancellationPolicyProfile> saveBackendCancellationPolicyProfile(
+  BackendCancellationPolicyProfile profile, {
+  String? tenantId,
+  String? companyId,
+}) async {
+  final endpoint = _withAdminTenantCompanyScope(
+    Uri.parse('${appConfig.bookingBaseUrl}/admin/cancellation-policy/profile'),
+    tenantId: tenantId,
+    companyId: companyId,
+  );
+  final scope = _resolveAdminTenantCompanyScope(
+    tenantId: tenantId,
+    companyId: companyId,
+  );
+  final res = await http
+      .post(
+        endpoint,
+        headers: _adminJsonHeaders(),
+        body: jsonEncode(<String, dynamic>{
+          ...scope,
+          'cancellation_policy_profile': profile.toApiPayload(),
+        }),
+      )
+      .timeout(const Duration(seconds: 12));
+  if (res.statusCode < 200 || res.statusCode >= 300) {
+    throw Exception('HTTP ${res.statusCode}: ${res.body}');
+  }
+  final decoded = jsonDecode(res.body);
+  if (decoded is! Map) throw Exception('Invalid response');
+  final saved = decoded['cancellation_policy_profile'];
+  if (saved is! Map) throw Exception('Missing cancellation_policy_profile');
+  return BackendCancellationPolicyProfile.fromJson(
+    Map<String, dynamic>.from(saved),
+  );
 }
 
 Future<BackendSubscriptionProfile> fetchBackendSubscriptionProfile({
