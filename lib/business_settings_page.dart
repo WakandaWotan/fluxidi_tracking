@@ -604,7 +604,10 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
       _cancellationPolicyStatus = null;
     });
     try {
-      final scope = _activeSettingsScope();
+      final scope = _strictSettingsScopeForAction(
+        action: 'save_cancellation_policy_profile',
+      );
+      if (scope == null) return false;
       final saved = await saveBackendCancellationPolicyProfile(
         profile,
         tenantId: scope.tenantId,
@@ -1146,7 +1149,10 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
   Future<void> _startGoogleCalendarReconnect() async {
     setState(() => _googleCalendarReconnectLoading = true);
     try {
-      final scope = _activeSettingsScope();
+      final scope = _strictSettingsScopeForAction(
+        action: 'start_google_calendar_reconnect',
+      );
+      if (scope == null) return;
       final data = await startBackendGoogleCalendarOAuth(
         tenantId: scope.tenantId,
         companyId: scope.companyId,
@@ -1251,7 +1257,10 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     if (!confirmed || !mounted) return;
     setState(() => _googleCalendarDisconnectLoading = true);
     try {
-      final scope = _activeSettingsScope();
+      final scope = _strictSettingsScopeForAction(
+        action: 'disconnect_google_calendar',
+      );
+      if (scope == null) return;
       await disconnectBackendGoogleCalendar(
         tenantId: scope.tenantId,
         companyId: scope.companyId,
@@ -2973,10 +2982,15 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         syncToBackend: false,
       );
 
-      final pricingSynced = await syncPricingProfileToBackend(
-        tenantId: scope.tenantId,
-        companyId: scope.companyId,
+      final pricingScope = _strictSettingsScopeForAction(
+        action: 'save_pricing_sync',
       );
+      final pricingSynced = pricingScope == null
+          ? false
+          : await syncPricingProfileToBackend(
+              tenantId: pricingScope.tenantId,
+              companyId: pricingScope.companyId,
+            );
       if (!pricingSynced) {
         failedParts.add(
           _t(
@@ -4081,7 +4095,10 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
       _airportFixedFaresStatus = null;
     });
     try {
-      final scope = _activeSettingsScope();
+      final scope = _strictSettingsScopeForAction(
+        action: 'save_airport_fixed_fare_rules',
+      );
+      if (scope == null) return false;
       final payloadRules = _airportFixedFareRules
           .map((rule) => Map<String, dynamic>.from(rule))
           .toList(growable: false);

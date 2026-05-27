@@ -62,6 +62,31 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
     return false;
   }
 
+  void _showMissingStrictReceiptPaymentScopeSnackbar(BuildContext context) {
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text(
+          'Backend synchronisatie vereist een actieve bedrijfssessie. Herkoppel of herstel eerst uw bedrijf.',
+        ),
+      ),
+    );
+  }
+
+  Map<String, String>? _strictReceiptPaymentScopeForMutation({
+    required BuildContext context,
+    required String action,
+    bool showUx = true,
+  }) {
+    final strictScope = _strictActiveBookingScopeQuery();
+    if (strictScope != null) return strictScope;
+    debugPrint(
+      '[RECEIPT_PAYMENT_SCOPE][BLOCK] reason=missing_strict_company_scope action=$action',
+    );
+    if (showUx) _showMissingStrictReceiptPaymentScopeSnackbar(context);
+    return null;
+  }
+
   @override
   void initState() {
     super.initState();
@@ -2404,6 +2429,11 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
   }) async {
     if (!_guardDriverReceiptOperation(action: 'persist_payment_$method'))
       return;
+    final strictScope = _strictReceiptPaymentScopeForMutation(
+      context: context,
+      action: 'persist_in_car_payment',
+    );
+    if (strictScope == null) return;
     final bookingId = (item.bookingId ?? '').trim();
     final tripId = item.tripId.trim();
     final normalizedMethod = method.toLowerCase().trim();
@@ -2441,7 +2471,7 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
         if (legId.isNotEmpty) 'leg_id': legId,
         if (legType.isNotEmpty) 'leg_type': legType,
         if (rowKey.isNotEmpty) 'row_key': rowKey,
-        ..._activeBookingScopeQuery(),
+        ...strictScope,
         'payment_status': 'paid',
         'payment_method': normalizedMethod,
         'payment_source': 'in_car',
@@ -2460,7 +2490,9 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
         headers['x-admin-token'] = kAdminToken.trim();
       }
       try {
-        final uri = _withActiveBookingScope(kWorkerBaseUrl, '/trip/payment');
+        final uri = Uri.parse(
+          '$kWorkerBaseUrl/trip/payment',
+        ).replace(queryParameters: strictScope);
         if (useLegTripPaymentPath) {
           debugPrint(
             '[RECEIPT_PAYMENT][LEG_TRIP_PAYMENT] tripId=$tripId bookingId=$bookingId legId=$legId legType=$legType parentBookingId=$parentBookingId method=$normalizedMethod',
@@ -2536,7 +2568,7 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
       'payment_status': 'paid',
       'payment_method': normalizedMethod,
       'payment_source': 'in_car',
-      ..._activeBookingScopeQuery(),
+      ...strictScope,
       'currency': item.currency.trim().isEmpty
           ? 'EUR'
           : item.currency.trim().toUpperCase(),
@@ -2556,10 +2588,9 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
       debugPrint(
         '[RECEIPT_PAYMENT][PARENT_BOOKING_PAYMENT] bookingId=$bookingId method=$normalizedMethod',
       );
-      final uri = _withActiveBookingScope(
-        kBookingBaseUrl,
-        '/bookings/${Uri.encodeComponent(bookingId)}/payment',
-      );
+      final uri = Uri.parse(
+        '$kBookingBaseUrl/bookings/${Uri.encodeComponent(bookingId)}/payment',
+      ).replace(queryParameters: strictScope);
       final res = await http
           .post(uri, headers: headers, body: jsonEncode(payload))
           .timeout(const Duration(seconds: 12));
