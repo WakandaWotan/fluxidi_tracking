@@ -1153,10 +1153,6 @@ class _BusinessHomePageState extends State<BusinessHomePage>
     if (profileCompany.isNotEmpty) {
       return (tenantId: profileCompany, companyId: profileCompany);
     }
-    final resolved = resolvedCompanyId.trim();
-    if (resolved.isNotEmpty) {
-      return (tenantId: resolved, companyId: resolved);
-    }
     return null;
   }
 
@@ -1266,6 +1262,22 @@ class _BusinessHomePageState extends State<BusinessHomePage>
             ),
           ),
         ),
+      );
+      return;
+    }
+
+    final backendContext = await _resolveBackendUsableCompanyContextForAdmin(
+      reason: 'business_home_pairing_code_create',
+      logDegraded: true,
+    );
+    if (!context.mounted) return;
+    if (!backendContext.usable) {
+      debugPrint(
+        '[PAIR_CODE_CREATE][BLOCKED] code=${backendContext.reasonCode} source=${backendContext.tokenSource}',
+      );
+      await _showDegradedCompanySessionRecoveryDialog(
+        context,
+        reason: 'business_home_pairing_code_create',
       );
       return;
     }
@@ -2874,13 +2886,16 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                   es: 'Equipo',
                                 ),
                                 onTap: () async {
-                                  final hasToken =
-                                      await _hasUsableCompanyBootstrapToken(
+                                  final backendContext =
+                                      await _resolveBackendUsableCompanyContextForAdmin(
                                         reason: 'business_home_manage_drivers',
                                         logDegraded: true,
                                       );
                                   if (!context.mounted) return;
-                                  if (!hasToken) {
+                                  if (!backendContext.usable) {
+                                    debugPrint(
+                                      '[COMPANY_SESSION][ADMIN_ENTRY_BLOCKED] flow=business_home_manage_drivers code=${backendContext.reasonCode} source=${backendContext.tokenSource}',
+                                    );
                                     await _showDegradedCompanySessionRecoveryDialog(
                                       context,
                                       reason: 'business_home_manage_drivers',

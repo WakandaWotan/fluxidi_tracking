@@ -403,6 +403,11 @@ class CompanySessionStore {
   CompanyProfile? _profileMemory;
   ActiveCompanySession? _sessionMemory;
 
+  /// Local validity for restoring company UX state on-device.
+  ///
+  /// This is intentionally permissive: sessions without token metadata are
+  /// still considered locally valid so the app can restore local company
+  /// context and show recovery UX for backend-only flows.
   bool _isSessionStillValid(ActiveCompanySession session) {
     final token = (session.companySessionToken ?? '').trim();
     if (token.isEmpty) return true;
@@ -649,6 +654,84 @@ class CompanySessionStore {
     return (token: null, source: 'none');
   }
 
+  /// Backend-usable company context for admin/sync entry points.
+  ///
+  /// Requires:
+  /// - non-empty company scope from active profile/session
+  /// - no profile/session company mismatch when both are present
+  /// - non-empty bootstrap token from accepted sources
+  ///
+  /// Reason codes:
+  /// - ok
+  /// - missing_company_scope
+  /// - profile_session_mismatch
+  /// - missing_token
+  Future<({bool ok, String reason, String tokenSource, String companyId})>
+  resolveBackendUsableCompanyContext({
+    CompanyProfile? profileHint,
+    ActiveCompanySession? sessionHint,
+  }) async {
+    var profile = profileHint ?? companyProfileNotifier.value;
+    profile ??= await loadProfile();
+    var session = sessionHint ?? activeCompanySessionNotifier.value;
+    session ??= await loadSession();
+
+    final profileCompanyId = (profile?.companyId ?? '').trim();
+    final sessionCompanyId = (session?.companyId ?? '').trim();
+
+    if (profileCompanyId.isEmpty && sessionCompanyId.isEmpty) {
+      return (
+        ok: false,
+        reason: 'missing_company_scope',
+        tokenSource: 'none',
+        companyId: '',
+      );
+    }
+    if (profileCompanyId.isNotEmpty &&
+        sessionCompanyId.isNotEmpty &&
+        profileCompanyId != sessionCompanyId) {
+      return (
+        ok: false,
+        reason: 'profile_session_mismatch',
+        tokenSource: 'none',
+        companyId: '',
+      );
+    }
+
+    final scopeCompanyId = sessionCompanyId.isNotEmpty
+        ? sessionCompanyId
+        : profileCompanyId;
+    if (scopeCompanyId.isEmpty) {
+      return (
+        ok: false,
+        reason: 'missing_company_scope',
+        tokenSource: 'none',
+        companyId: '',
+      );
+    }
+
+    final resolved = await resolveCompanyBootstrapToken(
+      preferredSession: session,
+    );
+    final token = (resolved.token ?? '').trim();
+    const acceptedSources = <String>{'notifier', 'session', 'session_alias'};
+    if (token.isEmpty || !acceptedSources.contains(resolved.source)) {
+      return (
+        ok: false,
+        reason: 'missing_token',
+        tokenSource: resolved.source,
+        companyId: scopeCompanyId,
+      );
+    }
+
+    return (
+      ok: true,
+      reason: 'ok',
+      tokenSource: resolved.source,
+      companyId: scopeCompanyId,
+    );
+  }
+
   Future<CompanyProfile?> loadProfile() async {
     try {
       if (_profileMemory != null) return _profileMemory;
@@ -795,7 +878,10 @@ class CompanySessionStore {
     }
   }
 
-  /// Valid when profile exists, active, session matches ids.
+  /// Local company context validity for restoring company screens.
+  ///
+  /// This does not guarantee backend-usable token state. For backend-admin
+  /// entry checks use [resolveBackendUsableCompanyContext].
   bool get hasValidCompanyContext =>
       companyProfileNotifier.value != null &&
       activeCompanySessionNotifier.value != null &&

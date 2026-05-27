@@ -839,6 +839,30 @@ Future<bool> _hasUsableCompanyBootstrapToken({
   return state.hasToken;
 }
 
+Future<({bool usable, String reasonCode, String tokenSource, String companyId})>
+_resolveBackendUsableCompanyContextForAdmin({
+  required String reason,
+  bool logDegraded = false,
+}) async {
+  final state = await CompanySessionStore.instance
+      .resolveBackendUsableCompanyContext();
+  if (!state.ok && logDegraded) {
+    debugPrint(
+      '[COMPANY_SESSION][DEGRADED_ADMIN_CONTEXT] reason=$reason code=${state.reason} token_source=${state.tokenSource}',
+    );
+    if (state.reason == 'missing_token') {
+      debugPrint('[COMPANY_SESSION][DEGRADED_NO_TOKEN] reason=$reason');
+      debugPrint('[COMPANY_SESSION][RECOVERY_REQUIRED] reason=$reason');
+    }
+  }
+  return (
+    usable: state.ok,
+    reasonCode: state.reason,
+    tokenSource: state.tokenSource,
+    companyId: state.companyId,
+  );
+}
+
 Future<void> _runCompanyRelinkActivationFlow(BuildContext context) async {
   const roleEntry = RoleEntryPage();
   final activationCode = await roleEntry._promptCompanyActivationCode(context);
