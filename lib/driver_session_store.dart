@@ -181,6 +181,8 @@ class DriverSessionStore {
   static final DriverSessionStore instance = DriverSessionStore._();
 
   static const String _fileName = 'active_driver_session_v1.json';
+  static const String _businessPreviewFileName =
+      'business_driver_preview_v1.json';
 
   ActiveDriverSession? _cache;
   String _cacheScopeKey = '';
@@ -238,6 +240,20 @@ class DriverSessionStore {
       '[DRIVER_SESSION][PATH] tenant=$tenantId company=$companyId path=${file.path}',
     );
     return file;
+  }
+
+  Future<File> _businessPreviewFile({
+    required String tenantId,
+    required String companyId,
+  }) async {
+    final root = await _stateRootDir();
+    final scopedDir = Directory(
+      '${root.path}${Platform.pathSeparator}tenant_${_safeScopeSegment(tenantId)}${Platform.pathSeparator}company_${_safeScopeSegment(companyId)}',
+    );
+    if (!await scopedDir.exists()) await scopedDir.create(recursive: true);
+    return File(
+      '${scopedDir.path}${Platform.pathSeparator}$_businessPreviewFileName',
+    );
   }
 
   Future<File?> _file() async {
@@ -728,6 +744,77 @@ class DriverSessionStore {
     _cache = null;
     _cacheScopeKey = '';
     activeDriverSessionNotifier.value = null;
+  }
+
+  Future<void> saveBusinessPreviewDriverSelection({
+    required String tenantId,
+    required String companyId,
+    required String driverId,
+  }) async {
+    final normalizedTenantId = tenantId.trim();
+    final normalizedCompanyId = companyId.trim();
+    final normalizedDriverId = driverId.trim();
+    if (normalizedTenantId.isEmpty ||
+        normalizedCompanyId.isEmpty ||
+        normalizedDriverId.isEmpty) {
+      return;
+    }
+    try {
+      final file = await _businessPreviewFile(
+        tenantId: normalizedTenantId,
+        companyId: normalizedCompanyId,
+      );
+      final payload = <String, dynamic>{
+        'version': 1,
+        'tenantId': normalizedTenantId,
+        'companyId': normalizedCompanyId,
+        'previewDriverId': normalizedDriverId,
+        'updatedAt': DateTime.now().toUtc().toIso8601String(),
+      };
+      await file.writeAsString(jsonEncode(payload));
+    } catch (_) {}
+  }
+
+  Future<String?> loadBusinessPreviewDriverSelection({
+    required String tenantId,
+    required String companyId,
+  }) async {
+    final normalizedTenantId = tenantId.trim();
+    final normalizedCompanyId = companyId.trim();
+    if (normalizedTenantId.isEmpty || normalizedCompanyId.isEmpty) return null;
+    try {
+      final file = await _businessPreviewFile(
+        tenantId: normalizedTenantId,
+        companyId: normalizedCompanyId,
+      );
+      if (!await file.exists()) return null;
+      final raw = await file.readAsString();
+      if (raw.trim().isEmpty) return null;
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) return null;
+      final driverId = (decoded['previewDriverId'] ?? '').toString().trim();
+      return driverId.isEmpty ? null : driverId;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> clearBusinessPreviewDriverSelection({
+    required String tenantId,
+    required String companyId,
+  }) async {
+    final normalizedTenantId = tenantId.trim();
+    final normalizedCompanyId = companyId.trim();
+    if (normalizedTenantId.isEmpty || normalizedCompanyId.isEmpty) return;
+    try {
+      final file = await _businessPreviewFile(
+        tenantId: normalizedTenantId,
+        companyId: normalizedCompanyId,
+      );
+      if (await file.exists()) {
+        await file.delete();
+      }
+    } catch (_) {}
   }
 
   DriverProfile? findDriverByEnteredId(

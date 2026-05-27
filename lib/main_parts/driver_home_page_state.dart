@@ -685,6 +685,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       _bootMinElapsed = true;
       _maybeHideBootSplash();
     });
+    unawaited(_restoreBusinessPreviewDriverSelectionOnOpen());
     _refreshBookings(trigger: 'init_boot');
     unawaited(_refreshCompletedTodayCount(reason: 'init_boot'));
     _syncDriverPauseFromProfile(reason: 'init_boot');
@@ -7841,6 +7842,113 @@ class _DriverHomePageState extends State<DriverHomePage>
     return CompanySessionStore.instance.hasValidCompanyContext;
   }
 
+  ({String tenantId, String companyId})? _activeBusinessPreviewScope() {
+    if (!CompanySessionStore.instance.hasValidCompanyContext) return null;
+    final profileCompanyId =
+        companyProfileNotifier.value?.companyId.trim() ?? '';
+    final sessionCompanyId =
+        (activeCompanySessionNotifier.value?.companyId ?? '').trim();
+    if (profileCompanyId.isNotEmpty &&
+        sessionCompanyId.isNotEmpty &&
+        profileCompanyId != sessionCompanyId) {
+      return null;
+    }
+    final resolvedCompanyId = profileCompanyId.isNotEmpty
+        ? profileCompanyId
+        : sessionCompanyId;
+    if (resolvedCompanyId.isEmpty) return null;
+    return (tenantId: resolvedCompanyId, companyId: resolvedCompanyId);
+  }
+
+  ActiveDriverSession _buildBusinessPreviewDriverSession({
+    required DriverProfile driver,
+    required ActiveDriverSession? previous,
+  }) {
+    final now = DateTime.now().toUtc().toIso8601String();
+    final profileCompanyId =
+        companyProfileNotifier.value?.companyId.trim() ?? '';
+    final sessionCompanyId =
+        (activeCompanySessionNotifier.value?.companyId ?? '').trim();
+    final fallbackCompanyId = (driver.companyId ?? '').trim();
+    final resolvedCompanyId = profileCompanyId.isNotEmpty
+        ? profileCompanyId
+        : (sessionCompanyId.isNotEmpty ? sessionCompanyId : fallbackCompanyId);
+    final resolvedTenantId = resolvedCompanyId;
+    final resolvedCompanyCode =
+        (activeCompanySessionNotifier.value?.companyCode ?? '').trim();
+    final previousAssignedVehicleId =
+        (previous?.assignedVehicleId ?? '').trim().isEmpty
+        ? null
+        : previous!.assignedVehicleId!.trim();
+    return ActiveDriverSession(
+      driverId: driver.id.trim(),
+      employeeNumber: driver.employeeNumber.trim(),
+      fullName: driver.fullName,
+      phone: driver.phone,
+      loggedInAt: previous?.loggedInAt ?? now,
+      updatedAt: now,
+      tenantId: resolvedTenantId.isEmpty ? null : resolvedTenantId,
+      companyId: resolvedCompanyId.isEmpty ? null : resolvedCompanyId,
+      companyCode: resolvedCompanyCode.isEmpty ? null : resolvedCompanyCode,
+      assignedVehicleId: previousAssignedVehicleId,
+      linkMethod: kCompanyAdminDriverViewLinkMethod,
+    );
+  }
+
+  Future<void> _restoreBusinessPreviewDriverSelectionOnOpen() async {
+    if (!widget.openedFromBusinessHome) return;
+    final scope = _activeBusinessPreviewScope();
+    if (scope == null) {
+      debugPrint(
+        '[DRIVER_VIEW_ORIGIN][PREVIEW_LOAD] source=business_home driver=missing reason=missing_scope',
+      );
+      return;
+    }
+    final previewDriverId = await DriverSessionStore.instance
+        .loadBusinessPreviewDriverSelection(
+          tenantId: scope.tenantId,
+          companyId: scope.companyId,
+        );
+    if ((previewDriverId ?? '').trim().isEmpty) {
+      debugPrint(
+        '[DRIVER_VIEW_ORIGIN][PREVIEW_LOAD] source=business_home driver=missing reason=no_saved_preview',
+      );
+      return;
+    }
+    final selectableDrivers = _resolveSelectableDriverBridgeCandidatesGlobal(
+      logCandidates: false,
+    );
+    DriverProfile? selectedDriver;
+    for (final driver in selectableDrivers) {
+      if (driver.id.trim() == previewDriverId!.trim()) {
+        selectedDriver = driver;
+        break;
+      }
+    }
+    if (selectedDriver == null) {
+      await DriverSessionStore.instance.clearBusinessPreviewDriverSelection(
+        tenantId: scope.tenantId,
+        companyId: scope.companyId,
+      );
+      debugPrint(
+        '[DRIVER_VIEW_ORIGIN][PREVIEW_LOAD] source=business_home driver=missing reason=invalid_or_inactive',
+      );
+      return;
+    }
+    final previous = activeDriverSessionNotifier.value;
+    activeDriverSessionNotifier.value = _buildBusinessPreviewDriverSession(
+      driver: selectedDriver,
+      previous: previous,
+    );
+    debugPrint(
+      '[DRIVER_VIEW_ORIGIN][PREVIEW_LOAD] source=business_home driver=${_maskBridgeDriverIdGlobal(selectedDriver.id)}',
+    );
+    if (mounted) setState(() {});
+    unawaited(
+      _refreshBookings(force: true, trigger: 'business_preview_restore'),
+    );
+  }
+
   void _goBackToBusinessPageFromDashboard() {
     setAppRole(AppRole.companyAdmin);
     final nav = Navigator.of(context);
@@ -7892,11 +8000,31 @@ class _DriverHomePageState extends State<DriverHomePage>
     debugPrint(
       '[DRIVER_OWNER_BRIDGE][SELECTED] driver=${_maskBridgeDriverIdGlobal(selectedDriver.id)}',
     );
-    await DriverSessionStore.instance.saveFromDriverProfile(
-      selectedDriver,
-      linkMethodOverride: kCompanyAdminDriverViewLinkMethod,
-    );
-    await DriverSessionStore.instance.bootstrap(driversNotifier.value);
+    if (widget.openedFromBusinessHome) {
+      final previous = activeDriverSessionNotifier.value;
+      final previewSession = _buildBusinessPreviewDriverSession(
+        driver: selectedDriver,
+        previous: previous,
+      );
+      activeDriverSessionNotifier.value = previewSession;
+      final scope = _activeBusinessPreviewScope();
+      if (scope != null) {
+        await DriverSessionStore.instance.saveBusinessPreviewDriverSelection(
+          tenantId: scope.tenantId,
+          companyId: scope.companyId,
+          driverId: selectedDriver.id,
+        );
+        debugPrint(
+          '[DRIVER_VIEW_ORIGIN][PREVIEW_SAVE] source=business_home driver=${_maskBridgeDriverIdGlobal(selectedDriver.id)}',
+        );
+      }
+    } else {
+      await DriverSessionStore.instance.saveFromDriverProfile(
+        selectedDriver,
+        linkMethodOverride: kCompanyAdminDriverViewLinkMethod,
+      );
+      await DriverSessionStore.instance.bootstrap(driversNotifier.value);
+    }
     if (!mounted) return;
     if (activeDriverSessionNotifier.value != null) {
       setAppRole(AppRole.driver);
