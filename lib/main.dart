@@ -824,6 +824,193 @@ Future<bool> _hasUsableCompanyBootstrapToken({
   return state.hasToken;
 }
 
+Future<void> _runCompanyRelinkActivationFlow(BuildContext context) async {
+  const roleEntry = RoleEntryPage();
+  final activationCode = await roleEntry._promptCompanyActivationCode(context);
+  if (!context.mounted || activationCode == null) return;
+  if (activationCode == RoleEntryPage._companyRecoveryIntent) {
+    await roleEntry._runCompanyRecoveryFlow(context);
+    return;
+  }
+  if (activationCode == RoleEntryPage._companyPairingOnboardingIntent) {
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          _tr(
+            nl: 'Gebruik activatiecode of herstel om als bedrijf in te loggen.',
+            en: 'Use activation code or recovery to sign in as business owner.',
+            fr: "Utilisez le code d'activation ou la récupération pour vous connecter en tant qu'entreprise.",
+            es: 'Usa el código de activación o recuperación para iniciar sesión como empresa.',
+          ),
+        ),
+      ),
+    );
+    return;
+  }
+  final parsed = roleEntry._parseCompanyActivationCode(activationCode);
+  if (parsed == null) {
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          _tr(
+            nl: 'Ongeldige activatiecode. Gebruik bijvoorbeeld FLX-4821-123456.',
+            en: 'Invalid activation code. Use for example FLX-4821-123456.',
+            fr: 'Code d’activation invalide. Utilisez par exemple FLX-4821-123456.',
+            es: 'Código de activación no válido. Usa por ejemplo FLX-4821-123456.',
+          ),
+        ),
+      ),
+    );
+    return;
+  }
+
+  final verified = await roleEntry._verifyCompanyPairingCode(
+    companyCode: parsed.companyCode,
+    pairingCode: parsed.pairingCode,
+  );
+  if (!context.mounted) return;
+  if (verified['ok'] != true) {
+    final errorCode = roleEntry
+        ._safePairingText(verified['error'])
+        .toLowerCase();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(roleEntry._companyPairingErrorText(errorCode))),
+    );
+    return;
+  }
+
+  final payload = verified['payload'] is Map
+      ? Map<String, dynamic>.from(verified['payload'] as Map)
+      : <String, dynamic>{};
+  await roleEntry._showCompanyPairingSuccessDialog(context);
+  if (!context.mounted) return;
+  final opened = await roleEntry._openVerifiedCompanySession(context, payload);
+  if (!context.mounted) return;
+  if (!opened) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          roleEntry._companyPairingErrorText('verification_failed'),
+        ),
+      ),
+    );
+  }
+}
+
+Future<void> _switchCompanyFromRecoveryDialog(BuildContext context) async {
+  await CompanySessionStore.instance.clearLocalCompanyState();
+  if (!context.mounted) return;
+  Navigator.of(context).pushAndRemoveUntil(
+    MaterialPageRoute<void>(builder: (_) => const RoleEntryPage()),
+    (route) => false,
+  );
+}
+
+Future<void> _showDegradedCompanySessionRecoveryDialog(
+  BuildContext context, {
+  required String reason,
+}) async {
+  final action = await FluxidiResponsiveDialog.show<String>(
+    context: context,
+    barrierDismissible: true,
+    builder: (dialogContext) {
+      return AlertDialog(
+        backgroundColor: const Color(0xFF111111),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: BorderSide(color: kFluxidiYellow.withOpacity(0.45)),
+        ),
+        title: Text(
+          _tr(
+            nl: 'Bedrijfssessie vereist',
+            en: 'Company session required',
+            fr: 'Session entreprise requise',
+            es: 'Se requiere sesión de empresa',
+          ),
+          style: const TextStyle(color: Colors.white),
+        ),
+        scrollable: true,
+        content: Text(
+          _tr(
+            nl: 'Backend synchronisatie vereist een actieve bedrijfssessie. Herkoppel of herstel eerst uw bedrijf.',
+            en: 'Backend synchronization requires an active company session. Relink or recover your company first.',
+            fr: 'La synchronisation backend nécessite une session entreprise active. Reliez ou récupérez d’abord votre entreprise.',
+            es: 'La sincronización backend requiere una sesión activa de empresa. Vuelve a vincular o recupera la empresa primero.',
+          ),
+          style: TextStyle(color: Colors.white.withOpacity(0.82)),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: Text(
+              _tr(nl: 'Sluiten', en: 'Close', fr: 'Fermer', es: 'Cerrar'),
+            ),
+          ),
+          OutlinedButton(
+            onPressed: () => Navigator.of(dialogContext).pop('recover'),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: Colors.white,
+              side: BorderSide(color: kFluxidiYellow.withOpacity(0.5)),
+            ),
+            child: Text(
+              _tr(
+                nl: 'Herstel bedrijf',
+                en: 'Recover company',
+                fr: "Récupérer l’entreprise",
+                es: 'Recuperar empresa',
+              ),
+            ),
+          ),
+          OutlinedButton(
+            onPressed: () => Navigator.of(dialogContext).pop('relink'),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: Colors.white,
+              side: BorderSide(color: kFluxidiYellow.withOpacity(0.5)),
+            ),
+            child: Text(
+              _tr(
+                nl: 'Herkoppel met activatiecode',
+                en: 'Relink with activation code',
+                fr: "Relier avec code d’activation",
+                es: 'Volver a vincular con código de activación',
+              ),
+            ),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop('switch_company'),
+            child: Text(
+              _tr(
+                nl: 'Ander bedrijf',
+                en: 'Other company',
+                fr: 'Autre entreprise',
+                es: 'Otra empresa',
+              ),
+            ),
+          ),
+        ],
+      );
+    },
+  );
+  if (!context.mounted || action == null) return;
+  debugPrint(
+    '[COMPANY_SESSION][RECOVERY_UI_ACTION] reason=$reason action=$action',
+  );
+  if (action == 'recover') {
+    const roleEntry = RoleEntryPage();
+    await roleEntry._runCompanyRecoveryFlow(context);
+    return;
+  }
+  if (action == 'relink') {
+    await _runCompanyRelinkActivationFlow(context);
+    return;
+  }
+  if (action == 'switch_company') {
+    await _switchCompanyFromRecoveryDialog(context);
+  }
+}
+
 bool _hasRicherLocalCompanyInventoryForBackfill() {
   if (vehiclesNotifier.value.length > 1 || driversNotifier.value.length > 1) {
     return true;
@@ -8194,17 +8381,9 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                       );
                                   if (!context.mounted) return;
                                   if (!hasToken) {
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      SnackBar(
-                                        content: Text(
-                                          _t(
-                                            nl: 'Backend synchronisatie vereist een actieve bedrijfssessie. Herkoppel of herstel eerst uw bedrijf.',
-                                            en: 'Backend synchronization requires an active company session. Relink or recover your company first.',
-                                            fr: 'La synchronisation backend nécessite une session entreprise active. Reliez ou récupérez d’abord votre entreprise.',
-                                            es: 'La sincronización backend requiere una sesión activa de empresa. Vuelve a vincular o recupera la empresa primero.',
-                                          ),
-                                        ),
-                                      ),
+                                    await _showDegradedCompanySessionRecoveryDialog(
+                                      context,
+                                      reason: 'business_home_manage_drivers',
                                     );
                                     return;
                                   }
@@ -8405,18 +8584,7 @@ class _CompanyDriverManagementPageState
     );
     if (!mounted || hasToken || _recoveryHintShown) return;
     _recoveryHintShown = true;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          _tr(
-            nl: 'Backend synchronisatie vereist een actieve bedrijfssessie. Herkoppel of herstel eerst uw bedrijf.',
-            en: 'Backend synchronization requires an active company session. Relink or recover your company first.',
-            fr: 'La synchronisation backend nécessite une session entreprise active. Reliez ou récupérez d’abord votre entreprise.',
-            es: 'La sincronización backend requiere una sesión activa de empresa. Vuelve a vincular o recupera la empresa primero.',
-          ),
-        ),
-      ),
-    );
+    await _showDegradedCompanySessionRecoveryDialog(context, reason: reason);
   }
 
   ({String tenantId, String companyId}) _adminScopeForDriver(
