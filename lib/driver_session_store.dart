@@ -258,27 +258,6 @@ class DriverSessionStore {
     return s;
   }
 
-  Future<ActiveDriverSession?> _readLatestScopedSessionFallback() async {
-    final root = await _stateRootDir();
-    ActiveDriverSession? best;
-    DateTime? bestStamp;
-    await for (final entity in root.list(recursive: true, followLinks: false)) {
-      if (entity is! File) continue;
-      if (!entity.path.endsWith('$_fileName')) continue;
-      final session = await _readSession(entity);
-      if (session == null) continue;
-      final stamp =
-          DateTime.tryParse(session.updatedAt)?.toUtc() ??
-          DateTime.tryParse(session.loggedInAt)?.toUtc() ??
-          DateTime.fromMillisecondsSinceEpoch(0, isUtc: true);
-      if (best == null || stamp.isAfter(bestStamp!)) {
-        best = session;
-        bestStamp = stamp;
-      }
-    }
-    return best;
-  }
-
   /// Load parsed session without validation (may be stale).
   Future<ActiveDriverSession?> load() async {
     try {
@@ -312,13 +291,11 @@ class DriverSessionStore {
         return legacy;
       }
 
-      final latestScoped = await _readLatestScopedSessionFallback();
-      if (latestScoped != null) {
+      if (scope == null) {
         debugPrint(
-          '[DRIVER_SESSION][LOAD_FALLBACK] driver=${_maskIdForLog(latestScoped.driverId)} reason=latest_scoped_without_active_company',
+          '[DRIVER_SESSION][LOAD][SKIP_LATEST_SCOPED_NO_ACTIVE_SCOPE]',
         );
-        _cache = latestScoped;
-        return latestScoped;
+        return null;
       }
       return null;
     } catch (e) {
