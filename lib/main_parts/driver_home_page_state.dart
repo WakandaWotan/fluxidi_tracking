@@ -1151,6 +1151,39 @@ class _DriverHomePageState extends State<DriverHomePage>
     );
   }
 
+  void _showMissingStrictBookingScopeSnackbar() {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          _tr(
+            nl: 'Backend synchronisatie vereist een actieve bedrijfssessie. Herkoppel of herstel eerst uw bedrijf.',
+            en: 'Backend synchronization requires an active company session. Relink or recover your company first.',
+            fr: 'La synchronisation backend nécessite une session entreprise active. Reliez ou récupérez d abord votre entreprise.',
+            es: 'La sincronizacion del backend requiere una sesion activa de empresa. Vuelve a vincular o recuperar tu empresa primero.',
+          ),
+        ),
+      ),
+    );
+  }
+
+  Map<String, String>? _strictBookingScopeForMutation({
+    required String action,
+    bool showUx = true,
+  }) {
+    final strictScope = _strictActiveBookingScopeQuery();
+    if (strictScope != null) return strictScope;
+    debugPrint(
+      '[DRIVER_BOOKING_SCOPE][BLOCK] reason=missing_strict_booking_scope action=$action',
+    );
+    if (showUx) _showMissingStrictBookingScopeSnackbar();
+    return null;
+  }
+
+  Uri _uriWithScope(String baseUrl, String path, Map<String, String> scope) {
+    return Uri.parse('$baseUrl$path').replace(queryParameters: scope);
+  }
+
   Future<void> _startTrip(BookingItem b) async {
     try {
       if (!_canOperateBookingWithGuard(
@@ -1165,7 +1198,12 @@ class _DriverHomePageState extends State<DriverHomePage>
       if (_scaffoldKey.currentState?.isDrawerOpen ?? false) {
         Navigator.of(context).pop();
       }
-      final uri = _withActiveBookingScope(kWorkerBaseUrl, kStartTripPath);
+      final strictScope = _strictBookingScopeForMutation(action: 'start_trip');
+      if (strictScope == null) {
+        if (mounted) setState(() => _isStartingTrip = false);
+        return;
+      }
+      final uri = _uriWithScope(kWorkerBaseUrl, kStartTripPath, strictScope);
       final actorDriverId = _resolvedActiveDriverIdForScope().trim();
       final vehicleContext = _plannedTripActorVehicleContext(b);
       final actorVehicleId = vehicleContext.actorVehicleId.trim();
@@ -1182,7 +1220,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         'vehicleId': actorVehicleId,
         'actor_vehicle_id': actorVehicleId,
         'actorVehicleId': actorVehicleId,
-        ..._activeBookingScopeQuery(),
+        ...strictScope,
         // Optional context (helps debugging / future UI)
         'pickup': (b.from ?? '').toString(),
         'dropoff': (b.to ?? '').toString(),
@@ -1421,14 +1459,19 @@ class _DriverHomePageState extends State<DriverHomePage>
     setState(() => _bookingActionInFlight.add(actionKey));
     _markBookingsUiDirty();
     try {
-      final uri = _withActiveBookingScope(
+      final strictScope = _strictBookingScopeForMutation(
+        action: 'set_booking_status',
+      );
+      if (strictScope == null) return;
+      final uri = _uriWithScope(
         kBookingBaseUrl,
         '$kUpdateBookingStatusPath/${Uri.encodeComponent(bookingId)}/status',
+        strictScope,
       );
       final payload = <String, dynamic>{
         'booking_id': bookingId,
         'status': status,
-        ..._activeBookingScopeQuery(),
+        ...strictScope,
         ..._driverMutationActorFields(
           actorVehicleId: _bookingScopeFirstText(
             _bookingScopeViewFor(b),
@@ -1597,9 +1640,14 @@ class _DriverHomePageState extends State<DriverHomePage>
     setState(() => _bookingActionInFlight.add(actionKey));
     _markBookingsUiDirty();
     try {
-      final uri = _withActiveBookingScope(
+      final strictScope = _strictBookingScopeForMutation(
+        action: 'set_operational_leg_status',
+      );
+      if (strictScope == null) return;
+      final uri = _uriWithScope(
         kBookingBaseUrl,
         '/bookings/${Uri.encodeComponent(bookingId)}/legs/${Uri.encodeComponent(legId)}/status',
+        strictScope,
       );
       final actorRole = appRoleNotifier.value == AppRole.driver
           ? 'driver'
@@ -1610,7 +1658,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         'status': status,
         'actor_role': actorRole,
         'actorRole': actorRole,
-        ..._activeBookingScopeQuery(),
+        ...strictScope,
         ..._driverMutationActorFields(
           actorVehicleId: _bookingScopeFirstText(
             _bookingScopeViewFor(b),
@@ -1742,6 +1790,11 @@ class _DriverHomePageState extends State<DriverHomePage>
     if (bookingId.isEmpty || legId.isEmpty) return;
 
     try {
+      final strictScope = _strictBookingScopeForMutation(
+        action: 'record_operational_leg_planned_stop',
+        showUx: false,
+      );
+      if (strictScope == null) return;
       final nowIso = DateTime.now().toUtc().toIso8601String();
       final bookingScope = _bookingScopeViewFor(booking);
       final legType = _operationalLegTypeToken(booking);
@@ -1837,7 +1890,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         'leg_id': legId,
         'leg_type': legType,
         'row_key': rowKey,
-        ..._activeBookingScopeQuery(),
+        ...strictScope,
         'driver_id': kDriverId,
         'vehicle_id': _directRideVehicleId(),
         'origin': <String, dynamic>{
@@ -1881,7 +1934,11 @@ class _DriverHomePageState extends State<DriverHomePage>
       );
       final res = await http
           .post(
-            _withActiveBookingScope(kWorkerBaseUrl, kRecordPlannedTripStopPath),
+            _uriWithScope(
+              kWorkerBaseUrl,
+              kRecordPlannedTripStopPath,
+              strictScope,
+            ),
             headers: _headers(admin: true),
             body: jsonEncode(payload),
           )
@@ -1912,13 +1969,18 @@ class _DriverHomePageState extends State<DriverHomePage>
     setState(() => _bookingActionInFlight.add(actionKey));
     _markBookingsUiDirty();
     try {
-      final uri = _withActiveBookingScope(
+      final strictScope = _strictBookingScopeForMutation(
+        action: 'delete_booking',
+      );
+      if (strictScope == null) return;
+      final uri = _uriWithScope(
         kBookingBaseUrl,
         '$kDeleteBookingPath/${Uri.encodeComponent(bookingId)}/delete',
+        strictScope,
       );
       final payload = <String, dynamic>{
         'booking_id': bookingId,
-        ..._activeBookingScopeQuery(),
+        ...strictScope,
         ..._driverMutationActorFields(
           actorVehicleId: _bookingScopeFirstText(
             _bookingScopeViewFor(b),
@@ -2012,13 +2074,19 @@ class _DriverHomePageState extends State<DriverHomePage>
     required String status,
   }) async {
     try {
-      final uri = _withActiveBookingScope(
+      final strictScope = _strictBookingScopeForMutation(
+        action: 'archive_closed_ride_delete',
+        showUx: false,
+      );
+      if (strictScope == null) return;
+      final uri = _uriWithScope(
         kBookingBaseUrl,
         '$kDeleteBookingPath/${Uri.encodeComponent(bookingId)}/delete',
+        strictScope,
       );
       final payload = <String, dynamic>{
         'booking_id': bookingId,
-        ..._activeBookingScopeQuery(),
+        ...strictScope,
       };
       debugPrint(
         '[RIDES][STATUS->DELETE][REQ] status=$status url=$uri payload=${jsonEncode(payload)}',
@@ -2712,14 +2780,19 @@ class _DriverHomePageState extends State<DriverHomePage>
     final tripId = _activeDirectTripId;
     if (!_directRideActive || tripId == null || tripId.trim().isEmpty) return;
     try {
+      final strictScope = _strictBookingScopeForMutation(
+        action: 'direct_trip_wait_event_$logLabel',
+        showUx: false,
+      );
+      if (strictScope == null) return;
       final payload = <String, dynamic>{
         'trip_id': tripId,
-        ..._activeBookingScopeQuery(),
+        ...strictScope,
         timestampKey: DateTime.now().toUtc().toIso8601String(),
       };
       final res = await http
           .post(
-            _withActiveBookingScope(kWorkerBaseUrl, path),
+            _uriWithScope(kWorkerBaseUrl, path, strictScope),
             headers: _headers(admin: true),
             body: jsonEncode(payload),
           )
@@ -3363,6 +3436,10 @@ class _DriverHomePageState extends State<DriverHomePage>
     required String destination,
   }) async {
     try {
+      final strictScope = _strictBookingScopeForMutation(
+        action: 'start_direct_trip',
+      );
+      if (strictScope == null) return;
       final point = _directRideDestinationPoint;
       final destinationPayload = <String, dynamic>{
         'label': destination,
@@ -3370,7 +3447,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         if (point != null) 'lon': point.lon,
       };
       final payload = <String, dynamic>{
-        ..._activeBookingScopeQuery(),
+        ...strictScope,
         'driver_id': kDriverId,
         'vehicle_id': _directRideVehicleId(),
         'origin': _currentOriginPayload(_lastPos),
@@ -3383,7 +3460,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       };
       final res = await http
           .post(
-            _withActiveBookingScope(kWorkerBaseUrl, kStartDirectTripPath),
+            _uriWithScope(kWorkerBaseUrl, kStartDirectTripPath, strictScope),
             headers: _headers(admin: true),
             body: jsonEncode(payload),
           )
@@ -3415,9 +3492,14 @@ class _DriverHomePageState extends State<DriverHomePage>
     required int waitSecondsTotal,
   }) async {
     try {
+      final strictScope = _strictBookingScopeForMutation(
+        action: 'stop_direct_trip',
+        showUx: false,
+      );
+      if (strictScope == null) return null;
       final payload = <String, dynamic>{
         'trip_id': tripId,
-        ..._activeBookingScopeQuery(),
+        ...strictScope,
         'km_total': kmTotal,
         'wait_seconds_total': waitSecondsTotal,
         'client_stopped_at': DateTime.now().toUtc().toIso8601String(),
@@ -3425,7 +3507,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       };
       final res = await http
           .post(
-            _withActiveBookingScope(kWorkerBaseUrl, kStopDirectTripPath),
+            _uriWithScope(kWorkerBaseUrl, kStopDirectTripPath, strictScope),
             headers: _headers(admin: true),
             body: jsonEncode(payload),
           )
@@ -3457,6 +3539,11 @@ class _DriverHomePageState extends State<DriverHomePage>
     required DateTime stoppedAt,
   }) async {
     try {
+      final strictScope = _strictBookingScopeForMutation(
+        action: 'record_planned_trip_stop',
+        showUx: false,
+      );
+      if (strictScope == null) return;
       var bookingDetails = _plannedBookingDetailsPayload(booking);
       final authoritativeFields = await _fetchPaymentFieldsForHistory(
         booking.bookingId,
@@ -3507,7 +3594,7 @@ class _DriverHomePageState extends State<DriverHomePage>
           BookingItem._toNumOrNull(bookingDetails['booking_total_eur']);
       final payload = <String, dynamic>{
         'booking_id': booking.bookingId,
-        ..._activeBookingScopeQuery(),
+        ...strictScope,
         'driver_id': kDriverId,
         'vehicle_id': _directRideVehicleId(),
         'origin': <String, dynamic>{
@@ -3555,7 +3642,11 @@ class _DriverHomePageState extends State<DriverHomePage>
       };
       final res = await http
           .post(
-            _withActiveBookingScope(kWorkerBaseUrl, kRecordPlannedTripStopPath),
+            _uriWithScope(
+              kWorkerBaseUrl,
+              kRecordPlannedTripStopPath,
+              strictScope,
+            ),
             headers: _headers(admin: true),
             body: jsonEncode(payload),
           )
@@ -4097,11 +4188,16 @@ class _DriverHomePageState extends State<DriverHomePage>
 
     if (trip != null) {
       try {
-        final uri = _withActiveBookingScope(kWorkerBaseUrl, kStopTripPath);
+        final strictScope = _strictBookingScopeForMutation(
+          action: 'stop_trip_session',
+          showUx: false,
+        );
+        if (strictScope == null) return;
+        final uri = _uriWithScope(kWorkerBaseUrl, kStopTripPath, strictScope);
         final payload = <String, dynamic>{
           'session_id': trip,
           'driver_id': kDriverId,
-          ..._activeBookingScopeQuery(),
+          ...strictScope,
           ..._driverMutationActorFields(actorVehicleId: _directRideVehicleId()),
         };
         final res = await http
@@ -4589,13 +4685,18 @@ class _DriverHomePageState extends State<DriverHomePage>
     if (trip == null) return;
 
     try {
-      final uri = _withActiveBookingScope(kWorkerBaseUrl, kPingPath);
+      final strictScope = _strictBookingScopeForMutation(
+        action: 'trip_ping',
+        showUx: false,
+      );
+      if (strictScope == null) return;
+      final uri = _uriWithScope(kWorkerBaseUrl, kPingPath, strictScope);
       final actorVehicleId = _directRideVehicleId();
       final payload = {
         'session_id': trip,
         'driver_id': kDriverId,
         'vehicle_id': actorVehicleId,
-        ..._activeBookingScopeQuery(),
+        ...strictScope,
         'lat': pos.latitude,
         'lon': pos.longitude,
         'speed': (pos.speed.isFinite ? (pos.speed * 3.6) : 0.0),

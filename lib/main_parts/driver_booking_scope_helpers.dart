@@ -217,7 +217,7 @@ String get kOutboundTenantId {
   return kTenantId;
 }
 
-Map<String, String> _activeBookingScopeQuery() {
+Map<String, String> _legacyReadOnlyBookingScopeQueryWithFallback() {
   final activeDriverSession = activeDriverSessionNotifier.value;
   final driverTenantId = (activeDriverSession?.tenantId ?? '').trim();
   final driverCompanyId = (activeDriverSession?.companyId ?? '').trim();
@@ -264,4 +264,50 @@ Map<String, String> _activeBookingScopeQuery() {
     'tenantId': tenantId,
     'companyId': companyId,
   };
+}
+
+/// Legacy read-only compatibility scope.
+///
+/// Mutation/write paths must use [_strictActiveBookingScopeQuery].
+Map<String, String> _activeBookingScopeQuery() {
+  return _legacyReadOnlyBookingScopeQueryWithFallback();
+}
+
+/// Strict scope for booking/trip mutations.
+///
+/// This helper is fail-closed and never falls back to default tenant ids.
+Map<String, String>? _strictActiveBookingScopeQuery() {
+  final activeDriverSession = activeDriverSessionNotifier.value;
+  final driverTenantId = (activeDriverSession?.tenantId ?? '').trim();
+  final driverCompanyId = (activeDriverSession?.companyId ?? '').trim();
+  final canUseVerifiedDriverScope =
+      driverTenantId.isNotEmpty &&
+      driverCompanyId.isNotEmpty &&
+      ((activeDriverSession?.isVerifiedPairingSession ?? false) ||
+          appRoleNotifier.value == AppRole.driver);
+  if (canUseVerifiedDriverScope) {
+    return <String, String>{
+      'tenant_id': driverTenantId,
+      'company_id': driverCompanyId,
+      'tenantId': driverTenantId,
+      'companyId': driverCompanyId,
+    };
+  }
+
+  final profileCompanyId = companyProfileNotifier.value?.companyId.trim() ?? '';
+  final sessionCompanyId =
+      activeCompanySessionNotifier.value?.companyId.trim() ?? '';
+  final hasCompanyContext = CompanySessionStore.instance.hasValidCompanyContext;
+  if (hasCompanyContext &&
+      profileCompanyId.isNotEmpty &&
+      sessionCompanyId.isNotEmpty &&
+      profileCompanyId == sessionCompanyId) {
+    return <String, String>{
+      'tenant_id': sessionCompanyId,
+      'company_id': sessionCompanyId,
+      'tenantId': sessionCompanyId,
+      'companyId': sessionCompanyId,
+    };
+  }
+  return null;
 }
