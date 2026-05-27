@@ -31,16 +31,23 @@ class _CompanySubscriptionBillingPageState
     required String es,
   }) => _tr(nl: nl, en: en, fr: fr, es: es);
 
-  String _activeCompanyId() {
+  String? _activeCompanyId() {
     final fromProfile = companyProfileNotifier.value?.companyId.trim() ?? '';
     if (fromProfile.isNotEmpty) return fromProfile;
-    final resolved = resolvedCompanyId.trim();
-    if (resolved.isNotEmpty) return resolved;
-    return kTenantId;
+    final fromSession =
+        activeCompanySessionNotifier.value?.companyId.trim() ?? '';
+    if (fromSession.isNotEmpty) return fromSession;
+    return null;
   }
 
   Future<BackendSubscriptionProfile> _fetch() async {
     final scopeId = _activeCompanyId();
+    if (scopeId == null || scopeId.trim().isEmpty) {
+      debugPrint(
+        '[SUBSCRIPTION_SCOPE][SKIP] reason=missing_strict_company_scope action=fetch_subscription_profile',
+      );
+      return BackendSubscriptionProfile.defaults();
+    }
     return fetchBackendSubscriptionProfile(
       tenantId: scopeId,
       companyId: scopeId,

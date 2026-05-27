@@ -823,7 +823,13 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
       _backendProfilesStatus = null;
     });
     try {
-      final scope = _activeSettingsScope();
+      final scope = _activeSettingsScopeStrict();
+      if (scope == null) {
+        debugPrint(
+          '[BUSINESS_SETTINGS_SCOPE][SKIP] reason=missing_strict_company_scope action=load_backend_profiles',
+        );
+        return;
+      }
       final results = await Future.wait<dynamic>([
         fetchBackendBusinessProfile(
           tenantId: scope.tenantId,
@@ -1111,7 +1117,13 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
       _googleCalendarStatusError = null;
     });
     try {
-      final scope = _activeSettingsScope();
+      final scope = _activeSettingsScopeStrict();
+      if (scope == null) {
+        debugPrint(
+          '[BUSINESS_SETTINGS_SCOPE][SKIP] reason=missing_strict_company_scope action=load_google_calendar_status',
+        );
+        return;
+      }
       final data = await fetchBackendGoogleCalendarStatus(
         tenantId: scope.tenantId,
         companyId: scope.companyId,
@@ -4025,7 +4037,13 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
       _airportFixedFaresStatus = null;
     });
     try {
-      final scope = _activeSettingsScope();
+      final scope = _activeSettingsScopeStrict();
+      if (scope == null) {
+        debugPrint(
+          '[BUSINESS_SETTINGS_SCOPE][SKIP] reason=missing_strict_company_scope action=load_airport_fixed_fare_rules',
+        );
+        return;
+      }
       final data = await fetchAdminAirportFixedFares(
         tenantId: scope.tenantId,
         companyId: scope.companyId,
