@@ -550,10 +550,15 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
         await dir.create(recursive: true);
       }
       final ext = _photoExtension(source);
+      final fromProfile = companyProfileNotifier.value?.companyId.trim() ?? '';
+      final fromSession =
+          activeCompanySessionNotifier.value?.companyId.trim() ?? '';
       final companySeg = _safePhotoSegment(
         driver.companyId?.trim().isNotEmpty == true
             ? driver.companyId!.trim()
-            : resolvedCompanyId.trim(),
+            : (fromProfile.isNotEmpty
+                  ? fromProfile
+                  : (fromSession.isNotEmpty ? fromSession : '')),
         fallback: 'company',
       );
       final driverSeg = _safePhotoSegment(driver.id, fallback: 'driver');
@@ -1046,6 +1051,16 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                                           _activeCompanyScopeForDriverDelete(
                                             existing,
                                           );
+                                      if (scope == null) {
+                                        debugPrint(
+                                          '[DRIVER_SCOPE][SKIP] reason=missing_strict_scope',
+                                        );
+                                        if (!context.mounted) return;
+                                        _showMissingCompanyScopeSnackbar(
+                                          context,
+                                        );
+                                        return;
+                                      }
                                       final bytes = kIsWeb
                                           ? await picked.readAsBytes()
                                           : null;
@@ -1358,6 +1373,13 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                             final scope = _activeCompanyScopeForDriverDelete(
                               existing,
                             );
+                            if (scope == null) {
+                              debugPrint(
+                                '[DRIVER_SCOPE][SKIP] reason=missing_strict_scope',
+                              );
+                              _showMissingCompanyScopeSnackbar(ctx);
+                              return;
+                            }
                             debugPrint(
                               '[DRIVER_STATUS_SAVE][START] driver=${_shortDriverIdForDiag(updated.id)} desiredActive=${updated.isActive}',
                             );
@@ -1503,8 +1525,7 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
     final fromSession =
         activeCompanySessionNotifier.value?.companyId.trim() ?? '';
     if (fromSession.isNotEmpty) return fromSession;
-    final resolved = resolvedCompanyId.trim();
-    return resolved;
+    return '';
   }
 
   String _maskDriverForLog(String value) {
@@ -1514,7 +1535,23 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
     return '${text.substring(0, 2)}…${text.substring(text.length - 2)}';
   }
 
-  ({String tenantId, String companyId}) _activeCompanyScopeForDriverDelete(
+  void _showMissingCompanyScopeSnackbar(BuildContext context) {
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          _t(
+            nl: 'Backendsynchronisatie vereist een actieve bedrijfssessie. Herkoppel of herstel eerst uw bedrijf.',
+            en: 'Backend synchronization requires an active company session. Relink or recover your company first.',
+            fr: 'La synchronisation backend nécessite une session entreprise active. Reliez ou récupérez d’abord votre entreprise.',
+            es: 'La sincronización del backend requiere una sesión activa de empresa. Vuelve a vincular o recuperar tu empresa primero.',
+          ),
+        ),
+      ),
+    );
+  }
+
+  ({String tenantId, String companyId})? _activeCompanyScopeForDriverDelete(
     DriverProfile driver,
   ) {
     final scoped = driver.companyId?.trim() ?? '';
@@ -1530,11 +1567,7 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
     if (fromSession.isNotEmpty) {
       return (tenantId: fromSession, companyId: fromSession);
     }
-    final resolved = resolvedCompanyId.trim();
-    if (resolved.isNotEmpty) {
-      return (tenantId: resolved, companyId: resolved);
-    }
-    return (tenantId: kTenantId, companyId: kTenantId);
+    return null;
   }
 
   String _temporaryDriverLinkExpiryLabel({
@@ -1752,6 +1785,11 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
       return;
     }
     final scope = _activeCompanyScopeForDriverDelete(driver);
+    if (scope == null) {
+      debugPrint('[DRIVER_SCOPE][SKIP] reason=missing_strict_scope');
+      _showMissingCompanyScopeSnackbar(context);
+      return;
+    }
     debugPrint(
       '[DRIVER_LINK_QR][SCOPE] tenant=${_maskScopeForLog(scope.tenantId)} company=${_maskScopeForLog(scope.companyId)}',
     );
@@ -1837,6 +1875,11 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
     DriverProfile driver,
   ) async {
     final scope = _activeCompanyScopeForDriverDelete(driver);
+    if (scope == null) {
+      debugPrint('[DRIVER_SCOPE][SKIP] reason=missing_strict_scope');
+      _showMissingCompanyScopeSnackbar(context);
+      return;
+    }
     final rotated = await rotateDriverLoginCode(
       driverId: driver.id,
       tenantId: scope.tenantId,
@@ -1897,6 +1940,11 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
   ) async {
     final driverId = driver.id.trim();
     final scope = _activeCompanyScopeForDriverDelete(driver);
+    if (scope == null) {
+      debugPrint('[DRIVER_SCOPE][SKIP] reason=missing_strict_scope');
+      _showMissingCompanyScopeSnackbar(context);
+      return;
+    }
     final maskedDriver = _maskDriverForLog(driverId);
     final maskedCompany = _maskScopeForLog(scope.companyId);
     debugPrint(
@@ -4019,6 +4067,17 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                 };
                 for (final d in visible) {
                   final scope = _activeCompanyScopeForDriverDelete(d);
+                  if (scope == null) {
+                    debugPrint(
+                      '[DRIVER_DOCS_ADMIN][VISIBLE_SKIP] reason=missing_strict_scope',
+                    );
+                    docsByDriverId[d.id.trim()] = const <DriverDocument>[];
+                    complianceByDriverId[d.id.trim()] = docsStore
+                        .complianceSummaryForDocuments(
+                          const <DriverDocument>[],
+                        );
+                    continue;
+                  }
                   final docs = docsStore.documentsVisibleForCompanyAdminDriver(
                     d.id,
                     tenantId: scope.tenantId,

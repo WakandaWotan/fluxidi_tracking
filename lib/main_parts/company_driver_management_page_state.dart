@@ -26,7 +26,7 @@ class _CompanyDriverManagementPageState
     await _showDegradedCompanySessionRecoveryDialog(context, reason: reason);
   }
 
-  ({String tenantId, String companyId}) _adminScopeForDriver(
+  ({String tenantId, String companyId})? _adminScopeForDriver(
     DriverProfile driver,
   ) {
     final scoped = driver.companyId?.trim() ?? '';
@@ -42,11 +42,7 @@ class _CompanyDriverManagementPageState
     if (fromSession.isNotEmpty) {
       return (tenantId: fromSession, companyId: fromSession);
     }
-    final resolved = resolvedCompanyId.trim();
-    if (resolved.isNotEmpty) {
-      return (tenantId: resolved, companyId: resolved);
-    }
-    return (tenantId: kTenantId, companyId: kTenantId);
+    return null;
   }
 
   List<DriverProfile> _adminVisibleDrivers() {
@@ -91,9 +87,13 @@ class _CompanyDriverManagementPageState
           refreshFailureStateChanged = true;
         }
         debugPrint('[DRIVER_DOCS_SYNC][AUDIT_START] driver=$safeDriverRef');
-        debugPrint(
-          '[DRIVER_DOCS_SYNC][SCOPE] driver=$safeDriverRef tenant=${_maskScopeForLog(scope.tenantId)} company=${_maskScopeForLog(scope.companyId)}',
-        );
+        if (scope == null) {
+          debugPrint('[DRIVER_DOCS_SYNC][SKIP] reason=missing_strict_scope');
+        } else {
+          debugPrint(
+            '[DRIVER_DOCS_SYNC][SCOPE] driver=$safeDriverRef tenant=${_maskScopeForLog(scope.tenantId)} company=${_maskScopeForLog(scope.companyId)}',
+          );
+        }
         debugPrint('[DRIVER_DOCS_SYNC][BACKEND] driver=$safeDriverRef count=0');
         debugPrint(
           '[DRIVER_DOCS_SYNC][MISMATCH] driver=$safeDriverRef reason=no_company_session_token',
@@ -122,6 +122,10 @@ class _CompanyDriverManagementPageState
         debugPrint('[DRIVER_DOCS_SYNC][AUDIT_START] driver=$safeDriverRef');
         debugPrint('[DRIVER_DOCS][REFRESH_START] driver=$safeDriverRef');
         final scope = _adminScopeForDriver(driver);
+        if (scope == null) {
+          debugPrint('[DRIVER_DOCS_SYNC][SKIP] reason=missing_strict_scope');
+          continue;
+        }
         debugPrint(
           '[DRIVER_DOCS_SYNC][SCOPE] driver=$safeDriverRef tenant=${_maskScopeForLog(scope.tenantId)} company=${_maskScopeForLog(scope.companyId)}',
         );
