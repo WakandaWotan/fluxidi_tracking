@@ -7837,7 +7837,12 @@ class _DriverHomePageState extends State<DriverHomePage>
 
   void _goBackToBusinessPageFromDashboard() {
     setAppRole(AppRole.companyAdmin);
-    Navigator.of(context).pushAndRemoveUntil(
+    final nav = Navigator.of(context);
+    if (nav.canPop()) {
+      nav.pop();
+      return;
+    }
+    nav.pushAndRemoveUntil(
       MaterialPageRoute<void>(builder: (_) => const BusinessHomePage()),
       (route) => false,
     );
@@ -7887,7 +7892,11 @@ class _DriverHomePageState extends State<DriverHomePage>
     if (activeDriverSessionNotifier.value != null) {
       setAppRole(AppRole.driver);
       Navigator.of(context).pushReplacement(
-        MaterialPageRoute<void>(builder: (_) => const DriverHomePage()),
+        MaterialPageRoute<void>(
+          builder: (_) => DriverHomePage(
+            openedFromBusinessHome: widget.openedFromBusinessHome,
+          ),
+        ),
       );
       return;
     }
@@ -8181,28 +8190,6 @@ class _DriverHomePageState extends State<DriverHomePage>
                     dense: true,
                     contentPadding: EdgeInsets.zero,
                     leading: const Icon(
-                      Icons.business_center_outlined,
-                      color: Color(0xFFFFD36A),
-                    ),
-                    title: Text(
-                      _tr(
-                        nl: 'Terug naar bedrijfspagina',
-                        en: 'Back to business page',
-                        fr: "Retour a la page entreprise",
-                        es: 'Volver a pagina de empresa',
-                      ),
-                      style: const TextStyle(color: Colors.white),
-                    ),
-                    onTap: () {
-                      Navigator.of(ctx).pop();
-                      _goBackToBusinessPageFromDashboard();
-                    },
-                  ),
-                if (_hasCompanyAdminDriverBridgeContext())
-                  ListTile(
-                    dense: true,
-                    contentPadding: EdgeInsets.zero,
-                    leading: const Icon(
                       Icons.switch_account_outlined,
                       color: Color(0xFFFFD36A),
                     ),
@@ -8228,16 +8215,27 @@ class _DriverHomePageState extends State<DriverHomePage>
                     color: Color(0xFFFFD36A),
                   ),
                   title: Text(
-                    _tr(
-                      nl: 'Terug naar startpagina',
-                      en: 'Back to start page',
-                      fr: "Retour a l'accueil",
-                      es: 'Volver al inicio',
-                    ),
+                    widget.openedFromBusinessHome
+                        ? _tr(
+                            nl: 'Terug naar bedrijfspagina',
+                            en: 'Back to business page',
+                            fr: 'Retour a la page entreprise',
+                            es: 'Volver a la pagina de empresa',
+                          )
+                        : _tr(
+                            nl: 'Terug naar startpagina',
+                            en: 'Back to start page',
+                            fr: "Retour a l'accueil",
+                            es: 'Volver al inicio',
+                          ),
                     style: const TextStyle(color: Colors.white),
                   ),
                   onTap: () {
                     Navigator.of(ctx).pop();
+                    if (widget.openedFromBusinessHome) {
+                      _goBackToBusinessPageFromDashboard();
+                      return;
+                    }
                     _goBackToStartFromDashboard();
                   },
                 ),
@@ -12786,7 +12784,10 @@ class _DriverHomePageState extends State<DriverHomePage>
                         onTap: () {
                           Navigator.of(context).pushAndRemoveUntil(
                             MaterialPageRoute(
-                              builder: (_) => const DriverHomePage(),
+                              builder: (_) => DriverHomePage(
+                                openedFromBusinessHome:
+                                    widget.openedFromBusinessHome,
+                              ),
                             ),
                             (route) => false,
                           );

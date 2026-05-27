@@ -426,9 +426,11 @@ class _BusinessHomePageState extends State<BusinessHomePage>
     if (!context.mounted) return;
     if (activeDriverSessionNotifier.value != null) {
       setAppRole(AppRole.driver);
-      Navigator.of(
-        context,
-      ).push(MaterialPageRoute(builder: (_) => const DriverHomePage()));
+      Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => const DriverHomePage(openedFromBusinessHome: true),
+        ),
+      );
       return;
     }
     if (!CompanySessionStore.instance.hasValidCompanyContext) {
@@ -452,9 +454,11 @@ class _BusinessHomePageState extends State<BusinessHomePage>
           '[DRIVER_OWNER_BRIDGE][OPEN] driver=${_maskBridgeDriverId(matchedDriver.id)} reason=owner_match',
         );
         setAppRole(AppRole.driver);
-        Navigator.of(
-          context,
-        ).push(MaterialPageRoute(builder: (_) => const DriverHomePage()));
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => const DriverHomePage(openedFromBusinessHome: true),
+          ),
+        );
         return;
       }
       debugPrint('[DRIVER_OWNER_BRIDGE][SKIP] reason=no_safe_match');
@@ -496,9 +500,11 @@ class _BusinessHomePageState extends State<BusinessHomePage>
     if (!context.mounted) return;
     if (activeDriverSessionNotifier.value != null) {
       setAppRole(AppRole.driver);
-      Navigator.of(
-        context,
-      ).push(MaterialPageRoute(builder: (_) => const DriverHomePage()));
+      Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => const DriverHomePage(openedFromBusinessHome: true),
+        ),
+      );
       return;
     }
     debugPrint('[DRIVER_OWNER_BRIDGE][SKIP] reason=no_safe_match');

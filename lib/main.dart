@@ -1432,7 +1432,9 @@ class _UnauthorizedMapbox implements Exception {
 }
 
 class DriverHomePage extends StatefulWidget {
-  const DriverHomePage({super.key});
+  const DriverHomePage({super.key, this.openedFromBusinessHome = false});
+
+  final bool openedFromBusinessHome;
 
   @override
   State<DriverHomePage> createState() => _DriverHomePageState();
