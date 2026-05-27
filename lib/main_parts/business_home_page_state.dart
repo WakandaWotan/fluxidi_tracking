@@ -2091,6 +2091,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
     VoidCallback? onTap,
     bool isFuture = false,
     String? futureBadge,
+    String? statusBadge,
     String? backgroundAsset,
     bool useImageBackground = false,
     bool compact = false,
@@ -2162,6 +2163,29 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                   futureBadge!,
                   style: TextStyle(
                     color: kFluxidiYellow.withOpacity(0.95),
+                    fontSize: compact ? 9.5 : 10.3,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            if ((futureBadge ?? '').trim().isEmpty &&
+                (statusBadge ?? '').trim().isNotEmpty)
+              Container(
+                padding: EdgeInsets.symmetric(
+                  horizontal: compact ? 7 : 8,
+                  vertical: compact ? 2 : 3,
+                ),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF2A1B0F),
+                  borderRadius: BorderRadius.circular(999),
+                  border: Border.all(
+                    color: const Color(0xFFE5B641).withOpacity(0.55),
+                  ),
+                ),
+                child: Text(
+                  statusBadge!,
+                  style: TextStyle(
+                    color: const Color(0xFFE5B641).withOpacity(0.98),
                     fontSize: compact ? 9.5 : 10.3,
                     fontWeight: FontWeight.w700,
                   ),
@@ -2274,6 +2298,26 @@ class _BusinessHomePageState extends State<BusinessHomePage>
         ),
       ),
     );
+  }
+
+  bool _isBusinessAdminSessionRecoveryRequired() {
+    if (!CompanySessionStore.instance.hasValidCompanyContext) return false;
+    final profileCompanyId =
+        companyProfileNotifier.value?.companyId.trim() ?? '';
+    final session = activeCompanySessionNotifier.value;
+    final sessionCompanyId = (session?.companyId ?? '').trim();
+    if (profileCompanyId.isNotEmpty &&
+        sessionCompanyId.isNotEmpty &&
+        profileCompanyId != sessionCompanyId) {
+      return true;
+    }
+    final token = (session?.companySessionToken ?? '').trim();
+    if (token.isEmpty) return true;
+    final expiresAt = session?.sessionExpiresAtUtc;
+    if (expiresAt != null && !DateTime.now().toUtc().isBefore(expiresAt)) {
+      return true;
+    }
+    return false;
   }
 
   @override
@@ -2709,6 +2753,35 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                         fontWeight: FontWeight.w700,
                       ),
                     ),
+                    if (_isBusinessAdminSessionRecoveryRequired()) ...[
+                      const SizedBox(height: 6),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 6,
+                        ),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF2A1B0F),
+                          borderRadius: BorderRadius.circular(999),
+                          border: Border.all(
+                            color: const Color(0xFFE5B641).withOpacity(0.5),
+                          ),
+                        ),
+                        child: Text(
+                          _t(
+                            nl: 'Bedrijfssessie herstellen vereist',
+                            en: 'Company admin session recovery required',
+                            fr: "Récupération de session entreprise requise",
+                            es: 'Se requiere recuperar la sesión de empresa',
+                          ),
+                          style: TextStyle(
+                            color: const Color(0xFFE5B641).withOpacity(0.98),
+                            fontSize: 10.7,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                    ],
                     SizedBox(height: businessQuickActionsGridTopGap),
                     LayoutBuilder(
                       builder: (context, constraints) {
@@ -2885,6 +2958,15 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                   fr: 'Équipe',
                                   es: 'Equipo',
                                 ),
+                                statusBadge:
+                                    _isBusinessAdminSessionRecoveryRequired()
+                                    ? _t(
+                                        nl: 'Herstel vereist',
+                                        en: 'Recovery required',
+                                        fr: 'Récupération requise',
+                                        es: 'Recuperación requerida',
+                                      )
+                                    : null,
                                 onTap: () async {
                                   final backendContext =
                                       await _resolveBackendUsableCompanyContextForAdmin(

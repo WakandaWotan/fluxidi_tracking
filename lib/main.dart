@@ -973,10 +973,10 @@ Future<void> _showDegradedCompanySessionRecoveryDialog(
         scrollable: true,
         content: Text(
           _tr(
-            nl: 'Backend synchronisatie vereist een actieve bedrijfssessie. Herkoppel of herstel eerst uw bedrijf.',
-            en: 'Backend synchronization requires an active company session. Relink or recover your company first.',
-            fr: 'La synchronisation backend nécessite une session entreprise active. Reliez ou récupérez d’abord votre entreprise.',
-            es: 'La sincronización backend requiere una sesión activa de empresa. Vuelve a vincular o recupera la empresa primero.',
+            nl: 'Je chauffeurmodus kan nog werken, maar beheerfuncties zoals chauffeurs, voertuigen en instellingen vereisen een actieve bedrijfssessie. Herstel of herkoppel je bedrijf om verder te gaan.',
+            en: 'Driver mode may still work, but management features like drivers, vehicles, and settings require an active company session. Recover or relink your company to continue.',
+            fr: 'Le mode chauffeur peut encore fonctionner, mais les fonctions de gestion comme chauffeurs, véhicules et réglages nécessitent une session entreprise active. Récupérez ou reliez votre entreprise pour continuer.',
+            es: 'El modo conductor puede seguir funcionando, pero las funciones de gestión como conductores, vehículos y ajustes requieren una sesión activa de empresa. Recupera o vuelve a vincular tu empresa para continuar.',
           ),
           style: TextStyle(color: Colors.white.withOpacity(0.82)),
         ),
