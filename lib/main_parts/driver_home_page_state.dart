@@ -7835,6 +7835,12 @@ class _DriverHomePageState extends State<DriverHomePage>
         _isCompanyAdminDriverViewSession(activeDriverSessionNotifier.value);
   }
 
+  bool _canSwitchCompanyDriversFromDashboard() {
+    if (_hasCompanyAdminDriverBridgeContext()) return true;
+    if (!widget.openedFromBusinessHome) return false;
+    return CompanySessionStore.instance.hasValidCompanyContext;
+  }
+
   void _goBackToBusinessPageFromDashboard() {
     setAppRole(AppRole.companyAdmin);
     final nav = Navigator.of(context);
@@ -7849,7 +7855,10 @@ class _DriverHomePageState extends State<DriverHomePage>
   }
 
   Future<void> _changeDriverViewFromDashboard() async {
-    if (!_hasCompanyAdminDriverBridgeContext()) return;
+    if (!_canSwitchCompanyDriversFromDashboard()) return;
+    if (widget.openedFromBusinessHome) {
+      debugPrint('[DRIVER_VIEW_ORIGIN][SWITCH] source=business_home');
+    }
     final selectableDrivers = _resolveSelectableDriverBridgeCandidatesGlobal(
       logCandidates: true,
     );
@@ -8185,7 +8194,7 @@ class _DriverHomePageState extends State<DriverHomePage>
                     unawaited(_handleDriverStatusAction());
                   },
                 ),
-                if (_hasCompanyAdminDriverBridgeContext())
+                if (_canSwitchCompanyDriversFromDashboard())
                   ListTile(
                     dense: true,
                     contentPadding: EdgeInsets.zero,
@@ -8195,10 +8204,10 @@ class _DriverHomePageState extends State<DriverHomePage>
                     ),
                     title: Text(
                       _tr(
-                        nl: 'Chauffeur wijzigen',
-                        en: 'Change driver view',
-                        fr: 'Changer de vue chauffeur',
-                        es: 'Cambiar vista de conductor',
+                        nl: 'Chauffeur wisselen',
+                        en: 'Switch driver',
+                        fr: 'Changer de chauffeur',
+                        es: 'Cambiar conductor',
                       ),
                       style: const TextStyle(color: Colors.white),
                     ),
