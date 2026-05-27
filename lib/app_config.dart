@@ -2691,10 +2691,8 @@ Map<String, dynamic> _encodeVehicleForBackendFleet(
   required String tenantId,
   required String companyId,
 }) {
-  final resolvedTenant = tenantId.trim().isEmpty ? kTenantId : tenantId.trim();
-  final resolvedCompany = companyId.trim().isEmpty
-      ? resolvedTenant
-      : companyId.trim();
+  final resolvedTenant = tenantId.trim();
+  final resolvedCompany = companyId.trim();
   DriverProfile? linkedDriver;
   for (final d in driversNotifier.value) {
     if (d.id == v.driverId) {

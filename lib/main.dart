@@ -803,15 +803,13 @@ Future<bool> _hydrateCompanyBootstrapFromActiveSession({
   }
 }
 
-String _activeCompanyScopeIdForSync() {
+String? _activeCompanyScopeIdForSync() {
   final fromProfile = companyProfileNotifier.value?.companyId.trim() ?? '';
   if (fromProfile.isNotEmpty) return fromProfile;
   final fromSession =
       activeCompanySessionNotifier.value?.companyId.trim() ?? '';
   if (fromSession.isNotEmpty) return fromSession;
-  final fallback = resolvedCompanyId.trim();
-  if (fallback.isNotEmpty) return fallback;
-  return kTenantId;
+  return null;
 }
 
 Future<({bool hasToken, String source})>
@@ -1069,6 +1067,12 @@ Future<void> _triggerCompanyInventoryBackfillRestore({
     return;
   }
   final scopeId = _activeCompanyScopeIdForSync();
+  if (scopeId == null) {
+    debugPrint(
+      '[COMPANY_INVENTORY_BACKFILL][SKIP] reason=missing_active_company_context',
+    );
+    return;
+  }
   unawaited(
     syncLocalCompanyInventoryToBackend(
       reason: reason,

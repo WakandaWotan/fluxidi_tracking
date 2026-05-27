@@ -49,10 +49,29 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
     return tierId;
   }
 
+  void _showMissingCompanyScopeSnackbar() {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          _t(
+            nl: 'Backend synchronisatie vereist een actieve bedrijfssessie. Herkoppel of herstel eerst uw bedrijf.',
+            en: 'Backend synchronization requires an active company session. Relink or recover your company first.',
+            fr: 'La synchronisation backend nécessite une session entreprise active. Reliez ou récupérez d’abord votre entreprise.',
+            es: 'La sincronización del backend requiere una sesión activa de empresa. Vuelve a vincular o recuperar tu empresa primero.',
+          ),
+        ),
+      ),
+    );
+  }
+
   Future<void> _syncFleetOrShowError() async {
-    final scopeId = resolvedCompanyId.trim().isEmpty
-        ? kTenantId
-        : resolvedCompanyId.trim();
+    final scopeId = _activeCompanyIdForFleetUi();
+    if (scopeId == null) {
+      debugPrint('[FLEET_SYNC][SKIP] reason=missing_active_company_context');
+      _showMissingCompanyScopeSnackbar();
+      return;
+    }
     final ok = await syncFleetInventoryToBackend(
       tenantId: scopeId,
       companyId: scopeId,
@@ -92,13 +111,10 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
     );
   }
 
-  String _vehicleMediaScopeId(VehicleProfile? existing) {
+  String? _vehicleMediaScopeId(VehicleProfile? existing) {
     final cid = _scopedVehicleCompanyId(existing);
-    return (cid?.trim().isNotEmpty ?? false)
-        ? cid!.trim()
-        : (resolvedCompanyId.trim().isNotEmpty
-              ? resolvedCompanyId.trim()
-              : kTenantId);
+    if (cid?.trim().isNotEmpty ?? false) return cid!.trim();
+    return _activeCompanyIdForFleetUi();
   }
 
   Future<void> _useExistingVehiclePhotoAsPublic({
@@ -176,6 +192,11 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
     }
 
     final scopeId = _vehicleMediaScopeId(existing);
+    if (scopeId == null) {
+      debugPrint('[VEHICLE_MEDIA][SKIP] reason=missing_active_company_context');
+      _showMissingCompanyScopeSnackbar();
+      return;
+    }
     try {
       final uploaded = await uploadPublicPartnerMedia(
         tenantId: scopeId,
@@ -218,7 +239,7 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
       final t = existing.companyId?.trim();
       if (t != null && t.isNotEmpty) return t;
     }
-    return companyProfileNotifier.value != null ? resolvedCompanyId : null;
+    return _activeCompanyIdForFleetUi();
   }
 
   String? _activeCompanyIdForFleetUi() {
@@ -496,9 +517,7 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                             taxiDriverCardExpiry: taxiCardExpiryCtrl.text
                                 .trim(),
                             isActive: true,
-                            companyId: companyProfileNotifier.value != null
-                                ? resolvedCompanyId
-                                : null,
+                            companyId: _activeCompanyIdForFleetUi(),
                           );
                           addDriver(saved!);
                         }
@@ -1645,6 +1664,13 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                                 );
                                 if (picked == null) return;
                                 final scopeId = _vehicleMediaScopeId(existing);
+                                if (scopeId == null) {
+                                  debugPrint(
+                                    '[VEHICLE_MEDIA][SKIP] reason=missing_active_company_context',
+                                  );
+                                  _showMissingCompanyScopeSnackbar();
+                                  return;
+                                }
                                 final bytes = kIsWeb
                                     ? await picked.readAsBytes()
                                     : null;
