@@ -2378,6 +2378,113 @@ String _shortBodyPreviewForDiag(String value) {
   return single.length <= 140 ? single : '${single.substring(0, 140)}…';
 }
 
+String _maskVehicleIdForDiag(String value) {
+  final text = value.trim();
+  if (text.isEmpty) return 'unknown';
+  if (text.length <= 4) return '…${text.substring(text.length - 1)}';
+  return '${text.substring(0, 2)}…${text.substring(text.length - 2)}';
+}
+
+String _shortVehicleTextForDiag(String value) {
+  final text = value.replaceAll(RegExp(r'\s+'), ' ').trim();
+  if (text.isEmpty) return '—';
+  return text.length <= 48 ? text : '${text.substring(0, 48)}…';
+}
+
+void _logVehicleAssignmentSyncOut(Map<String, dynamic> payload) {
+  final vehicleId = (payload['vehicle_id'] ?? payload['vehicleId'] ?? '')
+      .toString()
+      .trim();
+  final vehicleName = (payload['vehicle_name'] ?? payload['vehicleName'] ?? '')
+      .toString()
+      .trim();
+  final licensePlate =
+      (payload['license_plate'] ?? payload['licensePlate'] ?? '')
+          .toString()
+          .trim();
+  final assignedDriverId = (() {
+    final direct =
+        (payload['assigned_driver_id'] ??
+                payload['assignedDriverId'] ??
+                payload['driver_id'] ??
+                payload['driverId'] ??
+                '')
+            .toString()
+            .trim();
+    if (direct.isNotEmpty) return direct;
+    final assignedDriverRaw = payload['assigned_driver'];
+    if (assignedDriverRaw is Map) {
+      return (assignedDriverRaw['driver_id'] ??
+              assignedDriverRaw['driverId'] ??
+              assignedDriverRaw['id'] ??
+              '')
+          .toString()
+          .trim();
+    }
+    return '';
+  })();
+  debugPrint(
+    '[VEHICLE_ASSIGNMENT_SYNC][OUT] vehicle=${_maskVehicleIdForDiag(vehicleId)} name=${_shortVehicleTextForDiag(vehicleName)} plate=${_shortVehicleTextForDiag(licensePlate)} driver=${_maskDriverIdForDiag(assignedDriverId)}',
+  );
+}
+
+Future<bool> _postFleetVehiclesWithTruthfulResult({
+  required Uri endpoint,
+  required Map<String, String> scope,
+  required List<Map<String, dynamic>> fleetPayload,
+}) async {
+  for (final payload in fleetPayload) {
+    _logVehicleAssignmentSyncOut(payload);
+  }
+  try {
+    final response = await http
+        .post(
+          endpoint,
+          headers: _adminJsonHeaders(),
+          body: jsonEncode(<String, dynamic>{
+            ...scope,
+            'vehicles': fleetPayload,
+          }),
+        )
+        .timeout(const Duration(seconds: 12));
+    final status = response.statusCode;
+    final bodyPreview = _shortBodyPreviewForDiag(
+      utf8.decode(response.bodyBytes, allowMalformed: true),
+    );
+    if (status < 200 || status >= 300) {
+      debugPrint(
+        '[COMPANY_SYNC][VEHICLES_ERROR] status=$status reason=http_non_2xx body=$bodyPreview',
+      );
+      return false;
+    }
+    final rawBody = utf8
+        .decode(response.bodyBytes, allowMalformed: true)
+        .trim();
+    if (rawBody.isNotEmpty) {
+      try {
+        final decoded = jsonDecode(rawBody);
+        if (decoded is Map &&
+            decoded.containsKey('ok') &&
+            decoded['ok'] != true) {
+          debugPrint(
+            '[COMPANY_SYNC][VEHICLES_ERROR] status=$status reason=ok_false body=$bodyPreview',
+          );
+          return false;
+        }
+      } catch (_) {
+        // Preserve success behavior for 2xx responses with non-JSON bodies.
+      }
+    }
+    debugPrint('[COMPANY_SYNC][VEHICLES_OK] count=${fleetPayload.length}');
+    return true;
+  } catch (error) {
+    debugPrint(
+      '[COMPANY_SYNC][VEHICLES_ERROR] status=network reason=exception error=${_shortBodyPreviewForDiag(error.toString())}',
+    );
+    return false;
+  }
+}
+
 class DriverStatusSaveResult {
   const DriverStatusSaveResult({
     required this.ok,
@@ -2870,17 +2977,11 @@ Future<bool> syncFleetInventoryToBackend({
         )
         .where((e) => (e['vehicle_id'] as String).isNotEmpty)
         .toList(growable: false);
-    await http
-        .post(
-          endpoint,
-          headers: _adminJsonHeaders(),
-          body: jsonEncode(<String, dynamic>{
-            ...scope,
-            'vehicles': fleetPayload,
-          }),
-        )
-        .timeout(const Duration(seconds: 12));
-    return true;
+    return await _postFleetVehiclesWithTruthfulResult(
+      endpoint: endpoint,
+      scope: scope,
+      fleetPayload: fleetPayload,
+    );
   } catch (_) {
     // Keep local-first UX stable even when backend sync fails.
     return false;
@@ -3315,46 +3416,26 @@ Future<void> syncLocalCompanyInventoryToBackend({
     }
 
     if (scopedVehicles.isNotEmpty) {
-      try {
-        final endpoint = _withAdminTenantCompanyScope(
-          Uri.parse('${appConfig.bookingBaseUrl}/admin/fleet/vehicles'),
-          tenantId: scope['tenant_id'],
-          companyId: scope['company_id'],
-        );
-        final fleetPayload = scopedVehicles
-            .map(
-              (vehicle) => _encodeVehicleForBackendFleet(
-                vehicle,
-                tenantId: scope['tenant_id'] ?? '',
-                companyId: scope['company_id'] ?? '',
-              ),
-            )
-            .where((e) => (e['vehicle_id'] as String).isNotEmpty)
-            .toList(growable: false);
-        final response = await http
-            .post(
-              endpoint,
-              headers: _adminJsonHeaders(),
-              body: jsonEncode(<String, dynamic>{
-                ...scope,
-                'vehicles': fleetPayload,
-              }),
-            )
-            .timeout(const Duration(seconds: 12));
-        if (response.statusCode >= 200 && response.statusCode < 300) {
-          debugPrint(
-            '[COMPANY_SYNC][VEHICLES_OK] count=${fleetPayload.length}',
-          );
-        } else {
-          debugPrint(
-            '[COMPANY_SYNC][VEHICLES_ERROR] status=${response.statusCode} message=non_2xx',
-          );
-        }
-      } catch (_) {
-        debugPrint(
-          '[COMPANY_SYNC][VEHICLES_ERROR] status=network message=exception',
-        );
-      }
+      final endpoint = _withAdminTenantCompanyScope(
+        Uri.parse('${appConfig.bookingBaseUrl}/admin/fleet/vehicles'),
+        tenantId: scope['tenant_id'],
+        companyId: scope['company_id'],
+      );
+      final fleetPayload = scopedVehicles
+          .map(
+            (vehicle) => _encodeVehicleForBackendFleet(
+              vehicle,
+              tenantId: scope['tenant_id'] ?? '',
+              companyId: scope['company_id'] ?? '',
+            ),
+          )
+          .where((e) => (e['vehicle_id'] as String).isNotEmpty)
+          .toList(growable: false);
+      await _postFleetVehiclesWithTruthfulResult(
+        endpoint: endpoint,
+        scope: scope,
+        fleetPayload: fleetPayload,
+      );
     }
 
     if (scopedDrivers.isNotEmpty) {
@@ -5036,6 +5117,9 @@ Future<bool> hydrateCompanyStateFromBootstrap(
           map['assigned_driver_id'],
           map['assignedDriverId'],
         ]);
+        debugPrint(
+          '[VEHICLE_ASSIGNMENT_BOOTSTRAP][IN] vehicle=${_maskVehicleIdForDiag(vehicleId)} name=${_shortVehicleTextForDiag(textAny(<dynamic>[map["vehicle_name"], map["vehicleName"], map["name"], vehicleId]))} plate=${_shortVehicleTextForDiag(textAny(<dynamic>[map["license_plate"], map["licensePlate"]]))} driver=${_maskDriverIdForDiag(assignedDriverId)}',
+        );
         final vehicleCompanyId = textAny(<dynamic>[
           map['company_id'],
           map['companyId'],
