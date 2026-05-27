@@ -70,13 +70,17 @@ class _BusinessRegionalDemandPageState
     return 'BE';
   }
 
-  ({String tenantId, String companyId}) _activeDemandScope() {
+  ({String tenantId, String companyId})? _activeDemandScope() {
     final profileId = companyProfileNotifier.value?.companyId.trim() ?? '';
     final sessionId =
         activeCompanySessionNotifier.value?.companyId.trim() ?? '';
-    final base = profileId.isNotEmpty
-        ? profileId
-        : (sessionId.isNotEmpty ? sessionId : resolvedCompanyId);
+    if (profileId.isNotEmpty &&
+        sessionId.isNotEmpty &&
+        profileId != sessionId) {
+      return null;
+    }
+    final base = profileId.isNotEmpty ? profileId : sessionId;
+    if (base.isEmpty) return null;
     return (tenantId: base, companyId: base);
   }
 
@@ -241,7 +245,6 @@ class _BusinessRegionalDemandPageState
       final pos = await geo.Geolocator.getCurrentPosition(
         desiredAccuracy: geo.LocationAccuracy.high,
       );
-      final scope = _activeDemandScope();
       final local =
           localBackendBusinessProfileNotifier.value ??
           mergeLocalIntoBackendPreview(
@@ -278,16 +281,23 @@ class _BusinessRegionalDemandPageState
       );
 
       await updateLocalBackendBusinessProfileCache(updated);
-      try {
-        final saved = await saveBackendBusinessProfile(
-          updated,
-          tenantId: scope.tenantId,
-          companyId: scope.companyId,
+      final scope = _activeDemandScope();
+      if (scope == null) {
+        debugPrint(
+          '[BUSINESS_DEMAND_SCOPE][BLOCK] reason=missing_strict_company_scope action=save_backend_business_profile',
         );
-        final merged = _mergeDemandProfile(local: updated, server: saved);
-        await updateLocalBackendBusinessProfileCache(merged);
-      } catch (_) {
-        // Local cache already updated; continue with local-first UX.
+      } else {
+        try {
+          final saved = await saveBackendBusinessProfile(
+            updated,
+            tenantId: scope.tenantId,
+            companyId: scope.companyId,
+          );
+          final merged = _mergeDemandProfile(local: updated, server: saved);
+          await updateLocalBackendBusinessProfileCache(merged);
+        } catch (_) {
+          // Local cache already updated; continue with local-first UX.
+        }
       }
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -482,15 +492,21 @@ class _BusinessRegionalDemandPageState
           companyProfileNotifier.value,
         );
     BackendBusinessProfile backend = localFallback;
-    try {
-      final server = await fetchBackendBusinessProfile(
-        tenantId: scope.tenantId,
-        companyId: scope.companyId,
+    if (scope == null) {
+      debugPrint(
+        '[BUSINESS_DEMAND_SCOPE][BLOCK] reason=missing_strict_company_scope action=fetch_backend_business_profile',
       );
-      backend = _mergeDemandProfile(local: localFallback, server: server);
-      unawaited(updateLocalBackendBusinessProfileCache(backend));
-    } catch (_) {
-      // Keep local fallback only.
+    } else {
+      try {
+        final server = await fetchBackendBusinessProfile(
+          tenantId: scope.tenantId,
+          companyId: scope.companyId,
+        );
+        backend = _mergeDemandProfile(local: localFallback, server: server);
+        unawaited(updateLocalBackendBusinessProfileCache(backend));
+      } catch (_) {
+        // Keep local fallback only.
+      }
     }
 
     final primary = _normalizePostcode(

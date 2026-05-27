@@ -3,7 +3,6 @@ import 'dart:convert';
 
 import 'package:app_links/app_links.dart';
 import 'package:flutter/widgets.dart';
-import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/company_session_store.dart';
 import 'package:http/http.dart' as http;
 
@@ -47,10 +46,20 @@ class FluxidiPendingPayment {
 final ValueNotifier<FluxidiPendingPayment?> fluxidiPendingPaymentNotifier =
     ValueNotifier<FluxidiPendingPayment?>(null);
 
-Map<String, String> _activePaymentScopeQuery() {
-  final resolvedId = resolvedCompanyId.trim();
-  final tenantId = resolvedId.isNotEmpty ? resolvedId : kTenantId.trim();
-  final companyId = resolvedId.isNotEmpty ? resolvedId : tenantId;
+Map<String, String>? _activePaymentScopeQuery() {
+  final profileCompanyId = companyProfileNotifier.value?.companyId.trim() ?? '';
+  final sessionCompanyId =
+      activeCompanySessionNotifier.value?.companyId.trim() ?? '';
+  if (profileCompanyId.isNotEmpty &&
+      sessionCompanyId.isNotEmpty &&
+      profileCompanyId != sessionCompanyId) {
+    return null;
+  }
+  final companyId = profileCompanyId.isNotEmpty
+      ? profileCompanyId
+      : sessionCompanyId;
+  if (companyId.isEmpty) return null;
+  final tenantId = companyId;
   return <String, String>{
     'tenant_id': tenantId,
     'company_id': companyId,
@@ -233,12 +242,20 @@ class PaymentReturnCoordinator with WidgetsBindingObserver {
     );
 
     try {
+      final strictScope = _activePaymentScopeQuery();
+      if (strictScope == null) {
+        debugPrint(
+          '[PAYMENT_SCOPE][BLOCK] reason=missing_strict_company_scope action=pay_status',
+        );
+        return;
+      }
       // Up to 6 attempts, 2s apart (~12s) — enough for /pay/status to finalize.
       for (int attempt = 1; attempt <= 6; attempt++) {
         final ok = await _pollPaymentStatusOnce(
           pending.paymentBookingId,
           attempt: attempt,
           source: source,
+          strictScope: strictScope,
         );
         if (ok) break;
         if (attempt < 6) {
@@ -264,12 +281,13 @@ class PaymentReturnCoordinator with WidgetsBindingObserver {
     String paymentBookingId, {
     required int attempt,
     required String source,
+    required Map<String, String> strictScope,
   }) async {
     try {
       final uri = Uri.parse('$_bookingBaseUrl/pay/status').replace(
         queryParameters: <String, String>{
           'id': paymentBookingId,
-          ..._activePaymentScopeQuery(),
+          ...strictScope,
         },
       );
       final res = await http

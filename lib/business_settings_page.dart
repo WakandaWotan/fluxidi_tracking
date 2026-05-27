@@ -1716,7 +1716,10 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     // even if the backend HTTP call fails or the device is offline.
     await updateLocalBackendBusinessProfileCache(formProfile);
     try {
-      final scope = _activeSettingsScope();
+      final scope = _strictSettingsScopeForAction(
+        action: 'save_backend_business_profile',
+      );
+      if (scope == null) return false;
       final saved = await saveBackendBusinessProfile(
         formProfile,
         tenantId: scope.tenantId,
@@ -1777,7 +1780,10 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         imageQuality: quality,
       );
       if (picked == null) return;
-      final scope = _activeSettingsScope();
+      final scope = _strictSettingsScopeForAction(
+        action: 'upload_public_company_media',
+      );
+      if (scope == null) return;
       final bytes = kIsWeb ? await picked.readAsBytes() : null;
       final uploaded = await uploadPublicPartnerMedia(
         tenantId: scope.tenantId,
@@ -1866,7 +1872,10 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     // restart even if the backend HTTP call fails or the device is offline.
     await updateLocalBackendTaxProfileCache(formProfile);
     try {
-      final scope = _activeSettingsScope();
+      final scope = _strictSettingsScopeForAction(
+        action: 'save_backend_tax_profile',
+      );
+      if (scope == null) return false;
       final saved = await saveBackendTaxProfile(
         formProfile,
         tenantId: scope.tenantId,
@@ -1884,7 +1893,11 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
       });
       // Refresh local cache with the server-confirmed result, best-effort.
       unawaited(updateLocalBackendTaxProfileCache(saved));
-      final pricingScope = _activeSettingsScope();
+      final pricingScope = _strictSettingsScopeForAction(
+        action: 'sync_pricing_after_tax_profile_save',
+        showUx: false,
+      );
+      if (pricingScope == null) return true;
       unawaited(
         syncPricingProfileToBackend(
           tenantId: pricingScope.tenantId,
@@ -2662,7 +2675,10 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
       _publicPartnerProfileError = null;
     });
     try {
-      final scope = _activeSettingsScope();
+      final scope = _strictSettingsScopeForAction(
+        action: 'publish_public_partner_profile',
+      );
+      if (scope == null) return false;
       // Keep publish flow stateful: persist current business form values first
       // so manual public media URLs survive page close/reopen even if the user
       // uses "Publish public profile" without tapping "Save company details".
@@ -3702,6 +3718,47 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     final activeCompanyId = _effectivePublicCompanyId().trim();
     final companyId = activeCompanyId.isEmpty ? kTenantId : activeCompanyId;
     return (tenantId: companyId, companyId: companyId);
+  }
+
+  ({String tenantId, String companyId})? _activeSettingsScopeStrict() {
+    final profileCompanyId =
+        companyProfileNotifier.value?.companyId.trim() ?? '';
+    final sessionCompanyId =
+        activeCompanySessionNotifier.value?.companyId.trim() ?? '';
+    if (profileCompanyId.isNotEmpty &&
+        sessionCompanyId.isNotEmpty &&
+        profileCompanyId != sessionCompanyId) {
+      return null;
+    }
+    final companyId = profileCompanyId.isNotEmpty
+        ? profileCompanyId
+        : sessionCompanyId;
+    if (companyId.isEmpty) return null;
+    return (tenantId: companyId, companyId: companyId);
+  }
+
+  void _showMissingStrictCompanyScopeSnackbar() {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text(
+          'Backend synchronisatie vereist een actieve bedrijfssessie. Herkoppel of herstel eerst uw bedrijf.',
+        ),
+      ),
+    );
+  }
+
+  ({String tenantId, String companyId})? _strictSettingsScopeForAction({
+    required String action,
+    bool showUx = true,
+  }) {
+    final scope = _activeSettingsScopeStrict();
+    if (scope != null) return scope;
+    debugPrint(
+      '[BUSINESS_SETTINGS_SCOPE][BLOCK] reason=missing_strict_company_scope action=$action',
+    );
+    if (showUx) _showMissingStrictCompanyScopeSnackbar();
+    return null;
   }
 
   String _airportRuleText(dynamic value, {String fallback = ''}) {
