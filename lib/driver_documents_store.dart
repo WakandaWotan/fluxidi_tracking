@@ -1046,6 +1046,36 @@ class DriverDocumentsStore {
     return (tenantId: '', companyId: '');
   }
 
+  ({String tenantId, String companyId})?
+  _strictActiveTenantCompanyScopeForDocuments() {
+    final profileCompanyId =
+        companyProfileNotifier.value?.companyId.trim() ?? '';
+    final sessionCompanyId =
+        activeCompanySessionNotifier.value?.companyId.trim() ?? '';
+    if (profileCompanyId.isNotEmpty &&
+        sessionCompanyId.isNotEmpty &&
+        profileCompanyId != sessionCompanyId) {
+      return null;
+    }
+    final companyId = profileCompanyId.isNotEmpty
+        ? profileCompanyId
+        : sessionCompanyId;
+    if (companyId.isNotEmpty) {
+      return (tenantId: companyId, companyId: companyId);
+    }
+    final activeDriverSession = activeDriverSessionNotifier.value;
+    final driverTenantId = (activeDriverSession?.tenantId ?? '').trim();
+    final driverCompanyId = (activeDriverSession?.companyId ?? '').trim();
+    final canUseDriverScope =
+        driverTenantId.isNotEmpty &&
+        driverCompanyId.isNotEmpty &&
+        (activeDriverSession?.isVerifiedPairingSession ?? false);
+    if (canUseDriverScope) {
+      return (tenantId: driverTenantId, companyId: driverCompanyId);
+    }
+    return null;
+  }
+
   String _activeDriverIdForScope() {
     return (activeDriverSessionNotifier.value?.driverId ?? '').trim();
   }
@@ -1421,13 +1451,6 @@ class DriverDocumentsStore {
     final sessionCompanyId =
         activeCompanySessionNotifier.value?.companyId.trim() ?? '';
     if (sessionCompanyId.isNotEmpty) return sessionCompanyId;
-    final hasExplicitContext =
-        companyProfileNotifier.value != null ||
-        activeCompanySessionNotifier.value != null;
-    if (hasExplicitContext) {
-      final resolved = resolvedCompanyId.trim();
-      if (resolved.isNotEmpty) return resolved;
-    }
     return '';
   }
 
@@ -1667,6 +1690,25 @@ class DriverDocumentsStore {
       backendSyncAttemptCount: target.backendSyncAttemptCount + 1,
     );
     await _upsertDocumentAndPersist(target);
+    final strictScope = _strictActiveTenantCompanyScopeForDocuments();
+    final hasStrictScope = strictScope != null;
+    final hasMatchingStrictScope =
+        hasStrictScope &&
+        tenantId.isNotEmpty &&
+        companyId.isNotEmpty &&
+        tenantId == strictScope.tenantId &&
+        companyId == strictScope.companyId;
+    if (!hasMatchingStrictScope) {
+      final withError = target.copyWith(
+        backendPendingUpload: true,
+        backendSyncError: 'missing_strict_company_scope',
+      );
+      await _upsertDocumentAndPersist(withError);
+      debugPrint(
+        '[DRIVER_DOCUMENT_SCOPE][BLOCK] reason=missing_strict_company_scope action=sync_document_upsert',
+      );
+      return null;
+    }
 
     if (companySessionToken.trim().isEmpty) {
       final withError = target.copyWith(
@@ -2392,16 +2434,17 @@ class DriverDocumentsStore {
 
   /// Default [companyId] when saving new docs under an active local tenant.
   String resolvedCompanyIdForNewDoc() {
-    final activeCompanyId = _activeCompanyIdForDocuments();
-    if (activeCompanyId.isNotEmpty) return activeCompanyId;
-    return companyProfileNotifier.value != null ? resolvedCompanyId : '';
+    final strictScope = _strictActiveTenantCompanyScopeForDocuments();
+    return strictScope?.companyId ?? '';
   }
 
   String resolvedTenantIdForNewDoc() {
-    final scope = _activeTenantCompanyScope();
-    if (scope.tenantId.isNotEmpty) return scope.tenantId;
-    final company = resolvedCompanyIdForNewDoc().trim();
-    return company;
+    final strictScope = _strictActiveTenantCompanyScopeForDocuments();
+    return strictScope?.tenantId ?? '';
+  }
+
+  ({String tenantId, String companyId})? strictActiveScopeForNewDoc() {
+    return _strictActiveTenantCompanyScopeForDocuments();
   }
 
   static DriverDocument buildNew({

@@ -674,15 +674,40 @@ Future<void> showDriverDocumentEditorSheet(
                                   }
                                   return;
                                 }
-                                var company = DriverDocumentsStore.instance
-                                    .resolvedCompanyIdForNewDoc();
-                                var tenant = DriverDocumentsStore.instance
-                                    .resolvedTenantIdForNewDoc();
-                                if (activeCompanyId.isNotEmpty) {
-                                  company = activeCompanyId;
-                                  if (tenant.trim().isEmpty) {
-                                    tenant = activeCompanyId;
+                                final strictScope = DriverDocumentsStore
+                                    .instance
+                                    .strictActiveScopeForNewDoc();
+                                if (strictScope == null) {
+                                  debugPrint(
+                                    '[DRIVER_DOCUMENT_SCOPE][BLOCK] reason=missing_strict_company_scope action=create_driver_document',
+                                  );
+                                  if (ctx.mounted) {
+                                    ScaffoldMessenger.of(ctx).showSnackBar(
+                                      const SnackBar(
+                                        content: Text(
+                                          'Backend synchronisatie vereist een actieve bedrijfssessie. Herkoppel of herstel eerst uw bedrijf.',
+                                        ),
+                                      ),
+                                    );
                                   }
+                                  return;
+                                }
+                                final company = strictScope.companyId.trim();
+                                final tenant = strictScope.tenantId.trim();
+                                if (company.isEmpty || tenant.isEmpty) {
+                                  debugPrint(
+                                    '[DRIVER_DOCUMENT_SCOPE][BLOCK] reason=missing_strict_company_scope action=create_driver_document',
+                                  );
+                                  if (ctx.mounted) {
+                                    ScaffoldMessenger.of(ctx).showSnackBar(
+                                      const SnackBar(
+                                        content: Text(
+                                          'Backend synchronisatie vereist een actieve bedrijfssessie. Herkoppel of herstel eerst uw bedrijf.',
+                                        ),
+                                      ),
+                                    );
+                                  }
+                                  return;
                                 }
                                 final resolvedDocId =
                                     existing?.documentId ??
