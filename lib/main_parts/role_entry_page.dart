@@ -2,9 +2,67 @@ part of '../main.dart';
 
 class RoleEntryPage extends StatelessWidget {
   const RoleEntryPage({super.key});
+  static const Duration _backgroundCarouselInterval = Duration(
+    milliseconds: 3200,
+  );
+  static const Duration _backgroundCrossfadeDuration = Duration(
+    milliseconds: 850,
+  );
+  static final Set<String> _precachedRoleBackgrounds = <String>{};
 
-  static const String _startBackgroundAsset =
-      'assets/fluxidi/fluxidi_start_background.png';
+  String _backgroundAssetForSize(Size size) {
+    if (size.height > size.width && size.width < 600) {
+      return 'assets/fluxidi/background_sign_in_page_phone.png';
+    }
+    return 'assets/fluxidi/background_sign_in_page.png';
+  }
+
+  List<String> _carouselAssetsForSize(Size size) {
+    return <String>[
+      _backgroundAssetForSize(size),
+      'assets/fluxidi/role_customer_bg.png',
+      'assets/fluxidi/role_business_bg.png',
+      'assets/fluxidi/role_driver_bg.png',
+    ];
+  }
+
+  void _precacheCarouselAssets(BuildContext context, List<String> assets) {
+    for (final asset in assets) {
+      if (_precachedRoleBackgrounds.add(asset)) {
+        unawaited(precacheImage(AssetImage(asset), context));
+      }
+    }
+  }
+
+  Widget _buildBackgroundLayer({
+    required List<String> assets,
+    required int activeBackgroundIndex,
+  }) {
+    final activeAsset = assets[activeBackgroundIndex];
+    return AnimatedSwitcher(
+      duration: _backgroundCrossfadeDuration,
+      switchInCurve: Curves.easeInOut,
+      switchOutCurve: Curves.easeInOut,
+      child: Image.asset(
+        activeAsset,
+        key: ValueKey<String>(activeAsset),
+        fit: BoxFit.cover,
+        alignment: Alignment.topCenter,
+        filterQuality: FilterQuality.high,
+        gaplessPlayback: true,
+        errorBuilder: (_, __, ___) => const DecoratedBox(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [Color(0xFFF3ECE1), Color(0xFFE6DACA)],
+            ),
+          ),
+          child: SizedBox.expand(),
+        ),
+      ),
+    );
+  }
 
   String _normalizeHumanCompanyId(String raw) {
     var text = raw.trim().toUpperCase();
@@ -65,6 +123,18 @@ class RoleEntryPage extends StatelessWidget {
     required double height,
     bool highlighted = false,
   }) {
+    const double normalFillOpacity = 0.09;
+    const double activeFillOpacity = 0.14;
+    const double normalBorderOpacity = 0.56;
+    const double activeBorderOpacity = 0.76;
+    const double normalGlowOpacity = 0.08;
+    const double activeGlowOpacity = 0.15;
+    final fillOpacity = highlighted ? activeFillOpacity : normalFillOpacity;
+    final borderOpacity = highlighted
+        ? activeBorderOpacity
+        : normalBorderOpacity;
+    final glowOpacity = highlighted ? activeGlowOpacity : normalGlowOpacity;
+
     return SizedBox(
       height: height,
       child: Material(
@@ -80,25 +150,30 @@ class RoleEntryPage extends StatelessWidget {
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
                 colors: [
-                  const Color(0xFF15120A).withOpacity(0.94),
-                  const Color(0xFF07080C).withOpacity(0.98),
+                  const Color(0xFFFFFFFF).withOpacity(fillOpacity),
+                  const Color(0xFFFFFFFF).withOpacity(fillOpacity * 0.52),
+                  const Color(0xFF111827).withOpacity(highlighted ? 0.1 : 0.08),
                 ],
               ),
               border: Border.all(
-                color: highlighted
-                    ? kFluxidiYellow.withOpacity(0.72)
-                    : kFluxidiYellow.withOpacity(0.46),
-                width: highlighted ? 1.25 : 1.0,
+                color: kFluxidiYellow.withOpacity(borderOpacity),
+                width: highlighted ? 1.1 : 1.0,
               ),
               boxShadow: [
                 BoxShadow(
-                  color: kFluxidiYellow.withOpacity(highlighted ? 0.18 : 0.1),
-                  blurRadius: highlighted ? 14 : 10,
+                  color: kFluxidiYellow.withOpacity(glowOpacity),
+                  blurRadius: highlighted ? 12 : 9,
+                  spreadRadius: highlighted ? 0.26 : 0.12,
                 ),
-                const BoxShadow(
-                  color: Color(0x99000000),
-                  blurRadius: 10,
-                  offset: Offset(0, 7),
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.18),
+                  blurRadius: 9,
+                  offset: const Offset(0, 6),
+                ),
+                BoxShadow(
+                  color: Colors.white.withOpacity(0.06),
+                  blurRadius: 2,
+                  offset: const Offset(0, -1),
                 ),
               ],
             ),
@@ -110,10 +185,10 @@ class RoleEntryPage extends StatelessWidget {
                     width: 74,
                     height: 74,
                     decoration: BoxDecoration(
-                      color: const Color(0xFF15120A).withOpacity(0.78),
+                      color: const Color(0xFF111827).withOpacity(0.08),
                       shape: BoxShape.circle,
                       border: Border.all(
-                        color: kFluxidiYellow.withOpacity(0.58),
+                        color: kFluxidiYellow.withOpacity(0.64),
                       ),
                     ),
                     child: Icon(icon, color: kFluxidiYellow, size: 40),
@@ -128,10 +203,17 @@ class RoleEntryPage extends StatelessWidget {
                           title,
                           maxLines: 1,
                           style: const TextStyle(
-                            color: Colors.white,
+                            color: Color(0xFFFDFDFD),
                             fontSize: 18.2,
                             fontWeight: FontWeight.w800,
                             letterSpacing: 0.15,
+                            shadows: [
+                              Shadow(
+                                color: Color(0x8A000000),
+                                blurRadius: 6,
+                                offset: Offset(0, 1),
+                              ),
+                            ],
                           ),
                         ),
                         const SizedBox(height: 1),
@@ -140,10 +222,17 @@ class RoleEntryPage extends StatelessWidget {
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
-                            color: Colors.white.withOpacity(0.72),
+                            color: Colors.white.withOpacity(0.9),
                             fontSize: 10.8,
                             fontWeight: FontWeight.w600,
                             height: 1.14,
+                            shadows: const [
+                              Shadow(
+                                color: Color(0x70000000),
+                                blurRadius: 4,
+                                offset: Offset(0, 1),
+                              ),
+                            ],
                           ),
                         ),
                       ],
@@ -152,7 +241,7 @@ class RoleEntryPage extends StatelessWidget {
                   const SizedBox(width: 4),
                   Icon(
                     Icons.chevron_right_rounded,
-                    color: kFluxidiYellow,
+                    color: kFluxidiYellow.withOpacity(0.98),
                     size: 21,
                   ),
                 ],
@@ -1908,420 +1997,429 @@ class RoleEntryPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final viewportSize = MediaQuery.sizeOf(context);
+    final carouselAssets = _carouselAssetsForSize(viewportSize);
+    final disableAnimations =
+        MediaQuery.maybeOf(context)?.disableAnimations ?? false;
+    _precacheCarouselAssets(context, carouselAssets);
     return ValueListenableBuilder<AppLanguage>(
       valueListenable: appLanguageNotifier,
-      builder: (context, _, __) => Scaffold(
-        backgroundColor: kFluxidiBlack,
-        body: SafeArea(
-          child: Stack(
-            children: [
-              Positioned(
-                left: 0,
-                right: 0,
-                top: (() {
-                  final media = MediaQuery.of(context);
-                  final W = media.size.width;
-                  final H = media.size.height;
-                  final screenClass = FluxidiBreakpoints.classifyWidth(W);
-                  final isTabletLike =
-                      screenClass == FluxidiScreenClass.tablet ||
-                      screenClass == FluxidiScreenClass.desktop;
-                  final isLandscape = W > H;
-                  final isTabletLandscape =
-                      isTabletLike && isLandscape && H >= 700;
-                  final bgTop = isTabletLandscape ? 72.0 : 96.0;
-                  return bgTop;
-                })(),
-                bottom: (() {
-                  final media = MediaQuery.of(context);
-                  final W = media.size.width;
-                  final H = media.size.height;
-                  final screenClass = FluxidiBreakpoints.classifyWidth(W);
-                  final isTabletLike =
-                      screenClass == FluxidiScreenClass.tablet ||
-                      screenClass == FluxidiScreenClass.desktop;
-                  final isLandscape = W > H;
-                  final isTabletLandscape =
-                      isTabletLike && isLandscape && H >= 700;
-                  final bgBottom = isTabletLandscape ? -72.0 : -96.0;
-                  return bgBottom;
-                })(),
-                child: Image.asset(
-                  _startBackgroundAsset,
-                  fit: BoxFit.cover,
-                  alignment: (() {
-                    final media = MediaQuery.of(context);
-                    final W = media.size.width;
-                    final H = media.size.height;
-                    final screenClass = FluxidiBreakpoints.classifyWidth(W);
-                    final isTabletLike =
-                        screenClass == FluxidiScreenClass.tablet ||
-                        screenClass == FluxidiScreenClass.desktop;
-                    final isLandscape = W > H;
-                    final isTabletLandscape =
-                        isTabletLike && isLandscape && H >= 700;
-                    final bgAlignment = isTabletLandscape
-                        ? const Alignment(0.0, 0.82)
-                        : const Alignment(0.0, 0.75);
-                    return bgAlignment;
-                  })(),
-                  errorBuilder: (_, __, ___) => const DecoratedBox(
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        begin: Alignment.topCenter,
-                        end: Alignment.bottomCenter,
-                        colors: [Color(0xFF101827), Color(0xFF070A10)],
-                      ),
-                    ),
-                    child: SizedBox.expand(),
-                  ),
-                ),
+      builder: (context, _, __) {
+        if (disableAnimations) {
+          return _buildScaffoldWithBackground(
+            context: context,
+            assets: carouselAssets,
+            activeBackgroundIndex: 0,
+          );
+        }
+        return StreamBuilder<int>(
+          initialData: 0,
+          stream: Stream<int>.periodic(
+            _backgroundCarouselInterval,
+            (tick) => (tick + 1) % carouselAssets.length,
+          ),
+          builder: (context, snapshot) {
+            final activeBackgroundIndex = snapshot.data ?? 0;
+            return _buildScaffoldWithBackground(
+              context: context,
+              assets: carouselAssets,
+              activeBackgroundIndex: activeBackgroundIndex,
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Widget _buildScaffoldWithBackground({
+    required BuildContext context,
+    required List<String> assets,
+    required int activeBackgroundIndex,
+  }) {
+    return Scaffold(
+      backgroundColor: kFluxidiBlack,
+      body: SafeArea(
+        child: Stack(
+          children: [
+            Positioned.fill(
+              child: _buildBackgroundLayer(
+                assets: assets,
+                activeBackgroundIndex: activeBackgroundIndex,
               ),
-              Positioned.fill(
-                child: Container(color: Colors.black.withOpacity(0.15)),
-              ),
-              Positioned.fill(
-                child: IgnorePointer(
-                  child: DecoratedBox(
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        begin: Alignment.topCenter,
-                        end: Alignment.bottomCenter,
-                        stops: const [0.0, 0.46, 0.8, 1.0],
-                        colors: [
-                          Colors.black.withOpacity(0.02),
-                          Colors.black.withOpacity(0.10),
-                          Colors.black.withOpacity(0.16),
-                          Colors.black.withOpacity(0.22),
-                        ],
-                      ),
+            ),
+            Positioned.fill(
+              child: IgnorePointer(
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      stops: const [0.0, 0.44, 0.78, 1.0],
+                      colors: [
+                        Colors.black.withOpacity(0.0),
+                        Colors.black.withOpacity(0.06),
+                        Colors.black.withOpacity(0.10),
+                        Colors.black.withOpacity(0.14),
+                      ],
                     ),
                   ),
                 ),
               ),
-              LayoutBuilder(
-                builder: (context, constraints) {
-                  double clampDouble(double v, double min, double max) =>
-                      v < min ? min : (v > max ? max : v);
+            ),
+            LayoutBuilder(
+              builder: (context, constraints) {
+                double clampDouble(double v, double min, double max) =>
+                    v < min ? min : (v > max ? max : v);
 
-                  final W = constraints.maxWidth;
-                  final H = constraints.maxHeight;
-                  final veryCompact = constraints.maxHeight < 680;
-                  final narrow = constraints.maxWidth < 390;
-                  final screenClass = FluxidiBreakpoints.classifyWidth(W);
-                  final isTabletLike =
-                      screenClass == FluxidiScreenClass.tablet ||
-                      screenClass == FluxidiScreenClass.desktop;
-                  final isLandscape = W > H;
-                  final isTabletPortrait =
-                      isTabletLike && !isLandscape && H >= 900;
-                  final isTabletLandscape =
-                      isTabletLike && isLandscape && H >= 700;
-                  final contentHorizontalPadding = narrow ? 14.0 : 18.0;
-                  final logoTop = veryCompact ? -26.0 : -32.0;
-                  final languageTop = veryCompact ? 4.0 : 6.0;
-                  final logoMaxBySpace =
-                      constraints.maxWidth -
-                      (contentHorizontalPadding * 2) -
-                      84.0;
-                  final logoWidth = math.max(
-                    170.0,
-                    math.min(
-                      logoMaxBySpace,
-                      constraints.maxWidth * (narrow ? 0.62 : 0.55),
-                    ),
-                  );
-                  final logoLeft = isTabletLandscape
-                      ? -clampDouble(logoWidth * 0.16, 64.0, 96.0)
-                      : 0.0;
-                  const contentMaxWidth = 470.0;
-                  final languageRight = isTabletLandscape
-                      ? -clampDouble(
-                          ((W - contentMaxWidth) / 2.0) - 36.0,
-                          0.0,
-                          520.0,
-                        )
-                      : 0.0;
-                  final basePhoneContentTop = veryCompact ? 112.0 : 136.0;
-                  final contentTop = isTabletLandscape
-                      ? clampDouble(H * 0.40, 330.0, 365.0)
-                      : isTabletPortrait
-                      ? clampDouble(H * 0.15, 176.0, 232.0)
-                      : basePhoneContentTop;
+                final W = constraints.maxWidth;
+                final H = constraints.maxHeight;
+                final veryCompact = constraints.maxHeight < 680;
+                final narrow = constraints.maxWidth < 390;
+                final screenClass = FluxidiBreakpoints.classifyWidth(W);
+                final isTabletLike =
+                    screenClass == FluxidiScreenClass.tablet ||
+                    screenClass == FluxidiScreenClass.desktop;
+                final isLandscape = W > H;
+                final isTabletPortrait =
+                    isTabletLike && !isLandscape && H >= 900;
+                final isTabletLandscape =
+                    isTabletLike && isLandscape && H >= 700;
+                final contentHorizontalPadding = narrow ? 14.0 : 18.0;
+                final logoTop = isTabletLandscape
+                    ? 6.0
+                    : (veryCompact ? 16.0 : 24.0);
+                final languageTop = veryCompact ? 4.0 : 6.0;
+                final logoMaxBySpace =
+                    constraints.maxWidth -
+                    (contentHorizontalPadding * 2) -
+                    84.0;
+                final logoWidth = math.max(
+                  170.0,
+                  math.min(
+                    logoMaxBySpace,
+                    constraints.maxWidth * (narrow ? 0.62 : 0.55),
+                  ),
+                );
+                final logoLeft = isTabletLandscape
+                    ? -clampDouble(logoWidth * 0.16, 64.0, 96.0)
+                    : 0.0;
+                const contentMaxWidth = 470.0;
+                final languageRight = isTabletLandscape
+                    ? -clampDouble(
+                        ((W - contentMaxWidth) / 2.0) - 36.0,
+                        0.0,
+                        520.0,
+                      )
+                    : 0.0;
+                final basePhoneContentTop = veryCompact ? 112.0 : 136.0;
+                final contentTop = isTabletLandscape
+                    ? clampDouble(H * 0.40, 330.0, 365.0)
+                    : isTabletPortrait
+                    ? clampDouble(H * 0.15, 176.0, 232.0)
+                    : basePhoneContentTop;
 
-                  final roleCardHeight = isTabletLandscape
-                      ? 88.0
-                      : isTabletPortrait
-                      ? 98.0
-                      : (veryCompact ? 92.0 : 98.0);
-                  final cardGap = isTabletLandscape
-                      ? 4.0
-                      : isTabletPortrait
-                      ? 6.0
-                      : (veryCompact ? 5.0 : 6.0);
-                  final sectionGap = isTabletLandscape
-                      ? 6.0
-                      : isTabletPortrait
-                      ? 8.0
-                      : (veryCompact ? 7.0 : 8.0);
-                  final scrollBottomPadding = isTabletLandscape
-                      ? 92.0
-                      : isTabletPortrait
-                      ? 148.0
-                      : (veryCompact ? 118.0 : 136.0);
-                  final roleCardWidth = math.min(
-                    392.0,
-                    constraints.maxWidth * (narrow ? 0.85 : 0.8),
-                  );
-                  final reassuranceWidth = math.min(
-                    280.0,
-                    constraints.maxWidth * (narrow ? 0.78 : 0.66),
-                  );
+                final roleCardHeight = isTabletLandscape
+                    ? 88.0
+                    : isTabletPortrait
+                    ? 98.0
+                    : (veryCompact ? 92.0 : 98.0);
+                final cardGap = isTabletLandscape
+                    ? 4.0
+                    : isTabletPortrait
+                    ? 6.0
+                    : (veryCompact ? 5.0 : 6.0);
+                final sectionGap = isTabletLandscape
+                    ? 6.0
+                    : isTabletPortrait
+                    ? 8.0
+                    : (veryCompact ? 7.0 : 8.0);
+                final scrollBottomPadding = isTabletLandscape
+                    ? 92.0
+                    : isTabletPortrait
+                    ? 148.0
+                    : (veryCompact ? 118.0 : 136.0);
+                final startPrompt = _t(
+                  nl: 'Hoe wil je starten?',
+                  en: 'How do you want to start?',
+                  fr: 'Comment voulez-vous commencer ?',
+                  es: '¿Cómo quieres empezar?',
+                );
+                final roleCardWidth = math.min(
+                  392.0,
+                  constraints.maxWidth * (narrow ? 0.85 : 0.8),
+                );
+                final reassuranceWidth = math.min(
+                  280.0,
+                  constraints.maxWidth * (narrow ? 0.78 : 0.66),
+                );
 
-                  return Center(
-                    child: ConstrainedBox(
-                      constraints: const BoxConstraints(maxWidth: 470),
-                      child: Padding(
-                        padding: EdgeInsets.symmetric(
-                          horizontal: contentHorizontalPadding,
-                        ),
-                        child: Stack(
-                          clipBehavior: Clip.none,
-                          children: [
-                            Positioned(
-                              left: logoLeft,
-                              top: logoTop,
-                              child: SizedBox(
-                                width: logoWidth,
-                                child: Align(
+                return Center(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 470),
+                    child: Padding(
+                      padding: EdgeInsets.symmetric(
+                        horizontal: contentHorizontalPadding,
+                      ),
+                      child: Stack(
+                        clipBehavior: Clip.none,
+                        children: [
+                          Positioned(
+                            left: logoLeft,
+                            top: logoTop,
+                            child: SizedBox(
+                              width: logoWidth,
+                              child: Align(
+                                alignment: Alignment.topLeft,
+                                child: Image.asset(
+                                  'assets/fluxidi/fluxidi_logo_horizontal_dark.png',
+                                  fit: BoxFit.contain,
                                   alignment: Alignment.topLeft,
-                                  child: Image.asset(
-                                    kFluxidiLogoAsset,
-                                    fit: BoxFit.contain,
-                                    alignment: Alignment.topLeft,
-                                    errorBuilder: (_, __, ___) => const Text(
-                                      'FLUXIDI',
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: TextStyle(
-                                        color: Colors.white,
-                                        fontSize: 28,
-                                        fontWeight: FontWeight.w900,
-                                        letterSpacing: 0.8,
-                                      ),
+                                  errorBuilder: (_, __, ___) => const Text(
+                                    'FLUXIDI',
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 28,
+                                      fontWeight: FontWeight.w900,
+                                      letterSpacing: 0.8,
                                     ),
                                   ),
                                 ),
                               ),
                             ),
-                            Positioned(
-                              right: languageRight,
-                              top: languageTop,
-                              child: _languageSelectorPill(),
-                            ),
-                            Positioned.fill(
-                              top: contentTop,
-                              child: SingleChildScrollView(
-                                padding: EdgeInsets.only(
-                                  bottom: scrollBottomPadding,
-                                ),
-                                child: Column(
-                                  children: [
-                                    Center(
-                                      child: Column(
-                                        children: [
-                                          Text(
-                                            _t(
-                                              nl: 'Welkom bij Fluxidi',
-                                              en: 'Welcome to Fluxidi',
-                                              fr: 'Bienvenue chez Fluxidi',
-                                              es: 'Bienvenido a Fluxidi',
-                                            ),
-                                            textAlign: TextAlign.center,
-                                            style: TextStyle(
-                                              color: Colors.white.withOpacity(
-                                                0.97,
-                                              ),
-                                              fontSize: narrow ? 18 : 19,
-                                              fontWeight: FontWeight.w900,
-                                              height: 1.08,
-                                              shadows: [
-                                                Shadow(
-                                                  color: Colors.black
-                                                      .withOpacity(0.45),
-                                                  blurRadius: 10,
-                                                ),
-                                              ],
-                                            ),
+                          ),
+                          Positioned(
+                            right: languageRight,
+                            top: languageTop,
+                            child: _languageSelectorPill(),
+                          ),
+                          Positioned.fill(
+                            top: contentTop,
+                            child: SingleChildScrollView(
+                              padding: EdgeInsets.only(
+                                bottom: scrollBottomPadding,
+                              ),
+                              child: Column(
+                                children: [
+                                  Center(
+                                    child: Column(
+                                      children: [
+                                        Text(
+                                          _t(
+                                            nl: 'Welkom bij Fluxidi',
+                                            en: 'Welcome to Fluxidi',
+                                            fr: 'Bienvenue chez Fluxidi',
+                                            es: 'Bienvenido a Fluxidi',
                                           ),
-                                          const SizedBox(height: 3),
-                                          Text(
-                                            _t(
-                                              nl: 'Kies je rol en vertrek.',
-                                              en: 'Choose your role and go.',
-                                              fr: 'Choisissez votre rôle et démarrez.',
-                                              es: 'Elige tu rol y empieza.',
+                                          textAlign: TextAlign.center,
+                                          style: TextStyle(
+                                            color: Colors.white.withOpacity(
+                                              0.97,
                                             ),
-                                            textAlign: TextAlign.center,
-                                            maxLines: 1,
-                                            overflow: TextOverflow.ellipsis,
-                                            style: TextStyle(
-                                              color: Colors.white.withOpacity(
-                                                0.82,
-                                              ),
-                                              fontSize: 11.2,
-                                              fontWeight: FontWeight.w600,
-                                              height: 1.2,
-                                              shadows: [
-                                                Shadow(
-                                                  color: Colors.black
-                                                      .withOpacity(0.4),
-                                                  blurRadius: 8,
+                                            fontSize: narrow ? 18 : 19,
+                                            fontWeight: FontWeight.w900,
+                                            height: 1.08,
+                                            shadows: [
+                                              Shadow(
+                                                color: Colors.black.withOpacity(
+                                                  0.45,
                                                 ),
-                                              ],
+                                                blurRadius: 10,
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                        const SizedBox(height: 3),
+                                        Text(
+                                          _t(
+                                            nl: 'Kies je rol en vertrek.',
+                                            en: 'Choose your role and go.',
+                                            fr: 'Choisissez votre rôle et démarrez.',
+                                            es: 'Elige tu rol y empieza.',
+                                          ),
+                                          textAlign: TextAlign.center,
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: TextStyle(
+                                            color: Colors.white.withOpacity(
+                                              0.82,
+                                            ),
+                                            fontSize: 11.2,
+                                            fontWeight: FontWeight.w600,
+                                            height: 1.2,
+                                            shadows: [
+                                              Shadow(
+                                                color: Colors.black.withOpacity(
+                                                  0.4,
+                                                ),
+                                                blurRadius: 8,
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  SizedBox(height: sectionGap),
+                                  Stack(
+                                    alignment: Alignment.center,
+                                    children: [
+                                      Text(
+                                        startPrompt,
+                                        textAlign: TextAlign.center,
+                                        style: TextStyle(
+                                          fontSize: 13.2,
+                                          fontWeight: FontWeight.w800,
+                                          foreground: Paint()
+                                            ..style = PaintingStyle.stroke
+                                            ..strokeWidth = 2.2
+                                            ..color = const Color(0xFFF8F8F8),
+                                        ),
+                                      ),
+                                      Text(
+                                        startPrompt,
+                                        textAlign: TextAlign.center,
+                                        style: const TextStyle(
+                                          color: Color(0xFF1F2933),
+                                          fontSize: 13.2,
+                                          fontWeight: FontWeight.w800,
+                                          shadows: [
+                                            Shadow(
+                                              color: Color(0x4D000000),
+                                              blurRadius: 2,
+                                              offset: Offset(0, 1),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 6),
+                                  Center(
+                                    child: SizedBox(
+                                      width: roleCardWidth,
+                                      child: _roleCard(
+                                        title: _t(
+                                          nl: 'Klant',
+                                          en: 'Customer',
+                                          fr: 'Client',
+                                          es: 'Cliente',
+                                        ),
+                                        subtitle: _t(
+                                          nl: 'Boek je rit.',
+                                          en: 'Book your ride.',
+                                          fr: 'Réservez votre course.',
+                                          es: 'Reserva tu viaje.',
+                                        ),
+                                        icon: Icons.person_outline_rounded,
+                                        height: roleCardHeight,
+                                        highlighted: activeBackgroundIndex == 1,
+                                        onTap: () => _goCustomer(context),
+                                      ),
+                                    ),
+                                  ),
+                                  SizedBox(height: cardGap),
+                                  Center(
+                                    child: SizedBox(
+                                      width: roleCardWidth,
+                                      child: _roleCard(
+                                        title: _t(
+                                          nl: 'Bedrijf',
+                                          en: 'Business',
+                                          fr: 'Entreprise',
+                                          es: 'Empresa',
+                                        ),
+                                        subtitle: _t(
+                                          nl: 'Beheer je vloot.',
+                                          en: 'Manage your fleet.',
+                                          fr: 'Gérez votre flotte.',
+                                          es: 'Gestiona tu flota.',
+                                        ),
+                                        icon: Icons.business_center_rounded,
+                                        height: roleCardHeight,
+                                        highlighted: activeBackgroundIndex == 2,
+                                        onTap: () =>
+                                            unawaited(_goBusiness(context)),
+                                      ),
+                                    ),
+                                  ),
+                                  SizedBox(height: cardGap),
+                                  Center(
+                                    child: SizedBox(
+                                      width: roleCardWidth,
+                                      child: _roleCard(
+                                        title: _t(
+                                          nl: 'Chauffeur',
+                                          en: 'Driver',
+                                          fr: 'Chauffeur',
+                                          es: 'Conductor',
+                                        ),
+                                        subtitle: _t(
+                                          nl: 'Start en rij ritten.',
+                                          en: 'Start and drive rides.',
+                                          fr: 'Démarrez et roulez.',
+                                          es: 'Inicia y conduce viajes.',
+                                        ),
+                                        icon: Icons.local_taxi_rounded,
+                                        height: roleCardHeight,
+                                        highlighted: activeBackgroundIndex == 3,
+                                        onTap: () => _goDriver(context),
+                                      ),
+                                    ),
+                                  ),
+                                  SizedBox(height: sectionGap),
+                                  Center(
+                                    child: SizedBox(
+                                      width: reassuranceWidth,
+                                      child: Row(
+                                        mainAxisAlignment:
+                                            MainAxisAlignment.center,
+                                        children: [
+                                          Icon(
+                                            Icons.shield_outlined,
+                                            color: kFluxidiYellow.withOpacity(
+                                              0.86,
+                                            ),
+                                            size: 17,
+                                          ),
+                                          const SizedBox(width: 5),
+                                          Flexible(
+                                            child: Text(
+                                              _t(
+                                                nl: 'Keuze wordt onthouden.',
+                                                en: 'Choice remembered.',
+                                                fr: 'Choix mémorisé.',
+                                                es: 'Elección recordada.',
+                                              ),
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                              textAlign: TextAlign.center,
+                                              style: TextStyle(
+                                                color: Colors.white.withOpacity(
+                                                  0.78,
+                                                ),
+                                                fontSize: 10.6,
+                                                fontWeight: FontWeight.w600,
+                                              ),
                                             ),
                                           ),
                                         ],
                                       ),
                                     ),
-                                    SizedBox(height: sectionGap),
-                                    Text(
-                                      _t(
-                                        nl: 'Hoe wil je starten?',
-                                        en: 'How do you want to start?',
-                                        fr: 'Comment voulez-vous commencer ?',
-                                        es: '¿Cómo quieres empezar?',
-                                      ),
-                                      textAlign: TextAlign.center,
-                                      style: TextStyle(
-                                        color: kFluxidiYellow.withOpacity(0.98),
-                                        fontSize: 13.2,
-                                        fontWeight: FontWeight.w800,
-                                      ),
-                                    ),
-                                    const SizedBox(height: 6),
-                                    Center(
-                                      child: SizedBox(
-                                        width: roleCardWidth,
-                                        child: _roleCard(
-                                          title: _t(
-                                            nl: 'Klant',
-                                            en: 'Customer',
-                                            fr: 'Client',
-                                            es: 'Cliente',
-                                          ),
-                                          subtitle: _t(
-                                            nl: 'Boek je rit.',
-                                            en: 'Book your ride.',
-                                            fr: 'Réservez votre course.',
-                                            es: 'Reserva tu viaje.',
-                                          ),
-                                          icon: Icons.person_outline_rounded,
-                                          height: roleCardHeight,
-                                          highlighted: true,
-                                          onTap: () => _goCustomer(context),
-                                        ),
-                                      ),
-                                    ),
-                                    SizedBox(height: cardGap),
-                                    Center(
-                                      child: SizedBox(
-                                        width: roleCardWidth,
-                                        child: _roleCard(
-                                          title: _t(
-                                            nl: 'Bedrijf',
-                                            en: 'Business',
-                                            fr: 'Entreprise',
-                                            es: 'Empresa',
-                                          ),
-                                          subtitle: _t(
-                                            nl: 'Beheer je vloot.',
-                                            en: 'Manage your fleet.',
-                                            fr: 'Gérez votre flotte.',
-                                            es: 'Gestiona tu flota.',
-                                          ),
-                                          icon: Icons.business_center_rounded,
-                                          height: roleCardHeight,
-                                          onTap: () =>
-                                              unawaited(_goBusiness(context)),
-                                        ),
-                                      ),
-                                    ),
-                                    SizedBox(height: cardGap),
-                                    Center(
-                                      child: SizedBox(
-                                        width: roleCardWidth,
-                                        child: _roleCard(
-                                          title: _t(
-                                            nl: 'Chauffeur',
-                                            en: 'Driver',
-                                            fr: 'Chauffeur',
-                                            es: 'Conductor',
-                                          ),
-                                          subtitle: _t(
-                                            nl: 'Start en rij ritten.',
-                                            en: 'Start and drive rides.',
-                                            fr: 'Démarrez et roulez.',
-                                            es: 'Inicia y conduce viajes.',
-                                          ),
-                                          icon: Icons.local_taxi_rounded,
-                                          height: roleCardHeight,
-                                          onTap: () => _goDriver(context),
-                                        ),
-                                      ),
-                                    ),
-                                    SizedBox(height: sectionGap),
-                                    Center(
-                                      child: SizedBox(
-                                        width: reassuranceWidth,
-                                        child: Row(
-                                          mainAxisAlignment:
-                                              MainAxisAlignment.center,
-                                          children: [
-                                            Icon(
-                                              Icons.shield_outlined,
-                                              color: kFluxidiYellow.withOpacity(
-                                                0.86,
-                                              ),
-                                              size: 17,
-                                            ),
-                                            const SizedBox(width: 5),
-                                            Flexible(
-                                              child: Text(
-                                                _t(
-                                                  nl: 'Keuze wordt onthouden.',
-                                                  en: 'Choice remembered.',
-                                                  fr: 'Choix mémorisé.',
-                                                  es: 'Elección recordada.',
-                                                ),
-                                                maxLines: 1,
-                                                overflow: TextOverflow.ellipsis,
-                                                textAlign: TextAlign.center,
-                                                style: TextStyle(
-                                                  color: Colors.white
-                                                      .withOpacity(0.78),
-                                                  fontSize: 10.6,
-                                                  fontWeight: FontWeight.w600,
-                                                ),
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                      ),
-                                    ),
-                                  ],
-                                ),
+                                  ),
+                                ],
                               ),
                             ),
-                          ],
-                        ),
+                          ),
+                        ],
                       ),
                     ),
-                  );
-                },
-              ),
-            ],
-          ),
+                  ),
+                );
+              },
+            ),
+          ],
         ),
       ),
     );
