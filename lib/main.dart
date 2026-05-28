@@ -1108,6 +1108,52 @@ Future<void> _triggerCompanyInventoryBackfillRestore({
   );
 }
 
+Future<void> _runDeferredStartupTask({
+  required String task,
+  required Future<void> Function() action,
+}) async {
+  debugPrint('[STARTUP_PERF][DEFER] task=$task');
+  try {
+    await action();
+    debugPrint('[STARTUP_PERF][DEFER_DONE] task=$task');
+  } catch (error) {
+    debugPrint('[STARTUP_PERF][DEFER_WARN] task=$task error=$error');
+  }
+}
+
+Future<void> _runStartupDeferredWork({
+  required bool hasLocalCompanyContext,
+  required bool hasBootstrapToken,
+}) async {
+  await _runDeferredStartupTask(
+    task: 'cached_customer_profile_refresh',
+    action: _refreshCachedCustomerProfile,
+  );
+  await _runDeferredStartupTask(
+    task: 'driver_documents_load',
+    action: () => DriverDocumentsStore.instance.load(),
+  );
+  if (!hasLocalCompanyContext) return;
+  if (!hasBootstrapToken) {
+    debugPrint(
+      '[COMPANY_BOOTSTRAP][SKIP_REMOTE_NO_TOKEN] reason=deferred_startup',
+    );
+    return;
+  }
+  await _runDeferredStartupTask(
+    task: 'company_bootstrap_hydrate',
+    action: () => _hydrateCompanyBootstrapFromActiveSession(
+      reason: 'startup_restore_deferred',
+      clearOnUnauthorized: true,
+    ),
+  );
+  await _runDeferredStartupTask(
+    task: 'company_inventory_backfill_restore',
+    action: () =>
+        _triggerCompanyInventoryBackfillRestore(reason: 'company_home_restore'),
+  );
+}
+
 // Pending Mollie payment tracking lives in lib/payment_return.dart and is
 // re-exported above so existing references in this file (and other modules)
 // keep working unchanged.
@@ -1115,7 +1161,6 @@ Future<void> _triggerCompanyInventoryBackfillRestore({
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await loadLocalTenantState();
-  await _refreshCachedCustomerProfile();
   await CompanySessionStore.instance.bootstrap();
   var hasBootstrapToken = false;
   var hasLocalCompanyContext =
@@ -1125,19 +1170,6 @@ Future<void> main() async {
       reason: 'startup_restore',
       logDegraded: true,
     );
-    if (hasBootstrapToken) {
-      await _hydrateCompanyBootstrapFromActiveSession(
-        reason: 'startup_restore',
-        clearOnUnauthorized: true,
-      );
-      unawaited(
-        _triggerCompanyInventoryBackfillRestore(reason: 'company_home_restore'),
-      );
-    } else {
-      debugPrint(
-        '[COMPANY_BOOTSTRAP][SKIP_REMOTE_NO_TOKEN] reason=startup_restore',
-      );
-    }
   }
   hasLocalCompanyContext = CompanySessionStore.instance.hasValidCompanyContext;
   if (hasLocalCompanyContext) {
@@ -1163,7 +1195,6 @@ Future<void> main() async {
       debugPrint('[DRIVER_PAIRING][AUTO_ROUTE] target=driver_home');
     }
   }
-  await DriverDocumentsStore.instance.load();
   // Mapbox REST token is optional in this build.
   // If not provided, the app will fall back to Worker-side routing where possible.
   if (kMapboxToken.trim().isEmpty) {
@@ -1177,6 +1208,14 @@ Future<void> main() async {
   // which page is currently mounted.
   paymentReturnCoordinator.start(bookingBaseUrl: kBookingBaseUrl);
   runApp(const FluxidiDriverApp());
+  WidgetsBinding.instance.addPostFrameCallback((_) {
+    unawaited(
+      _runStartupDeferredWork(
+        hasLocalCompanyContext: hasLocalCompanyContext,
+        hasBootstrapToken: hasBootstrapToken,
+      ),
+    );
+  });
 }
 
 /// ===============================
