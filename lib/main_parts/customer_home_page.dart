@@ -2,6 +2,13 @@ part of '../main.dart';
 
 class CustomerHomePage extends StatelessWidget {
   const CustomerHomePage({super.key});
+  static const Color _premiumBg = Color(0xFFFFFBF4);
+  static const Color _premiumSurface = Color(0xFFFFFFFF);
+  static const Color _premiumText = Color(0xFF182028);
+  static const Color _premiumMuted = Color(0xFF5F6670);
+  static const Color _premiumGold = Color(0xFFC49A45);
+  static const Color _premiumBronze = Color(0xFFB88735);
+  static const Color _premiumBorder = Color(0xFFE7DECF);
 
   String _t({
     required String nl,
@@ -287,7 +294,15 @@ class CustomerHomePage extends StatelessWidget {
       height: heroHeight,
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: kFluxidiYellow.withOpacity(0.26)),
+        color: _premiumSurface,
+        border: Border.all(color: _premiumBorder),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.08),
+            blurRadius: 18,
+            offset: const Offset(0, 8),
+          ),
+        ],
       ),
       clipBehavior: Clip.antiAlias,
       child: Stack(
@@ -301,7 +316,7 @@ class CustomerHomePage extends StatelessWidget {
               fit: BoxFit.cover,
               alignment: heroImageAlignment,
               errorBuilder: (_, __, ___) => Image.asset(
-                'assets/fluxidi/fluxidi_hero_taxi.png',
+                'assets/fluxidi/customer_home_hero_light.png',
                 fit: BoxFit.cover,
                 alignment: heroImageAlignment,
               ),
@@ -313,9 +328,9 @@ class CustomerHomePage extends StatelessWidget {
                 begin: Alignment.centerLeft,
                 end: Alignment.centerRight,
                 colors: [
-                  Colors.black.withOpacity(0.58),
-                  Colors.black.withOpacity(0.34),
-                  Colors.black.withOpacity(0.12),
+                  const Color(0xFF253443).withOpacity(0.28),
+                  const Color(0xFF253443).withOpacity(0.14),
+                  const Color(0xFF253443).withOpacity(0.03),
                 ],
               ),
             ),
@@ -326,9 +341,9 @@ class CustomerHomePage extends StatelessWidget {
                 begin: Alignment.topCenter,
                 end: Alignment.bottomCenter,
                 colors: [
-                  Colors.black.withOpacity(0.06),
-                  Colors.black.withOpacity(0.11),
-                  Colors.black.withOpacity(0.52),
+                  Colors.white.withOpacity(0.16),
+                  Colors.white.withOpacity(0.06),
+                  Colors.black.withOpacity(0.2),
                 ],
               ),
             ),
@@ -342,8 +357,8 @@ class CustomerHomePage extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Image.asset(
-                      kFluxidiLogoAsset,
-                      width: 178,
+                      'assets/fluxidi/fluxidi_logo_horizontal_dark.png',
+                      width: 166,
                       fit: BoxFit.contain,
                     ),
                     const Spacer(),
@@ -363,10 +378,27 @@ class CustomerHomePage extends StatelessWidget {
                     fr: 'Bienvenue !',
                     es: '¡Bienvenido!',
                   ),
-                  style: const TextStyle(
-                    color: Colors.white,
+                  style: TextStyle(
+                    color: _premiumBronze,
                     fontSize: 27,
                     fontWeight: FontWeight.w900,
+                    shadows: const [
+                      Shadow(
+                        color: Color(0xFFFFFFFF),
+                        blurRadius: 2,
+                        offset: Offset(0, 0),
+                      ),
+                      Shadow(
+                        color: Color(0xE6FFFFFF),
+                        blurRadius: 6,
+                        offset: Offset(0, 1),
+                      ),
+                      Shadow(
+                        color: Color(0x80000000),
+                        blurRadius: 3,
+                        offset: Offset(0, 1),
+                      ),
+                    ],
                   ),
                 ),
                 if (customerName.isNotEmpty) ...[
@@ -374,9 +406,26 @@ class CustomerHomePage extends StatelessWidget {
                   Text(
                     customerName,
                     style: TextStyle(
-                      color: Colors.white.withOpacity(0.84),
+                      color: _premiumBronze.withOpacity(0.95),
                       fontSize: 14.2,
-                      fontWeight: FontWeight.w500,
+                      fontWeight: FontWeight.w600,
+                      shadows: const [
+                        Shadow(
+                          color: Color(0xFFFFFFFF),
+                          blurRadius: 2,
+                          offset: Offset(0, 0),
+                        ),
+                        Shadow(
+                          color: Color(0xD9FFFFFF),
+                          blurRadius: 5,
+                          offset: Offset(0, 1),
+                        ),
+                        Shadow(
+                          color: Color(0x66000000),
+                          blurRadius: 2,
+                          offset: Offset(0, 1),
+                        ),
+                      ],
                     ),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
@@ -396,62 +445,67 @@ class CustomerHomePage extends StatelessWidget {
     required String label,
     required VoidCallback onTap,
   }) {
-    const quickActionIconContainerSize = 56.0;
-    const quickActionIconGlyphSize = 31.0;
+    const quickActionIconContainerSize = 50.0;
+    const quickActionIconGlyphSize = 24.0;
     return GestureDetector(
       onTap: onTap,
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
         decoration: BoxDecoration(
-          gradient: const LinearGradient(
+          gradient: LinearGradient(
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
-            colors: [Color(0xFF101010), Color(0xFF07080C)],
+            colors: [_premiumSurface, const Color(0xFFFFF9EE)],
           ),
           borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: kFluxidiYellow.withOpacity(0.15)),
+          border: Border.all(color: _premiumBorder),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(0.34),
-              blurRadius: 10,
+              color: Colors.black.withOpacity(0.08),
+              blurRadius: 12,
               offset: const Offset(0, 5),
             ),
-            BoxShadow(
-              color: kFluxidiYellow.withOpacity(0.035),
-              blurRadius: 7,
-              spreadRadius: 0.2,
-            ),
+            BoxShadow(color: _premiumGold.withOpacity(0.05), blurRadius: 8),
           ],
         ),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
           children: [
             Container(
               width: quickActionIconContainerSize,
               height: quickActionIconContainerSize,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                color: const Color(0xFF15120A).withOpacity(0.72),
-                border: Border.all(color: kFluxidiYellow.withOpacity(0.24)),
+                color: const Color(0xFFFFF7E8),
+                border: Border.all(color: _premiumGold.withOpacity(0.36)),
               ),
               child: Icon(
                 icon,
-                color: kFluxidiYellow.withOpacity(0.98),
+                color: _premiumGold,
                 size: quickActionIconGlyphSize,
               ),
             ),
-            const SizedBox(height: 6),
-            Text(
-              label,
-              textAlign: TextAlign.center,
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 11.6,
-                fontWeight: FontWeight.w700,
-                height: 1.2,
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                label,
+                textAlign: TextAlign.left,
+                style: const TextStyle(
+                  color: _premiumText,
+                  fontSize: 11.2,
+                  fontWeight: FontWeight.w700,
+                  height: 1.2,
+                ),
+                maxLines: 2,
+                softWrap: true,
+                overflow: TextOverflow.fade,
               ),
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
+            ),
+            const SizedBox(width: 6),
+            Icon(
+              Icons.arrow_forward_ios_rounded,
+              size: 13,
+              color: _premiumGold.withOpacity(0.9),
             ),
           ],
         ),
@@ -601,15 +655,26 @@ class CustomerHomePage extends StatelessWidget {
       child: Container(
         height: hasVisual ? (visualHeight ?? 130.0) : null,
         clipBehavior: Clip.antiAlias,
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(18),
-          border: Border.all(color: kFluxidiYellow.withOpacity(0.26)),
-          gradient: const LinearGradient(
+          border: Border.all(
+            color: hasVisual
+                ? _premiumBorder.withOpacity(0.5)
+                : _premiumBorder.withOpacity(0.84),
+            width: hasVisual ? 0.7 : 0.9,
+          ),
+          gradient: LinearGradient(
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
-            colors: [Color(0xFF101010), Color(0xFF07080C)],
+            colors: [_premiumSurface, const Color(0xFFFFF8EC)],
           ),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.08),
+              blurRadius: 12,
+              offset: const Offset(0, 5),
+            ),
+          ],
         ),
         child: Stack(
           fit: StackFit.expand,
@@ -631,97 +696,112 @@ class CustomerHomePage extends StatelessWidget {
                       stops: const [0.0, 0.46, 0.78, 1.0],
                       colors: [
                         const Color(
-                          0xFF07080C,
-                        ).withOpacity(0.96 * overlayOpacityFactor),
-                        const Color(
-                          0xFF07080C,
+                          0xFF111827,
                         ).withOpacity(0.82 * overlayOpacityFactor),
                         const Color(
-                          0xFF07080C,
-                        ).withOpacity(0.38 * overlayOpacityFactor),
+                          0xFF111827,
+                        ).withOpacity(0.62 * overlayOpacityFactor),
                         const Color(
-                          0xFF07080C,
-                        ).withOpacity(0.08 * overlayOpacityFactor),
+                          0xFF111827,
+                        ).withOpacity(0.26 * overlayOpacityFactor),
+                        const Color(
+                          0xFF111827,
+                        ).withOpacity(0.03 * overlayOpacityFactor),
                       ],
                     ),
                   ),
                 ),
               ),
             ],
-            Row(
-              children: [
-                Container(
-                  width: iconChipSize,
-                  height: iconChipSize,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: kFluxidiYellow.withOpacity(0.18),
-                    border: Border.all(color: kFluxidiYellow.withOpacity(0.45)),
+            Padding(
+              padding: EdgeInsets.symmetric(
+                horizontal: hasVisual ? 12 : 14,
+                vertical: hasVisual ? 11 : 14,
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    width: iconChipSize,
+                    height: iconChipSize,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: Colors.white.withOpacity(0.84),
+                      border: Border.all(color: _premiumGold.withOpacity(0.5)),
+                    ),
+                    child: Icon(icon, color: _premiumGold, size: iconSize),
                   ),
-                  child: Icon(icon, color: kFluxidiYellow, size: iconSize),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Text(
-                        title,
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.w800,
-                          fontSize: titleFontSize,
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      if (subtitle.trim().isNotEmpty) ...[
-                        const SizedBox(height: 3),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
                         Text(
-                          subtitle,
+                          title,
                           style: TextStyle(
-                            color: Colors.white.withOpacity(0.72),
-                            fontSize: 12.4,
+                            color: Colors.white,
+                            fontWeight: FontWeight.w800,
+                            fontSize: titleFontSize,
                           ),
-                          maxLines: 2,
+                          maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                         ),
-                      ],
-                      if (ctaLabel != null) ...[
-                        const SizedBox(height: 9),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 11,
-                            vertical: 6,
+                        if (subtitle.trim().isNotEmpty) ...[
+                          const SizedBox(height: 3),
+                          Text(
+                            subtitle,
+                            style: TextStyle(
+                              color: Colors.white.withOpacity(0.72),
+                              fontSize: 12.4,
+                            ),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
                           ),
-                          decoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(999),
-                            color: kFluxidiYellow.withOpacity(0.18),
-                            border: Border.all(
-                              color: kFluxidiYellow.withOpacity(0.5),
+                        ],
+                        if (ctaLabel != null) ...[
+                          const SizedBox(height: 9),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 11,
+                              vertical: 6,
+                            ),
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(999),
+                              color: Colors.white.withOpacity(0.8),
+                              border: Border.all(
+                                color: _premiumGold.withOpacity(0.45),
+                              ),
+                            ),
+                            child: Text(
+                              ctaLabel,
+                              style: const TextStyle(
+                                color: _premiumGold,
+                                fontSize: 11.7,
+                                fontWeight: FontWeight.w800,
+                              ),
                             ),
                           ),
-                          child: Text(
-                            ctaLabel,
-                            style: const TextStyle(
-                              color: Color(0xFFE5B641),
-                              fontSize: 11.7,
-                              fontWeight: FontWeight.w800,
-                            ),
-                          ),
-                        ),
+                        ],
                       ],
-                    ],
+                    ),
                   ),
-                ),
-                const SizedBox(width: 8),
-                Icon(
-                  Icons.arrow_forward_ios_rounded,
-                  size: 16,
-                  color: kFluxidiYellow.withOpacity(0.94),
-                ),
-              ],
+                  const SizedBox(width: 8),
+                  Container(
+                    width: 30,
+                    height: 30,
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.86),
+                      shape: BoxShape.circle,
+                      border: Border.all(color: _premiumGold.withOpacity(0.45)),
+                    ),
+                    child: const Icon(
+                      Icons.arrow_forward_ios_rounded,
+                      size: 14,
+                      color: _premiumGold,
+                    ),
+                  ),
+                ],
+              ),
             ),
           ],
         ),
@@ -735,20 +815,20 @@ class CustomerHomePage extends StatelessWidget {
       _t(nl: 'Home', en: 'Home', fr: 'Accueil', es: 'Inicio'),
       _t(nl: 'Taxi’s', en: 'Taxis', fr: 'Taxis', es: 'Taxis'),
       _t(nl: 'Boekingen', en: 'Bookings', fr: 'Réservations', es: 'Reservas'),
-      _t(
-        nl: 'Meldingen',
-        en: 'Notifications',
-        fr: 'Notifications',
-        es: 'Notificaciones',
-      ),
+      _t(nl: 'Start', en: 'Start', fr: 'Accueil', es: 'Inicio'),
       _t(nl: 'Profiel', en: 'Profile', fr: 'Profil', es: 'Perfil'),
     ];
     return Container(
       decoration: BoxDecoration(
-        color: const Color(0xFF050505),
-        border: Border(
-          top: BorderSide(color: kFluxidiYellow.withOpacity(0.2), width: 0.8),
-        ),
+        color: _premiumSurface.withOpacity(0.97),
+        border: Border(top: BorderSide(color: _premiumBorder, width: 0.8)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.06),
+            blurRadius: 12,
+            offset: const Offset(0, -3),
+          ),
+        ],
       ),
       child: SafeArea(
         top: false,
@@ -778,6 +858,13 @@ class CustomerHomePage extends StatelessWidget {
               );
               return;
             }
+            if (i == 3) {
+              Navigator.of(context).pushAndRemoveUntil(
+                MaterialPageRoute(builder: (_) => const RoleEntryPage()),
+                (route) => false,
+              );
+              return;
+            }
             if (i == 4) {
               Navigator.of(context).push(
                 MaterialPageRoute(
@@ -786,12 +873,11 @@ class CustomerHomePage extends StatelessWidget {
               );
               return;
             }
-            _comingSoon(context);
           },
           type: BottomNavigationBarType.fixed,
           backgroundColor: Colors.transparent,
-          selectedItemColor: kFluxidiYellow,
-          unselectedItemColor: Colors.white60,
+          selectedItemColor: _premiumGold,
+          unselectedItemColor: _premiumMuted.withOpacity(0.82),
           showUnselectedLabels: true,
           selectedFontSize: 11,
           unselectedFontSize: 11,
@@ -813,7 +899,7 @@ class CustomerHomePage extends StatelessWidget {
             ),
             BottomNavigationBarItem(
               icon: const Icon(
-                Icons.notifications_none_rounded,
+                Icons.keyboard_return_rounded,
                 size: navIconSize,
               ),
               label: items[3],
@@ -853,38 +939,36 @@ class CustomerHomePage extends StatelessWidget {
             W < H && !isTabletPortrait && !isTabletLandscape;
         final usesSplitUtilityAndFeatureCards =
             isPhonePortrait || isTabletPortrait || isTabletLandscape;
-        final heroAsset = isTabletLandscape
-            ? 'assets/fluxidi/fluxidi_customer_header_picture_landscape_tablet.png'
-            : 'assets/fluxidi/fluxidi_customer_home_hero.png';
+        const heroAsset = 'assets/fluxidi/customer_home_hero_light.png';
         final eventsAsset = isTabletLandscape
             ? 'assets/fluxidi/evenementen_picture_landscape_tablet.png'
-            : 'assets/fluxidi/fluxidi_event_crowd_night.jpg';
+            : 'assets/fluxidi/customer_home_events_banner.png';
         final businessAsset = isTabletLandscape
             ? 'assets/fluxidi/zakelijke_picture_landscape_tablet.png'
-            : 'assets/fluxidi/fluxidi_business_briefcase_night.jpg';
+            : 'assets/fluxidi/customer_home_business_banner.png';
         final customerHeroHeight = isTabletPortrait
-            ? clampDouble(H * 0.28, 360.0, 410.0)
-            : 312.0;
+            ? clampDouble(H * 0.255, 330.0, 385.0)
+            : 288.0;
         final customerHeroImageAlignment = isTabletPortrait
             ? const Alignment(0.42, 0.00)
             : const Alignment(0.55, 0.10);
         final customerHeroImageScale = isTabletPortrait ? 1.02 : 1.12;
         final customerQuickGridMainAxisExtent = isTabletPortrait
-            ? clampDouble(H * 0.10, 126.0, 144.0)
-            : 112.0;
+            ? clampDouble(H * 0.07, 86.0, 102.0)
+            : 86.0;
         final customerPortraitUtilityMainAxisExtent = isTabletPortrait
-            ? clampDouble(H * 0.085, 98.0, 118.0)
+            ? clampDouble(H * 0.067, 82.0, 96.0)
             : customerQuickGridMainAxisExtent;
         final customerLandscapeUtilityMainAxisExtent = isTabletLandscape
-            ? clampDouble(H * 0.09, 86.0, 102.0)
+            ? clampDouble(H * 0.066, 68.0, 78.0)
             : customerPortraitUtilityMainAxisExtent;
         final customerWideCardHeight = isTabletLandscape
-            ? clampDouble(H * 0.24, 200.0, 230.0)
+            ? clampDouble(H * 0.215, 180.0, 210.0)
             : isTabletPortrait
-            ? clampDouble(H * 0.155, 205.0, 225.0)
-            : 130.0;
+            ? clampDouble(H * 0.14, 185.0, 210.0)
+            : 118.0;
         return Scaffold(
-          backgroundColor: const Color(0xFF050505),
+          backgroundColor: _premiumBg,
           bottomNavigationBar: _customerBottomNav(context),
           body: SafeArea(
             child: SingleChildScrollView(
@@ -899,7 +983,7 @@ class CustomerHomePage extends StatelessWidget {
                     heroImageScale: customerHeroImageScale,
                     enforceLanguagePillTapTarget: isTabletLandscape,
                   ),
-                  const SizedBox(height: 14),
+                  const SizedBox(height: 10),
                   _customerQuickActionGrid(
                     context,
                     mainAxisExtent: customerLandscapeUtilityMainAxisExtent,
@@ -907,7 +991,7 @@ class CustomerHomePage extends StatelessWidget {
                     forceTwoColumns: isPhonePortrait,
                     forceFourColumns: isTabletPortrait || isTabletLandscape,
                   ),
-                  const SizedBox(height: 12),
+                  const SizedBox(height: 8),
                   if (isTabletLandscape) ...[
                     LayoutBuilder(
                       builder: (context, constraints) {
@@ -925,7 +1009,7 @@ class CustomerHomePage extends StatelessWidget {
                             ),
                             subtitle: '',
                             visualAsset:
-                                'assets/fluxidi/airport_portret_background_GSM.png',
+                                'assets/fluxidi/customer_home_airport_banner.png',
                             visualHeight: customerWideCardHeight,
                             visualAlignment: const Alignment(-0.35, -0.15),
                             visualOverlayOpacityMultiplier: 0.82,
@@ -942,7 +1026,7 @@ class CustomerHomePage extends StatelessWidget {
                             ),
                             subtitle: '',
                             visualAsset:
-                                'assets/fluxidi/Hotel&B&B_background.png',
+                                'assets/fluxidi/customer_home_hotel_bb_banner.png',
                             visualHeight: customerWideCardHeight,
                             visualAlignment: const Alignment(0.62, 0.08),
                             onTap: () => _openHotelsPage(context),
@@ -1001,7 +1085,7 @@ class CustomerHomePage extends StatelessWidget {
                         ),
                         subtitle: '',
                         visualAsset:
-                            'assets/fluxidi/airport_portret_background_GSM.png',
+                            'assets/fluxidi/customer_home_airport_banner.png',
                         visualHeight: customerWideCardHeight,
                         visualAlignment: isTabletPortrait
                             ? const Alignment(-0.35, -0.15)
@@ -1011,7 +1095,7 @@ class CustomerHomePage extends StatelessWidget {
                             : 1.0,
                         onTap: () => _openAirportFlow(context),
                       ),
-                      const SizedBox(height: 10),
+                      const SizedBox(height: 8),
                       _customerWideCard(
                         context: context,
                         icon: Icons.hotel_rounded,
@@ -1022,7 +1106,8 @@ class CustomerHomePage extends StatelessWidget {
                           es: 'Hoteles & B&B',
                         ),
                         subtitle: '',
-                        visualAsset: 'assets/fluxidi/Hotel&B&B_background.png',
+                        visualAsset:
+                            'assets/fluxidi/customer_home_hotel_bb_banner.png',
                         visualHeight: customerWideCardHeight,
                         visualAlignment: const Alignment(0.62, 0.08),
                         visualOverlayOpacityMultiplier: isTabletPortrait
@@ -1030,7 +1115,7 @@ class CustomerHomePage extends StatelessWidget {
                             : 1.0,
                         onTap: () => _openHotelsPage(context),
                       ),
-                      const SizedBox(height: 10),
+                      const SizedBox(height: 8),
                     ],
                     _customerWideCard(
                       context: context,
@@ -1047,7 +1132,7 @@ class CustomerHomePage extends StatelessWidget {
                       visualAlignment: Alignment.centerRight,
                       onTap: () => _openEventsPage(context),
                     ),
-                    const SizedBox(height: 10),
+                    const SizedBox(height: 8),
                     _customerWideCard(
                       context: context,
                       icon: Icons.business_center_outlined,
@@ -1064,8 +1149,7 @@ class CustomerHomePage extends StatelessWidget {
                       onTap: () => _comingSoon(context),
                     ),
                   ],
-                  const SizedBox(height: 12),
-                  const FluxidiBackToStartButton(),
+                  const SizedBox(height: 16),
                 ],
               ),
             ),
