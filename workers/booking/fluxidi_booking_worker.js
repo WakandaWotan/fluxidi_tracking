@@ -34219,6 +34219,118 @@ function _preferPublicPartnerCandidate(currentEntry, nextEntry) {
   return currentEntry;
 }
 
+function _safeNearbyCapabilityMap(value, { maxKeys = 24 } = {}) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const out = {};
+  for (const [rawKey, rawValue] of Object.entries(value)) {
+    const key = _safePublicText(rawKey, 64);
+    if (!key) continue;
+    if (typeof rawValue === "boolean") {
+      out[key] = rawValue;
+    } else if (typeof rawValue === "number" && Number.isFinite(rawValue)) {
+      out[key] = rawValue;
+    } else if (typeof rawValue === "string") {
+      const safeValue = _safePublicText(rawValue, 80);
+      if (safeValue) out[key] = safeValue;
+    }
+    if (Object.keys(out).length >= maxKeys) break;
+  }
+  return Object.keys(out).length > 0 ? out : null;
+}
+
+function _coerceNearbyAirportSignal(value) {
+  if (value == null) return null;
+  if (typeof value === "boolean") return value;
+  const text = sanitizeTenantString(value, 16).toLowerCase();
+  if (!text) return null;
+  if (
+    text === "true" ||
+    text === "1" ||
+    text === "yes" ||
+    text === "on" ||
+    text === "enabled"
+  ) {
+    return true;
+  }
+  if (
+    text === "false" ||
+    text === "0" ||
+    text === "no" ||
+    text === "off" ||
+    text === "disabled"
+  ) {
+    return false;
+  }
+  return null;
+}
+
+function _airportServiceSignalFromServices(value) {
+  if (Array.isArray(value)) {
+    for (const tokenRaw of value) {
+      const token = sanitizeTenantString(tokenRaw, 80).toLowerCase().replace(/[\s-]+/g, "_");
+      if (!token) continue;
+      if (token.includes("airport") || token.includes("luchthaven")) return true;
+    }
+    return null;
+  }
+  if (!value || typeof value !== "object") return null;
+  for (const [rawKey, rawValue] of Object.entries(value)) {
+    const key = sanitizeTenantString(rawKey, 80).toLowerCase().replace(/[\s-]+/g, "_");
+    if (!key) continue;
+    if (!key.includes("airport") && !key.includes("luchthaven")) continue;
+    const signal = _coerceNearbyAirportSignal(rawValue);
+    if (signal != null) return signal;
+  }
+  return null;
+}
+
+function _resolveNearbyAirportSignal({ profile = null, capabilities = null, bookingCapabilities = null } = {}) {
+  const signals = [
+    profile?.airport_service_enabled,
+    profile?.airportServiceEnabled,
+    profile?.airport_transfer_enabled,
+    profile?.airportTransferEnabled,
+    capabilities?.airport,
+    capabilities?.airport_transfer,
+    capabilities?.airport_service_enabled,
+    capabilities?.airportServiceEnabled,
+    capabilities?.airport_transfer_enabled,
+    capabilities?.airportTransferEnabled,
+    bookingCapabilities?.airport,
+    bookingCapabilities?.airport_transfer,
+    bookingCapabilities?.airport_service_enabled,
+    bookingCapabilities?.airportServiceEnabled,
+    bookingCapabilities?.airport_transfer_enabled,
+    bookingCapabilities?.airportTransferEnabled,
+  ];
+  for (const signalCandidate of signals) {
+    const normalized = _coerceNearbyAirportSignal(signalCandidate);
+    if (normalized != null) return normalized;
+  }
+  return _airportServiceSignalFromServices(profile?.services);
+}
+
+function _logNearbyCapabilitiesDiagnostics(partnerId, payload) {
+  const services = payload?.services;
+  const capabilities = payload?.capabilities;
+  const servicesCount = Array.isArray(services)
+    ? services.length
+    : (services && typeof services === "object" ? Object.keys(services).length : 0);
+  const capabilitiesKeys = capabilities && typeof capabilities === "object"
+    ? Object.keys(capabilities).slice(0, 10).join(",")
+    : "none";
+  const hasAirportSignal = _coerceNearbyAirportSignal(
+    payload?.airport_service_enabled ?? payload?.airportServiceEnabled,
+  ) === true ||
+    _coerceNearbyAirportSignal(
+      payload?.airport_transfer_enabled ?? payload?.airportTransferEnabled,
+    ) === true ||
+    _airportServiceSignalFromServices(services) === true;
+  console.log(
+    `[PARTNERS_NEARBY][CAPABILITIES] partner=${_maskPublicDriverLoginValue(partnerId)} has_airport_signal=${hasAirportSignal} services_count=${servicesCount} capabilities_keys=${capabilitiesKeys || "none"}`,
+  );
+}
+
 async function listNearbyPartners(env, { postcode = "", lat = null, lng = null, radiusKm = null } = {}) {
   const needle = _normalizePostcode(postcode);
   const hasGeoQuery = Number.isFinite(lat) && Number.isFinite(lng);
@@ -34240,6 +34352,37 @@ async function listNearbyPartners(env, { postcode = "", lat = null, lng = null, 
         const heroUrl = _safePublicHttpsUrl(media.hero_photo_url ?? media.heroPhotoUrl, 600);
         const logoUrl = _safePublicHttpsUrl(media.logo_url ?? media.logoUrl, 600);
         return [profile.partner_id, { hero_photo_url: heroUrl, logo_url: logoUrl }];
+      }),
+  );
+  const nearbyCapabilitySignalsByPartnerId = new Map(
+    visibleProfiles
+      .map((profile) => {
+        const services = Array.isArray(profile?.services)
+          ? _safePublicStringList(profile.services, { maxItems: 24, maxItemLen: 64 })
+          : null;
+        const capabilities = _safeNearbyCapabilityMap(profile?.capabilities);
+        const bookingCapabilities = _safeNearbyCapabilityMap(
+          profile?.booking_capabilities ?? profile?.bookingCapabilities,
+        );
+        const airportSignal = _resolveNearbyAirportSignal({
+          profile,
+          capabilities,
+          bookingCapabilities,
+        });
+        const payload = {
+          ...(services ? { services } : {}),
+          ...(capabilities ? { capabilities } : {}),
+          ...(bookingCapabilities ? { booking_capabilities: bookingCapabilities } : {}),
+          ...(airportSignal != null
+            ? {
+                airport_service_enabled: airportSignal,
+                airportServiceEnabled: airportSignal,
+                airport_transfer_enabled: airportSignal,
+                airportTransferEnabled: airportSignal,
+              }
+            : {}),
+        };
+        return [profile.partner_id, payload];
       }),
   );
   const coverageByPartnerId = new Map(
@@ -34373,6 +34516,8 @@ async function listNearbyPartners(env, { postcode = "", lat = null, lng = null, 
     .map((entry) => {
       const p = entry.p;
       const media = publicMediaByPartnerId.get(p.partner_id) || {};
+      const capabilitySignals = nearbyCapabilitySignalsByPartnerId.get(p.partner_id) || {};
+      _logNearbyCapabilitiesDiagnostics(p.partner_id, capabilitySignals);
       return {
         partner_id: p.partner_id,
         company_name: p.company_name,
@@ -34384,6 +34529,7 @@ async function listNearbyPartners(env, { postcode = "", lat = null, lng = null, 
           : {}),
         hero_photo_url: _safePublicHttpsUrl(media.hero_photo_url, 600),
         logo_url: _safePublicHttpsUrl(media.logo_url, 600),
+        ...capabilitySignals,
       };
     });
 }

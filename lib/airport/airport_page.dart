@@ -10,6 +10,8 @@ import 'package:fluxidi_tracking/effective_tenant_company_scope.dart';
 import 'package:fluxidi_tracking/hotels/hotel_model.dart';
 import 'package:fluxidi_tracking/hotels/hotel_seed_data.dart';
 import 'package:fluxidi_tracking/hotels/hotels_page.dart';
+import 'package:fluxidi_tracking/customer_theme_palette.dart';
+import 'package:fluxidi_tracking/customer_theme_store.dart';
 import 'package:geolocator/geolocator.dart' as geo;
 import 'package:http/http.dart' as http;
 
@@ -97,10 +99,19 @@ class AirportPage extends StatefulWidget {
 }
 
 class _AirportPageState extends State<AirportPage> {
-  static const Color _bg = Color(0xFF07080C);
-  static const Color _panel = Color(0xFF101010);
-  static const Color _gold = Color(0xFFE5B641);
-  static const Color _soft = Color(0xFFB4B4B4);
+  CustomerThemePalette get _themePalette =>
+      paletteForCustomerTheme(customerThemeNotifier.value);
+  bool get _isDarkTheme => _themePalette.isDark;
+  Color get _bg => _themePalette.background;
+  Color get _panel => _themePalette.surface;
+  Color get _panelAlt => _themePalette.surfaceAlt;
+  Color get _gold => _themePalette.gold;
+  Color get _bronze => _themePalette.bronze;
+  Color get _soft => _themePalette.textMuted;
+  Color get _textPrimary => _themePalette.textPrimary;
+  Color get _textMuted => _themePalette.textMuted;
+  Color get _border => _themePalette.border;
+  Color get _shadow => _themePalette.shadow;
   static const String _mapboxToken = String.fromEnvironment('MAPBOX_TOKEN');
   static const Set<String> _supportedCountryCodes = <String>{
     'BE',
@@ -791,9 +802,9 @@ class _AirportPageState extends State<AirportPage> {
           value: _selectedCountryCode,
           isDense: true,
           isExpanded: true,
-          dropdownColor: const Color(0xFF1A1A1A),
+          dropdownColor: _panelAlt,
           iconEnabledColor: _gold,
-          style: const TextStyle(color: Colors.white, fontSize: 13),
+          style: TextStyle(color: _textPrimary, fontSize: 13),
           items: _availableCountryCodes
               .map(
                 (countryCode) => DropdownMenuItem<String>(
@@ -830,9 +841,9 @@ class _AirportPageState extends State<AirportPage> {
           value: _selectedAirport.id,
           isDense: true,
           isExpanded: true,
-          dropdownColor: const Color(0xFF1A1A1A),
+          dropdownColor: _panelAlt,
           iconEnabledColor: _gold,
-          style: const TextStyle(color: Colors.white, fontSize: 13),
+          style: TextStyle(color: _textPrimary, fontSize: 13),
           selectedItemBuilder: (context) => filteredAirports
               .map(
                 (airport) => Text(
@@ -1000,46 +1011,53 @@ class _AirportPageState extends State<AirportPage> {
     final horizontalPadding = width < 360 ? 12.0 : 14.0;
     final compactHero = width < 430;
 
-    return Scaffold(
-      backgroundColor: _bg,
-      body: SafeArea(
-        child: Column(
-          children: [
-            _buildHeader(context),
-            Expanded(
-              child: ListView(
-                padding: EdgeInsets.fromLTRB(
-                  horizontalPadding,
-                  8,
-                  horizontalPadding,
-                  16,
+    return ValueListenableBuilder<CustomerThemeVariant>(
+      valueListenable: customerThemeNotifier,
+      builder: (context, themeVariant, __) {
+        final palette = paletteForCustomerTheme(themeVariant);
+        return Scaffold(
+          backgroundColor: palette.background,
+          body: SafeArea(
+            child: Column(
+              children: [
+                _buildHeader(context),
+                Expanded(
+                  child: ListView(
+                    padding: EdgeInsets.fromLTRB(
+                      horizontalPadding,
+                      8,
+                      horizontalPadding,
+                      16,
+                    ),
+                    children: [
+                      _buildHero(compact: compactHero),
+                      const SizedBox(height: 10),
+                      _buildDirectionActions(),
+                      const SizedBox(height: 10),
+                      _buildRoundtripToggleCard(),
+                      if (_roundtripEnabled) ...[
+                        const SizedBox(height: 10),
+                        _buildReturnLegSection(),
+                      ],
+                      const SizedBox(height: 10),
+                      _buildIntakePanel(),
+                      const SizedBox(height: 10),
+                      _buildRideSummaryCard(),
+                      if (_airportQuote != null ||
+                          _airportQuoteError != null) ...[
+                        const SizedBox(height: 10),
+                        _buildAirportQuoteCard(),
+                      ],
+                      const SizedBox(height: 12),
+                      _buildCtaButton(context),
+                    ],
+                  ),
                 ),
-                children: [
-                  _buildHero(compact: compactHero),
-                  const SizedBox(height: 10),
-                  _buildDirectionActions(),
-                  const SizedBox(height: 10),
-                  _buildRoundtripToggleCard(),
-                  if (_roundtripEnabled) ...[
-                    const SizedBox(height: 10),
-                    _buildReturnLegSection(),
-                  ],
-                  const SizedBox(height: 10),
-                  _buildIntakePanel(),
-                  const SizedBox(height: 10),
-                  _buildRideSummaryCard(),
-                  if (_airportQuote != null || _airportQuoteError != null) ...[
-                    const SizedBox(height: 10),
-                    _buildAirportQuoteCard(),
-                  ],
-                  const SizedBox(height: 12),
-                  _buildCtaButton(context),
-                ],
-              ),
+              ],
             ),
-          ],
-        ),
-      ),
+          ),
+        );
+      },
     );
   }
 
@@ -1074,7 +1092,7 @@ class _AirportPageState extends State<AirportPage> {
                   maxLines: compactHeader ? 2 : 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                    color: Colors.white,
+                    color: _textPrimary,
                     fontSize: compactHeader ? 18.5 : 20,
                     fontWeight: FontWeight.w800,
                   ),
@@ -1173,8 +1191,10 @@ class _AirportPageState extends State<AirportPage> {
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: _gold.withOpacity(0.26)),
-          color: const Color(0xFF0F100C),
+          border: Border.all(
+            color: _isDarkTheme ? _gold.withOpacity(0.26) : _border,
+          ),
+          color: _panelAlt,
         ),
         child: Row(
           children: [
@@ -1194,8 +1214,8 @@ class _AirportPageState extends State<AirportPage> {
                 ),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: Colors.white,
+                style: TextStyle(
+                  color: _textPrimary,
                   fontSize: 12.2,
                   fontWeight: FontWeight.w700,
                 ),
@@ -1209,11 +1229,13 @@ class _AirportPageState extends State<AirportPage> {
       padding: EdgeInsets.all(compact ? 12 : 14),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: _gold.withOpacity(0.28)),
-        gradient: const LinearGradient(
+        border: Border.all(
+          color: _isDarkTheme ? _gold.withOpacity(0.28) : _border,
+        ),
+        gradient: LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          colors: <Color>[Color(0xFF12110A), Color(0xFF07080C)],
+          colors: <Color>[_panelAlt, _bg],
         ),
       ),
       child: Row(
@@ -1245,7 +1267,7 @@ class _AirportPageState extends State<AirportPage> {
                     es: 'Traslados al aeropuerto para empresas y particulares',
                   ),
                   style: TextStyle(
-                    color: Colors.white,
+                    color: _textPrimary,
                     fontSize: compact ? 13.6 : 14.2,
                     fontWeight: FontWeight.w800,
                   ),
@@ -1390,7 +1412,9 @@ class _AirportPageState extends State<AirportPage> {
       decoration: BoxDecoration(
         color: _panel,
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: _gold.withOpacity(0.22)),
+        border: Border.all(
+          color: _isDarkTheme ? _gold.withOpacity(0.22) : _border,
+        ),
       ),
       child: Row(
         children: [
@@ -1408,8 +1432,8 @@ class _AirportPageState extends State<AirportPage> {
                 fr: 'Aller-retour',
                 es: 'Ida y vuelta',
               ),
-              style: const TextStyle(
-                color: Colors.white,
+              style: TextStyle(
+                color: _textPrimary,
                 fontSize: 13.2,
                 fontWeight: FontWeight.w800,
               ),
@@ -1516,13 +1540,15 @@ class _AirportPageState extends State<AirportPage> {
         color: _panel,
         borderRadius: BorderRadius.circular(14),
         border: Border.all(
-          color: isSelected ? _gold : _gold.withOpacity(0.26),
+          color: isSelected
+              ? (_isDarkTheme ? _gold : _bronze)
+              : (_isDarkTheme ? _gold.withOpacity(0.26) : _border),
           width: isSelected ? 1.6 : 1,
         ),
         boxShadow: isSelected
             ? <BoxShadow>[
                 BoxShadow(
-                  color: _gold.withOpacity(0.28),
+                  color: _shadow.withOpacity(_isDarkTheme ? 0.28 : 0.14),
                   blurRadius: 14,
                   spreadRadius: 0.2,
                   offset: const Offset(0, 2),
@@ -1573,7 +1599,9 @@ class _AirportPageState extends State<AirportPage> {
                         title,
                         maxLines: 2,
                         style: TextStyle(
-                          color: isSelected ? _gold : Colors.white,
+                          color: isSelected
+                              ? (_isDarkTheme ? _gold : _bronze)
+                              : _textPrimary,
                           fontSize: 13.2,
                           fontWeight: FontWeight.w800,
                           height: 1.15,
@@ -1586,11 +1614,7 @@ class _AirportPageState extends State<AirportPage> {
                 Text(
                   subtitle,
                   maxLines: 2,
-                  style: const TextStyle(
-                    color: _soft,
-                    fontSize: 11.2,
-                    height: 1.2,
-                  ),
+                  style: TextStyle(color: _soft, fontSize: 11.2, height: 1.2),
                 ),
                 if (isSelected) ...[
                   const SizedBox(height: 8),
@@ -1606,7 +1630,7 @@ class _AirportPageState extends State<AirportPage> {
                     ),
                     child: Text(
                       _t(nl: 'Actief', en: 'Active', fr: 'Actif', es: 'Activo'),
-                      style: const TextStyle(
+                      style: TextStyle(
                         color: _gold,
                         fontSize: 10.6,
                         fontWeight: FontWeight.w800,
@@ -1633,7 +1657,9 @@ class _AirportPageState extends State<AirportPage> {
       decoration: BoxDecoration(
         color: _panel,
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: _gold.withOpacity(0.22)),
+        border: Border.all(
+          color: _isDarkTheme ? _gold.withOpacity(0.22) : _border,
+        ),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1647,8 +1673,8 @@ class _AirportPageState extends State<AirportPage> {
                   title,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: Colors.white,
+                  style: TextStyle(
+                    color: _textPrimary,
                     fontSize: 13.2,
                     fontWeight: FontWeight.w800,
                   ),
@@ -1660,11 +1686,7 @@ class _AirportPageState extends State<AirportPage> {
             const SizedBox(height: 6),
             Text(
               subtitle,
-              style: const TextStyle(
-                color: _soft,
-                fontSize: 11.7,
-                height: 1.25,
-              ),
+              style: TextStyle(color: _soft, fontSize: 11.7, height: 1.25),
             ),
           ],
           if (child != null) ...[const SizedBox(height: 8), child],
@@ -2054,7 +2076,7 @@ class _AirportPageState extends State<AirportPage> {
       onChanged: onChanged,
       maxLines: maxLines,
       minLines: minLines,
-      style: const TextStyle(color: Colors.white, fontSize: 13),
+      style: TextStyle(color: _textPrimary, fontSize: 13),
       decoration: _fieldDecoration(
         label: label,
         hintText: hint,
@@ -2154,9 +2176,11 @@ class _AirportPageState extends State<AirportPage> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
       decoration: BoxDecoration(
-        color: const Color(0xFF181818),
+        color: _panelAlt,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: _gold.withOpacity(0.32)),
+        border: Border.all(
+          color: _isDarkTheme ? _gold.withOpacity(0.32) : _border,
+        ),
       ),
       child: Row(
         children: [
@@ -2165,8 +2189,8 @@ class _AirportPageState extends State<AirportPage> {
           Expanded(
             child: Text(
               label,
-              style: const TextStyle(
-                color: Colors.white,
+              style: TextStyle(
+                color: _textPrimary,
                 fontSize: 12.8,
                 fontWeight: FontWeight.w700,
               ),
@@ -2181,7 +2205,7 @@ class _AirportPageState extends State<AirportPage> {
             padding: const EdgeInsets.symmetric(horizontal: 10),
             child: Text(
               '$value',
-              style: const TextStyle(
+              style: TextStyle(
                 color: _gold,
                 fontSize: 14,
                 fontWeight: FontWeight.w800,
@@ -2232,12 +2256,12 @@ class _AirportPageState extends State<AirportPage> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
       decoration: BoxDecoration(
-        color: const Color(0xFF181818),
+        color: _panelAlt,
         borderRadius: BorderRadius.circular(12),
         border: Border.all(
           color: _meetAndGreet
               ? _gold.withOpacity(0.7)
-              : _gold.withOpacity(0.3),
+              : (_isDarkTheme ? _gold.withOpacity(0.3) : _border),
         ),
       ),
       child: Row(
@@ -2256,8 +2280,8 @@ class _AirportPageState extends State<AirportPage> {
                 fr: 'Accueil personnalisé',
                 es: 'Recepción personalizada',
               ),
-              style: const TextStyle(
-                color: Colors.white,
+              style: TextStyle(
+                color: _textPrimary,
                 fontSize: 12.8,
                 fontWeight: FontWeight.w700,
               ),
@@ -2684,9 +2708,11 @@ class _AirportPageState extends State<AirportPage> {
     return Container(
       margin: const EdgeInsets.only(top: 6),
       decoration: BoxDecoration(
-        color: const Color(0xFF171717),
+        color: _panelAlt,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: _gold.withOpacity(0.28)),
+        border: Border.all(
+          color: _isDarkTheme ? _gold.withOpacity(0.28) : _border,
+        ),
       ),
       child: ListView.separated(
         shrinkWrap: true,
@@ -2706,7 +2732,7 @@ class _AirportPageState extends State<AirportPage> {
             ),
             title: Text(
               suggestion.label,
-              style: const TextStyle(color: Colors.white, fontSize: 12.7),
+              style: TextStyle(color: _textPrimary, fontSize: 12.7),
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
             ),
@@ -2907,8 +2933,8 @@ class _AirportPageState extends State<AirportPage> {
                 value,
                 maxLines: maxLines,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: Colors.white,
+                style: TextStyle(
+                  color: _textPrimary,
                   fontSize: 12.4,
                   fontWeight: FontWeight.w600,
                   height: 1.2,
@@ -2933,10 +2959,12 @@ class _AirportPageState extends State<AirportPage> {
       decoration: BoxDecoration(
         color: _panel,
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: _gold.withOpacity(0.26)),
+        border: Border.all(
+          color: _isDarkTheme ? _gold.withOpacity(0.26) : _border,
+        ),
         boxShadow: <BoxShadow>[
           BoxShadow(
-            color: _gold.withOpacity(0.08),
+            color: _shadow.withOpacity(_isDarkTheme ? 0.12 : 0.08),
             blurRadius: 10,
             offset: const Offset(0, 2),
           ),
@@ -2958,7 +2986,7 @@ class _AirportPageState extends State<AirportPage> {
                     es: 'Resumen del viaje',
                   ),
                   style: TextStyle(
-                    color: Colors.white,
+                    color: _textPrimary,
                     fontSize: 13.2,
                     fontWeight: FontWeight.w800,
                   ),
@@ -2973,7 +3001,7 @@ class _AirportPageState extends State<AirportPage> {
                 ),
                 child: Text(
                   _t(nl: 'Lokaal', en: 'Local', fr: 'Local', es: 'Local'),
-                  style: const TextStyle(
+                  style: TextStyle(
                     color: _gold,
                     fontSize: 10.4,
                     fontWeight: FontWeight.w800,
@@ -3178,9 +3206,11 @@ class _AirportPageState extends State<AirportPage> {
               width: double.infinity,
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
               decoration: BoxDecoration(
-                color: const Color(0xFF171717),
+                color: _panelAlt,
                 borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: _gold.withOpacity(0.38)),
+                border: Border.all(
+                  color: _isDarkTheme ? _gold.withOpacity(0.38) : _border,
+                ),
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -3200,8 +3230,8 @@ class _AirportPageState extends State<AirportPage> {
                           fr: 'Trajet retour',
                           es: 'Trayecto de vuelta',
                         ),
-                        style: const TextStyle(
-                          color: Colors.white,
+                        style: TextStyle(
+                          color: _textPrimary,
                           fontSize: 12.6,
                           fontWeight: FontWeight.w800,
                         ),
@@ -3278,7 +3308,7 @@ class _AirportPageState extends State<AirportPage> {
             ),
             child: Row(
               children: [
-                const Icon(Icons.verified_rounded, color: _gold, size: 16),
+                Icon(Icons.verified_rounded, color: _gold, size: 16),
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
@@ -3288,7 +3318,7 @@ class _AirportPageState extends State<AirportPage> {
                       fr: 'Statut : prêt pour le calcul du prix',
                       es: 'Estado: listo para calcular el precio',
                     ),
-                    style: const TextStyle(
+                    style: TextStyle(
                       color: _gold,
                       fontSize: 11.8,
                       fontWeight: FontWeight.w800,
@@ -3305,9 +3335,11 @@ class _AirportPageState extends State<AirportPage> {
               child: OutlinedButton.icon(
                 onPressed: _openNearbyStaysFromAirport,
                 style: OutlinedButton.styleFrom(
-                  backgroundColor: const Color(0xFF111111),
-                  foregroundColor: Colors.white.withOpacity(0.94),
-                  side: BorderSide(color: _gold.withOpacity(0.35)),
+                  backgroundColor: _panelAlt,
+                  foregroundColor: _textPrimary.withOpacity(0.94),
+                  side: BorderSide(
+                    color: _isDarkTheme ? _gold.withOpacity(0.35) : _border,
+                  ),
                   minimumSize: const Size.fromHeight(42),
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(11),
@@ -3335,8 +3367,8 @@ class _AirportPageState extends State<AirportPage> {
       width: double.infinity,
       child: FilledButton(
         style: FilledButton.styleFrom(
-          backgroundColor: _gold,
-          foregroundColor: Colors.black,
+          backgroundColor: _isDarkTheme ? _gold : _bronze,
+          foregroundColor: _isDarkTheme ? Colors.black : Colors.white,
           padding: const EdgeInsets.symmetric(vertical: 14),
           textStyle: const TextStyle(fontSize: 14, fontWeight: FontWeight.w800),
           shape: RoundedRectangleBorder(
@@ -4030,7 +4062,9 @@ class _AirportPageState extends State<AirportPage> {
       decoration: BoxDecoration(
         color: _panel,
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: _gold.withOpacity(0.24)),
+        border: Border.all(
+          color: _isDarkTheme ? _gold.withOpacity(0.24) : _border,
+        ),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -4056,7 +4090,7 @@ class _AirportPageState extends State<AirportPage> {
                         : 'Indicación de precio',
                   ),
                   style: TextStyle(
-                    color: Colors.white,
+                    color: _textPrimary,
                     fontSize: 13.2,
                     fontWeight: FontWeight.w800,
                   ),
@@ -4066,7 +4100,7 @@ class _AirportPageState extends State<AirportPage> {
           ),
           const SizedBox(height: 8),
           if (error != null)
-            Text(error, style: const TextStyle(color: _soft, fontSize: 12))
+            Text(error, style: TextStyle(color: _soft, fontSize: 12))
           else if (quote != null) ...[
             if (isRoundtrip) ...[
               Row(
@@ -4082,8 +4116,8 @@ class _AirportPageState extends State<AirportPage> {
                   const Spacer(),
                   Text(
                     mainIncl != null ? '€ ${mainIncl.toStringAsFixed(2)}' : '—',
-                    style: const TextStyle(
-                      color: Colors.white,
+                    style: TextStyle(
+                      color: _textPrimary,
                       fontSize: 13,
                       fontWeight: FontWeight.w800,
                     ),
@@ -4111,8 +4145,8 @@ class _AirportPageState extends State<AirportPage> {
                     returnIncl != null
                         ? '€ ${returnIncl.toStringAsFixed(2)}'
                         : '—',
-                    style: const TextStyle(
-                      color: Colors.white,
+                    style: TextStyle(
+                      color: _textPrimary,
                       fontSize: 13,
                       fontWeight: FontWeight.w800,
                     ),
@@ -4137,7 +4171,7 @@ class _AirportPageState extends State<AirportPage> {
                         fr: 'Total aller-retour',
                         es: 'Total ida y vuelta',
                       ),
-                      style: const TextStyle(
+                      style: TextStyle(
                         color: _gold,
                         fontSize: 12,
                         fontWeight: FontWeight.w900,
@@ -4148,7 +4182,7 @@ class _AirportPageState extends State<AirportPage> {
                       displayPrice != null
                           ? '€ ${displayPrice.toStringAsFixed(2)}'
                           : '—',
-                      style: const TextStyle(
+                      style: TextStyle(
                         color: _gold,
                         fontSize: 19,
                         fontWeight: FontWeight.w900,
@@ -4178,7 +4212,7 @@ class _AirportPageState extends State<AirportPage> {
                     displayPrice != null
                         ? '€ ${displayPrice.toStringAsFixed(2)}'
                         : '—',
-                    style: const TextStyle(
+                    style: TextStyle(
                       color: _gold,
                       fontSize: 21,
                       fontWeight: FontWeight.w900,
@@ -4222,7 +4256,7 @@ class _AirportPageState extends State<AirportPage> {
                         ),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
+                        style: TextStyle(
                           color: _gold,
                           fontSize: 11.1,
                           fontWeight: FontWeight.w800,
@@ -4313,7 +4347,7 @@ class _AirportPageState extends State<AirportPage> {
                         ? '${_t(nl: "Afstand", en: "Distance", fr: "Distance", es: "Distancia")}: ${distance.toStringAsFixed(1)} km'
                         : '${_t(nl: "Afstand", en: "Distance", fr: "Distance", es: "Distancia")}: —',
                     style: TextStyle(
-                      color: Colors.white.withOpacity(0.84),
+                      color: _textMuted.withOpacity(0.92),
                       fontSize: 11.6,
                     ),
                   ),
@@ -4325,7 +4359,7 @@ class _AirportPageState extends State<AirportPage> {
                         : '${_t(nl: "Duur", en: "Duration", fr: "Durée", es: "Duración")}: —',
                     textAlign: TextAlign.right,
                     style: TextStyle(
-                      color: Colors.white.withOpacity(0.84),
+                      color: _textMuted.withOpacity(0.92),
                       fontSize: 11.6,
                     ),
                   ),
@@ -4352,16 +4386,18 @@ class _AirportPageState extends State<AirportPage> {
       prefixIcon: Icon(prefixIcon, color: _gold.withOpacity(0.92), size: 18),
       suffixIcon: suffixIcon,
       filled: true,
-      fillColor: const Color(0xFF181818),
+      fillColor: _panelAlt,
       isDense: true,
       contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
       enabledBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(12),
-        borderSide: BorderSide(color: _gold.withOpacity(0.32)),
+        borderSide: BorderSide(
+          color: _isDarkTheme ? _gold.withOpacity(0.32) : _border,
+        ),
       ),
       focusedBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(12),
-        borderSide: const BorderSide(color: _gold, width: 1.2),
+        borderSide: BorderSide(color: _gold, width: 1.2),
       ),
     );
   }

@@ -291,6 +291,11 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
                 .whereType<Map<String, dynamic>>()
                 .toList()
           : <Map<String, dynamic>>[];
+      _logAirportFilterDiagnostics(
+        rawPartners: partnersRaw,
+        searchMode: 'postcode',
+        postcode: postcode,
+      );
       if (!mounted) return;
       setState(() {
         _searching = false;
@@ -384,6 +389,11 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
                 .whereType<Map<String, dynamic>>()
                 .toList()
           : <Map<String, dynamic>>[];
+      _logAirportFilterDiagnostics(
+        rawPartners: partnersRaw,
+        searchMode: 'gps',
+        radiusKm: radiusKm,
+      );
       if (!mounted) return;
       setState(() {
         _searching = false;
@@ -670,6 +680,75 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
     if (hasExplicitSignal) return false;
     // Legacy fallback for profiles without explicit capability booleans.
     return _servicesListIncludesAirport(source['services']);
+  }
+
+  String _maskPartnerToken(String raw) {
+    final value = raw.trim();
+    if (value.isEmpty) return 'empty';
+    if (value.length <= 4) return '***';
+    return '${value.substring(0, 2)}***${value.substring(value.length - 2)}';
+  }
+
+  String _airportSignalPreview(dynamic value) {
+    if (value == null) return 'null';
+    if (value is bool) return value ? 'true' : 'false';
+    final text = value.toString().trim();
+    if (text.isEmpty) return 'empty';
+    return text.length > 16 ? '${text.substring(0, 16)}…' : text;
+  }
+
+  String _safeKeyList(Map<String, dynamic> map, {int maxKeys = 8}) {
+    if (map.isEmpty) return 'none';
+    final keys = map.keys.take(maxKeys).join(',');
+    return keys.isEmpty ? 'none' : keys;
+  }
+
+  String _servicesShapePreview(dynamic services) {
+    if (services == null) return 'null';
+    if (services is List) {
+      final tokens = services
+          .map((item) => item.toString().trim())
+          .where((item) => item.isNotEmpty)
+          .take(6)
+          .join(',');
+      return tokens.isEmpty ? 'list(empty)' : 'list($tokens)';
+    }
+    if (services is Map) {
+      final keys = services.keys.map((k) => k.toString()).take(8).join(',');
+      return keys.isEmpty ? 'map(empty)' : 'map($keys)';
+    }
+    return 'other(${services.runtimeType})';
+  }
+
+  void _logAirportFilterDiagnostics({
+    required List<Map<String, dynamic>> rawPartners,
+    required String searchMode,
+    String? postcode,
+    int? radiusKm,
+  }) {
+    if (!widget.selectionMode) return;
+    final filteredCount = rawPartners
+        .where(_airportServiceEnabledFromPartner)
+        .length;
+    final postcodeTag = (postcode ?? '').trim();
+    debugPrint(
+      '[NEARBY_PARTNERS][AIRPORT_FILTER][SUMMARY] mode=$searchMode raw=${rawPartners.length} filtered=$filteredCount radius_km=${radiusKm ?? "-"} postcode=${postcodeTag.isEmpty ? "-" : postcodeTag}',
+    );
+    final sample = rawPartners.take(5).toList(growable: false);
+    for (var i = 0; i < sample.length; i++) {
+      final partner = sample[i];
+      final partnerId = _mapTextAny(partner, const ['partner_id', 'partnerId']);
+      final companyName = _mapTextAny(partner, const [
+        'company_name',
+        'companyName',
+      ]);
+      final capabilities = _safeMap(partner['capabilities']);
+      final bookingCapabilities = _safeMap(partner['booking_capabilities']);
+      final airportEligible = _airportServiceEnabledFromPartner(partner);
+      debugPrint(
+        '[NEARBY_PARTNERS][AIRPORT_FILTER][PARTNER] idx=$i id=${_maskPartnerToken(partnerId)} company=${companyName.isEmpty ? "-" : companyName} airport_service_enabled=${_airportSignalPreview(partner['airport_service_enabled'])} airportServiceEnabled=${_airportSignalPreview(partner['airportServiceEnabled'])} airport_transfer_enabled=${_airportSignalPreview(partner['airport_transfer_enabled'])} airportTransferEnabled=${_airportSignalPreview(partner['airportTransferEnabled'])} capabilities_keys=${_safeKeyList(capabilities)} booking_capabilities_keys=${_safeKeyList(bookingCapabilities)} services=${_servicesShapePreview(partner['services'])} airport_capable=$airportEligible',
+      );
+    }
   }
 
   List<String> _mapTextList(Map<String, dynamic> p, String key) {
