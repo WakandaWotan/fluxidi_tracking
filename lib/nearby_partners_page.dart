@@ -9,6 +9,8 @@ import 'app_config.dart';
 import 'app_strings.dart';
 import 'calculator_page.dart';
 import 'customer_profile_store.dart';
+import 'customer_theme_palette.dart';
+import 'customer_theme_store.dart';
 import 'partner_public_profile_page.dart';
 
 typedef CustomerProfileBackendSync =
@@ -49,10 +51,18 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
       const <Map<String, dynamic>>[];
   bool _favoritesLoading = false;
   String? _favoritesError;
-  static const Color _bg = Color(0xFF07080C);
-  static const Color _card = Color(0xFF101113);
-  static const Color _panel = Color(0xFF16120A);
-  static const Color _gold = Color(0xFFE5B641);
+  CustomerThemePalette get _themePalette =>
+      paletteForCustomerTheme(customerThemeNotifier.value);
+  bool get _isDarkTheme => _themePalette.isDark;
+  Color get _bg => _themePalette.background;
+  Color get _card => _themePalette.surface;
+  Color get _panel => _themePalette.surfaceAlt;
+  Color get _gold => _themePalette.gold;
+  Color get _bronze => _themePalette.bronze;
+  Color get _textPrimary => _themePalette.textPrimary;
+  Color get _textMuted => _themePalette.textMuted;
+  Color get _border => _themePalette.border;
+  Color get _shadow => _themePalette.shadow;
 
   String _t({
     required String nl,
@@ -416,7 +426,16 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
       decoration: BoxDecoration(
         color: _card,
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: _gold.withOpacity(0.28)),
+        border: Border.all(
+          color: _isDarkTheme ? _gold.withOpacity(0.28) : _border,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: _shadow.withOpacity(_isDarkTheme ? 0.18 : 0.08),
+            blurRadius: 10,
+            offset: const Offset(0, 3),
+          ),
+        ],
       ),
       child: child,
     );
@@ -456,13 +475,7 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            text,
-            style: TextStyle(
-              color: Colors.white.withOpacity(0.78),
-              fontSize: 13,
-            ),
-          ),
+          Text(text, style: TextStyle(color: _textMuted, fontSize: 13)),
           if (action != null) ...[const SizedBox(height: 10), action],
         ],
       ),
@@ -791,9 +804,9 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
         decoration: BoxDecoration(
           gradient: LinearGradient(
             colors: [
-              const Color(0xFF15100A),
-              const Color(0xFF0E0F11),
-              _gold.withOpacity(0.20),
+              _panel,
+              _card,
+              _gold.withOpacity(_isDarkTheme ? 0.20 : 0.14),
             ],
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
@@ -806,13 +819,15 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
               height: 32,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                color: _gold.withOpacity(0.16),
-                border: Border.all(color: _gold.withOpacity(0.5)),
+                color: _gold.withOpacity(_isDarkTheme ? 0.16 : 0.10),
+                border: Border.all(
+                  color: _gold.withOpacity(_isDarkTheme ? 0.5 : 0.34),
+                ),
               ),
               child: Icon(
                 Icons.local_taxi_outlined,
                 size: 17,
-                color: _gold.withOpacity(0.96),
+                color: _isDarkTheme ? _gold.withOpacity(0.96) : _bronze,
               ),
             ),
             const SizedBox(width: 8),
@@ -825,7 +840,7 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
                   es: 'Socio Fluxidi',
                 ),
                 style: TextStyle(
-                  color: Colors.white.withOpacity(0.9),
+                  color: _textPrimary,
                   fontWeight: FontWeight.w700,
                   fontSize: 12,
                 ),
@@ -896,9 +911,9 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
                           decoration: BoxDecoration(
                             gradient: LinearGradient(
                               colors: [
-                                const Color(0xFF15100A),
-                                const Color(0xFF0E0F11),
-                                _gold.withOpacity(0.20),
+                                _panel,
+                                _card,
+                                _gold.withOpacity(_isDarkTheme ? 0.20 : 0.14),
                               ],
                               begin: Alignment.topLeft,
                               end: Alignment.bottomRight,
@@ -931,8 +946,8 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
                         company.isEmpty ? partnerId : company,
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: Colors.white,
+                        style: TextStyle(
+                          color: _textPrimary,
                           fontWeight: FontWeight.w800,
                           fontSize: 14.2,
                         ),
@@ -991,8 +1006,10 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
                       child: FilledButton(
                         onPressed: () => _openPartnerBooking(p),
                         style: FilledButton.styleFrom(
-                          backgroundColor: _gold,
-                          foregroundColor: Colors.black,
+                          backgroundColor: _isDarkTheme ? _gold : _bronze,
+                          foregroundColor: _isDarkTheme
+                              ? Colors.black
+                              : Colors.white,
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(9),
                           ),
@@ -1024,9 +1041,17 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
                       child: OutlinedButton(
                         onPressed: () => _openPartnerProfile(p),
                         style: OutlinedButton.styleFrom(
-                          foregroundColor: _gold.withOpacity(0.98),
-                          side: BorderSide(color: _gold.withOpacity(0.34)),
-                          backgroundColor: _gold.withOpacity(0.10),
+                          foregroundColor: _isDarkTheme
+                              ? _gold.withOpacity(0.98)
+                              : _bronze,
+                          side: BorderSide(
+                            color: _isDarkTheme
+                                ? _gold.withOpacity(0.34)
+                                : _border,
+                          ),
+                          backgroundColor: _isDarkTheme
+                              ? _gold.withOpacity(0.10)
+                              : _panel.withOpacity(0.70),
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(9),
                           ),
@@ -1054,7 +1079,9 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
                             const SizedBox(width: 4),
                             Icon(
                               Icons.arrow_forward_rounded,
-                              color: _gold.withOpacity(0.98),
+                              color: _isDarkTheme
+                                  ? _gold.withOpacity(0.98)
+                                  : _bronze,
                               size: 16,
                             ),
                           ],
@@ -1068,7 +1095,7 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
                   Text(
                     '${_t(nl: "Referentie", en: "Reference", fr: "Référence", es: "Referencia")}: $partnerId',
                     style: TextStyle(
-                      color: Colors.white.withOpacity(0.32),
+                      color: _textMuted.withOpacity(0.72),
                       fontSize: 9.8,
                     ),
                   ),
@@ -1098,7 +1125,9 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
               children: [
                 CircleAvatar(
                   radius: 18,
-                  backgroundColor: _gold.withOpacity(0.14),
+                  backgroundColor: _gold.withOpacity(
+                    _isDarkTheme ? 0.14 : 0.10,
+                  ),
                   foregroundImage: logoUrl.isNotEmpty
                       ? NetworkImage(logoUrl)
                       : null,
@@ -1106,7 +1135,9 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
                       ? Icon(
                           Icons.local_taxi_outlined,
                           size: 18,
-                          color: _gold.withOpacity(0.96),
+                          color: _isDarkTheme
+                              ? _gold.withOpacity(0.96)
+                              : _bronze,
                         )
                       : null,
                 ),
@@ -1119,8 +1150,8 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
                         company.isEmpty ? partnerId : company,
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: Colors.white,
+                        style: TextStyle(
+                          color: _textPrimary,
                           fontWeight: FontWeight.w800,
                           fontSize: 13.8,
                         ),
@@ -1129,10 +1160,7 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
                         const SizedBox(height: 4),
                         Text(
                           subtitle,
-                          style: TextStyle(
-                            color: Colors.white.withOpacity(0.64),
-                            fontSize: 11.2,
-                          ),
+                          style: TextStyle(color: _textMuted, fontSize: 11.2),
                         ),
                       ],
                     ],
@@ -1147,9 +1175,15 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
                   child: OutlinedButton(
                     onPressed: () => _openPartnerProfile(p),
                     style: OutlinedButton.styleFrom(
-                      foregroundColor: _gold.withOpacity(0.98),
-                      side: BorderSide(color: _gold.withOpacity(0.34)),
-                      backgroundColor: _gold.withOpacity(0.10),
+                      foregroundColor: _isDarkTheme
+                          ? _gold.withOpacity(0.98)
+                          : _bronze,
+                      side: BorderSide(
+                        color: _isDarkTheme ? _gold.withOpacity(0.34) : _border,
+                      ),
+                      backgroundColor: _isDarkTheme
+                          ? _gold.withOpacity(0.10)
+                          : _panel.withOpacity(0.70),
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(9),
                       ),
@@ -1176,8 +1210,10 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
                   child: FilledButton(
                     onPressed: () => _openPartnerBooking(p),
                     style: FilledButton.styleFrom(
-                      backgroundColor: _gold,
-                      foregroundColor: Colors.black,
+                      backgroundColor: _isDarkTheme ? _gold : _bronze,
+                      foregroundColor: _isDarkTheme
+                          ? Colors.black
+                          : Colors.white,
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(9),
                       ),
@@ -1221,8 +1257,8 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
               fr: 'Mes taxis favoris',
               es: 'Mis taxis favoritos',
             ),
-            style: const TextStyle(
-              color: Colors.white,
+            style: TextStyle(
+              color: _textPrimary,
               fontWeight: FontWeight.w800,
               fontSize: 13.8,
             ),
@@ -1236,10 +1272,7 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
                 fr: 'Chargement des favoris...',
                 es: 'Cargando favoritos...',
               ),
-              style: TextStyle(
-                color: Colors.white.withOpacity(0.72),
-                fontSize: 12.3,
-              ),
+              style: TextStyle(color: _textMuted, fontSize: 12.3),
             )
           else if (_favoritePartnerIds.isEmpty)
             Text(
@@ -1249,20 +1282,14 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
                 fr: 'Aucune compagnie de taxi favorite pour le moment. Ouvrez un profil partenaire et touchez Favori.',
                 es: 'Aún no tienes taxis favoritos. Abre un perfil de socio y toca Favorito.',
               ),
-              style: TextStyle(
-                color: Colors.white.withOpacity(0.72),
-                fontSize: 12.3,
-              ),
+              style: TextStyle(color: _textMuted, fontSize: 12.3),
             )
           else ...[
             if (_favoritesError != null &&
                 _favoritesError!.trim().isNotEmpty) ...[
               Text(
                 _favoritesError!,
-                style: TextStyle(
-                  color: Colors.white.withOpacity(0.64),
-                  fontSize: 11.6,
-                ),
+                style: TextStyle(color: _textMuted, fontSize: 11.6),
               ),
               const SizedBox(height: 8),
             ],
@@ -1281,10 +1308,7 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
                         fr: 'Les profils favoris sont encore en cours d’actualisation.',
                         es: 'Los perfiles favoritos todavía se están actualizando.',
                       ),
-                style: TextStyle(
-                  color: Colors.white.withOpacity(0.72),
-                  fontSize: 12.1,
-                ),
+                style: TextStyle(color: _textMuted, fontSize: 12.1),
               )
             else
               LayoutBuilder(
@@ -1325,369 +1349,411 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
               .where(_airportServiceEnabledFromPartner)
               .toList(growable: false)
         : _partners;
-    return ValueListenableBuilder<AppLanguage>(
-      valueListenable: appLanguageNotifier,
-      builder: (context, _, __) => Scaffold(
-        backgroundColor: _bg,
-        appBar: AppBar(
+    return ValueListenableBuilder<CustomerThemeVariant>(
+      valueListenable: customerThemeNotifier,
+      builder: (context, _, __) => ValueListenableBuilder<AppLanguage>(
+        valueListenable: appLanguageNotifier,
+        builder: (context, _, __) => Scaffold(
           backgroundColor: _bg,
-          title: Text(
-            widget.selectionMode
-                ? _t(
-                    nl: 'Kies taxipartner',
-                    en: 'Choose taxi partner',
-                    fr: 'Choisir un partenaire taxi',
-                    es: 'Elige socio de taxi',
-                  )
-                : _t(
-                    nl: "Taxi's in de buurt",
-                    en: 'Taxis nearby',
-                    fr: 'Taxis à proximité',
-                    es: 'Taxis cercanos',
-                  ),
+          appBar: AppBar(
+            backgroundColor: _bg,
+            foregroundColor: _textPrimary,
+            surfaceTintColor: Colors.transparent,
+            title: Text(
+              widget.selectionMode
+                  ? _t(
+                      nl: 'Kies taxipartner',
+                      en: 'Choose taxi partner',
+                      fr: 'Choisir un partenaire taxi',
+                      es: 'Elige socio de taxi',
+                    )
+                  : _t(
+                      nl: "Taxi's in de buurt",
+                      en: 'Taxis nearby',
+                      fr: 'Taxis à proximité',
+                      es: 'Taxis cercanos',
+                    ),
+              style: TextStyle(color: _textPrimary),
+            ),
           ),
-        ),
-        body: SafeArea(
-          child: ListView(
-            padding: const EdgeInsets.all(16),
-            children: [
-              _premiumCard(
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Container(
-                      width: 34,
-                      height: 34,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: _gold.withOpacity(0.14),
-                        border: Border.all(color: _gold.withOpacity(0.48)),
-                      ),
-                      child: Icon(
-                        Icons.location_searching_outlined,
-                        size: 18,
-                        color: _gold.withOpacity(0.95),
-                      ),
-                    ),
-                    const SizedBox(width: 9),
-                    Expanded(
-                      child: Text(
-                        _t(
-                          nl: 'Zoek actieve Fluxidi-partners op postcode of op basis van je huidige locatie.',
-                          en: 'Search active Fluxidi partners by postal code or by your current location.',
-                          fr: 'Recherchez des partenaires Fluxidi actifs par code postal ou via votre position actuelle.',
-                          es: 'Busca socios activos de Fluxidi por código postal o con tu ubicación actual.',
+          body: SafeArea(
+            child: ListView(
+              padding: const EdgeInsets.all(16),
+              children: [
+                _premiumCard(
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Container(
+                        width: 34,
+                        height: 34,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: _gold.withOpacity(0.14),
+                          border: Border.all(color: _gold.withOpacity(0.48)),
                         ),
-                        style: TextStyle(
-                          color: Colors.white.withOpacity(0.80),
-                          fontSize: 13,
-                          height: 1.3,
+                        child: Icon(
+                          Icons.location_searching_outlined,
+                          size: 18,
+                          color: _gold.withOpacity(0.95),
                         ),
                       ),
-                    ),
-                  ],
+                      const SizedBox(width: 9),
+                      Expanded(
+                        child: Text(
+                          _t(
+                            nl: 'Zoek actieve Fluxidi-partners op postcode of op basis van je huidige locatie.',
+                            en: 'Search active Fluxidi partners by postal code or by your current location.',
+                            fr: 'Recherchez des partenaires Fluxidi actifs par code postal ou via votre position actuelle.',
+                            es: 'Busca socios activos de Fluxidi por código postal o con tu ubicación actual.',
+                          ),
+                          style: TextStyle(
+                            color: _textMuted,
+                            fontSize: 13,
+                            height: 1.3,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-              const SizedBox(height: 12),
-              _favoritePartnersSection(),
-              const SizedBox(height: 12),
-              _premiumCard(
-                child: Column(
-                  children: [
-                    TextField(
-                      controller: _postalCodeCtrl,
-                      style: const TextStyle(color: Colors.white, fontSize: 14),
-                      textInputAction: TextInputAction.search,
-                      onSubmitted: (_) => _searchPartners(),
-                      decoration: InputDecoration(
-                        labelText: _t(
-                          nl: 'Postcode',
-                          en: 'Postal code',
-                          fr: 'Code postal',
-                          es: 'Código postal',
-                        ),
-                        labelStyle: const TextStyle(color: Colors.white70),
-                        hintText: _t(
-                          nl: 'Bijv. 2000',
-                          en: 'e.g. 2000',
-                          fr: 'ex. 2000',
-                          es: 'p. ej. 2000',
-                        ),
-                        hintStyle: const TextStyle(color: Colors.white38),
-                        filled: true,
-                        fillColor: _panel,
-                        contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 14,
-                        ),
-                        enabledBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(12),
-                          borderSide: BorderSide(
-                            color: _gold.withOpacity(0.28),
+                const SizedBox(height: 12),
+                _favoritePartnersSection(),
+                const SizedBox(height: 12),
+                _premiumCard(
+                  child: Column(
+                    children: [
+                      TextField(
+                        controller: _postalCodeCtrl,
+                        style: TextStyle(color: _textPrimary, fontSize: 14),
+                        cursorColor: _gold,
+                        textInputAction: TextInputAction.search,
+                        onSubmitted: (_) => _searchPartners(),
+                        decoration: InputDecoration(
+                          labelText: _t(
+                            nl: 'Postcode',
+                            en: 'Postal code',
+                            fr: 'Code postal',
+                            es: 'Código postal',
                           ),
-                        ),
-                        focusedBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(12),
-                          borderSide: BorderSide(
-                            color: _gold.withOpacity(0.78),
-                            width: 1.3,
+                          labelStyle: TextStyle(
+                            color: _isDarkTheme
+                                ? _gold.withOpacity(0.84)
+                                : _textMuted,
+                          ),
+                          hintText: _t(
+                            nl: 'Bijv. 2000',
+                            en: 'e.g. 2000',
+                            fr: 'ex. 2000',
+                            es: 'p. ej. 2000',
+                          ),
+                          hintStyle: TextStyle(
+                            color: _textMuted.withOpacity(0.72),
+                          ),
+                          filled: true,
+                          fillColor: _panel,
+                          contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 14,
+                          ),
+                          enabledBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12),
+                            borderSide: BorderSide(
+                              color: _isDarkTheme
+                                  ? _gold.withOpacity(0.28)
+                                  : _border,
+                            ),
+                          ),
+                          focusedBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12),
+                            borderSide: BorderSide(
+                              color: _gold.withOpacity(0.78),
+                              width: 1.3,
+                            ),
                           ),
                         ),
                       ),
-                    ),
-                    const SizedBox(height: 10),
-                    SizedBox(
-                      width: double.infinity,
-                      child: FilledButton(
-                        onPressed: _searching ? null : _searchPartners,
-                        style: FilledButton.styleFrom(
-                          backgroundColor: _gold,
-                          foregroundColor: Colors.black,
-                          disabledBackgroundColor: _gold.withOpacity(0.45),
-                          disabledForegroundColor: Colors.black87,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
+                      const SizedBox(height: 10),
+                      SizedBox(
+                        width: double.infinity,
+                        child: FilledButton(
+                          onPressed: _searching ? null : _searchPartners,
+                          style: FilledButton.styleFrom(
+                            backgroundColor: _isDarkTheme ? _gold : _bronze,
+                            foregroundColor: _isDarkTheme
+                                ? Colors.black
+                                : Colors.white,
+                            disabledBackgroundColor:
+                                (_isDarkTheme ? _gold : _bronze).withOpacity(
+                                  0.45,
+                                ),
+                            disabledForegroundColor: _isDarkTheme
+                                ? Colors.black87
+                                : Colors.white70,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                          ),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                            child: Text(
+                              _searching
+                                  ? _t(
+                                      nl: 'Zoeken...',
+                                      en: 'Searching...',
+                                      fr: 'Recherche...',
+                                      es: 'Buscando...',
+                                    )
+                                  : _t(
+                                      nl: 'Zoek actieve partners',
+                                      en: 'Search active partners',
+                                      fr: 'Rechercher des partenaires actifs',
+                                      es: 'Buscar socios activos',
+                                    ),
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
                           ),
                         ),
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 12),
-                          child: Text(
-                            _searching
-                                ? _t(
-                                    nl: 'Zoeken...',
-                                    en: 'Searching...',
-                                    fr: 'Recherche...',
-                                    es: 'Buscando...',
-                                  )
-                                : _t(
-                                    nl: 'Zoek actieve partners',
-                                    en: 'Search active partners',
-                                    fr: 'Rechercher des partenaires actifs',
-                                    es: 'Buscar socios activos',
+                      ),
+                      const SizedBox(height: 8),
+                      SizedBox(
+                        width: double.infinity,
+                        child: OutlinedButton.icon(
+                          onPressed: _searching
+                              ? null
+                              : _searchPartnersByCurrentLocation,
+                          icon: _searchingByLocation
+                              ? const SizedBox(
+                                  width: 15,
+                                  height: 15,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
                                   ),
+                                )
+                              : const Icon(Icons.my_location_outlined),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: _isDarkTheme
+                                ? _gold.withOpacity(0.98)
+                                : _bronze,
+                            side: BorderSide(
+                              color: _isDarkTheme
+                                  ? _gold.withOpacity(0.42)
+                                  : _border,
+                            ),
+                            backgroundColor: _panel,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                          ),
+                          label: Text(
+                            _t(
+                              nl: 'Gebruik mijn locatie',
+                              en: 'Use my location',
+                              fr: 'Utiliser ma position',
+                              es: 'Usar mi ubicación',
+                            ),
                             style: const TextStyle(fontWeight: FontWeight.w700),
                           ),
                         ),
                       ),
-                    ),
-                    const SizedBox(height: 8),
-                    SizedBox(
-                      width: double.infinity,
-                      child: OutlinedButton.icon(
-                        onPressed: _searching
-                            ? null
-                            : _searchPartnersByCurrentLocation,
-                        icon: _searchingByLocation
-                            ? const SizedBox(
-                                width: 15,
-                                height: 15,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                ),
-                              )
-                            : const Icon(Icons.my_location_outlined),
-                        style: OutlinedButton.styleFrom(
-                          foregroundColor: _gold.withOpacity(0.98),
-                          side: BorderSide(color: _gold.withOpacity(0.42)),
-                          backgroundColor: _panel,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                        ),
-                        label: Text(
-                          _t(
-                            nl: 'Gebruik mijn locatie',
-                            en: 'Use my location',
-                            fr: 'Utiliser ma position',
-                            es: 'Usar mi ubicación',
-                          ),
-                          style: const TextStyle(fontWeight: FontWeight.w700),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text(
-                        _t(
-                          nl: 'Zoekstraal',
-                          en: 'Search radius',
-                          fr: 'Rayon de recherche',
-                          es: 'Radio de búsqueda',
-                        ),
-                        style: TextStyle(
-                          color: Colors.white.withOpacity(0.78),
-                          fontSize: 12.2,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: _gpsRadiusOptionsKm
-                          .map((radiusKm) {
-                            final selected = _selectedGpsRadiusKm == radiusKm;
-                            return ChoiceChip(
-                              label: Text('$radiusKm km'),
-                              selected: selected,
-                              onSelected: _searching
-                                  ? null
-                                  : (_) => setState(() {
-                                      _selectedGpsRadiusKm = radiusKm;
-                                    }),
-                              labelStyle: TextStyle(
-                                color: selected
-                                    ? Colors.black
-                                    : _gold.withOpacity(0.98),
-                                fontWeight: FontWeight.w700,
-                                fontSize: 11.6,
-                              ),
-                              selectedColor: _gold,
-                              backgroundColor: _panel,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(999),
-                                side: BorderSide(
-                                  color: selected
-                                      ? _gold
-                                      : _gold.withOpacity(0.40),
-                                ),
-                              ),
-                              visualDensity: VisualDensity.compact,
-                            );
-                          })
-                          .toList(growable: false),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 14),
-              !_searched
-                  ? _emptyStateCard(
-                      _t(
-                        nl: 'Voer je postcode in of gebruik je locatie om te controleren welke partners actief zijn.',
-                        en: 'Enter your postal code or use your location to check which partners are active.',
-                        fr: 'Saisissez votre code postal ou utilisez votre position pour vérifier quels partenaires sont actifs.',
-                        es: 'Ingresa tu código postal o usa tu ubicación para comprobar qué socios están activos.',
-                      ),
-                    )
-                  : visiblePartners.isNotEmpty
-                  ? _premiumCard(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            _t(
-                              nl: widget.selectionMode
-                                  ? (_lastSearchUsedLocation
-                                        ? 'Luchthavenpartners in de buurt van je locatie'
-                                        : 'Luchthavenpartners in $_normalizedPostcode')
-                                  : (_lastSearchUsedLocation
-                                        ? 'Actieve partners in de buurt van je locatie'
-                                        : 'Actieve partners in $_normalizedPostcode'),
-                              en: widget.selectionMode
-                                  ? (_lastSearchUsedLocation
-                                        ? 'Airport-capable partners near your location'
-                                        : 'Airport-capable partners in $_normalizedPostcode')
-                                  : (_lastSearchUsedLocation
-                                        ? 'Active partners near your location'
-                                        : 'Active partners in $_normalizedPostcode'),
-                              fr: widget.selectionMode
-                                  ? (_lastSearchUsedLocation
-                                        ? 'Partenaires aéroport près de votre position'
-                                        : 'Partenaires aéroport dans $_normalizedPostcode')
-                                  : (_lastSearchUsedLocation
-                                        ? 'Partenaires actifs à proximité de votre position'
-                                        : 'Partenaires actifs dans $_normalizedPostcode'),
-                              es: widget.selectionMode
-                                  ? (_lastSearchUsedLocation
-                                        ? 'Socios aptos para aeropuerto cerca de tu ubicación'
-                                        : 'Socios aptos para aeropuerto en $_normalizedPostcode')
-                                  : (_lastSearchUsedLocation
-                                        ? 'Socios activos cerca de tu ubicación'
-                                        : 'Socios activos en $_normalizedPostcode'),
-                            ),
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.w700,
-                              fontSize: 13.5,
-                            ),
-                          ),
-                          if (_lastSearchUsedLocation &&
-                              _locationSearchLabel.trim().isNotEmpty) ...[
-                            const SizedBox(height: 4),
-                            Text(
-                              _locationSearchLabel,
-                              style: TextStyle(
-                                color: Colors.white.withOpacity(0.58),
-                                fontSize: 11,
-                              ),
-                            ),
-                          ],
-                          const SizedBox(height: 10),
-                          ...visiblePartners.map(_partnerCard),
-                        ],
-                      ),
-                    )
-                  : _emptyStateCard(
-                      _t(
-                        nl: widget.selectionMode
-                            ? (_lastSearchUsedLocation
-                                  ? 'Geen luchthavenpartners gevonden voor je huidige locatie.'
-                                  : 'Geen luchthavenpartners gevonden voor $_normalizedPostcode.')
-                            : (_lastSearchUsedLocation
-                                  ? 'Geen partners gevonden voor je huidige locatie of servicegebied.'
-                                  : 'Geen partners gevonden voor postcode of servicegebied $_normalizedPostcode.'),
-                        en: widget.selectionMode
-                            ? (_lastSearchUsedLocation
-                                  ? 'No airport-capable partners found for your current location.'
-                                  : 'No airport-capable partners found for $_normalizedPostcode.')
-                            : (_lastSearchUsedLocation
-                                  ? 'No partners found for your current location or service area.'
-                                  : 'No partners found for postcode or service area $_normalizedPostcode.'),
-                        fr: widget.selectionMode
-                            ? (_lastSearchUsedLocation
-                                  ? 'Aucun partenaire compatible aéroport trouvé pour votre position actuelle.'
-                                  : 'Aucun partenaire compatible aéroport trouvé pour $_normalizedPostcode.')
-                            : (_lastSearchUsedLocation
-                                  ? 'Aucun partenaire trouvé pour votre position actuelle ou zone de service.'
-                                  : 'Aucun partenaire trouvé pour le code postal ou la zone de service $_normalizedPostcode.'),
-                        es: widget.selectionMode
-                            ? (_lastSearchUsedLocation
-                                  ? 'No se encontraron socios aptos para aeropuerto para tu ubicación actual.'
-                                  : 'No se encontraron socios aptos para aeropuerto para $_normalizedPostcode.')
-                            : (_lastSearchUsedLocation
-                                  ? 'No se encontraron socios para tu ubicación actual o zona de servicio.'
-                                  : 'No se encontraron socios para el código postal o zona de servicio $_normalizedPostcode.'),
-                      ),
-                      action: OutlinedButton(
-                        onPressed: () {
-                          Navigator.of(context).push(
-                            MaterialPageRoute(
-                              builder: widget.regionRegistrationBuilder,
-                            ),
-                          );
-                        },
-                        style: OutlinedButton.styleFrom(
-                          foregroundColor: _gold.withOpacity(0.97),
-                          side: BorderSide(color: _gold.withOpacity(0.45)),
-                          backgroundColor: _panel,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                        ),
+                      const SizedBox(height: 8),
+                      Align(
+                        alignment: Alignment.centerLeft,
                         child: Text(
                           _t(
-                            nl: 'Open Regio Radar',
-                            en: 'Open Region Radar',
-                            fr: 'Ouvrir Radar régional',
-                            es: 'Abrir Radar regional',
+                            nl: 'Zoekstraal',
+                            en: 'Search radius',
+                            fr: 'Rayon de recherche',
+                            es: 'Radio de búsqueda',
+                          ),
+                          style: TextStyle(
+                            color: _textMuted,
+                            fontSize: 12.2,
+                            fontWeight: FontWeight.w700,
                           ),
                         ),
                       ),
-                    ),
-            ],
+                      const SizedBox(height: 6),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: _gpsRadiusOptionsKm
+                            .map((radiusKm) {
+                              final selected = _selectedGpsRadiusKm == radiusKm;
+                              return ChoiceChip(
+                                label: Text('$radiusKm km'),
+                                selected: selected,
+                                onSelected: _searching
+                                    ? null
+                                    : (_) => setState(() {
+                                        _selectedGpsRadiusKm = radiusKm;
+                                      }),
+                                labelStyle: TextStyle(
+                                  color: selected
+                                      ? (_isDarkTheme
+                                            ? Colors.black
+                                            : Colors.white)
+                                      : (_isDarkTheme
+                                            ? _gold.withOpacity(0.98)
+                                            : _textPrimary),
+                                  fontWeight: FontWeight.w700,
+                                  fontSize: 11.6,
+                                ),
+                                selectedColor: _isDarkTheme ? _gold : _bronze,
+                                backgroundColor: _panel,
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(999),
+                                  side: BorderSide(
+                                    color: selected
+                                        ? (_isDarkTheme ? _gold : _bronze)
+                                        : (_isDarkTheme
+                                              ? _gold.withOpacity(0.40)
+                                              : _border),
+                                  ),
+                                ),
+                                visualDensity: VisualDensity.compact,
+                              );
+                            })
+                            .toList(growable: false),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 14),
+                !_searched
+                    ? _emptyStateCard(
+                        _t(
+                          nl: 'Voer je postcode in of gebruik je locatie om te controleren welke partners actief zijn.',
+                          en: 'Enter your postal code or use your location to check which partners are active.',
+                          fr: 'Saisissez votre code postal ou utilisez votre position pour vérifier quels partenaires sont actifs.',
+                          es: 'Ingresa tu código postal o usa tu ubicación para comprobar qué socios están activos.',
+                        ),
+                      )
+                    : visiblePartners.isNotEmpty
+                    ? _premiumCard(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              _t(
+                                nl: widget.selectionMode
+                                    ? (_lastSearchUsedLocation
+                                          ? 'Luchthavenpartners in de buurt van je locatie'
+                                          : 'Luchthavenpartners in $_normalizedPostcode')
+                                    : (_lastSearchUsedLocation
+                                          ? 'Actieve partners in de buurt van je locatie'
+                                          : 'Actieve partners in $_normalizedPostcode'),
+                                en: widget.selectionMode
+                                    ? (_lastSearchUsedLocation
+                                          ? 'Airport-capable partners near your location'
+                                          : 'Airport-capable partners in $_normalizedPostcode')
+                                    : (_lastSearchUsedLocation
+                                          ? 'Active partners near your location'
+                                          : 'Active partners in $_normalizedPostcode'),
+                                fr: widget.selectionMode
+                                    ? (_lastSearchUsedLocation
+                                          ? 'Partenaires aéroport près de votre position'
+                                          : 'Partenaires aéroport dans $_normalizedPostcode')
+                                    : (_lastSearchUsedLocation
+                                          ? 'Partenaires actifs à proximité de votre position'
+                                          : 'Partenaires actifs dans $_normalizedPostcode'),
+                                es: widget.selectionMode
+                                    ? (_lastSearchUsedLocation
+                                          ? 'Socios aptos para aeropuerto cerca de tu ubicación'
+                                          : 'Socios aptos para aeropuerto en $_normalizedPostcode')
+                                    : (_lastSearchUsedLocation
+                                          ? 'Socios activos cerca de tu ubicación'
+                                          : 'Socios activos en $_normalizedPostcode'),
+                              ),
+                              style: TextStyle(
+                                color: _textPrimary,
+                                fontWeight: FontWeight.w700,
+                                fontSize: 13.5,
+                              ),
+                            ),
+                            if (_lastSearchUsedLocation &&
+                                _locationSearchLabel.trim().isNotEmpty) ...[
+                              const SizedBox(height: 4),
+                              Text(
+                                _locationSearchLabel,
+                                style: TextStyle(
+                                  color: _textMuted.withOpacity(0.9),
+                                  fontSize: 11,
+                                ),
+                              ),
+                            ],
+                            const SizedBox(height: 10),
+                            ...visiblePartners.map(_partnerCard),
+                          ],
+                        ),
+                      )
+                    : _emptyStateCard(
+                        _t(
+                          nl: widget.selectionMode
+                              ? (_lastSearchUsedLocation
+                                    ? 'Geen luchthavenpartners gevonden voor je huidige locatie.'
+                                    : 'Geen luchthavenpartners gevonden voor $_normalizedPostcode.')
+                              : (_lastSearchUsedLocation
+                                    ? 'Geen partners gevonden voor je huidige locatie of servicegebied.'
+                                    : 'Geen partners gevonden voor postcode of servicegebied $_normalizedPostcode.'),
+                          en: widget.selectionMode
+                              ? (_lastSearchUsedLocation
+                                    ? 'No airport-capable partners found for your current location.'
+                                    : 'No airport-capable partners found for $_normalizedPostcode.')
+                              : (_lastSearchUsedLocation
+                                    ? 'No partners found for your current location or service area.'
+                                    : 'No partners found for postcode or service area $_normalizedPostcode.'),
+                          fr: widget.selectionMode
+                              ? (_lastSearchUsedLocation
+                                    ? 'Aucun partenaire compatible aéroport trouvé pour votre position actuelle.'
+                                    : 'Aucun partenaire compatible aéroport trouvé pour $_normalizedPostcode.')
+                              : (_lastSearchUsedLocation
+                                    ? 'Aucun partenaire trouvé pour votre position actuelle ou zone de service.'
+                                    : 'Aucun partenaire trouvé pour le code postal ou la zone de service $_normalizedPostcode.'),
+                          es: widget.selectionMode
+                              ? (_lastSearchUsedLocation
+                                    ? 'No se encontraron socios aptos para aeropuerto para tu ubicación actual.'
+                                    : 'No se encontraron socios aptos para aeropuerto para $_normalizedPostcode.')
+                              : (_lastSearchUsedLocation
+                                    ? 'No se encontraron socios para tu ubicación actual o zona de servicio.'
+                                    : 'No se encontraron socios para el código postal o zona de servicio $_normalizedPostcode.'),
+                        ),
+                        action: OutlinedButton(
+                          onPressed: () {
+                            Navigator.of(context).push(
+                              MaterialPageRoute(
+                                builder: widget.regionRegistrationBuilder,
+                              ),
+                            );
+                          },
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: _isDarkTheme
+                                ? _gold.withOpacity(0.97)
+                                : _bronze,
+                            side: BorderSide(
+                              color: _isDarkTheme
+                                  ? _gold.withOpacity(0.45)
+                                  : _border,
+                            ),
+                            backgroundColor: _panel,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                          ),
+                          child: Text(
+                            _t(
+                              nl: 'Open Regio Radar',
+                              en: 'Open Region Radar',
+                              fr: 'Ouvrir Radar régional',
+                              es: 'Abrir Radar regional',
+                            ),
+                          ),
+                        ),
+                      ),
+              ],
+            ),
           ),
         ),
       ),
