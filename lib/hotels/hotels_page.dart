@@ -4,6 +4,8 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:fluxidi_tracking/app_config.dart';
+import 'package:fluxidi_tracking/customer_theme_palette.dart';
+import 'package:fluxidi_tracking/customer_theme_store.dart';
 import 'package:fluxidi_tracking/discovery/discovery_models.dart';
 import 'package:fluxidi_tracking/discovery/discovery_labels.dart';
 import 'package:fluxidi_tracking/events/event_models.dart';
@@ -46,10 +48,18 @@ class HotelsPage extends StatefulWidget {
 }
 
 class _HotelsPageState extends State<HotelsPage> {
-  static const Color _bgBlack = Color(0xFF07080C);
-  static const Color _panelBlack = Color(0xFF101010);
-  static const Color _gold = Color(0xFFE5B641);
-  static const Color _softText = Color(0xFFB4B4B4);
+  CustomerThemePalette get _themePalette =>
+      paletteForCustomerTheme(customerThemeNotifier.value);
+  bool get _isDarkTheme => _themePalette.isDark;
+  Color get _bgBlack => _themePalette.background;
+  Color get _panelBlack => _themePalette.surface;
+  Color get _gold => _themePalette.gold;
+  Color get _softText => _themePalette.textMuted;
+  Color get _textPrimary => _themePalette.textPrimary;
+  Color get _border => _themePalette.border;
+  Color get _shadow => _themePalette.shadow;
+  Color get _actionOnGold =>
+      _isDarkTheme ? Colors.black : const Color(0xFF1F1706);
 
   final TextEditingController _searchController = TextEditingController();
   final DiscoveryLocalSavedStore _savedStore = const DiscoveryLocalSavedStore(
@@ -88,17 +98,34 @@ class _HotelsPageState extends State<HotelsPage> {
   @override
   void initState() {
     super.initState();
+    customerThemeNotifier.addListener(_onThemeChanged);
     _allStays = List<HotelStay>.from(widget.stays ?? kBelgiumHotelSeedData);
     _searchController.addListener(_onSearchChanged);
     _loadSavedStayIds();
   }
 
+  void _onThemeChanged() {
+    if (!mounted) return;
+    setState(() {});
+  }
+
   @override
   void dispose() {
+    customerThemeNotifier.removeListener(_onThemeChanged);
     _searchController
       ..removeListener(_onSearchChanged)
       ..dispose();
     super.dispose();
+  }
+
+  void _showThemedSnackBar(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        backgroundColor: _panelBlack,
+        content: Text(message, style: TextStyle(color: _textPrimary)),
+      ),
+    );
   }
 
   void _onSearchChanged() {
@@ -311,20 +338,12 @@ class _HotelsPageState extends State<HotelsPage> {
     } catch (_) {
       if (!mounted) return;
       setState(() => _savedStayIds = previous);
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(_saveSyncFailedLabel)));
+      _showThemedSnackBar(_saveSyncFailedLabel);
       return;
     }
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          nextSaved
-              ? _staySavedMessage(stay.name)
-              : _stayUnsavedMessage(stay.name),
-        ),
-      ),
+    _showThemedSnackBar(
+      nextSaved ? _staySavedMessage(stay.name) : _stayUnsavedMessage(stay.name),
     );
   }
 
@@ -401,16 +420,12 @@ class _HotelsPageState extends State<HotelsPage> {
   Future<void> _openStayLink(HotelStay stay) async {
     final uri = _preferredStayUri(stay);
     if (uri == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            _t(
-              nl: 'Verblijflink is nog niet beschikbaar.',
-              en: 'Stay link is not available yet.',
-              fr: 'Le lien du séjour n’est pas encore disponible.',
-              es: 'El enlace del alojamiento aún no está disponible.',
-            ),
-          ),
+      _showThemedSnackBar(
+        _t(
+          nl: 'Verblijflink is nog niet beschikbaar.',
+          en: 'Stay link is not available yet.',
+          fr: 'Le lien du séjour n’est pas encore disponible.',
+          es: 'El enlace del alojamiento aún no está disponible.',
         ),
       );
       return;
@@ -418,16 +433,12 @@ class _HotelsPageState extends State<HotelsPage> {
     final opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
     if (opened) return;
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          _t(
-            nl: 'Kon verblijflink niet openen.',
-            en: 'Could not open stay link.',
-            fr: 'Impossible d’ouvrir le lien du séjour.',
-            es: 'No se pudo abrir el enlace del alojamiento.',
-          ),
-        ),
+    _showThemedSnackBar(
+      _t(
+        nl: 'Kon verblijflink niet openen.',
+        en: 'Could not open stay link.',
+        fr: 'Impossible d’ouvrir le lien du séjour.',
+        es: 'No se pudo abrir el enlace del alojamiento.',
       ),
     );
   }
@@ -568,9 +579,7 @@ class _HotelsPageState extends State<HotelsPage> {
         )
         .catchError((_) {
           if (!mounted) return;
-          ScaffoldMessenger.of(
-            context,
-          ).showSnackBar(SnackBar(content: Text(_taxiNavigationFallbackLabel)));
+          _showThemedSnackBar(_taxiNavigationFallbackLabel);
         });
   }
 
@@ -645,9 +654,7 @@ class _HotelsPageState extends State<HotelsPage> {
         )
         .catchError((_) {
           if (!mounted) return;
-          ScaffoldMessenger.of(
-            context,
-          ).showSnackBar(SnackBar(content: Text(_taxiNavigationFallbackLabel)));
+          _showThemedSnackBar(_taxiNavigationFallbackLabel);
         });
   }
 
@@ -683,9 +690,7 @@ class _HotelsPageState extends State<HotelsPage> {
       return;
     }
     if (!mounted) return;
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(_airportFlowFallbackLabel)));
+    _showThemedSnackBar(_airportFlowFallbackLabel);
   }
 
   @override
@@ -700,14 +705,14 @@ class _HotelsPageState extends State<HotelsPage> {
             _buildHeader(context),
             Expanded(
               child: ListView(
-                padding: const EdgeInsets.fromLTRB(14, 8, 14, 18),
+                padding: const EdgeInsets.fromLTRB(14, 5, 14, 18),
                 children: [
                   _buildSearchField(),
-                  const SizedBox(height: 10),
-                  _buildFilterPanel(),
-                  const SizedBox(height: 12),
+                  const SizedBox(height: 8),
+                  _buildCompactFilterChips(),
+                  const SizedBox(height: 8),
                   _buildResultSummary(stays.length),
-                  const SizedBox(height: 10),
+                  const SizedBox(height: 8),
                   _buildCardsGrid(stays),
                 ],
               ),
@@ -719,27 +724,44 @@ class _HotelsPageState extends State<HotelsPage> {
   }
 
   Widget _buildHeader(BuildContext context) {
+    final logoAsset = _isDarkTheme
+        ? 'assets/fluxidi/fluxidi_logo_horizontal_gold.png'
+        : 'assets/fluxidi/fluxidi_logo_horizontal_dark.png';
     return Padding(
-      padding: const EdgeInsets.fromLTRB(8, 8, 8, 4),
+      padding: const EdgeInsets.fromLTRB(8, 3, 8, 1),
       child: Row(
         children: [
           IconButton(
             onPressed: () => Navigator.of(context).pop(),
-            icon: const Icon(Icons.arrow_back_rounded),
+            icon: const Icon(Icons.arrow_back_rounded, size: 22),
             color: _gold,
+            visualDensity: const VisualDensity(horizontal: -3, vertical: -3),
+            constraints: const BoxConstraints(minWidth: 34, minHeight: 34),
+            splashRadius: 19,
             tooltip: _t(nl: 'Terug', en: 'Back', fr: 'Retour', es: 'Volver'),
           ),
+          const SizedBox(width: 4),
           Expanded(
-            child: Text(
-              'Hotels & B&B',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 20,
-                fontWeight: FontWeight.w800,
-                letterSpacing: 0.2,
+            child: Center(
+              child: Image.asset(
+                logoAsset,
+                height: 21,
+                fit: BoxFit.contain,
+                filterQuality: FilterQuality.high,
               ),
+            ),
+          ),
+          IconButton(
+            onPressed: _openFiltersSheet,
+            icon: Icon(Icons.tune_rounded, size: 18, color: _gold),
+            visualDensity: const VisualDensity(horizontal: -3, vertical: -3),
+            constraints: const BoxConstraints(minWidth: 34, minHeight: 34),
+            splashRadius: 18,
+            tooltip: _t(
+              nl: 'Filters',
+              en: 'Filters',
+              fr: 'Filtres',
+              es: 'Filtros',
             ),
           ),
         ],
@@ -751,7 +773,7 @@ class _HotelsPageState extends State<HotelsPage> {
     return TextField(
       controller: _searchController,
       textInputAction: TextInputAction.search,
-      style: const TextStyle(color: Colors.white),
+      style: TextStyle(color: _textPrimary),
       decoration: InputDecoration(
         hintText: _t(
           nl: 'Zoek hotel, stad of regio',
@@ -759,8 +781,18 @@ class _HotelsPageState extends State<HotelsPage> {
           fr: 'Rechercher un hôtel, une ville ou une région',
           es: 'Buscar hotel, ciudad o región',
         ),
-        hintStyle: const TextStyle(color: Color(0xFF8C8C8C)),
+        hintStyle: TextStyle(color: _softText),
         prefixIcon: Icon(Icons.search_rounded, color: _gold),
+        suffixIcon: IconButton(
+          onPressed: _openFiltersSheet,
+          icon: Icon(Icons.tune_rounded, color: _gold, size: 18),
+          tooltip: _t(
+            nl: 'Filters',
+            en: 'Filters',
+            fr: 'Filtres',
+            es: 'Filtros',
+          ),
+        ),
         filled: true,
         fillColor: _panelBlack,
         contentPadding: const EdgeInsets.symmetric(
@@ -769,15 +801,474 @@ class _HotelsPageState extends State<HotelsPage> {
         ),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
-          borderSide: BorderSide(color: _gold.withOpacity(0.2)),
+          borderSide: BorderSide(
+            color: _border.withOpacity(_isDarkTheme ? 0.35 : 0.95),
+          ),
         ),
         enabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
-          borderSide: BorderSide(color: _gold.withOpacity(0.2)),
+          borderSide: BorderSide(
+            color: _border.withOpacity(_isDarkTheme ? 0.35 : 0.95),
+          ),
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
-          borderSide: const BorderSide(color: _gold, width: 1.2),
+          borderSide: BorderSide(color: _gold, width: 1.2),
+        ),
+      ),
+    );
+  }
+
+  bool get _hasActiveFilters =>
+      _selectedCountryCode != _allKey ||
+      _selectedRegionKey != _allKey ||
+      _selectedSettlementKey != _allKey ||
+      _selectedType != _allKey;
+
+  String get _selectedCountryLabel {
+    if (_selectedCountryCode == _allKey) return _allCountriesLabel;
+    for (final option in _countryOptions) {
+      if (option.value == _selectedCountryCode) return option.label;
+    }
+    return _allCountriesLabel;
+  }
+
+  String get _selectedRegionLabel {
+    if (_selectedRegionKey == _allKey) return _allRegionsLabel;
+    for (final option in _regionOptions) {
+      if (option.value == _selectedRegionKey) return option.label;
+    }
+    return _allRegionsLabel;
+  }
+
+  String get _selectedCityLabel {
+    if (_selectedSettlementKey == _allKey) return _allCitiesLabel;
+    for (final option in _settlementOptions) {
+      if (option.value == _selectedSettlementKey) return option.label;
+    }
+    return _allCitiesLabel;
+  }
+
+  Future<void> _openCountryPicker() async {
+    final options = <HotelGeoOption>[
+      HotelGeoOption(value: _allKey, label: _allCountriesLabel),
+      ..._countryOptions,
+    ];
+    final selected = await _openFilterPicker(
+      title: _t(nl: 'Land', en: 'Country', fr: 'Pays', es: 'País'),
+      options: options,
+      currentValue: _selectedCountryCode,
+    );
+    if (selected == null) return;
+    setState(() {
+      _selectedCountryCode = selected;
+      _selectedRegionKey = _allKey;
+      _selectedSettlementKey = _allKey;
+    });
+  }
+
+  Future<void> _openRegionPicker() async {
+    if (_selectedCountryCode == _allKey) return;
+    final options = <HotelGeoOption>[
+      HotelGeoOption(value: _allKey, label: _allRegionsLabel),
+      ..._regionOptions,
+    ];
+    final selected = await _openFilterPicker(
+      title: _t(nl: 'Regio', en: 'Region', fr: 'Région', es: 'Región'),
+      options: options,
+      currentValue: _selectedRegionKey,
+    );
+    if (selected == null) return;
+    setState(() {
+      _selectedRegionKey = selected;
+      _selectedSettlementKey = _allKey;
+    });
+  }
+
+  Future<void> _openSettlementPicker() async {
+    if (_selectedCountryCode == _allKey || _selectedRegionKey == _allKey)
+      return;
+    final options = <HotelGeoOption>[
+      HotelGeoOption(value: _allKey, label: _allCitiesLabel),
+      ..._settlementOptions,
+    ];
+    final selected = await _openFilterPicker(
+      title: _t(nl: 'Stad', en: 'City', fr: 'Ville', es: 'Ciudad'),
+      options: options,
+      currentValue: _selectedSettlementKey,
+    );
+    if (selected == null) return;
+    setState(() => _selectedSettlementKey = selected);
+  }
+
+  Future<void> _openTypePicker() async {
+    final options = <HotelGeoOption>[
+      HotelGeoOption(value: _allKey, label: _typeLabel(_allKey)),
+      HotelGeoOption(
+        value: HotelStayType.hotel,
+        label: _typeLabel(HotelStayType.hotel),
+      ),
+      HotelGeoOption(
+        value: HotelStayType.bedAndBreakfast,
+        label: _typeLabel(HotelStayType.bedAndBreakfast),
+      ),
+      HotelGeoOption(
+        value: HotelStayType.aparthotel,
+        label: _typeLabel(HotelStayType.aparthotel),
+      ),
+      HotelGeoOption(
+        value: HotelStayType.guesthouse,
+        label: _typeLabel(HotelStayType.guesthouse),
+      ),
+    ];
+    final selected = await _openFilterPicker(
+      title: _t(nl: 'Type', en: 'Type', fr: 'Type', es: 'Tipo'),
+      options: options,
+      currentValue: _selectedType,
+    );
+    if (selected == null) return;
+    setState(() => _selectedType = selected);
+  }
+
+  Future<String?> _openFilterPicker({
+    required String title,
+    required List<HotelGeoOption> options,
+    required String currentValue,
+  }) async {
+    return showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: _panelBlack,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
+      builder: (context) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(14, 10, 14, 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: TextStyle(
+                    color: _textPrimary,
+                    fontWeight: FontWeight.w800,
+                    fontSize: 16,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Flexible(
+                  child: ListView.separated(
+                    shrinkWrap: true,
+                    itemCount: options.length,
+                    separatorBuilder: (_, __) => Divider(
+                      color: _border.withOpacity(_isDarkTheme ? 0.3 : 0.95),
+                      height: 1,
+                    ),
+                    itemBuilder: (context, index) {
+                      final option = options[index];
+                      final isSelected = option.value == currentValue;
+                      return ListTile(
+                        dense: true,
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 2,
+                          vertical: 2,
+                        ),
+                        title: Text(
+                          option.label,
+                          style: TextStyle(
+                            color: isSelected ? _gold : _textPrimary,
+                            fontWeight: isSelected
+                                ? FontWeight.w700
+                                : FontWeight.w500,
+                          ),
+                        ),
+                        trailing: isSelected
+                            ? Icon(Icons.check_rounded, color: _gold)
+                            : null,
+                        onTap: () => Navigator.of(context).pop(option.value),
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _openFiltersSheet() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: _panelBlack,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
+      builder: (sheetContext) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(14, 10, 14, 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  _t(
+                    nl: 'Filters',
+                    en: 'Filters',
+                    fr: 'Filtres',
+                    es: 'Filtros',
+                  ),
+                  style: TextStyle(
+                    color: _textPrimary,
+                    fontWeight: FontWeight.w800,
+                    fontSize: 16,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                ListTile(
+                  dense: true,
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 2),
+                  leading: Icon(
+                    Icons.public_rounded,
+                    color: _gold.withOpacity(0.95),
+                  ),
+                  title: Text(
+                    _t(nl: 'Land', en: 'Country', fr: 'Pays', es: 'País'),
+                    style: TextStyle(color: _textPrimary),
+                  ),
+                  subtitle: Text(
+                    _selectedCountryLabel,
+                    style: TextStyle(color: _softText.withOpacity(0.9)),
+                  ),
+                  onTap: () async {
+                    Navigator.of(sheetContext).pop();
+                    await _openCountryPicker();
+                  },
+                ),
+                ListTile(
+                  dense: true,
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 2),
+                  leading: Icon(
+                    Icons.map_outlined,
+                    color: _gold.withOpacity(0.95),
+                  ),
+                  title: Text(
+                    _t(nl: 'Regio', en: 'Region', fr: 'Région', es: 'Región'),
+                    style: TextStyle(color: _textPrimary),
+                  ),
+                  subtitle: Text(
+                    _selectedRegionLabel,
+                    style: TextStyle(color: _softText.withOpacity(0.9)),
+                  ),
+                  onTap: _selectedCountryCode == _allKey
+                      ? null
+                      : () async {
+                          Navigator.of(sheetContext).pop();
+                          await _openRegionPicker();
+                        },
+                ),
+                ListTile(
+                  dense: true,
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 2),
+                  leading: Icon(
+                    Icons.location_city_rounded,
+                    color: _gold.withOpacity(0.95),
+                  ),
+                  title: Text(
+                    _t(nl: 'Stad', en: 'City', fr: 'Ville', es: 'Ciudad'),
+                    style: TextStyle(color: _textPrimary),
+                  ),
+                  subtitle: Text(
+                    _selectedCityLabel,
+                    style: TextStyle(color: _softText.withOpacity(0.9)),
+                  ),
+                  onTap:
+                      (_selectedCountryCode == _allKey ||
+                          _selectedRegionKey == _allKey)
+                      ? null
+                      : () async {
+                          Navigator.of(sheetContext).pop();
+                          await _openSettlementPicker();
+                        },
+                ),
+                ListTile(
+                  dense: true,
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 2),
+                  leading: Icon(
+                    Icons.hotel_rounded,
+                    color: _gold.withOpacity(0.95),
+                  ),
+                  title: Text(
+                    _t(nl: 'Type', en: 'Type', fr: 'Type', es: 'Tipo'),
+                    style: TextStyle(color: _textPrimary),
+                  ),
+                  subtitle: Text(
+                    _typeLabel(_selectedType),
+                    style: TextStyle(color: _softText.withOpacity(0.9)),
+                  ),
+                  onTap: () async {
+                    Navigator.of(sheetContext).pop();
+                    await _openTypePicker();
+                  },
+                ),
+                if (_hasActiveFilters) ...[
+                  const SizedBox(height: 4),
+                  SizedBox(
+                    width: double.infinity,
+                    child: TextButton.icon(
+                      onPressed: () {
+                        Navigator.of(sheetContext).pop();
+                        _resetAllFilters();
+                      },
+                      icon: Icon(Icons.restart_alt_rounded, color: _gold),
+                      label: Text(
+                        _t(
+                          nl: 'Filters wissen',
+                          en: 'Clear filters',
+                          fr: 'Effacer filtres',
+                          es: 'Borrar filtros',
+                        ),
+                        style: TextStyle(
+                          color: _gold,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  void _resetAllFilters() {
+    setState(() {
+      _selectedCountryCode = _allKey;
+      _selectedRegionKey = _allKey;
+      _selectedSettlementKey = _allKey;
+      _selectedType = _allKey;
+    });
+  }
+
+  Widget _buildCompactFilterChips() {
+    final hasCountrySelection = _selectedCountryCode != _allKey;
+    final hasRegionSelection =
+        hasCountrySelection && _selectedRegionKey != _allKey;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final landChip = _buildFilterChip(
+          label: _t(nl: 'Land', en: 'Country', fr: 'Pays', es: 'País'),
+          value: _selectedCountryLabel,
+          onTap: _openCountryPicker,
+        );
+        final cityChip = _buildFilterChip(
+          label: _t(nl: 'Stad', en: 'City', fr: 'Ville', es: 'Ciudad'),
+          value: _selectedCityLabel,
+          onTap: hasRegionSelection ? _openSettlementPicker : null,
+        );
+        final regionChip = _buildFilterChip(
+          label: _t(nl: 'Regio', en: 'Region', fr: 'Région', es: 'Región'),
+          value: _selectedRegionLabel,
+          onTap: hasCountrySelection ? _openRegionPicker : null,
+        );
+        final typeChip = _buildFilterChip(
+          label: _t(nl: 'Type', en: 'Type', fr: 'Type', es: 'Tipo'),
+          value: _typeLabel(_selectedType),
+          onTap: _openTypePicker,
+          emphasize: _selectedType != _allKey,
+        );
+
+        if (constraints.maxWidth < 700) {
+          return Column(
+            children: [
+              Row(
+                children: [
+                  Expanded(child: landChip),
+                  const SizedBox(width: 6),
+                  Expanded(child: cityChip),
+                ],
+              ),
+              const SizedBox(height: 6),
+              Row(
+                children: [
+                  Expanded(child: regionChip),
+                  const SizedBox(width: 6),
+                  Expanded(child: typeChip),
+                ],
+              ),
+            ],
+          );
+        }
+
+        return Row(
+          children: [
+            Expanded(child: landChip),
+            const SizedBox(width: 6),
+            Expanded(child: cityChip),
+            const SizedBox(width: 6),
+            Expanded(child: regionChip),
+            const SizedBox(width: 6),
+            Expanded(child: typeChip),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildFilterChip({
+    required String label,
+    required String value,
+    required VoidCallback? onTap,
+    bool emphasize = false,
+  }) {
+    final enabled = onTap != null;
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(999),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
+        decoration: BoxDecoration(
+          color: emphasize ? _gold : _panelBlack,
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(
+            color: emphasize
+                ? _gold
+                : _border.withOpacity(_isDarkTheme ? 0.35 : 0.95),
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.max,
+          children: [
+            Expanded(
+              child: Text(
+                '$label: $value',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: emphasize
+                      ? _actionOnGold
+                      : (enabled ? _textPrimary : _softText.withOpacity(0.8)),
+                  fontWeight: FontWeight.w700,
+                  fontSize: 11.4,
+                ),
+              ),
+            ),
+            const SizedBox(width: 4),
+            Icon(
+              Icons.expand_more_rounded,
+              size: 14,
+              color: emphasize
+                  ? _actionOnGold
+                  : (enabled ? _gold : _softText.withOpacity(0.8)),
+            ),
+          ],
         ),
       ),
     );
@@ -804,7 +1295,16 @@ class _HotelsPageState extends State<HotelsPage> {
       decoration: BoxDecoration(
         color: _panelBlack,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: _gold.withOpacity(0.24)),
+        border: Border.all(
+          color: _border.withOpacity(_isDarkTheme ? 0.35 : 0.95),
+        ),
+        boxShadow: <BoxShadow>[
+          BoxShadow(
+            color: _shadow.withOpacity(_isDarkTheme ? 0.18 : 0.08),
+            blurRadius: 10,
+            offset: const Offset(0, 3),
+          ),
+        ],
       ),
       child: Column(
         children: [
@@ -878,17 +1378,17 @@ class _HotelsPageState extends State<HotelsPage> {
                     label: Text(
                       _typeLabel(typeKey),
                       style: TextStyle(
-                        color: isSelected
-                            ? const Color(0xFF1A1307)
-                            : Colors.white,
+                        color: isSelected ? _actionOnGold : _textPrimary,
                         fontWeight: FontWeight.w700,
                         fontSize: 12,
                       ),
                     ),
-                    backgroundColor: const Color(0xFF151515),
+                    backgroundColor: _panelBlack,
                     selectedColor: _gold,
                     side: BorderSide(
-                      color: isSelected ? _gold : _gold.withOpacity(0.26),
+                      color: isSelected
+                          ? _gold
+                          : _border.withOpacity(_isDarkTheme ? 0.35 : 0.95),
                     ),
                     onSelected: (_) => setState(() => _selectedType = typeKey),
                   );
@@ -915,7 +1415,7 @@ class _HotelsPageState extends State<HotelsPage> {
       dropdownColor: _panelBlack,
       iconEnabledColor: enabled ? _gold : _softText.withOpacity(0.7),
       style: TextStyle(
-        color: enabled ? Colors.white : _softText.withOpacity(0.8),
+        color: enabled ? _textPrimary : _softText.withOpacity(0.8),
         fontWeight: FontWeight.w600,
       ),
       decoration: InputDecoration(
@@ -927,19 +1427,23 @@ class _HotelsPageState extends State<HotelsPage> {
         ),
         isDense: true,
         filled: true,
-        fillColor: const Color(0xFF151515),
+        fillColor: _panelBlack,
         contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(10),
-          borderSide: BorderSide(color: _gold.withOpacity(0.24)),
+          borderSide: BorderSide(
+            color: _border.withOpacity(_isDarkTheme ? 0.35 : 0.95),
+          ),
         ),
         enabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(10),
-          borderSide: BorderSide(color: _gold.withOpacity(0.24)),
+          borderSide: BorderSide(
+            color: _border.withOpacity(_isDarkTheme ? 0.35 : 0.95),
+          ),
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(10),
-          borderSide: const BorderSide(color: _gold, width: 1.1),
+          borderSide: BorderSide(color: _gold, width: 1.1),
         ),
       ),
       items: options
@@ -965,23 +1469,38 @@ class _HotelsPageState extends State<HotelsPage> {
       fr: '$count séjours trouvés',
       es: '$count alojamientos encontrados',
     );
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-      decoration: BoxDecoration(
-        color: _gold.withOpacity(0.1),
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: _gold.withOpacity(0.3)),
-      ),
-      child: Text(
-        text,
-        textAlign: TextAlign.center,
-        style: const TextStyle(
-          color: _gold,
-          fontWeight: FontWeight.w700,
-          fontSize: 12.2,
+    return Row(
+      children: [
+        Icon(Icons.hotel_rounded, size: 14, color: _gold.withOpacity(0.95)),
+        const SizedBox(width: 6),
+        Expanded(
+          child: Text(
+            text,
+            style: TextStyle(
+              color: _gold.withOpacity(0.95),
+              fontWeight: FontWeight.w700,
+              fontSize: 11.8,
+            ),
+          ),
         ),
-      ),
+        if (_hasActiveFilters)
+          TextButton(
+            onPressed: _resetAllFilters,
+            style: TextButton.styleFrom(
+              foregroundColor: _gold,
+              visualDensity: const VisualDensity(horizontal: -3, vertical: -3),
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+            child: Text(
+              _t(nl: 'Wis', en: 'Clear', fr: 'Effacer', es: 'Borrar'),
+              style: const TextStyle(
+                fontSize: 11.4,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+      ],
     );
   }
 
@@ -992,7 +1511,9 @@ class _HotelsPageState extends State<HotelsPage> {
         decoration: BoxDecoration(
           color: _panelBlack,
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: _gold.withOpacity(0.24)),
+          border: Border.all(
+            color: _border.withOpacity(_isDarkTheme ? 0.35 : 0.95),
+          ),
         ),
         child: Text(
           _t(
@@ -1002,7 +1523,7 @@ class _HotelsPageState extends State<HotelsPage> {
             es: 'No se encontraron alojamientos para esta selección.',
           ),
           textAlign: TextAlign.center,
-          style: const TextStyle(color: _softText, fontSize: 13),
+          style: TextStyle(color: _softText, fontSize: 13),
         ),
       );
     }
@@ -1016,14 +1537,14 @@ class _HotelsPageState extends State<HotelsPage> {
             children: [
               for (var i = 0; i < stays.length; i++) ...[
                 _buildStayCard(stays[i]),
-                if (i != stays.length - 1) const SizedBox(height: 10),
+                if (i != stays.length - 1) const SizedBox(height: 8),
               ],
             ],
           );
         }
         final textScale = MediaQuery.textScalerOf(context).scale(1.0);
-        final safeMainAxisExtent = (422.0 * textScale).clamp(422.0, 520.0);
-        const spacing = 10.0;
+        final safeMainAxisExtent = (392.0 * textScale).clamp(392.0, 500.0);
+        const spacing = 8.0;
         return GridView.builder(
           shrinkWrap: true,
           physics: const NeverScrollableScrollPhysics(),
@@ -1057,10 +1578,12 @@ class _HotelsPageState extends State<HotelsPage> {
           decoration: BoxDecoration(
             color: _panelBlack,
             borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: _gold.withOpacity(0.22)),
+            border: Border.all(
+              color: _border.withOpacity(_isDarkTheme ? 0.35 : 0.95),
+            ),
             boxShadow: <BoxShadow>[
               BoxShadow(
-                color: _gold.withOpacity(0.06),
+                color: _shadow.withOpacity(_isDarkTheme ? 0.2 : 0.1),
                 blurRadius: 14,
                 spreadRadius: 0.2,
                 offset: const Offset(0, 4),
@@ -1071,7 +1594,7 @@ class _HotelsPageState extends State<HotelsPage> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Container(
-                height: 132,
+                height: 120,
                 width: double.infinity,
                 decoration: BoxDecoration(
                   borderRadius: const BorderRadius.vertical(
@@ -1080,7 +1603,7 @@ class _HotelsPageState extends State<HotelsPage> {
                   gradient: const LinearGradient(
                     begin: Alignment.topLeft,
                     end: Alignment.bottomRight,
-                    colors: <Color>[Color(0xFF23304A), Color(0xFF111827)],
+                    colors: <Color>[Color(0xFF2C394E), Color(0xFF162033)],
                   ),
                 ),
                 child: Stack(
@@ -1158,7 +1681,7 @@ class _HotelsPageState extends State<HotelsPage> {
                         ),
                         child: Text(
                           _typeLabel(stay.type),
-                          style: const TextStyle(
+                          style: TextStyle(
                             color: _gold,
                             fontSize: 10.5,
                             fontWeight: FontWeight.w700,
@@ -1182,7 +1705,7 @@ class _HotelsPageState extends State<HotelsPage> {
                           ),
                           child: Text(
                             '★ ${stay.rating!.toStringAsFixed(1)}',
-                            style: const TextStyle(
+                            style: TextStyle(
                               color: _gold,
                               fontSize: 10.5,
                               fontWeight: FontWeight.w800,
@@ -1202,7 +1725,7 @@ class _HotelsPageState extends State<HotelsPage> {
                               : Icons.favorite_border_rounded,
                           color: isSaved
                               ? _gold
-                              : Colors.white.withOpacity(0.9),
+                              : _textPrimary.withOpacity(0.9),
                           size: 22,
                         ),
                         style: IconButton.styleFrom(
@@ -1227,7 +1750,7 @@ class _HotelsPageState extends State<HotelsPage> {
                           ),
                           child: Text(
                             _recommendedLabel,
-                            style: const TextStyle(
+                            style: TextStyle(
                               color: _gold,
                               fontSize: 10.4,
                               fontWeight: FontWeight.w800,
@@ -1240,7 +1763,7 @@ class _HotelsPageState extends State<HotelsPage> {
               ),
               Expanded(
                 child: Padding(
-                  padding: const EdgeInsets.fromLTRB(11, 9, 11, 8),
+                  padding: const EdgeInsets.fromLTRB(10, 8, 10, 7),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
@@ -1248,10 +1771,10 @@ class _HotelsPageState extends State<HotelsPage> {
                         stay.name,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: Colors.white,
+                        style: TextStyle(
+                          color: _textPrimary,
                           fontWeight: FontWeight.w800,
-                          fontSize: 15.8,
+                          fontSize: 15.1,
                         ),
                       ),
                       const SizedBox(height: 4),
@@ -1270,13 +1793,13 @@ class _HotelsPageState extends State<HotelsPage> {
                         stay.description,
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
+                        style: TextStyle(
                           color: _softText,
-                          fontSize: 11.8,
+                          fontSize: 11.4,
                           height: 1.2,
                         ),
                       ),
-                      const SizedBox(height: 8),
+                      const SizedBox(height: 7),
                       if (highlights.isNotEmpty)
                         Wrap(
                           spacing: 6,
@@ -1289,10 +1812,12 @@ class _HotelsPageState extends State<HotelsPage> {
                                     vertical: 3,
                                   ),
                                   decoration: BoxDecoration(
-                                    color: const Color(0xFF171717),
+                                    color: _panelBlack,
                                     borderRadius: BorderRadius.circular(999),
                                     border: Border.all(
-                                      color: _gold.withOpacity(0.32),
+                                      color: _border.withOpacity(
+                                        _isDarkTheme ? 0.4 : 1,
+                                      ),
                                     ),
                                   ),
                                   child: Text(
@@ -1300,7 +1825,7 @@ class _HotelsPageState extends State<HotelsPage> {
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
                                     style: TextStyle(
-                                      color: Colors.white.withOpacity(0.78),
+                                      color: _textPrimary.withOpacity(0.82),
                                       fontSize: 10.2,
                                       fontWeight: FontWeight.w600,
                                     ),
@@ -1310,10 +1835,10 @@ class _HotelsPageState extends State<HotelsPage> {
                               .toList(),
                         ),
                       if (displayPrice.isNotEmpty) ...[
-                        const SizedBox(height: 5),
+                        const SizedBox(height: 4),
                         Text(
                           displayPrice,
-                          style: const TextStyle(
+                          style: TextStyle(
                             color: _gold,
                             fontSize: 11.7,
                             fontWeight: FontWeight.w700,
@@ -1327,8 +1852,8 @@ class _HotelsPageState extends State<HotelsPage> {
                           onPressed: () => _onTaxiCtaTap(stay),
                           style: ElevatedButton.styleFrom(
                             backgroundColor: _gold,
-                            foregroundColor: const Color(0xFF141414),
-                            minimumSize: const Size.fromHeight(42),
+                            foregroundColor: _actionOnGold,
+                            minimumSize: const Size.fromHeight(39),
                             shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(11),
                             ),
@@ -1352,10 +1877,14 @@ class _HotelsPageState extends State<HotelsPage> {
                           child: OutlinedButton.icon(
                             onPressed: () => _openStayLink(stay),
                             style: OutlinedButton.styleFrom(
-                              backgroundColor: const Color(0xFF121212),
-                              foregroundColor: Colors.white.withOpacity(0.92),
-                              side: BorderSide(color: _gold.withOpacity(0.28)),
-                              minimumSize: const Size.fromHeight(38),
+                              backgroundColor: _panelBlack,
+                              foregroundColor: _textPrimary.withOpacity(0.92),
+                              side: BorderSide(
+                                color: _border.withOpacity(
+                                  _isDarkTheme ? 0.4 : 1,
+                                ),
+                              ),
+                              minimumSize: const Size.fromHeight(36),
                               shape: RoundedRectangleBorder(
                                 borderRadius: BorderRadius.circular(10),
                               ),
@@ -1413,11 +1942,18 @@ class HotelStayDetailPage extends StatelessWidget {
   final VoidCallback onAirportTransferTap;
   final VoidCallback onTaxiTap;
   final VoidCallback onViewStayTap;
-
-  static const Color _bgBlack = Color(0xFF07080C);
-  static const Color _panelBlack = Color(0xFF101010);
-  static const Color _gold = Color(0xFFE5B641);
-  static const Color _softText = Color(0xFFB4B4B4);
+  CustomerThemePalette get _themePalette =>
+      paletteForCustomerTheme(customerThemeNotifier.value);
+  bool get _isDarkTheme => _themePalette.isDark;
+  Color get _bgBlack => _themePalette.background;
+  Color get _panelBlack => _themePalette.surface;
+  Color get _gold => _themePalette.gold;
+  Color get _softText => _themePalette.textMuted;
+  Color get _textPrimary => _themePalette.textPrimary;
+  Color get _border => _themePalette.border;
+  Color get _shadow => _themePalette.shadow;
+  Color get _actionOnGold =>
+      _isDarkTheme ? Colors.black : const Color(0xFF1F1706);
 
   String get _languageCode => appConfig.currentLanguage.name;
 
@@ -1779,9 +2315,11 @@ class HotelStayDetailPage extends StatelessWidget {
           width: double.infinity,
           padding: const EdgeInsets.fromLTRB(10, 9, 10, 9),
           decoration: BoxDecoration(
-            color: const Color(0xFF151515),
+            color: _panelBlack,
             borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: _gold.withOpacity(0.22)),
+            border: Border.all(
+              color: _border.withOpacity(_isDarkTheme ? 0.35 : 0.95),
+            ),
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -1790,8 +2328,8 @@ class HotelStayDetailPage extends StatelessWidget {
                 event.title,
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: Colors.white,
+                style: TextStyle(
+                  color: _textPrimary,
                   fontSize: 13.5,
                   fontWeight: FontWeight.w700,
                 ),
@@ -1812,7 +2350,7 @@ class HotelStayDetailPage extends StatelessWidget {
                 '${event.locationName}, ${event.city}',
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
+                style: TextStyle(
                   color: _softText,
                   fontSize: 11.6,
                   fontWeight: FontWeight.w600,
@@ -1835,9 +2373,11 @@ class HotelStayDetailPage extends StatelessWidget {
                 child: OutlinedButton.icon(
                   onPressed: () => onNearbyEventTaxiTap(event),
                   style: OutlinedButton.styleFrom(
-                    backgroundColor: const Color(0xFF121212),
-                    foregroundColor: Colors.white.withOpacity(0.93),
-                    side: BorderSide(color: _gold.withOpacity(0.32)),
+                    backgroundColor: _panelBlack,
+                    foregroundColor: _textPrimary.withOpacity(0.93),
+                    side: BorderSide(
+                      color: _border.withOpacity(_isDarkTheme ? 0.4 : 1),
+                    ),
                     minimumSize: const Size.fromHeight(40),
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(10),
@@ -1870,118 +2410,98 @@ class HotelStayDetailPage extends StatelessWidget {
     final hasAnyNearbyEvents = _nearbyEventsForRadiusMode(
       _HotelNearbyEventRadiusMode.wider,
     ).isNotEmpty;
-    return Scaffold(
-      backgroundColor: _bgBlack,
-      body: SafeArea(
-        child: Column(
-          children: [
-            Expanded(
-              child: ListView(
-                padding: const EdgeInsets.fromLTRB(14, 8, 14, 16),
-                children: [
-                  Row(
-                    children: [
-                      IconButton(
-                        onPressed: () => Navigator.of(context).pop(),
-                        icon: const Icon(Icons.arrow_back_rounded),
-                        color: _gold,
-                        tooltip: _t(
-                          nl: 'Terug',
-                          en: 'Back',
-                          fr: 'Retour',
-                          es: 'Volver',
-                        ),
-                      ),
-                    ],
-                  ),
-                  Container(
-                    height: 248,
-                    width: double.infinity,
-                    clipBehavior: Clip.antiAlias,
-                    decoration: BoxDecoration(
-                      color: _panelBlack,
-                      borderRadius: BorderRadius.circular(18),
-                      border: Border.all(color: _gold.withOpacity(0.24)),
-                      gradient: const LinearGradient(
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                        colors: <Color>[Color(0xFF22314C), Color(0xFF101828)],
-                      ),
-                    ),
-                    child: Stack(
+    return ValueListenableBuilder<CustomerThemeVariant>(
+      valueListenable: customerThemeNotifier,
+      builder: (_, __, ___) => Scaffold(
+        backgroundColor: _bgBlack,
+        body: SafeArea(
+          child: Column(
+            children: [
+              Expanded(
+                child: ListView(
+                  padding: const EdgeInsets.fromLTRB(14, 8, 14, 16),
+                  children: [
+                    Row(
                       children: [
-                        if (imageUrl.isNotEmpty)
-                          Positioned.fill(
-                            child: Image.network(
-                              imageUrl,
-                              fit: BoxFit.cover,
-                              loadingBuilder: (context, child, progress) {
-                                if (progress == null) return child;
-                                return Center(
-                                  child: SizedBox(
-                                    width: 28,
-                                    height: 28,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2.2,
-                                      color: _gold.withOpacity(0.9),
+                        IconButton(
+                          onPressed: () => Navigator.of(context).pop(),
+                          icon: const Icon(Icons.arrow_back_rounded),
+                          color: _gold,
+                          tooltip: _t(
+                            nl: 'Terug',
+                            en: 'Back',
+                            fr: 'Retour',
+                            es: 'Volver',
+                          ),
+                        ),
+                      ],
+                    ),
+                    Container(
+                      height: 248,
+                      width: double.infinity,
+                      clipBehavior: Clip.antiAlias,
+                      decoration: BoxDecoration(
+                        color: _panelBlack,
+                        borderRadius: BorderRadius.circular(18),
+                        border: Border.all(
+                          color: _border.withOpacity(
+                            _isDarkTheme ? 0.35 : 0.95,
+                          ),
+                        ),
+                        gradient: const LinearGradient(
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                          colors: <Color>[Color(0xFF22314C), Color(0xFF101828)],
+                        ),
+                      ),
+                      child: Stack(
+                        children: [
+                          if (imageUrl.isNotEmpty)
+                            Positioned.fill(
+                              child: Image.network(
+                                imageUrl,
+                                fit: BoxFit.cover,
+                                loadingBuilder: (context, child, progress) {
+                                  if (progress == null) return child;
+                                  return Center(
+                                    child: SizedBox(
+                                      width: 28,
+                                      height: 28,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2.2,
+                                        color: _gold.withOpacity(0.9),
+                                      ),
                                     ),
-                                  ),
-                                );
-                              },
-                              errorBuilder: (_, __, ___) =>
-                                  const SizedBox.shrink(),
+                                  );
+                                },
+                                errorBuilder: (_, __, ___) =>
+                                    const SizedBox.shrink(),
+                              ),
                             ),
-                          ),
-                        Positioned.fill(
-                          child: DecoratedBox(
-                            decoration: BoxDecoration(
-                              gradient: LinearGradient(
-                                begin: Alignment.topCenter,
-                                end: Alignment.bottomCenter,
-                                colors: <Color>[
-                                  Colors.black.withOpacity(0.16),
-                                  Colors.black.withOpacity(0.34),
-                                  Colors.black.withOpacity(0.66),
-                                ],
+                          Positioned.fill(
+                            child: DecoratedBox(
+                              decoration: BoxDecoration(
+                                gradient: LinearGradient(
+                                  begin: Alignment.topCenter,
+                                  end: Alignment.bottomCenter,
+                                  colors: <Color>[
+                                    Colors.black.withOpacity(0.16),
+                                    Colors.black.withOpacity(0.34),
+                                    Colors.black.withOpacity(0.66),
+                                  ],
+                                ),
                               ),
                             ),
                           ),
-                        ),
-                        Center(
-                          child: Icon(
-                            Icons.hotel_rounded,
-                            color: _gold.withOpacity(0.95),
-                            size: 64,
-                          ),
-                        ),
-                        Positioned(
-                          left: 12,
-                          top: 10,
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 9,
-                              vertical: 4,
-                            ),
-                            decoration: BoxDecoration(
-                              color: Colors.black.withOpacity(0.34),
-                              borderRadius: BorderRadius.circular(999),
-                              border: Border.all(
-                                color: _gold.withOpacity(0.44),
-                              ),
-                            ),
-                            child: Text(
-                              _typeLabel(stay.type),
-                              style: const TextStyle(
-                                color: _gold,
-                                fontSize: 11,
-                                fontWeight: FontWeight.w800,
-                              ),
+                          Center(
+                            child: Icon(
+                              Icons.hotel_rounded,
+                              color: _gold.withOpacity(0.95),
+                              size: 64,
                             ),
                           ),
-                        ),
-                        if (stay.rating != null)
                           Positioned(
-                            right: 12,
+                            left: 12,
                             top: 10,
                             child: Container(
                               padding: const EdgeInsets.symmetric(
@@ -1989,15 +2509,15 @@ class HotelStayDetailPage extends StatelessWidget {
                                 vertical: 4,
                               ),
                               decoration: BoxDecoration(
-                                color: Colors.black.withOpacity(0.36),
+                                color: Colors.black.withOpacity(0.34),
                                 borderRadius: BorderRadius.circular(999),
                                 border: Border.all(
                                   color: _gold.withOpacity(0.44),
                                 ),
                               ),
                               child: Text(
-                                '★ ${stay.rating!.toStringAsFixed(1)}',
-                                style: const TextStyle(
+                                _typeLabel(stay.type),
+                                style: TextStyle(
                                   color: _gold,
                                   fontSize: 11,
                                   fontWeight: FontWeight.w800,
@@ -2005,137 +2525,35 @@ class HotelStayDetailPage extends StatelessWidget {
                               ),
                             ),
                           ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
-                    decoration: BoxDecoration(
-                      color: _panelBlack,
-                      borderRadius: BorderRadius.circular(14),
-                      border: Border.all(color: _gold.withOpacity(0.22)),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: [
-                            Expanded(
-                              child: Text(
-                                stay.name,
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 22,
-                                  fontWeight: FontWeight.w800,
+                          if (stay.rating != null)
+                            Positioned(
+                              right: 12,
+                              top: 10,
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 9,
+                                  vertical: 4,
                                 ),
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            IconButton(
-                              onPressed: onToggleSaved,
-                              tooltip: isSaved ? savedLabel : saveLabel,
-                              icon: Icon(
-                                isSaved
-                                    ? Icons.favorite_rounded
-                                    : Icons.favorite_border_rounded,
-                                color: isSaved
-                                    ? _gold
-                                    : Colors.white.withOpacity(0.92),
-                              ),
-                              style: IconButton.styleFrom(
-                                backgroundColor: const Color(0xFF161616),
-                                side: BorderSide(
-                                  color: _gold.withOpacity(0.32),
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 6),
-                        Text(
-                          '${stay.city}, ${stay.region}, ${stay.country}',
-                          style: TextStyle(
-                            color: _gold.withOpacity(0.92),
-                            fontSize: 13.2,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                        if (displayPrice.isNotEmpty) ...[
-                          const SizedBox(height: 8),
-                          Text(
-                            displayPrice,
-                            style: const TextStyle(
-                              color: _gold,
-                              fontSize: 13,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                        ],
-                        const SizedBox(height: 10),
-                        Text(
-                          stay.description,
-                          style: const TextStyle(
-                            color: _softText,
-                            fontSize: 13.2,
-                            height: 1.3,
-                          ),
-                        ),
-                        if (highlights.isNotEmpty) ...[
-                          const SizedBox(height: 12),
-                          Text(
-                            _highlightsLabel,
-                            style: TextStyle(
-                              color: _gold.withOpacity(0.9),
-                              fontSize: 12.6,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                          const SizedBox(height: 6),
-                          Wrap(
-                            spacing: 7,
-                            runSpacing: 6,
-                            children: highlights
-                                .map(
-                                  (tag) => Container(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 9,
-                                      vertical: 4,
-                                    ),
-                                    decoration: BoxDecoration(
-                                      color: const Color(0xFF171717),
-                                      borderRadius: BorderRadius.circular(999),
-                                      border: Border.all(
-                                        color: _gold.withOpacity(0.28),
-                                      ),
-                                    ),
-                                    child: Text(
-                                      tag,
-                                      style: TextStyle(
-                                        color: Colors.white.withOpacity(0.82),
-                                        fontSize: 11.2,
-                                        fontWeight: FontWeight.w600,
-                                      ),
-                                    ),
+                                decoration: BoxDecoration(
+                                  color: Colors.black.withOpacity(0.36),
+                                  borderRadius: BorderRadius.circular(999),
+                                  border: Border.all(
+                                    color: _gold.withOpacity(0.44),
                                   ),
-                                )
-                                .toList(),
-                          ),
+                                ),
+                                child: Text(
+                                  '★ ${stay.rating!.toStringAsFixed(1)}',
+                                  style: TextStyle(
+                                    color: _gold,
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w800,
+                                  ),
+                                ),
+                              ),
+                            ),
                         ],
-                        const SizedBox(height: 12),
-                        Text(
-                          '$_providerLabel: ${stay.effectiveProvider}',
-                          style: TextStyle(
-                            color: _softText.withOpacity(0.95),
-                            fontSize: 11.7,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ],
+                      ),
                     ),
-                  ),
-                  if (hasAnyNearbyEvents) ...[
                     const SizedBox(height: 12),
                     Container(
                       width: double.infinity,
@@ -2143,115 +2561,269 @@ class HotelStayDetailPage extends StatelessWidget {
                       decoration: BoxDecoration(
                         color: _panelBlack,
                         borderRadius: BorderRadius.circular(14),
-                        border: Border.all(color: _gold.withOpacity(0.22)),
+                        border: Border.all(
+                          color: _border.withOpacity(
+                            _isDarkTheme ? 0.35 : 0.95,
+                          ),
+                        ),
                       ),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  stay.name,
+                                  style: TextStyle(
+                                    color: _textPrimary,
+                                    fontSize: 22,
+                                    fontWeight: FontWeight.w800,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              IconButton(
+                                onPressed: onToggleSaved,
+                                tooltip: isSaved ? savedLabel : saveLabel,
+                                icon: Icon(
+                                  isSaved
+                                      ? Icons.favorite_rounded
+                                      : Icons.favorite_border_rounded,
+                                  color: isSaved
+                                      ? _gold
+                                      : _textPrimary.withOpacity(0.92),
+                                ),
+                                style: IconButton.styleFrom(
+                                  backgroundColor: _panelBlack,
+                                  side: BorderSide(
+                                    color: _border.withOpacity(
+                                      _isDarkTheme ? 0.4 : 1,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 6),
                           Text(
-                            _nearbyEventsLabel,
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 16.2,
-                              fontWeight: FontWeight.w800,
+                            '${stay.city}, ${stay.region}, ${stay.country}',
+                            style: TextStyle(
+                              color: _gold.withOpacity(0.92),
+                              fontSize: 13.2,
+                              fontWeight: FontWeight.w700,
                             ),
                           ),
+                          if (displayPrice.isNotEmpty) ...[
+                            const SizedBox(height: 8),
+                            Text(
+                              displayPrice,
+                              style: TextStyle(
+                                color: _gold,
+                                fontSize: 13,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ],
                           const SizedBox(height: 10),
-                          _HotelNearbyEventsSection(
-                            modeLabelBuilder: _radiusModeLabel,
-                            noEventsText: _noNearbyEventsLabel,
-                            eventsForMode: _nearbyEventsForRadiusMode,
-                            buildCard: (event) =>
-                                _buildNearbyEventCard(context, event),
-                            gold: _gold,
-                            softText: _softText,
+                          Text(
+                            stay.description,
+                            style: TextStyle(
+                              color: _softText,
+                              fontSize: 13.2,
+                              height: 1.3,
+                            ),
+                          ),
+                          if (highlights.isNotEmpty) ...[
+                            const SizedBox(height: 12),
+                            Text(
+                              _highlightsLabel,
+                              style: TextStyle(
+                                color: _gold.withOpacity(0.9),
+                                fontSize: 12.6,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            const SizedBox(height: 6),
+                            Wrap(
+                              spacing: 7,
+                              runSpacing: 6,
+                              children: highlights
+                                  .map(
+                                    (tag) => Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 9,
+                                        vertical: 4,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: _panelBlack,
+                                        borderRadius: BorderRadius.circular(
+                                          999,
+                                        ),
+                                        border: Border.all(
+                                          color: _border.withOpacity(
+                                            _isDarkTheme ? 0.4 : 1,
+                                          ),
+                                        ),
+                                      ),
+                                      child: Text(
+                                        tag,
+                                        style: TextStyle(
+                                          color: _textPrimary.withOpacity(0.82),
+                                          fontSize: 11.2,
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
+                                    ),
+                                  )
+                                  .toList(),
+                            ),
+                          ],
+                          const SizedBox(height: 12),
+                          Text(
+                            '$_providerLabel: ${stay.effectiveProvider}',
+                            style: TextStyle(
+                              color: _softText.withOpacity(0.95),
+                              fontSize: 11.7,
+                              fontWeight: FontWeight.w600,
+                            ),
                           ),
                         ],
                       ),
                     ),
+                    if (hasAnyNearbyEvents) ...[
+                      const SizedBox(height: 12),
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
+                        decoration: BoxDecoration(
+                          color: _panelBlack,
+                          borderRadius: BorderRadius.circular(14),
+                          border: Border.all(
+                            color: _border.withOpacity(
+                              _isDarkTheme ? 0.35 : 0.95,
+                            ),
+                          ),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              _nearbyEventsLabel,
+                              style: TextStyle(
+                                color: _textPrimary,
+                                fontSize: 16.2,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                            const SizedBox(height: 10),
+                            _HotelNearbyEventsSection(
+                              modeLabelBuilder: _radiusModeLabel,
+                              noEventsText: _noNearbyEventsLabel,
+                              eventsForMode: _nearbyEventsForRadiusMode,
+                              buildCard: (event) =>
+                                  _buildNearbyEventCard(context, event),
+                              gold: _gold,
+                              softText: _softText,
+                              panelColor: _panelBlack,
+                              textPrimary: _textPrimary,
+                              borderColor: _border,
+                              actionOnGold: _actionOnGold,
+                              isDarkTheme: _isDarkTheme,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
                   ],
-                ],
+                ),
               ),
-            ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
-              child: Column(
-                children: [
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton.icon(
-                      onPressed: onTaxiTap,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: _gold,
-                        foregroundColor: const Color(0xFF161616),
-                        minimumSize: const Size.fromHeight(46),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
+                child: Column(
+                  children: [
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton.icon(
+                        onPressed: onTaxiTap,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: _gold,
+                          foregroundColor: _actionOnGold,
+                          minimumSize: const Size.fromHeight(46),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                        icon: const Icon(Icons.local_taxi_rounded, size: 17),
+                        label: Text(
+                          _taxiLabel,
+                          style: const TextStyle(fontWeight: FontWeight.w800),
                         ),
                       ),
-                      icon: const Icon(Icons.local_taxi_rounded, size: 17),
-                      label: Text(
-                        _taxiLabel,
-                        style: const TextStyle(fontWeight: FontWeight.w800),
-                      ),
                     ),
-                  ),
-                  const SizedBox(height: 8),
-                  SizedBox(
-                    width: double.infinity,
-                    child: OutlinedButton.icon(
-                      onPressed: onAirportTransferTap,
-                      style: OutlinedButton.styleFrom(
-                        backgroundColor: const Color(0xFF111111),
-                        foregroundColor: Colors.white.withOpacity(0.94),
-                        side: BorderSide(color: _gold.withOpacity(0.3)),
-                        minimumSize: const Size.fromHeight(44),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                      ),
-                      icon: Icon(
-                        Icons.flight_takeoff_rounded,
-                        size: 16,
-                        color: _gold.withOpacity(0.92),
-                      ),
-                      label: Text(
-                        _airportTransferLabel,
-                        style: const TextStyle(fontWeight: FontWeight.w700),
-                      ),
-                    ),
-                  ),
-                  if (hasExternalLink) ...[
                     const SizedBox(height: 8),
                     SizedBox(
                       width: double.infinity,
                       child: OutlinedButton.icon(
-                        onPressed: onViewStayTap,
+                        onPressed: onAirportTransferTap,
                         style: OutlinedButton.styleFrom(
-                          backgroundColor: const Color(0xFF111111),
-                          foregroundColor: Colors.white.withOpacity(0.94),
-                          side: BorderSide(color: _gold.withOpacity(0.3)),
+                          backgroundColor: _panelBlack,
+                          foregroundColor: _textPrimary.withOpacity(0.94),
+                          side: BorderSide(
+                            color: _border.withOpacity(_isDarkTheme ? 0.4 : 1),
+                          ),
                           minimumSize: const Size.fromHeight(44),
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(12),
                           ),
                         ),
                         icon: Icon(
-                          Icons.open_in_new_rounded,
+                          Icons.flight_takeoff_rounded,
                           size: 16,
                           color: _gold.withOpacity(0.92),
                         ),
                         label: Text(
-                          _viewStayLabel,
+                          _airportTransferLabel,
                           style: const TextStyle(fontWeight: FontWeight.w700),
                         ),
                       ),
                     ),
+                    if (hasExternalLink) ...[
+                      const SizedBox(height: 8),
+                      SizedBox(
+                        width: double.infinity,
+                        child: OutlinedButton.icon(
+                          onPressed: onViewStayTap,
+                          style: OutlinedButton.styleFrom(
+                            backgroundColor: _panelBlack,
+                            foregroundColor: _textPrimary.withOpacity(0.94),
+                            side: BorderSide(
+                              color: _border.withOpacity(
+                                _isDarkTheme ? 0.4 : 1,
+                              ),
+                            ),
+                            minimumSize: const Size.fromHeight(44),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                          ),
+                          icon: Icon(
+                            Icons.open_in_new_rounded,
+                            size: 16,
+                            color: _gold.withOpacity(0.92),
+                          ),
+                          label: Text(
+                            _viewStayLabel,
+                            style: const TextStyle(fontWeight: FontWeight.w700),
+                          ),
+                        ),
+                      ),
+                    ],
                   ],
-                ],
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -2266,6 +2838,11 @@ class _HotelNearbyEventsSection extends StatefulWidget {
     required this.buildCard,
     required this.gold,
     required this.softText,
+    required this.panelColor,
+    required this.textPrimary,
+    required this.borderColor,
+    required this.actionOnGold,
+    required this.isDarkTheme,
   });
 
   final String Function(_HotelNearbyEventRadiusMode mode) modeLabelBuilder;
@@ -2275,6 +2852,11 @@ class _HotelNearbyEventsSection extends StatefulWidget {
   final Widget Function(EventDetailData event) buildCard;
   final Color gold;
   final Color softText;
+  final Color panelColor;
+  final Color textPrimary;
+  final Color borderColor;
+  final Color actionOnGold;
+  final bool isDarkTheme;
 
   @override
   State<_HotelNearbyEventsSection> createState() =>
@@ -2303,20 +2885,22 @@ class _HotelNearbyEventsSectionState extends State<_HotelNearbyEventsSection> {
                   _selectedMode = mode;
                 });
               },
-              backgroundColor: const Color(0xFF151515),
+              backgroundColor: widget.panelColor,
               selectedColor: widget.gold,
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(999),
                 side: BorderSide(
                   color: isSelected
                       ? widget.gold
-                      : widget.gold.withOpacity(0.26),
+                      : widget.borderColor.withOpacity(
+                          widget.isDarkTheme ? 0.35 : 1,
+                        ),
                 ),
               ),
               labelStyle: TextStyle(
                 color: isSelected
-                    ? const Color(0xFF171717)
-                    : Colors.white.withOpacity(0.92),
+                    ? widget.actionOnGold
+                    : widget.textPrimary.withOpacity(0.92),
                 fontSize: 11.5,
                 fontWeight: FontWeight.w700,
               ),
