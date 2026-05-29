@@ -17,6 +17,19 @@ class _CustomerRegionRegistrationPageState
   String _profilePhone = '';
   String _profilePostcode = '';
   String? _radarInterestDisplayCount;
+  CustomerThemePalette get _themePalette =>
+      paletteForCustomerTheme(customerThemeNotifier.value);
+  bool get _isDarkTheme => _themePalette.isDark;
+  Color get _bg => _themePalette.background;
+  Color get _surface => _themePalette.surface;
+  Color get _surfaceAlt => _themePalette.surfaceAlt;
+  Color get _textPrimary => _themePalette.textPrimary;
+  Color get _textMuted => _themePalette.textMuted;
+  Color get _gold => _themePalette.gold;
+  Color get _border => _themePalette.border;
+  Color get _shadow => _themePalette.shadow;
+  Color get _actionOnGold =>
+      _isDarkTheme ? const Color(0xFF050505) : const Color(0xFF1F1706);
 
   String _t({
     required String nl,
@@ -28,7 +41,19 @@ class _CustomerRegionRegistrationPageState
   @override
   void initState() {
     super.initState();
+    customerThemeNotifier.addListener(_onThemeChanged);
     unawaited(_prefillFromProfile());
+  }
+
+  void _onThemeChanged() {
+    if (!mounted) return;
+    setState(() {});
+  }
+
+  @override
+  void dispose() {
+    customerThemeNotifier.removeListener(_onThemeChanged);
+    super.dispose();
   }
 
   Future<void> _prefillFromProfile() async {
@@ -98,16 +123,12 @@ class _CustomerRegionRegistrationPageState
     await _prefillFromProfile();
     if (!_hasRequiredProfileData()) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            _t(
-              nl: 'Vul eerst je profielgegevens aan zodat we je kunnen verwittigen.',
-              en: 'Complete your profile details first so we can notify you.',
-              fr: 'Complétez d’abord votre profil afin que nous puissions vous informer.',
-              es: 'Completa primero tu perfil para que podamos avisarte.',
-            ),
-          ),
+      _showThemedSnackBar(
+        _t(
+          nl: 'Vul eerst je profielgegevens aan zodat we je kunnen verwittigen.',
+          en: 'Complete your profile details first so we can notify you.',
+          fr: 'Complétez d’abord votre profil afin que nous puissions vous informer.',
+          es: 'Completa primero tu perfil para que podamos avisarte.',
         ),
       );
       await _openProfileForCompletion();
@@ -135,15 +156,13 @@ class _CustomerRegionRegistrationPageState
   }
 
   InlineSpan _radarHeadlineSpan() {
-    const baseStyle = TextStyle(
-      color: Colors.white,
-      fontSize: 24,
+    final baseStyle = TextStyle(
+      color: _textPrimary,
+      fontSize: 22,
       fontWeight: FontWeight.w900,
-      height: 1.12,
+      height: 1.08,
     );
-    final highlightStyle = baseStyle.copyWith(
-      color: kFluxidiYellow.withOpacity(0.98),
-    );
+    final highlightStyle = baseStyle.copyWith(color: _gold.withOpacity(0.98));
     switch (appLanguageNotifier.value) {
       case AppLanguage.nl:
         return TextSpan(
@@ -263,6 +282,16 @@ class _CustomerRegionRegistrationPageState
     );
   }
 
+  void _showThemedSnackBar(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        backgroundColor: _surfaceAlt,
+        content: Text(message, style: TextStyle(color: _textPrimary)),
+      ),
+    );
+  }
+
   Future<void> _submit() async {
     final fullName = _profileName.trim();
     final email = _profileEmail.trim();
@@ -336,24 +365,20 @@ class _CustomerRegionRegistrationPageState
     await Future<void>.delayed(const Duration(milliseconds: 220));
     if (!mounted) return;
     setState(() => _submitting = false);
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          backendSynced
-              ? _t(
-                  nl: 'Je regio is geregistreerd. We houden je op de hoogte.',
-                  en: 'Your area is registered. We’ll keep you updated.',
-                  fr: 'Votre région est enregistrée. Nous vous tiendrons informé.',
-                  es: 'Tu zona está registrada. Te mantendremos informado.',
-                )
-              : _t(
-                  nl: 'Je interesse is lokaal bewaard. We proberen later opnieuw te synchroniseren.',
-                  en: 'Your interest was saved locally. We’ll try to sync it later.',
-                  fr: 'Votre intérêt a été enregistré localement. Nous réessaierons plus tard.',
-                  es: 'Tu interés se guardó localmente. Intentaremos sincronizarlo más tarde.',
-                ),
-        ),
-      ),
+    _showThemedSnackBar(
+      backendSynced
+          ? _t(
+              nl: 'Je regio is geregistreerd. We houden je op de hoogte.',
+              en: 'Your area is registered. We’ll keep you updated.',
+              fr: 'Votre région est enregistrée. Nous vous tiendrons informé.',
+              es: 'Tu zona está registrada. Te mantendremos informado.',
+            )
+          : _t(
+              nl: 'Je interesse is lokaal bewaard. We proberen later opnieuw te synchroniseren.',
+              en: 'Your interest was saved locally. We’ll try to sync it later.',
+              fr: 'Votre intérêt a été enregistré localement. Nous réessaierons plus tard.',
+              es: 'Tu interés se guardó localmente. Intentaremos sincronizarlo más tarde.',
+            ),
     );
     Navigator.pop(context);
   }
@@ -362,12 +387,20 @@ class _CustomerRegionRegistrationPageState
   Widget build(BuildContext context) {
     const partnerColor = Color(0xFF34D29A);
     final hasActivePartnerSignals = _hasVerifiedActivePartnersSignal();
+    final screenHeight = MediaQuery.sizeOf(context).height;
+    final radarHeight = screenHeight < 760
+        ? 220.0
+        : screenHeight < 860
+        ? 238.0
+        : 254.0;
     return ValueListenableBuilder<AppLanguage>(
       valueListenable: appLanguageNotifier,
       builder: (context, _, __) => Scaffold(
-        backgroundColor: const Color(0xFF07080C),
+        backgroundColor: _bg,
         appBar: AppBar(
-          backgroundColor: const Color(0xFF07080C),
+          backgroundColor: _bg,
+          foregroundColor: _textPrimary,
+          toolbarHeight: 52,
           title: Text(
             _t(
               nl: 'Regio Radar',
@@ -375,14 +408,19 @@ class _CustomerRegionRegistrationPageState
               fr: 'Radar régional',
               es: 'Radar regional',
             ),
+            style: TextStyle(
+              color: _textPrimary,
+              fontSize: 18,
+              fontWeight: FontWeight.w700,
+            ),
           ),
         ),
         body: SafeArea(
           child: ListView(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.fromLTRB(14, 10, 14, 14),
             children: [
               RichText(text: _radarHeadlineSpan()),
-              const SizedBox(height: 8),
+              const SizedBox(height: 6),
               Text(
                 _t(
                   nl: 'Maar je bent niet alleen. Steeds meer mensen vragen Fluxidi in hun buurt.',
@@ -391,23 +429,23 @@ class _CustomerRegionRegistrationPageState
                   es: 'No estás solo. Cada vez más personas piden Fluxidi en su zona.',
                 ),
                 style: TextStyle(
-                  color: Colors.white.withOpacity(0.76),
-                  fontSize: 13,
-                  height: 1.3,
+                  color: _textMuted.withOpacity(0.92),
+                  fontSize: 12.2,
+                  height: 1.25,
                 ),
               ),
-              const SizedBox(height: 8),
+              const SizedBox(height: 6),
               Row(
                 children: [
                   Container(
-                    width: 11,
-                    height: 11,
+                    width: 9,
+                    height: 9,
                     decoration: BoxDecoration(
-                      color: kFluxidiYellow.withOpacity(0.98),
+                      color: _gold.withOpacity(0.98),
                       shape: BoxShape.circle,
                       boxShadow: [
                         BoxShadow(
-                          color: kFluxidiYellow.withOpacity(0.72),
+                          color: _gold.withOpacity(0.72),
                           blurRadius: 14,
                           spreadRadius: 2,
                         ),
@@ -418,20 +456,20 @@ class _CustomerRegionRegistrationPageState
                   Text(
                     _regionBadgeText(),
                     style: TextStyle(
-                      color: kFluxidiYellow.withOpacity(0.98),
-                      fontSize: 12.8,
+                      color: _gold.withOpacity(0.98),
+                      fontSize: 12.2,
                       fontWeight: FontWeight.w700,
                     ),
                   ),
                 ],
               ),
-              const SizedBox(height: 10),
+              const SizedBox(height: 7),
               Wrap(
-                spacing: 10,
-                runSpacing: 8,
+                spacing: 8,
+                runSpacing: 6,
                 children: [
                   _legendDotLabel(
-                    color: kFluxidiYellow.withOpacity(0.98),
+                    color: _gold.withOpacity(0.98),
                     label: _t(
                       nl: 'Klantinteresse',
                       en: 'Customer interest',
@@ -464,28 +502,32 @@ class _CustomerRegionRegistrationPageState
                           ),
                     color: hasActivePartnerSignals
                         ? partnerColor
-                        : kFluxidiYellow.withOpacity(0.95),
+                        : _gold.withOpacity(0.95),
                   ),
                 ],
               ),
-              const SizedBox(height: 14),
+              const SizedBox(height: 10),
               Container(
-                height: 372,
+                height: radarHeight,
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(20),
                   gradient: LinearGradient(
                     begin: Alignment.topLeft,
                     end: Alignment.bottomRight,
-                    colors: [
-                      const Color(0xFF101114),
-                      const Color(0xFF0B0C10),
-                      const Color(0xFF151008),
+                    colors: <Color>[
+                      _surfaceAlt.withOpacity(_isDarkTheme ? 0.88 : 0.65),
+                      _surface.withOpacity(_isDarkTheme ? 0.96 : 0.78),
+                      _surfaceAlt.withOpacity(_isDarkTheme ? 0.95 : 0.72),
                     ],
                   ),
-                  border: Border.all(color: kFluxidiYellow.withOpacity(0.36)),
+                  border: Border.all(
+                    color: _isDarkTheme
+                        ? _gold.withOpacity(0.36)
+                        : _border.withOpacity(0.95),
+                  ),
                   boxShadow: [
                     BoxShadow(
-                      color: kFluxidiYellow.withOpacity(0.14),
+                      color: _shadow.withOpacity(_isDarkTheme ? 0.2 : 0.1),
                       blurRadius: 22,
                       offset: const Offset(0, 10),
                     ),
@@ -496,25 +538,29 @@ class _CustomerRegionRegistrationPageState
                     Positioned.fill(
                       child: CustomPaint(
                         painter: _RegionRadarPainter(
-                          customerColor: kFluxidiYellow.withOpacity(0.98),
+                          customerColor: _gold.withOpacity(0.98),
                           partnerColor: partnerColor,
                           showPartnerOpportunity: !hasActivePartnerSignals,
                         ),
                       ),
                     ),
                     Positioned(
-                      left: 12,
-                      top: 12,
+                      left: 10,
+                      top: 10,
                       child: Container(
                         padding: const EdgeInsets.symmetric(
-                          horizontal: 10,
-                          vertical: 5,
+                          horizontal: 8,
+                          vertical: 4,
                         ),
                         decoration: BoxDecoration(
-                          color: Colors.black.withOpacity(0.42),
+                          color: _surface.withOpacity(
+                            _isDarkTheme ? 0.72 : 0.88,
+                          ),
                           borderRadius: BorderRadius.circular(999),
                           border: Border.all(
-                            color: kFluxidiYellow.withOpacity(0.44),
+                            color: _isDarkTheme
+                                ? _gold.withOpacity(0.44)
+                                : _border.withOpacity(1),
                           ),
                         ),
                         child: Text(
@@ -525,33 +571,39 @@ class _CustomerRegionRegistrationPageState
                             es: 'Interés anónimo en tu zona',
                           ),
                           style: TextStyle(
-                            color: Colors.white.withOpacity(0.9),
-                            fontSize: 10.9,
+                            color: _textPrimary.withOpacity(0.92),
+                            fontSize: 10.2,
                             fontWeight: FontWeight.w700,
                           ),
                         ),
                       ),
                     ),
                     Positioned(
-                      right: 12,
-                      bottom: 12,
+                      right: 10,
+                      bottom: 10,
                       child: Container(
                         padding: const EdgeInsets.symmetric(
-                          horizontal: 10,
-                          vertical: 6,
+                          horizontal: 8,
+                          vertical: 5,
                         ),
                         decoration: BoxDecoration(
-                          color: const Color(0xFF0F1013).withOpacity(0.92),
+                          color: _surface.withOpacity(
+                            _isDarkTheme ? 0.9 : 0.94,
+                          ),
                           borderRadius: BorderRadius.circular(12),
                           border: Border.all(
-                            color: const Color(0xFFE5B641).withOpacity(0.36),
+                            color: _isDarkTheme
+                                ? _gold.withOpacity(0.36)
+                                : _border.withOpacity(0.95),
                           ),
                         ),
                         child: Text(
                           _regionBadgeText(),
-                          style: const TextStyle(
-                            color: Color(0xFFFFF1C7),
-                            fontSize: 11.6,
+                          style: TextStyle(
+                            color: _isDarkTheme
+                                ? const Color(0xFFFFF1C7)
+                                : _textPrimary.withOpacity(0.95),
+                            fontSize: 11,
                             fontWeight: FontWeight.w700,
                           ),
                         ),
@@ -560,7 +612,7 @@ class _CustomerRegionRegistrationPageState
                   ],
                 ),
               ),
-              const SizedBox(height: 8),
+              const SizedBox(height: 6),
               Row(
                 children: [
                   Expanded(
@@ -615,27 +667,13 @@ class _CustomerRegionRegistrationPageState
                   ),
                 ],
               ),
-              const SizedBox(height: 4),
-              Text(
-                _t(
-                  nl: 'We gebruiken je gegevens enkel om je op de hoogte te houden. Geen spam, enkel belangrijk nieuws.',
-                  en: 'We only use your details to keep you updated. No spam, only important news.',
-                  fr: 'Nous utilisons vos données uniquement pour vous tenir informé. Pas de spam, seulement les nouvelles importantes.',
-                  es: 'Solo usamos tus datos para mantenerte informado. Sin spam, solo noticias importantes.',
-                ),
-                style: TextStyle(
-                  color: Colors.white.withOpacity(0.66),
-                  fontSize: 11.4,
-                  height: 1.3,
-                ),
-              ),
-              const SizedBox(height: 12),
+              const SizedBox(height: 8),
               FilledButton.icon(
                 onPressed: _submitting ? null : _submitFromProfileGuarded,
                 style: FilledButton.styleFrom(
-                  backgroundColor: kFluxidiYellow,
-                  foregroundColor: Colors.black,
-                  padding: const EdgeInsets.symmetric(vertical: 13),
+                  backgroundColor: _gold,
+                  foregroundColor: _actionOnGold,
+                  padding: const EdgeInsets.symmetric(vertical: 12),
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(12),
                   ),
@@ -659,11 +697,32 @@ class _CustomerRegionRegistrationPageState
                 ),
               ),
               const SizedBox(height: 8),
+              Text(
+                _t(
+                  nl: 'We gebruiken je gegevens enkel om je op de hoogte te houden. Geen spam, enkel belangrijk nieuws.',
+                  en: 'We only use your details to keep you updated. No spam, only important news.',
+                  fr: 'Nous utilisons vos données uniquement pour vous tenir informé. Pas de spam, seulement les nouvelles importantes.',
+                  es: 'Solo usamos tus datos para mantenerte informado. Sin spam, solo noticias importantes.',
+                ),
+                style: TextStyle(
+                  color: _textMuted.withOpacity(0.86),
+                  fontSize: 11.1,
+                  height: 1.28,
+                ),
+              ),
+              const SizedBox(height: 8),
               OutlinedButton.icon(
                 onPressed: _shareRadar,
                 style: OutlinedButton.styleFrom(
-                  foregroundColor: kFluxidiYellow.withOpacity(0.98),
-                  side: BorderSide(color: kFluxidiYellow.withOpacity(0.44)),
+                  foregroundColor: _gold.withOpacity(0.98),
+                  side: BorderSide(
+                    color: _isDarkTheme
+                        ? _gold.withOpacity(0.44)
+                        : _border.withOpacity(1),
+                  ),
+                  backgroundColor: _isDarkTheme
+                      ? Colors.transparent
+                      : _surface.withOpacity(0.7),
                   padding: const EdgeInsets.symmetric(vertical: 12),
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(12),
@@ -712,7 +771,7 @@ class _CustomerRegionRegistrationPageState
           Text(
             label,
             style: TextStyle(
-              color: Colors.white.withOpacity(0.84),
+              color: _textPrimary.withOpacity(0.9),
               fontSize: 11.1,
               fontWeight: FontWeight.w600,
             ),
@@ -751,18 +810,22 @@ class _CustomerRegionRegistrationPageState
       child: Semantics(
         label: tooltip,
         child: Container(
-          constraints: const BoxConstraints(minHeight: 92),
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+          constraints: const BoxConstraints(minHeight: 80),
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
           decoration: BoxDecoration(
-            color: const Color(0xFF111317),
+            color: _surfaceAlt.withOpacity(_isDarkTheme ? 0.95 : 0.86),
             borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: kFluxidiYellow.withOpacity(0.26)),
+            border: Border.all(
+              color: _isDarkTheme
+                  ? _gold.withOpacity(0.26)
+                  : _border.withOpacity(0.95),
+            ),
           ),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(icon, color: kFluxidiYellow.withOpacity(0.98), size: 28),
-              const SizedBox(height: 8),
+              Icon(icon, color: _gold.withOpacity(0.98), size: 24),
+              const SizedBox(height: 5),
               FittedBox(
                 fit: BoxFit.scaleDown,
                 child: Text(
@@ -770,8 +833,8 @@ class _CustomerRegionRegistrationPageState
                   maxLines: 1,
                   textAlign: TextAlign.center,
                   style: TextStyle(
-                    color: kFluxidiYellow.withOpacity(0.98),
-                    fontSize: 24,
+                    color: _gold.withOpacity(0.98),
+                    fontSize: 21,
                     fontWeight: FontWeight.w900,
                     letterSpacing: 0.15,
                   ),
