@@ -120,6 +120,8 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
     double? initialToLng,
     String? initialServiceId,
     String? entryContext,
+    String? publicPartnerId,
+    String? publicPartnerName,
   }) {
     Navigator.of(context).push(
       MaterialPageRoute(
@@ -131,6 +133,12 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
           initialToLat: initialToLat,
           initialToLng: initialToLng,
           initialServiceId: initialServiceId,
+          publicPartnerId: (publicPartnerId ?? '').trim().isEmpty
+              ? null
+              : publicPartnerId!.trim(),
+          publicPartnerName: (publicPartnerName ?? '').trim().isEmpty
+              ? null
+              : publicPartnerName!.trim(),
           onGoToStartPage: () {
             Navigator.of(context).pushAndRemoveUntil(
               MaterialPageRoute(builder: (_) => const CustomerHomePage()),
@@ -159,6 +167,39 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
     }
   }
 
+  Future<Map<String, String>?> _selectTaxiPartner(BuildContext context) async {
+    final selected = await Navigator.of(context).push<Map<String, String>>(
+      MaterialPageRoute(
+        builder: (_) => NearbyPartnersPage(
+          customerHomeBuilder: (_) => const CustomerHomePage(),
+          regionRegistrationBuilder: (_) =>
+              const CustomerRegionRegistrationPage(),
+          syncCustomerProfileFromBackend:
+              _syncCustomerProfileFromBackendBestEffort,
+          selectionMode: true,
+        ),
+      ),
+    );
+    if (selected == null || !context.mounted) return null;
+    final partnerId = _partnerSelectionValue(selected, 'partner_id');
+    if (partnerId.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Kies eerst een taxipartner.',
+              en: 'Select a taxi partner first.',
+              fr: "Sélectionnez d'abord un partenaire taxi.",
+              es: 'Selecciona primero un socio de taxi.',
+            ),
+          ),
+        ),
+      );
+      return null;
+    }
+    return selected;
+  }
+
   void _openEventsPage(BuildContext context) {
     Navigator.of(context).push(
       MaterialPageRoute(
@@ -166,12 +207,19 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
           dataSource: buildDefaultEventLocatorDataSource(
             baseUrl: kBookingBaseUrl,
           ),
-          onBookEvent: (event) {
+          onBookEvent: (event) async {
             final destination = event.address.trim().isNotEmpty
                 ? event.address.trim()
                 : (event.locationName.trim().isNotEmpty
                       ? event.locationName.trim()
                       : event.title.trim());
+            final selected = await _selectTaxiPartner(context);
+            if (selected == null || !context.mounted) return;
+            final partnerId = _partnerSelectionValue(selected, 'partner_id');
+            final partnerName = _partnerSelectionValue(
+              selected,
+              'company_name',
+            );
             _openCalculator(
               context,
               scheduledIntent: false,
@@ -179,6 +227,9 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
               initialToLat: event.lat,
               initialToLng: event.lng,
               initialServiceId: 'event',
+              publicPartnerId: partnerId,
+              publicPartnerName: partnerName,
+              entryContext: 'event_flow',
             );
           },
         ),

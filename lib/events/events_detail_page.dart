@@ -4,11 +4,13 @@ import 'package:flutter/material.dart';
 import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/calculator_page.dart';
+import 'package:fluxidi_tracking/customer_profile_store.dart';
 import 'package:fluxidi_tracking/discovery/discovery_geo.dart';
 import 'package:fluxidi_tracking/discovery/discovery_labels.dart';
 import 'package:fluxidi_tracking/discovery/discovery_nearby.dart';
 import 'package:fluxidi_tracking/hotels/hotel_model.dart';
 import 'package:fluxidi_tracking/hotels/hotel_seed_data.dart';
+import 'package:fluxidi_tracking/nearby_partners_page.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'event_models.dart';
 
@@ -319,7 +321,42 @@ class EventDetailPage extends StatelessWidget {
     );
   }
 
-  void _onStayTaxiTap(BuildContext context, HotelStay stay) {
+  Future<Map<String, String>?> _selectTaxiPartnerForEventFlow(
+    BuildContext context,
+  ) async {
+    final selected = await Navigator.of(context).push<Map<String, String>>(
+      MaterialPageRoute(
+        builder: (_) => NearbyPartnersPage(
+          customerHomeBuilder: (_) => const SizedBox.shrink(),
+          regionRegistrationBuilder: (_) => const SizedBox.shrink(),
+          syncCustomerProfileFromBackend: ({required String reason}) async {
+            return CustomerProfileStore.instance.load();
+          },
+          selectionMode: true,
+        ),
+      ),
+    );
+    if (selected == null || !context.mounted) return null;
+    final partnerId = (selected['partner_id'] ?? '').trim();
+    if (partnerId.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Kies eerst een taxipartner.',
+              en: 'Select a taxi partner first.',
+              fr: "Sélectionnez d'abord un partenaire taxi.",
+              es: 'Selecciona primero un socio de taxi.',
+            ),
+          ),
+        ),
+      );
+      return null;
+    }
+    return selected;
+  }
+
+  Future<void> _onStayTaxiTap(BuildContext context, HotelStay stay) async {
     final destination = stay.toDiscoveryDestination();
     final eventAddress = event.address.trim();
     final eventLocation = event.locationName.trim();
@@ -348,6 +385,10 @@ class EventDetailPage extends StatelessWidget {
       '[events.nearby_stay_handoff] stayId=${stay.id} '
       'name="${destination.destinationName}" city="${destination.city}"',
     );
+    final selectedPartner = await _selectTaxiPartnerForEventFlow(context);
+    if (selectedPartner == null || !context.mounted) return;
+    final publicPartnerId = (selectedPartner['partner_id'] ?? '').trim();
+    final publicPartnerName = (selectedPartner['company_name'] ?? '').trim();
     Navigator.of(context)
         .push(
           MaterialPageRoute(
@@ -363,6 +404,10 @@ class EventDetailPage extends StatelessWidget {
               initialToLat: destination.latitude,
               initialToLng: destination.longitude,
               initialServiceId: 'passenger',
+              publicPartnerId: publicPartnerId.isEmpty ? null : publicPartnerId,
+              publicPartnerName: publicPartnerName.isEmpty
+                  ? null
+                  : publicPartnerName,
             ),
           ),
         )
