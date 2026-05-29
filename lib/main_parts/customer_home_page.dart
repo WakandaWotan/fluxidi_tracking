@@ -348,6 +348,34 @@ class CustomerHomePage extends StatelessWidget {
               ),
             ),
           ),
+          Positioned.fill(
+            child: IgnorePointer(
+              child: Align(
+                alignment: Alignment.bottomLeft,
+                child: FractionallySizedBox(
+                  widthFactor: 0.62,
+                  heightFactor: 0.36,
+                  alignment: Alignment.bottomLeft,
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      borderRadius: const BorderRadius.only(
+                        bottomLeft: Radius.circular(24),
+                      ),
+                      gradient: LinearGradient(
+                        begin: Alignment.centerLeft,
+                        end: Alignment.centerRight,
+                        colors: [
+                          const Color(0xFF111827).withOpacity(0.32),
+                          const Color(0xFF111827).withOpacity(0.18),
+                          Colors.transparent,
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 9, 16, 14),
             child: Column(
@@ -816,7 +844,7 @@ class CustomerHomePage extends StatelessWidget {
       _t(nl: 'Taxi’s', en: 'Taxis', fr: 'Taxis', es: 'Taxis'),
       _t(nl: 'Boekingen', en: 'Bookings', fr: 'Réservations', es: 'Reservas'),
       _t(nl: 'Start', en: 'Start', fr: 'Accueil', es: 'Inicio'),
-      _t(nl: 'Profiel', en: 'Profile', fr: 'Profil', es: 'Perfil'),
+      _t(nl: 'Thema', en: 'Theme', fr: 'Thème', es: 'Tema'),
     ];
     return Container(
       decoration: BoxDecoration(
@@ -866,11 +894,7 @@ class CustomerHomePage extends StatelessWidget {
               return;
             }
             if (i == 4) {
-              Navigator.of(context).push(
-                MaterialPageRoute(
-                  builder: (_) => const CustomerProfileEditPage(),
-                ),
-              );
+              _comingSoon(context);
               return;
             }
           },
@@ -905,7 +929,7 @@ class CustomerHomePage extends StatelessWidget {
               label: items[3],
             ),
             BottomNavigationBarItem(
-              icon: const Icon(Icons.person_outline_rounded, size: navIconSize),
+              icon: const Icon(Icons.palette_outlined, size: navIconSize),
               label: items[4],
             ),
           ],
@@ -984,14 +1008,6 @@ class CustomerHomePage extends StatelessWidget {
                     enforceLanguagePillTapTarget: isTabletLandscape,
                   ),
                   const SizedBox(height: 10),
-                  _customerQuickActionGrid(
-                    context,
-                    mainAxisExtent: customerLandscapeUtilityMainAxisExtent,
-                    includeAirportAndHotels: !usesSplitUtilityAndFeatureCards,
-                    forceTwoColumns: isPhonePortrait,
-                    forceFourColumns: isTabletPortrait || isTabletLandscape,
-                  ),
-                  const SizedBox(height: 8),
                   if (isTabletLandscape) ...[
                     LayoutBuilder(
                       builder: (context, constraints) {
@@ -1149,6 +1165,31 @@ class CustomerHomePage extends StatelessWidget {
                       onTap: () => _comingSoon(context),
                     ),
                   ],
+                  const SizedBox(height: 16),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      _t(
+                        nl: 'Mijn Fluxidi',
+                        en: 'My Fluxidi',
+                        fr: 'Mon Fluxidi',
+                        es: 'Mi Fluxidi',
+                      ),
+                      style: const TextStyle(
+                        color: _premiumText,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  _customerQuickActionGrid(
+                    context,
+                    mainAxisExtent: customerLandscapeUtilityMainAxisExtent,
+                    includeAirportAndHotels: !usesSplitUtilityAndFeatureCards,
+                    forceTwoColumns: isPhonePortrait,
+                    forceFourColumns: isTabletPortrait || isTabletLandscape,
+                  ),
                   const SizedBox(height: 16),
                 ],
               ),
