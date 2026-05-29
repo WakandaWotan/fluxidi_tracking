@@ -11,6 +11,8 @@ import 'airport/airport_page.dart';
 import 'calculator_page.dart';
 import 'customer_profile_store.dart';
 import 'customer_session_store.dart';
+import 'customer_theme_palette.dart';
+import 'customer_theme_store.dart';
 
 class PartnerPublicProfilePage extends StatefulWidget {
   final String partnerId;
@@ -30,9 +32,18 @@ class PartnerPublicProfilePage extends StatefulWidget {
 }
 
 class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
-  static const Color _bg = Color(0xFF07080C);
-  static const Color _card = Color(0xFF101113);
-  static const Color _gold = Color(0xFFE5B641);
+  CustomerThemePalette get _themePalette =>
+      paletteForCustomerTheme(customerThemeNotifier.value);
+  bool get _isDarkTheme => _themePalette.isDark;
+  Color get _bg => _themePalette.background;
+  Color get _card => _themePalette.surface;
+  Color get _gold => _themePalette.gold;
+  Color get _bronze => _themePalette.bronze;
+  Color get _textPrimary => _themePalette.textPrimary;
+  Color get _textMuted => _themePalette.textMuted;
+  Color get _surfaceAlt => _themePalette.surfaceAlt;
+  Color get _border => _themePalette.border;
+  Color get _shadow => _themePalette.shadow;
   bool _loading = true;
   String? _error;
   Map<String, dynamic>? _profile;
@@ -717,13 +728,19 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
     return FilledButton.tonalIcon(
       onPressed: () => unawaited(onPressed()),
       style: FilledButton.styleFrom(
-        backgroundColor: const Color(0xFF15171B),
-        foregroundColor: Colors.white,
-        side: BorderSide(color: _gold.withOpacity(0.26)),
+        backgroundColor: _surfaceAlt,
+        foregroundColor: _isDarkTheme ? _textPrimary : _textPrimary,
+        side: BorderSide(
+          color: _isDarkTheme ? _gold.withOpacity(0.26) : _border,
+        ),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 10),
       ),
-      icon: Icon(icon, size: 16, color: _gold.withOpacity(0.95)),
+      icon: Icon(
+        icon,
+        size: 16,
+        color: _isDarkTheme ? _gold.withOpacity(0.95) : _bronze,
+      ),
       label: Text(
         label,
         style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
@@ -753,7 +770,16 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
       decoration: BoxDecoration(
         color: _card,
         borderRadius: BorderRadius.circular(13),
-        border: Border.all(color: _gold.withOpacity(0.24)),
+        border: Border.all(
+          color: _isDarkTheme ? _gold.withOpacity(0.24) : _border,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: _shadow.withOpacity(_isDarkTheme ? 0.14 : 0.07),
+            blurRadius: 10,
+            offset: const Offset(0, 3),
+          ),
+        ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -761,7 +787,7 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
           Text(
             title,
             style: TextStyle(
-              color: _gold.withOpacity(0.95),
+              color: _isDarkTheme ? _gold.withOpacity(0.95) : _bronze,
               fontSize: 13,
               fontWeight: FontWeight.w700,
             ),
@@ -774,13 +800,15 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
   }
 
   Widget _chip(String text, {IconData? icon, Color? color, Widget? leading}) {
-    final accent = color ?? _gold;
+    final accent = color ?? (_isDarkTheme ? _gold : _bronze);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
-        color: accent.withOpacity(0.14),
+        color: accent.withOpacity(_isDarkTheme ? 0.14 : 0.10),
         borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: accent.withOpacity(0.45)),
+        border: Border.all(
+          color: accent.withOpacity(_isDarkTheme ? 0.45 : 0.34),
+        ),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -965,12 +993,14 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
           width: 56,
           height: 56,
           decoration: BoxDecoration(
-            color: const Color(0xFF13161A),
+            color: _surfaceAlt,
             borderRadius: BorderRadius.circular(15),
-            border: Border.all(color: _gold.withOpacity(0.32)),
+            border: Border.all(
+              color: _isDarkTheme ? _gold.withOpacity(0.32) : _border,
+            ),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withOpacity(0.28),
+                color: _shadow.withOpacity(_isDarkTheme ? 0.28 : 0.12),
                 blurRadius: 9,
                 offset: const Offset(0, 4),
               ),
@@ -1135,368 +1165,90 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
         instantQuote ||
         gallery.isNotEmpty;
 
-    return ValueListenableBuilder<AppLanguage>(
-      valueListenable: appLanguageNotifier,
-      builder: (context, _, __) => Scaffold(
-        backgroundColor: _bg,
-        appBar: AppBar(
-          backgroundColor: _bg,
-          title: Text(_publicProfileLabel('profile')),
-          actions: [
-            if (!_loading && _error == null)
-              Padding(
-                padding: const EdgeInsets.only(right: 6),
-                child: TextButton.icon(
-                  onPressed: _favoriteBusy ? null : _toggleFavoritePartner,
-                  style: TextButton.styleFrom(
-                    foregroundColor: _isFavorite
-                        ? const Color(0xFFFF7A90)
-                        : _gold.withOpacity(0.95),
-                  ),
-                  icon: Icon(
-                    _isFavorite
-                        ? Icons.favorite_rounded
-                        : Icons.favorite_border_rounded,
-                    size: 17,
-                  ),
-                  label: Text(
-                    _t(
-                      nl: 'Favoriet',
-                      en: 'Favorite',
-                      fr: 'Favori',
-                      es: 'Favorito',
-                    ),
-                    style: const TextStyle(fontWeight: FontWeight.w700),
-                  ),
-                ),
+    return ValueListenableBuilder<CustomerThemeVariant>(
+      valueListenable: customerThemeNotifier,
+      builder: (context, themeVariant, __) {
+        final palette = paletteForCustomerTheme(themeVariant);
+        return ValueListenableBuilder<AppLanguage>(
+          valueListenable: appLanguageNotifier,
+          builder: (context, _, __) => Scaffold(
+            backgroundColor: palette.background,
+            appBar: AppBar(
+              backgroundColor: palette.background,
+              foregroundColor: _textPrimary,
+              surfaceTintColor: Colors.transparent,
+              title: Text(
+                _publicProfileLabel('profile'),
+                style: TextStyle(color: _textPrimary),
               ),
-          ],
-        ),
-        bottomNavigationBar: !_loading && _error == null && hasBookCta
-            ? SafeArea(
-                minimum: const EdgeInsets.fromLTRB(12, 6, 12, 10),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: FilledButton.icon(
-                        onPressed: () =>
-                            _openPartnerBooking(companyName: companyName),
-                        style: FilledButton.styleFrom(
-                          backgroundColor: _gold,
-                          foregroundColor: Colors.black,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(14),
-                          ),
-                          minimumSize: const Size.fromHeight(54),
-                          padding: const EdgeInsets.symmetric(vertical: 14),
-                        ),
-                        icon: const Icon(Icons.local_taxi_outlined, size: 22),
-                        label: Text(
-                          _t(nl: 'Taxi', en: 'Taxi', fr: 'Taxi', es: 'Taxi'),
-                          style: const TextStyle(
-                            fontWeight: FontWeight.w800,
-                            fontSize: 15,
-                          ),
-                        ),
+              actions: [
+                if (!_loading && _error == null)
+                  Padding(
+                    padding: const EdgeInsets.only(right: 6),
+                    child: TextButton.icon(
+                      onPressed: _favoriteBusy ? null : _toggleFavoritePartner,
+                      style: TextButton.styleFrom(
+                        foregroundColor: _isFavorite
+                            ? const Color(0xFFFF7A90)
+                            : (_isDarkTheme
+                                  ? _gold.withOpacity(0.95)
+                                  : _bronze),
                       ),
-                    ),
-                    if (airportServiceEnabled) ...[
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: OutlinedButton.icon(
-                          onPressed: () => _openPartnerAirportBooking(
-                            companyName: companyName,
-                          ),
-                          style: OutlinedButton.styleFrom(
-                            foregroundColor: _gold.withOpacity(0.98),
-                            side: BorderSide(color: _gold.withOpacity(0.38)),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(14),
-                            ),
-                            minimumSize: const Size.fromHeight(54),
-                            padding: const EdgeInsets.symmetric(vertical: 14),
-                          ),
-                          icon: const Icon(
-                            Icons.flight_takeoff_rounded,
-                            size: 21,
-                          ),
-                          label: Text(
-                            _t(
-                              nl: 'Luchthaven',
-                              en: 'Airport',
-                              fr: 'Aéroport',
-                              es: 'Aeropuerto',
-                            ),
-                            style: const TextStyle(
-                              fontWeight: FontWeight.w800,
-                              fontSize: 14.5,
-                            ),
-                          ),
-                        ),
+                      icon: Icon(
+                        _isFavorite
+                            ? Icons.favorite_rounded
+                            : Icons.favorite_border_rounded,
+                        size: 17,
                       ),
-                    ],
-                  ],
-                ),
-              )
-            : null,
-        body: SafeArea(
-          child: _loading
-              ? const Center(child: CircularProgressIndicator())
-              : _error != null
-              ? Center(
-                  child: Padding(
-                    padding: const EdgeInsets.all(18),
-                    child: Text(
-                      _error!,
-                      textAlign: TextAlign.center,
-                      style: TextStyle(color: Colors.white.withOpacity(0.8)),
+                      label: Text(
+                        _t(
+                          nl: 'Favoriet',
+                          en: 'Favorite',
+                          fr: 'Favori',
+                          es: 'Favorito',
+                        ),
+                        style: const TextStyle(fontWeight: FontWeight.w700),
+                      ),
                     ),
                   ),
-                )
-              : ListView(
-                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 92),
-                  children: [
-                    if (heroPhotoUrl.isNotEmpty)
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(18),
-                        child: Stack(
-                          children: [
-                            Image.network(
-                              heroPhotoUrl,
-                              height: 244,
-                              width: double.infinity,
-                              fit: BoxFit.cover,
-                              errorBuilder: (_, __, ___) {
-                                return Container(
-                                  height: 244,
-                                  width: double.infinity,
-                                  decoration: BoxDecoration(
-                                    gradient: LinearGradient(
-                                      colors: [
-                                        const Color(0xFF16110A),
-                                        const Color(0xFF101113),
-                                        _gold.withOpacity(0.18),
-                                      ],
-                                      begin: Alignment.topLeft,
-                                      end: Alignment.bottomRight,
-                                    ),
-                                  ),
-                                );
-                              },
-                            ),
-                            Positioned.fill(
-                              child: DecoratedBox(
-                                decoration: BoxDecoration(
-                                  gradient: LinearGradient(
-                                    colors: [
-                                      Colors.black.withOpacity(0.06),
-                                      Colors.black.withOpacity(0.74),
-                                    ],
-                                    begin: Alignment.topCenter,
-                                    end: Alignment.bottomCenter,
-                                  ),
-                                ),
-                              ),
-                            ),
-                            Positioned(
-                              left: 12,
-                              right: 12,
-                              bottom: 12,
-                              child: Padding(
-                                padding: EdgeInsets.only(
-                                  left: logoUrl.isNotEmpty ? 94 : 0,
-                                ),
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      companyName,
-                                      maxLines: 3,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: const TextStyle(
-                                        color: Colors.white,
-                                        fontWeight: FontWeight.w800,
-                                        fontSize: 18,
-                                      ),
-                                    ),
-                                    if (tagline.isNotEmpty)
-                                      Text(
-                                        tagline,
-                                        maxLines: 2,
-                                        overflow: TextOverflow.ellipsis,
-                                        style: TextStyle(
-                                          color: Colors.white.withOpacity(0.86),
-                                          fontSize: 12.5,
-                                        ),
-                                      ),
-                                    const SizedBox(height: 5),
-                                    _chip(
-                                      _verifiedPartnerTrustLabel(),
-                                      icon: Icons.verified_outlined,
-                                      color: const Color(0xFF34D29A),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ),
-                            if (logoUrl.isNotEmpty)
-                              Positioned(
-                                left: 12,
-                                bottom: 10,
-                                child: Container(
-                                  width: 82,
-                                  height: 82,
-                                  decoration: BoxDecoration(
-                                    color: Colors.black.withOpacity(0.72),
-                                    borderRadius: BorderRadius.circular(16),
-                                    border: Border.all(
-                                      color: _gold.withOpacity(0.62),
-                                      width: 1.2,
-                                    ),
-                                    boxShadow: [
-                                      BoxShadow(
-                                        color: Colors.black.withOpacity(0.30),
-                                        blurRadius: 10,
-                                        offset: const Offset(0, 5),
-                                      ),
-                                    ],
-                                  ),
-                                  padding: const EdgeInsets.all(7),
-                                  child: ClipRRect(
-                                    borderRadius: BorderRadius.circular(12),
-                                    child: Image.network(
-                                      logoUrl,
-                                      fit: BoxFit.cover,
-                                      errorBuilder: (_, __, ___) => Container(
-                                        color: const Color(0xFF16120A),
-                                        alignment: Alignment.center,
-                                        child: Icon(
-                                          Icons.business_outlined,
-                                          color: _gold.withOpacity(0.95),
-                                          size: 28,
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              ),
-                          ],
-                        ),
-                      )
-                    else
-                      Container(
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(15),
-                          gradient: LinearGradient(
-                            colors: [
-                              const Color(0xFF16110A),
-                              const Color(0xFF101113),
-                              _gold.withOpacity(0.18),
-                            ],
-                            begin: Alignment.topLeft,
-                            end: Alignment.bottomRight,
-                          ),
-                          border: Border.all(color: _gold.withOpacity(0.24)),
-                          boxShadow: [
-                            BoxShadow(
-                              color: _gold.withOpacity(0.08),
-                              blurRadius: 16,
-                              offset: const Offset(0, 8),
-                            ),
-                          ],
-                        ),
-                        child: Row(
-                          children: [
-                            if (logoUrl.isNotEmpty)
-                              CircleAvatar(
-                                radius: 20,
-                                backgroundColor: Colors.black,
-                                foregroundImage: NetworkImage(logoUrl),
-                              )
-                            else
-                              CircleAvatar(
-                                radius: 20,
-                                backgroundColor: _gold.withOpacity(0.2),
-                                child: Icon(
-                                  Icons.local_taxi_outlined,
-                                  color: _gold.withOpacity(0.95),
-                                ),
-                              ),
-                            const SizedBox(width: 10),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    companyName,
-                                    style: const TextStyle(
-                                      color: Colors.white,
-                                      fontWeight: FontWeight.w800,
-                                      fontSize: 17,
-                                    ),
-                                  ),
-                                  if (tagline.isNotEmpty)
-                                    Text(
-                                      tagline,
-                                      maxLines: 2,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: TextStyle(
-                                        color: Colors.white.withOpacity(0.82),
-                                        fontSize: 12,
-                                      ),
-                                    ),
-                                ],
-                              ),
-                            ),
-                          ],
+              ],
+            ),
+            bottomNavigationBar: !_loading && _error == null && hasBookCta
+                ? DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: _card.withOpacity(_isDarkTheme ? 0.98 : 0.96),
+                      border: Border(
+                        top: BorderSide(
+                          color: _isDarkTheme
+                              ? _gold.withOpacity(0.20)
+                              : _border,
                         ),
                       ),
-                    const SizedBox(height: 8),
-                    Wrap(
-                      spacing: 6,
-                      runSpacing: 6,
-                      children: [
-                        if (hasCompanyRating)
-                          _chip(
-                            companyRatingLabel,
-                            color: const Color(0xFFE0BE64),
-                          ),
-                        if (verified || professionalBadge)
-                          _chip(
-                            _verifiedPartnerTrustLabel(),
-                            icon: Icons.verified_outlined,
-                            color: const Color(0xFF34D29A),
-                          ),
-                        if (professionalBadge)
-                          _chip(
-                            _serviceLabel('verified_professional'),
-                            icon: Icons.workspace_premium_outlined,
-                          ),
-                      ],
                     ),
-                    const SizedBox(height: 8),
-                    if (hasBookCta)
-                      Row(
+                    child: SafeArea(
+                      minimum: const EdgeInsets.fromLTRB(12, 6, 12, 10),
+                      child: Row(
                         children: [
                           Expanded(
                             child: FilledButton.icon(
                               onPressed: () =>
                                   _openPartnerBooking(companyName: companyName),
                               style: FilledButton.styleFrom(
-                                backgroundColor: _gold,
-                                foregroundColor: Colors.black,
+                                backgroundColor: _isDarkTheme ? _gold : _bronze,
+                                foregroundColor: _isDarkTheme
+                                    ? Colors.black
+                                    : Colors.white,
                                 shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(12),
+                                  borderRadius: BorderRadius.circular(14),
                                 ),
-                                minimumSize: const Size.fromHeight(52),
+                                minimumSize: const Size.fromHeight(54),
                                 padding: const EdgeInsets.symmetric(
-                                  vertical: 13,
+                                  vertical: 14,
                                 ),
                               ),
                               icon: const Icon(
                                 Icons.local_taxi_outlined,
-                                size: 21,
+                                size: 22,
                               ),
                               label: Text(
                                 _t(
@@ -1507,7 +1259,7 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
                                 ),
                                 style: const TextStyle(
                                   fontWeight: FontWeight.w800,
-                                  fontSize: 14.5,
+                                  fontSize: 15,
                                 ),
                               ),
                             ),
@@ -1520,21 +1272,26 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
                                   companyName: companyName,
                                 ),
                                 style: OutlinedButton.styleFrom(
-                                  foregroundColor: _gold.withOpacity(0.98),
+                                  foregroundColor: _isDarkTheme
+                                      ? _gold.withOpacity(0.98)
+                                      : _bronze,
                                   side: BorderSide(
-                                    color: _gold.withOpacity(0.36),
+                                    color: _isDarkTheme
+                                        ? _gold.withOpacity(0.38)
+                                        : _border,
                                   ),
+                                  backgroundColor: _surfaceAlt,
                                   shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(12),
+                                    borderRadius: BorderRadius.circular(14),
                                   ),
-                                  minimumSize: const Size.fromHeight(52),
+                                  minimumSize: const Size.fromHeight(54),
                                   padding: const EdgeInsets.symmetric(
-                                    vertical: 13,
+                                    vertical: 14,
                                   ),
                                 ),
                                 icon: const Icon(
                                   Icons.flight_takeoff_rounded,
-                                  size: 20,
+                                  size: 21,
                                 ),
                                 label: Text(
                                   _t(
@@ -1545,7 +1302,7 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
                                   ),
                                   style: const TextStyle(
                                     fontWeight: FontWeight.w800,
-                                    fontSize: 14,
+                                    fontSize: 14.5,
                                   ),
                                 ),
                               ),
@@ -1553,572 +1310,939 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
                           ],
                         ],
                       ),
-                    const SizedBox(height: 9),
-                    _section(
-                      _publicProfileLabel('about'),
-                      Text(
-                        aboutCopy,
-                        style: TextStyle(
-                          color: Colors.white.withOpacity(0.84),
-                          fontSize: 12.5,
-                          height: 1.35,
-                        ),
-                        maxLines: 6,
-                        overflow: TextOverflow.ellipsis,
-                      ),
                     ),
-                    if (visibleServices.isNotEmpty)
-                      _section(
-                        _t(
-                          nl: 'Services',
-                          en: 'Services',
-                          fr: 'Services',
-                          es: 'Servicios',
-                        ),
-                        Wrap(
-                          spacing: 6,
-                          runSpacing: 6,
-                          children: visibleServices
-                              .map(
-                                (s) => _chip(
-                                  _serviceLabel(s),
-                                  icon: Icons.check_circle_outline,
-                                  color: const Color(0xFFDFC16A),
-                                ),
-                              )
-                              .toList(growable: false),
+                  )
+                : null,
+            body: SafeArea(
+              child: _loading
+                  ? Center(child: CircularProgressIndicator(color: _gold))
+                  : _error != null
+                  ? Center(
+                      child: Padding(
+                        padding: const EdgeInsets.all(18),
+                        child: Text(
+                          _error!,
+                          textAlign: TextAlign.center,
+                          style: TextStyle(color: _textMuted),
                         ),
                       ),
-                    if (vehicles.isNotEmpty)
-                      _section(
-                        _t(
-                          nl: 'Voertuigen',
-                          en: 'Vehicles',
-                          fr: 'Véhicules',
-                          es: 'Vehículos',
-                        ),
-                        Column(
-                          children: vehicles
-                              .map((v) {
-                                final vName = _localizeVehicleName(
-                                  _profileTextAny(v, const ['name']),
-                                );
-                                final vBrand = _profileTextAny(v, const [
-                                  'brand_model',
-                                  'brandModel',
-                                ]);
-                                final vCategory = _profileTextAny(v, const [
-                                  'category',
-                                ]);
-                                final vehiclePhotoUrl = _profileHttpsUrl(
-                                  v,
-                                  const ['photo_url', 'photoUrl'],
-                                );
-                                final vFeatures = _profileTextListAny(v, const [
-                                  'features',
-                                ]);
-                                final vPax = v['pax'];
-                                final vLuggage = v['luggage'];
-                                return Container(
-                                  margin: const EdgeInsets.only(bottom: 8),
-                                  padding: const EdgeInsets.all(10),
-                                  decoration: BoxDecoration(
-                                    color: const Color(0xFF141517),
-                                    borderRadius: BorderRadius.circular(10),
-                                    border: Border.all(
-                                      color: _gold.withOpacity(0.2),
+                    )
+                  : ListView(
+                      padding: const EdgeInsets.fromLTRB(16, 16, 16, 92),
+                      children: [
+                        if (heroPhotoUrl.isNotEmpty)
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(18),
+                            child: Stack(
+                              children: [
+                                Image.network(
+                                  heroPhotoUrl,
+                                  height: 244,
+                                  width: double.infinity,
+                                  fit: BoxFit.cover,
+                                  errorBuilder: (_, __, ___) {
+                                    return Container(
+                                      height: 244,
+                                      width: double.infinity,
+                                      decoration: BoxDecoration(
+                                        gradient: LinearGradient(
+                                          colors: [
+                                            _surfaceAlt,
+                                            _card,
+                                            _gold.withOpacity(0.18),
+                                          ],
+                                          begin: Alignment.topLeft,
+                                          end: Alignment.bottomRight,
+                                        ),
+                                      ),
+                                    );
+                                  },
+                                ),
+                                Positioned.fill(
+                                  child: DecoratedBox(
+                                    decoration: BoxDecoration(
+                                      gradient: LinearGradient(
+                                        colors: [
+                                          Colors.black.withOpacity(0.06),
+                                          Colors.black.withOpacity(0.74),
+                                        ],
+                                        begin: Alignment.topCenter,
+                                        end: Alignment.bottomCenter,
+                                      ),
                                     ),
                                   ),
+                                ),
+                                Positioned(
+                                  left: 12,
+                                  right: 12,
+                                  bottom: 12,
+                                  child: Padding(
+                                    padding: EdgeInsets.only(
+                                      left: logoUrl.isNotEmpty ? 94 : 0,
+                                    ),
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          companyName,
+                                          maxLines: 3,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: TextStyle(
+                                            color: _textPrimary,
+                                            fontWeight: FontWeight.w800,
+                                            fontSize: 18,
+                                          ),
+                                        ),
+                                        if (tagline.isNotEmpty)
+                                          Text(
+                                            tagline,
+                                            maxLines: 2,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: TextStyle(
+                                              color: _textMuted,
+                                              fontSize: 12.5,
+                                            ),
+                                          ),
+                                        const SizedBox(height: 5),
+                                        _chip(
+                                          _verifiedPartnerTrustLabel(),
+                                          icon: Icons.verified_outlined,
+                                          color: const Color(0xFF34D29A),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                                if (logoUrl.isNotEmpty)
+                                  Positioned(
+                                    left: 12,
+                                    bottom: 10,
+                                    child: Container(
+                                      width: 82,
+                                      height: 82,
+                                      decoration: BoxDecoration(
+                                        color: Colors.black.withOpacity(0.72),
+                                        borderRadius: BorderRadius.circular(16),
+                                        border: Border.all(
+                                          color: _gold.withOpacity(0.62),
+                                          width: 1.2,
+                                        ),
+                                        boxShadow: [
+                                          BoxShadow(
+                                            color: Colors.black.withOpacity(
+                                              0.30,
+                                            ),
+                                            blurRadius: 10,
+                                            offset: const Offset(0, 5),
+                                          ),
+                                        ],
+                                      ),
+                                      padding: const EdgeInsets.all(7),
+                                      child: ClipRRect(
+                                        borderRadius: BorderRadius.circular(12),
+                                        child: Image.network(
+                                          logoUrl,
+                                          fit: BoxFit.cover,
+                                          errorBuilder: (_, __, ___) =>
+                                              Container(
+                                                color: _surfaceAlt,
+                                                alignment: Alignment.center,
+                                                child: Icon(
+                                                  Icons.business_outlined,
+                                                  color: _gold.withOpacity(
+                                                    0.95,
+                                                  ),
+                                                  size: 28,
+                                                ),
+                                              ),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          )
+                        else
+                          Container(
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(15),
+                              gradient: LinearGradient(
+                                colors: [
+                                  _surfaceAlt,
+                                  _card,
+                                  _gold.withOpacity(0.18),
+                                ],
+                                begin: Alignment.topLeft,
+                                end: Alignment.bottomRight,
+                              ),
+                              border: Border.all(
+                                color: _isDarkTheme
+                                    ? _gold.withOpacity(0.24)
+                                    : _border,
+                              ),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: _shadow.withOpacity(
+                                    _isDarkTheme ? 0.14 : 0.08,
+                                  ),
+                                  blurRadius: 16,
+                                  offset: const Offset(0, 8),
+                                ),
+                              ],
+                            ),
+                            child: Row(
+                              children: [
+                                if (logoUrl.isNotEmpty)
+                                  CircleAvatar(
+                                    radius: 20,
+                                    backgroundColor: Colors.black,
+                                    foregroundImage: NetworkImage(logoUrl),
+                                  )
+                                else
+                                  CircleAvatar(
+                                    radius: 20,
+                                    backgroundColor: _gold.withOpacity(0.2),
+                                    child: Icon(
+                                      Icons.local_taxi_outlined,
+                                      color: _gold.withOpacity(0.95),
+                                    ),
+                                  ),
+                                const SizedBox(width: 10),
+                                Expanded(
                                   child: Column(
                                     crossAxisAlignment:
                                         CrossAxisAlignment.start,
                                     children: [
-                                      if (vehiclePhotoUrl.isNotEmpty)
-                                        ClipRRect(
-                                          borderRadius: BorderRadius.circular(
-                                            8,
-                                          ),
-                                          child: Image.network(
-                                            vehiclePhotoUrl,
-                                            height: 168,
-                                            width: double.infinity,
-                                            fit: BoxFit.cover,
-                                            errorBuilder: (_, __, ___) {
-                                              return Container(
-                                                height: 168,
-                                                width: double.infinity,
-                                                decoration: BoxDecoration(
-                                                  borderRadius:
-                                                      BorderRadius.circular(8),
-                                                  gradient: LinearGradient(
-                                                    colors: [
-                                                      const Color(0xFF16100A),
-                                                      _gold.withOpacity(0.16),
-                                                    ],
-                                                  ),
-                                                ),
-                                                padding:
-                                                    const EdgeInsets.symmetric(
-                                                      horizontal: 10,
-                                                    ),
-                                                child: Row(
-                                                  children: [
-                                                    Icon(
-                                                      Icons
-                                                          .directions_car_outlined,
-                                                      color: _gold.withOpacity(
-                                                        0.95,
-                                                      ),
-                                                      size: 18,
-                                                    ),
-                                                    const SizedBox(width: 6),
-                                                    Text(
-                                                      _t(
-                                                        nl: 'Publiek voertuigprofiel',
-                                                        en: 'Public vehicle profile',
-                                                        fr: 'Profil véhicule public',
-                                                        es: 'Perfil público de vehículo',
-                                                      ),
-                                                      style: TextStyle(
-                                                        color: Colors.white
-                                                            .withOpacity(0.82),
-                                                        fontSize: 11.3,
-                                                        fontWeight:
-                                                            FontWeight.w600,
-                                                      ),
-                                                    ),
-                                                  ],
-                                                ),
-                                              );
-                                            },
-                                          ),
-                                        )
-                                      else
-                                        Container(
-                                          height: 54,
-                                          width: double.infinity,
-                                          decoration: BoxDecoration(
-                                            borderRadius: BorderRadius.circular(
-                                              8,
-                                            ),
-                                            gradient: LinearGradient(
-                                              colors: [
-                                                const Color(0xFF16100A),
-                                                _gold.withOpacity(0.16),
-                                              ],
-                                            ),
-                                          ),
-                                          padding: const EdgeInsets.symmetric(
-                                            horizontal: 10,
-                                          ),
-                                          child: Row(
-                                            children: [
-                                              Icon(
-                                                Icons.directions_car_outlined,
-                                                color: _gold.withOpacity(0.95),
-                                                size: 18,
-                                              ),
-                                              const SizedBox(width: 6),
-                                              Text(
-                                                _t(
-                                                  nl: 'Publiek voertuigprofiel',
-                                                  en: 'Public vehicle profile',
-                                                  fr: 'Profil véhicule public',
-                                                  es: 'Perfil público de vehículo',
-                                                ),
-                                                style: TextStyle(
-                                                  color: Colors.white
-                                                      .withOpacity(0.82),
-                                                  fontSize: 11.3,
-                                                  fontWeight: FontWeight.w600,
-                                                ),
-                                              ),
-                                            ],
-                                          ),
-                                        ),
-                                      const SizedBox(height: 7),
                                       Text(
-                                        vName,
-                                        style: const TextStyle(
-                                          color: Colors.white,
-                                          fontWeight: FontWeight.w700,
+                                        companyName,
+                                        style: TextStyle(
+                                          color: _textPrimary,
+                                          fontWeight: FontWeight.w800,
+                                          fontSize: 17,
                                         ),
                                       ),
-                                      if (vBrand.isNotEmpty ||
-                                          vCategory.isNotEmpty)
+                                      if (tagline.isNotEmpty)
                                         Text(
-                                          [vBrand, vCategory]
-                                              .where((e) => e.trim().isNotEmpty)
-                                              .join(' • '),
+                                          tagline,
+                                          maxLines: 2,
+                                          overflow: TextOverflow.ellipsis,
                                           style: TextStyle(
-                                            color: Colors.white.withOpacity(
-                                              0.7,
-                                            ),
+                                            color: _textMuted,
                                             fontSize: 12,
                                           ),
                                         ),
-                                      const SizedBox(height: 6),
-                                      Wrap(
-                                        spacing: 6,
-                                        runSpacing: 6,
-                                        children: [
-                                          if (vPax != null)
-                                            _chip(
-                                              '${_publicProfileLabel("passengers")}: $vPax',
-                                              icon: Icons.people_alt_outlined,
-                                            ),
-                                          if (vLuggage != null)
-                                            _chip(
-                                              '${_publicProfileLabel("luggage")}: $vLuggage',
-                                              icon: Icons.luggage_outlined,
-                                            ),
-                                          ...vFeatures.map(
-                                            (f) => _chip(_featureLabel(f)),
-                                          ),
-                                        ],
-                                      ),
                                     ],
                                   ),
-                                );
-                              })
-                              .toList(growable: false),
+                                ),
+                              ],
+                            ),
+                          ),
+                        const SizedBox(height: 8),
+                        Wrap(
+                          spacing: 6,
+                          runSpacing: 6,
+                          children: [
+                            if (hasCompanyRating)
+                              _chip(
+                                companyRatingLabel,
+                                color: _isDarkTheme
+                                    ? const Color(0xFFE0BE64)
+                                    : _bronze,
+                              ),
+                            if (verified || professionalBadge)
+                              _chip(
+                                _verifiedPartnerTrustLabel(),
+                                icon: Icons.verified_outlined,
+                                color: const Color(0xFF34D29A),
+                              ),
+                            if (professionalBadge)
+                              _chip(
+                                _serviceLabel('verified_professional'),
+                                icon: Icons.workspace_premium_outlined,
+                              ),
+                          ],
                         ),
-                      ),
-                    if (drivers.isNotEmpty)
-                      _section(
-                        _publicProfileLabel('drivers'),
-                        Column(
-                          children: drivers
-                              .map((d) {
-                                final displayName = _profileTextAny(d, const [
-                                  'display_name',
-                                  'displayName',
-                                ]);
-                                final languages = _profileTextListAny(d, const [
-                                  'languages',
-                                ]);
-                                final badges = _profileTextListAny(d, const [
-                                  'badges',
-                                ]);
-                                final portrait = _profileHttpsUrl(d, const [
-                                  'portrait_url',
-                                  'portraitUrl',
-                                ]);
-                                final ratingAvg = _ratingAverageFromMap(d);
-                                final ratingCount = _ratingCountFromMap(d);
-                                final ratingLabel = _localizedRatingDisplay(
-                                  avg: ratingAvg,
-                                  count: ratingCount,
-                                );
-                                return Container(
-                                  margin: const EdgeInsets.only(bottom: 8),
-                                  padding: const EdgeInsets.all(10),
-                                  decoration: BoxDecoration(
-                                    color: const Color(0xFF141517),
-                                    borderRadius: BorderRadius.circular(10),
-                                    border: Border.all(
-                                      color: _gold.withOpacity(0.2),
+                        const SizedBox(height: 8),
+                        if (hasBookCta)
+                          Row(
+                            children: [
+                              Expanded(
+                                child: FilledButton.icon(
+                                  onPressed: () => _openPartnerBooking(
+                                    companyName: companyName,
+                                  ),
+                                  style: FilledButton.styleFrom(
+                                    backgroundColor: _isDarkTheme
+                                        ? _gold
+                                        : _bronze,
+                                    foregroundColor: _isDarkTheme
+                                        ? Colors.black
+                                        : Colors.white,
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                    minimumSize: const Size.fromHeight(52),
+                                    padding: const EdgeInsets.symmetric(
+                                      vertical: 13,
                                     ),
                                   ),
-                                  child: Row(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      CircleAvatar(
-                                        radius: 20,
-                                        backgroundColor: _gold.withOpacity(0.2),
-                                        foregroundImage: portrait.isNotEmpty
-                                            ? NetworkImage(portrait)
-                                            : null,
-                                        child: portrait.isEmpty
-                                            ? Icon(
-                                                Icons.person_outline_rounded,
-                                                color: _gold.withOpacity(0.96),
-                                              )
-                                            : null,
-                                      ),
-                                      const SizedBox(width: 10),
-                                      Expanded(
-                                        child: Column(
-                                          crossAxisAlignment:
-                                              CrossAxisAlignment.start,
-                                          children: [
-                                            Text(
-                                              displayName,
-                                              style: const TextStyle(
-                                                color: Colors.white,
-                                                fontWeight: FontWeight.w700,
-                                              ),
-                                            ),
-                                            const SizedBox(height: 5),
-                                            Text(
-                                              ratingLabel,
-                                              style: TextStyle(
-                                                color: Colors.white.withOpacity(
-                                                  0.76,
-                                                ),
-                                                fontSize: 12.0,
-                                                fontWeight: FontWeight.w600,
-                                              ),
-                                            ),
-                                            const SizedBox(height: 5),
-                                            if (languages.isNotEmpty)
-                                              Wrap(
-                                                spacing: 6,
-                                                runSpacing: 6,
-                                                children: languages
-                                                    .map(
-                                                      (l) => _chip(
-                                                        l,
-                                                        icon: Icons
-                                                            .translate_rounded,
-                                                      ),
-                                                    )
-                                                    .toList(growable: false),
-                                              ),
-                                            if (badges.isNotEmpty) ...[
-                                              const SizedBox(height: 5),
-                                              Wrap(
-                                                spacing: 6,
-                                                runSpacing: 6,
-                                                children: badges
-                                                    .map(
-                                                      (b) => _chip(
-                                                        _badgeLabel(b),
-                                                        icon: Icons
-                                                            .verified_outlined,
-                                                      ),
-                                                    )
-                                                    .toList(growable: false),
-                                              ),
-                                            ],
-                                            if (badges.isEmpty) ...[
-                                              const SizedBox(height: 5),
-                                              _chip(
-                                                _serviceLabel(
-                                                  'verified_professional',
-                                                ),
-                                                icon: Icons.verified_outlined,
-                                              ),
-                                            ],
-                                          ],
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                );
-                              })
-                              .toList(growable: false),
-                        ),
-                      ),
-                    if (showContactSection)
-                      _section(
-                        _publicProfileLabel('coverage'),
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            if (regionLabel.isNotEmpty)
-                              Text(
-                                '${_publicProfileLabel("region")}: $regionLabel',
-                                style: TextStyle(
-                                  color: Colors.white.withOpacity(0.82),
-                                  fontSize: 12.7,
-                                ),
-                              ),
-                            if (postcodes.isNotEmpty) ...[
-                              const SizedBox(height: 6),
-                              Wrap(
-                                spacing: 6,
-                                runSpacing: 6,
-                                children: visiblePostcodes
-                                    .map(
-                                      (z) => _chip(
-                                        z,
-                                        icon: Icons.location_on_outlined,
-                                      ),
-                                    )
-                                    .toList(growable: false),
-                              ),
-                              if (hiddenPostcodeCount > 0) ...[
-                                const SizedBox(height: 7),
-                                TextButton.icon(
-                                  onPressed: () {
-                                    setState(() {
-                                      _showAllCoveragePostcodes =
-                                          !_showAllCoveragePostcodes;
-                                    });
-                                  },
-                                  icon: Icon(
-                                    _showAllCoveragePostcodes
-                                        ? Icons.expand_less_rounded
-                                        : Icons.expand_more_rounded,
-                                    size: 16,
+                                  icon: const Icon(
+                                    Icons.local_taxi_outlined,
+                                    size: 21,
                                   ),
                                   label: Text(
-                                    _showAllCoveragePostcodes
-                                        ? _t(
-                                            nl: 'Minder tonen',
-                                            en: 'Show less',
-                                            fr: 'Afficher moins',
-                                            es: 'Mostrar menos',
-                                          )
-                                        : _t(
-                                            nl: 'Toon alle regio’s (+$hiddenPostcodeCount)',
-                                            en: 'Show all areas (+$hiddenPostcodeCount)',
-                                            fr: 'Afficher toutes les zones (+$hiddenPostcodeCount)',
-                                            es: 'Mostrar todas las zonas (+$hiddenPostcodeCount)',
-                                          ),
+                                    _t(
+                                      nl: 'Taxi',
+                                      en: 'Taxi',
+                                      fr: 'Taxi',
+                                      es: 'Taxi',
+                                    ),
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.w800,
+                                      fontSize: 14.5,
+                                    ),
                                   ),
-                                  style: TextButton.styleFrom(
-                                    foregroundColor: _gold.withOpacity(0.96),
-                                    visualDensity: VisualDensity.compact,
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 2,
-                                      vertical: 0,
+                                ),
+                              ),
+                              if (airportServiceEnabled) ...[
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: OutlinedButton.icon(
+                                    onPressed: () => _openPartnerAirportBooking(
+                                      companyName: companyName,
+                                    ),
+                                    style: OutlinedButton.styleFrom(
+                                      foregroundColor: _isDarkTheme
+                                          ? _gold.withOpacity(0.98)
+                                          : _bronze,
+                                      side: BorderSide(
+                                        color: _isDarkTheme
+                                            ? _gold.withOpacity(0.36)
+                                            : _border,
+                                      ),
+                                      backgroundColor: _surfaceAlt,
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(12),
+                                      ),
+                                      minimumSize: const Size.fromHeight(52),
+                                      padding: const EdgeInsets.symmetric(
+                                        vertical: 13,
+                                      ),
+                                    ),
+                                    icon: const Icon(
+                                      Icons.flight_takeoff_rounded,
+                                      size: 20,
+                                    ),
+                                    label: Text(
+                                      _t(
+                                        nl: 'Luchthaven',
+                                        en: 'Airport',
+                                        fr: 'Aéroport',
+                                        es: 'Aeropuerto',
+                                      ),
+                                      style: const TextStyle(
+                                        fontWeight: FontWeight.w800,
+                                        fontSize: 14,
+                                      ),
                                     ),
                                   ),
                                 ),
                               ],
                             ],
-                            if (website.isNotEmpty ||
-                                publicPhone.isNotEmpty ||
-                                bookingEmail.isNotEmpty) ...[
-                              const SizedBox(height: 8),
-                              Wrap(
-                                spacing: 8,
-                                runSpacing: 8,
-                                children: [
-                                  if (website.isNotEmpty)
-                                    _contactActionButton(
-                                      label: _t(
-                                        nl: 'Website',
-                                        en: 'Website',
-                                        fr: 'Site web',
-                                        es: 'Sitio web',
+                          ),
+                        const SizedBox(height: 9),
+                        _section(
+                          _publicProfileLabel('about'),
+                          Text(
+                            aboutCopy,
+                            style: TextStyle(
+                              color: _textMuted,
+                              fontSize: 12.5,
+                              height: 1.35,
+                            ),
+                            maxLines: 6,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        if (visibleServices.isNotEmpty)
+                          _section(
+                            _t(
+                              nl: 'Services',
+                              en: 'Services',
+                              fr: 'Services',
+                              es: 'Servicios',
+                            ),
+                            Wrap(
+                              spacing: 6,
+                              runSpacing: 6,
+                              children: visibleServices
+                                  .map(
+                                    (s) => _chip(
+                                      _serviceLabel(s),
+                                      icon: Icons.check_circle_outline,
+                                      color: _isDarkTheme
+                                          ? const Color(0xFFDFC16A)
+                                          : _bronze,
+                                    ),
+                                  )
+                                  .toList(growable: false),
+                            ),
+                          ),
+                        if (vehicles.isNotEmpty)
+                          _section(
+                            _t(
+                              nl: 'Voertuigen',
+                              en: 'Vehicles',
+                              fr: 'Véhicules',
+                              es: 'Vehículos',
+                            ),
+                            Column(
+                              children: vehicles
+                                  .map((v) {
+                                    final vName = _localizeVehicleName(
+                                      _profileTextAny(v, const ['name']),
+                                    );
+                                    final vBrand = _profileTextAny(v, const [
+                                      'brand_model',
+                                      'brandModel',
+                                    ]);
+                                    final vCategory = _profileTextAny(v, const [
+                                      'category',
+                                    ]);
+                                    final vehiclePhotoUrl = _profileHttpsUrl(
+                                      v,
+                                      const ['photo_url', 'photoUrl'],
+                                    );
+                                    final vFeatures = _profileTextListAny(
+                                      v,
+                                      const ['features'],
+                                    );
+                                    final vPax = v['pax'];
+                                    final vLuggage = v['luggage'];
+                                    return Container(
+                                      margin: const EdgeInsets.only(bottom: 8),
+                                      padding: const EdgeInsets.all(10),
+                                      decoration: BoxDecoration(
+                                        color: _surfaceAlt,
+                                        borderRadius: BorderRadius.circular(10),
+                                        border: Border.all(
+                                          color: _isDarkTheme
+                                              ? _gold.withOpacity(0.2)
+                                              : _border,
+                                        ),
                                       ),
-                                      icon: Icons.language_outlined,
-                                      onPressed: () =>
-                                          _launchWebsiteUrl(website),
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          if (vehiclePhotoUrl.isNotEmpty)
+                                            ClipRRect(
+                                              borderRadius:
+                                                  BorderRadius.circular(8),
+                                              child: Image.network(
+                                                vehiclePhotoUrl,
+                                                height: 168,
+                                                width: double.infinity,
+                                                fit: BoxFit.cover,
+                                                errorBuilder: (_, __, ___) {
+                                                  return Container(
+                                                    height: 168,
+                                                    width: double.infinity,
+                                                    decoration: BoxDecoration(
+                                                      borderRadius:
+                                                          BorderRadius.circular(
+                                                            8,
+                                                          ),
+                                                      gradient: LinearGradient(
+                                                        colors: [
+                                                          _surfaceAlt,
+                                                          _gold.withOpacity(
+                                                            0.16,
+                                                          ),
+                                                        ],
+                                                      ),
+                                                    ),
+                                                    padding:
+                                                        const EdgeInsets.symmetric(
+                                                          horizontal: 10,
+                                                        ),
+                                                    child: Row(
+                                                      children: [
+                                                        Icon(
+                                                          Icons
+                                                              .directions_car_outlined,
+                                                          color: _gold
+                                                              .withOpacity(
+                                                                0.95,
+                                                              ),
+                                                          size: 18,
+                                                        ),
+                                                        const SizedBox(
+                                                          width: 6,
+                                                        ),
+                                                        Text(
+                                                          _t(
+                                                            nl: 'Publiek voertuigprofiel',
+                                                            en: 'Public vehicle profile',
+                                                            fr: 'Profil véhicule public',
+                                                            es: 'Perfil público de vehículo',
+                                                          ),
+                                                          style: TextStyle(
+                                                            color: _textMuted,
+                                                            fontSize: 11.3,
+                                                            fontWeight:
+                                                                FontWeight.w600,
+                                                          ),
+                                                        ),
+                                                      ],
+                                                    ),
+                                                  );
+                                                },
+                                              ),
+                                            )
+                                          else
+                                            Container(
+                                              height: 54,
+                                              width: double.infinity,
+                                              decoration: BoxDecoration(
+                                                borderRadius:
+                                                    BorderRadius.circular(8),
+                                                gradient: LinearGradient(
+                                                  colors: [
+                                                    _surfaceAlt,
+                                                    _gold.withOpacity(0.16),
+                                                  ],
+                                                ),
+                                              ),
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                    horizontal: 10,
+                                                  ),
+                                              child: Row(
+                                                children: [
+                                                  Icon(
+                                                    Icons
+                                                        .directions_car_outlined,
+                                                    color: _gold.withOpacity(
+                                                      0.95,
+                                                    ),
+                                                    size: 18,
+                                                  ),
+                                                  const SizedBox(width: 6),
+                                                  Text(
+                                                    _t(
+                                                      nl: 'Publiek voertuigprofiel',
+                                                      en: 'Public vehicle profile',
+                                                      fr: 'Profil véhicule public',
+                                                      es: 'Perfil público de vehículo',
+                                                    ),
+                                                    style: TextStyle(
+                                                      color: _textMuted,
+                                                      fontSize: 11.3,
+                                                      fontWeight:
+                                                          FontWeight.w600,
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
+                                            ),
+                                          const SizedBox(height: 7),
+                                          Text(
+                                            vName,
+                                            style: TextStyle(
+                                              color: _textPrimary,
+                                              fontWeight: FontWeight.w700,
+                                            ),
+                                          ),
+                                          if (vBrand.isNotEmpty ||
+                                              vCategory.isNotEmpty)
+                                            Text(
+                                              [vBrand, vCategory]
+                                                  .where(
+                                                    (e) => e.trim().isNotEmpty,
+                                                  )
+                                                  .join(' • '),
+                                              style: TextStyle(
+                                                color: _textMuted,
+                                                fontSize: 12,
+                                              ),
+                                            ),
+                                          const SizedBox(height: 6),
+                                          Wrap(
+                                            spacing: 6,
+                                            runSpacing: 6,
+                                            children: [
+                                              if (vPax != null)
+                                                _chip(
+                                                  '${_publicProfileLabel("passengers")}: $vPax',
+                                                  icon:
+                                                      Icons.people_alt_outlined,
+                                                ),
+                                              if (vLuggage != null)
+                                                _chip(
+                                                  '${_publicProfileLabel("luggage")}: $vLuggage',
+                                                  icon: Icons.luggage_outlined,
+                                                ),
+                                              ...vFeatures.map(
+                                                (f) => _chip(_featureLabel(f)),
+                                              ),
+                                            ],
+                                          ),
+                                        ],
+                                      ),
+                                    );
+                                  })
+                                  .toList(growable: false),
+                            ),
+                          ),
+                        if (drivers.isNotEmpty)
+                          _section(
+                            _publicProfileLabel('drivers'),
+                            Column(
+                              children: drivers
+                                  .map((d) {
+                                    final displayName = _profileTextAny(
+                                      d,
+                                      const ['display_name', 'displayName'],
+                                    );
+                                    final languages = _profileTextListAny(
+                                      d,
+                                      const ['languages'],
+                                    );
+                                    final badges = _profileTextListAny(
+                                      d,
+                                      const ['badges'],
+                                    );
+                                    final portrait = _profileHttpsUrl(d, const [
+                                      'portrait_url',
+                                      'portraitUrl',
+                                    ]);
+                                    final ratingAvg = _ratingAverageFromMap(d);
+                                    final ratingCount = _ratingCountFromMap(d);
+                                    final ratingLabel = _localizedRatingDisplay(
+                                      avg: ratingAvg,
+                                      count: ratingCount,
+                                    );
+                                    return Container(
+                                      margin: const EdgeInsets.only(bottom: 8),
+                                      padding: const EdgeInsets.all(10),
+                                      decoration: BoxDecoration(
+                                        color: _surfaceAlt,
+                                        borderRadius: BorderRadius.circular(10),
+                                        border: Border.all(
+                                          color: _isDarkTheme
+                                              ? _gold.withOpacity(0.2)
+                                              : _border,
+                                        ),
+                                      ),
+                                      child: Row(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          CircleAvatar(
+                                            radius: 20,
+                                            backgroundColor: _gold.withOpacity(
+                                              0.2,
+                                            ),
+                                            foregroundImage: portrait.isNotEmpty
+                                                ? NetworkImage(portrait)
+                                                : null,
+                                            child: portrait.isEmpty
+                                                ? Icon(
+                                                    Icons
+                                                        .person_outline_rounded,
+                                                    color: _gold.withOpacity(
+                                                      0.96,
+                                                    ),
+                                                  )
+                                                : null,
+                                          ),
+                                          const SizedBox(width: 10),
+                                          Expanded(
+                                            child: Column(
+                                              crossAxisAlignment:
+                                                  CrossAxisAlignment.start,
+                                              children: [
+                                                Text(
+                                                  displayName,
+                                                  style: TextStyle(
+                                                    color: _textPrimary,
+                                                    fontWeight: FontWeight.w700,
+                                                  ),
+                                                ),
+                                                const SizedBox(height: 5),
+                                                Text(
+                                                  ratingLabel,
+                                                  style: TextStyle(
+                                                    color: _textMuted,
+                                                    fontSize: 12.0,
+                                                    fontWeight: FontWeight.w600,
+                                                  ),
+                                                ),
+                                                const SizedBox(height: 5),
+                                                if (languages.isNotEmpty)
+                                                  Wrap(
+                                                    spacing: 6,
+                                                    runSpacing: 6,
+                                                    children: languages
+                                                        .map(
+                                                          (l) => _chip(
+                                                            l,
+                                                            icon: Icons
+                                                                .translate_rounded,
+                                                          ),
+                                                        )
+                                                        .toList(
+                                                          growable: false,
+                                                        ),
+                                                  ),
+                                                if (badges.isNotEmpty) ...[
+                                                  const SizedBox(height: 5),
+                                                  Wrap(
+                                                    spacing: 6,
+                                                    runSpacing: 6,
+                                                    children: badges
+                                                        .map(
+                                                          (b) => _chip(
+                                                            _badgeLabel(b),
+                                                            icon: Icons
+                                                                .verified_outlined,
+                                                          ),
+                                                        )
+                                                        .toList(
+                                                          growable: false,
+                                                        ),
+                                                  ),
+                                                ],
+                                                if (badges.isEmpty) ...[
+                                                  const SizedBox(height: 5),
+                                                  _chip(
+                                                    _serviceLabel(
+                                                      'verified_professional',
+                                                    ),
+                                                    icon:
+                                                        Icons.verified_outlined,
+                                                  ),
+                                                ],
+                                              ],
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    );
+                                  })
+                                  .toList(growable: false),
+                            ),
+                          ),
+                        if (showContactSection)
+                          _section(
+                            _publicProfileLabel('coverage'),
+                            Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                if (regionLabel.isNotEmpty)
+                                  Text(
+                                    '${_publicProfileLabel("region")}: $regionLabel',
+                                    style: TextStyle(
+                                      color: _textMuted,
+                                      fontSize: 12.7,
+                                    ),
+                                  ),
+                                if (postcodes.isNotEmpty) ...[
+                                  const SizedBox(height: 6),
+                                  Wrap(
+                                    spacing: 6,
+                                    runSpacing: 6,
+                                    children: visiblePostcodes
+                                        .map(
+                                          (z) => _chip(
+                                            z,
+                                            icon: Icons.location_on_outlined,
+                                          ),
+                                        )
+                                        .toList(growable: false),
+                                  ),
+                                  if (hiddenPostcodeCount > 0) ...[
+                                    const SizedBox(height: 7),
+                                    TextButton.icon(
+                                      onPressed: () {
+                                        setState(() {
+                                          _showAllCoveragePostcodes =
+                                              !_showAllCoveragePostcodes;
+                                        });
+                                      },
+                                      icon: Icon(
+                                        _showAllCoveragePostcodes
+                                            ? Icons.expand_less_rounded
+                                            : Icons.expand_more_rounded,
+                                        size: 16,
+                                      ),
+                                      label: Text(
+                                        _showAllCoveragePostcodes
+                                            ? _t(
+                                                nl: 'Minder tonen',
+                                                en: 'Show less',
+                                                fr: 'Afficher moins',
+                                                es: 'Mostrar menos',
+                                              )
+                                            : _t(
+                                                nl: 'Toon alle regio’s (+$hiddenPostcodeCount)',
+                                                en: 'Show all areas (+$hiddenPostcodeCount)',
+                                                fr: 'Afficher toutes les zones (+$hiddenPostcodeCount)',
+                                                es: 'Mostrar todas las zonas (+$hiddenPostcodeCount)',
+                                              ),
+                                      ),
+                                      style: TextButton.styleFrom(
+                                        foregroundColor: _isDarkTheme
+                                            ? _gold.withOpacity(0.96)
+                                            : _bronze,
+                                        visualDensity: VisualDensity.compact,
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 2,
+                                          vertical: 0,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ],
+                                if (website.isNotEmpty ||
+                                    publicPhone.isNotEmpty ||
+                                    bookingEmail.isNotEmpty) ...[
+                                  const SizedBox(height: 8),
+                                  Wrap(
+                                    spacing: 8,
+                                    runSpacing: 8,
+                                    children: [
+                                      if (website.isNotEmpty)
+                                        _contactActionButton(
+                                          label: _t(
+                                            nl: 'Website',
+                                            en: 'Website',
+                                            fr: 'Site web',
+                                            es: 'Sitio web',
+                                          ),
+                                          icon: Icons.language_outlined,
+                                          onPressed: () =>
+                                              _launchWebsiteUrl(website),
+                                        ),
+                                      if (publicPhone.isNotEmpty)
+                                        _contactActionButton(
+                                          label: _t(
+                                            nl: 'Bel',
+                                            en: 'Call',
+                                            fr: 'Appeler',
+                                            es: 'Llamar',
+                                          ),
+                                          icon: Icons.call_outlined,
+                                          onPressed: () =>
+                                              _launchPublicPhone(publicPhone),
+                                        ),
+                                      if (bookingEmail.isNotEmpty)
+                                        _contactActionButton(
+                                          label: _t(
+                                            nl: 'E-mail',
+                                            en: 'Email',
+                                            fr: 'E-mail',
+                                            es: 'E-mail',
+                                          ),
+                                          icon: Icons.email_outlined,
+                                          onPressed: () =>
+                                              _launchBookingEmail(bookingEmail),
+                                        ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 8),
+                                  if (website.isNotEmpty)
+                                    Text(
+                                      '${_publicProfileLabel("website")}: $website',
+                                      style: TextStyle(color: _textMuted),
                                     ),
                                   if (publicPhone.isNotEmpty)
-                                    _contactActionButton(
-                                      label: _t(
-                                        nl: 'Bel',
-                                        en: 'Call',
-                                        fr: 'Appeler',
-                                        es: 'Llamar',
-                                      ),
-                                      icon: Icons.call_outlined,
-                                      onPressed: () =>
-                                          _launchPublicPhone(publicPhone),
+                                    Text(
+                                      '${_publicProfileLabel("phone")}: $publicPhone',
+                                      style: TextStyle(color: _textMuted),
                                     ),
                                   if (bookingEmail.isNotEmpty)
-                                    _contactActionButton(
-                                      label: _t(
-                                        nl: 'E-mail',
-                                        en: 'Email',
-                                        fr: 'E-mail',
-                                        es: 'E-mail',
-                                      ),
-                                      icon: Icons.email_outlined,
-                                      onPressed: () =>
-                                          _launchBookingEmail(bookingEmail),
+                                    Text(
+                                      '${_publicProfileLabel("booking_email")}: $bookingEmail',
+                                      style: TextStyle(color: _textMuted),
                                     ),
                                 ],
-                              ),
-                              const SizedBox(height: 8),
-                              if (website.isNotEmpty)
-                                Text(
-                                  '${_publicProfileLabel("website")}: $website',
-                                  style: TextStyle(
-                                    color: Colors.white.withOpacity(0.75),
-                                  ),
-                                ),
-                              if (publicPhone.isNotEmpty)
-                                Text(
-                                  '${_publicProfileLabel("phone")}: $publicPhone',
-                                  style: TextStyle(
-                                    color: Colors.white.withOpacity(0.75),
-                                  ),
-                                ),
-                              if (bookingEmail.isNotEmpty)
-                                Text(
-                                  '${_publicProfileLabel("booking_email")}: $bookingEmail',
-                                  style: TextStyle(
-                                    color: Colors.white.withOpacity(0.75),
-                                  ),
-                                ),
-                            ],
-                            if (onlinePayments ||
-                                instantQuote ||
-                                gallery.isNotEmpty) ...[
-                              const SizedBox(height: 8),
-                              Wrap(
-                                spacing: 6,
-                                runSpacing: 6,
-                                children: [
-                                  if (onlinePayments)
-                                    if (!hasExplicitOnlinePaymentMethod)
-                                      _chip(
-                                        _t(
-                                          nl: 'Online betalen',
-                                          en: 'Online payments',
-                                          fr: 'Paiement en ligne',
-                                          es: 'Pagos en línea',
+                                if (onlinePayments ||
+                                    instantQuote ||
+                                    gallery.isNotEmpty) ...[
+                                  const SizedBox(height: 8),
+                                  Wrap(
+                                    spacing: 6,
+                                    runSpacing: 6,
+                                    children: [
+                                      if (onlinePayments)
+                                        if (!hasExplicitOnlinePaymentMethod)
+                                          _chip(
+                                            _t(
+                                              nl: 'Online betalen',
+                                              en: 'Online payments',
+                                              fr: 'Paiement en ligne',
+                                              es: 'Pagos en línea',
+                                            ),
+                                            icon: Icons.credit_card_outlined,
+                                          ),
+                                      if (instantQuote)
+                                        _chip(
+                                          _t(
+                                            nl: 'Directe prijsindicatie',
+                                            en: 'Instant quote',
+                                            fr: 'Devis instantané',
+                                            es: 'Presupuesto instantáneo',
+                                          ),
+                                          icon: Icons.flash_on_outlined,
                                         ),
-                                        icon: Icons.credit_card_outlined,
-                                      ),
-                                  if (instantQuote)
-                                    _chip(
-                                      _t(
-                                        nl: 'Directe prijsindicatie',
-                                        en: 'Instant quote',
-                                        fr: 'Devis instantané',
-                                        es: 'Presupuesto instantáneo',
-                                      ),
-                                      icon: Icons.flash_on_outlined,
-                                    ),
-                                  if (gallery.isNotEmpty)
-                                    _chip(
-                                      _t(
-                                        nl: '${gallery.length} galerijfoto\'s',
-                                        en: '${gallery.length} gallery photos',
-                                        fr: '${gallery.length} photos de galerie',
-                                        es: '${gallery.length} fotos de galería',
-                                      ),
-                                      icon: Icons.photo_library_outlined,
-                                    ),
+                                      if (gallery.isNotEmpty)
+                                        _chip(
+                                          _t(
+                                            nl: '${gallery.length} galerijfoto\'s',
+                                            en: '${gallery.length} gallery photos',
+                                            fr: '${gallery.length} photos de galerie',
+                                            es: '${gallery.length} fotos de galería',
+                                          ),
+                                          icon: Icons.photo_library_outlined,
+                                        ),
+                                    ],
+                                  ),
                                 ],
-                              ),
-                            ],
-                          ],
-                        ),
-                      ),
-                    if (paymentMethods.isNotEmpty)
-                      _section(
-                        _t(
-                          nl: 'Betaalopties',
-                          en: 'Payment options',
-                          fr: 'Moyens de paiement',
-                          es: 'Opciones de pago',
-                        ),
-                        Wrap(
-                          spacing: 9,
-                          runSpacing: 9,
-                          children: paymentMethods
-                              .map(
-                                (m) => _paymentOptionLogoTile(
-                                  paymentId: _normalizePublicPaymentMethodId(m),
-                                  semanticLabel: _paymentLabel(m),
-                                ),
-                              )
-                              .toList(growable: false),
-                        ),
-                      ),
-                  ],
-                ),
-        ),
-      ),
+                              ],
+                            ),
+                          ),
+                        if (paymentMethods.isNotEmpty)
+                          _section(
+                            _t(
+                              nl: 'Betaalopties',
+                              en: 'Payment options',
+                              fr: 'Moyens de paiement',
+                              es: 'Opciones de pago',
+                            ),
+                            Wrap(
+                              spacing: 9,
+                              runSpacing: 9,
+                              children: paymentMethods
+                                  .map(
+                                    (m) => _paymentOptionLogoTile(
+                                      paymentId:
+                                          _normalizePublicPaymentMethodId(m),
+                                      semanticLabel: _paymentLabel(m),
+                                    ),
+                                  )
+                                  .toList(growable: false),
+                            ),
+                          ),
+                      ],
+                    ),
+            ),
+          ),
+        );
+      },
     );
   }
 }
