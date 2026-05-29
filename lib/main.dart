@@ -30,6 +30,8 @@ import 'package:fluxidi_tracking/customer_phone_recovery_page.dart';
 import 'package:fluxidi_tracking/customer_profile_store.dart';
 import 'package:fluxidi_tracking/customer_session_store.dart';
 import 'package:fluxidi_tracking/customer_theme_page.dart';
+import 'package:fluxidi_tracking/customer_theme_palette.dart';
+import 'package:fluxidi_tracking/customer_theme_store.dart';
 import 'package:fluxidi_tracking/payment_return.dart';
 export 'package:fluxidi_tracking/payment_return.dart'
     show

@@ -42,18 +42,10 @@ class _CustomerThemePageState extends State<CustomerThemePage> {
   Future<void> _selectTheme(CustomerThemeVariant variant) async {
     await saveCustomerThemePreference(variant);
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          _t(
-            nl: 'Thema opgeslagen.',
-            en: 'Theme saved.',
-            fr: 'Thème enregistré.',
-            es: 'Tema guardado.',
-          ),
-        ),
-      ),
-    );
+    final navigator = Navigator.of(context);
+    if (navigator.canPop()) {
+      navigator.pop();
+    }
   }
 
   Widget _paletteDot(Color color, {required bool darkBackground}) {
