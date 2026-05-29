@@ -11,16 +11,13 @@ import 'package:fluxidi_tracking/discovery/discovery_nearby.dart';
 import 'package:fluxidi_tracking/hotels/hotel_model.dart';
 import 'package:fluxidi_tracking/hotels/hotel_seed_data.dart';
 import 'package:fluxidi_tracking/nearby_partners_page.dart';
+import 'package:fluxidi_tracking/customer_theme_palette.dart';
+import 'package:fluxidi_tracking/customer_theme_store.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'event_models.dart';
 
 class EventDetailPage extends StatelessWidget {
   const EventDetailPage({required this.event, this.onBookEvent, super.key});
-
-  static const Color _bgBlack = Color(0xFF07080C);
-  static const Color _panelBlack = Color(0xFF101010);
-  static const Color _gold = Color(0xFFE5B641);
-  static const Color _softText = Color(0xFFB4B4B4);
 
   final EventDetailData event;
   final EventBookCallback? onBookEvent;
@@ -430,44 +427,50 @@ class EventDetailPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final bottomInset = MediaQuery.of(context).padding.bottom;
-    final nearbyStays = _nearbyStays();
-    return Scaffold(
-      backgroundColor: _bgBlack,
-      body: SafeArea(
-        child: Column(
-          children: [
-            _buildHeader(context),
-            Expanded(
-              child: ListView(
-                padding: EdgeInsets.fromLTRB(
-                  14,
-                  10,
-                  14,
-                  18 + bottomInset * 0.35,
+    return ValueListenableBuilder<CustomerThemeVariant>(
+      valueListenable: customerThemeNotifier,
+      builder: (context, themeVariant, __) {
+        final palette = paletteForCustomerTheme(themeVariant);
+        final bottomInset = MediaQuery.of(context).padding.bottom;
+        final nearbyStays = _nearbyStays();
+        return Scaffold(
+          backgroundColor: palette.background,
+          body: SafeArea(
+            child: Column(
+              children: [
+                _buildHeader(context, palette),
+                Expanded(
+                  child: ListView(
+                    padding: EdgeInsets.fromLTRB(
+                      14,
+                      10,
+                      14,
+                      18 + bottomInset * 0.35,
+                    ),
+                    children: [
+                      _buildHeroVisual(palette),
+                      const SizedBox(height: 14),
+                      _buildPrimaryContent(palette),
+                      const SizedBox(height: 13),
+                      _buildInfoPanel(palette),
+                      if (nearbyStays.isNotEmpty) ...[
+                        const SizedBox(height: 13),
+                        _buildNearbyStaysSection(context, nearbyStays, palette),
+                      ],
+                      const SizedBox(height: 15),
+                      _buildCtaArea(context, palette),
+                    ],
+                  ),
                 ),
-                children: [
-                  _buildHeroVisual(),
-                  const SizedBox(height: 14),
-                  _buildPrimaryContent(),
-                  const SizedBox(height: 13),
-                  _buildInfoPanel(),
-                  if (nearbyStays.isNotEmpty) ...[
-                    const SizedBox(height: 13),
-                    _buildNearbyStaysSection(context, nearbyStays),
-                  ],
-                  const SizedBox(height: 15),
-                  _buildCtaArea(context),
-                ],
-              ),
+              ],
             ),
-          ],
-        ),
-      ),
+          ),
+        );
+      },
     );
   }
 
-  Widget _buildHeader(BuildContext context) {
+  Widget _buildHeader(BuildContext context, CustomerThemePalette palette) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(8, 9, 8, 4),
       child: Row(
@@ -475,7 +478,7 @@ class EventDetailPage extends StatelessWidget {
           IconButton(
             onPressed: () => Navigator.of(context).pop(),
             icon: const Icon(Icons.arrow_back_rounded),
-            color: _gold,
+            color: palette.gold,
             tooltip: _t(nl: 'Terug', en: 'Back', fr: 'Retour', es: 'Volver'),
           ),
           const SizedBox(width: 2),
@@ -483,9 +486,11 @@ class EventDetailPage extends StatelessWidget {
             child: Container(
               padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
               decoration: BoxDecoration(
-                color: _panelBlack.withOpacity(0.92),
+                color: palette.surface.withOpacity(
+                  palette.isDark ? 0.92 : 0.98,
+                ),
                 borderRadius: BorderRadius.circular(14),
-                border: Border.all(color: _gold.withOpacity(0.2)),
+                border: Border.all(color: palette.border.withOpacity(0.7)),
               ),
               child: Text(
                 _t(
@@ -496,8 +501,8 @@ class EventDetailPage extends StatelessWidget {
                 ),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: Colors.white,
+                style: TextStyle(
+                  color: palette.textPrimary,
                   fontSize: 20,
                   fontWeight: FontWeight.w800,
                   letterSpacing: 0.2,
@@ -510,14 +515,14 @@ class EventDetailPage extends StatelessWidget {
     );
   }
 
-  Widget _buildHeroVisual() {
+  Widget _buildHeroVisual(CustomerThemePalette palette) {
     final heroImageUrl = _heroImageUrl;
     final secondaryChipLabel = _heroSecondaryChipLabel;
     return Container(
       height: 236,
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: _gold.withOpacity(0.32)),
+        border: Border.all(color: palette.border.withOpacity(0.85)),
         gradient: LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
@@ -548,8 +553,8 @@ class EventDetailPage extends StatelessWidget {
                     begin: Alignment.topCenter,
                     end: Alignment.bottomCenter,
                     colors: <Color>[
-                      Colors.black.withOpacity(0.25),
-                      Colors.black.withOpacity(0.58),
+                      palette.shadow.withOpacity(0.25),
+                      palette.shadow.withOpacity(0.58),
                     ],
                   ),
                 ),
@@ -565,8 +570,8 @@ class EventDetailPage extends StatelessWidget {
                 shape: BoxShape.circle,
                 gradient: RadialGradient(
                   colors: [
-                    _gold.withOpacity(0.30),
-                    _gold.withOpacity(0.08),
+                    palette.gold.withOpacity(0.30),
+                    palette.gold.withOpacity(0.08),
                     Colors.transparent,
                   ],
                 ),
@@ -582,7 +587,7 @@ class EventDetailPage extends StatelessWidget {
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
                 gradient: RadialGradient(
-                  colors: [_gold.withOpacity(0.20), Colors.transparent],
+                  colors: [palette.gold.withOpacity(0.20), Colors.transparent],
                 ),
               ),
             ),
@@ -591,6 +596,7 @@ class EventDetailPage extends StatelessWidget {
             left: 16,
             top: 14,
             child: _buildChip(
+              palette: palette,
               label: event.category,
               icon: _categoryIcon(event.category),
             ),
@@ -600,6 +606,7 @@ class EventDetailPage extends StatelessWidget {
               left: 16,
               top: 48,
               child: _buildChip(
+                palette: palette,
                 label: secondaryChipLabel!,
                 icon: Icons.local_taxi_rounded,
               ),
@@ -609,7 +616,7 @@ class EventDetailPage extends StatelessWidget {
             top: 18,
             child: Icon(
               Icons.workspace_premium_rounded,
-              color: _gold.withOpacity(0.90),
+              color: palette.gold.withOpacity(0.90),
               size: 28,
             ),
           ),
@@ -621,8 +628,8 @@ class EventDetailPage extends StatelessWidget {
               event.title,
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: Colors.white,
+              style: TextStyle(
+                color: palette.isDark ? Colors.white : palette.textPrimary,
                 fontSize: 23,
                 fontWeight: FontWeight.w800,
                 height: 1.2,
@@ -634,25 +641,33 @@ class EventDetailPage extends StatelessWidget {
     );
   }
 
-  Widget _buildPrimaryContent() {
+  Widget _buildPrimaryContent(CustomerThemePalette palette) {
     final description = _eventDescription;
     return Container(
       padding: const EdgeInsets.all(15),
       decoration: BoxDecoration(
-        color: _panelBlack,
+        color: palette.surface,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: _gold.withOpacity(0.26)),
+        border: Border.all(color: palette.border.withOpacity(0.85)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _buildMetaRow(Icons.calendar_today_outlined, event.dateTimeLabel),
+          _buildMetaRow(
+            Icons.calendar_today_outlined,
+            event.dateTimeLabel,
+            palette,
+          ),
           const SizedBox(height: 8),
-          _buildMetaRow(Icons.location_on_outlined, event.locationName),
+          _buildMetaRow(
+            Icons.location_on_outlined,
+            event.locationName,
+            palette,
+          ),
           const SizedBox(height: 8),
-          _buildMetaRow(Icons.pin_drop_outlined, event.address),
+          _buildMetaRow(Icons.pin_drop_outlined, event.address, palette),
           const SizedBox(height: 11),
-          const Divider(color: Color(0x33E5B641), height: 1),
+          Divider(color: palette.border.withOpacity(0.75), height: 1),
           const SizedBox(height: 11),
           Text(
             _t(
@@ -661,8 +676,8 @@ class EventDetailPage extends StatelessWidget {
               fr: 'Informations sur l evenement',
               es: 'Informacion del evento',
             ),
-            style: const TextStyle(
-              color: Colors.white,
+            style: TextStyle(
+              color: palette.textPrimary,
               fontSize: 13.2,
               fontWeight: FontWeight.w700,
             ),
@@ -670,8 +685,8 @@ class EventDetailPage extends StatelessWidget {
           const SizedBox(height: 6),
           Text(
             description ?? _emptyDescriptionLabel,
-            style: const TextStyle(
-              color: _softText,
+            style: TextStyle(
+              color: palette.textMuted,
               fontSize: 13,
               height: 1.4,
               fontWeight: FontWeight.w500,
@@ -682,13 +697,13 @@ class EventDetailPage extends StatelessWidget {
     );
   }
 
-  Widget _buildInfoPanel() {
+  Widget _buildInfoPanel(CustomerThemePalette palette) {
     return Container(
       padding: const EdgeInsets.all(15),
       decoration: BoxDecoration(
-        color: _panelBlack,
+        color: palette.surface,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: _gold.withOpacity(0.26)),
+        border: Border.all(color: palette.border.withOpacity(0.85)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -701,11 +716,13 @@ class EventDetailPage extends StatelessWidget {
               es: 'Lugar del evento',
             ),
             '${event.locationName}, ${event.city}',
+            palette,
           ),
           const SizedBox(height: 10),
           _buildInfoRow(
             _t(nl: 'Adres', en: 'Address', fr: 'Adresse', es: 'Direccion'),
             event.address,
+            palette,
           ),
           const SizedBox(height: 12),
           Text(
@@ -715,8 +732,8 @@ class EventDetailPage extends StatelessWidget {
               fr: 'Conseil de mobilite',
               es: 'Consejo de movilidad',
             ),
-            style: const TextStyle(
-              color: Colors.white,
+            style: TextStyle(
+              color: palette.textPrimary,
               fontSize: 13.2,
               fontWeight: FontWeight.w800,
             ),
@@ -730,6 +747,7 @@ class EventDetailPage extends StatelessWidget {
               es: 'Demanda de movilidad esperada',
             ),
             _mobiliteitsvraag,
+            palette,
           ),
           const SizedBox(height: 10),
           _buildInfoRow(
@@ -740,6 +758,7 @@ class EventDetailPage extends StatelessWidget {
               es: 'Inicio del evento',
             ),
             _eventStartGuidance,
+            palette,
           ),
         ],
       ),
@@ -749,13 +768,14 @@ class EventDetailPage extends StatelessWidget {
   Widget _buildNearbyStaysSection(
     BuildContext context,
     List<HotelStay> nearbyStays,
+    CustomerThemePalette palette,
   ) {
     return Container(
       padding: const EdgeInsets.all(15),
       decoration: BoxDecoration(
-        color: _panelBlack,
+        color: palette.surface,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: _gold.withOpacity(0.26)),
+        border: Border.all(color: palette.border.withOpacity(0.85)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -767,15 +787,15 @@ class EventDetailPage extends StatelessWidget {
               fr: 'Hebergements a proximite',
               es: 'Alojamientos cerca',
             ),
-            style: const TextStyle(
-              color: Colors.white,
+            style: TextStyle(
+              color: palette.textPrimary,
               fontSize: 14.2,
               fontWeight: FontWeight.w800,
             ),
           ),
           const SizedBox(height: 10),
           for (var i = 0; i < nearbyStays.length; i++) ...[
-            _buildNearbyStayCard(context, nearbyStays[i]),
+            _buildNearbyStayCard(context, nearbyStays[i], palette),
             if (i != nearbyStays.length - 1) const SizedBox(height: 8),
           ],
         ],
@@ -783,15 +803,19 @@ class EventDetailPage extends StatelessWidget {
     );
   }
 
-  Widget _buildNearbyStayCard(BuildContext context, HotelStay stay) {
+  Widget _buildNearbyStayCard(
+    BuildContext context,
+    HotelStay stay,
+    CustomerThemePalette palette,
+  ) {
     final price = _stayPriceLabel(stay);
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.fromLTRB(10, 9, 10, 9),
       decoration: BoxDecoration(
-        color: const Color(0xFF151515),
+        color: palette.surfaceAlt,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: _gold.withOpacity(0.22)),
+        border: Border.all(color: palette.border.withOpacity(0.75)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -800,8 +824,8 @@ class EventDetailPage extends StatelessWidget {
             stay.name,
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              color: Colors.white,
+            style: TextStyle(
+              color: palette.textPrimary,
               fontSize: 13.5,
               fontWeight: FontWeight.w700,
             ),
@@ -812,7 +836,7 @@ class EventDetailPage extends StatelessWidget {
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: TextStyle(
-              color: _gold.withOpacity(0.94),
+              color: palette.gold.withOpacity(0.94),
               fontSize: 11.4,
               fontWeight: FontWeight.w700,
             ),
@@ -822,8 +846,8 @@ class EventDetailPage extends StatelessWidget {
             '${stay.city}, ${stay.region}, ${stay.country}',
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              color: _softText,
+            style: TextStyle(
+              color: palette.textMuted,
               fontSize: 11.6,
               fontWeight: FontWeight.w600,
             ),
@@ -833,7 +857,7 @@ class EventDetailPage extends StatelessWidget {
             Text(
               '★ ${stay.rating!.toStringAsFixed(1)}',
               style: TextStyle(
-                color: _gold.withOpacity(0.92),
+                color: palette.gold.withOpacity(0.92),
                 fontSize: 11.2,
                 fontWeight: FontWeight.w700,
               ),
@@ -844,7 +868,7 @@ class EventDetailPage extends StatelessWidget {
             Text(
               price,
               style: TextStyle(
-                color: _softText.withOpacity(0.9),
+                color: palette.textMuted.withOpacity(0.9),
                 fontSize: 11.2,
                 fontWeight: FontWeight.w600,
               ),
@@ -857,9 +881,11 @@ class EventDetailPage extends StatelessWidget {
                 child: OutlinedButton.icon(
                   onPressed: () => _openStayUrl(context, stay),
                   style: OutlinedButton.styleFrom(
-                    backgroundColor: const Color(0xFF121212),
-                    foregroundColor: Colors.white.withOpacity(0.93),
-                    side: BorderSide(color: _gold.withOpacity(0.32)),
+                    backgroundColor: palette.surface.withOpacity(
+                      palette.isDark ? 0.98 : 0.95,
+                    ),
+                    foregroundColor: palette.textPrimary.withOpacity(0.95),
+                    side: BorderSide(color: palette.border.withOpacity(0.8)),
                     minimumSize: const Size.fromHeight(40),
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(10),
@@ -868,7 +894,7 @@ class EventDetailPage extends StatelessWidget {
                   icon: Icon(
                     Icons.open_in_new_rounded,
                     size: 16,
-                    color: _gold.withOpacity(0.92),
+                    color: palette.gold.withOpacity(0.92),
                   ),
                   label: Text(
                     _t(
@@ -886,9 +912,11 @@ class EventDetailPage extends StatelessWidget {
                 child: OutlinedButton.icon(
                   onPressed: () => _onStayTaxiTap(context, stay),
                   style: OutlinedButton.styleFrom(
-                    backgroundColor: const Color(0xFF121212),
-                    foregroundColor: Colors.white.withOpacity(0.93),
-                    side: BorderSide(color: _gold.withOpacity(0.32)),
+                    backgroundColor: palette.surface.withOpacity(
+                      palette.isDark ? 0.98 : 0.95,
+                    ),
+                    foregroundColor: palette.textPrimary.withOpacity(0.95),
+                    side: BorderSide(color: palette.border.withOpacity(0.8)),
                     minimumSize: const Size.fromHeight(40),
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(10),
@@ -897,7 +925,7 @@ class EventDetailPage extends StatelessWidget {
                   icon: Icon(
                     Icons.local_taxi_rounded,
                     size: 16,
-                    color: _gold.withOpacity(0.92),
+                    color: palette.gold.withOpacity(0.92),
                   ),
                   label: Text(
                     _t(
@@ -917,34 +945,41 @@ class EventDetailPage extends StatelessWidget {
     );
   }
 
-  Widget _buildCtaArea(BuildContext context) {
+  Widget _buildCtaArea(BuildContext context, CustomerThemePalette palette) {
     return _EventDetailActionPanel(
       event: event,
       onBookEvent: onBookEvent,
-      panelBlack: _panelBlack,
-      gold: _gold,
+      palette: palette,
       t: _t,
     );
   }
 
-  Widget _buildMetaRow(IconData icon, String value) {
+  Widget _buildMetaRow(
+    IconData icon,
+    String value,
+    CustomerThemePalette palette,
+  ) {
     return Row(
       children: [
-        Icon(icon, size: 15, color: _gold.withOpacity(0.95)),
+        Icon(icon, size: 15, color: palette.gold.withOpacity(0.95)),
         const SizedBox(width: 6),
         Expanded(
           child: Text(
             value,
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(color: _softText, fontSize: 12.8),
+            style: TextStyle(color: palette.textMuted, fontSize: 12.8),
           ),
         ),
       ],
     );
   }
 
-  Widget _buildInfoRow(String label, String value) {
+  Widget _buildInfoRow(
+    String label,
+    String value,
+    CustomerThemePalette palette,
+  ) {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -952,7 +987,10 @@ class EventDetailPage extends StatelessWidget {
           width: 7,
           height: 7,
           margin: const EdgeInsets.only(top: 5),
-          decoration: const BoxDecoration(color: _gold, shape: BoxShape.circle),
+          decoration: BoxDecoration(
+            color: palette.gold,
+            shape: BoxShape.circle,
+          ),
         ),
         const SizedBox(width: 8),
         Expanded(
@@ -961,8 +999,8 @@ class EventDetailPage extends StatelessWidget {
             children: [
               Text(
                 label,
-                style: const TextStyle(
-                  color: Colors.white,
+                style: TextStyle(
+                  color: palette.textPrimary,
                   fontSize: 12.2,
                   fontWeight: FontWeight.w700,
                 ),
@@ -970,8 +1008,8 @@ class EventDetailPage extends StatelessWidget {
               const SizedBox(height: 3),
               Text(
                 value,
-                style: const TextStyle(
-                  color: _softText,
+                style: TextStyle(
+                  color: palette.textMuted,
                   fontSize: 12.2,
                   height: 1.35,
                 ),
@@ -983,23 +1021,27 @@ class EventDetailPage extends StatelessWidget {
     );
   }
 
-  Widget _buildChip({required String label, required IconData icon}) {
+  Widget _buildChip({
+    required CustomerThemePalette palette,
+    required String label,
+    required IconData icon,
+  }) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
       decoration: BoxDecoration(
-        color: Colors.black.withOpacity(0.42),
+        color: palette.surface.withOpacity(palette.isDark ? 0.42 : 0.72),
         borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: _gold.withOpacity(0.5)),
+        border: Border.all(color: palette.gold.withOpacity(0.5)),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, color: _gold, size: 12),
+          Icon(icon, color: palette.gold, size: 12),
           const SizedBox(width: 4),
           Text(
             label,
-            style: const TextStyle(
-              color: _gold,
+            style: TextStyle(
+              color: palette.gold,
               fontSize: 10.8,
               fontWeight: FontWeight.w700,
             ),
@@ -1029,15 +1071,13 @@ class _EventDetailActionPanel extends StatefulWidget {
   const _EventDetailActionPanel({
     required this.event,
     required this.onBookEvent,
-    required this.panelBlack,
-    required this.gold,
+    required this.palette,
     required this.t,
   });
 
   final EventDetailData event;
   final EventBookCallback? onBookEvent;
-  final Color panelBlack;
-  final Color gold;
+  final CustomerThemePalette palette;
   final String Function({
     required String nl,
     required String en,
@@ -1152,9 +1192,9 @@ class _EventDetailActionPanelState extends State<_EventDetailActionPanel> {
     return Container(
       padding: const EdgeInsets.fromLTRB(15, 15, 15, 16),
       decoration: BoxDecoration(
-        color: widget.panelBlack,
+        color: widget.palette.surface,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: widget.gold.withOpacity(0.3)),
+        border: Border.all(color: widget.palette.border.withOpacity(0.82)),
       ),
       child: Column(
         children: [
@@ -1163,7 +1203,7 @@ class _EventDetailActionPanelState extends State<_EventDetailActionPanel> {
             child: ElevatedButton.icon(
               onPressed: _onBookPressed,
               style: ElevatedButton.styleFrom(
-                backgroundColor: widget.gold,
+                backgroundColor: widget.palette.gold,
                 foregroundColor: Colors.black,
                 elevation: 0,
                 minimumSize: const Size.fromHeight(54),
@@ -1189,9 +1229,15 @@ class _EventDetailActionPanelState extends State<_EventDetailActionPanel> {
             child: OutlinedButton.icon(
               onPressed: _onSavePressed,
               style: OutlinedButton.styleFrom(
-                backgroundColor: const Color(0xFF171209),
-                foregroundColor: widget.gold,
-                side: BorderSide(color: widget.gold.withOpacity(0.6)),
+                backgroundColor: widget.palette.surfaceAlt.withOpacity(
+                  widget.palette.isDark ? 0.9 : 0.96,
+                ),
+                foregroundColor: widget.palette.gold,
+                side: BorderSide(
+                  color: widget.palette.border.withOpacity(
+                    widget.palette.isDark ? 0.9 : 0.95,
+                  ),
+                ),
                 minimumSize: const Size.fromHeight(48),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(12),
@@ -1227,9 +1273,15 @@ class _EventDetailActionPanelState extends State<_EventDetailActionPanel> {
             child: OutlinedButton.icon(
               onPressed: _onOpenTicketsPressed,
               style: OutlinedButton.styleFrom(
-                backgroundColor: const Color(0xFF171209),
-                foregroundColor: widget.gold,
-                side: BorderSide(color: widget.gold.withOpacity(0.6)),
+                backgroundColor: widget.palette.surfaceAlt.withOpacity(
+                  widget.palette.isDark ? 0.9 : 0.96,
+                ),
+                foregroundColor: widget.palette.gold,
+                side: BorderSide(
+                  color: widget.palette.border.withOpacity(
+                    widget.palette.isDark ? 0.9 : 0.95,
+                  ),
+                ),
                 minimumSize: const Size.fromHeight(48),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(12),
