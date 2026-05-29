@@ -67,12 +67,25 @@ class _CustomerThemePageState extends State<CustomerThemePage> {
   Widget _themeCard({
     required CustomerThemeVariant variant,
     required CustomerThemeVariant current,
-    required CustomerThemePalette pagePalette,
     required String title,
     required String description,
   }) {
-    final preview = paletteForCustomerTheme(variant);
+    final previewPalette = paletteForCustomerTheme(variant);
     final selected = current == variant;
+    final cardBorderColor = selected
+        ? previewPalette.gold.withOpacity(previewPalette.isDark ? 0.86 : 0.95)
+        : previewPalette.border.withOpacity(
+            previewPalette.isDark ? 0.92 : 0.98,
+          );
+    final badgeBackground = previewPalette.isDark
+        ? previewPalette.gold.withOpacity(0.24)
+        : previewPalette.gold.withOpacity(0.16);
+    final badgeBorder = previewPalette.gold.withOpacity(
+      previewPalette.isDark ? 0.58 : 0.48,
+    );
+    final badgeText = previewPalette.isDark
+        ? previewPalette.gold
+        : previewPalette.bronze;
     return Material(
       color: Colors.transparent,
       child: InkWell(
@@ -81,18 +94,25 @@ class _CustomerThemePageState extends State<CustomerThemePage> {
         child: Ink(
           padding: const EdgeInsets.all(14),
           decoration: BoxDecoration(
-            color: pagePalette.surface,
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: <Color>[
+                previewPalette.surface,
+                previewPalette.surfaceAlt.withOpacity(
+                  previewPalette.isDark ? 0.95 : 0.88,
+                ),
+              ],
+            ),
             borderRadius: BorderRadius.circular(18),
             border: Border.all(
-              color: selected
-                  ? pagePalette.gold.withOpacity(0.9)
-                  : pagePalette.border.withOpacity(0.9),
+              color: cardBorderColor,
               width: selected ? 1.35 : 1.0,
             ),
             boxShadow: [
               BoxShadow(
-                color: pagePalette.shadow.withOpacity(
-                  pagePalette.isDark ? 0.5 : 0.25,
+                color: previewPalette.shadow.withOpacity(
+                  previewPalette.isDark ? 0.45 : 0.22,
                 ),
                 blurRadius: 14,
                 offset: const Offset(0, 6),
@@ -108,7 +128,7 @@ class _CustomerThemePageState extends State<CustomerThemePage> {
                     child: Text(
                       title,
                       style: TextStyle(
-                        color: pagePalette.textPrimary,
+                        color: previewPalette.textPrimary,
                         fontSize: 16,
                         fontWeight: FontWeight.w800,
                       ),
@@ -121,22 +141,14 @@ class _CustomerThemePageState extends State<CustomerThemePage> {
                         vertical: 4,
                       ),
                       decoration: BoxDecoration(
-                        color: pagePalette.gold.withOpacity(
-                          pagePalette.isDark ? 0.22 : 0.16,
-                        ),
+                        color: badgeBackground,
                         borderRadius: BorderRadius.circular(999),
-                        border: Border.all(
-                          color: pagePalette.gold.withOpacity(0.55),
-                        ),
+                        border: Border.all(color: badgeBorder),
                       ),
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          Icon(
-                            Icons.check_rounded,
-                            size: 14,
-                            color: pagePalette.gold,
-                          ),
+                          Icon(Icons.check_rounded, size: 14, color: badgeText),
                           const SizedBox(width: 4),
                           Text(
                             _t(
@@ -146,7 +158,7 @@ class _CustomerThemePageState extends State<CustomerThemePage> {
                               es: 'Activo',
                             ),
                             style: TextStyle(
-                              color: pagePalette.gold,
+                              color: badgeText,
                               fontSize: 11.1,
                               fontWeight: FontWeight.w800,
                             ),
@@ -160,7 +172,7 @@ class _CustomerThemePageState extends State<CustomerThemePage> {
               Text(
                 description,
                 style: TextStyle(
-                  color: pagePalette.textMuted,
+                  color: previewPalette.textMuted,
                   fontSize: 12.8,
                   height: 1.3,
                 ),
@@ -169,20 +181,29 @@ class _CustomerThemePageState extends State<CustomerThemePage> {
               Row(
                 children: [
                   _paletteDot(
-                    preview.background,
-                    darkBackground: preview.isDark,
+                    previewPalette.background,
+                    darkBackground: previewPalette.isDark,
                   ),
-                  const SizedBox(width: 8),
-                  _paletteDot(preview.surface, darkBackground: preview.isDark),
                   const SizedBox(width: 8),
                   _paletteDot(
-                    preview.textPrimary,
-                    darkBackground: preview.isDark,
+                    previewPalette.surface,
+                    darkBackground: previewPalette.isDark,
                   ),
                   const SizedBox(width: 8),
-                  _paletteDot(preview.gold, darkBackground: preview.isDark),
+                  _paletteDot(
+                    previewPalette.textPrimary,
+                    darkBackground: previewPalette.isDark,
+                  ),
                   const SizedBox(width: 8),
-                  _paletteDot(preview.bronze, darkBackground: preview.isDark),
+                  _paletteDot(
+                    previewPalette.gold,
+                    darkBackground: previewPalette.isDark,
+                  ),
+                  const SizedBox(width: 8),
+                  _paletteDot(
+                    previewPalette.bronze,
+                    darkBackground: previewPalette.isDark,
+                  ),
                 ],
               ),
             ],
@@ -196,8 +217,10 @@ class _CustomerThemePageState extends State<CustomerThemePage> {
   Widget build(BuildContext context) {
     return ValueListenableBuilder<CustomerThemeVariant>(
       valueListenable: customerThemeNotifier,
-      builder: (context, variant, _) {
-        final palette = paletteForCustomerTheme(variant);
+      builder: (context, currentVariant, _) {
+        final palette = paletteForCustomerTheme(currentVariant);
+        final variants = CustomerThemeVariant.values;
+        final locale = currentLanguageCode.toLowerCase();
         return Scaffold(
           backgroundColor: palette.background,
           appBar: AppBar(
@@ -210,41 +233,19 @@ class _CustomerThemePageState extends State<CustomerThemePage> {
             child: ListView(
               padding: const EdgeInsets.fromLTRB(14, 10, 14, 18),
               children: [
-                _themeCard(
-                  variant: CustomerThemeVariant.premiumLight,
-                  current: variant,
-                  pagePalette: palette,
-                  title: _t(
-                    nl: 'Premium licht',
-                    en: 'Premium light',
-                    fr: 'Premium clair',
-                    es: 'Premium claro',
+                for (var i = 0; i < variants.length; i++) ...[
+                  _themeCard(
+                    variant: variants[i],
+                    current: currentVariant,
+                    title: customerThemeMetadata(
+                      variants[i],
+                    ).title.resolve(locale),
+                    description: customerThemeMetadata(
+                      variants[i],
+                    ).description.resolve(locale),
                   ),
-                  description: _t(
-                    nl: 'Licht, warm en premium.',
-                    en: 'Light, warm and premium.',
-                    fr: 'Clair, chaleureux et premium.',
-                    es: 'Claro, cálido y premium.',
-                  ),
-                ),
-                const SizedBox(height: 10),
-                _themeCard(
-                  variant: CustomerThemeVariant.nightGold,
-                  current: variant,
-                  pagePalette: palette,
-                  title: _t(
-                    nl: 'Nacht goud',
-                    en: 'Night gold',
-                    fr: 'Nuit dorée',
-                    es: 'Noche dorada',
-                  ),
-                  description: _t(
-                    nl: 'Donker met Fluxidi-goud.',
-                    en: 'Dark with Fluxidi gold.',
-                    fr: 'Sombre avec l’or Fluxidi.',
-                    es: 'Oscuro con oro Fluxidi.',
-                  ),
-                ),
+                  if (i < variants.length - 1) const SizedBox(height: 10),
+                ],
                 const SizedBox(height: 14),
                 Container(
                   padding: const EdgeInsets.all(12),
