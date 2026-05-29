@@ -166,6 +166,7 @@ class _CustomerBookingLookupPageState extends State<CustomerBookingLookupPage> {
   Widget _field({
     required String label,
     required TextEditingController controller,
+    required CustomerThemePalette palette,
     String? Function(String?)? validator,
     TextInputType keyboardType = TextInputType.text,
     String? hintText,
@@ -175,34 +176,47 @@ class _CustomerBookingLookupPageState extends State<CustomerBookingLookupPage> {
       children: [
         Text(
           label,
-          style: const TextStyle(color: Colors.white70, fontSize: 12),
+          style: TextStyle(
+            color: palette.textMuted.withOpacity(0.92),
+            fontSize: 12,
+          ),
         ),
         const SizedBox(height: 6),
         TextFormField(
           controller: controller,
           validator: validator,
           keyboardType: keyboardType,
-          style: const TextStyle(color: Colors.white),
+          cursorColor: palette.gold,
+          style: TextStyle(color: palette.textPrimary),
           decoration: InputDecoration(
             hintText: hintText,
-            hintStyle: const TextStyle(color: Colors.white38),
+            hintStyle: TextStyle(
+              color: palette.textMuted.withOpacity(palette.isDark ? 0.74 : 0.9),
+            ),
+            errorStyle: TextStyle(color: palette.danger.withOpacity(0.95)),
             filled: true,
-            fillColor: const Color(0xFF111317),
+            fillColor: palette.surfaceAlt,
             border: OutlineInputBorder(
               borderRadius: BorderRadius.circular(14),
-              borderSide: BorderSide.none,
+              borderSide: BorderSide(color: palette.border.withOpacity(0.75)),
             ),
             enabledBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(14),
               borderSide: BorderSide(
-                color: const Color(0xFFE5B641).withOpacity(0.18),
+                color: palette.border.withOpacity(palette.isDark ? 0.44 : 0.9),
               ),
             ),
             focusedBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(14),
-              borderSide: BorderSide(
-                color: const Color(0xFFE5B641).withOpacity(0.52),
-              ),
+              borderSide: BorderSide(color: palette.gold.withOpacity(0.72)),
+            ),
+            errorBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(14),
+              borderSide: BorderSide(color: palette.danger.withOpacity(0.74)),
+            ),
+            focusedErrorBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(14),
+              borderSide: BorderSide(color: palette.danger.withOpacity(0.92)),
             ),
           ),
         ),
@@ -212,132 +226,154 @@ class _CustomerBookingLookupPageState extends State<CustomerBookingLookupPage> {
 
   @override
   Widget build(BuildContext context) {
-    return ValueListenableBuilder<AppLanguage>(
-      valueListenable: appLanguageNotifier,
-      builder: (context, _, __) => Scaffold(
-        backgroundColor: const Color(0xFF0B1020),
-        appBar: AppBar(
-          backgroundColor: const Color(0xFF0B1020),
-          title: Text(
-            _t(
-              nl: 'Controleer of volg je boeking',
-              en: 'Check or follow your booking',
-              fr: 'Verifier ou suivre votre reservation',
-              es: 'Consulta o sigue tu reserva',
+    return ValueListenableBuilder<CustomerThemeVariant>(
+      valueListenable: customerThemeNotifier,
+      builder: (context, themeVariant, __) {
+        final palette = paletteForCustomerTheme(themeVariant);
+        return ValueListenableBuilder<AppLanguage>(
+          valueListenable: appLanguageNotifier,
+          builder: (context, _, __) => Scaffold(
+            backgroundColor: palette.background,
+            appBar: AppBar(
+              backgroundColor: palette.background,
+              foregroundColor: palette.textPrimary,
+              title: Text(
+                _t(
+                  nl: 'Controleer of volg je boeking',
+                  en: 'Check or follow your booking',
+                  fr: 'Verifier ou suivre votre reservation',
+                  es: 'Consulta o sigue tu reserva',
+                ),
+              ),
             ),
-          ),
-        ),
-        body: SafeArea(
-          child: Form(
-            key: _formKey,
-            child: ListView(
-              padding: const EdgeInsets.all(16),
-              children: [
-                Text(
-                  _t(
-                    nl: 'Vul je boekingsreferentie in om je boeking terug te vinden.',
-                    en: 'Enter your booking reference to look up your booking.',
-                    fr: 'Entrez votre reference pour retrouver la reservation.',
-                    es: 'Introduce tu referencia para encontrar tu reserva.',
-                  ),
-                  style: TextStyle(color: Colors.white.withOpacity(0.78)),
-                ),
-                const SizedBox(height: 14),
-                _field(
-                  label: _t(
-                    nl: 'Boekingsreferentie',
-                    en: 'Booking reference',
-                    fr: 'Reference de reservation',
-                    es: 'Referencia de reserva',
-                  ),
-                  controller: _bookingIdCtrl,
-                  hintText: 'bv. 2026-04-538473',
-                  validator: (v) {
-                    final s = (v ?? '').trim();
-                    if (s.isEmpty) {
-                      return _t(
-                        nl: 'Voer je boekingsreferentie in',
-                        en: 'Enter your booking reference',
-                        fr: 'Entrez votre reference',
-                        es: 'Introduce tu referencia',
-                      );
-                    }
-                    if (s.length < 4) {
-                      return _t(
-                        nl: 'Referentie lijkt te kort',
-                        en: 'Reference looks too short',
-                        fr: 'Reference trop courte',
-                        es: 'La referencia es muy corta',
-                      );
-                    }
-                    return null;
-                  },
-                ),
-                const SizedBox(height: 12),
-                _field(
-                  label: _t(
-                    nl: 'E-mail of telefoon (optioneel)',
-                    en: 'Email or phone (optional)',
-                    fr: 'E-mail ou telephone (optionnel)',
-                    es: 'Email o telefono (opcional)',
-                  ),
-                  controller: _contactCtrl,
-                  hintText: _t(
-                    nl: 'Extra controle op je gegevens',
-                    en: 'Extra check against your details',
-                    fr: 'Verification supplementaire',
-                    es: 'Verificacion adicional',
-                  ),
-                  keyboardType: TextInputType.emailAddress,
-                ),
-                if (_error != null) ...[
-                  const SizedBox(height: 12),
-                  Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: Colors.red.withOpacity(0.12),
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: Colors.red.withOpacity(0.4)),
+            body: SafeArea(
+              child: Form(
+                key: _formKey,
+                child: ListView(
+                  padding: const EdgeInsets.all(16),
+                  children: [
+                    Text(
+                      _t(
+                        nl: 'Vul je boekingsreferentie in om je boeking terug te vinden.',
+                        en: 'Enter your booking reference to look up your booking.',
+                        fr: 'Entrez votre reference pour retrouver la reservation.',
+                        es: 'Introduce tu referencia para encontrar tu reserva.',
+                      ),
+                      style: TextStyle(
+                        color: palette.textMuted.withOpacity(0.94),
+                      ),
                     ),
-                    child: Text(
-                      _error!,
-                      style: const TextStyle(color: Color(0xFFFFB4B4)),
+                    const SizedBox(height: 14),
+                    _field(
+                      label: _t(
+                        nl: 'Boekingsreferentie',
+                        en: 'Booking reference',
+                        fr: 'Reference de reservation',
+                        es: 'Referencia de reserva',
+                      ),
+                      controller: _bookingIdCtrl,
+                      palette: palette,
+                      hintText: 'bv. 2026-04-538473',
+                      validator: (v) {
+                        final s = (v ?? '').trim();
+                        if (s.isEmpty) {
+                          return _t(
+                            nl: 'Voer je boekingsreferentie in',
+                            en: 'Enter your booking reference',
+                            fr: 'Entrez votre reference',
+                            es: 'Introduce tu referencia',
+                          );
+                        }
+                        if (s.length < 4) {
+                          return _t(
+                            nl: 'Referentie lijkt te kort',
+                            en: 'Reference looks too short',
+                            fr: 'Reference trop courte',
+                            es: 'La referencia es muy corta',
+                          );
+                        }
+                        return null;
+                      },
                     ),
-                  ),
-                ],
-                const SizedBox(height: 16),
-                ElevatedButton.icon(
-                  onPressed: _busy ? null : _submit,
-                  icon: const Icon(Icons.search),
-                  label: Text(
-                    _busy
-                        ? _t(
-                            nl: 'Zoeken...',
-                            en: 'Searching...',
-                            fr: 'Recherche...',
-                            es: 'Buscando...',
-                          )
-                        : _t(
-                            nl: 'Zoek mijn boeking',
-                            en: 'Find my booking',
-                            fr: 'Trouver ma reservation',
-                            es: 'Buscar mi reserva',
+                    const SizedBox(height: 12),
+                    _field(
+                      label: _t(
+                        nl: 'E-mail of telefoon (optioneel)',
+                        en: 'Email or phone (optional)',
+                        fr: 'E-mail ou telephone (optionnel)',
+                        es: 'Email o telefono (opcional)',
+                      ),
+                      controller: _contactCtrl,
+                      palette: palette,
+                      hintText: _t(
+                        nl: 'Extra controle op je gegevens',
+                        en: 'Extra check against your details',
+                        fr: 'Verification supplementaire',
+                        es: 'Verificacion adicional',
+                      ),
+                      keyboardType: TextInputType.emailAddress,
+                    ),
+                    if (_error != null) ...[
+                      const SizedBox(height: 12),
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: palette.danger.withOpacity(0.12),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                            color: palette.danger.withOpacity(0.42),
                           ),
-                  ),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFFE5B641),
-                    foregroundColor: Colors.black,
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14),
+                        ),
+                        child: Text(
+                          _error!,
+                          style: TextStyle(
+                            color: palette.danger.withOpacity(0.95),
+                          ),
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 16),
+                    ElevatedButton.icon(
+                      onPressed: _busy ? null : _submit,
+                      icon: const Icon(Icons.search),
+                      label: Text(
+                        _busy
+                            ? _t(
+                                nl: 'Zoeken...',
+                                en: 'Searching...',
+                                fr: 'Recherche...',
+                                es: 'Buscando...',
+                              )
+                            : _t(
+                                nl: 'Zoek mijn boeking',
+                                en: 'Find my booking',
+                                fr: 'Trouver ma reservation',
+                                es: 'Buscar mi reserva',
+                              ),
+                      ),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: palette.gold,
+                        foregroundColor: Colors.black,
+                        elevation: palette.isDark ? 2 : 0.5,
+                        shadowColor: palette.shadow,
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                        side: BorderSide(
+                          color: palette.border.withOpacity(
+                            palette.isDark ? 0.36 : 0.72,
+                          ),
+                        ),
+                      ),
                     ),
-                  ),
+                  ],
                 ),
-              ],
+              ),
             ),
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 }
