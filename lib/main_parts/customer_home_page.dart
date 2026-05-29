@@ -894,7 +894,9 @@ class CustomerHomePage extends StatelessWidget {
               return;
             }
             if (i == 4) {
-              _comingSoon(context);
+              Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const CustomerThemePage()),
+              );
               return;
             }
           },
