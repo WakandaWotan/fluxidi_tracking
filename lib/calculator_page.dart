@@ -20,6 +20,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
+import 'package:fluxidi_tracking/customer_theme_palette.dart';
+import 'package:fluxidi_tracking/customer_theme_store.dart';
 import 'package:fluxidi_tracking/customer_bookings_store.dart';
 import 'package:fluxidi_tracking/customer_profile_store.dart';
 import 'package:fluxidi_tracking/customer_session_store.dart';
@@ -406,9 +408,22 @@ class _CalculatorPageState extends State<CalculatorPage> {
     }
   }
 
-  Color get _calcScaffoldColor => appConfig.branding.calculatorScaffoldColor;
-  Color get _calcPanelColor => appConfig.branding.calculatorPanelColor;
-  Color get _calcDropdownColor => appConfig.branding.calculatorDropdownColor;
+  CustomerThemePalette get _themePalette =>
+      paletteForCustomerTheme(customerThemeNotifier.value);
+  bool get _isDarkTheme => _themePalette.isDark;
+  Color get _calcScaffoldColor => _themePalette.background;
+  Color get _calcPanelColor => _themePalette.surface;
+  Color get _calcPanelAltColor => _themePalette.surfaceAlt;
+  Color get _calcDropdownColor => _themePalette.surfaceAlt;
+  Color get _calcTextPrimary => _themePalette.textPrimary;
+  Color get _calcTextMuted => _themePalette.textMuted;
+  Color get _calcAccent => _themePalette.gold;
+  Color get _calcBorder => _themePalette.border;
+  Color get _calcShadow => _themePalette.shadow;
+  Color get _calcDanger => _themePalette.danger;
+  Color get _calcSuccess => _themePalette.success;
+  Color get _calcAccentOnColor =>
+      _isDarkTheme ? Colors.black : const Color(0xFF1F1706);
   List<AppOption> get _services => appConfig.enabledServices;
   List<AppOption> get _tiers => appConfig.enabledTiers;
   List<AppOption> get _extras => appConfig.enabledExtraOptions;
@@ -681,7 +696,7 @@ class _CalculatorPageState extends State<CalculatorPage> {
   }) {
     return Row(
       children: [
-        Icon(icon, color: const Color(0xFFE5B641), size: 19),
+        Icon(icon, color: _calcAccent, size: 19),
         const SizedBox(width: 10),
         Expanded(
           child: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
@@ -941,9 +956,7 @@ class _CalculatorPageState extends State<CalculatorPage> {
     if (quote == null) return;
     final availability = _quoteAvailabilityValue(quote);
     if (availability == false) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(_availabilityUnavailableMessageForQuote(quote))),
-      );
+      _showThemedSnackBar(_availabilityUnavailableMessageForQuote(quote));
       return;
     }
     final dt =
@@ -977,6 +990,7 @@ class _CalculatorPageState extends State<CalculatorPage> {
   @override
   void initState() {
     super.initState();
+    customerThemeNotifier.addListener(_onThemeChanged);
     appLanguageNotifier.addListener(_onLanguageChanged);
     businessSettingsNotifier.addListener(_onBusinessSettingsChanged);
     localBackendTaxProfileNotifier.addListener(_onVatProfileChanged);
@@ -1021,6 +1035,11 @@ class _CalculatorPageState extends State<CalculatorPage> {
     setState(() {});
   }
 
+  void _onThemeChanged() {
+    if (!mounted) return;
+    setState(() {});
+  }
+
   void _onBusinessSettingsChanged() {
     if (!mounted) return;
     if (!_returnFeatureEnabled && _returnTrip) {
@@ -1037,6 +1056,7 @@ class _CalculatorPageState extends State<CalculatorPage> {
 
   @override
   void dispose() {
+    customerThemeNotifier.removeListener(_onThemeChanged);
     appLanguageNotifier.removeListener(_onLanguageChanged);
     businessSettingsNotifier.removeListener(_onBusinessSettingsChanged);
     localBackendTaxProfileNotifier.removeListener(_onVatProfileChanged);
@@ -1175,9 +1195,18 @@ class _CalculatorPageState extends State<CalculatorPage> {
   }
 
   // ---------- UI helpers ----------
-  void _toast(String msg) {
+  void _showThemedSnackBar(String msg) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        backgroundColor: _calcPanelAltColor,
+        content: Text(msg, style: TextStyle(color: _calcTextPrimary)),
+      ),
+    );
+  }
+
+  void _toast(String msg) {
+    _showThemedSnackBar(msg);
   }
 
   Widget _zoneCard({
@@ -1190,15 +1219,17 @@ class _CalculatorPageState extends State<CalculatorPage> {
       decoration: BoxDecoration(
         color: color ?? _calcPanelColor.withOpacity(0.94),
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: Colors.white.withOpacity(0.08)),
+        border: Border.all(
+          color: _calcBorder.withOpacity(_isDarkTheme ? 0.45 : 1),
+        ),
         boxShadow: [
           BoxShadow(
-            color: const Color(0xFFE5B641).withOpacity(0.08),
+            color: _calcAccent.withOpacity(_isDarkTheme ? 0.08 : 0.05),
             blurRadius: 18,
             spreadRadius: 1,
           ),
           BoxShadow(
-            color: Colors.black.withOpacity(0.35),
+            color: _calcShadow.withOpacity(_isDarkTheme ? 0.55 : 0.16),
             blurRadius: 20,
             offset: const Offset(0, 10),
           ),
@@ -1216,24 +1247,28 @@ class _CalculatorPageState extends State<CalculatorPage> {
     return Container(
       margin: const EdgeInsets.only(top: 6),
       decoration: BoxDecoration(
-        color: _calcPanelColor,
-        border: Border.all(color: Colors.white12),
+        color: _calcPanelAltColor,
+        border: Border.all(
+          color: _calcBorder.withOpacity(_isDarkTheme ? 0.45 : 1),
+        ),
         borderRadius: BorderRadius.circular(14),
       ),
       child: ListView.separated(
         shrinkWrap: true,
         physics: const NeverScrollableScrollPhysics(),
         itemCount: list.length,
-        separatorBuilder: (_, __) =>
-            const Divider(height: 1, color: Colors.white12),
+        separatorBuilder: (_, __) => Divider(
+          height: 1,
+          color: _calcBorder.withOpacity(_isDarkTheme ? 0.45 : 1),
+        ),
         itemBuilder: (context, i) {
           final s = list[i];
           return ListTile(
             dense: true,
-            title: Text(s.label, style: const TextStyle(color: Colors.white)),
+            title: Text(s.label, style: TextStyle(color: _calcTextPrimary)),
             subtitle: Text(
               _s.calculatorSuggestionTapHint.of(_lang),
-              style: const TextStyle(color: Colors.white54),
+              style: TextStyle(color: _calcTextMuted),
             ),
             onTap: () => onTap(s),
           );
@@ -1252,9 +1287,11 @@ class _CalculatorPageState extends State<CalculatorPage> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
-        color: _calcPanelColor.withOpacity(0.72),
+        color: _calcPanelAltColor.withOpacity(_isDarkTheme ? 0.72 : 0.9),
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: Colors.white.withOpacity(0.08)),
+        border: Border.all(
+          color: _calcBorder.withOpacity(_isDarkTheme ? 0.45 : 1),
+        ),
       ),
       child: Row(
         children: [
@@ -1264,8 +1301,8 @@ class _CalculatorPageState extends State<CalculatorPage> {
               children: [
                 Text(
                   label,
-                  style: const TextStyle(
-                    color: Colors.white,
+                  style: TextStyle(
+                    color: _calcTextPrimary,
                     fontSize: 13.5,
                     fontWeight: FontWeight.w700,
                   ),
@@ -1275,7 +1312,7 @@ class _CalculatorPageState extends State<CalculatorPage> {
                   Text(
                     hint,
                     style: TextStyle(
-                      color: Colors.white.withOpacity(0.6),
+                      color: _calcTextMuted.withOpacity(0.9),
                       fontSize: 11.5,
                     ),
                   ),
@@ -1285,25 +1322,19 @@ class _CalculatorPageState extends State<CalculatorPage> {
           ),
           IconButton(
             onPressed: onMinus,
-            icon: const Icon(
-              Icons.remove_circle_outline,
-              color: Color(0xFFE5B641),
-            ),
+            icon: Icon(Icons.remove_circle_outline, color: _calcAccent),
           ),
           Text(
             value,
-            style: const TextStyle(
-              color: Colors.white,
+            style: TextStyle(
+              color: _calcTextPrimary,
               fontSize: 17,
               fontWeight: FontWeight.w800,
             ),
           ),
           IconButton(
             onPressed: onPlus,
-            icon: const Icon(
-              Icons.add_circle_outline,
-              color: Color(0xFFE5B641),
-            ),
+            icon: Icon(Icons.add_circle_outline, color: _calcAccent),
           ),
         ],
       ),
@@ -1696,20 +1727,22 @@ class _CalculatorPageState extends State<CalculatorPage> {
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
           decoration: BoxDecoration(
-            color: Colors.black.withOpacity(0.28),
+            color: _calcPanelAltColor.withOpacity(_isDarkTheme ? 0.78 : 0.92),
             borderRadius: BorderRadius.circular(999),
-            border: Border.all(color: Colors.white.withOpacity(0.08)),
+            border: Border.all(
+              color: _calcBorder.withOpacity(_isDarkTheme ? 0.45 : 1),
+            ),
           ),
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(icon, size: 14, color: const Color(0xFFE5B641)),
+              Icon(icon, size: 14, color: _calcAccent),
               const SizedBox(width: 5),
               Flexible(
                 child: Text(
                   '$label $value',
-                  style: const TextStyle(
-                    color: Colors.white,
+                  style: TextStyle(
+                    color: _calcTextPrimary,
                     fontSize: 11.5,
                     fontWeight: FontWeight.w600,
                   ),
@@ -1728,10 +1761,12 @@ class _CalculatorPageState extends State<CalculatorPage> {
       decoration: BoxDecoration(
         color: _calcPanelColor.withOpacity(0.95),
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFFE5B641).withOpacity(0.35)),
+        border: Border.all(
+          color: _calcAccent.withOpacity(_isDarkTheme ? 0.35 : 0.5),
+        ),
         boxShadow: [
           BoxShadow(
-            color: const Color(0xFFE5B641).withOpacity(0.08),
+            color: _calcAccent.withOpacity(_isDarkTheme ? 0.08 : 0.05),
             blurRadius: 18,
             spreadRadius: 1,
           ),
@@ -1742,19 +1777,15 @@ class _CalculatorPageState extends State<CalculatorPage> {
         children: [
           Row(
             children: [
-              const Icon(
-                Icons.place_outlined,
-                size: 16,
-                color: Color(0xFFE5B641),
-              ),
+              Icon(Icons.place_outlined, size: 16, color: _calcAccent),
               const SizedBox(width: 6),
               Expanded(
                 child: Text(
                   _fromCtrl.text.trim().isEmpty
                       ? _s.calculatorFromLabel.of(_lang)
                       : _fromCtrl.text.trim(),
-                  style: const TextStyle(
-                    color: Colors.white,
+                  style: TextStyle(
+                    color: _calcTextPrimary,
                     fontSize: 12.5,
                     fontWeight: FontWeight.w600,
                   ),
@@ -1772,26 +1803,22 @@ class _CalculatorPageState extends State<CalculatorPage> {
                 Icon(
                   Icons.south_rounded,
                   size: 14,
-                  color: Colors.white.withOpacity(0.5),
+                  color: _calcTextMuted.withOpacity(0.8),
                 ),
               ],
             ),
           ),
           Row(
             children: [
-              const Icon(
-                Icons.flag_outlined,
-                size: 16,
-                color: Color(0xFFE5B641),
-              ),
+              Icon(Icons.flag_outlined, size: 16, color: _calcAccent),
               const SizedBox(width: 6),
               Expanded(
                 child: Text(
                   _toCtrl.text.trim().isEmpty
                       ? _s.calculatorToLabel.of(_lang)
                       : _toCtrl.text.trim(),
-                  style: const TextStyle(
-                    color: Colors.white,
+                  style: TextStyle(
+                    color: _calcTextPrimary,
                     fontSize: 12.5,
                     fontWeight: FontWeight.w600,
                   ),
@@ -1866,7 +1893,7 @@ class _CalculatorPageState extends State<CalculatorPage> {
             width: double.infinity,
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
             decoration: BoxDecoration(
-              color: Colors.black.withOpacity(0.25),
+              color: _calcPanelAltColor.withOpacity(_isDarkTheme ? 0.78 : 0.92),
               borderRadius: BorderRadius.circular(12),
             ),
             child: Row(
@@ -1874,18 +1901,15 @@ class _CalculatorPageState extends State<CalculatorPage> {
                 Expanded(
                   child: Text(
                     distanceLabel,
-                    style: const TextStyle(
-                      color: Colors.white70,
-                      fontSize: 11.5,
-                    ),
+                    style: TextStyle(color: _calcTextMuted, fontSize: 11.5),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
                 ),
                 Text(
                   '${fmtNum(showTotalMetrics ? totalDisplayDistance : distanceKm, decimals: 2)} ${appConfig.distanceUnitLabel}',
-                  style: const TextStyle(
-                    color: Colors.white,
+                  style: TextStyle(
+                    color: _calcTextPrimary,
                     fontSize: 12,
                     fontWeight: FontWeight.w700,
                   ),
@@ -1895,10 +1919,7 @@ class _CalculatorPageState extends State<CalculatorPage> {
                   child: Text(
                     durationLabel,
                     textAlign: TextAlign.right,
-                    style: const TextStyle(
-                      color: Colors.white70,
-                      fontSize: 11.5,
-                    ),
+                    style: TextStyle(color: _calcTextMuted, fontSize: 11.5),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
@@ -1906,8 +1927,8 @@ class _CalculatorPageState extends State<CalculatorPage> {
                 const SizedBox(width: 6),
                 Text(
                   '${fmtNum(showTotalMetrics ? totalDisplayDuration : durationMin, decimals: 0)} ${appConfig.durationUnitLabel}',
-                  style: const TextStyle(
-                    color: Colors.white,
+                  style: TextStyle(
+                    color: _calcTextPrimary,
                     fontSize: 12,
                     fontWeight: FontWeight.w700,
                   ),
@@ -1922,13 +1943,13 @@ class _CalculatorPageState extends State<CalculatorPage> {
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
               decoration: BoxDecoration(
                 color: availabilityIsAvailable
-                    ? const Color(0xFF133126)
-                    : const Color(0xFF3A1D22),
+                    ? _calcSuccess.withOpacity(_isDarkTheme ? 0.25 : 0.18)
+                    : _calcDanger.withOpacity(_isDarkTheme ? 0.25 : 0.18),
                 borderRadius: BorderRadius.circular(10),
                 border: Border.all(
                   color: availabilityIsAvailable
-                      ? const Color(0xFF2F8E62)
-                      : const Color(0xFFAA4E5F),
+                      ? _calcSuccess.withOpacity(0.8)
+                      : _calcDanger.withOpacity(0.8),
                 ),
               ),
               child: Row(
@@ -1939,18 +1960,14 @@ class _CalculatorPageState extends State<CalculatorPage> {
                         ? Icons.check_circle_outline
                         : Icons.warning_amber_rounded,
                     size: 16,
-                    color: availabilityIsAvailable
-                        ? const Color(0xFF86E0B8)
-                        : const Color(0xFFFFC9C9),
+                    color: availabilityIsAvailable ? _calcSuccess : _calcDanger,
                   ),
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
                       availabilityMessage,
                       style: TextStyle(
-                        color: availabilityIsAvailable
-                            ? const Color(0xFFD9FFE6)
-                            : const Color(0xFFFFE2E2),
+                        color: _calcTextPrimary,
                         fontSize: 11.8,
                         fontWeight: FontWeight.w600,
                       ),
@@ -1967,9 +1984,11 @@ class _CalculatorPageState extends State<CalculatorPage> {
             width: double.infinity,
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
             decoration: BoxDecoration(
-              color: Colors.black.withOpacity(0.35),
+              color: _calcPanelAltColor.withOpacity(_isDarkTheme ? 0.82 : 0.95),
               borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: Colors.white.withOpacity(0.08)),
+              border: Border.all(
+                color: _calcBorder.withOpacity(_isDarkTheme ? 0.45 : 1),
+              ),
             ),
             child: Row(
               children: [
@@ -1981,8 +2000,8 @@ class _CalculatorPageState extends State<CalculatorPage> {
                       fr: 'Prix total',
                       es: 'Precio total',
                     ),
-                    style: const TextStyle(
-                      color: Colors.white,
+                    style: TextStyle(
+                      color: _calcTextPrimary,
                       fontSize: 12.5,
                       fontWeight: FontWeight.w700,
                     ),
@@ -1990,8 +2009,8 @@ class _CalculatorPageState extends State<CalculatorPage> {
                 ),
                 Text(
                   '$_currencySymbol ${fmtNum(priceIncl)}',
-                  style: const TextStyle(
-                    color: Color(0xFFE5B641),
+                  style: TextStyle(
+                    color: _calcAccent,
                     fontSize: 26,
                     fontWeight: FontWeight.w900,
                   ),
@@ -2005,7 +2024,7 @@ class _CalculatorPageState extends State<CalculatorPage> {
               Icon(
                 Icons.verified_outlined,
                 size: 14,
-                color: Colors.white.withOpacity(0.70),
+                color: _calcTextMuted.withOpacity(0.9),
               ),
               const SizedBox(width: 6),
               Expanded(
@@ -2017,7 +2036,7 @@ class _CalculatorPageState extends State<CalculatorPage> {
                     es: 'IVA incluido  •  Sin costes ocultos',
                   ),
                   style: TextStyle(
-                    color: Colors.white.withOpacity(0.68),
+                    color: _calcTextMuted.withOpacity(0.88),
                     fontSize: 11.5,
                     fontWeight: FontWeight.w500,
                   ),
@@ -2039,8 +2058,8 @@ class _CalculatorPageState extends State<CalculatorPage> {
           Expanded(
             child: Text(
               k,
-              style: const TextStyle(
-                color: Colors.white70,
+              style: TextStyle(
+                color: _calcTextMuted,
                 fontSize: 12.5,
                 fontWeight: FontWeight.w500,
               ),
@@ -2055,8 +2074,8 @@ class _CalculatorPageState extends State<CalculatorPage> {
               textAlign: TextAlign.right,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: Colors.white,
+              style: TextStyle(
+                color: _calcTextPrimary,
                 fontSize: 12.5,
                 fontWeight: FontWeight.w700,
               ),
@@ -2069,27 +2088,25 @@ class _CalculatorPageState extends State<CalculatorPage> {
 
   @override
   Widget build(BuildContext context) {
-    const accent = Color(0xFFE5B641);
-
     return Scaffold(
       backgroundColor: _calcScaffoldColor,
       appBar: AppBar(
         backgroundColor: _calcScaffoldColor,
         title: Text(
           _s.calculatorTitle.of(_lang),
-          style: const TextStyle(
-            color: Colors.white,
+          style: TextStyle(
+            color: _calcTextPrimary,
             fontWeight: FontWeight.w700,
           ),
         ),
-        iconTheme: const IconThemeData(color: Colors.white),
+        iconTheme: IconThemeData(color: _calcTextPrimary),
         actions: [
           if (widget.onGoToStartPage != null)
             TextButton.icon(
               onPressed: widget.onGoToStartPage,
               icon: const Icon(Icons.home_outlined, size: 18),
               label: Text(_backToStartLabel()),
-              style: TextButton.styleFrom(foregroundColor: Colors.white),
+              style: TextButton.styleFrom(foregroundColor: _calcTextPrimary),
             ),
         ],
       ),
@@ -2109,13 +2126,15 @@ class _CalculatorPageState extends State<CalculatorPage> {
                         width: 34,
                         height: 34,
                         decoration: BoxDecoration(
-                          color: accent.withOpacity(0.18),
+                          color: _calcAccent.withOpacity(0.18),
                           shape: BoxShape.circle,
-                          border: Border.all(color: accent.withOpacity(0.45)),
+                          border: Border.all(
+                            color: _calcAccent.withOpacity(0.45),
+                          ),
                         ),
-                        child: const Icon(
+                        child: Icon(
                           Icons.local_taxi_outlined,
-                          color: accent,
+                          color: _calcAccent,
                           size: 19,
                         ),
                       ),
@@ -2123,8 +2142,8 @@ class _CalculatorPageState extends State<CalculatorPage> {
                       Expanded(
                         child: Text(
                           _s.calculatorTitle.of(_lang),
-                          style: const TextStyle(
-                            color: Colors.white,
+                          style: TextStyle(
+                            color: _calcTextPrimary,
                             fontSize: 20,
                             fontWeight: FontWeight.w800,
                           ),
@@ -2136,7 +2155,7 @@ class _CalculatorPageState extends State<CalculatorPage> {
                   Text(
                     _s.calculatorMenuSubtitle.of(_lang),
                     style: TextStyle(
-                      color: Colors.white.withOpacity(0.72),
+                      color: _calcTextMuted.withOpacity(0.9),
                       fontSize: 13,
                     ),
                   ),
@@ -2152,16 +2171,20 @@ class _CalculatorPageState extends State<CalculatorPage> {
                   vertical: 10,
                 ),
                 decoration: BoxDecoration(
-                  color: Colors.black.withOpacity(0.34),
+                  color: _calcPanelAltColor.withOpacity(
+                    _isDarkTheme ? 0.76 : 0.9,
+                  ),
                   borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: accent.withOpacity(0.34)),
+                  border: Border.all(
+                    color: _calcBorder.withOpacity(_isDarkTheme ? 0.45 : 1),
+                  ),
                 ),
                 child: Row(
                   children: [
                     Icon(
                       Icons.storefront_outlined,
                       size: 15,
-                      color: accent.withOpacity(0.95),
+                      color: _calcAccent.withOpacity(0.95),
                     ),
                     const SizedBox(width: 7),
                     Expanded(
@@ -2175,7 +2198,7 @@ class _CalculatorPageState extends State<CalculatorPage> {
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
-                          color: accent.withOpacity(0.96),
+                          color: _calcAccent.withOpacity(0.96),
                           fontSize: 12.2,
                           fontWeight: FontWeight.w700,
                         ),
@@ -2192,12 +2215,12 @@ class _CalculatorPageState extends State<CalculatorPage> {
                 children: [
                   Row(
                     children: [
-                      const Icon(Icons.route_outlined, size: 18, color: accent),
+                      Icon(Icons.route_outlined, size: 18, color: _calcAccent),
                       const SizedBox(width: 8),
                       Text(
                         '${_s.calculatorFromLabel.of(_lang)}  ->  ${_s.calculatorToLabel.of(_lang)}',
-                        style: const TextStyle(
-                          color: Colors.white,
+                        style: TextStyle(
+                          color: _calcTextPrimary,
                           fontSize: 14,
                           fontWeight: FontWeight.w700,
                         ),
@@ -2207,17 +2230,22 @@ class _CalculatorPageState extends State<CalculatorPage> {
                   const SizedBox(height: 12),
                   Text(
                     _s.calculatorFromLabel.of(_lang),
-                    style: const TextStyle(color: Colors.white70, fontSize: 12),
+                    style: TextStyle(color: _calcTextMuted, fontSize: 12),
                   ),
                   const SizedBox(height: 6),
                   TextField(
                     controller: _fromCtrl,
-                    style: const TextStyle(color: Colors.white),
+                    style: TextStyle(color: _calcTextPrimary),
+                    cursorColor: _calcAccent,
                     decoration: InputDecoration(
                       filled: true,
-                      fillColor: _calcPanelColor.withOpacity(0.76),
+                      fillColor: _calcPanelAltColor.withOpacity(
+                        _isDarkTheme ? 0.76 : 0.92,
+                      ),
                       hintText: _s.calculatorAddressHint.of(_lang),
-                      hintStyle: const TextStyle(color: Colors.white38),
+                      hintStyle: TextStyle(
+                        color: _calcTextMuted.withOpacity(0.75),
+                      ),
                       contentPadding: const EdgeInsets.symmetric(
                         horizontal: 14,
                         vertical: 13,
@@ -2225,28 +2253,29 @@ class _CalculatorPageState extends State<CalculatorPage> {
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(14),
                         borderSide: BorderSide(
-                          color: Colors.white.withOpacity(0.08),
+                          color: _calcBorder.withOpacity(
+                            _isDarkTheme ? 0.45 : 1,
+                          ),
                         ),
                       ),
                       enabledBorder: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(14),
                         borderSide: BorderSide(
-                          color: Colors.white.withOpacity(0.08),
+                          color: _calcBorder.withOpacity(
+                            _isDarkTheme ? 0.45 : 1,
+                          ),
                         ),
                       ),
                       focusedBorder: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(14),
                         borderSide: BorderSide(
-                          color: accent.withOpacity(0.70),
+                          color: _calcAccent.withOpacity(0.7),
                           width: 1.1,
                         ),
                       ),
                       suffixIcon: IconButton(
                         onPressed: _setFromCurrentLocation,
-                        icon: const Icon(
-                          Icons.my_location,
-                          color: Colors.white70,
-                        ),
+                        icon: Icon(Icons.my_location, color: _calcTextMuted),
                         tooltip: _s.calculatorUseCurrentLocationTooltip.of(
                           _lang,
                         ),
@@ -2302,17 +2331,22 @@ class _CalculatorPageState extends State<CalculatorPage> {
                   const SizedBox(height: 12),
                   Text(
                     _s.calculatorToLabel.of(_lang),
-                    style: const TextStyle(color: Colors.white70, fontSize: 12),
+                    style: TextStyle(color: _calcTextMuted, fontSize: 12),
                   ),
                   const SizedBox(height: 6),
                   TextField(
                     controller: _toCtrl,
-                    style: const TextStyle(color: Colors.white),
+                    style: TextStyle(color: _calcTextPrimary),
+                    cursorColor: _calcAccent,
                     decoration: InputDecoration(
                       filled: true,
-                      fillColor: _calcPanelColor.withOpacity(0.76),
+                      fillColor: _calcPanelAltColor.withOpacity(
+                        _isDarkTheme ? 0.76 : 0.92,
+                      ),
                       hintText: _s.calculatorAddressHint.of(_lang),
-                      hintStyle: const TextStyle(color: Colors.white38),
+                      hintStyle: TextStyle(
+                        color: _calcTextMuted.withOpacity(0.75),
+                      ),
                       contentPadding: const EdgeInsets.symmetric(
                         horizontal: 14,
                         vertical: 13,
@@ -2320,19 +2354,23 @@ class _CalculatorPageState extends State<CalculatorPage> {
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(14),
                         borderSide: BorderSide(
-                          color: Colors.white.withOpacity(0.08),
+                          color: _calcBorder.withOpacity(
+                            _isDarkTheme ? 0.45 : 1,
+                          ),
                         ),
                       ),
                       enabledBorder: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(14),
                         borderSide: BorderSide(
-                          color: Colors.white.withOpacity(0.08),
+                          color: _calcBorder.withOpacity(
+                            _isDarkTheme ? 0.45 : 1,
+                          ),
                         ),
                       ),
                       focusedBorder: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(14),
                         borderSide: BorderSide(
-                          color: accent.withOpacity(0.70),
+                          color: _calcAccent.withOpacity(0.7),
                           width: 1.1,
                         ),
                       ),
@@ -2389,8 +2427,8 @@ class _CalculatorPageState extends State<CalculatorPage> {
                     const SizedBox(height: 8),
                     Text(
                       _addressSearchUnavailableMessage(),
-                      style: const TextStyle(
-                        color: Colors.white60,
+                      style: TextStyle(
+                        color: _calcTextMuted.withOpacity(0.85),
                         fontSize: 12,
                       ),
                     ),
@@ -2405,12 +2443,12 @@ class _CalculatorPageState extends State<CalculatorPage> {
                 children: [
                   Row(
                     children: [
-                      const Icon(Icons.tune_rounded, size: 18, color: accent),
+                      Icon(Icons.tune_rounded, size: 18, color: _calcAccent),
                       const SizedBox(width: 8),
                       Text(
                         _s.calculatorServiceLabel.of(_lang),
-                        style: const TextStyle(
-                          color: Colors.white,
+                        style: TextStyle(
+                          color: _calcTextPrimary,
                           fontSize: 14,
                           fontWeight: FontWeight.w700,
                         ),
@@ -2440,17 +2478,21 @@ class _CalculatorPageState extends State<CalculatorPage> {
                       vertical: 10,
                     ),
                     decoration: BoxDecoration(
-                      color: _calcPanelColor.withOpacity(0.72),
+                      color: _calcPanelAltColor.withOpacity(
+                        _isDarkTheme ? 0.72 : 0.9,
+                      ),
                       borderRadius: BorderRadius.circular(14),
-                      border: Border.all(color: Colors.white.withOpacity(0.08)),
+                      border: Border.all(
+                        color: _calcBorder.withOpacity(_isDarkTheme ? 0.45 : 1),
+                      ),
                     ),
                     child: Row(
                       children: [
                         Expanded(
                           child: Text(
                             _s.calculatorPickupTimeLabel.of(_lang),
-                            style: const TextStyle(
-                              color: Colors.white,
+                            style: TextStyle(
+                              color: _calcTextPrimary,
                               fontWeight: FontWeight.w700,
                             ),
                           ),
@@ -2464,8 +2506,8 @@ class _CalculatorPageState extends State<CalculatorPage> {
                                       '${_pickupDateTime!.year} '
                                       '${_pickupDateTime!.hour.toString().padLeft(2, '0')}:'
                                       '${_pickupDateTime!.minute.toString().padLeft(2, '0')}',
-                            style: const TextStyle(
-                              color: Colors.white70,
+                            style: TextStyle(
+                              color: _calcTextMuted,
                               fontSize: 12.5,
                             ),
                             textAlign: TextAlign.end,
@@ -2474,7 +2516,7 @@ class _CalculatorPageState extends State<CalculatorPage> {
                         const SizedBox(width: 6),
                         IconButton(
                           onPressed: _pickDateTime,
-                          icon: const Icon(Icons.schedule, color: accent),
+                          icon: Icon(Icons.schedule, color: _calcAccent),
                         ),
                       ],
                     ),
@@ -2549,8 +2591,8 @@ class _CalculatorPageState extends State<CalculatorPage> {
                           }),
                     title: Text(
                       _returnTripLabel(),
-                      style: const TextStyle(
-                        color: Colors.white,
+                      style: TextStyle(
+                        color: _calcTextPrimary,
                         fontWeight: FontWeight.w700,
                       ),
                     ),
@@ -2558,9 +2600,9 @@ class _CalculatorPageState extends State<CalculatorPage> {
                       _returnFeatureEnabled
                           ? _s.calculatorReturnSubtitle.of(_lang)
                           : _disabledReturnLabel(),
-                      style: const TextStyle(color: Colors.white54),
+                      style: TextStyle(color: _calcTextMuted),
                     ),
-                    activeColor: accent,
+                    activeColor: _calcAccent,
                   ),
                   if (_returnFeatureEnabled && _returnTrip) ...[
                     const SizedBox(height: 8),
@@ -2570,10 +2612,14 @@ class _CalculatorPageState extends State<CalculatorPage> {
                         vertical: 10,
                       ),
                       decoration: BoxDecoration(
-                        color: _calcPanelColor.withOpacity(0.72),
+                        color: _calcPanelAltColor.withOpacity(
+                          _isDarkTheme ? 0.72 : 0.9,
+                        ),
                         borderRadius: BorderRadius.circular(14),
                         border: Border.all(
-                          color: Colors.white.withOpacity(0.08),
+                          color: _calcBorder.withOpacity(
+                            _isDarkTheme ? 0.45 : 1,
+                          ),
                         ),
                       ),
                       child: Row(
@@ -2581,8 +2627,8 @@ class _CalculatorPageState extends State<CalculatorPage> {
                           Expanded(
                             child: Text(
                               '${_returnTripLabel()} ${_s.calculatorPickupTimeLabel.of(_lang)}',
-                              style: const TextStyle(
-                                color: Colors.white,
+                              style: TextStyle(
+                                color: _calcTextPrimary,
                                 fontWeight: FontWeight.w700,
                               ),
                             ),
@@ -2596,8 +2642,8 @@ class _CalculatorPageState extends State<CalculatorPage> {
                                         '${_returnPickupDateTime!.year} '
                                         '${_returnPickupDateTime!.hour.toString().padLeft(2, '0')}:'
                                         '${_returnPickupDateTime!.minute.toString().padLeft(2, '0')}',
-                              style: const TextStyle(
-                                color: Colors.white70,
+                              style: TextStyle(
+                                color: _calcTextMuted,
                                 fontSize: 12.5,
                               ),
                               textAlign: TextAlign.end,
@@ -2606,7 +2652,7 @@ class _CalculatorPageState extends State<CalculatorPage> {
                           const SizedBox(width: 6),
                           IconButton(
                             onPressed: _pickReturnDateTime,
-                            icon: const Icon(Icons.schedule, color: accent),
+                            icon: Icon(Icons.schedule, color: _calcAccent),
                           ),
                         ],
                       ),
@@ -2640,16 +2686,16 @@ class _CalculatorPageState extends State<CalculatorPage> {
                       padding: const EdgeInsets.symmetric(vertical: 14),
                       decoration: BoxDecoration(
                         borderRadius: BorderRadius.circular(14),
-                        border: Border.all(color: accent.withOpacity(0.5)),
+                        border: Border.all(color: _calcAccent.withOpacity(0.5)),
                         gradient: LinearGradient(
                           colors: [
-                            accent.withOpacity(0.95),
-                            const Color(0xFFB98722),
+                            _calcAccent.withOpacity(0.95),
+                            _themePalette.bronze.withOpacity(0.95),
                           ],
                         ),
                         boxShadow: [
                           BoxShadow(
-                            color: accent.withOpacity(0.18),
+                            color: _calcAccent.withOpacity(0.18),
                             blurRadius: 16,
                             spreadRadius: 1,
                           ),
@@ -2660,8 +2706,8 @@ class _CalculatorPageState extends State<CalculatorPage> {
                         _loading
                             ? _s.calculatorButtonBusyLabel.of(_lang)
                             : _s.calculatorButtonLabel.of(_lang),
-                        style: const TextStyle(
-                          color: Colors.black,
+                        style: TextStyle(
+                          color: _calcAccentOnColor,
                           fontSize: 15,
                           fontWeight: FontWeight.w900,
                         ),
@@ -2672,7 +2718,7 @@ class _CalculatorPageState extends State<CalculatorPage> {
                     const SizedBox(height: 10),
                     Text(
                       '${_s.calculatorErrorPrefix.of(_lang)}: $_error',
-                      style: const TextStyle(color: Colors.redAccent),
+                      style: TextStyle(color: _calcDanger),
                     ),
                   ],
                 ],
@@ -2704,15 +2750,17 @@ class _CalculatorPageState extends State<CalculatorPage> {
                                 borderRadius: BorderRadius.circular(14),
                                 border: Border.all(
                                   color: quoteUnavailable
-                                      ? Colors.white.withOpacity(0.22)
-                                      : accent.withOpacity(0.55),
+                                      ? _calcBorder.withOpacity(
+                                          _isDarkTheme ? 0.55 : 1,
+                                        )
+                                      : _calcAccent.withOpacity(0.55),
                                 ),
-                                color: Colors.black,
+                                color: _calcPanelAltColor,
                                 boxShadow: [
                                   BoxShadow(
                                     color: quoteUnavailable
-                                        ? Colors.black.withOpacity(0.08)
-                                        : accent.withOpacity(0.12),
+                                        ? _calcShadow.withOpacity(0.1)
+                                        : _calcAccent.withOpacity(0.12),
                                     blurRadius: 14,
                                     spreadRadius: 1,
                                   ),
@@ -2728,17 +2776,17 @@ class _CalculatorPageState extends State<CalculatorPage> {
                                       maxLines: 1,
                                       overflow: TextOverflow.ellipsis,
                                       textAlign: TextAlign.center,
-                                      style: const TextStyle(
-                                        color: Colors.white,
+                                      style: TextStyle(
+                                        color: _calcTextPrimary,
                                         fontSize: 15,
                                         fontWeight: FontWeight.w800,
                                       ),
                                     ),
                                   ),
                                   const SizedBox(width: 6),
-                                  const Icon(
+                                  Icon(
                                     Icons.arrow_forward_rounded,
-                                    color: Color(0xFFE5B641),
+                                    color: _calcAccent,
                                     size: 18,
                                   ),
                                 ],
@@ -2769,8 +2817,8 @@ class _CalculatorPageState extends State<CalculatorPage> {
       children: [
         Text(
           label,
-          style: const TextStyle(
-            color: Colors.white70,
+          style: TextStyle(
+            color: _calcTextMuted,
             fontSize: 12,
             fontWeight: FontWeight.w700,
           ),
@@ -2784,28 +2832,34 @@ class _CalculatorPageState extends State<CalculatorPage> {
           dropdownColor: _calcDropdownColor,
           decoration: InputDecoration(
             filled: true,
-            fillColor: _calcPanelColor.withOpacity(0.72),
+            fillColor: _calcPanelAltColor.withOpacity(
+              _isDarkTheme ? 0.72 : 0.9,
+            ),
             contentPadding: const EdgeInsets.symmetric(
               horizontal: 14,
               vertical: 12,
             ),
             border: OutlineInputBorder(
               borderRadius: BorderRadius.circular(14),
-              borderSide: BorderSide(color: Colors.white.withOpacity(0.08)),
+              borderSide: BorderSide(
+                color: _calcBorder.withOpacity(_isDarkTheme ? 0.45 : 1),
+              ),
             ),
             enabledBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(14),
-              borderSide: BorderSide(color: Colors.white.withOpacity(0.08)),
+              borderSide: BorderSide(
+                color: _calcBorder.withOpacity(_isDarkTheme ? 0.45 : 1),
+              ),
             ),
             focusedBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(14),
               borderSide: BorderSide(
-                color: const Color(0xFFE5B641).withOpacity(0.70),
+                color: _calcAccent.withOpacity(0.7),
                 width: 1.1,
               ),
             ),
           ),
-          style: const TextStyle(color: Colors.white),
+          style: TextStyle(color: _calcTextPrimary),
         ),
       ],
     );
@@ -2872,6 +2926,21 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
   bool _paymentConfirmed = false;
   bool _postPaymentNavigated = false;
   _BookingPaymentChoice _selectedPaymentChoice = _BookingPaymentChoice.manual;
+  CustomerThemePalette get _themePalette =>
+      paletteForCustomerTheme(customerThemeNotifier.value);
+  bool get _isDarkTheme => _themePalette.isDark;
+  Color get _bg => _themePalette.background;
+  Color get _panel => _themePalette.surface;
+  Color get _panelAlt => _themePalette.surfaceAlt;
+  Color get _gold => _themePalette.gold;
+  Color get _textPrimary => _themePalette.textPrimary;
+  Color get _textMuted => _themePalette.textMuted;
+  Color get _border => _themePalette.border;
+  Color get _shadow => _themePalette.shadow;
+  Color get _danger => _themePalette.danger;
+  Color get _success => _themePalette.success;
+  Color get _actionOnGold =>
+      _isDarkTheme ? Colors.black : const Color(0xFF1F1706);
   bool get _allowsCustomerSessionLink =>
       widget.entryContext == BookingEntryContext.customer;
   bool get _shouldReturnToOriginAfterSuccess =>
@@ -2887,10 +2956,16 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
   @override
   void initState() {
     super.initState();
+    customerThemeNotifier.addListener(_onThemeChanged);
     fluxidiPendingPaymentNotifier.addListener(_onPendingPaymentChanged);
     if (_allowsCustomerSessionLink) {
       unawaited(_prefillFromCustomerProfile());
     }
+  }
+
+  void _onThemeChanged() {
+    if (!mounted) return;
+    setState(() {});
   }
 
   Future<void> _prefillFromCustomerProfile() async {
@@ -2981,7 +3056,12 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
             : lang == AppLanguage.es
             ? 'Pago confirmado. Tu reserva esta en Mis reservas.'
             : 'Betaling bevestigd. Je boeking staat bij Mijn boekingen.';
-        messenger?.showSnackBar(SnackBar(content: Text(confirmation)));
+        messenger?.showSnackBar(
+          SnackBar(
+            backgroundColor: _panelAlt,
+            content: Text(confirmation, style: TextStyle(color: _textPrimary)),
+          ),
+        );
       }
     }
   }
@@ -3010,6 +3090,7 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
 
   @override
   void dispose() {
+    customerThemeNotifier.removeListener(_onThemeChanged);
     fluxidiPendingPaymentNotifier.removeListener(_onPendingPaymentChanged);
     _nameCtrl.dispose();
     _phoneCtrl.dispose();
@@ -3032,6 +3113,16 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
 
   bool get _isOnlinePaymentChoice =>
       _selectedPaymentChoice == _BookingPaymentChoice.online;
+
+  void _showThemedSnackBar(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        backgroundColor: _panelAlt,
+        content: Text(message, style: TextStyle(color: _textPrimary)),
+      ),
+    );
+  }
 
   String get _selectedPaymentMode =>
       _isOnlinePaymentChoice ? 'mollie' : 'manual';
@@ -3103,13 +3194,13 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
         decoration: BoxDecoration(
           color: selected
-              ? const Color(0xFF1B222F)
-              : Colors.black.withOpacity(0.18),
+              ? _panelAlt
+              : _panel.withOpacity(_isDarkTheme ? 0.45 : 0.75),
           borderRadius: BorderRadius.circular(12),
           border: Border.all(
             color: selected
-                ? const Color(0xFFE5B641)
-                : const Color(0xFFE5B641).withOpacity(0.24),
+                ? _gold
+                : _border.withOpacity(_isDarkTheme ? 0.45 : 1),
             width: selected ? 1.2 : 1,
           ),
         ),
@@ -3119,9 +3210,7 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
               choice == _BookingPaymentChoice.online
                   ? Icons.language_rounded
                   : Icons.local_taxi_rounded,
-              color: selected
-                  ? const Color(0xFFE5B641)
-                  : Colors.white.withOpacity(0.76),
+              color: selected ? _gold : _textPrimary.withOpacity(0.8),
               size: 18,
             ),
             const SizedBox(width: 9),
@@ -3132,7 +3221,7 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
                   Text(
                     _paymentChoiceLabel(choice),
                     style: TextStyle(
-                      color: Colors.white,
+                      color: _textPrimary,
                       fontSize: 12.8,
                       fontWeight: selected ? FontWeight.w800 : FontWeight.w700,
                     ),
@@ -3141,7 +3230,7 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
                   Text(
                     _paymentChoiceDescription(choice),
                     style: TextStyle(
-                      color: Colors.white.withOpacity(0.68),
+                      color: _textMuted.withOpacity(0.92),
                       fontSize: 11.2,
                       height: 1.2,
                     ),
@@ -3152,9 +3241,7 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
             const SizedBox(width: 8),
             Icon(
               selected ? Icons.radio_button_checked : Icons.radio_button_off,
-              color: selected
-                  ? const Color(0xFFE5B641)
-                  : Colors.white.withOpacity(0.45),
+              color: selected ? _gold : _textMuted.withOpacity(0.8),
               size: 18,
             ),
           ],
@@ -3245,15 +3332,9 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
   Future<void> _copyPaymentLink(String paymentUrl, {String? message}) async {
     await Clipboard.setData(ClipboardData(text: paymentUrl));
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          message ??
-              widget.strings.bookingPaymentLinkCopiedMessage.of(
-                widget.language,
-              ),
-        ),
-      ),
+    _showThemedSnackBar(
+      message ??
+          widget.strings.bookingPaymentLinkCopiedMessage.of(widget.language),
     );
   }
 
@@ -3322,8 +3403,8 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
                 : widget.strings.bookingSuccessCashMessage.of(widget.language);
 
             return AlertDialog(
-              backgroundColor: const Color(0xFF141B2F),
-              title: Text(title, style: const TextStyle(color: Colors.white)),
+              backgroundColor: _panelAlt,
+              title: Text(title, style: TextStyle(color: _textPrimary)),
               content: Column(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -3342,7 +3423,7 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
                       Expanded(
                         child: Text(
                           message,
-                          style: const TextStyle(color: Colors.white70),
+                          style: TextStyle(color: _textMuted),
                         ),
                       ),
                     ],
@@ -3351,8 +3432,8 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
                     const SizedBox(height: 12),
                     Text(
                       '${widget.strings.bookingSuccessReferencePrefix.of(widget.language)}: ${publicRef!.trim()}',
-                      style: const TextStyle(
-                        color: Colors.white,
+                      style: TextStyle(
+                        color: _textPrimary,
                         fontWeight: FontWeight.w700,
                       ),
                     ),
@@ -3895,9 +3976,7 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
         Navigator.of(context).pop(true);
       }
     } else if (mounted) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(successMessage)));
+      _showThemedSnackBar(successMessage);
       await Future<void>.delayed(const Duration(milliseconds: 600));
       if (_shouldReturnToOriginAfterSuccess && mounted) {
         Navigator.of(context).pop(true);
@@ -3948,9 +4027,7 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
     FocusScope.of(context).unfocus();
     if (_quoteAvailabilityBlocksBooking()) {
       final availabilityMessage = _availabilityUnavailableMessage();
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(availabilityMessage)));
+      _showThemedSnackBar(availabilityMessage);
       return;
     }
     final name = _nameCtrl.text.trim();
@@ -4011,12 +4088,8 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
         phone.isEmpty ||
         email.isEmpty ||
         !_isValidEmail(email)) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            widget.strings.bookingRequiredFieldsError.of(widget.language),
-          ),
-        ),
+      _showThemedSnackBar(
+        widget.strings.bookingRequiredFieldsError.of(widget.language),
       );
       return;
     }
@@ -4028,9 +4101,7 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
           : widget.language == AppLanguage.es
           ? 'Primero elige una empresa de taxi para completar tu reserva.'
           : 'Kies eerst een taxibedrijf om je boeking te voltooien.';
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(chooseCompanyMessage)));
+      _showThemedSnackBar(chooseCompanyMessage);
       return;
     }
     final customerSession = _allowsCustomerSessionLink
@@ -4234,9 +4305,7 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
           _submitState = uncertain;
           _submitStateIsError = false;
         });
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(uncertain)));
+        _showThemedSnackBar(uncertain);
         return;
       }
       final friendlyErr = _friendlyBookingError(rawErr);
@@ -4246,7 +4315,7 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
         _submitState = msg;
         _submitStateIsError = true;
       });
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+      _showThemedSnackBar(msg);
     } finally {
       if (mounted) {
         setState(() {
@@ -4381,14 +4450,14 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
     );
 
     return Scaffold(
-      backgroundColor: appConfig.branding.calculatorScaffoldColor,
+      backgroundColor: _bg,
       appBar: AppBar(
-        backgroundColor: appConfig.branding.calculatorScaffoldColor,
+        backgroundColor: _bg,
         title: Text(
           widget.strings.bookingConfirmationTitle.of(widget.language),
-          style: const TextStyle(color: Colors.white),
+          style: TextStyle(color: _textPrimary),
         ),
-        iconTheme: const IconThemeData(color: Colors.white),
+        iconTheme: IconThemeData(color: _textPrimary),
       ),
       body: ListView(
         padding: const EdgeInsets.fromLTRB(14, 12, 14, 18),
@@ -4400,17 +4469,13 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
               children: [
                 Row(
                   children: [
-                    const Icon(
-                      Icons.place_outlined,
-                      size: 16,
-                      color: Color(0xFFE5B641),
-                    ),
+                    Icon(Icons.place_outlined, size: 16, color: _gold),
                     const SizedBox(width: 6),
                     Expanded(
                       child: Text(
                         from,
-                        style: const TextStyle(
-                          color: Colors.white,
+                        style: TextStyle(
+                          color: _textPrimary,
                           fontWeight: FontWeight.w600,
                         ),
                         maxLines: 1,
@@ -4424,22 +4489,18 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
                   child: Icon(
                     Icons.south_rounded,
                     size: 14,
-                    color: Colors.white.withOpacity(0.5),
+                    color: _textMuted.withOpacity(0.8),
                   ),
                 ),
                 Row(
                   children: [
-                    const Icon(
-                      Icons.flag_outlined,
-                      size: 16,
-                      color: Color(0xFFE5B641),
-                    ),
+                    Icon(Icons.flag_outlined, size: 16, color: _gold),
                     const SizedBox(width: 6),
                     Expanded(
                       child: Text(
                         to,
-                        style: const TextStyle(
-                          color: Colors.white,
+                        style: TextStyle(
+                          color: _textPrimary,
                           fontWeight: FontWeight.w600,
                         ),
                         maxLines: 1,
@@ -4493,10 +4554,7 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
           const SizedBox(height: 9),
           _sectionCard(
             title: widget.strings.bookingSummaryPickupLabel.of(widget.language),
-            child: Text(
-              '$date  $time',
-              style: const TextStyle(color: Colors.white),
-            ),
+            child: Text('$date  $time', style: TextStyle(color: _textPrimary)),
           ),
           const SizedBox(height: 9),
           if (returnTrip) ...[
@@ -4506,7 +4564,7 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
               ),
               child: Text(
                 widget.strings.commonYesLabel.of(widget.language),
-                style: const TextStyle(color: Colors.white),
+                style: TextStyle(color: _textPrimary),
               ),
             ),
             const SizedBox(height: 9),
@@ -4518,7 +4576,7 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
               ),
               child: Text(
                 '$waitMin min',
-                style: const TextStyle(color: Colors.white),
+                style: TextStyle(color: _textPrimary),
               ),
             ),
             const SizedBox(height: 9),
@@ -4529,7 +4587,7 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
               title: 'Extra service',
               child: Text(
                 compactExtraServiceLabel,
-                style: const TextStyle(color: Colors.white),
+                style: TextStyle(color: _textPrimary),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
               ),
@@ -4567,7 +4625,7 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
                     vertical: 8,
                   ),
                   decoration: BoxDecoration(
-                    color: Colors.black.withOpacity(0.25),
+                    color: _panelAlt.withOpacity(_isDarkTheme ? 0.78 : 0.92),
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: Row(
@@ -4575,18 +4633,15 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
                       Expanded(
                         child: Text(
                           distanceLabel,
-                          style: const TextStyle(
-                            color: Colors.white70,
-                            fontSize: 11.5,
-                          ),
+                          style: TextStyle(color: _textMuted, fontSize: 11.5),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                         ),
                       ),
                       Text(
                         '${_fmt(showTotalMetrics ? totalDisplayDistance : distanceKm, decimals: 2)} ${widget.distanceUnitLabel}',
-                        style: const TextStyle(
-                          color: Colors.white,
+                        style: TextStyle(
+                          color: _textPrimary,
                           fontSize: 12,
                           fontWeight: FontWeight.w700,
                         ),
@@ -4596,10 +4651,7 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
                         child: Text(
                           durationLabel,
                           textAlign: TextAlign.right,
-                          style: const TextStyle(
-                            color: Colors.white70,
-                            fontSize: 11.5,
-                          ),
+                          style: TextStyle(color: _textMuted, fontSize: 11.5),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                         ),
@@ -4607,8 +4659,8 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
                       const SizedBox(width: 6),
                       Text(
                         '${_fmt(showTotalMetrics ? totalDisplayDuration : durationMin, decimals: 0)} ${widget.durationUnitLabel}',
-                        style: const TextStyle(
-                          color: Colors.white,
+                        style: TextStyle(
+                          color: _textPrimary,
                           fontSize: 12,
                           fontWeight: FontWeight.w700,
                         ),
@@ -4624,9 +4676,11 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
                     vertical: 10,
                   ),
                   decoration: BoxDecoration(
-                    color: Colors.black.withOpacity(0.35),
+                    color: _panelAlt.withOpacity(_isDarkTheme ? 0.82 : 0.95),
                     borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: Colors.white.withOpacity(0.08)),
+                    border: Border.all(
+                      color: _border.withOpacity(_isDarkTheme ? 0.45 : 1),
+                    ),
                   ),
                   child: Row(
                     children: [
@@ -4638,8 +4692,8 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
                             fr: 'Prix total',
                             es: 'Precio total',
                           ),
-                          style: const TextStyle(
-                            color: Colors.white,
+                          style: TextStyle(
+                            color: _textPrimary,
                             fontWeight: FontWeight.w700,
                             fontSize: 12.5,
                           ),
@@ -4647,8 +4701,8 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
                       ),
                       Text(
                         '${widget.currencySymbol} ${_fmt(totalIncl)}',
-                        style: const TextStyle(
-                          color: Color(0xFFE5B641),
+                        style: TextStyle(
+                          color: _gold,
                           fontSize: 26,
                           fontWeight: FontWeight.w900,
                         ),
@@ -4662,7 +4716,7 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
                     Icon(
                       Icons.verified_outlined,
                       size: 14,
-                      color: Colors.white.withOpacity(0.70),
+                      color: _textMuted.withOpacity(0.9),
                     ),
                     const SizedBox(width: 6),
                     Expanded(
@@ -4674,7 +4728,7 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
                           es: 'IVA incluido  •  Sin costes ocultos',
                         ),
                         style: TextStyle(
-                          color: Colors.white.withOpacity(0.66),
+                          color: _textMuted.withOpacity(0.88),
                           fontSize: 11.5,
                         ),
                       ),
@@ -4693,7 +4747,7 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
                 Text(
                   _paymentChoiceSubtitle(),
                   style: TextStyle(
-                    color: Colors.white.withOpacity(0.7),
+                    color: _textMuted.withOpacity(0.9),
                     fontSize: 11.5,
                     height: 1.2,
                   ),
@@ -4765,7 +4819,7 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
                             icon: Icon(
                               Icons.delete_outline,
                               size: 18,
-                              color: const Color(0xFFE5B641).withOpacity(0.92),
+                              color: _gold.withOpacity(0.92),
                             ),
                             onPressed: () => _vatNumberCtrl.clear(),
                           ),
@@ -4776,7 +4830,7 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
                   alignment: Alignment.centerLeft,
                   child: Text(
                     widget.strings.bookingVatNumberHelpText.of(widget.language),
-                    style: const TextStyle(color: Colors.white54, fontSize: 12),
+                    style: TextStyle(color: _textMuted, fontSize: 12),
                   ),
                 ),
                 const SizedBox(height: 8),
@@ -4798,18 +4852,16 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
               padding: const EdgeInsets.symmetric(vertical: 14),
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(16),
-                border: Border.all(
-                  color: const Color(0xFFE5B641).withOpacity(0.5),
-                ),
+                border: Border.all(color: _gold.withOpacity(0.5)),
                 gradient: LinearGradient(
                   colors: [
-                    const Color(0xFFE5B641).withOpacity(0.95),
-                    const Color(0xFFB98722),
+                    _gold.withOpacity(0.95),
+                    _themePalette.bronze.withOpacity(0.95),
                   ],
                 ),
                 boxShadow: [
                   BoxShadow(
-                    color: const Color(0xFFE5B641).withOpacity(0.18),
+                    color: _gold.withOpacity(0.18),
                     blurRadius: 16,
                     spreadRadius: 1,
                   ),
@@ -4827,16 +4879,16 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
                         : widget.strings.bookingConfirmButtonLabel.of(
                             widget.language,
                           ),
-                    style: const TextStyle(
-                      color: Colors.black,
+                    style: TextStyle(
+                      color: _actionOnGold,
                       fontWeight: FontWeight.w900,
                     ),
                   ),
                   const SizedBox(width: 6),
-                  const Icon(
+                  Icon(
                     Icons.arrow_forward_rounded,
                     size: 18,
-                    color: Colors.black,
+                    color: _actionOnGold,
                   ),
                 ],
               ),
@@ -4847,9 +4899,7 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
             Text(
               _submitState!,
               style: TextStyle(
-                color: _submitStateIsError
-                    ? Colors.redAccent
-                    : Colors.greenAccent,
+                color: _submitStateIsError ? _danger : _success,
                 fontWeight: FontWeight.w600,
               ),
             ),
@@ -4865,7 +4915,7 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
                   if ((_finalPricingBookingId ?? '').isNotEmpty)
                     Text(
                       '${widget.strings.bookingSuccessReferencePrefix.of(widget.language)}: $_finalPricingBookingId',
-                      style: const TextStyle(color: Colors.white),
+                      style: TextStyle(color: _textPrimary),
                     ),
                   const SizedBox(height: 6),
                   _confirmationRow(
@@ -4898,12 +4948,12 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
     return Container(
       padding: const EdgeInsets.fromLTRB(13, 11, 13, 11),
       decoration: BoxDecoration(
-        color: appConfig.branding.calculatorPanelColor.withOpacity(0.95),
+        color: _panel.withOpacity(0.95),
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFFE5B641).withOpacity(0.35)),
+        border: Border.all(color: _border.withOpacity(_isDarkTheme ? 0.45 : 1)),
         boxShadow: [
           BoxShadow(
-            color: const Color(0xFFE5B641).withOpacity(0.08),
+            color: _gold.withOpacity(_isDarkTheme ? 0.08 : 0.05),
             blurRadius: 18,
             spreadRadius: 1,
           ),
@@ -4915,7 +4965,7 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
           Text(
             title,
             style: TextStyle(
-              color: Colors.white.withOpacity(0.92),
+              color: _textPrimary.withOpacity(0.95),
               fontWeight: FontWeight.w800,
               fontSize: 13.5,
             ),
@@ -4933,20 +4983,22 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
         decoration: BoxDecoration(
-          color: Colors.black.withOpacity(0.28),
+          color: _panelAlt.withOpacity(_isDarkTheme ? 0.78 : 0.92),
           borderRadius: BorderRadius.circular(999),
-          border: Border.all(color: Colors.white.withOpacity(0.08)),
+          border: Border.all(
+            color: _border.withOpacity(_isDarkTheme ? 0.45 : 1),
+          ),
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, size: 14, color: const Color(0xFFE5B641)),
+            Icon(icon, size: 14, color: _gold),
             const SizedBox(width: 5),
             Flexible(
               child: Text(
                 text,
-                style: const TextStyle(
-                  color: Colors.white,
+                style: TextStyle(
+                  color: _textPrimary,
                   fontSize: 11.5,
                   fontWeight: FontWeight.w600,
                 ),
@@ -4973,8 +5025,8 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
           Expanded(
             child: Text(
               label,
-              style: const TextStyle(
-                color: Colors.white70,
+              style: TextStyle(
+                color: _textMuted,
                 fontSize: 12.5,
                 fontWeight: FontWeight.w500,
               ),
@@ -4990,7 +5042,7 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
-                color: emphasizeValue ? const Color(0xFFE5B641) : Colors.white,
+                color: emphasizeValue ? _gold : _textPrimary,
                 fontSize: emphasizeValue ? 13 : 12.5,
                 fontWeight: FontWeight.w800,
               ),
@@ -5068,34 +5120,34 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
       controller: ctrl,
       keyboardType: keyboardType,
       maxLines: maxLines,
-      style: const TextStyle(color: Colors.white),
+      style: TextStyle(color: _textPrimary),
+      cursorColor: _gold,
       decoration: InputDecoration(
         hintText: label,
-        hintStyle: const TextStyle(color: Colors.white54),
-        prefixIcon: icon == null
-            ? null
-            : Icon(icon, size: 18, color: const Color(0xFFE5B641)),
+        hintStyle: TextStyle(color: _textMuted),
+        prefixIcon: icon == null ? null : Icon(icon, size: 18, color: _gold),
         suffixIcon: suffixIcon,
         filled: true,
-        fillColor: appConfig.branding.calculatorScaffoldColor.withOpacity(0.82),
+        fillColor: _panelAlt.withOpacity(_isDarkTheme ? 0.82 : 0.92),
         contentPadding: const EdgeInsets.symmetric(
           horizontal: 14,
           vertical: 13,
         ),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
-          borderSide: BorderSide(color: Colors.white.withOpacity(0.08)),
+          borderSide: BorderSide(
+            color: _border.withOpacity(_isDarkTheme ? 0.45 : 1),
+          ),
         ),
         enabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
-          borderSide: BorderSide(color: Colors.white.withOpacity(0.08)),
+          borderSide: BorderSide(
+            color: _border.withOpacity(_isDarkTheme ? 0.45 : 1),
+          ),
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
-          borderSide: BorderSide(
-            color: const Color(0xFFE5B641).withOpacity(0.70),
-            width: 1.1,
-          ),
+          borderSide: BorderSide(color: _gold.withOpacity(0.7), width: 1.1),
         ),
       ),
     );
