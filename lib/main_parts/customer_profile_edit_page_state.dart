@@ -43,21 +43,26 @@ class _CustomerProfileEditPageState extends State<CustomerProfileEditPage> {
     ].where((ctrl) => ctrl.text.trim().isNotEmpty).length;
   }
 
-  Widget _profileHeader() {
+  Widget _profileHeader(CustomerThemePalette palette) {
+    final isDarkTheme = palette.isDark;
     final completed = _completedProfileFields();
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        gradient: const LinearGradient(
+        gradient: LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          colors: [Color(0xFF15120A), Color(0xFF101010), Color(0xFF07080C)],
+          colors: [palette.surfaceAlt, palette.surface, palette.background],
         ),
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: kFluxidiYellow.withOpacity(0.34)),
+        border: Border.all(
+          color: (isDarkTheme ? palette.gold : palette.border).withOpacity(
+            isDarkTheme ? 0.34 : 0.9,
+          ),
+        ),
         boxShadow: [
           BoxShadow(
-            color: kFluxidiYellow.withOpacity(0.10),
+            color: palette.shadow.withOpacity(isDarkTheme ? 0.26 : 0.12),
             blurRadius: 16,
             spreadRadius: 0.5,
           ),
@@ -75,15 +80,17 @@ class _CustomerProfileEditPageState extends State<CustomerProfileEditPage> {
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
                 colors: [
-                  kFluxidiYellow.withOpacity(0.30),
-                  const Color(0xFF15120A),
+                  palette.gold.withOpacity(isDarkTheme ? 0.30 : 0.22),
+                  palette.surfaceAlt,
                 ],
               ),
-              border: Border.all(color: kFluxidiYellow.withOpacity(0.54)),
+              border: Border.all(
+                color: palette.gold.withOpacity(isDarkTheme ? 0.54 : 0.46),
+              ),
             ),
             child: Icon(
               Icons.person_outline_rounded,
-              color: kFluxidiYellow.withOpacity(0.98),
+              color: palette.gold.withOpacity(0.98),
               size: 29,
             ),
           ),
@@ -100,8 +107,8 @@ class _CustomerProfileEditPageState extends State<CustomerProfileEditPage> {
                         _pageTitle(),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: Colors.white,
+                        style: TextStyle(
+                          color: palette.textPrimary,
                           fontSize: 20,
                           fontWeight: FontWeight.w900,
                         ),
@@ -114,16 +121,20 @@ class _CustomerProfileEditPageState extends State<CustomerProfileEditPage> {
                         vertical: 5,
                       ),
                       decoration: BoxDecoration(
-                        color: kFluxidiYellow.withOpacity(0.12),
+                        color: palette.gold.withOpacity(
+                          isDarkTheme ? 0.12 : 0.10,
+                        ),
                         borderRadius: BorderRadius.circular(999),
                         border: Border.all(
-                          color: kFluxidiYellow.withOpacity(0.44),
+                          color: palette.gold.withOpacity(
+                            isDarkTheme ? 0.44 : 0.38,
+                          ),
                         ),
                       ),
                       child: Text(
                         '$completed/6 ${_t(nl: 'compleet', en: 'complete', fr: 'complet', es: 'completo')}',
                         style: TextStyle(
-                          color: kFluxidiYellow.withOpacity(0.98),
+                          color: isDarkTheme ? palette.gold : palette.bronze,
                           fontSize: 11,
                           fontWeight: FontWeight.w800,
                         ),
@@ -140,7 +151,7 @@ class _CustomerProfileEditPageState extends State<CustomerProfileEditPage> {
                     es: 'Usamos estos datos para reservas, contacto y recibos.',
                   ),
                   style: TextStyle(
-                    color: Colors.white.withOpacity(0.72),
+                    color: palette.textMuted,
                     height: 1.28,
                     fontSize: 12.5,
                   ),
@@ -154,21 +165,34 @@ class _CustomerProfileEditPageState extends State<CustomerProfileEditPage> {
   }
 
   Widget _sectionCard({
+    required CustomerThemePalette palette,
     required String title,
     required String subtitle,
     required IconData icon,
     required List<Widget> children,
   }) {
+    final isDarkTheme = palette.isDark;
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        gradient: const LinearGradient(
+        gradient: LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          colors: [Color(0xFF101010), Color(0xFF07080C)],
+          colors: [palette.surface, palette.surfaceAlt],
         ),
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: kFluxidiYellow.withOpacity(0.18)),
+        border: Border.all(
+          color: (isDarkTheme ? palette.gold : palette.border).withOpacity(
+            isDarkTheme ? 0.22 : 0.95,
+          ),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: palette.shadow.withOpacity(isDarkTheme ? 0.16 : 0.08),
+            blurRadius: 12,
+            offset: const Offset(0, 3),
+          ),
+        ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -180,10 +204,12 @@ class _CustomerProfileEditPageState extends State<CustomerProfileEditPage> {
                 height: 34,
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(11),
-                  color: const Color(0xFF15120A),
-                  border: Border.all(color: kFluxidiYellow.withOpacity(0.34)),
+                  color: palette.surfaceAlt,
+                  border: Border.all(
+                    color: palette.gold.withOpacity(isDarkTheme ? 0.34 : 0.30),
+                  ),
                 ),
-                child: Icon(icon, color: kFluxidiYellow, size: 19),
+                child: Icon(icon, color: palette.gold, size: 19),
               ),
               const SizedBox(width: 10),
               Expanded(
@@ -194,8 +220,8 @@ class _CustomerProfileEditPageState extends State<CustomerProfileEditPage> {
                       title,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: Colors.white,
+                      style: TextStyle(
+                        color: palette.textPrimary,
                         fontSize: 14.5,
                         fontWeight: FontWeight.w800,
                       ),
@@ -206,7 +232,7 @@ class _CustomerProfileEditPageState extends State<CustomerProfileEditPage> {
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
-                        color: Colors.white.withOpacity(0.62),
+                        color: palette.textMuted,
                         fontSize: 11.6,
                       ),
                     ),
@@ -301,18 +327,22 @@ class _CustomerProfileEditPageState extends State<CustomerProfileEditPage> {
   }
 
   Widget _field({
+    required CustomerThemePalette palette,
     required String label,
     required TextEditingController controller,
     TextInputType keyboardType = TextInputType.text,
     String? Function(String?)? validator,
   }) {
+    final isDarkTheme = palette.isDark;
+    final baseBorderColor = (isDarkTheme ? palette.border : palette.border)
+        .withOpacity(isDarkTheme ? 0.55 : 1.0);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
           label,
-          style: const TextStyle(
-            color: Color(0xFFE5D4A1),
+          style: TextStyle(
+            color: isDarkTheme ? palette.bronze : palette.textMuted,
             fontSize: 11.5,
             fontWeight: FontWeight.w700,
           ),
@@ -322,37 +352,39 @@ class _CustomerProfileEditPageState extends State<CustomerProfileEditPage> {
           controller: controller,
           keyboardType: keyboardType,
           validator: validator,
-          style: const TextStyle(
-            color: Colors.white,
+          style: TextStyle(
+            color: palette.textPrimary,
             fontSize: 14,
             height: 1.15,
           ),
-          cursorColor: kFluxidiYellow,
+          cursorColor: palette.gold,
           decoration: InputDecoration(
             filled: true,
-            fillColor: const Color(0xFF0B0B0B),
+            fillColor: isDarkTheme
+                ? palette.background.withOpacity(0.86)
+                : palette.surface,
             border: OutlineInputBorder(
               borderRadius: BorderRadius.circular(13),
-              borderSide: BorderSide(color: Colors.white.withOpacity(0.12)),
+              borderSide: BorderSide(color: baseBorderColor),
             ),
             enabledBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(13),
-              borderSide: BorderSide(color: Colors.white.withOpacity(0.12)),
+              borderSide: BorderSide(color: baseBorderColor),
             ),
             focusedBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(13),
               borderSide: BorderSide(
-                color: kFluxidiYellow.withOpacity(0.72),
+                color: palette.gold.withOpacity(isDarkTheme ? 0.78 : 0.72),
                 width: 1.2,
               ),
             ),
             errorBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(13),
-              borderSide: BorderSide(color: Colors.redAccent.withOpacity(0.75)),
+              borderSide: BorderSide(color: palette.danger.withOpacity(0.78)),
             ),
             focusedErrorBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(13),
-              borderSide: BorderSide(color: Colors.redAccent.withOpacity(0.85)),
+              borderSide: BorderSide(color: palette.danger.withOpacity(0.92)),
             ),
             contentPadding: const EdgeInsets.symmetric(
               horizontal: 13,
@@ -366,257 +398,279 @@ class _CustomerProfileEditPageState extends State<CustomerProfileEditPage> {
 
   @override
   Widget build(BuildContext context) {
-    return ValueListenableBuilder<AppLanguage>(
-      valueListenable: appLanguageNotifier,
-      builder: (context, _, __) => Scaffold(
-        backgroundColor: const Color(0xFF07080C),
-        appBar: AppBar(
-          backgroundColor: const Color(0xFF07080C),
-          elevation: 0,
-          surfaceTintColor: Colors.transparent,
-          title: Text(_pageTitle()),
-        ),
-        body: SafeArea(
-          child: DecoratedBox(
-            decoration: const BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-                colors: [
-                  Color(0xFF101010),
-                  Color(0xFF07080C),
-                  Color(0xFF07080C),
-                ],
+    return ValueListenableBuilder<CustomerThemeVariant>(
+      valueListenable: customerThemeNotifier,
+      builder: (context, themeVariant, __) {
+        final palette = paletteForCustomerTheme(themeVariant);
+        final isDarkTheme = palette.isDark;
+        return ValueListenableBuilder<AppLanguage>(
+          valueListenable: appLanguageNotifier,
+          builder: (context, _, __) => Scaffold(
+            backgroundColor: palette.background,
+            appBar: AppBar(
+              backgroundColor: palette.background,
+              foregroundColor: palette.textPrimary,
+              elevation: 0,
+              surfaceTintColor: Colors.transparent,
+              title: Text(
+                _pageTitle(),
+                style: TextStyle(color: palette.textPrimary),
               ),
             ),
-            child: Center(
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 560),
-                child: SingleChildScrollView(
-                  padding: const EdgeInsets.fromLTRB(16, 10, 16, 20),
-                  child: Form(
-                    key: _formKey,
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        AnimatedBuilder(
-                          animation: Listenable.merge([
-                            _nameCtrl,
-                            _postcodeCtrl,
-                            _phoneCtrl,
-                            _emailCtrl,
-                            _companyNameCtrl,
-                            _vatNumberCtrl,
-                          ]),
-                          builder: (context, _) => _profileHeader(),
-                        ),
-                        const SizedBox(height: 12),
-                        _sectionCard(
-                          title: _t(
-                            nl: 'Persoonlijk',
-                            en: 'Personal',
-                            fr: 'Personnel',
-                            es: 'Personal',
-                          ),
-                          subtitle: _t(
-                            nl: 'Naam voor boekingen',
-                            en: 'Name for bookings',
-                            fr: 'Nom pour les réservations',
-                            es: 'Nombre para reservas',
-                          ),
-                          icon: Icons.badge_outlined,
+            body: SafeArea(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [
+                      palette.surface,
+                      palette.background,
+                      palette.background,
+                    ],
+                  ),
+                ),
+                child: Center(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 560),
+                    child: SingleChildScrollView(
+                      padding: const EdgeInsets.fromLTRB(16, 10, 16, 20),
+                      child: Form(
+                        key: _formKey,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
-                            _field(
-                              label: _t(
-                                nl: 'Naam',
-                                en: 'Name',
-                                fr: 'Nom',
-                                es: 'Nombre',
+                            AnimatedBuilder(
+                              animation: Listenable.merge([
+                                _nameCtrl,
+                                _postcodeCtrl,
+                                _phoneCtrl,
+                                _emailCtrl,
+                                _companyNameCtrl,
+                                _vatNumberCtrl,
+                              ]),
+                              builder: (context, _) => _profileHeader(palette),
+                            ),
+                            const SizedBox(height: 12),
+                            _sectionCard(
+                              palette: palette,
+                              title: _t(
+                                nl: 'Persoonlijk',
+                                en: 'Personal',
+                                fr: 'Personnel',
+                                es: 'Personal',
                               ),
-                              controller: _nameCtrl,
-                              validator: (v) {
-                                final text = (v ?? '').trim();
-                                if (text.isEmpty) {
-                                  return _t(
-                                    nl: 'Vul je naam in',
-                                    en: 'Enter your name',
-                                    fr: 'Saisissez votre nom',
-                                    es: 'Introduce tu nombre',
-                                  );
-                                }
-                                return null;
-                              },
-                            ),
-                            const SizedBox(height: 10),
-                            _field(
-                              label: _t(
-                                nl: 'Postcode',
-                                en: 'Postcode',
-                                fr: 'Code postal',
-                                es: 'Código postal',
+                              subtitle: _t(
+                                nl: 'Naam voor boekingen',
+                                en: 'Name for bookings',
+                                fr: 'Nom pour les réservations',
+                                es: 'Nombre para reservas',
                               ),
-                              controller: _postcodeCtrl,
-                              validator: (v) {
-                                final text = (v ?? '').trim();
-                                if (text.isEmpty) {
-                                  return _t(
-                                    nl: 'Vul je postcode in',
-                                    en: 'Enter your postcode',
-                                    fr: 'Saisissez votre code postal',
-                                    es: 'Introduce tu código postal',
-                                  );
-                                }
-                                return null;
-                              },
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 12),
-                        _sectionCard(
-                          title: _t(
-                            nl: 'Contact',
-                            en: 'Contact',
-                            fr: 'Contact',
-                            es: 'Contacto',
-                          ),
-                          subtitle: _t(
-                            nl: 'Telefoon en e-mail',
-                            en: 'Phone and email',
-                            fr: 'Téléphone et e-mail',
-                            es: 'Teléfono y correo',
-                          ),
-                          icon: Icons.alternate_email_rounded,
-                          children: [
-                            _field(
-                              label: _t(
-                                nl: 'Telefoonnummer',
-                                en: 'Phone number',
-                                fr: 'Numéro de téléphone',
-                                es: 'Número de teléfono',
-                              ),
-                              controller: _phoneCtrl,
-                              keyboardType: TextInputType.phone,
-                              validator: (v) {
-                                final text = (v ?? '').trim();
-                                if (text.isEmpty) {
-                                  return _t(
-                                    nl: 'Vul je telefoonnummer in',
-                                    en: 'Enter your phone number',
-                                    fr: 'Saisissez votre numéro de téléphone',
-                                    es: 'Introduce tu número de teléfono',
-                                  );
-                                }
-                                return null;
-                              },
-                            ),
-                            const SizedBox(height: 10),
-                            _field(
-                              label: _t(
-                                nl: 'E-mailadres',
-                                en: 'Email address',
-                                fr: 'Adresse e-mail',
-                                es: 'Correo electrónico',
-                              ),
-                              controller: _emailCtrl,
-                              keyboardType: TextInputType.emailAddress,
-                              validator: (v) {
-                                final text = (v ?? '').trim();
-                                if (text.isEmpty) {
-                                  return _t(
-                                    nl: 'Vul je e-mail in',
-                                    en: 'Enter your email',
-                                    fr: 'Saisissez votre e-mail',
-                                    es: 'Introduce tu correo',
-                                  );
-                                }
-                                if (!text.contains('@') ||
-                                    !text.contains('.')) {
-                                  return _t(
-                                    nl: 'Vul een geldig e-mailadres in',
-                                    en: 'Enter a valid email address',
-                                    fr: 'Saisissez une adresse e-mail valide',
-                                    es: 'Introduce un correo electrónico válido',
-                                  );
-                                }
-                                return null;
-                              },
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 12),
-                        _sectionCard(
-                          title: _t(
-                            nl: 'Facturatie optioneel',
-                            en: 'Optional billing',
-                            fr: 'Facturation facultative',
-                            es: 'Facturación opcional',
-                          ),
-                          subtitle: _t(
-                            nl: 'Voor zakelijke ritbonnen',
-                            en: 'For business receipts',
-                            fr: 'Pour les reçus professionnels',
-                            es: 'Para recibos empresariales',
-                          ),
-                          icon: Icons.receipt_long_outlined,
-                          children: [
-                            _field(
-                              label: _t(
-                                nl: 'Bedrijfsnaam (optioneel)',
-                                en: 'Company name (optional)',
-                                fr: 'Nom de l’entreprise (facultatif)',
-                                es: 'Nombre de la empresa (opcional)',
-                              ),
-                              controller: _companyNameCtrl,
-                            ),
-                            const SizedBox(height: 10),
-                            _field(
-                              label: _t(
-                                nl: 'BTW-nummer (optioneel)',
-                                en: 'VAT number (optional)',
-                                fr: 'Numéro de TVA (facultatif)',
-                                es: 'Número de IVA (opcional)',
-                              ),
-                              controller: _vatNumberCtrl,
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 14),
-                        FilledButton(
-                          onPressed: _saving ? null : _save,
-                          style: FilledButton.styleFrom(
-                            backgroundColor: kFluxidiYellow,
-                            foregroundColor: Colors.black,
-                            minimumSize: const Size.fromHeight(52),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(16),
-                            ),
-                            elevation: 0,
-                          ),
-                          child: Text(
-                            _saving
-                                ? _t(
-                                    nl: 'Opslaan...',
-                                    en: 'Saving...',
-                                    fr: 'Enregistrement...',
-                                    es: 'Guardando...',
-                                  )
-                                : _t(
-                                    nl: 'Opslaan',
-                                    en: 'Save',
-                                    fr: 'Enregistrer',
-                                    es: 'Guardar',
+                              icon: Icons.badge_outlined,
+                              children: [
+                                _field(
+                                  palette: palette,
+                                  label: _t(
+                                    nl: 'Naam',
+                                    en: 'Name',
+                                    fr: 'Nom',
+                                    es: 'Nombre',
                                   ),
-                          ),
+                                  controller: _nameCtrl,
+                                  validator: (v) {
+                                    final text = (v ?? '').trim();
+                                    if (text.isEmpty) {
+                                      return _t(
+                                        nl: 'Vul je naam in',
+                                        en: 'Enter your name',
+                                        fr: 'Saisissez votre nom',
+                                        es: 'Introduce tu nombre',
+                                      );
+                                    }
+                                    return null;
+                                  },
+                                ),
+                                const SizedBox(height: 10),
+                                _field(
+                                  palette: palette,
+                                  label: _t(
+                                    nl: 'Postcode',
+                                    en: 'Postcode',
+                                    fr: 'Code postal',
+                                    es: 'Código postal',
+                                  ),
+                                  controller: _postcodeCtrl,
+                                  validator: (v) {
+                                    final text = (v ?? '').trim();
+                                    if (text.isEmpty) {
+                                      return _t(
+                                        nl: 'Vul je postcode in',
+                                        en: 'Enter your postcode',
+                                        fr: 'Saisissez votre code postal',
+                                        es: 'Introduce tu código postal',
+                                      );
+                                    }
+                                    return null;
+                                  },
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 12),
+                            _sectionCard(
+                              palette: palette,
+                              title: _t(
+                                nl: 'Contact',
+                                en: 'Contact',
+                                fr: 'Contact',
+                                es: 'Contacto',
+                              ),
+                              subtitle: _t(
+                                nl: 'Telefoon en e-mail',
+                                en: 'Phone and email',
+                                fr: 'Téléphone et e-mail',
+                                es: 'Teléfono y correo',
+                              ),
+                              icon: Icons.alternate_email_rounded,
+                              children: [
+                                _field(
+                                  palette: palette,
+                                  label: _t(
+                                    nl: 'Telefoonnummer',
+                                    en: 'Phone number',
+                                    fr: 'Numéro de téléphone',
+                                    es: 'Número de teléfono',
+                                  ),
+                                  controller: _phoneCtrl,
+                                  keyboardType: TextInputType.phone,
+                                  validator: (v) {
+                                    final text = (v ?? '').trim();
+                                    if (text.isEmpty) {
+                                      return _t(
+                                        nl: 'Vul je telefoonnummer in',
+                                        en: 'Enter your phone number',
+                                        fr: 'Saisissez votre numéro de téléphone',
+                                        es: 'Introduce tu número de teléfono',
+                                      );
+                                    }
+                                    return null;
+                                  },
+                                ),
+                                const SizedBox(height: 10),
+                                _field(
+                                  palette: palette,
+                                  label: _t(
+                                    nl: 'E-mailadres',
+                                    en: 'Email address',
+                                    fr: 'Adresse e-mail',
+                                    es: 'Correo electrónico',
+                                  ),
+                                  controller: _emailCtrl,
+                                  keyboardType: TextInputType.emailAddress,
+                                  validator: (v) {
+                                    final text = (v ?? '').trim();
+                                    if (text.isEmpty) {
+                                      return _t(
+                                        nl: 'Vul je e-mail in',
+                                        en: 'Enter your email',
+                                        fr: 'Saisissez votre e-mail',
+                                        es: 'Introduce tu correo',
+                                      );
+                                    }
+                                    if (!text.contains('@') ||
+                                        !text.contains('.')) {
+                                      return _t(
+                                        nl: 'Vul een geldig e-mailadres in',
+                                        en: 'Enter a valid email address',
+                                        fr: 'Saisissez une adresse e-mail valide',
+                                        es: 'Introduce un correo electrónico válido',
+                                      );
+                                    }
+                                    return null;
+                                  },
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 12),
+                            _sectionCard(
+                              palette: palette,
+                              title: _t(
+                                nl: 'Facturatie optioneel',
+                                en: 'Optional billing',
+                                fr: 'Facturation facultative',
+                                es: 'Facturación opcional',
+                              ),
+                              subtitle: _t(
+                                nl: 'Voor zakelijke ritbonnen',
+                                en: 'For business receipts',
+                                fr: 'Pour les reçus professionnels',
+                                es: 'Para recibos empresariales',
+                              ),
+                              icon: Icons.receipt_long_outlined,
+                              children: [
+                                _field(
+                                  palette: palette,
+                                  label: _t(
+                                    nl: 'Bedrijfsnaam (optioneel)',
+                                    en: 'Company name (optional)',
+                                    fr: 'Nom de l’entreprise (facultatif)',
+                                    es: 'Nombre de la empresa (opcional)',
+                                  ),
+                                  controller: _companyNameCtrl,
+                                ),
+                                const SizedBox(height: 10),
+                                _field(
+                                  palette: palette,
+                                  label: _t(
+                                    nl: 'BTW-nummer (optioneel)',
+                                    en: 'VAT number (optional)',
+                                    fr: 'Numéro de TVA (facultatif)',
+                                    es: 'Número de IVA (opcional)',
+                                  ),
+                                  controller: _vatNumberCtrl,
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 14),
+                            FilledButton(
+                              onPressed: _saving ? null : _save,
+                              style: FilledButton.styleFrom(
+                                backgroundColor: isDarkTheme
+                                    ? palette.gold
+                                    : palette.bronze,
+                                foregroundColor: Colors.black.withOpacity(0.92),
+                                minimumSize: const Size.fromHeight(52),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(16),
+                                ),
+                                elevation: 0,
+                              ),
+                              child: Text(
+                                _saving
+                                    ? _t(
+                                        nl: 'Opslaan...',
+                                        en: 'Saving...',
+                                        fr: 'Enregistrement...',
+                                        es: 'Guardando...',
+                                      )
+                                    : _t(
+                                        nl: 'Opslaan',
+                                        en: 'Save',
+                                        fr: 'Enregistrer',
+                                        es: 'Guardar',
+                                      ),
+                              ),
+                            ),
+                          ],
                         ),
-                      ],
+                      ),
                     ),
                   ),
                 ),
               ),
             ),
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 }
