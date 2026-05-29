@@ -42,6 +42,9 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
     required String es,
   }) => _tr(nl: nl, en: en, fr: fr, es: es);
 
+  CustomerThemePalette get _themePalette =>
+      paletteForCustomerTheme(customerThemeNotifier.value);
+
   @override
   void initState() {
     super.initState();
@@ -596,13 +599,19 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
     required int initialRating,
     required String initialComment,
   }) async {
+    final palette = _themePalette;
+    final sheetBackground = palette.surface;
+    final fieldBackground = palette.surfaceAlt;
+    final textColor = palette.textPrimary;
+    final mutedText = palette.textMuted;
+    final borderColor = palette.border;
     final controller = TextEditingController(text: initialComment);
     var selectedRating = initialRating.clamp(1, 5);
     try {
       return await showModalBottomSheet<Map<String, dynamic>>(
         context: context,
         isScrollControlled: true,
-        backgroundColor: const Color(0xFF101113),
+        backgroundColor: sheetBackground,
         shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
         ),
@@ -627,8 +636,8 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                         fr: 'Évaluer la course',
                         es: 'Valorar viaje',
                       ),
-                      style: const TextStyle(
-                        color: Colors.white,
+                      style: TextStyle(
+                        color: textColor,
                         fontWeight: FontWeight.w800,
                         fontSize: 16,
                       ),
@@ -647,7 +656,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                             selectedRating >= star
                                 ? Icons.star_rounded
                                 : Icons.star_outline_rounded,
-                            color: const Color(0xFFE5B641),
+                            color: palette.gold,
                             size: 28,
                           ),
                         );
@@ -659,7 +668,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                       minLines: 2,
                       maxLines: 4,
                       maxLength: 500,
-                      style: const TextStyle(color: Colors.white),
+                      style: TextStyle(color: textColor),
                       decoration: InputDecoration(
                         hintText: _t(
                           nl: 'Opmerking (optioneel)',
@@ -667,13 +676,17 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                           fr: 'Commentaire (optionnel)',
                           es: 'Comentario (opcional)',
                         ),
-                        hintStyle: const TextStyle(color: Colors.white54),
+                        hintStyle: TextStyle(
+                          color: mutedText.withOpacity(
+                            palette.isDark ? 0.7 : 0.9,
+                          ),
+                        ),
                         filled: true,
-                        fillColor: const Color(0xFF16120A),
+                        fillColor: fieldBackground,
                         border: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(12),
                           borderSide: BorderSide(
-                            color: kFluxidiYellow.withOpacity(0.22),
+                            color: borderColor.withOpacity(0.55),
                           ),
                         ),
                       ),
@@ -689,7 +702,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                           });
                         },
                         style: FilledButton.styleFrom(
-                          backgroundColor: kFluxidiYellow,
+                          backgroundColor: palette.gold,
                           foregroundColor: Colors.black,
                         ),
                         child: Text(
@@ -1408,7 +1421,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
             es: 'Esta reserva ya no puede cancelarse en linea porque el plazo de cancelacion ha vencido. Contacta con la empresa de taxi si necesitas ayuda.',
           ),
           allowRefresh: false,
-          accent: const Color(0xFFE76F51),
+          accent: _themePalette.danger,
           icon: Icons.block_rounded,
         );
       case 'booking_not_found':
@@ -1426,7 +1439,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
             es: 'No pudimos volver a cargar esta reserva. Actualiza la lista e intentalo de nuevo.',
           ),
           allowRefresh: true,
-          accent: const Color(0xFFF4C95D),
+          accent: _themePalette.gold,
           icon: Icons.search_off_rounded,
         );
       case 'network_error':
@@ -1444,7 +1457,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
             es: 'Comprueba tu conexion a internet e intentalo de nuevo.',
           ),
           allowRefresh: true,
-          accent: const Color(0xFFF4C95D),
+          accent: _themePalette.gold,
           icon: Icons.wifi_off_rounded,
         );
       default:
@@ -1462,7 +1475,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
             es: 'No pudimos cancelar esta reserva. Intentalo de nuevo mas tarde.',
           ),
           allowRefresh: false,
-          accent: const Color(0xFFE76F51),
+          accent: _themePalette.danger,
           icon: Icons.error_outline_rounded,
         );
     }
@@ -1472,6 +1485,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
     required String reason,
   }) async {
     if (!mounted) return;
+    final palette = _themePalette;
     final ui = _customerCancellationFailureUi(reason);
     final shouldRefresh = await showDialog<bool>(
       context: context,
@@ -1486,12 +1500,14 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
           ),
           child: Container(
             decoration: BoxDecoration(
-              color: const Color(0xFF10141E),
+              color: palette.surface,
               borderRadius: BorderRadius.circular(22),
               border: Border.all(color: ui.accent.withValues(alpha: 0.55)),
               boxShadow: [
                 BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.40),
+                  color: palette.shadow.withValues(
+                    alpha: palette.isDark ? 0.40 : 0.18,
+                  ),
                   blurRadius: 24,
                   offset: const Offset(0, 10),
                 ),
@@ -1519,7 +1535,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                       child: Text(
                         ui.title,
                         style: theme.textTheme.titleMedium?.copyWith(
-                          color: Colors.white,
+                          color: palette.textPrimary,
                           fontWeight: FontWeight.w800,
                         ),
                       ),
@@ -1530,7 +1546,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                 Text(
                   ui.message,
                   style: theme.textTheme.bodyMedium?.copyWith(
-                    color: Colors.white.withValues(alpha: 0.90),
+                    color: palette.textMuted,
                     height: 1.35,
                   ),
                 ),
@@ -1549,9 +1565,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                             es: 'Actualizar',
                           ),
                           style: TextStyle(
-                            color: const Color(
-                              0xFFF4C95D,
-                            ).withValues(alpha: 0.95),
+                            color: palette.gold.withValues(alpha: 0.95),
                             fontWeight: FontWeight.w700,
                           ),
                         ),
@@ -1988,19 +2002,20 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
   }
 
   Widget _section({required String title, required List<Widget> children}) {
+    final palette = _themePalette;
     return Container(
       margin: const EdgeInsets.only(bottom: 14),
       decoration: BoxDecoration(
-        gradient: const LinearGradient(
+        gradient: LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          colors: [Color(0xFF121212), Color(0xFF0A0A0B), Color(0xFF080809)],
+          colors: [palette.surface, palette.surfaceAlt],
         ),
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: kFluxidiYellow.withOpacity(0.2)),
+        border: Border.all(color: palette.border.withOpacity(0.7)),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.26),
+            color: palette.shadow.withOpacity(palette.isDark ? 0.26 : 0.12),
             blurRadius: 16,
             offset: const Offset(0, 8),
           ),
@@ -2016,7 +2031,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
               style: TextStyle(
                 fontWeight: FontWeight.w800,
                 fontSize: 14.4,
-                color: kFluxidiYellow.withOpacity(0.98),
+                color: palette.gold.withOpacity(0.98),
               ),
             ),
             const SizedBox(height: 9),
@@ -2033,6 +2048,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
     bool stacked = false,
     String? emptyText,
   }) {
+    final palette = _themePalette;
     final v = value.trim().isEmpty ? (emptyText ?? '-') : value.trim();
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -2046,7 +2062,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                 Text(
                   label,
                   style: TextStyle(
-                    color: Colors.white.withOpacity(0.74),
+                    color: palette.textMuted.withOpacity(0.9),
                     fontSize: 12.1,
                     fontWeight: FontWeight.w600,
                   ),
@@ -2054,8 +2070,8 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                 const SizedBox(height: 4),
                 Text(
                   v,
-                  style: const TextStyle(
-                    color: Colors.white,
+                  style: TextStyle(
+                    color: palette.textPrimary,
                     fontSize: 12.8,
                     height: 1.28,
                   ),
@@ -2077,7 +2093,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                    color: Colors.white.withOpacity(0.74),
+                    color: palette.textMuted.withOpacity(0.9),
                     fontSize: 12.2,
                     height: 1.25,
                   ),
@@ -2086,8 +2102,8 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
               Expanded(
                 child: Text(
                   v,
-                  style: const TextStyle(
-                    color: Colors.white,
+                  style: TextStyle(
+                    color: palette.textPrimary,
                     fontSize: 12.8,
                     height: 1.28,
                   ),
@@ -2103,517 +2119,399 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
 
   @override
   Widget build(BuildContext context) {
-    return ValueListenableBuilder<AppLanguage>(
-      valueListenable: appLanguageNotifier,
-      builder: (context, _, __) {
-        final v = _view;
-        final paymentToken = _classifyCustomerPaymentDisplayToken(
-          aliases: _paymentAliasesForView(v),
-          fallbackToken: _derivedPaymentDisplayToken.isNotEmpty
-              ? _derivedPaymentDisplayToken
-              : v.rawPaymentStatus,
-        );
-        final paid = _isPaidCustomerPaymentDisplayToken(paymentToken);
-        final partiallyPaid = _isPartialCustomerPaymentDisplayToken(
-          paymentToken,
-        );
-        final paymentStatusLabel = paid
-            ? _t(nl: 'Betaald', en: 'Paid', fr: 'Paye', es: 'Pagado')
-            : (partiallyPaid
-                  ? _t(
-                      nl: 'Deels betaald',
-                      en: 'Partially paid',
-                      fr: 'Partiellement paye',
-                      es: 'Parcialmente pagado',
-                    )
-                  : _t(
-                      nl: 'Te betalen in de wagen',
-                      en: 'To pay in the vehicle',
-                      fr: 'A payer dans le vehicule',
-                      es: 'A pagar en el vehiculo',
-                    ));
-        final paymentStatusDescription = paid
-            ? _t(
-                nl: 'Je betaling is bevestigd.',
-                en: 'Your payment has been confirmed.',
-                fr: 'Votre paiement est confirme.',
-                es: 'Tu pago esta confirmado.',
-              )
-            : (partiallyPaid
-                  ? _t(
-                      nl: 'Een deel is betaald, resterend bedrag staat nog open.',
-                      en: 'Part of this booking is paid, remaining amount is still open.',
-                      fr: 'Une partie est payee, le montant restant est encore ouvert.',
-                      es: 'Una parte esta pagada, el monto restante sigue abierto.',
-                    )
-                  : _t(
-                      nl: 'Voldoe het bedrag bij de chauffeur.',
-                      en: 'Pay the driver during your ride.',
-                      fr: 'Reglez le chauffeur pendant la course.',
-                      es: 'Paga al conductor durante el viaje.',
-                    ));
-        final business = v.businessCustomer;
-        final isRoundtrip = v.isRoundtrip;
-        final showRoundtripPricing =
-            isRoundtrip &&
-            (v.priceInclVatMain != null ||
-                v.priceInclVatReturn != null ||
-                v.priceInclVatTotal != null);
-        final serviceText = _serviceLabel(v.service);
-        final tierText = _tierLabel(v.tier);
-        final hasServiceText =
-            serviceText.trim().isNotEmpty && serviceText != '-';
-        final hasTierText = tierText.trim().isNotEmpty && tierText != '-';
-        final invoiceEmail = v.invoiceEmail.trim().isEmpty
-            ? _notFilled()
-            : v.invoiceEmail.trim();
-        final invoiceAddress = v.invoiceAddress.trim().isEmpty
-            ? _notFilled()
-            : v.invoiceAddress.trim();
-        final invoiceFieldsExist =
-            v.companyName.isNotEmpty ||
-            v.vatNumber.isNotEmpty ||
-            v.invoiceEmail.isNotEmpty ||
-            v.invoiceAddress.isNotEmpty;
-        final showInvoiceSection = business || invoiceFieldsExist;
+    return ValueListenableBuilder<CustomerThemeVariant>(
+      valueListenable: customerThemeNotifier,
+      builder: (context, themeVariant, __) {
+        final palette = paletteForCustomerTheme(themeVariant);
+        return ValueListenableBuilder<AppLanguage>(
+          valueListenable: appLanguageNotifier,
+          builder: (context, _, __) {
+            final v = _view;
+            final paymentToken = _classifyCustomerPaymentDisplayToken(
+              aliases: _paymentAliasesForView(v),
+              fallbackToken: _derivedPaymentDisplayToken.isNotEmpty
+                  ? _derivedPaymentDisplayToken
+                  : v.rawPaymentStatus,
+            );
+            final paid = _isPaidCustomerPaymentDisplayToken(paymentToken);
+            final partiallyPaid = _isPartialCustomerPaymentDisplayToken(
+              paymentToken,
+            );
+            final paymentStatusLabel = paid
+                ? _t(nl: 'Betaald', en: 'Paid', fr: 'Paye', es: 'Pagado')
+                : (partiallyPaid
+                      ? _t(
+                          nl: 'Deels betaald',
+                          en: 'Partially paid',
+                          fr: 'Partiellement paye',
+                          es: 'Parcialmente pagado',
+                        )
+                      : _t(
+                          nl: 'Te betalen in de wagen',
+                          en: 'To pay in the vehicle',
+                          fr: 'A payer dans le vehicule',
+                          es: 'A pagar en el vehiculo',
+                        ));
+            final paymentStatusDescription = paid
+                ? _t(
+                    nl: 'Je betaling is bevestigd.',
+                    en: 'Your payment has been confirmed.',
+                    fr: 'Votre paiement est confirme.',
+                    es: 'Tu pago esta confirmado.',
+                  )
+                : (partiallyPaid
+                      ? _t(
+                          nl: 'Een deel is betaald, resterend bedrag staat nog open.',
+                          en: 'Part of this booking is paid, remaining amount is still open.',
+                          fr: 'Une partie est payee, le montant restant est encore ouvert.',
+                          es: 'Una parte esta pagada, el monto restante sigue abierto.',
+                        )
+                      : _t(
+                          nl: 'Voldoe het bedrag bij de chauffeur.',
+                          en: 'Pay the driver during your ride.',
+                          fr: 'Reglez le chauffeur pendant la course.',
+                          es: 'Paga al conductor durante el viaje.',
+                        ));
+            final business = v.businessCustomer;
+            final isRoundtrip = v.isRoundtrip;
+            final showRoundtripPricing =
+                isRoundtrip &&
+                (v.priceInclVatMain != null ||
+                    v.priceInclVatReturn != null ||
+                    v.priceInclVatTotal != null);
+            final serviceText = _serviceLabel(v.service);
+            final tierText = _tierLabel(v.tier);
+            final hasServiceText =
+                serviceText.trim().isNotEmpty && serviceText != '-';
+            final hasTierText = tierText.trim().isNotEmpty && tierText != '-';
+            final invoiceEmail = v.invoiceEmail.trim().isEmpty
+                ? _notFilled()
+                : v.invoiceEmail.trim();
+            final invoiceAddress = v.invoiceAddress.trim().isEmpty
+                ? _notFilled()
+                : v.invoiceAddress.trim();
+            final invoiceFieldsExist =
+                v.companyName.isNotEmpty ||
+                v.vatNumber.isNotEmpty ||
+                v.invoiceEmail.isNotEmpty ||
+                v.invoiceAddress.isNotEmpty;
+            final showInvoiceSection = business || invoiceFieldsExist;
 
-        return Scaffold(
-          backgroundColor: const Color(0xFF0B1020),
-          appBar: AppBar(
-            backgroundColor: const Color(0xFF0B1020),
-            title: Text(
-              _t(
-                nl: 'Boekingsdetail',
-                en: 'Booking detail',
-                fr: 'Detail de reservation',
-                es: 'Detalle de reserva',
-              ),
-            ),
-            actions: [
-              IconButton(
-                style: IconButton.styleFrom(
-                  backgroundColor: const Color(0xFF111214),
-                  foregroundColor: _canCancelBooking
-                      ? const Color(0xFFFFC1C1)
-                      : Colors.white38,
-                  side: BorderSide(
-                    color: _canCancelBooking
-                        ? const Color(0xFFCD5C6C).withOpacity(0.6)
-                        : Colors.white24,
+            final iconButtonBg = palette.surfaceAlt.withOpacity(
+              palette.isDark ? 0.95 : 0.86,
+            );
+            final subtleBorder = palette.border.withOpacity(
+              palette.isDark ? 0.75 : 0.9,
+            );
+            return Scaffold(
+              backgroundColor: palette.background,
+              appBar: AppBar(
+                backgroundColor: palette.background,
+                foregroundColor: palette.textPrimary,
+                title: Text(
+                  _t(
+                    nl: 'Boekingsdetail',
+                    en: 'Booking detail',
+                    fr: 'Detail de reservation',
+                    es: 'Detalle de reserva',
                   ),
                 ),
-                tooltip: _t(
-                  nl: 'Boeking annuleren',
-                  en: 'Cancel booking',
-                  fr: 'Annuler la réservation',
-                  es: 'Cancelar reserva',
-                ),
-                onPressed: (!_canCancelBooking || _cancelling)
-                    ? null
-                    : _cancelBookingServerSide,
-                icon: _cancelling
-                    ? const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.cancel_outlined),
-              ),
-              if (_canLocalRemoveBookingOnly)
-                IconButton(
-                  style: IconButton.styleFrom(
-                    backgroundColor: const Color(0xFF111214),
-                    foregroundColor: Colors.white.withOpacity(0.9),
-                    side: BorderSide(color: Colors.white.withOpacity(0.22)),
-                  ),
-                  tooltip: _t(
-                    nl: 'Verwijderen uit mijn lijst',
-                    en: 'Remove from my list',
-                    fr: 'Supprimer de ma liste',
-                    es: 'Eliminar de mi lista',
-                  ),
-                  onPressed: _removeFromMyBookings,
-                  icon: const Icon(Icons.delete_outline),
-                ),
-              IconButton(
-                style: IconButton.styleFrom(
-                  backgroundColor: const Color(0xFF111214),
-                  foregroundColor: kFluxidiYellow.withOpacity(0.98),
-                  side: BorderSide(color: kFluxidiYellow.withOpacity(0.3)),
-                ),
-                tooltip: _t(
-                  nl: 'Vernieuwen',
-                  en: 'Refresh',
-                  fr: 'Actualiser',
-                  es: 'Actualizar',
-                ),
-                onPressed: _refreshing ? null : _refresh,
-                icon: _refreshing
-                    ? const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.refresh_outlined),
-              ),
-              const SizedBox(width: 6),
-            ],
-          ),
-          body: SafeArea(
-            child: RefreshIndicator(
-              onRefresh: _refresh,
-              child: ListView(
-                padding: const EdgeInsets.all(16),
-                physics: const AlwaysScrollableScrollPhysics(),
-                children: [
-                  if (_refreshError != null)
-                    Container(
-                      margin: const EdgeInsets.only(bottom: 12),
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: Colors.red.withOpacity(0.12),
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: Colors.red.withOpacity(0.4)),
-                      ),
-                      child: Text(
-                        _refreshError!,
-                        style: const TextStyle(color: Color(0xFFFFB4B4)),
+                actions: [
+                  IconButton(
+                    style: IconButton.styleFrom(
+                      backgroundColor: iconButtonBg,
+                      foregroundColor: _canCancelBooking
+                          ? palette.danger.withOpacity(0.9)
+                          : palette.textMuted.withOpacity(0.55),
+                      side: BorderSide(
+                        color: _canCancelBooking
+                            ? palette.danger.withOpacity(0.6)
+                            : subtleBorder.withOpacity(0.6),
                       ),
                     ),
-                  if (_usingLocalCache)
-                    Container(
-                      margin: const EdgeInsets.only(bottom: 12),
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF2A2410),
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: const Color(0xFFE5B641)),
-                      ),
-                      child: Text(
-                        _t(
-                          nl: 'Je ziet lokale gegevens. Vernieuwen voor de laatste status.',
-                          en: 'Showing local data. Refresh for the latest status.',
-                          fr: 'Donnees locales affichees. Actualisez pour le statut le plus recent.',
-                          es: 'Mostrando datos locales. Actualiza para ver el estado mas reciente.',
-                        ),
-                        style: const TextStyle(color: Colors.white),
-                      ),
+                    tooltip: _t(
+                      nl: 'Boeking annuleren',
+                      en: 'Cancel booking',
+                      fr: 'Annuler la réservation',
+                      es: 'Cancelar reserva',
                     ),
-                  if (_canCancelBooking) ...[
-                    Container(
-                      margin: const EdgeInsets.only(bottom: 12),
-                      width: double.infinity,
-                      child: OutlinedButton.icon(
-                        onPressed: _cancelling
-                            ? null
-                            : _cancelBookingServerSide,
-                        style: OutlinedButton.styleFrom(
-                          foregroundColor: const Color(0xFFFFCDCD),
-                          side: BorderSide(
-                            color: const Color(0xFFCD5C6C).withOpacity(0.72),
-                          ),
-                          backgroundColor: const Color(0xFF2A1114),
-                          padding: const EdgeInsets.symmetric(vertical: 11),
-                          shape: RoundedRectangleBorder(
+                    onPressed: (!_canCancelBooking || _cancelling)
+                        ? null
+                        : _cancelBookingServerSide,
+                    icon: _cancelling
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.cancel_outlined),
+                  ),
+                  if (_canLocalRemoveBookingOnly)
+                    IconButton(
+                      style: IconButton.styleFrom(
+                        backgroundColor: iconButtonBg,
+                        foregroundColor: palette.textPrimary.withOpacity(0.9),
+                        side: BorderSide(color: subtleBorder.withOpacity(0.7)),
+                      ),
+                      tooltip: _t(
+                        nl: 'Verwijderen uit mijn lijst',
+                        en: 'Remove from my list',
+                        fr: 'Supprimer de ma liste',
+                        es: 'Eliminar de mi lista',
+                      ),
+                      onPressed: _removeFromMyBookings,
+                      icon: const Icon(Icons.delete_outline),
+                    ),
+                  IconButton(
+                    style: IconButton.styleFrom(
+                      backgroundColor: iconButtonBg,
+                      foregroundColor: palette.gold.withOpacity(0.98),
+                      side: BorderSide(color: palette.gold.withOpacity(0.35)),
+                    ),
+                    tooltip: _t(
+                      nl: 'Vernieuwen',
+                      en: 'Refresh',
+                      fr: 'Actualiser',
+                      es: 'Actualizar',
+                    ),
+                    onPressed: _refreshing ? null : _refresh,
+                    icon: _refreshing
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.refresh_outlined),
+                  ),
+                  const SizedBox(width: 6),
+                ],
+              ),
+              body: SafeArea(
+                child: RefreshIndicator(
+                  onRefresh: _refresh,
+                  child: ListView(
+                    padding: const EdgeInsets.all(16),
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    children: [
+                      if (_refreshError != null)
+                        Container(
+                          margin: const EdgeInsets.only(bottom: 12),
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: palette.danger.withOpacity(0.12),
                             borderRadius: BorderRadius.circular(12),
+                            border: Border.all(
+                              color: palette.danger.withOpacity(0.4),
+                            ),
+                          ),
+                          child: Text(
+                            _refreshError!,
+                            style: TextStyle(
+                              color: palette.danger.withOpacity(0.86),
+                            ),
                           ),
                         ),
-                        icon: _cancelling
-                            ? const SizedBox(
-                                width: 16,
-                                height: 16,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                ),
-                              )
-                            : const Icon(Icons.cancel_outlined),
-                        label: Text(
-                          _t(
-                            nl: 'Boeking annuleren',
-                            en: 'Cancel booking',
-                            fr: 'Annuler la réservation',
-                            es: 'Cancelar reserva',
+                      if (_usingLocalCache)
+                        Container(
+                          margin: const EdgeInsets.only(bottom: 12),
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: palette.surfaceAlt.withOpacity(
+                              palette.isDark ? 0.95 : 0.92,
+                            ),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(
+                              color: palette.gold.withOpacity(0.58),
+                            ),
+                          ),
+                          child: Text(
+                            _t(
+                              nl: 'Je ziet lokale gegevens. Vernieuwen voor de laatste status.',
+                              en: 'Showing local data. Refresh for the latest status.',
+                              fr: 'Donnees locales affichees. Actualisez pour le statut le plus recent.',
+                              es: 'Mostrando datos locales. Actualiza para ver el estado mas reciente.',
+                            ),
+                            style: TextStyle(color: palette.textPrimary),
                           ),
                         ),
-                      ),
-                    ),
-                  ],
-                  if (_canRateCompletedBooking) ...[
-                    Container(
-                      margin: const EdgeInsets.only(bottom: 12),
-                      width: double.infinity,
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          if (_existingCustomerRatingValue() != null) ...[
-                            Text(
+                      if (_canCancelBooking) ...[
+                        Container(
+                          margin: const EdgeInsets.only(bottom: 12),
+                          width: double.infinity,
+                          child: OutlinedButton.icon(
+                            onPressed: _cancelling
+                                ? null
+                                : _cancelBookingServerSide,
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: palette.danger.withOpacity(0.95),
+                              side: BorderSide(
+                                color: palette.danger.withOpacity(0.72),
+                              ),
+                              backgroundColor: palette.surfaceAlt.withOpacity(
+                                palette.isDark ? 0.94 : 0.82,
+                              ),
+                              padding: const EdgeInsets.symmetric(vertical: 11),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                            ),
+                            icon: _cancelling
+                                ? const SizedBox(
+                                    width: 16,
+                                    height: 16,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                    ),
+                                  )
+                                : const Icon(Icons.cancel_outlined),
+                            label: Text(
                               _t(
-                                nl: 'Jouw beoordeling: ${_existingCustomerRatingValue()}/5',
-                                en: 'Your rating: ${_existingCustomerRatingValue()}/5',
-                                fr: 'Votre évaluation : ${_existingCustomerRatingValue()}/5',
-                                es: 'Tu valoración: ${_existingCustomerRatingValue()}/5',
-                              ),
-                              style: TextStyle(
-                                color: Colors.white.withOpacity(0.84),
-                                fontSize: 12.4,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                            if (_existingCustomerRatingComment()
-                                .isNotEmpty) ...[
-                              const SizedBox(height: 4),
-                              Text(
-                                _existingCustomerRatingComment(),
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  color: Colors.white.withOpacity(0.66),
-                                  fontSize: 11.8,
-                                ),
-                              ),
-                            ],
-                            const SizedBox(height: 8),
-                          ],
-                          SizedBox(
-                            width: double.infinity,
-                            child: FilledButton.icon(
-                              onPressed: _ratingSubmitting
-                                  ? null
-                                  : _openRatingFlow,
-                              style: FilledButton.styleFrom(
-                                backgroundColor: kFluxidiYellow,
-                                foregroundColor: Colors.black,
-                                padding: const EdgeInsets.symmetric(
-                                  vertical: 11,
-                                ),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
-                              ),
-                              icon: _ratingSubmitting
-                                  ? const SizedBox(
-                                      width: 16,
-                                      height: 16,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2,
-                                      ),
-                                    )
-                                  : const Icon(Icons.star_rounded),
-                              label: Text(
-                                _t(
-                                  nl: 'Beoordeel rit',
-                                  en: 'Rate ride',
-                                  fr: 'Évaluer la course',
-                                  es: 'Valorar viaje',
-                                ),
+                                nl: 'Boeking annuleren',
+                                en: 'Cancel booking',
+                                fr: 'Annuler la réservation',
+                                es: 'Cancelar reserva',
                               ),
                             ),
                           ),
-                          if (_ratingSessionChecked &&
-                              !_hasValidRatingSession) ...[
-                            const SizedBox(height: 8),
-                            Text(
-                              _t(
-                                nl: 'Verifieer je klantprofiel om deze rit te beoordelen.',
-                                en: 'Verify your customer profile to rate this ride.',
-                                fr: 'Vérifiez votre profil client pour évaluer cette course.',
-                                es: 'Verifica tu perfil de cliente para valorar este viaje.',
-                              ),
-                              style: TextStyle(
-                                color: Colors.white.withOpacity(0.7),
-                                fontSize: 11.8,
-                              ),
-                            ),
-                          ],
-                        ],
-                      ),
-                    ),
-                  ],
-                  Container(
-                    margin: const EdgeInsets.only(bottom: 14),
-                    padding: const EdgeInsets.all(14),
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                        colors: paid
-                            ? const [Color(0xFF103325), Color(0xFF0A1E16)]
-                            : (partiallyPaid
-                                  ? const [Color(0xFF3A2A12), Color(0xFF1E1409)]
-                                  : const [
-                                      Color(0xFF2A2410),
-                                      Color(0xFF161109),
-                                    ]),
-                      ),
-                      borderRadius: BorderRadius.circular(16),
-                      border: Border.all(
-                        color: paid
-                            ? const Color(0xFF34D29A)
-                            : (partiallyPaid
-                                  ? const Color(0xFFFFC857)
-                                  : const Color(0xFFE5B641)),
-                        width: 1.2,
-                      ),
-                    ),
-                    child: Row(
-                      children: [
-                        Icon(
-                          paid
-                              ? Icons.verified_outlined
-                              : Icons.payments_outlined,
-                          color: paid
-                              ? const Color(0xFF34D29A)
-                              : (partiallyPaid
-                                    ? const Color(0xFFFFC857)
-                                    : const Color(0xFFE5B641)),
                         ),
-                        const SizedBox(width: 10),
-                        Expanded(
+                      ],
+                      if (_canRateCompletedBooking) ...[
+                        Container(
+                          margin: const EdgeInsets.only(bottom: 12),
+                          width: double.infinity,
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Text(
-                                _t(
-                                  nl: 'Betaalstatus',
-                                  en: 'Payment status',
-                                  fr: 'Statut de paiement',
-                                  es: 'Estado de pago',
+                              if (_existingCustomerRatingValue() != null) ...[
+                                Text(
+                                  _t(
+                                    nl: 'Jouw beoordeling: ${_existingCustomerRatingValue()}/5',
+                                    en: 'Your rating: ${_existingCustomerRatingValue()}/5',
+                                    fr: 'Votre évaluation : ${_existingCustomerRatingValue()}/5',
+                                    es: 'Tu valoración: ${_existingCustomerRatingValue()}/5',
+                                  ),
+                                  style: TextStyle(
+                                    color: palette.textPrimary.withOpacity(
+                                      0.84,
+                                    ),
+                                    fontSize: 12.4,
+                                    fontWeight: FontWeight.w700,
+                                  ),
                                 ),
-                                style: TextStyle(
-                                  color: Colors.white.withOpacity(0.72),
-                                  fontSize: 11.1,
-                                  fontWeight: FontWeight.w700,
+                                if (_existingCustomerRatingComment()
+                                    .isNotEmpty) ...[
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    _existingCustomerRatingComment(),
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      color: palette.textMuted.withOpacity(0.9),
+                                      fontSize: 11.8,
+                                    ),
+                                  ),
+                                ],
+                                const SizedBox(height: 8),
+                              ],
+                              SizedBox(
+                                width: double.infinity,
+                                child: FilledButton.icon(
+                                  onPressed: _ratingSubmitting
+                                      ? null
+                                      : _openRatingFlow,
+                                  style: FilledButton.styleFrom(
+                                    backgroundColor: palette.gold,
+                                    foregroundColor: Colors.black,
+                                    padding: const EdgeInsets.symmetric(
+                                      vertical: 11,
+                                    ),
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                  ),
+                                  icon: _ratingSubmitting
+                                      ? const SizedBox(
+                                          width: 16,
+                                          height: 16,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2,
+                                          ),
+                                        )
+                                      : const Icon(Icons.star_rounded),
+                                  label: Text(
+                                    _t(
+                                      nl: 'Beoordeel rit',
+                                      en: 'Rate ride',
+                                      fr: 'Évaluer la course',
+                                      es: 'Valorar viaje',
+                                    ),
+                                  ),
                                 ),
                               ),
-                              const SizedBox(height: 2),
-                              Text(
-                                paymentStatusLabel,
-                                style: const TextStyle(
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.w800,
-                                  color: Colors.white,
+                              if (_ratingSessionChecked &&
+                                  !_hasValidRatingSession) ...[
+                                const SizedBox(height: 8),
+                                Text(
+                                  _t(
+                                    nl: 'Verifieer je klantprofiel om deze rit te beoordelen.',
+                                    en: 'Verify your customer profile to rate this ride.',
+                                    fr: 'Vérifiez votre profil client pour évaluer cette course.',
+                                    es: 'Verifica tu perfil de cliente para valorar este viaje.',
+                                  ),
+                                  style: TextStyle(
+                                    color: palette.textMuted.withOpacity(0.9),
+                                    fontSize: 11.8,
+                                  ),
                                 ),
-                              ),
-                              const SizedBox(height: 2),
-                              Text(
-                                paymentStatusDescription,
-                                style: TextStyle(
-                                  color: Colors.white.withOpacity(0.85),
-                                ),
-                              ),
+                              ],
                             ],
                           ),
                         ),
                       ],
-                    ),
-                  ),
-                  if (isRoundtrip)
-                    Container(
-                      margin: const EdgeInsets.only(bottom: 12),
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 10,
-                        vertical: 7,
-                      ),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF2A2410),
-                        borderRadius: BorderRadius.circular(999),
-                        border: Border.all(
-                          color: kFluxidiYellow.withOpacity(0.5),
+                      Container(
+                        margin: const EdgeInsets.only(bottom: 14),
+                        padding: const EdgeInsets.all(14),
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                            colors: paid
+                                ? [
+                                    palette.success.withOpacity(
+                                      palette.isDark ? 0.35 : 0.22,
+                                    ),
+                                    palette.surfaceAlt,
+                                  ]
+                                : (partiallyPaid
+                                      ? [
+                                          palette.gold.withOpacity(
+                                            palette.isDark ? 0.26 : 0.16,
+                                          ),
+                                          palette.surfaceAlt,
+                                        ]
+                                      : [palette.surfaceAlt, palette.surface]),
+                          ),
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(
+                            color: paid
+                                ? palette.success
+                                : (partiallyPaid
+                                      ? palette.gold.withOpacity(0.95)
+                                      : palette.gold.withOpacity(0.88)),
+                            width: 1.2,
+                          ),
                         ),
-                      ),
-                      child: Text(
-                        _t(
-                          nl: 'Heen-en-terug luchthavenrit',
-                          en: 'Roundtrip airport ride',
-                          fr: 'Trajet aeroport aller-retour',
-                          es: 'Traslado de aeropuerto ida y vuelta',
-                        ),
-                        style: TextStyle(
-                          color: kFluxidiYellow.withOpacity(0.98),
-                          fontSize: 11.2,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                    ),
-                  _section(
-                    title: _t(
-                      nl: 'Boeking',
-                      en: 'Booking',
-                      fr: 'Reservation',
-                      es: 'Reserva',
-                    ),
-                    children: [
-                      (() {
-                        final bookingRef = _customerBookingReferenceDisplay(v);
-                        return Column(
+                        child: Row(
                           children: [
-                            _kv(bookingRef.label, bookingRef.value),
-                            if (bookingRef.internalSecondary != null)
-                              _kv(
-                                _t(
-                                  nl: 'Interne boeking',
-                                  en: 'Internal booking',
-                                  fr: 'Réservation interne',
-                                  es: 'Reserva interna',
-                                ),
-                                bookingRef.internalSecondary!,
-                              ),
-                          ],
-                        );
-                      })(),
-                      _kv(
-                        _t(
-                          nl: 'Status',
-                          en: 'Status',
-                          fr: 'Statut',
-                          es: 'Estado',
-                        ),
-                        _lifecycleLabel(v.lifecycleStatus),
-                      ),
-                      _kv(
-                        _t(
-                          nl: 'Betaalstatus',
-                          en: 'Payment status',
-                          fr: 'Statut de paiement',
-                          es: 'Estado de pago',
-                        ),
-                        paymentStatusLabel,
-                      ),
-                    ],
-                  ),
-                  _section(
-                    title: _t(
-                      nl: 'Route',
-                      en: 'Route',
-                      fr: 'Itineraire',
-                      es: 'Ruta',
-                    ),
-                    children: [
-                      if (!isRoundtrip) ...[
-                        Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Column(
-                              children: [
-                                Icon(
-                                  Icons.radio_button_checked,
-                                  size: 12,
-                                  color: kFluxidiYellow.withOpacity(0.95),
-                                ),
-                                Container(
-                                  width: 2,
-                                  height: 34,
-                                  margin: const EdgeInsets.symmetric(
-                                    vertical: 4,
-                                  ),
-                                  color: kFluxidiYellow.withOpacity(0.34),
-                                ),
-                                const Icon(
-                                  Icons.location_on,
-                                  size: 14,
-                                  color: Color(0xFF34D29A),
-                                ),
-                              ],
+                            Icon(
+                              paid
+                                  ? Icons.verified_outlined
+                                  : Icons.payments_outlined,
+                              color: paid
+                                  ? palette.success
+                                  : (partiallyPaid
+                                        ? palette.gold.withOpacity(0.95)
+                                        : palette.gold.withOpacity(0.88)),
                             ),
                             const SizedBox(width: 10),
                             Expanded(
@@ -2622,51 +2520,33 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                                 children: [
                                   Text(
                                     _t(
-                                      nl: 'Ophaaladres',
-                                      en: 'Pickup',
-                                      fr: 'Prise en charge',
-                                      es: 'Recogida',
+                                      nl: 'Betaalstatus',
+                                      en: 'Payment status',
+                                      fr: 'Statut de paiement',
+                                      es: 'Estado de pago',
                                     ),
                                     style: TextStyle(
-                                      color: Colors.white.withOpacity(0.7),
-                                      fontSize: 11.8,
+                                      color: palette.textMuted.withOpacity(0.9),
+                                      fontSize: 11.1,
                                       fontWeight: FontWeight.w700,
                                     ),
                                   ),
                                   const SizedBox(height: 2),
                                   Text(
-                                    v.fromAddress.trim().isEmpty
-                                        ? _notFilled()
-                                        : v.fromAddress.trim(),
-                                    style: const TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 12.8,
-                                      height: 1.26,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 10),
-                                  Text(
-                                    _t(
-                                      nl: 'Bestemming',
-                                      en: 'Destination',
-                                      fr: 'Destination',
-                                      es: 'Destino',
-                                    ),
+                                    paymentStatusLabel,
                                     style: TextStyle(
-                                      color: Colors.white.withOpacity(0.7),
-                                      fontSize: 11.8,
-                                      fontWeight: FontWeight.w700,
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.w800,
+                                      color: palette.textPrimary,
                                     ),
                                   ),
                                   const SizedBox(height: 2),
                                   Text(
-                                    v.toAddress.trim().isEmpty
-                                        ? _notFilled()
-                                        : v.toAddress.trim(),
-                                    style: const TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 12.8,
-                                      height: 1.26,
+                                    paymentStatusDescription,
+                                    style: TextStyle(
+                                      color: palette.textMuted.withOpacity(
+                                        0.95,
+                                      ),
                                     ),
                                   ),
                                 ],
@@ -2674,375 +2554,579 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                             ),
                           ],
                         ),
-                        const SizedBox(height: 10),
-                        _kv(
-                          _t(
-                            nl: 'Geplande ophaal',
-                            en: 'Scheduled pickup',
-                            fr: 'Prise en charge prevue',
-                            es: 'Recogida programada',
-                          ),
-                          _formatPickup(v.pickupIso),
-                        ),
-                      ] else ...[
-                        _kv(
-                          _t(
-                            nl: 'Heenrit van',
-                            en: 'Outbound from',
-                            fr: 'Aller depuis',
-                            es: 'Ida desde',
-                          ),
-                          v.fromAddress.trim().isEmpty
-                              ? _notFilled()
-                              : v.fromAddress.trim(),
-                          stacked: true,
-                        ),
-                        _kv(
-                          _t(
-                            nl: 'Heenrit naar',
-                            en: 'Outbound to',
-                            fr: 'Aller vers',
-                            es: 'Ida hacia',
-                          ),
-                          v.toAddress.trim().isEmpty
-                              ? _notFilled()
-                              : v.toAddress.trim(),
-                          stacked: true,
-                        ),
-                        _kv(
-                          _t(
-                            nl: 'Heenrit datum en tijd',
-                            en: 'Outbound date and time',
-                            fr: "Date et heure de l'aller",
-                            es: 'Fecha y hora de ida',
-                          ),
-                          _formatPickup(v.pickupIso),
-                          stacked: true,
-                        ),
-                        _kv(
-                          _t(
-                            nl: 'Terugrit van',
-                            en: 'Return from',
-                            fr: 'Retour depuis',
-                            es: 'Regreso desde',
-                          ),
-                          v.returnFrom.trim().isEmpty
-                              ? _notFilled()
-                              : v.returnFrom.trim(),
-                          stacked: true,
-                        ),
-                        _kv(
-                          _t(
-                            nl: 'Terugrit naar',
-                            en: 'Return to',
-                            fr: 'Retour vers',
-                            es: 'Regreso hacia',
-                          ),
-                          v.returnTo.trim().isEmpty
-                              ? _notFilled()
-                              : v.returnTo.trim(),
-                          stacked: true,
-                        ),
-                        _kv(
-                          _t(
-                            nl: 'Terugrit datum en tijd',
-                            en: 'Return date and time',
-                            fr: 'Date et heure du retour',
-                            es: 'Fecha y hora de regreso',
-                          ),
-                          _formatPickup(v.returnPickupIso),
-                          stacked: true,
-                        ),
-                      ],
-                    ],
-                  ),
-                  _section(
-                    title: _t(
-                      nl: 'Klantgegevens',
-                      en: 'Customer',
-                      fr: 'Client',
-                      es: 'Cliente',
-                    ),
-                    children: [
-                      _kv(
-                        _t(nl: 'Naam', en: 'Name', fr: 'Nom', es: 'Nombre'),
-                        v.customerName,
                       ),
-                      _kv(
-                        _t(
-                          nl: 'Telefoon',
-                          en: 'Phone',
-                          fr: 'Téléphone',
-                          es: 'Teléfono',
-                        ),
-                        v.customerPhone,
-                      ),
-                      _kv(
-                        _t(
-                          nl: 'E-mail',
-                          en: 'Email',
-                          fr: 'E-mail',
-                          es: 'Email',
-                        ),
-                        v.customerEmail,
-                        stacked: true,
-                      ),
-                    ],
-                  ),
-                  _section(
-                    title: _t(
-                      nl: 'Rit details',
-                      en: 'Ride details',
-                      fr: 'Details de course',
-                      es: 'Detalles del viaje',
-                    ),
-                    children: [
-                      if (hasServiceText)
-                        _kv(
-                          _t(
-                            nl: 'Service',
-                            en: 'Service',
-                            fr: 'Service',
-                            es: 'Servicio',
+                      if (isRoundtrip)
+                        Container(
+                          margin: const EdgeInsets.only(bottom: 12),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 7,
                           ),
-                          serviceText,
-                        ),
-                      if (hasTierText)
-                        _kv(
-                          _t(
-                            nl: 'Tier',
-                            en: 'Tier',
-                            fr: 'Categorie',
-                            es: 'Categoria',
-                          ),
-                          tierText,
-                        ),
-                      _kv(
-                        _t(
-                          nl: 'Passagiers',
-                          en: 'Passengers',
-                          fr: 'Passagers',
-                          es: 'Pasajeros',
-                        ),
-                        v.pax,
-                      ),
-                      _kv(
-                        _t(
-                          nl: 'Bagage',
-                          en: 'Bags',
-                          fr: 'Bagages',
-                          es: 'Equipaje',
-                        ),
-                        v.bags,
-                      ),
-                      _kv(
-                        _t(
-                          nl: 'Extra opties',
-                          en: 'Extra options',
-                          fr: 'Options supplementaires',
-                          es: 'Opciones extra',
-                        ),
-                        v.extraOptions.isEmpty
-                            ? _t(
-                                nl: 'Geen extra opties',
-                                en: 'No extra options',
-                                fr: 'Aucune option supplementaire',
-                                es: 'Sin opciones extra',
-                              )
-                            : _tokenLabel(v.extraOptions),
-                      ),
-                    ],
-                  ),
-                  _section(
-                    title: _t(
-                      nl: 'Prijs',
-                      en: 'Price',
-                      fr: 'Prix',
-                      es: 'Precio',
-                    ),
-                    children: [
-                      if (!showRoundtripPricing) ...[
-                        _kv(
-                          _t(
-                            nl: 'Totaal',
-                            en: 'Total',
-                            fr: 'Total',
-                            es: 'Total',
-                          ),
-                          _formatPrice(v.totalAmount, v.currency),
-                        ),
-                      ] else ...[
-                        _kv(
-                          _t(
-                            nl: 'Heenrit prijs incl. btw',
-                            en: 'Outbound price incl. VAT',
-                            fr: "Prix aller TVAC",
-                            es: 'Precio ida con IVA',
-                          ),
-                          _formatPrice(v.priceInclVatMain, v.currency),
-                          stacked: true,
-                        ),
-                        _kv(
-                          _t(
-                            nl: 'Terugrit prijs incl. btw',
-                            en: 'Return price incl. VAT',
-                            fr: 'Prix retour TVAC',
-                            es: 'Precio regreso con IVA',
-                          ),
-                          _formatPrice(v.priceInclVatReturn, v.currency),
-                          stacked: true,
-                        ),
-                        _kv(
-                          _t(
-                            nl: 'Totaal heen-en-terug incl. btw',
-                            en: 'Roundtrip total incl. VAT',
-                            fr: 'Total aller-retour TVAC',
-                            es: 'Total ida y vuelta con IVA',
-                          ),
-                          _formatPrice(
-                            v.priceInclVatTotal ?? v.totalAmount,
-                            v.currency,
-                          ),
-                          stacked: true,
-                        ),
-                        if (v.fixedFareAppliedMain && v.fixedFareAppliedReturn)
-                          Container(
-                            margin: const EdgeInsets.only(top: 2, bottom: 4),
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 9,
-                              vertical: 6,
+                          decoration: BoxDecoration(
+                            color: palette.surfaceAlt.withOpacity(
+                              palette.isDark ? 0.96 : 0.9,
                             ),
-                            decoration: BoxDecoration(
-                              color: kFluxidiYellow.withOpacity(0.12),
-                              borderRadius: BorderRadius.circular(999),
-                              border: Border.all(
-                                color: kFluxidiYellow.withOpacity(0.45),
-                              ),
+                            borderRadius: BorderRadius.circular(999),
+                            border: Border.all(
+                              color: palette.gold.withOpacity(0.55),
                             ),
-                            child: Text(
+                          ),
+                          child: Text(
+                            _t(
+                              nl: 'Heen-en-terug luchthavenrit',
+                              en: 'Roundtrip airport ride',
+                              fr: 'Trajet aeroport aller-retour',
+                              es: 'Traslado de aeropuerto ida y vuelta',
+                            ),
+                            style: TextStyle(
+                              color: palette.gold.withOpacity(0.98),
+                              fontSize: 11.2,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                        ),
+                      _section(
+                        title: _t(
+                          nl: 'Boeking',
+                          en: 'Booking',
+                          fr: 'Reservation',
+                          es: 'Reserva',
+                        ),
+                        children: [
+                          (() {
+                            final bookingRef = _customerBookingReferenceDisplay(
+                              v,
+                            );
+                            return Column(
+                              children: [
+                                _kv(bookingRef.label, bookingRef.value),
+                                if (bookingRef.internalSecondary != null)
+                                  _kv(
+                                    _t(
+                                      nl: 'Interne boeking',
+                                      en: 'Internal booking',
+                                      fr: 'Réservation interne',
+                                      es: 'Reserva interna',
+                                    ),
+                                    bookingRef.internalSecondary!,
+                                  ),
+                              ],
+                            );
+                          })(),
+                          _kv(
+                            _t(
+                              nl: 'Status',
+                              en: 'Status',
+                              fr: 'Statut',
+                              es: 'Estado',
+                            ),
+                            _lifecycleLabel(v.lifecycleStatus),
+                          ),
+                          _kv(
+                            _t(
+                              nl: 'Betaalstatus',
+                              en: 'Payment status',
+                              fr: 'Statut de paiement',
+                              es: 'Estado de pago',
+                            ),
+                            paymentStatusLabel,
+                          ),
+                        ],
+                      ),
+                      _section(
+                        title: _t(
+                          nl: 'Route',
+                          en: 'Route',
+                          fr: 'Itineraire',
+                          es: 'Ruta',
+                        ),
+                        children: [
+                          if (!isRoundtrip) ...[
+                            Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Column(
+                                  children: [
+                                    Icon(
+                                      Icons.radio_button_checked,
+                                      size: 12,
+                                      color: palette.gold.withOpacity(0.95),
+                                    ),
+                                    Container(
+                                      width: 2,
+                                      height: 34,
+                                      margin: const EdgeInsets.symmetric(
+                                        vertical: 4,
+                                      ),
+                                      color: palette.gold.withOpacity(0.34),
+                                    ),
+                                    Icon(
+                                      Icons.location_on,
+                                      size: 14,
+                                      color: palette.success,
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        _t(
+                                          nl: 'Ophaaladres',
+                                          en: 'Pickup',
+                                          fr: 'Prise en charge',
+                                          es: 'Recogida',
+                                        ),
+                                        style: TextStyle(
+                                          color: palette.textMuted.withOpacity(
+                                            0.9,
+                                          ),
+                                          fontSize: 11.8,
+                                          fontWeight: FontWeight.w700,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 2),
+                                      Text(
+                                        v.fromAddress.trim().isEmpty
+                                            ? _notFilled()
+                                            : v.fromAddress.trim(),
+                                        style: TextStyle(
+                                          color: palette.textPrimary,
+                                          fontSize: 12.8,
+                                          height: 1.26,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 10),
+                                      Text(
+                                        _t(
+                                          nl: 'Bestemming',
+                                          en: 'Destination',
+                                          fr: 'Destination',
+                                          es: 'Destino',
+                                        ),
+                                        style: TextStyle(
+                                          color: palette.textMuted.withOpacity(
+                                            0.9,
+                                          ),
+                                          fontSize: 11.8,
+                                          fontWeight: FontWeight.w700,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 2),
+                                      Text(
+                                        v.toAddress.trim().isEmpty
+                                            ? _notFilled()
+                                            : v.toAddress.trim(),
+                                        style: TextStyle(
+                                          color: palette.textPrimary,
+                                          fontSize: 12.8,
+                                          height: 1.26,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 10),
+                            _kv(
                               _t(
-                                nl: 'Vast tarief per rit volgens bedrijfsregels',
-                                en: 'Fixed fare per ride by company rules',
-                                fr: "Tarif fixe par trajet selon les regles de l'entreprise",
-                                es: 'Tarifa fija por trayecto según reglas de la empresa',
+                                nl: 'Geplande ophaal',
+                                en: 'Scheduled pickup',
+                                fr: 'Prise en charge prevue',
+                                es: 'Recogida programada',
                               ),
-                              style: TextStyle(
-                                color: kFluxidiYellow.withOpacity(0.98),
-                                fontSize: 11.2,
-                                fontWeight: FontWeight.w700,
-                              ),
+                              _formatPickup(v.pickupIso),
                             ),
-                          ),
-                      ],
-                    ],
-                  ),
-                  if (showInvoiceSection)
-                    _section(
-                      title: _t(
-                        nl: 'Zakelijk / Factuur',
-                        en: 'Business / Invoice',
-                        fr: 'Professionnel / Facture',
-                        es: 'Empresa / Factura',
+                          ] else ...[
+                            _kv(
+                              _t(
+                                nl: 'Heenrit van',
+                                en: 'Outbound from',
+                                fr: 'Aller depuis',
+                                es: 'Ida desde',
+                              ),
+                              v.fromAddress.trim().isEmpty
+                                  ? _notFilled()
+                                  : v.fromAddress.trim(),
+                              stacked: true,
+                            ),
+                            _kv(
+                              _t(
+                                nl: 'Heenrit naar',
+                                en: 'Outbound to',
+                                fr: 'Aller vers',
+                                es: 'Ida hacia',
+                              ),
+                              v.toAddress.trim().isEmpty
+                                  ? _notFilled()
+                                  : v.toAddress.trim(),
+                              stacked: true,
+                            ),
+                            _kv(
+                              _t(
+                                nl: 'Heenrit datum en tijd',
+                                en: 'Outbound date and time',
+                                fr: "Date et heure de l'aller",
+                                es: 'Fecha y hora de ida',
+                              ),
+                              _formatPickup(v.pickupIso),
+                              stacked: true,
+                            ),
+                            _kv(
+                              _t(
+                                nl: 'Terugrit van',
+                                en: 'Return from',
+                                fr: 'Retour depuis',
+                                es: 'Regreso desde',
+                              ),
+                              v.returnFrom.trim().isEmpty
+                                  ? _notFilled()
+                                  : v.returnFrom.trim(),
+                              stacked: true,
+                            ),
+                            _kv(
+                              _t(
+                                nl: 'Terugrit naar',
+                                en: 'Return to',
+                                fr: 'Retour vers',
+                                es: 'Regreso hacia',
+                              ),
+                              v.returnTo.trim().isEmpty
+                                  ? _notFilled()
+                                  : v.returnTo.trim(),
+                              stacked: true,
+                            ),
+                            _kv(
+                              _t(
+                                nl: 'Terugrit datum en tijd',
+                                en: 'Return date and time',
+                                fr: 'Date et heure du retour',
+                                es: 'Fecha y hora de regreso',
+                              ),
+                              _formatPickup(v.returnPickupIso),
+                              stacked: true,
+                            ),
+                          ],
+                        ],
                       ),
-                      children: [
-                        _kv(
-                          _t(
-                            nl: 'Zakelijke klant',
-                            en: 'Business customer',
-                            fr: 'Client professionnel',
-                            es: 'Cliente empresa',
-                          ),
-                          business
-                              ? _t(nl: 'Ja', en: 'Yes', fr: 'Oui', es: 'Si')
-                              : _t(nl: 'Nee', en: 'No', fr: 'Non', es: 'No'),
+                      _section(
+                        title: _t(
+                          nl: 'Klantgegevens',
+                          en: 'Customer',
+                          fr: 'Client',
+                          es: 'Cliente',
                         ),
-                        _kv(
-                          _t(
-                            nl: 'Bedrijfsnaam',
-                            en: 'Company name',
-                            fr: "Nom de l'entreprise",
-                            es: 'Empresa',
+                        children: [
+                          _kv(
+                            _t(nl: 'Naam', en: 'Name', fr: 'Nom', es: 'Nombre'),
+                            v.customerName,
                           ),
-                          v.companyName,
-                          stacked: true,
-                        ),
-                        _kv(
-                          _t(
-                            nl: 'BTW-nummer',
-                            en: 'VAT number',
-                            fr: 'Numero de TVA',
-                            es: 'NIF/IVA',
-                          ),
-                          v.vatNumber,
-                          stacked: true,
-                        ),
-                        _kv(
-                          _t(
-                            nl: 'Factuur e-mail',
-                            en: 'Invoice email',
-                            fr: 'E-mail facture',
-                            es: 'Email de factura',
-                          ),
-                          invoiceEmail,
-                          stacked: true,
-                          emptyText: _notFilled(),
-                        ),
-                        _kv(
-                          _t(
-                            nl: 'Factuuradres',
-                            en: 'Invoice address',
-                            fr: 'Adresse de facturation',
-                            es: 'Dirección de factura',
-                          ),
-                          invoiceAddress,
-                          stacked: true,
-                          emptyText: _notFilled(),
-                        ),
-                        const SizedBox(height: 8),
-                        const SizedBox(height: 10),
-                        Wrap(
-                          spacing: 8,
-                          runSpacing: 8,
-                          children: [
-                            OutlinedButton.icon(
-                              onPressed: () => _openReceiptAction(
-                                context,
-                                _ReceiptQuickAction.viewPdf,
-                              ),
-                              icon: const Icon(Icons.visibility_outlined),
-                              label: Text(
-                                _t(
-                                  nl: 'Bekijk PDF',
-                                  en: 'View PDF',
-                                  fr: 'Voir PDF',
-                                  es: 'Ver PDF',
-                                ),
-                              ),
+                          _kv(
+                            _t(
+                              nl: 'Telefoon',
+                              en: 'Phone',
+                              fr: 'Téléphone',
+                              es: 'Teléfono',
                             ),
-                            OutlinedButton.icon(
-                              onPressed: () => _openReceiptAction(
-                                context,
-                                _ReceiptQuickAction.sharePdf,
+                            v.customerPhone,
+                          ),
+                          _kv(
+                            _t(
+                              nl: 'E-mail',
+                              en: 'Email',
+                              fr: 'E-mail',
+                              es: 'Email',
+                            ),
+                            v.customerEmail,
+                            stacked: true,
+                          ),
+                        ],
+                      ),
+                      _section(
+                        title: _t(
+                          nl: 'Rit details',
+                          en: 'Ride details',
+                          fr: 'Details de course',
+                          es: 'Detalles del viaje',
+                        ),
+                        children: [
+                          if (hasServiceText)
+                            _kv(
+                              _t(
+                                nl: 'Service',
+                                en: 'Service',
+                                fr: 'Service',
+                                es: 'Servicio',
                               ),
-                              icon: const Icon(Icons.download_outlined),
-                              label: Text(
-                                _t(
-                                  nl: 'Deel PDF',
-                                  en: 'Share PDF',
-                                  fr: 'Partager PDF',
-                                  es: 'Compartir PDF',
+                              serviceText,
+                            ),
+                          if (hasTierText)
+                            _kv(
+                              _t(
+                                nl: 'Tier',
+                                en: 'Tier',
+                                fr: 'Categorie',
+                                es: 'Categoria',
+                              ),
+                              tierText,
+                            ),
+                          _kv(
+                            _t(
+                              nl: 'Passagiers',
+                              en: 'Passengers',
+                              fr: 'Passagers',
+                              es: 'Pasajeros',
+                            ),
+                            v.pax,
+                          ),
+                          _kv(
+                            _t(
+                              nl: 'Bagage',
+                              en: 'Bags',
+                              fr: 'Bagages',
+                              es: 'Equipaje',
+                            ),
+                            v.bags,
+                          ),
+                          _kv(
+                            _t(
+                              nl: 'Extra opties',
+                              en: 'Extra options',
+                              fr: 'Options supplementaires',
+                              es: 'Opciones extra',
+                            ),
+                            v.extraOptions.isEmpty
+                                ? _t(
+                                    nl: 'Geen extra opties',
+                                    en: 'No extra options',
+                                    fr: 'Aucune option supplementaire',
+                                    es: 'Sin opciones extra',
+                                  )
+                                : _tokenLabel(v.extraOptions),
+                          ),
+                        ],
+                      ),
+                      _section(
+                        title: _t(
+                          nl: 'Prijs',
+                          en: 'Price',
+                          fr: 'Prix',
+                          es: 'Precio',
+                        ),
+                        children: [
+                          if (!showRoundtripPricing) ...[
+                            _kv(
+                              _t(
+                                nl: 'Totaal',
+                                en: 'Total',
+                                fr: 'Total',
+                                es: 'Total',
+                              ),
+                              _formatPrice(v.totalAmount, v.currency),
+                            ),
+                          ] else ...[
+                            _kv(
+                              _t(
+                                nl: 'Heenrit prijs incl. btw',
+                                en: 'Outbound price incl. VAT',
+                                fr: "Prix aller TVAC",
+                                es: 'Precio ida con IVA',
+                              ),
+                              _formatPrice(v.priceInclVatMain, v.currency),
+                              stacked: true,
+                            ),
+                            _kv(
+                              _t(
+                                nl: 'Terugrit prijs incl. btw',
+                                en: 'Return price incl. VAT',
+                                fr: 'Prix retour TVAC',
+                                es: 'Precio regreso con IVA',
+                              ),
+                              _formatPrice(v.priceInclVatReturn, v.currency),
+                              stacked: true,
+                            ),
+                            _kv(
+                              _t(
+                                nl: 'Totaal heen-en-terug incl. btw',
+                                en: 'Roundtrip total incl. VAT',
+                                fr: 'Total aller-retour TVAC',
+                                es: 'Total ida y vuelta con IVA',
+                              ),
+                              _formatPrice(
+                                v.priceInclVatTotal ?? v.totalAmount,
+                                v.currency,
+                              ),
+                              stacked: true,
+                            ),
+                            if (v.fixedFareAppliedMain &&
+                                v.fixedFareAppliedReturn)
+                              Container(
+                                margin: const EdgeInsets.only(
+                                  top: 2,
+                                  bottom: 4,
+                                ),
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 9,
+                                  vertical: 6,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: palette.gold.withOpacity(0.12),
+                                  borderRadius: BorderRadius.circular(999),
+                                  border: Border.all(
+                                    color: palette.gold.withOpacity(0.45),
+                                  ),
+                                ),
+                                child: Text(
+                                  _t(
+                                    nl: 'Vast tarief per rit volgens bedrijfsregels',
+                                    en: 'Fixed fare per ride by company rules',
+                                    fr: "Tarif fixe par trajet selon les regles de l'entreprise",
+                                    es: 'Tarifa fija por trayecto según reglas de la empresa',
+                                  ),
+                                  style: TextStyle(
+                                    color: palette.gold.withOpacity(0.98),
+                                    fontSize: 11.2,
+                                    fontWeight: FontWeight.w700,
+                                  ),
                                 ),
                               ),
+                          ],
+                        ],
+                      ),
+                      if (showInvoiceSection)
+                        _section(
+                          title: _t(
+                            nl: 'Zakelijk / Factuur',
+                            en: 'Business / Invoice',
+                            fr: 'Professionnel / Facture',
+                            es: 'Empresa / Factura',
+                          ),
+                          children: [
+                            _kv(
+                              _t(
+                                nl: 'Zakelijke klant',
+                                en: 'Business customer',
+                                fr: 'Client professionnel',
+                                es: 'Cliente empresa',
+                              ),
+                              business
+                                  ? _t(nl: 'Ja', en: 'Yes', fr: 'Oui', es: 'Si')
+                                  : _t(
+                                      nl: 'Nee',
+                                      en: 'No',
+                                      fr: 'Non',
+                                      es: 'No',
+                                    ),
+                            ),
+                            _kv(
+                              _t(
+                                nl: 'Bedrijfsnaam',
+                                en: 'Company name',
+                                fr: "Nom de l'entreprise",
+                                es: 'Empresa',
+                              ),
+                              v.companyName,
+                              stacked: true,
+                            ),
+                            _kv(
+                              _t(
+                                nl: 'BTW-nummer',
+                                en: 'VAT number',
+                                fr: 'Numero de TVA',
+                                es: 'NIF/IVA',
+                              ),
+                              v.vatNumber,
+                              stacked: true,
+                            ),
+                            _kv(
+                              _t(
+                                nl: 'Factuur e-mail',
+                                en: 'Invoice email',
+                                fr: 'E-mail facture',
+                                es: 'Email de factura',
+                              ),
+                              invoiceEmail,
+                              stacked: true,
+                              emptyText: _notFilled(),
+                            ),
+                            _kv(
+                              _t(
+                                nl: 'Factuuradres',
+                                en: 'Invoice address',
+                                fr: 'Adresse de facturation',
+                                es: 'Dirección de factura',
+                              ),
+                              invoiceAddress,
+                              stacked: true,
+                              emptyText: _notFilled(),
+                            ),
+                            const SizedBox(height: 8),
+                            const SizedBox(height: 10),
+                            Wrap(
+                              spacing: 8,
+                              runSpacing: 8,
+                              children: [
+                                OutlinedButton.icon(
+                                  onPressed: () => _openReceiptAction(
+                                    context,
+                                    _ReceiptQuickAction.viewPdf,
+                                  ),
+                                  style: OutlinedButton.styleFrom(
+                                    foregroundColor: palette.textPrimary,
+                                    backgroundColor: palette.surfaceAlt
+                                        .withOpacity(
+                                          palette.isDark ? 0.86 : 0.94,
+                                        ),
+                                    side: BorderSide(color: palette.border),
+                                  ),
+                                  icon: const Icon(Icons.visibility_outlined),
+                                  label: Text(
+                                    _t(
+                                      nl: 'Bekijk PDF',
+                                      en: 'View PDF',
+                                      fr: 'Voir PDF',
+                                      es: 'Ver PDF',
+                                    ),
+                                  ),
+                                ),
+                                OutlinedButton.icon(
+                                  onPressed: () => _openReceiptAction(
+                                    context,
+                                    _ReceiptQuickAction.sharePdf,
+                                  ),
+                                  style: OutlinedButton.styleFrom(
+                                    foregroundColor: palette.textPrimary,
+                                    backgroundColor: palette.surfaceAlt
+                                        .withOpacity(
+                                          palette.isDark ? 0.86 : 0.94,
+                                        ),
+                                    side: BorderSide(color: palette.border),
+                                  ),
+                                  icon: const Icon(Icons.download_outlined),
+                                  label: Text(
+                                    _t(
+                                      nl: 'Deel PDF',
+                                      en: 'Share PDF',
+                                      fr: 'Partager PDF',
+                                      es: 'Compartir PDF',
+                                    ),
+                                  ),
+                                ),
+                              ],
                             ),
                           ],
                         ),
-                      ],
-                    ),
-                  const SizedBox(height: 4),
-                ],
+                      const SizedBox(height: 4),
+                    ],
+                  ),
+                ),
               ),
-            ),
-          ),
+            );
+          },
         );
       },
     );
