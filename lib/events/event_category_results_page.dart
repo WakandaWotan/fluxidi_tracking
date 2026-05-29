@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
+import 'package:fluxidi_tracking/customer_theme_palette.dart';
+import 'package:fluxidi_tracking/customer_theme_store.dart';
 import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart' as mb;
 
 import 'event_data_source.dart';
@@ -39,10 +41,18 @@ class EventCategoryResultsPage extends StatefulWidget {
 }
 
 class _EventCategoryResultsPageState extends State<EventCategoryResultsPage> {
-  static const Color _bgBlack = Color(0xFF07080C);
-  static const Color _panelBlack = Color(0xFF101010);
-  static const Color _gold = Color(0xFFE5B641);
-  static const Color _softText = Color(0xFFB4B4B4);
+  CustomerThemePalette get _themePalette =>
+      paletteForCustomerTheme(customerThemeNotifier.value);
+  bool get _isDarkTheme => _themePalette.isDark;
+  Color get _bgBlack => _themePalette.background;
+  Color get _panelBlack => _themePalette.surface;
+  Color get _gold => _themePalette.gold;
+  Color get _softText => _themePalette.textMuted;
+  Color get _textPrimary => _themePalette.textPrimary;
+  Color get _border => _themePalette.border;
+  Color get _shadow => _themePalette.shadow;
+  Color get _actionOnGold =>
+      _isDarkTheme ? Colors.black : const Color(0xFF1F1706);
 
   final EventLocalSavedStore _savedStore = const EventLocalSavedStore();
   List<EventDetailData> _events = const <EventDetailData>[];
@@ -79,6 +89,7 @@ class _EventCategoryResultsPageState extends State<EventCategoryResultsPage> {
   @override
   void initState() {
     super.initState();
+    customerThemeNotifier.addListener(_onThemeChanged);
     _loadSavedEvents();
     _loadEvents();
     _mapWidgetKey = ValueKey<String>(
@@ -86,8 +97,14 @@ class _EventCategoryResultsPageState extends State<EventCategoryResultsPage> {
     );
   }
 
+  void _onThemeChanged() {
+    if (!mounted) return;
+    setState(() {});
+  }
+
   @override
   void dispose() {
+    customerThemeNotifier.removeListener(_onThemeChanged);
     try {
       _mapTapCancelable?.cancel();
     } catch (_) {}
@@ -838,8 +855,8 @@ class _EventCategoryResultsPageState extends State<EventCategoryResultsPage> {
               widget.title,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: Colors.white,
+              style: TextStyle(
+                color: _textPrimary,
                 fontSize: 20,
                 fontWeight: FontWeight.w800,
                 letterSpacing: 0.2,
@@ -857,12 +874,14 @@ class _EventCategoryResultsPageState extends State<EventCategoryResultsPage> {
       decoration: BoxDecoration(
         color: _panelBlack,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: _gold.withOpacity(0.24)),
+        border: Border.all(
+          color: _border.withOpacity(_isDarkTheme ? 0.35 : 0.95),
+        ),
       ),
       child: Text(
         _filterSummary,
-        style: const TextStyle(
-          color: _gold,
+        style: TextStyle(
+          color: _isDarkTheme ? _gold : _themePalette.bronze,
           fontSize: 11.6,
           fontWeight: FontWeight.w700,
         ),
@@ -876,7 +895,7 @@ class _EventCategoryResultsPageState extends State<EventCategoryResultsPage> {
       decoration: BoxDecoration(
         color: _panelBlack,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: _gold.withOpacity(0.28)),
+        border: Border.all(color: _border.withOpacity(_isDarkTheme ? 0.4 : 1)),
       ),
       child: Row(
         children: [
@@ -922,7 +941,7 @@ class _EventCategoryResultsPageState extends State<EventCategoryResultsPage> {
               Icon(
                 icon,
                 size: 16,
-                color: selected ? Colors.black : _gold.withOpacity(0.92),
+                color: selected ? _actionOnGold : _gold.withOpacity(0.92),
               ),
               const SizedBox(width: 6),
               Flexible(
@@ -931,7 +950,7 @@ class _EventCategoryResultsPageState extends State<EventCategoryResultsPage> {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                    color: selected ? Colors.black : Colors.white,
+                    color: selected ? _actionOnGold : _textPrimary,
                     fontWeight: FontWeight.w700,
                   ),
                 ),
@@ -969,10 +988,12 @@ class _EventCategoryResultsPageState extends State<EventCategoryResultsPage> {
       decoration: BoxDecoration(
         color: _panelBlack,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: _gold.withOpacity(0.24)),
+        border: Border.all(
+          color: _border.withOpacity(_isDarkTheme ? 0.35 : 0.95),
+        ),
         boxShadow: [
           BoxShadow(
-            color: _gold.withOpacity(0.05),
+            color: _shadow.withOpacity(_isDarkTheme ? 0.2 : 0.1),
             blurRadius: 12,
             spreadRadius: 0.4,
           ),
@@ -1063,7 +1084,7 @@ class _EventCategoryResultsPageState extends State<EventCategoryResultsPage> {
                                 const SizedBox(width: 4),
                                 Text(
                                   event.category,
-                                  style: const TextStyle(
+                                  style: TextStyle(
                                     color: _gold,
                                     fontSize: 10.6,
                                     fontWeight: FontWeight.w700,
@@ -1138,8 +1159,8 @@ class _EventCategoryResultsPageState extends State<EventCategoryResultsPage> {
                           event.title,
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            color: Colors.white,
+                          style: TextStyle(
+                            color: _textPrimary,
                             fontSize: 16.4,
                             height: 1.2,
                             fontWeight: FontWeight.w800,
@@ -1171,9 +1192,11 @@ class _EventCategoryResultsPageState extends State<EventCategoryResultsPage> {
               child: OutlinedButton.icon(
                 onPressed: () => _bookEvent(event),
                 style: OutlinedButton.styleFrom(
-                  backgroundColor: const Color(0xFF171209),
+                  backgroundColor: _panelBlack,
                   foregroundColor: _gold,
-                  side: BorderSide(color: _gold.withOpacity(0.55)),
+                  side: BorderSide(
+                    color: _border.withOpacity(_isDarkTheme ? 0.6 : 1),
+                  ),
                   minimumSize: const Size.fromHeight(46),
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(11),
@@ -1210,7 +1233,7 @@ class _EventCategoryResultsPageState extends State<EventCategoryResultsPage> {
             value,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(color: _softText, fontSize: 11.9),
+            style: TextStyle(color: _softText, fontSize: 11.9),
           ),
         ),
       ],
@@ -1254,7 +1277,9 @@ class _EventCategoryResultsPageState extends State<EventCategoryResultsPage> {
           child: Container(
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(18),
-              border: Border.all(color: _gold.withOpacity(0.28)),
+              border: Border.all(
+                color: _border.withOpacity(_isDarkTheme ? 0.4 : 1),
+              ),
             ),
             clipBehavior: Clip.antiAlias,
             child: Stack(
@@ -1264,7 +1289,9 @@ class _EventCategoryResultsPageState extends State<EventCategoryResultsPage> {
                     key: _mapWidgetKey,
                     onMapCreated: _onMapCreated,
                     textureView: true,
-                    styleUri: mb.MapboxStyles.DARK,
+                    styleUri: _isDarkTheme
+                        ? mb.MapboxStyles.DARK
+                        : mb.MapboxStyles.LIGHT,
                     cameraOptions: mb.CameraOptions(
                       center: _marketFallbackCenter(),
                       zoom: 5.8,
@@ -1297,9 +1324,9 @@ class _EventCategoryResultsPageState extends State<EventCategoryResultsPage> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
       decoration: BoxDecoration(
-        color: Colors.black.withOpacity(0.78),
+        color: _panelBlack.withOpacity(_isDarkTheme ? 0.9 : 0.96),
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: _gold.withOpacity(0.42)),
+        border: Border.all(color: _border.withOpacity(_isDarkTheme ? 0.5 : 1)),
       ),
       child: Text(
         _t(
@@ -1309,8 +1336,8 @@ class _EventCategoryResultsPageState extends State<EventCategoryResultsPage> {
           es: 'No se encontraron ubicaciones exactas para esta selección.',
         ),
         textAlign: TextAlign.center,
-        style: const TextStyle(
-          color: Colors.white,
+        style: TextStyle(
+          color: _textPrimary,
           fontSize: 12.9,
           fontWeight: FontWeight.w700,
         ),
@@ -1324,9 +1351,11 @@ class _EventCategoryResultsPageState extends State<EventCategoryResultsPage> {
       return Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
         decoration: BoxDecoration(
-          color: Colors.black.withOpacity(0.72),
+          color: _panelBlack.withOpacity(_isDarkTheme ? 0.86 : 0.95),
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: _gold.withOpacity(0.38)),
+          border: Border.all(
+            color: _border.withOpacity(_isDarkTheme ? 0.45 : 1),
+          ),
         ),
         child: Text(
           _t(
@@ -1336,8 +1365,8 @@ class _EventCategoryResultsPageState extends State<EventCategoryResultsPage> {
             es: 'Pulsa un marcador para previsualizar este evento.',
           ),
           textAlign: TextAlign.center,
-          style: const TextStyle(
-            color: Colors.white,
+          style: TextStyle(
+            color: _textPrimary,
             fontSize: 12.5,
             fontWeight: FontWeight.w700,
           ),
@@ -1347,9 +1376,9 @@ class _EventCategoryResultsPageState extends State<EventCategoryResultsPage> {
     return Container(
       padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
       decoration: BoxDecoration(
-        color: Colors.black.withOpacity(0.78),
+        color: _panelBlack.withOpacity(_isDarkTheme ? 0.88 : 0.96),
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: _gold.withOpacity(0.38)),
+        border: Border.all(color: _border.withOpacity(_isDarkTheme ? 0.45 : 1)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1358,8 +1387,8 @@ class _EventCategoryResultsPageState extends State<EventCategoryResultsPage> {
             event.title,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              color: Colors.white,
+            style: TextStyle(
+              color: _textPrimary,
               fontSize: 13.6,
               fontWeight: FontWeight.w800,
             ),
@@ -1369,7 +1398,7 @@ class _EventCategoryResultsPageState extends State<EventCategoryResultsPage> {
             event.dateTimeLabel,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
+            style: TextStyle(
               color: _softText,
               fontSize: 12,
               fontWeight: FontWeight.w600,
@@ -1380,7 +1409,7 @@ class _EventCategoryResultsPageState extends State<EventCategoryResultsPage> {
             '${event.locationName}, ${event.city}',
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
+            style: TextStyle(
               color: _softText,
               fontSize: 12,
               fontWeight: FontWeight.w600,
@@ -1392,9 +1421,11 @@ class _EventCategoryResultsPageState extends State<EventCategoryResultsPage> {
             child: OutlinedButton.icon(
               onPressed: () => _bookEvent(event),
               style: OutlinedButton.styleFrom(
-                backgroundColor: const Color(0xFF171209),
+                backgroundColor: _panelBlack,
                 foregroundColor: _gold,
-                side: BorderSide(color: _gold.withOpacity(0.55)),
+                side: BorderSide(
+                  color: _border.withOpacity(_isDarkTheme ? 0.6 : 1),
+                ),
                 minimumSize: const Size.fromHeight(40),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(10),
@@ -1423,17 +1454,53 @@ class _EventCategoryResultsPageState extends State<EventCategoryResultsPage> {
       decoration: BoxDecoration(
         color: _panelBlack,
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: _gold.withOpacity(0.24)),
-      ),
-      child: Text(
-        _t(
-          nl: 'Geen evenementen gevonden voor deze regio en filters. Probeer een andere datum, categorie of zoekterm.',
-          en: 'No events found for this market and filter set. Try another date, category, or search term.',
-          fr: 'Aucun evenement trouve pour ce marche et ces filtres. Essayez une autre date, categorie ou recherche.',
-          es: 'No se encontraron eventos para este mercado y filtros. Prueba otra fecha, categoria o busqueda.',
+        border: Border.all(
+          color: _border.withOpacity(_isDarkTheme ? 0.35 : 0.95),
         ),
-        textAlign: TextAlign.center,
-        style: const TextStyle(color: _softText, fontSize: 13),
+      ),
+      child: Column(
+        children: [
+          Container(
+            width: 38,
+            height: 38,
+            decoration: BoxDecoration(
+              color: _gold.withOpacity(0.14),
+              shape: BoxShape.circle,
+              border: Border.all(color: _gold.withOpacity(0.5)),
+            ),
+            child: Icon(
+              Icons.confirmation_number_outlined,
+              color: _gold.withOpacity(0.95),
+              size: 20,
+            ),
+          ),
+          const SizedBox(height: 10),
+          Text(
+            _t(
+              nl: 'Geen evenementen gevonden',
+              en: 'No events found',
+              fr: 'Aucun evenement trouve',
+              es: 'No se encontraron eventos',
+            ),
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: _textPrimary,
+              fontSize: 14.2,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            _t(
+              nl: 'Probeer een andere zoekopdracht of wijzig je filters.',
+              en: 'Try another search query or adjust your filters.',
+              fr: 'Essayez une autre recherche ou modifiez vos filtres.',
+              es: 'Prueba otra búsqueda o ajusta tus filtros.',
+            ),
+            textAlign: TextAlign.center,
+            style: TextStyle(color: _softText, fontSize: 12.8),
+          ),
+        ],
       ),
     );
   }

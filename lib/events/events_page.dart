@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
+import 'package:fluxidi_tracking/customer_theme_palette.dart';
+import 'package:fluxidi_tracking/customer_theme_store.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
 
@@ -14,7 +16,7 @@ import 'saved_events_page.dart';
 EventDataSource buildDefaultEventLocatorDataSource({required String baseUrl}) {
   return RemoteEventDataSource(
     baseUrl: baseUrl,
-    fallbackDataSource: const LocalSeedEventDataSource(),
+    fallbackDataSource: const EmptyEventDataSource(),
   );
 }
 
@@ -29,10 +31,18 @@ class EventsPage extends StatefulWidget {
 }
 
 class _EventsPageState extends State<EventsPage> {
-  static const Color _bgBlack = Color(0xFF07080C);
-  static const Color _panelBlack = Color(0xFF101010);
-  static const Color _gold = Color(0xFFE5B641);
-  static const Color _softText = Color(0xFFB4B4B4);
+  CustomerThemePalette get _themePalette =>
+      paletteForCustomerTheme(customerThemeNotifier.value);
+  bool get _isDarkTheme => _themePalette.isDark;
+  Color get _bgBlack => _themePalette.background;
+  Color get _panelBlack => _themePalette.surface;
+  Color get _gold => _themePalette.gold;
+  Color get _softText => _themePalette.textMuted;
+  Color get _textPrimary => _themePalette.textPrimary;
+  Color get _border => _themePalette.border;
+  Color get _shadow => _themePalette.shadow;
+  Color get _actionOnGold =>
+      _isDarkTheme ? Colors.black : const Color(0xFF1F1706);
 
   static const List<String> _dateFilterKeys = <String>[
     EventDateMode.all,
@@ -47,8 +57,14 @@ class _EventsPageState extends State<EventsPage> {
     EventCategoryKey.theater,
     EventCategoryKey.comedy,
     EventCategoryKey.family,
-    EventCategoryKey.food,
-    EventCategoryKey.business,
+    EventCategoryKey.culture,
+  ];
+  static const List<String> _landingCategoryKeys = <String>[
+    EventCategoryKey.music,
+    EventCategoryKey.sport,
+    EventCategoryKey.theater,
+    EventCategoryKey.comedy,
+    EventCategoryKey.family,
     EventCategoryKey.culture,
   ];
   static const List<String> _marketKeys = <String>[
@@ -106,8 +122,14 @@ class _EventsPageState extends State<EventsPage> {
   @override
   void initState() {
     super.initState();
+    customerThemeNotifier.addListener(_onThemeChanged);
     _selectedMarketKey = _marketKeys.first;
-    _dataSource = widget.dataSource ?? const LocalSeedEventDataSource();
+    _dataSource = widget.dataSource ?? const EmptyEventDataSource();
+  }
+
+  void _onThemeChanged() {
+    if (!mounted) return;
+    setState(() {});
   }
 
   @override
@@ -118,6 +140,7 @@ class _EventsPageState extends State<EventsPage> {
 
   @override
   void dispose() {
+    customerThemeNotifier.removeListener(_onThemeChanged);
     _searchController.dispose();
     super.dispose();
   }
@@ -329,8 +352,8 @@ class _EventsPageState extends State<EventsPage> {
                     fr: 'Sélectionner le mois',
                     es: 'Seleccionar mes',
                   ),
-                  style: const TextStyle(
-                    color: Colors.white,
+                  style: TextStyle(
+                    color: _textPrimary,
                     fontWeight: FontWeight.w800,
                     fontSize: 16,
                   ),
@@ -356,14 +379,14 @@ class _EventsPageState extends State<EventsPage> {
                         title: Text(
                           _formatMonthLabel(option.startUtc),
                           style: TextStyle(
-                            color: isSelected ? _gold : Colors.white,
+                            color: isSelected ? _gold : _textPrimary,
                             fontWeight: isSelected
                                 ? FontWeight.w700
                                 : FontWeight.w500,
                           ),
                         ),
                         trailing: isSelected
-                            ? const Icon(Icons.check_rounded, color: _gold)
+                            ? Icon(Icons.check_rounded, color: _gold)
                             : null,
                         onTap: () => Navigator.of(context).pop(option),
                       );
@@ -825,8 +848,8 @@ class _EventsPageState extends State<EventsPage> {
                           fr: 'Demander à Fluxidi AI',
                           es: 'Preguntar a Fluxidi AI',
                         ),
-                        style: const TextStyle(
-                          color: Colors.white,
+                        style: TextStyle(
+                          color: _textPrimary,
                           fontWeight: FontWeight.w800,
                           fontSize: 16.2,
                         ),
@@ -854,7 +877,7 @@ class _EventsPageState extends State<EventsPage> {
                             validationError = message;
                           }),
                         ),
-                        style: const TextStyle(color: Colors.white),
+                        style: TextStyle(color: _textPrimary),
                         decoration: InputDecoration(
                           hintText: _t(
                             nl: 'Bijv. concerten dit weekend in België',
@@ -862,9 +885,9 @@ class _EventsPageState extends State<EventsPage> {
                             fr: 'Ex. concerts ce week-end en Belgique',
                             es: 'Ej. conciertos este fin de semana en Bélgica',
                           ),
-                          hintStyle: const TextStyle(color: Color(0xFF8C8C8C)),
+                          hintStyle: TextStyle(color: _softText),
                           filled: true,
-                          fillColor: const Color(0xFF151515),
+                          fillColor: _panelBlack,
                           contentPadding: const EdgeInsets.symmetric(
                             horizontal: 11,
                             vertical: 10,
@@ -877,10 +900,7 @@ class _EventsPageState extends State<EventsPage> {
                           ),
                           focusedBorder: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(12),
-                            borderSide: const BorderSide(
-                              color: _gold,
-                              width: 1.2,
-                            ),
+                            borderSide: BorderSide(color: _gold, width: 1.2),
                           ),
                           suffixIcon: IconButton(
                             onPressed: onMicTap,
@@ -948,7 +968,7 @@ class _EventsPageState extends State<EventsPage> {
                             fr: 'Saisie vocale capturée. Vérifiez puis appuyez sur Rechercher.',
                             es: 'Entrada de voz capturada. Revisa y pulsa Buscar.',
                           ),
-                          style: const TextStyle(
+                          style: TextStyle(
                             color: _softText,
                             fontSize: 11.4,
                             fontWeight: FontWeight.w600,
@@ -963,14 +983,18 @@ class _EventsPageState extends State<EventsPage> {
                           return ActionChip(
                             label: Text(
                               prompt,
-                              style: const TextStyle(
-                                color: Colors.white,
+                              style: TextStyle(
+                                color: _textPrimary,
                                 fontSize: 11.2,
                                 fontWeight: FontWeight.w600,
                               ),
                             ),
-                            backgroundColor: const Color(0xFF171717),
-                            side: BorderSide(color: _gold.withOpacity(0.3)),
+                            backgroundColor: _panelBlack,
+                            side: BorderSide(
+                              color: _border.withOpacity(
+                                _isDarkTheme ? 0.35 : 0.95,
+                              ),
+                            ),
                             onPressed: () {
                               aiController.text = prompt;
                               aiController
@@ -1005,7 +1029,7 @@ class _EventsPageState extends State<EventsPage> {
                           ),
                           child: Text(
                             _eventAiExplanation(currentIntent),
-                            style: const TextStyle(
+                            style: TextStyle(
                               color: _gold,
                               fontSize: 11.8,
                               fontWeight: FontWeight.w700,
@@ -1025,7 +1049,7 @@ class _EventsPageState extends State<EventsPage> {
                           ),
                           style: ElevatedButton.styleFrom(
                             backgroundColor: _gold,
-                            foregroundColor: const Color(0xFF1A1307),
+                            foregroundColor: _actionOnGold,
                             minimumSize: const Size.fromHeight(42),
                             shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(11),
@@ -1090,8 +1114,8 @@ class _EventsPageState extends State<EventsPage> {
                     fr: 'Choisir la region',
                     es: 'Elegir region',
                   ),
-                  style: const TextStyle(
-                    color: Colors.white,
+                  style: TextStyle(
+                    color: _textPrimary,
                     fontWeight: FontWeight.w800,
                     fontSize: 16,
                   ),
@@ -1115,14 +1139,14 @@ class _EventsPageState extends State<EventsPage> {
                         title: Text(
                           _marketLabel(key),
                           style: TextStyle(
-                            color: isSelected ? _gold : Colors.white,
+                            color: isSelected ? _gold : _textPrimary,
                             fontWeight: isSelected
                                 ? FontWeight.w700
                                 : FontWeight.w500,
                           ),
                         ),
                         trailing: isSelected
-                            ? const Icon(Icons.check_rounded, color: _gold)
+                            ? Icon(Icons.check_rounded, color: _gold)
                             : null,
                         onTap: () => Navigator.of(context).pop(key),
                       );
@@ -1161,8 +1185,8 @@ class _EventsPageState extends State<EventsPage> {
                     fr: 'Choisir le filtre de date',
                     es: 'Elegir filtro de fecha',
                   ),
-                  style: const TextStyle(
-                    color: Colors.white,
+                  style: TextStyle(
+                    color: _textPrimary,
                     fontWeight: FontWeight.w800,
                     fontSize: 16,
                   ),
@@ -1186,14 +1210,14 @@ class _EventsPageState extends State<EventsPage> {
                         title: Text(
                           _dateFilterLabel(key),
                           style: TextStyle(
-                            color: isSelected ? _gold : Colors.white,
+                            color: isSelected ? _gold : _textPrimary,
                             fontWeight: isSelected
                                 ? FontWeight.w700
                                 : FontWeight.w500,
                           ),
                         ),
                         trailing: isSelected
-                            ? const Icon(Icons.check_rounded, color: _gold)
+                            ? Icon(Icons.check_rounded, color: _gold)
                             : null,
                         onTap: () => Navigator.of(context).pop(key),
                       );
@@ -1236,8 +1260,8 @@ class _EventsPageState extends State<EventsPage> {
                     fr: 'Choisir categorie',
                     es: 'Elegir categoria',
                   ),
-                  style: const TextStyle(
-                    color: Colors.white,
+                  style: TextStyle(
+                    color: _textPrimary,
                     fontWeight: FontWeight.w800,
                     fontSize: 16,
                   ),
@@ -1261,14 +1285,14 @@ class _EventsPageState extends State<EventsPage> {
                         title: Text(
                           _categoryFilterLabel(key),
                           style: TextStyle(
-                            color: isSelected ? _gold : Colors.white,
+                            color: isSelected ? _gold : _textPrimary,
                             fontWeight: isSelected
                                 ? FontWeight.w700
                                 : FontWeight.w500,
                           ),
                         ),
                         trailing: isSelected
-                            ? const Icon(Icons.check_rounded, color: _gold)
+                            ? Icon(Icons.check_rounded, color: _gold)
                             : null,
                         onTap: () => Navigator.of(context).pop(key),
                       );
@@ -1312,8 +1336,8 @@ class _EventsPageState extends State<EventsPage> {
                     fr: 'Trier evenements',
                     es: 'Ordenar eventos',
                   ),
-                  style: const TextStyle(
-                    color: Colors.white,
+                  style: TextStyle(
+                    color: _textPrimary,
                     fontWeight: FontWeight.w800,
                     fontSize: 16,
                   ),
@@ -1337,14 +1361,14 @@ class _EventsPageState extends State<EventsPage> {
                         title: Text(
                           _sortModeLabel(key),
                           style: TextStyle(
-                            color: isSelected ? _gold : Colors.white,
+                            color: isSelected ? _gold : _textPrimary,
                             fontWeight: isSelected
                                 ? FontWeight.w700
                                 : FontWeight.w500,
                           ),
                         ),
                         trailing: isSelected
-                            ? const Icon(Icons.check_rounded, color: _gold)
+                            ? Icon(Icons.check_rounded, color: _gold)
                             : null,
                         onTap: () => Navigator.of(context).pop(key),
                       );
@@ -1359,6 +1383,119 @@ class _EventsPageState extends State<EventsPage> {
     );
     if (!mounted || selected == null) return;
     setState(() => _selectedSortMode = selected);
+  }
+
+  Future<void> _openFiltersSheet() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: _panelBlack,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
+      builder: (sheetContext) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(14, 10, 14, 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  _t(
+                    nl: 'Filters',
+                    en: 'Filters',
+                    fr: 'Filtres',
+                    es: 'Filtros',
+                  ),
+                  style: TextStyle(
+                    color: _textPrimary,
+                    fontWeight: FontWeight.w800,
+                    fontSize: 16,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                ListTile(
+                  dense: true,
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 2),
+                  leading: Icon(
+                    Icons.calendar_month_rounded,
+                    color: _gold.withOpacity(0.95),
+                  ),
+                  title: Text(
+                    _t(nl: 'Datum', en: 'Date', fr: 'Date', es: 'Fecha'),
+                    style: TextStyle(color: _textPrimary),
+                  ),
+                  subtitle: Text(
+                    _dateFilterLabel(_selectedDateMode),
+                    style: TextStyle(color: _softText.withOpacity(0.9)),
+                  ),
+                  onTap: () async {
+                    Navigator.of(sheetContext).pop();
+                    await _openDatePicker();
+                  },
+                ),
+                ListTile(
+                  dense: true,
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 2),
+                  leading: Icon(
+                    Icons.grid_view_rounded,
+                    color: _gold.withOpacity(0.95),
+                  ),
+                  title: Text(
+                    _t(
+                      nl: 'Categorie',
+                      en: 'Category',
+                      fr: 'Categorie',
+                      es: 'Categoria',
+                    ),
+                    style: TextStyle(color: _textPrimary),
+                  ),
+                  subtitle: Text(
+                    _categoryFilterLabel(_selectedCategoryKey),
+                    style: TextStyle(color: _softText.withOpacity(0.9)),
+                  ),
+                  onTap: () async {
+                    Navigator.of(sheetContext).pop();
+                    await _openCategoryPicker();
+                  },
+                ),
+                ListTile(
+                  dense: true,
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 2),
+                  leading: Icon(
+                    Icons.swap_vert_rounded,
+                    color: _gold.withOpacity(0.95),
+                  ),
+                  title: Text(
+                    _t(nl: 'Sorteren', en: 'Sort', fr: 'Trier', es: 'Ordenar'),
+                    style: TextStyle(color: _textPrimary),
+                  ),
+                  subtitle: Text(
+                    _sortModeLabel(_selectedSortMode),
+                    style: TextStyle(color: _softText.withOpacity(0.9)),
+                  ),
+                  onTap: () async {
+                    Navigator.of(sheetContext).pop();
+                    await _openSortPicker();
+                  },
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  void _resetLandingFilters() {
+    setState(() {
+      _selectedDateMode = EventDateMode.all;
+      _selectedMonthStartUtc = null;
+      _selectedMonthEndUtc = null;
+      _selectedCategoryKey = 'all';
+      _selectedSortMode = 'default';
+      _searchController.clear();
+    });
   }
 
   List<Color> _categoryTileGradient(String categoryKey) {
@@ -1423,93 +1560,51 @@ class _EventsPageState extends State<EventsPage> {
             final mediaQuery = MediaQuery.of(context);
             const horizontalPadding = 14.0;
             const topPadding = 10.0;
-            const bottomPadding = 18.0;
+            const bottomPadding = 12.0;
             final screenWidth = constraints.maxWidth;
             final shortestSide = mediaQuery.size.shortestSide;
             final isTabletLayout = shortestSide >= 600 || screenWidth >= 700;
-            final isTabletLandscape =
-                isTabletLayout && constraints.maxWidth > constraints.maxHeight;
-            final headerToSearchSpacing = isTabletLandscape
-                ? 8.0
-                : (isTabletLayout ? 10.0 : 8.0);
-            final searchToControlsSpacing = isTabletLandscape
-                ? 8.0
-                : (isTabletLayout ? 10.0 : 8.0);
-            final controlsToHeadingSpacing = isTabletLandscape
-                ? 10.0
-                : (isTabletLayout ? 12.0 : 10.0);
-            final headingToGridSpacing = isTabletLandscape
-                ? 8.0
-                : (isTabletLayout ? 10.0 : 8.0);
-            final estimatedHeaderHeight = isTabletLandscape
-                ? 56.0
-                : (isTabletLayout ? 58.0 : 50.0);
-            final estimatedSearchHeight = isTabletLandscape
-                ? 52.0
-                : (isTabletLayout ? 56.0 : 48.0);
-            final estimatedControlsHeight = isTabletLandscape
-                ? 124.0
-                : (isTabletLayout ? 132.0 : 102.0);
-            final estimatedHeadingHeight = isTabletLandscape
-                ? 28.0
-                : (isTabletLayout ? 30.0 : 22.0);
-            final tileSpacing = isTabletLandscape
-                ? 10.0
-                : (isTabletLayout ? 12.0 : 10.0);
-            final columns = isTabletLandscape
-                ? (screenWidth >= 980 ? 5 : 4)
-                : (screenWidth < 360 ? 2 : 3);
-            final rows = (_categoryFilterKeys.length / columns).ceil();
-            final contentWidth = screenWidth - (horizontalPadding * 2);
-            final tileWidth =
-                (contentWidth - ((columns - 1) * tileSpacing)) / columns;
-
-            final estimatedTopContentHeight =
+            final tileSpacing = isTabletLayout ? 14.0 : 14.0;
+            // Phone portrait intentionally uses 2 columns and vertical-space-based card height
+            // so 6 categories render as 2+2+2 while filling the landing area with premium card size.
+            final columns = constraints.maxWidth < 700 ? 2 : 3;
+            final headingFontSize = isTabletLayout ? 21.0 : 15.6;
+            final categoryLabelFontSize = isTabletLayout ? 15.8 : 12.4;
+            final categoryTileInset = isTabletLayout ? 11.0 : 8.0;
+            final categoryLabelMaxLines = 1;
+            final categoryLabelSpacing = isTabletLayout ? 5.0 : 3.0;
+            final availableGridWidth =
+                constraints.maxWidth - (horizontalPadding * 2);
+            final cardWidth =
+                (availableGridWidth - (tileSpacing * (columns - 1))) / columns;
+            final categoryRows = (_landingCategoryKeys.length / columns).ceil();
+            final estimatedHeaderHeight = isTabletLayout ? 52.0 : 44.0;
+            final estimatedSearchHeight = isTabletLayout ? 54.0 : 48.0;
+            final estimatedFilterControlsHeight = isTabletLayout ? 112.0 : 96.0;
+            final estimatedCategoryHeadingHeight = isTabletLayout ? 32.0 : 28.0;
+            final usedTopContentHeight =
                 topPadding +
                 estimatedHeaderHeight +
-                headerToSearchSpacing +
+                (isTabletLayout ? 9.0 : 8.0) +
                 estimatedSearchHeight +
-                searchToControlsSpacing +
-                estimatedControlsHeight +
-                controlsToHeadingSpacing +
-                estimatedHeadingHeight +
-                headingToGridSpacing +
-                bottomPadding;
-            final remainingHeight =
-                constraints.maxHeight - estimatedTopContentHeight;
-            final unclampedTileHeight =
-                (remainingHeight - ((rows - 1) * tileSpacing)) / rows;
-            final minTileHeight = isTabletLandscape
-                ? 150.0
-                : (isTabletLayout
-                      ? 215.0
-                      : (screenWidth < 360 ? 108.0 : 130.0));
-            final maxTileHeight = isTabletLandscape
-                ? 200.0
-                : (isTabletLayout
-                      ? 300.0
-                      : (screenWidth < 360 ? 145.0 : 165.0));
-            final tileHeight = unclampedTileHeight
-                .clamp(minTileHeight, maxTileHeight)
-                .toDouble();
-            final gridHeight = (tileHeight * rows) + ((rows - 1) * tileSpacing);
-            final tileAspectRatio = tileWidth / tileHeight;
-            final categoryLabelFontSize = isTabletLandscape
-                ? 18.0
-                : (isTabletLayout ? 22.0 : 12.2);
-            final categoryIconSize = isTabletLandscape
-                ? 22.0
-                : (isTabletLayout ? 28.0 : 16.0);
-            final categoryTileInset = isTabletLandscape
-                ? 10.0
-                : (isTabletLayout ? 14.0 : 8.0);
-            final categoryLabelMaxLines = isTabletLayout ? 2 : 1;
-            final categoryLabelSpacing = isTabletLandscape
-                ? 4.0
-                : (isTabletLayout ? 6.0 : 3.0);
-            final headingFontSize = isTabletLandscape
-                ? 20.0
-                : (isTabletLayout ? 22.0 : 14.0);
+                (isTabletLayout ? 8.0 : 7.0) +
+                estimatedFilterControlsHeight +
+                (isTabletLayout ? 10.0 : 9.0) +
+                estimatedCategoryHeadingHeight +
+                (isTabletLayout ? 10.0 : 8.0);
+            final bottomReserve = bottomPadding + (isTabletLayout ? 10.0 : 8.0);
+            final availableGridHeight =
+                constraints.maxHeight - usedTopContentHeight - bottomReserve;
+            final cardHeightFromHeight =
+                (availableGridHeight - (tileSpacing * (categoryRows - 1))) /
+                categoryRows;
+            final minCardHeight = cardWidth * 0.82;
+            final maxCardHeight = cardWidth * (isTabletLayout ? 1.12 : 1.08);
+            final cardHeight = cardHeightFromHeight.clamp(
+              minCardHeight,
+              maxCardHeight,
+            );
+            final tileAspectRatio = cardWidth / cardHeight;
 
             return ListView(
               padding: const EdgeInsets.fromLTRB(
@@ -1520,46 +1615,79 @@ class _EventsPageState extends State<EventsPage> {
               ),
               children: [
                 _buildHeader(context, isTabletLayout: isTabletLayout),
-                SizedBox(height: headerToSearchSpacing),
+                SizedBox(height: isTabletLayout ? 9 : 8),
                 _buildSearchField(isTabletLayout: isTabletLayout),
-                SizedBox(height: searchToControlsSpacing),
+                SizedBox(height: isTabletLayout ? 8 : 7),
                 _buildCompactDiscoveryControls(isTabletLayout: isTabletLayout),
-                SizedBox(height: controlsToHeadingSpacing),
-                Text(
-                  _t(
-                    nl: 'Categorieën',
-                    en: 'Categories',
-                    fr: 'Categories',
-                    es: 'Categorias',
-                  ),
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: headingFontSize,
-                    fontWeight: FontWeight.w800,
-                  ),
+                SizedBox(height: isTabletLayout ? 10 : 9),
+                Row(
+                  children: [
+                    Text(
+                      _t(
+                        nl: 'Categorieën',
+                        en: 'Categories',
+                        fr: 'Categories',
+                        es: 'Categorias',
+                      ),
+                      style: TextStyle(
+                        color: _textPrimary,
+                        fontSize: headingFontSize,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const Spacer(),
+                    TextButton(
+                      onPressed: () => _openResultsPage(
+                        title: _t(
+                          nl: 'Alle events',
+                          en: 'All events',
+                          fr: 'Tous les événements',
+                          es: 'Todos los eventos',
+                        ),
+                        categoryKey: 'all',
+                        searchQuery: _searchController.text,
+                      ),
+                      style: TextButton.styleFrom(
+                        foregroundColor: _gold,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 4,
+                        ),
+                        visualDensity: VisualDensity.compact,
+                      ),
+                      child: Text(
+                        _t(
+                          nl: 'Bekijk alles →',
+                          en: 'View all →',
+                          fr: 'Voir tout →',
+                          es: 'Ver todo →',
+                        ),
+                        style: TextStyle(
+                          fontWeight: FontWeight.w700,
+                          fontSize: isTabletLayout ? 13.8 : 12,
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
-                SizedBox(height: headingToGridSpacing),
-                SizedBox(
-                  height: gridHeight,
-                  child: GridView.builder(
-                    shrinkWrap: true,
-                    physics: const NeverScrollableScrollPhysics(),
-                    itemCount: _categoryFilterKeys.length,
-                    gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                      crossAxisCount: columns,
-                      crossAxisSpacing: tileSpacing,
-                      mainAxisSpacing: tileSpacing,
-                      childAspectRatio: tileAspectRatio,
-                    ),
-                    itemBuilder: (context, index) => _buildCategoryTile(
-                      _categoryFilterKeys[index],
-                      isTabletLayout: isTabletLayout,
-                      iconSize: categoryIconSize,
-                      labelFontSize: categoryLabelFontSize,
-                      labelMaxLines: categoryLabelMaxLines,
-                      contentInset: categoryTileInset,
-                      labelSpacing: categoryLabelSpacing,
-                    ),
+                SizedBox(height: isTabletLayout ? 10 : 8),
+                GridView.builder(
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  itemCount: _landingCategoryKeys.length,
+                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: columns,
+                    crossAxisSpacing: tileSpacing,
+                    mainAxisSpacing: tileSpacing,
+                    childAspectRatio: tileAspectRatio,
+                  ),
+                  itemBuilder: (context, index) => _buildCategoryTile(
+                    _landingCategoryKeys[index],
+                    isTabletLayout: isTabletLayout,
+                    labelFontSize: categoryLabelFontSize,
+                    labelMaxLines: categoryLabelMaxLines,
+                    contentInset: categoryTileInset,
+                    labelSpacing: categoryLabelSpacing,
                   ),
                 ),
               ],
@@ -1571,220 +1699,68 @@ class _EventsPageState extends State<EventsPage> {
   }
 
   Widget _buildHeader(BuildContext context, {required bool isTabletLayout}) {
-    return Row(
-      children: [
-        IconButton(
-          onPressed: () => Navigator.of(context).pop(),
-          icon: Icon(Icons.arrow_back_rounded, size: isTabletLayout ? 27 : 24),
-          color: _gold,
-          tooltip: _t(nl: 'Terug', en: 'Back', fr: 'Retour', es: 'Volver'),
-        ),
-        Expanded(
-          child: Text(
-            _t(
-              nl: 'Evenementen',
-              en: 'Events',
-              fr: 'Événements',
-              es: 'Eventos',
-            ),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: isTabletLayout ? 24 : 20,
-              fontWeight: FontWeight.w800,
-              letterSpacing: 0.2,
-            ),
-          ),
-        ),
-        OutlinedButton.icon(
-          onPressed: _openSavedEventsPage,
-          style: OutlinedButton.styleFrom(
-            backgroundColor: _panelBlack,
-            foregroundColor: _gold,
-            side: BorderSide(color: _gold.withOpacity(0.34)),
-            minimumSize: Size(0, isTabletLayout ? 46 : 38),
-            padding: EdgeInsets.symmetric(
-              horizontal: isTabletLayout ? 13 : 10,
-              vertical: isTabletLayout ? 8 : 6,
-            ),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(999),
-            ),
-          ),
-          icon: Icon(Icons.bookmark_rounded, size: isTabletLayout ? 20 : 16),
-          label: Text(
-            _t(
-              nl: 'Opgeslagen',
-              en: 'Saved',
-              fr: 'Enregistres',
-              es: 'Guardados',
-            ),
-            style: TextStyle(
-              fontWeight: FontWeight.w700,
-              fontSize: isTabletLayout ? 14.5 : 11.8,
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildSearchField({required bool isTabletLayout}) {
-    return TextField(
-      controller: _searchController,
-      textInputAction: TextInputAction.search,
-      onSubmitted: (_) => _openSearchResults(),
-      style: TextStyle(color: Colors.white, fontSize: isTabletLayout ? 16 : 14),
-      decoration: InputDecoration(
-        hintText: _t(
-          nl: 'Zoek evenement of locatie',
-          en: 'Search event or location',
-          fr: 'Rechercher un evenement ou un lieu',
-          es: 'Buscar evento o ubicación',
-        ),
-        hintStyle: TextStyle(
-          color: const Color(0xFF8C8C8C),
-          fontSize: isTabletLayout ? 15.2 : 14,
-        ),
-        prefixIcon: Icon(
-          Icons.search_rounded,
-          color: _gold,
-          size: isTabletLayout ? 24 : 20,
-        ),
-        suffixIcon: IconButton(
-          onPressed: _openSearchResults,
-          icon: Icon(
-            Icons.arrow_forward_rounded,
-            color: _gold,
-            size: isTabletLayout ? 24 : 20,
-          ),
-        ),
-        filled: true,
-        fillColor: _panelBlack,
-        contentPadding: EdgeInsets.symmetric(
-          horizontal: isTabletLayout ? 14 : 11,
-          vertical: isTabletLayout ? 12 : 9,
-        ),
-        isDense: !isTabletLayout,
-        enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: BorderSide(color: _gold.withOpacity(0.24)),
-        ),
-        focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: const BorderSide(color: _gold, width: 1.2),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildCompactDiscoveryControls({required bool isTabletLayout}) {
+    final logoAsset = _isDarkTheme
+        ? 'assets/fluxidi/fluxidi_logo_horizontal_gold.png'
+        : 'assets/fluxidi/fluxidi_logo_horizontal_dark.png';
     return Container(
       padding: EdgeInsets.fromLTRB(
-        isTabletLayout ? 12 : 10,
-        isTabletLayout ? 11 : 9,
-        isTabletLayout ? 12 : 10,
-        isTabletLayout ? 12 : 10,
+        isTabletLayout ? 8 : 2,
+        isTabletLayout ? 2 : 0,
+        isTabletLayout ? 8 : 2,
+        2,
       ),
-      decoration: BoxDecoration(
-        color: _panelBlack,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: _gold.withOpacity(0.24)),
-      ),
-      child: Column(
+      child: Stack(
+        alignment: Alignment.center,
         children: [
           Row(
             children: [
-              Expanded(
-                child: _buildCompactFilterButton(
-                  label: _t(nl: 'Datum', en: 'Date', fr: 'Date', es: 'Fecha'),
-                  value: _dateFilterLabel(_selectedDateMode),
-                  icon: Icons.calendar_month_rounded,
-                  onTap: _openDatePicker,
-                  isTabletLayout: isTabletLayout,
+              IconButton(
+                onPressed: () => Navigator.of(context).pop(),
+                icon: Icon(
+                  Icons.arrow_back_rounded,
+                  size: isTabletLayout ? 26 : 22,
+                ),
+                color: _gold,
+                tooltip: _t(
+                  nl: 'Terug',
+                  en: 'Back',
+                  fr: 'Retour',
+                  es: 'Volver',
                 ),
               ),
-              SizedBox(width: isTabletLayout ? 10 : 8),
-              Expanded(
-                child: _buildCompactFilterButton(
-                  label: _t(
-                    nl: 'Categorie',
-                    en: 'Category',
-                    fr: 'Categorie',
-                    es: 'Categoria',
+              const Spacer(),
+              OutlinedButton.icon(
+                onPressed: _openSavedEventsPage,
+                style: OutlinedButton.styleFrom(
+                  backgroundColor: _panelBlack,
+                  foregroundColor: _isDarkTheme ? _gold : _textPrimary,
+                  side: BorderSide(
+                    color: _border.withOpacity(_isDarkTheme ? 0.35 : 0.9),
                   ),
-                  value: _categoryFilterLabel(_selectedCategoryKey),
-                  icon: Icons.grid_view_rounded,
-                  onTap: _openCategoryPicker,
-                  isTabletLayout: isTabletLayout,
-                ),
-              ),
-              SizedBox(width: isTabletLayout ? 10 : 8),
-              Expanded(
-                child: _buildCompactFilterButton(
-                  label: _t(
-                    nl: 'Sorteren',
-                    en: 'Sort',
-                    fr: 'Trier',
-                    es: 'Ordenar',
+                  minimumSize: Size(
+                    isTabletLayout ? 40 : 34,
+                    isTabletLayout ? 40 : 34,
                   ),
-                  value: _sortModeLabel(_selectedSortMode),
-                  icon: Icons.swap_vert_rounded,
-                  onTap: _openSortPicker,
-                  isTabletLayout: isTabletLayout,
+                  padding: EdgeInsets.zero,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(999),
+                  ),
                 ),
+                icon: Icon(
+                  Icons.account_circle_rounded,
+                  size: isTabletLayout ? 22 : 18,
+                ),
+                label: const SizedBox.shrink(),
               ),
             ],
           ),
-          SizedBox(height: isTabletLayout ? 10 : 8),
-          Row(
-            children: [
-              _buildRegionSelectorChip(isTabletLayout: isTabletLayout),
-              SizedBox(width: isTabletLayout ? 10 : 8),
-              Expanded(
-                child: _buildActiveSummaryBar(isTabletLayout: isTabletLayout),
-              ),
-            ],
-          ),
-          SizedBox(height: isTabletLayout ? 10 : 8),
-          SizedBox(
-            width: double.infinity,
-            child: OutlinedButton.icon(
-              onPressed: _openEventAiAssistant,
-              style: OutlinedButton.styleFrom(
-                backgroundColor: const Color(0xFF161616),
-                foregroundColor: _gold,
-                side: BorderSide(color: _gold.withOpacity(0.34)),
-                minimumSize: Size.fromHeight(isTabletLayout ? 50 : 37),
-                padding: EdgeInsets.symmetric(
-                  horizontal: isTabletLayout ? 12 : 10,
-                  vertical: isTabletLayout ? 10 : 8,
-                ),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(10),
-                ),
-              ),
-              icon: Icon(
-                Icons.auto_awesome_rounded,
-                size: isTabletLayout ? 20 : 16,
-              ),
-              label: Align(
-                alignment: Alignment.centerLeft,
-                child: Text(
-                  _t(
-                    nl: 'Vraag Fluxidi AI',
-                    en: 'Ask Fluxidi AI',
-                    fr: 'Demander à Fluxidi AI',
-                    es: 'Preguntar a Fluxidi AI',
-                  ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontWeight: FontWeight.w800,
-                    fontSize: isTabletLayout ? 14.8 : 12.2,
-                  ),
-                ),
+          IgnorePointer(
+            child: Opacity(
+              opacity: 0.95,
+              child: Image.asset(
+                logoAsset,
+                height: isTabletLayout ? 35 : 28,
+                fit: BoxFit.contain,
               ),
             ),
           ),
@@ -1793,95 +1769,154 @@ class _EventsPageState extends State<EventsPage> {
     );
   }
 
-  Widget _buildCompactFilterButton({
-    required String label,
-    required String value,
-    required IconData icon,
-    required VoidCallback onTap,
-    required bool isTabletLayout,
-  }) {
-    return Material(
-      color: const Color(0xFF161616),
-      borderRadius: BorderRadius.circular(10),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(10),
-        child: Padding(
-          padding: EdgeInsets.fromLTRB(
-            isTabletLayout ? 10 : 8,
-            isTabletLayout ? 10 : 7,
-            isTabletLayout ? 10 : 8,
-            isTabletLayout ? 10 : 7,
+  Widget _buildSearchField({required bool isTabletLayout}) {
+    return TextField(
+      controller: _searchController,
+      textInputAction: TextInputAction.search,
+      onSubmitted: (_) => _openSearchResults(),
+      style: TextStyle(
+        color: _textPrimary,
+        fontSize: isTabletLayout ? 15.2 : 13.5,
+      ),
+      decoration: InputDecoration(
+        hintText: _t(
+          nl: 'Zoek evenement of locaties...',
+          en: 'Search event or location',
+          fr: 'Rechercher un evenement ou un lieu',
+          es: 'Buscar evento o ubicación',
+        ),
+        hintStyle: TextStyle(
+          color: _softText,
+          fontSize: isTabletLayout ? 14.2 : 13,
+        ),
+        prefixIcon: Icon(
+          Icons.search_rounded,
+          color: _gold.withOpacity(0.95),
+          size: isTabletLayout ? 22 : 19,
+        ),
+        suffixIcon: Container(
+          width: isTabletLayout ? 34 : 30,
+          height: isTabletLayout ? 34 : 30,
+          margin: const EdgeInsets.all(7),
+          decoration: BoxDecoration(
+            color: _gold,
+            borderRadius: BorderRadius.circular(999),
           ),
-          child: Row(
-            children: [
-              Icon(
-                icon,
-                size: isTabletLayout ? 18 : 13,
-                color: _gold.withOpacity(0.95),
-              ),
-              SizedBox(width: isTabletLayout ? 7 : 5),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      label,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: _softText.withOpacity(0.92),
-                        fontSize: isTabletLayout ? 12.4 : 10.2,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    SizedBox(height: isTabletLayout ? 3 : 2),
-                    Text(
-                      value,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: isTabletLayout ? 14.4 : 11.4,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
+          child: IconButton(
+            onPressed: _openSearchResults,
+            icon: Icon(
+              Icons.arrow_forward_rounded,
+              color: _actionOnGold,
+              size: isTabletLayout ? 18 : 16,
+            ),
+            splashRadius: isTabletLayout ? 17 : 15,
+            tooltip: _t(
+              nl: 'Zoek',
+              en: 'Search',
+              fr: 'Rechercher',
+              es: 'Buscar',
+            ),
           ),
+        ),
+        filled: true,
+        fillColor: _panelBlack,
+        contentPadding: EdgeInsets.symmetric(
+          horizontal: isTabletLayout ? 13 : 10,
+          vertical: isTabletLayout ? 11 : 8.5,
+        ),
+        isDense: true,
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(14),
+          borderSide: BorderSide(
+            color: _border.withOpacity(_isDarkTheme ? 0.35 : 0.95),
+          ),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(14),
+          borderSide: BorderSide(color: _gold, width: 1.2),
         ),
       ),
     );
   }
 
-  Widget _buildRegionSelectorChip({required bool isTabletLayout}) {
+  Widget _buildCompactDiscoveryControls({required bool isTabletLayout}) {
+    return Column(
+      children: [
+        Wrap(
+          spacing: isTabletLayout ? 9 : 7,
+          runSpacing: isTabletLayout ? 9 : 7,
+          children: [
+            _buildCompactActionChip(
+              text: _t(
+                nl: 'Filters',
+                en: 'Filters',
+                fr: 'Filtres',
+                es: 'Filtros',
+              ),
+              icon: Icons.tune_rounded,
+              onTap: _openFiltersSheet,
+              isTabletLayout: isTabletLayout,
+            ),
+            _buildCompactActionChip(
+              text: _marketLabel(_selectedMarketKey),
+              icon: Icons.public_rounded,
+              onTap: _openMarketPicker,
+              isTabletLayout: isTabletLayout,
+            ),
+            _buildCompactActionChip(
+              text: _t(
+                nl: 'Vraag Fluxidi AI',
+                en: 'Ask Fluxidi AI',
+                fr: 'Demander Fluxidi AI',
+                es: 'Preguntar Fluxidi AI',
+              ),
+              icon: Icons.auto_awesome_rounded,
+              onTap: _openEventAiAssistant,
+              isTabletLayout: isTabletLayout,
+              emphasizeGold: true,
+            ),
+          ],
+        ),
+        SizedBox(height: isTabletLayout ? 9 : 8),
+        _buildActiveSummaryBar(isTabletLayout: isTabletLayout),
+      ],
+    );
+  }
+
+  Widget _buildCompactActionChip({
+    required String text,
+    required IconData icon,
+    required VoidCallback onTap,
+    required bool isTabletLayout,
+    bool emphasizeGold = false,
+  }) {
+    final backgroundColor = emphasizeGold ? _gold : _panelBlack;
+    final foregroundColor = emphasizeGold ? _actionOnGold : _textPrimary;
     return Material(
-      color: const Color(0xFF161616),
+      color: backgroundColor,
       borderRadius: BorderRadius.circular(999),
       child: InkWell(
-        onTap: _openMarketPicker,
+        onTap: onTap,
         borderRadius: BorderRadius.circular(999),
         child: Padding(
           padding: EdgeInsets.symmetric(
-            horizontal: isTabletLayout ? 13 : 10,
-            vertical: isTabletLayout ? 9 : 7,
+            horizontal: isTabletLayout ? 11 : 9,
+            vertical: isTabletLayout ? 8 : 6,
           ),
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
               Icon(
-                Icons.public_rounded,
-                size: isTabletLayout ? 17 : 13,
-                color: _gold.withOpacity(0.95),
+                icon,
+                size: isTabletLayout ? 16 : 13,
+                color: emphasizeGold ? _actionOnGold : _gold,
               ),
-              SizedBox(width: isTabletLayout ? 6 : 4),
+              SizedBox(width: isTabletLayout ? 5 : 4),
               Text(
-                _marketLabel(_selectedMarketKey),
+                text,
                 style: TextStyle(
-                  color: Colors.white,
-                  fontSize: isTabletLayout ? 14.2 : 11.6,
+                  color: foregroundColor,
+                  fontSize: isTabletLayout ? 12.8 : 10.8,
                   fontWeight: FontWeight.w700,
                 ),
               ),
@@ -1904,28 +1939,64 @@ class _EventsPageState extends State<EventsPage> {
         borderRadius: BorderRadius.circular(999),
         border: Border.all(color: _gold.withOpacity(0.26)),
       ),
-      child: Text(
-        _activeFilterSummaryText,
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        style: TextStyle(
-          color: _gold,
-          fontSize: isTabletLayout ? 13.2 : 10.8,
-          fontWeight: FontWeight.w700,
-        ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              _activeFilterSummaryText,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: _gold,
+                fontSize: isTabletLayout ? 13.2 : 10.8,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+          IconButton(
+            onPressed: _resetLandingFilters,
+            icon: Icon(
+              Icons.close_rounded,
+              size: isTabletLayout ? 16 : 14,
+              color: _gold.withOpacity(0.95),
+            ),
+            splashRadius: isTabletLayout ? 16 : 14,
+            visualDensity: const VisualDensity(horizontal: -4, vertical: -4),
+            tooltip: _t(
+              nl: 'Filters wissen',
+              en: 'Clear filters',
+              fr: 'Effacer filtres',
+              es: 'Borrar filtros',
+            ),
+          ),
+        ],
       ),
+    );
+  }
+
+  Widget _categoryIconBadge(IconData icon, bool isTabletLayout) {
+    return Container(
+      width: isTabletLayout ? 28 : 22,
+      height: isTabletLayout ? 28 : 22,
+      decoration: BoxDecoration(
+        color: _gold.withOpacity(0.18),
+        shape: BoxShape.circle,
+        border: Border.all(color: _gold.withOpacity(0.9)),
+      ),
+      child: Icon(icon, size: isTabletLayout ? 15 : 12, color: _gold),
     );
   }
 
   Widget _buildCategoryTile(
     String categoryKey, {
     required bool isTabletLayout,
-    required double iconSize,
     required double labelFontSize,
     required int labelMaxLines,
     required double contentInset,
     required double labelSpacing,
   }) {
+    const cardRadius = 18.0;
+    const imageInnerZoom = 1.06;
     final selected = _selectedCategoryKey == categoryKey;
     final pressed = _pressedCategoryKey == categoryKey;
     final icon = categoryKey == 'all'
@@ -1966,39 +2037,42 @@ class _EventsPageState extends State<EventsPage> {
           duration: const Duration(milliseconds: 160),
           curve: Curves.easeOutCubic,
           decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(12),
+            borderRadius: BorderRadius.circular(cardRadius),
             border: Border.all(
               color: pressed
                   ? _gold.withOpacity(0.7)
                   : (selected ? _gold : _gold.withOpacity(0.16)),
               width: pressed ? 1.8 : (selected ? 1.3 : 0.9),
             ),
-            boxShadow: pressed
-                ? <BoxShadow>[
-                    BoxShadow(
-                      color: _gold.withOpacity(0.22),
-                      blurRadius: 16,
-                      spreadRadius: 0.4,
-                      offset: const Offset(0, 4),
-                    ),
-                  ]
-                : const <BoxShadow>[],
+            boxShadow: <BoxShadow>[
+              BoxShadow(
+                color: _gold.withOpacity(pressed ? 0.22 : 0.09),
+                blurRadius: pressed ? 16 : 10,
+                spreadRadius: pressed ? 0.4 : 0,
+                offset: const Offset(0, 4),
+              ),
+            ],
             color: _panelBlack,
           ),
           clipBehavior: Clip.antiAlias,
           child: Stack(
             fit: StackFit.expand,
             children: [
-              Image(
-                image: imageProvider,
-                fit: BoxFit.cover,
-                gaplessPlayback: true,
-                errorBuilder: (_, __, ___) => DecoratedBox(
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                      colors: fallbackGradient,
+              // Small inner zoom trims baked-in image frames so the card's
+              // Flutter border remains the only visible premium frame.
+              Transform.scale(
+                scale: imageInnerZoom,
+                child: Image(
+                  image: imageProvider,
+                  fit: BoxFit.cover,
+                  gaplessPlayback: true,
+                  errorBuilder: (_, __, ___) => DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: fallbackGradient,
+                      ),
                     ),
                   ),
                 ),
@@ -2010,7 +2084,7 @@ class _EventsPageState extends State<EventsPage> {
                     end: Alignment.bottomCenter,
                     colors: <Color>[
                       Colors.black.withOpacity(isTabletLayout ? 0.04 : 0.025),
-                      Colors.black.withOpacity(isTabletLayout ? 0.14 : 0.11),
+                      Colors.black.withOpacity(isTabletLayout ? 0.2 : 0.17),
                     ],
                   ),
                 ),
@@ -2029,10 +2103,10 @@ class _EventsPageState extends State<EventsPage> {
                           colors: <Color>[
                             Colors.black.withOpacity(0.0),
                             Colors.black.withOpacity(
-                              isTabletLayout ? 0.34 : 0.40,
+                              isTabletLayout ? 0.46 : 0.5,
                             ),
                             Colors.black.withOpacity(
-                              isTabletLayout ? 0.76 : 0.80,
+                              isTabletLayout ? 0.82 : 0.86,
                             ),
                           ],
                         ),
@@ -2048,7 +2122,7 @@ class _EventsPageState extends State<EventsPage> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Icon(icon, size: iconSize, color: _gold),
+                    _categoryIconBadge(icon, isTabletLayout),
                     SizedBox(height: labelSpacing),
                     Text(
                       _categoryFilterLabel(categoryKey),

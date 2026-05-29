@@ -52,6 +52,31 @@ class LocalSeedEventDataSource implements EventDataSource {
   }
 }
 
+class EmptyEventDataSource implements EventDataSource {
+  const EmptyEventDataSource();
+
+  @override
+  List<EventDetailData> getInitialEvents() => const <EventDetailData>[];
+
+  @override
+  Future<List<EventDetailData>> loadEvents() async {
+    return const <EventDetailData>[];
+  }
+
+  @override
+  Future<EventFeedResult> loadEventFeed({
+    EventFeedQuery query = const EventFeedQuery(),
+  }) async {
+    return EventFeedResult(
+      events: const <EventDetailData>[],
+      source: 'empty',
+      receivedAtUtc: DateTime.now().toUtc(),
+      isFromCache: false,
+      warnings: const <String>[],
+    );
+  }
+}
+
 class RemoteEventDataSource implements EventDataSource {
   const RemoteEventDataSource({
     this.baseUrl = '',
