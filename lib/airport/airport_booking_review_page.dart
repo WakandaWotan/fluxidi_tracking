@@ -4,6 +4,8 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:fluxidi_tracking/customer_bookings_store.dart';
 import 'package:fluxidi_tracking/customer_profile_store.dart';
+import 'package:fluxidi_tracking/customer_theme_palette.dart';
+import 'package:fluxidi_tracking/customer_theme_store.dart';
 import 'package:http/http.dart' as http;
 import 'package:url_launcher/url_launcher.dart';
 
@@ -31,10 +33,20 @@ class AirportBookingReviewPage extends StatefulWidget {
 }
 
 class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
-  static const Color _bg = Color(0xFF07080C);
-  static const Color _panel = Color(0xFF101010);
-  static const Color _gold = Color(0xFFE5B641);
-  static const Color _soft = Color(0xFFB4B4B4);
+  CustomerThemePalette get _themePalette =>
+      paletteForCustomerTheme(customerThemeNotifier.value);
+  bool get _isDarkTheme => _themePalette.isDark;
+  Color get _bg => _themePalette.background;
+  Color get _panel => _themePalette.surfaceAlt;
+  Color get _card => _themePalette.surface;
+  Color get _gold => _themePalette.gold;
+  Color get _soft => _themePalette.textMuted;
+  Color get _textPrimary => _themePalette.textPrimary;
+  Color get _textMuted => _themePalette.textMuted;
+  Color get _border => _themePalette.border;
+  Color get _shadow => _themePalette.shadow;
+  Color get _accentForeground =>
+      _isDarkTheme ? Colors.black : const Color(0xFF1F1706);
 
   final TextEditingController _nameController = TextEditingController();
   final TextEditingController _phoneController = TextEditingController();
@@ -53,8 +65,14 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
   @override
   void initState() {
     super.initState();
+    customerThemeNotifier.addListener(_onThemeChanged);
     _vatNumberController.addListener(_onVatNumberChanged);
     unawaited(_prefillFromCustomerProfile());
+  }
+
+  void _onThemeChanged() {
+    if (!mounted) return;
+    setState(() {});
   }
 
   void _onVatNumberChanged() {
@@ -94,6 +112,7 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
 
   @override
   void dispose() {
+    customerThemeNotifier.removeListener(_onThemeChanged);
     _vatNumberController.removeListener(_onVatNumberChanged);
     _nameController.dispose();
     _phoneController.dispose();
@@ -645,9 +664,13 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
         _submittedBookingId = bookingId.isEmpty ? null : bookingId;
         _submittedMessage = successMessage;
       });
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(successMessage)));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          behavior: SnackBarBehavior.floating,
+          backgroundColor: _panel,
+          content: Text(successMessage, style: TextStyle(color: _textPrimary)),
+        ),
+      );
       if (explicitOnlineRequested && hasSafeCheckoutUrl) {
         await _openCheckoutUrl(checkoutUrl);
       }
@@ -691,11 +714,13 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
         padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 9),
         decoration: BoxDecoration(
           color: selected
-              ? const Color(0xFF1A2130)
-              : Colors.black.withOpacity(0.18),
+              ? _gold.withOpacity(_isDarkTheme ? 0.16 : 0.12)
+              : (_isDarkTheme ? Colors.black.withOpacity(0.18) : _panel),
           borderRadius: BorderRadius.circular(12),
           border: Border.all(
-            color: selected ? _gold : _gold.withOpacity(0.25),
+            color: selected
+                ? _gold
+                : _border.withOpacity(_isDarkTheme ? 0.8 : 0.95),
             width: selected ? 1.2 : 1,
           ),
         ),
@@ -705,7 +730,7 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
               choice == _AirportPaymentChoice.online
                   ? Icons.language_rounded
                   : Icons.local_taxi_rounded,
-              color: selected ? _gold : Colors.white.withOpacity(0.8),
+              color: selected ? _gold : _textMuted,
               size: 18,
             ),
             const SizedBox(width: 9),
@@ -716,7 +741,7 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
                   Text(
                     _paymentChoiceLabel(choice),
                     style: TextStyle(
-                      color: Colors.white,
+                      color: _textPrimary,
                       fontSize: 12.8,
                       fontWeight: selected ? FontWeight.w800 : FontWeight.w700,
                     ),
@@ -725,7 +750,7 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
                   Text(
                     _paymentChoiceDescription(choice),
                     style: TextStyle(
-                      color: Colors.white.withOpacity(0.68),
+                      color: _textMuted,
                       fontSize: 11.1,
                       height: 1.2,
                     ),
@@ -736,7 +761,7 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
             const SizedBox(width: 8),
             Icon(
               selected ? Icons.radio_button_checked : Icons.radio_button_off,
-              color: selected ? _gold : Colors.white.withOpacity(0.45),
+              color: selected ? _gold : _textMuted.withOpacity(0.8),
               size: 18,
             ),
           ],
@@ -762,8 +787,8 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
           const SizedBox(height: 2),
           Text(
             value,
-            style: const TextStyle(
-              color: Colors.white,
+            style: TextStyle(
+              color: _textPrimary,
               fontSize: 12.4,
               fontWeight: FontWeight.w700,
               height: 1.25,
@@ -886,7 +911,8 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
       backgroundColor: _bg,
       appBar: AppBar(
         backgroundColor: _bg,
-        foregroundColor: _gold,
+        foregroundColor: _textPrimary,
+        elevation: 0,
         title: Text(
           _t(
             nl: 'Luchthavenrit controle',
@@ -894,667 +920,723 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
             fr: 'Vérification du transfert aéroport',
             es: 'Revisión del traslado al aeropuerto',
           ),
-          style: const TextStyle(
-            color: Colors.white,
-            fontWeight: FontWeight.w800,
-          ),
+          style: TextStyle(color: _textPrimary, fontWeight: FontWeight.w800),
         ),
       ),
-      body: ListView(
-        padding: const EdgeInsets.fromLTRB(14, 12, 14, 20),
-        children: [
-          Container(
-            padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
-            decoration: BoxDecoration(
-              color: _panel,
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: _gold.withOpacity(0.28)),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  _t(
-                    nl: 'Ritoverzicht',
-                    en: 'Ride overview',
-                    fr: 'Aperçu du trajet',
-                    es: 'Resumen del viaje',
-                  ),
-                  style: const TextStyle(
-                    color: _gold,
-                    fontSize: 13.8,
-                    fontWeight: FontWeight.w800,
-                  ),
+      body: Container(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: _isDarkTheme
+                ? <Color>[_bg, _panel.withOpacity(0.55), _bg]
+                : <Color>[_bg, _panel.withOpacity(0.45), _bg],
+          ),
+        ),
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(14, 12, 14, 20),
+          children: [
+            Container(
+              padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+              decoration: BoxDecoration(
+                color: _card,
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(
+                  color: _border.withOpacity(_isDarkTheme ? 0.82 : 0.95),
                 ),
-                const SizedBox(height: 8),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 9,
-                    vertical: 5,
+                boxShadow: <BoxShadow>[
+                  BoxShadow(
+                    color: _shadow.withOpacity(_isDarkTheme ? 0.35 : 0.14),
+                    blurRadius: 18,
+                    offset: const Offset(0, 10),
                   ),
-                  decoration: BoxDecoration(
-                    color: _gold.withOpacity(0.14),
-                    borderRadius: BorderRadius.circular(999),
-                    border: Border.all(color: _gold.withOpacity(0.48)),
-                  ),
-                  child: Text(
+                ],
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
                     _t(
-                      nl: isRoundtrip
-                          ? 'Heen-en-terug luchthavenrit'
-                          : 'Enkele luchthavenrit',
-                      en: isRoundtrip
-                          ? 'Roundtrip airport ride'
-                          : 'Single airport ride',
-                      fr: isRoundtrip
-                          ? 'Trajet aéroport aller-retour'
-                          : 'Trajet aéroport simple',
-                      es: isRoundtrip
-                          ? 'Traslado de aeropuerto ida y vuelta'
-                          : 'Traslado de aeropuerto sencillo',
+                      nl: 'Ritoverzicht',
+                      en: 'Ride overview',
+                      fr: 'Aperçu du trajet',
+                      es: 'Resumen del viaje',
                     ),
                     style: TextStyle(
-                      color: _gold.withOpacity(0.97),
-                      fontSize: 10.9,
+                      color: _gold,
+                      fontSize: 13.8,
                       fontWeight: FontWeight.w800,
                     ),
                   ),
-                ),
-                const SizedBox(height: 9),
-                if (selectedCompanyLabel.isNotEmpty)
-                  _summaryRow(
-                    _t(
-                      nl: 'Boeking bij',
-                      en: 'Booking with',
-                      fr: 'Réservation chez',
-                      es: 'Reserva con',
+                  const SizedBox(height: 8),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 9,
+                      vertical: 5,
                     ),
-                    selectedCompanyLabel,
-                  ),
-                _summaryRow(
-                  _t(
-                    nl: 'Luchthaven',
-                    en: 'Airport',
-                    fr: 'Aéroport',
-                    es: 'Aeropuerto',
-                  ),
-                  '${_fallback(payload['airport_name'])} (${_fallback(payload['airport_iata'])})',
-                ),
-                _summaryRow(
-                  _t(
-                    nl: 'Richting',
-                    en: 'Direction',
-                    fr: 'Direction',
-                    es: 'Dirección',
-                  ),
-                  directionLabel,
-                ),
-                _summaryRow(
-                  _t(
-                    nl: isRoundtrip ? 'Heenrit van' : 'Van',
-                    en: isRoundtrip ? 'Outbound from' : 'From',
-                    fr: isRoundtrip ? "Aller depuis" : 'De',
-                    es: isRoundtrip ? 'Ida desde' : 'Desde',
-                  ),
-                  _fallback(payload['from']),
-                ),
-                _summaryRow(
-                  _t(
-                    nl: isRoundtrip ? 'Heenrit naar' : 'Naar',
-                    en: isRoundtrip ? 'Outbound to' : 'To',
-                    fr: isRoundtrip ? "Aller vers" : 'Vers',
-                    es: isRoundtrip ? 'Ida hacia' : 'Hasta',
-                  ),
-                  _fallback(payload['to']),
-                ),
-                _summaryRow(
-                  _t(
-                    nl: isRoundtrip ? 'Heenrit datum en tijd' : 'Datum en tijd',
-                    en: isRoundtrip
-                        ? 'Outbound date and time'
-                        : 'Date and time',
-                    fr: isRoundtrip
-                        ? "Date et heure de l'aller"
-                        : 'Date et heure',
-                    es: isRoundtrip ? 'Fecha y hora de ida' : 'Fecha y hora',
-                  ),
-                  '${_fallback(payload['date'])} ${_fallback(payload['time'])}',
-                ),
-                if (isRoundtrip) ...[
-                  _summaryRow(
-                    _t(
-                      nl: 'Terugrit van',
-                      en: 'Return from',
-                      fr: 'Retour depuis',
-                      es: 'Regreso desde',
-                    ),
-                    returnFrom,
-                  ),
-                  _summaryRow(
-                    _t(
-                      nl: 'Terugrit naar',
-                      en: 'Return to',
-                      fr: 'Retour vers',
-                      es: 'Regreso hacia',
-                    ),
-                    returnTo,
-                  ),
-                  _summaryRow(
-                    _t(
-                      nl: 'Terugrit datum en tijd',
-                      en: 'Return date and time',
-                      fr: 'Date et heure du retour',
-                      es: 'Fecha y hora de regreso',
-                    ),
-                    '${returnDate.isEmpty ? '—' : returnDate} ${returnTime.isEmpty ? '' : returnTime}'
-                        .trim(),
-                  ),
-                ],
-                _summaryRow(
-                  _t(
-                    nl: 'Passagiers',
-                    en: 'Passengers',
-                    fr: 'Passagers',
-                    es: 'Pasajeros',
-                  ),
-                  _fallback(payload['pax']),
-                ),
-                _summaryRow(
-                  _t(
-                    nl: 'Bagage',
-                    en: 'Luggage',
-                    fr: 'Bagages',
-                    es: 'Equipaje',
-                  ),
-                  _fallback(payload['bags']),
-                ),
-                _summaryRow(
-                  _t(
-                    nl: 'Afstand',
-                    en: 'Distance',
-                    fr: 'Distance',
-                    es: 'Distancia',
-                  ),
-                  distance != null ? '${distance.toStringAsFixed(1)} km' : '—',
-                ),
-                _summaryRow(
-                  _t(nl: 'Duur', en: 'Duration', fr: 'Durée', es: 'Duración'),
-                  duration != null ? '${duration.toStringAsFixed(0)} min' : '—',
-                ),
-                if (isRoundtrip) ...[
-                  _summaryRow(
-                    _t(
-                      nl: 'Terugrit afstand',
-                      en: 'Return distance',
-                      fr: 'Distance retour',
-                      es: 'Distancia de regreso',
-                    ),
-                    returnDistance != null
-                        ? '${returnDistance.toStringAsFixed(1)} km'
-                        : '—',
-                  ),
-                  _summaryRow(
-                    _t(
-                      nl: 'Terugrit duur',
-                      en: 'Return duration',
-                      fr: 'Durée retour',
-                      es: 'Duración de regreso',
-                    ),
-                    returnDuration != null
-                        ? '${returnDuration.toStringAsFixed(0)} min'
-                        : '—',
-                  ),
-                ],
-                if (canShowVatBreakdown) ...[
-                  _summaryRow(
-                    _t(
-                      nl: 'Prijs excl. btw',
-                      en: 'Price excl. VAT',
-                      fr: 'Prix hors TVA',
-                      es: 'Precio sin IVA',
-                    ),
-                    _fmtMoney(priceExNum),
-                  ),
-                  _summaryRow(
-                    _t(nl: 'Btw', en: 'VAT', fr: 'TVA', es: 'IVA'),
-                    _fmtMoney(priceVatNum),
-                  ),
-                ],
-                _summaryRow(
-                  _t(
-                    nl: isRoundtrip
-                        ? 'Heenrit prijs incl. btw'
-                        : 'Prijs incl. btw',
-                    en: isRoundtrip
-                        ? 'Outbound price incl. VAT'
-                        : 'Price incl. VAT',
-                    fr: isRoundtrip ? "Prix aller TVAC" : 'Prix TTC',
-                    es: isRoundtrip ? 'Precio ida con IVA' : 'Precio con IVA',
-                  ),
-                  _fmtMoney(priceInclMain),
-                ),
-                if (isRoundtrip)
-                  _summaryRow(
-                    _t(
-                      nl: 'Terugrit prijs incl. btw',
-                      en: 'Return price incl. VAT',
-                      fr: 'Prix retour TVAC',
-                      es: 'Precio regreso con IVA',
-                    ),
-                    _fmtMoney(priceInclReturn),
-                  ),
-                if (isRoundtrip)
-                  _summaryRow(
-                    _t(
-                      nl: 'Totaal heen-en-terug incl. btw',
-                      en: 'Roundtrip total incl. VAT',
-                      fr: 'Total aller-retour TVAC',
-                      es: 'Total ida y vuelta con IVA',
-                    ),
-                    _fmtMoney(priceIncl),
-                  ),
-                if (hasFixedFare) ...[
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 7),
-                    child: Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 6,
-                      ),
-                      decoration: BoxDecoration(
-                        color: _gold.withOpacity(0.14),
-                        borderRadius: BorderRadius.circular(9),
-                        border: Border.all(color: _gold.withOpacity(0.48)),
-                      ),
-                      child: Row(
-                        children: [
-                          Icon(
-                            Icons.workspace_premium_rounded,
-                            color: _gold.withOpacity(0.96),
-                            size: 14,
-                          ),
-                          const SizedBox(width: 6),
-                          Expanded(
-                            child: Text(
-                              _t(
-                                nl: isRoundtrip
-                                    ? 'Vast tarief per rit volgens bedrijfsregel'
-                                    : 'Vast tarief volgens bedrijfsregel',
-                                en: isRoundtrip
-                                    ? 'Fixed fare per leg by company rule'
-                                    : 'Fixed fare by company rule',
-                                fr: isRoundtrip
-                                    ? "Tarif fixe par trajet selon la règle d’entreprise"
-                                    : 'Tarif fixe selon la règle d’entreprise',
-                                es: isRoundtrip
-                                    ? 'Tarifa fija por trayecto según regla de empresa'
-                                    : 'Tarifa fija según regla de empresa',
-                              ),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                color: _gold,
-                                fontSize: 11.1,
-                                fontWeight: FontWeight.w800,
-                              ),
-                            ),
-                          ),
-                        ],
+                    decoration: BoxDecoration(
+                      color: _gold.withOpacity(_isDarkTheme ? 0.14 : 0.1),
+                      borderRadius: BorderRadius.circular(999),
+                      border: Border.all(
+                        color: _gold.withOpacity(_isDarkTheme ? 0.48 : 0.38),
                       ),
                     ),
-                  ),
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 7),
                     child: Text(
                       _t(
                         nl: isRoundtrip
-                            ? (fixedFareMain && fixedFareReturn
-                                  ? 'Heen- en terugrit volgen beide de ingestelde luchthavenregels van het bedrijf.'
-                                  : 'Vaste tariefregels zijn toegepast waar beschikbaar; overige delen volgen routeberekening.')
-                            : 'Deze prijs geldt voor deze enkele luchthavenrit en komt uit de ingestelde luchthavenregels van het bedrijf.',
+                            ? 'Heen-en-terug luchthavenrit'
+                            : 'Enkele luchthavenrit',
                         en: isRoundtrip
-                            ? (fixedFareMain && fixedFareReturn
-                                  ? 'Both outbound and return legs follow the company’s configured airport rules.'
-                                  : 'Fixed-fare rules are applied where available; remaining parts use route pricing.')
-                            : 'This price applies to this single airport ride and comes from the company’s configured airport rules.',
+                            ? 'Roundtrip airport ride'
+                            : 'Single airport ride',
                         fr: isRoundtrip
-                            ? (fixedFareMain && fixedFareReturn
-                                  ? "L’aller et le retour suivent les règles aéroport configurées par l’entreprise."
-                                  : "Les règles de tarif fixe sont appliquées quand possible; le reste suit le calcul d’itinéraire.")
-                            : "Ce prix s'applique à ce trajet aéroport simple et provient des règles aéroport configurées par l'entreprise.",
+                            ? 'Trajet aéroport aller-retour'
+                            : 'Trajet aéroport simple',
                         es: isRoundtrip
-                            ? (fixedFareMain && fixedFareReturn
-                                  ? 'Tanto ida como regreso siguen las reglas de aeropuerto configuradas por la empresa.'
-                                  : 'Las reglas de tarifa fija se aplican donde estén disponibles; el resto usa cálculo por ruta.')
-                            : 'Este precio se aplica a este traslado de aeropuerto sencillo y proviene de las reglas de aeropuerto configuradas por la empresa.',
+                            ? 'Traslado de aeropuerto ida y vuelta'
+                            : 'Traslado de aeropuerto sencillo',
                       ),
-                      maxLines: 3,
-                      overflow: TextOverflow.fade,
                       style: TextStyle(
-                        color: _soft.withOpacity(0.9),
-                        fontSize: 10.8,
-                        height: 1.2,
+                        color: _isDarkTheme
+                            ? _gold.withOpacity(0.97)
+                            : _themePalette.bronze,
+                        fontSize: 10.9,
+                        fontWeight: FontWeight.w800,
                       ),
                     ),
                   ),
-                  if (fixedFareRuleId != null)
+                  const SizedBox(height: 9),
+                  if (selectedCompanyLabel.isNotEmpty)
                     _summaryRow(
                       _t(
-                        nl: 'Tariefregel',
-                        en: 'Fare rule',
-                        fr: 'Règle tarifaire',
-                        es: 'Regla de tarifa',
+                        nl: 'Boeking bij',
+                        en: 'Booking with',
+                        fr: 'Réservation chez',
+                        es: 'Reserva con',
                       ),
-                      fixedFareRuleId,
+                      selectedCompanyLabel,
                     ),
-                  if (isRoundtrip &&
-                      fixedFareRuleIdMain.isNotEmpty &&
-                      fixedFareRuleIdReturn.isNotEmpty &&
-                      fixedFareRuleIdMain != fixedFareRuleIdReturn) ...[
+                  _summaryRow(
+                    _t(
+                      nl: 'Luchthaven',
+                      en: 'Airport',
+                      fr: 'Aéroport',
+                      es: 'Aeropuerto',
+                    ),
+                    '${_fallback(payload['airport_name'])} (${_fallback(payload['airport_iata'])})',
+                  ),
+                  _summaryRow(
+                    _t(
+                      nl: 'Richting',
+                      en: 'Direction',
+                      fr: 'Direction',
+                      es: 'Dirección',
+                    ),
+                    directionLabel,
+                  ),
+                  _summaryRow(
+                    _t(
+                      nl: isRoundtrip ? 'Heenrit van' : 'Van',
+                      en: isRoundtrip ? 'Outbound from' : 'From',
+                      fr: isRoundtrip ? "Aller depuis" : 'De',
+                      es: isRoundtrip ? 'Ida desde' : 'Desde',
+                    ),
+                    _fallback(payload['from']),
+                  ),
+                  _summaryRow(
+                    _t(
+                      nl: isRoundtrip ? 'Heenrit naar' : 'Naar',
+                      en: isRoundtrip ? 'Outbound to' : 'To',
+                      fr: isRoundtrip ? "Aller vers" : 'Vers',
+                      es: isRoundtrip ? 'Ida hacia' : 'Hasta',
+                    ),
+                    _fallback(payload['to']),
+                  ),
+                  _summaryRow(
+                    _t(
+                      nl: isRoundtrip
+                          ? 'Heenrit datum en tijd'
+                          : 'Datum en tijd',
+                      en: isRoundtrip
+                          ? 'Outbound date and time'
+                          : 'Date and time',
+                      fr: isRoundtrip
+                          ? "Date et heure de l'aller"
+                          : 'Date et heure',
+                      es: isRoundtrip ? 'Fecha y hora de ida' : 'Fecha y hora',
+                    ),
+                    '${_fallback(payload['date'])} ${_fallback(payload['time'])}',
+                  ),
+                  if (isRoundtrip) ...[
                     _summaryRow(
                       _t(
-                        nl: 'Tariefregel heenrit',
-                        en: 'Fare rule outbound',
-                        fr: "Règle tarifaire aller",
-                        es: 'Regla tarifa ida',
+                        nl: 'Terugrit van',
+                        en: 'Return from',
+                        fr: 'Retour depuis',
+                        es: 'Regreso desde',
                       ),
-                      fixedFareRuleIdMain,
+                      returnFrom,
                     ),
                     _summaryRow(
                       _t(
-                        nl: 'Tariefregel terugrit',
-                        en: 'Fare rule return',
-                        fr: 'Règle tarifaire retour',
-                        es: 'Regla tarifa regreso',
+                        nl: 'Terugrit naar',
+                        en: 'Return to',
+                        fr: 'Retour vers',
+                        es: 'Regreso hacia',
                       ),
-                      fixedFareRuleIdReturn,
+                      returnTo,
+                    ),
+                    _summaryRow(
+                      _t(
+                        nl: 'Terugrit datum en tijd',
+                        en: 'Return date and time',
+                        fr: 'Date et heure du retour',
+                        es: 'Fecha y hora de regreso',
+                      ),
+                      '${returnDate.isEmpty ? '—' : returnDate} ${returnTime.isEmpty ? '' : returnTime}'
+                          .trim(),
                     ),
                   ],
-                ],
-                if (flightNumber.isNotEmpty)
                   _summaryRow(
                     _t(
-                      nl: 'Vluchtnummer',
-                      en: 'Flight number',
-                      fr: 'Numéro de vol',
-                      es: 'Número de vuelo',
+                      nl: 'Passagiers',
+                      en: 'Passengers',
+                      fr: 'Passagers',
+                      es: 'Pasajeros',
                     ),
-                    flightNumber,
+                    _fallback(payload['pax']),
                   ),
-                if (payload['meet_and_greet'] == true)
                   _summaryRow(
                     _t(
-                      nl: 'Meet & greet',
-                      en: 'Meet & greet',
-                      fr: 'Accueil personnalisé',
-                      es: 'Recepción personalizada',
+                      nl: 'Bagage',
+                      en: 'Luggage',
+                      fr: 'Bagages',
+                      es: 'Equipaje',
                     ),
-                    _t(nl: 'Ja', en: 'Yes', fr: 'Oui', es: 'Sí'),
+                    _fallback(payload['bags']),
                   ),
-                if (nameBoard.isNotEmpty)
                   _summaryRow(
                     _t(
-                      nl: 'Naam bordje',
-                      en: 'Name board',
-                      fr: 'Nom sur panneau',
-                      es: 'Nombre en cartel',
+                      nl: 'Afstand',
+                      en: 'Distance',
+                      fr: 'Distance',
+                      es: 'Distancia',
                     ),
-                    nameBoard,
+                    distance != null
+                        ? '${distance.toStringAsFixed(1)} km'
+                        : '—',
                   ),
-                if (note.isNotEmpty)
                   _summaryRow(
-                    _t(nl: 'Opmerking', en: 'Note', fr: 'Note', es: 'Nota'),
-                    note,
+                    _t(nl: 'Duur', en: 'Duration', fr: 'Durée', es: 'Duración'),
+                    duration != null
+                        ? '${duration.toStringAsFixed(0)} min'
+                        : '—',
                   ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 10),
-          Container(
-            padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
-            decoration: BoxDecoration(
-              color: _panel,
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: _gold.withOpacity(0.3)),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  _t(
-                    nl: 'Betaalmethode',
-                    en: 'Payment method',
-                    fr: 'Mode de paiement',
-                    es: 'Método de pago',
+                  if (isRoundtrip) ...[
+                    _summaryRow(
+                      _t(
+                        nl: 'Terugrit afstand',
+                        en: 'Return distance',
+                        fr: 'Distance retour',
+                        es: 'Distancia de regreso',
+                      ),
+                      returnDistance != null
+                          ? '${returnDistance.toStringAsFixed(1)} km'
+                          : '—',
+                    ),
+                    _summaryRow(
+                      _t(
+                        nl: 'Terugrit duur',
+                        en: 'Return duration',
+                        fr: 'Durée retour',
+                        es: 'Duración de regreso',
+                      ),
+                      returnDuration != null
+                          ? '${returnDuration.toStringAsFixed(0)} min'
+                          : '—',
+                    ),
+                  ],
+                  if (canShowVatBreakdown) ...[
+                    _summaryRow(
+                      _t(
+                        nl: 'Prijs excl. btw',
+                        en: 'Price excl. VAT',
+                        fr: 'Prix hors TVA',
+                        es: 'Precio sin IVA',
+                      ),
+                      _fmtMoney(priceExNum),
+                    ),
+                    _summaryRow(
+                      _t(nl: 'Btw', en: 'VAT', fr: 'TVA', es: 'IVA'),
+                      _fmtMoney(priceVatNum),
+                    ),
+                  ],
+                  _summaryRow(
+                    _t(
+                      nl: isRoundtrip
+                          ? 'Heenrit prijs incl. btw'
+                          : 'Prijs incl. btw',
+                      en: isRoundtrip
+                          ? 'Outbound price incl. VAT'
+                          : 'Price incl. VAT',
+                      fr: isRoundtrip ? "Prix aller TVAC" : 'Prix TTC',
+                      es: isRoundtrip ? 'Precio ida con IVA' : 'Precio con IVA',
+                    ),
+                    _fmtMoney(priceInclMain),
                   ),
-                  style: const TextStyle(
-                    color: _gold,
-                    fontSize: 13.3,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-                const SizedBox(height: 7),
-                Text(
-                  _t(
-                    nl: 'Kies hoe je wilt betalen voor deze rit.',
-                    en: 'Choose how you want to pay for this ride.',
-                    fr: 'Choisissez comment payer ce trajet.',
-                    es: 'Elige cómo quieres pagar este viaje.',
-                  ),
-                  style: TextStyle(
-                    color: _soft.withOpacity(0.95),
-                    fontSize: 11.2,
-                    height: 1.2,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                _paymentChoiceOptionTile(_AirportPaymentChoice.manual),
-                const SizedBox(height: 7),
-                _paymentChoiceOptionTile(_AirportPaymentChoice.online),
-              ],
-            ),
-          ),
-          const SizedBox(height: 10),
-          Container(
-            padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
-            decoration: BoxDecoration(
-              color: _panel,
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: _gold.withOpacity(0.24)),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  _t(
-                    nl: 'Uw contactgegevens',
-                    en: 'Your contact details',
-                    fr: 'Vos coordonnées',
-                    es: 'Tus datos de contacto',
-                  ),
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 13.4,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-                const SizedBox(height: 9),
-                _inputField(
-                  controller: _nameController,
-                  label: _t(nl: 'Naam', en: 'Name', fr: 'Nom', es: 'Nombre'),
-                  icon: Icons.person_outline,
-                ),
-                const SizedBox(height: 8),
-                _inputField(
-                  controller: _phoneController,
-                  label: _t(
-                    nl: 'Telefoon',
-                    en: 'Phone',
-                    fr: 'Téléphone',
-                    es: 'Teléfono',
-                  ),
-                  icon: Icons.phone_outlined,
-                  keyboardType: TextInputType.phone,
-                ),
-                const SizedBox(height: 8),
-                _inputField(
-                  controller: _emailController,
-                  label: _t(
-                    nl: 'E-mail',
-                    en: 'Email',
-                    fr: 'E-mail',
-                    es: 'Correo electrónico',
-                  ),
-                  icon: Icons.alternate_email_rounded,
-                  keyboardType: TextInputType.emailAddress,
-                ),
-                const SizedBox(height: 12),
-                Text(
-                  _t(
-                    nl: 'Facturatie optioneel',
-                    en: 'Billing optional',
-                    fr: 'Facturation optionnelle',
-                    es: 'Facturación opcional',
-                  ),
-                  style: TextStyle(
-                    color: _soft.withOpacity(0.95),
-                    fontSize: 12.2,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                _inputField(
-                  controller: _companyNameController,
-                  label: _t(
-                    nl: 'Bedrijfsnaam',
-                    en: 'Company name',
-                    fr: "Nom de l'entreprise",
-                    es: 'Nombre de la empresa',
-                  ),
-                  icon: Icons.business_outlined,
-                ),
-                const SizedBox(height: 8),
-                _inputField(
-                  controller: _vatNumberController,
-                  label: _t(
-                    nl: 'BTW-nummer',
-                    en: 'VAT number',
-                    fr: 'Numéro de TVA',
-                    es: 'Número de IVA',
-                  ),
-                  icon: Icons.receipt_long_outlined,
-                  suffixIcon: _vatNumberController.text.trim().isEmpty
-                      ? null
-                      : IconButton(
-                          tooltip: _t(
-                            nl: 'Wissen',
-                            en: 'Clear',
-                            fr: 'Effacer',
-                            es: 'Borrar',
-                          ),
-                          onPressed: () {
-                            _vatNumberController.clear();
-                            if (mounted) setState(() {});
-                          },
-                          icon: const Icon(
-                            Icons.close_rounded,
-                            color: _gold,
-                            size: 18,
+                  if (isRoundtrip)
+                    _summaryRow(
+                      _t(
+                        nl: 'Terugrit prijs incl. btw',
+                        en: 'Return price incl. VAT',
+                        fr: 'Prix retour TVAC',
+                        es: 'Precio regreso con IVA',
+                      ),
+                      _fmtMoney(priceInclReturn),
+                    ),
+                  if (isRoundtrip)
+                    _summaryRow(
+                      _t(
+                        nl: 'Totaal heen-en-terug incl. btw',
+                        en: 'Roundtrip total incl. VAT',
+                        fr: 'Total aller-retour TVAC',
+                        es: 'Total ida y vuelta con IVA',
+                      ),
+                      _fmtMoney(priceIncl),
+                    ),
+                  if (hasFixedFare) ...[
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 7),
+                      child: Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 6,
+                        ),
+                        decoration: BoxDecoration(
+                          color: _gold.withOpacity(_isDarkTheme ? 0.14 : 0.11),
+                          borderRadius: BorderRadius.circular(9),
+                          border: Border.all(
+                            color: _gold.withOpacity(
+                              _isDarkTheme ? 0.48 : 0.38,
+                            ),
                           ),
                         ),
-                ),
-                if (_submitError != null) ...[
-                  const SizedBox(height: 8),
-                  Text(
-                    _submitError!,
-                    style: const TextStyle(
-                      color: Colors.redAccent,
-                      fontSize: 12,
+                        child: Row(
+                          children: [
+                            Icon(
+                              Icons.workspace_premium_rounded,
+                              color: _gold.withOpacity(0.96),
+                              size: 14,
+                            ),
+                            const SizedBox(width: 6),
+                            Expanded(
+                              child: Text(
+                                _t(
+                                  nl: isRoundtrip
+                                      ? 'Vast tarief per rit volgens bedrijfsregel'
+                                      : 'Vast tarief volgens bedrijfsregel',
+                                  en: isRoundtrip
+                                      ? 'Fixed fare per leg by company rule'
+                                      : 'Fixed fare by company rule',
+                                  fr: isRoundtrip
+                                      ? "Tarif fixe par trajet selon la règle d’entreprise"
+                                      : 'Tarif fixe selon la règle d’entreprise',
+                                  es: isRoundtrip
+                                      ? 'Tarifa fija por trayecto según regla de empresa'
+                                      : 'Tarifa fija según regla de empresa',
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: _isDarkTheme
+                                      ? _gold
+                                      : _themePalette.bronze,
+                                  fontSize: 11.1,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
                     ),
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 7),
+                      child: Text(
+                        _t(
+                          nl: isRoundtrip
+                              ? (fixedFareMain && fixedFareReturn
+                                    ? 'Heen- en terugrit volgen beide de ingestelde luchthavenregels van het bedrijf.'
+                                    : 'Vaste tariefregels zijn toegepast waar beschikbaar; overige delen volgen routeberekening.')
+                              : 'Deze prijs geldt voor deze enkele luchthavenrit en komt uit de ingestelde luchthavenregels van het bedrijf.',
+                          en: isRoundtrip
+                              ? (fixedFareMain && fixedFareReturn
+                                    ? 'Both outbound and return legs follow the company’s configured airport rules.'
+                                    : 'Fixed-fare rules are applied where available; remaining parts use route pricing.')
+                              : 'This price applies to this single airport ride and comes from the company’s configured airport rules.',
+                          fr: isRoundtrip
+                              ? (fixedFareMain && fixedFareReturn
+                                    ? "L’aller et le retour suivent les règles aéroport configurées par l’entreprise."
+                                    : "Les règles de tarif fixe sont appliquées quand possible; le reste suit le calcul d’itinéraire.")
+                              : "Ce prix s'applique à ce trajet aéroport simple et provient des règles aéroport configurées par l'entreprise.",
+                          es: isRoundtrip
+                              ? (fixedFareMain && fixedFareReturn
+                                    ? 'Tanto ida como regreso siguen las reglas de aeropuerto configuradas por la empresa.'
+                                    : 'Las reglas de tarifa fija se aplican donde estén disponibles; el resto usa cálculo por ruta.')
+                              : 'Este precio se aplica a este traslado de aeropuerto sencillo y proviene de las reglas de aeropuerto configuradas por la empresa.',
+                        ),
+                        maxLines: 3,
+                        overflow: TextOverflow.fade,
+                        style: TextStyle(
+                          color: _textMuted,
+                          fontSize: 10.8,
+                          height: 1.2,
+                        ),
+                      ),
+                    ),
+                    if (fixedFareRuleId != null)
+                      _summaryRow(
+                        _t(
+                          nl: 'Tariefregel',
+                          en: 'Fare rule',
+                          fr: 'Règle tarifaire',
+                          es: 'Regla de tarifa',
+                        ),
+                        fixedFareRuleId,
+                      ),
+                    if (isRoundtrip &&
+                        fixedFareRuleIdMain.isNotEmpty &&
+                        fixedFareRuleIdReturn.isNotEmpty &&
+                        fixedFareRuleIdMain != fixedFareRuleIdReturn) ...[
+                      _summaryRow(
+                        _t(
+                          nl: 'Tariefregel heenrit',
+                          en: 'Fare rule outbound',
+                          fr: "Règle tarifaire aller",
+                          es: 'Regla tarifa ida',
+                        ),
+                        fixedFareRuleIdMain,
+                      ),
+                      _summaryRow(
+                        _t(
+                          nl: 'Tariefregel terugrit',
+                          en: 'Fare rule return',
+                          fr: 'Règle tarifaire retour',
+                          es: 'Regla tarifa regreso',
+                        ),
+                        fixedFareRuleIdReturn,
+                      ),
+                    ],
+                  ],
+                  if (flightNumber.isNotEmpty)
+                    _summaryRow(
+                      _t(
+                        nl: 'Vluchtnummer',
+                        en: 'Flight number',
+                        fr: 'Numéro de vol',
+                        es: 'Número de vuelo',
+                      ),
+                      flightNumber,
+                    ),
+                  if (payload['meet_and_greet'] == true)
+                    _summaryRow(
+                      _t(
+                        nl: 'Meet & greet',
+                        en: 'Meet & greet',
+                        fr: 'Accueil personnalisé',
+                        es: 'Recepción personalizada',
+                      ),
+                      _t(nl: 'Ja', en: 'Yes', fr: 'Oui', es: 'Sí'),
+                    ),
+                  if (nameBoard.isNotEmpty)
+                    _summaryRow(
+                      _t(
+                        nl: 'Naam bordje',
+                        en: 'Name board',
+                        fr: 'Nom sur panneau',
+                        es: 'Nombre en cartel',
+                      ),
+                      nameBoard,
+                    ),
+                  if (note.isNotEmpty)
+                    _summaryRow(
+                      _t(nl: 'Opmerking', en: 'Note', fr: 'Note', es: 'Nota'),
+                      note,
+                    ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 10),
+            Container(
+              padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+              decoration: BoxDecoration(
+                color: _card,
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(
+                  color: _border.withOpacity(_isDarkTheme ? 0.82 : 0.95),
+                ),
+                boxShadow: <BoxShadow>[
+                  BoxShadow(
+                    color: _shadow.withOpacity(_isDarkTheme ? 0.35 : 0.14),
+                    blurRadius: 18,
+                    offset: const Offset(0, 10),
                   ),
                 ],
-                if (_isSubmitted) ...[
-                  const SizedBox(height: 8),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
                   Text(
-                    _submittedMessage ??
-                        (_submittedBookingId == null
-                            ? _t(
-                                nl: 'Luchthavenrit aangevraagd.',
-                                en: 'Airport ride requested.',
-                                fr: 'Trajet aéroport demandé.',
-                                es: 'Traslado al aeropuerto solicitado.',
-                              )
-                            : '${_t(nl: "Aangevraagd", en: "Requested", fr: "Demandé", es: "Solicitado")}: $_submittedBookingId'),
-                    style: const TextStyle(
+                    _t(
+                      nl: 'Betaalmethode',
+                      en: 'Payment method',
+                      fr: 'Mode de paiement',
+                      es: 'Método de pago',
+                    ),
+                    style: TextStyle(
                       color: _gold,
+                      fontSize: 13.3,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(height: 7),
+                  Text(
+                    _t(
+                      nl: 'Kies hoe je wilt betalen voor deze rit.',
+                      en: 'Choose how you want to pay for this ride.',
+                      fr: 'Choisissez comment payer ce trajet.',
+                      es: 'Elige cómo quieres pagar este viaje.',
+                    ),
+                    style: TextStyle(
+                      color: _textMuted,
+                      fontSize: 11.2,
+                      height: 1.2,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  _paymentChoiceOptionTile(_AirportPaymentChoice.manual),
+                  const SizedBox(height: 7),
+                  _paymentChoiceOptionTile(_AirportPaymentChoice.online),
+                ],
+              ),
+            ),
+            const SizedBox(height: 10),
+            Container(
+              padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+              decoration: BoxDecoration(
+                color: _card,
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(
+                  color: _border.withOpacity(_isDarkTheme ? 0.82 : 0.95),
+                ),
+                boxShadow: <BoxShadow>[
+                  BoxShadow(
+                    color: _shadow.withOpacity(_isDarkTheme ? 0.35 : 0.14),
+                    blurRadius: 18,
+                    offset: const Offset(0, 10),
+                  ),
+                ],
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    _t(
+                      nl: 'Uw contactgegevens',
+                      en: 'Your contact details',
+                      fr: 'Vos coordonnées',
+                      es: 'Tus datos de contacto',
+                    ),
+                    style: TextStyle(
+                      color: _textPrimary,
+                      fontSize: 13.4,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(height: 9),
+                  _inputField(
+                    controller: _nameController,
+                    label: _t(nl: 'Naam', en: 'Name', fr: 'Nom', es: 'Nombre'),
+                    icon: Icons.person_outline,
+                  ),
+                  const SizedBox(height: 8),
+                  _inputField(
+                    controller: _phoneController,
+                    label: _t(
+                      nl: 'Telefoon',
+                      en: 'Phone',
+                      fr: 'Téléphone',
+                      es: 'Teléfono',
+                    ),
+                    icon: Icons.phone_outlined,
+                    keyboardType: TextInputType.phone,
+                  ),
+                  const SizedBox(height: 8),
+                  _inputField(
+                    controller: _emailController,
+                    label: _t(
+                      nl: 'E-mail',
+                      en: 'Email',
+                      fr: 'E-mail',
+                      es: 'Correo electrónico',
+                    ),
+                    icon: Icons.alternate_email_rounded,
+                    keyboardType: TextInputType.emailAddress,
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    _t(
+                      nl: 'Facturatie optioneel',
+                      en: 'Billing optional',
+                      fr: 'Facturation optionnelle',
+                      es: 'Facturación opcional',
+                    ),
+                    style: TextStyle(
+                      color: _textMuted,
                       fontSize: 12.2,
                       fontWeight: FontWeight.w700,
                     ),
                   ),
-                  const SizedBox(height: 4),
-                  Text(
-                    _t(
-                      nl: 'Uw aanvraag werd ontvangen.',
-                      en: 'Your request was received.',
-                      fr: 'Votre demande a été reçue.',
-                      es: 'Tu solicitud fue recibida.',
+                  const SizedBox(height: 8),
+                  _inputField(
+                    controller: _companyNameController,
+                    label: _t(
+                      nl: 'Bedrijfsnaam',
+                      en: 'Company name',
+                      fr: "Nom de l'entreprise",
+                      es: 'Nombre de la empresa',
                     ),
-                    style: TextStyle(
-                      color: _soft.withOpacity(0.95),
-                      fontSize: 11.8,
-                    ),
+                    icon: Icons.business_outlined,
                   ),
-                ],
-              ],
-            ),
-          ),
-          const SizedBox(height: 12),
-          FilledButton(
-            onPressed: _isSubmitting || _isSubmitted ? null : _submitBooking,
-            style: FilledButton.styleFrom(
-              backgroundColor: _gold,
-              foregroundColor: Colors.black,
-              padding: const EdgeInsets.symmetric(vertical: 14),
-              textStyle: const TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.w800,
-              ),
-            ),
-            child: Text(
-              _isSubmitting
-                  ? _t(
-                      nl: 'Aanvragen...',
-                      en: 'Requesting...',
-                      fr: 'Envoi...',
-                      es: 'Enviando...',
-                    )
-                  : _t(
-                      nl: 'Luchthavenrit aanvragen',
-                      en: 'Request airport ride',
-                      fr: 'Demander le transfert aéroport',
-                      es: 'Solicitar traslado al aeropuerto',
+                  const SizedBox(height: 8),
+                  _inputField(
+                    controller: _vatNumberController,
+                    label: _t(
+                      nl: 'BTW-nummer',
+                      en: 'VAT number',
+                      fr: 'Numéro de TVA',
+                      es: 'Número de IVA',
                     ),
-            ),
-          ),
-          if (_isSubmitted) ...[
-            const SizedBox(height: 8),
-            OutlinedButton(
-              onPressed: _returnToCustomerPage,
-              style: OutlinedButton.styleFrom(
-                foregroundColor: _gold,
-                side: BorderSide(color: _gold.withOpacity(0.65)),
+                    icon: Icons.receipt_long_outlined,
+                    suffixIcon: _vatNumberController.text.trim().isEmpty
+                        ? null
+                        : IconButton(
+                            tooltip: _t(
+                              nl: 'Wissen',
+                              en: 'Clear',
+                              fr: 'Effacer',
+                              es: 'Borrar',
+                            ),
+                            onPressed: () {
+                              _vatNumberController.clear();
+                              if (mounted) setState(() {});
+                            },
+                            icon: Icon(
+                              Icons.close_rounded,
+                              color: _gold,
+                              size: 18,
+                            ),
+                          ),
+                  ),
+                  if (_submitError != null) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      _submitError!,
+                      style: TextStyle(
+                        color: _isDarkTheme
+                            ? Colors.redAccent
+                            : Colors.red.shade700,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                  if (_isSubmitted) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      _submittedMessage ??
+                          (_submittedBookingId == null
+                              ? _t(
+                                  nl: 'Luchthavenrit aangevraagd.',
+                                  en: 'Airport ride requested.',
+                                  fr: 'Trajet aéroport demandé.',
+                                  es: 'Traslado al aeropuerto solicitado.',
+                                )
+                              : '${_t(nl: "Aangevraagd", en: "Requested", fr: "Demandé", es: "Solicitado")}: $_submittedBookingId'),
+                      style: TextStyle(
+                        color: _gold,
+                        fontSize: 12.2,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      _t(
+                        nl: 'Uw aanvraag werd ontvangen.',
+                        en: 'Your request was received.',
+                        fr: 'Votre demande a été reçue.',
+                        es: 'Tu solicitud fue recibida.',
+                      ),
+                      style: TextStyle(color: _textMuted, fontSize: 11.8),
+                    ),
+                  ],
+                ],
               ),
-              child: Text(
-                _t(
-                  nl: 'Terug naar klantenpagina',
-                  en: 'Back to customer page',
-                  fr: 'Retour à la page client',
-                  es: 'Volver a la página del cliente',
+            ),
+            const SizedBox(height: 12),
+            FilledButton(
+              onPressed: _isSubmitting || _isSubmitted ? null : _submitBooking,
+              style: FilledButton.styleFrom(
+                backgroundColor: _gold,
+                foregroundColor: _accentForeground,
+                disabledBackgroundColor: _gold.withOpacity(0.45),
+                disabledForegroundColor: _accentForeground.withOpacity(0.75),
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                textStyle: const TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w800,
                 ),
               ),
+              child: Text(
+                _isSubmitting
+                    ? _t(
+                        nl: 'Aanvragen...',
+                        en: 'Requesting...',
+                        fr: 'Envoi...',
+                        es: 'Enviando...',
+                      )
+                    : _t(
+                        nl: 'Luchthavenrit aanvragen',
+                        en: 'Request airport ride',
+                        fr: 'Demander le transfert aéroport',
+                        es: 'Solicitar traslado al aeropuerto',
+                      ),
+              ),
             ),
+            if (_isSubmitted) ...[
+              const SizedBox(height: 8),
+              OutlinedButton(
+                onPressed: _returnToCustomerPage,
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: _textPrimary,
+                  side: BorderSide(
+                    color: _border.withOpacity(_isDarkTheme ? 0.9 : 1),
+                  ),
+                  backgroundColor: _card,
+                ),
+                child: Text(
+                  _t(
+                    nl: 'Terug naar klantenpagina',
+                    en: 'Back to customer page',
+                    fr: 'Retour à la page client',
+                    es: 'Volver a la página del cliente',
+                  ),
+                ),
+              ),
+            ],
           ],
-        ],
+        ),
       ),
     );
   }
@@ -1569,14 +1651,15 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
     return TextField(
       controller: controller,
       keyboardType: keyboardType,
-      style: const TextStyle(color: Colors.white, fontSize: 13),
+      cursorColor: _gold,
+      style: TextStyle(color: _textPrimary, fontSize: 13),
       decoration: InputDecoration(
         labelText: label,
-        labelStyle: TextStyle(color: _soft, fontSize: 12.2),
+        labelStyle: TextStyle(color: _textMuted, fontSize: 12.2),
         prefixIcon: Icon(icon, color: _gold, size: 18),
         suffixIcon: suffixIcon,
         filled: true,
-        fillColor: const Color(0xFF181818),
+        fillColor: _panel,
         isDense: true,
         contentPadding: const EdgeInsets.symmetric(
           horizontal: 12,
@@ -1584,11 +1667,13 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
         ),
         enabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
-          borderSide: BorderSide(color: _gold.withOpacity(0.32)),
+          borderSide: BorderSide(
+            color: _border.withOpacity(_isDarkTheme ? 0.8 : 1),
+          ),
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
-          borderSide: const BorderSide(color: _gold, width: 1.2),
+          borderSide: BorderSide(color: _gold, width: 1.2),
         ),
       ),
     );
