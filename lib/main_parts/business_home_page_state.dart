@@ -774,6 +774,48 @@ class _BusinessHomePageState extends State<BusinessHomePage>
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (sheetContext) {
+        final themeVariant = businessThemeNotifier.value;
+        final palette = _businessThemePalette;
+        final isExecutiveGold =
+            themeVariant == BusinessThemeVariant.executiveGold;
+        final isCorporateBlue =
+            themeVariant == BusinessThemeVariant.corporateBlue;
+        final isCleanProfessional =
+            themeVariant == BusinessThemeVariant.cleanProfessional;
+        final sheetBg = isCleanProfessional
+            ? palette.surface
+            : (isCorporateBlue ? palette.surface : const Color(0xFF0F0F0F));
+        final panelBg = isCleanProfessional
+            ? palette.surfaceAlt
+            : const Color(0xFF0B0B0B);
+        final borderColor = palette.border.withOpacity(
+          isCleanProfessional ? 0.9 : 0.62,
+        );
+        final titleColor = palette.textPrimary;
+        final bodyColor = palette.textMuted.withOpacity(
+          isCleanProfessional ? 0.96 : 0.88,
+        );
+        final codeColor = isExecutiveGold
+            ? palette.accent.withOpacity(0.98)
+            : palette.accent;
+        final urlColor = palette.textPrimary;
+        final qrCardBg = isCleanProfessional ? palette.surface : Colors.white;
+        final qrCardBorderColor = palette.accent.withOpacity(
+          isCleanProfessional ? 0.42 : 0.55,
+        );
+        final qrCardTextColor = isCleanProfessional
+            ? palette.textPrimary
+            : const Color(0xFF101010);
+        final qrCardSubtleTextColor = isCleanProfessional
+            ? palette.textMuted
+            : const Color(0xFF262626);
+        final outlinedButtonStyle = OutlinedButton.styleFrom(
+          foregroundColor: palette.textPrimary,
+          side: BorderSide(color: palette.accent.withOpacity(0.52)),
+          backgroundColor: isCleanProfessional
+              ? palette.surfaceAlt.withOpacity(0.72)
+              : Colors.transparent,
+        );
         final maxQrSize = math.min(
           180.0,
           MediaQuery.of(sheetContext).size.width - 96,
@@ -783,12 +825,14 @@ class _BusinessHomePageState extends State<BusinessHomePage>
             padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
             child: Container(
               decoration: BoxDecoration(
-                color: const Color(0xFF0F0F0F),
+                color: sheetBg,
                 borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: kFluxidiYellow.withOpacity(0.38)),
+                border: Border.all(color: borderColor),
                 boxShadow: [
                   BoxShadow(
-                    color: Colors.black.withOpacity(0.35),
+                    color: Colors.black.withOpacity(
+                      isCleanProfessional ? 0.10 : 0.35,
+                    ),
                     blurRadius: 22,
                     spreadRadius: 0.5,
                   ),
@@ -807,8 +851,8 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                         fr: 'Lien de réservation public',
                         es: 'Enlace público de reserva',
                       ),
-                      style: const TextStyle(
-                        color: Colors.white,
+                      style: TextStyle(
+                        color: titleColor,
                         fontSize: 18,
                         fontWeight: FontWeight.w800,
                       ),
@@ -822,7 +866,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                         es: 'Comparte este enlace o código QR con los clientes para que puedan reservar directamente.',
                       ),
                       style: TextStyle(
-                        color: Colors.white.withOpacity(0.72),
+                        color: bodyColor,
                         fontSize: 12.5,
                         height: 1.35,
                       ),
@@ -835,11 +879,9 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                         vertical: 10,
                       ),
                       decoration: BoxDecoration(
-                        color: const Color(0xFF0B0B0B),
+                        color: panelBg,
                         borderRadius: BorderRadius.circular(10),
-                        border: Border.all(
-                          color: const Color(0xFFD4AF4A).withOpacity(0.45),
-                        ),
+                        border: Border.all(color: borderColor),
                       ),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -852,7 +894,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                               es: 'Código público de empresa',
                             ),
                             style: TextStyle(
-                              color: Colors.white.withOpacity(0.72),
+                              color: bodyColor,
                               fontSize: 11.5,
                               fontWeight: FontWeight.w600,
                             ),
@@ -860,8 +902,8 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                           const SizedBox(height: 6),
                           SelectableText(
                             publicCompanyCode,
-                            style: const TextStyle(
-                              color: Color(0xFFF0C85D),
+                            style: TextStyle(
+                              color: codeColor,
                               fontFamily: 'monospace',
                               fontSize: 13.2,
                               fontWeight: FontWeight.w700,
@@ -878,16 +920,14 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                         vertical: 10,
                       ),
                       decoration: BoxDecoration(
-                        color: const Color(0xFF0B0B0B),
+                        color: panelBg,
                         borderRadius: BorderRadius.circular(10),
-                        border: Border.all(
-                          color: Colors.white.withOpacity(0.16),
-                        ),
+                        border: Border.all(color: borderColor),
                       ),
                       child: SelectableText(
                         publicBookingUrl,
-                        style: const TextStyle(
-                          color: Colors.white,
+                        style: TextStyle(
+                          color: urlColor,
                           fontFamily: 'monospace',
                           fontSize: 12.2,
                         ),
@@ -904,11 +944,9 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                           ),
                           padding: const EdgeInsets.fromLTRB(12, 12, 12, 10),
                           decoration: BoxDecoration(
-                            color: Colors.white,
+                            color: qrCardBg,
                             borderRadius: BorderRadius.circular(12),
-                            border: Border.all(
-                              color: const Color(0xFFD4AF4A).withOpacity(0.55),
-                            ),
+                            border: Border.all(color: qrCardBorderColor),
                           ),
                           child: Column(
                             mainAxisSize: MainAxisSize.min,
@@ -916,8 +954,8 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                               Text(
                                 qrCardTitle,
                                 textAlign: TextAlign.center,
-                                style: const TextStyle(
-                                  color: Color(0xFF101010),
+                                style: TextStyle(
+                                  color: qrCardTextColor,
                                   fontSize: 14,
                                   fontWeight: FontWeight.w800,
                                 ),
@@ -931,8 +969,8 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                   es: 'Escanea para reservar un viaje',
                                 ),
                                 textAlign: TextAlign.center,
-                                style: const TextStyle(
-                                  color: Color(0xFF262626),
+                                style: TextStyle(
+                                  color: qrCardSubtleTextColor,
                                   fontSize: 11.2,
                                   fontWeight: FontWeight.w600,
                                 ),
@@ -948,8 +986,8 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                               Text(
                                 publicCompanyCode,
                                 textAlign: TextAlign.center,
-                                style: const TextStyle(
-                                  color: Color(0xFF101010),
+                                style: TextStyle(
+                                  color: qrCardTextColor,
                                   fontFamily: 'monospace',
                                   fontSize: 12.4,
                                   fontWeight: FontWeight.w700,
@@ -965,9 +1003,9 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                 ),
                                 textAlign: TextAlign.center,
                                 style: TextStyle(
-                                  color: const Color(
-                                    0xFF2A2A2A,
-                                  ).withOpacity(0.78),
+                                  color: qrCardSubtleTextColor.withOpacity(
+                                    0.82,
+                                  ),
                                   fontSize: 10.0,
                                   fontWeight: FontWeight.w600,
                                   height: 1.22,
@@ -984,6 +1022,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                       runSpacing: 8,
                       children: [
                         OutlinedButton.icon(
+                          style: outlinedButtonStyle,
                           onPressed: () async {
                             await Clipboard.setData(
                               ClipboardData(text: publicCompanyCode),
@@ -1013,6 +1052,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                           ),
                         ),
                         OutlinedButton.icon(
+                          style: outlinedButtonStyle,
                           onPressed: () async {
                             await Clipboard.setData(
                               ClipboardData(text: publicBookingUrl),
@@ -1042,6 +1082,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                           ),
                         ),
                         OutlinedButton.icon(
+                          style: outlinedButtonStyle,
                           onPressed: () => _sharePublicBookingQrCardImage(
                             context: context,
                             repaintBoundaryKey: qrCardBoundaryKey,
@@ -1059,6 +1100,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                           ),
                         ),
                         OutlinedButton.icon(
+                          style: outlinedButtonStyle,
                           onPressed: () async {
                             await Share.share(publicBookingUrl);
                           },
@@ -1073,6 +1115,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                           ),
                         ),
                         OutlinedButton.icon(
+                          style: outlinedButtonStyle,
                           onPressed: () async {
                             try {
                               final uri = Uri.parse(publicBookingUrl);
