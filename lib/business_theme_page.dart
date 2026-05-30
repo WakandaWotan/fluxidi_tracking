@@ -17,6 +17,33 @@ class BusinessThemePage extends StatefulWidget {
 class _BusinessThemePageState extends State<BusinessThemePage> {
   late final Future<void> _loadPreferencesFuture;
 
+  _BusinessThemePageVisuals _visualsForTheme(BusinessThemeVariant variant) {
+    final palette = paletteForBusinessTheme(variant);
+    final isClean = variant == BusinessThemeVariant.cleanProfessional;
+    return _BusinessThemePageVisuals(
+      palette: palette,
+      pageBg: palette.background,
+      sectionBg: palette.surface,
+      sectionBorder: palette.border.withOpacity(isClean ? 0.92 : 0.58),
+      titleColor: palette.textPrimary,
+      subtitleColor: palette.textMuted.withOpacity(isClean ? 0.94 : 0.86),
+      tileBg: isClean
+          ? palette.surfaceAlt
+          : palette.surfaceAlt.withOpacity(0.9),
+      tileSelectedBg: palette.accent.withOpacity(isClean ? 0.11 : 0.16),
+      tileBorder: palette.border.withOpacity(isClean ? 0.8 : 0.5),
+      tileSelectedBorder: palette.accent.withOpacity(0.72),
+      tileTitle: palette.textPrimary,
+      tileSelectedTitle: isClean
+          ? palette.textPrimary
+          : palette.accent.withOpacity(0.98),
+      tileSubtitle: palette.textMuted.withOpacity(isClean ? 0.9 : 0.82),
+      selectedIcon: palette.accent,
+      unselectedIcon: palette.textMuted.withOpacity(0.65),
+      toneDotBorder: palette.border.withOpacity(isClean ? 0.74 : 0.58),
+    );
+  }
+
   @override
   void initState() {
     super.initState();
@@ -84,22 +111,23 @@ class _BusinessThemePageState extends State<BusinessThemePage> {
     required String title,
     required String subtitle,
     required Widget child,
+    required _BusinessThemePageVisuals visuals,
   }) {
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: const Color(0xFF101113),
+        color: visuals.sectionBg,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0x33FFFFFF)),
+        border: Border.all(color: visuals.sectionBorder),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
             title,
-            style: const TextStyle(
-              color: Colors.white,
+            style: TextStyle(
+              color: visuals.titleColor,
               fontWeight: FontWeight.w800,
               fontSize: 14.8,
             ),
@@ -107,7 +135,7 @@ class _BusinessThemePageState extends State<BusinessThemePage> {
           const SizedBox(height: 4),
           Text(
             subtitle,
-            style: const TextStyle(color: Colors.white70, fontSize: 12.2),
+            style: TextStyle(color: visuals.subtitleColor, fontSize: 12.2),
           ),
           const SizedBox(height: 10),
           child,
@@ -129,10 +157,12 @@ class _BusinessThemePageState extends State<BusinessThemePage> {
       decoration: BoxDecoration(
         color: color,
         shape: BoxShape.circle,
-        border: Border.all(color: Colors.black.withOpacity(0.16)),
+        border: Border.all(color: _activeVisuals.toneDotBorder),
       ),
     );
   }
+
+  late _BusinessThemePageVisuals _activeVisuals;
 
   Widget _selectableThemeTile({
     required String title,
@@ -140,11 +170,12 @@ class _BusinessThemePageState extends State<BusinessThemePage> {
     required bool selected,
     required List<Color> swatches,
     required VoidCallback onTap,
+    required _BusinessThemePageVisuals visuals,
   }) {
     final borderColor = selected
-        ? const Color(0xFFE5B641)
-        : const Color(0x33FFFFFF);
-    final fill = selected ? const Color(0xFF1A1408) : const Color(0xFF121418);
+        ? visuals.tileSelectedBorder
+        : visuals.tileBorder;
+    final fill = selected ? visuals.tileSelectedBg : visuals.tileBg;
     return Material(
       color: Colors.transparent,
       child: InkWell(
@@ -172,8 +203,8 @@ class _BusinessThemePageState extends State<BusinessThemePage> {
                       title,
                       style: TextStyle(
                         color: selected
-                            ? const Color(0xFFFFE2A0)
-                            : Colors.white.withOpacity(0.96),
+                            ? visuals.tileSelectedTitle
+                            : visuals.tileTitle,
                         fontSize: 13.5,
                         fontWeight: FontWeight.w800,
                       ),
@@ -184,7 +215,7 @@ class _BusinessThemePageState extends State<BusinessThemePage> {
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
-                        color: Colors.white.withOpacity(0.66),
+                        color: visuals.tileSubtitle,
                         fontSize: 11.6,
                       ),
                     ),
@@ -203,7 +234,7 @@ class _BusinessThemePageState extends State<BusinessThemePage> {
               const SizedBox(width: 8),
               Icon(
                 selected ? Icons.check_circle_rounded : Icons.radio_button_off,
-                color: selected ? const Color(0xFFE5B641) : Colors.white38,
+                color: selected ? visuals.selectedIcon : visuals.unselectedIcon,
                 size: 21,
               ),
             ],
@@ -235,6 +266,7 @@ class _BusinessThemePageState extends State<BusinessThemePage> {
                     'Bedrijfsthema opgeslagen: ${_labelForBusiness(variant)}',
                   );
                 },
+                visuals: _activeVisuals,
               ),
               if (variant != BusinessThemeVariant.values.last)
                 const SizedBox(height: 8),
@@ -267,6 +299,7 @@ class _BusinessThemePageState extends State<BusinessThemePage> {
                     'Chauffeursthema opgeslagen: ${_labelForDriver(variant)}',
                   );
                 },
+                visuals: _activeVisuals,
               ),
               if (variant != DriverThemeVariant.values.last)
                 const SizedBox(height: 8),
@@ -302,6 +335,7 @@ class _BusinessThemePageState extends State<BusinessThemePage> {
                     'Klantthema-voorkeur opgeslagen: ${_labelForCustomer(variant)}',
                   );
                 },
+                visuals: _activeVisuals,
               ),
               if (variant != CustomerThemeVariant.values.last)
                 const SizedBox(height: 8),
@@ -314,41 +348,95 @@ class _BusinessThemePageState extends State<BusinessThemePage> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFF0B1020),
-      appBar: AppBar(
-        backgroundColor: const Color(0xFF0B1020),
-        title: const Text('Thema\'s & uitstraling'),
-      ),
-      body: FutureBuilder<void>(
-        future: _loadPreferencesFuture,
-        builder: (context, snapshot) {
-          if (snapshot.connectionState != ConnectionState.done) {
-            return const Center(child: CircularProgressIndicator());
-          }
-          return ListView(
-            padding: const EdgeInsets.all(12),
-            children: [
-              _sectionCard(
-                title: 'A. Bedrijfsweergave',
-                subtitle: 'Kies het thema voor business/admin schermen.',
-                child: _businessSection(),
-              ),
-              _sectionCard(
-                title: 'B. Chauffeursweergave',
-                subtitle: 'Kies het thema voor chauffeur/driver schermen.',
-                child: _driverSection(),
-              ),
-              _sectionCard(
-                title: 'C. Klantweergave publiceren',
-                subtitle:
-                    'Voorbereiding op publieke klantstijl. In deze fase alleen lokaal opgeslagen.',
-                child: _publishedCustomerSection(),
-              ),
-            ],
-          );
-        },
-      ),
+    return ValueListenableBuilder<BusinessThemeVariant>(
+      valueListenable: businessThemeNotifier,
+      builder: (context, variant, _) {
+        _activeVisuals = _visualsForTheme(variant);
+        return Scaffold(
+          backgroundColor: _activeVisuals.pageBg,
+          appBar: AppBar(
+            backgroundColor: _activeVisuals.pageBg,
+            foregroundColor: _activeVisuals.titleColor,
+            title: const Text('Thema\'s & uitstraling'),
+          ),
+          body: FutureBuilder<void>(
+            future: _loadPreferencesFuture,
+            builder: (context, snapshot) {
+              if (snapshot.connectionState != ConnectionState.done) {
+                return Center(
+                  child: CircularProgressIndicator(
+                    valueColor: AlwaysStoppedAnimation<Color>(
+                      _activeVisuals.selectedIcon,
+                    ),
+                  ),
+                );
+              }
+              return ListView(
+                padding: const EdgeInsets.all(12),
+                children: [
+                  _sectionCard(
+                    title: 'A. Bedrijfsweergave',
+                    subtitle: 'Kies het thema voor business/admin schermen.',
+                    child: _businessSection(),
+                    visuals: _activeVisuals,
+                  ),
+                  _sectionCard(
+                    title: 'B. Chauffeursweergave',
+                    subtitle: 'Kies het thema voor chauffeur/driver schermen.',
+                    child: _driverSection(),
+                    visuals: _activeVisuals,
+                  ),
+                  _sectionCard(
+                    title: 'C. Klantweergave publiceren',
+                    subtitle:
+                        'Voorbereiding op publieke klantstijl. In deze fase alleen lokaal opgeslagen.',
+                    child: _publishedCustomerSection(),
+                    visuals: _activeVisuals,
+                  ),
+                ],
+              );
+            },
+          ),
+        );
+      },
     );
   }
+}
+
+class _BusinessThemePageVisuals {
+  const _BusinessThemePageVisuals({
+    required this.palette,
+    required this.pageBg,
+    required this.sectionBg,
+    required this.sectionBorder,
+    required this.titleColor,
+    required this.subtitleColor,
+    required this.tileBg,
+    required this.tileSelectedBg,
+    required this.tileBorder,
+    required this.tileSelectedBorder,
+    required this.tileTitle,
+    required this.tileSelectedTitle,
+    required this.tileSubtitle,
+    required this.selectedIcon,
+    required this.unselectedIcon,
+    required this.toneDotBorder,
+  });
+
+  final BusinessThemePalette palette;
+  final Color pageBg;
+  final Color sectionBg;
+  final Color sectionBorder;
+  final Color titleColor;
+  final Color subtitleColor;
+  final Color tileBg;
+  final Color tileSelectedBg;
+  final Color tileBorder;
+  final Color tileSelectedBorder;
+  final Color tileTitle;
+  final Color tileSelectedTitle;
+  final Color tileSubtitle;
+  final Color selectedIcon;
+  final Color unselectedIcon;
+  final Color toneDotBorder;
 }
