@@ -46,52 +46,60 @@ class FluxidiFrame extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Hard Frame A: a visible yellow HUD border that *contains* the whole UI.
-    // Target: visually ~2–3mm on phone screens.
-    return Container(
-      color: kFluxidiBlack,
-      child: SafeArea(
-        top: false,
-        bottom: false,
-        child: Padding(
-          padding: const EdgeInsets.all(8),
-          child: DecoratedBox(
-            decoration: BoxDecoration(
-              color: kFluxidiBlack,
-              borderRadius: BorderRadius.circular(28),
-              border: Border.all(
-                color: kFluxidiYellow.withOpacity(0.98),
-                width: 3.0,
-              ),
-              boxShadow: const [
-                BoxShadow(
-                  color: Color(0x33000000),
-                  blurRadius: 18,
-                  spreadRadius: 2,
-                  offset: Offset(0, 10),
-                ),
-              ],
-            ),
+    return ValueListenableBuilder<BusinessThemeVariant>(
+      valueListenable: businessThemeNotifier,
+      builder: (context, themeVariant, _) {
+        final frameAccent = themeVariant == BusinessThemeVariant.corporateBlue
+            ? paletteForBusinessTheme(BusinessThemeVariant.corporateBlue).accent
+            : kFluxidiYellow;
+        // Hard Frame A: a visible HUD border that contains the whole UI.
+        // Target: visually ~2–3mm on phone screens.
+        return Container(
+          color: kFluxidiBlack,
+          child: SafeArea(
+            top: false,
+            bottom: false,
             child: Padding(
-              padding: const EdgeInsets.all(3),
+              padding: const EdgeInsets.all(8),
               child: DecoratedBox(
                 decoration: BoxDecoration(
                   color: kFluxidiBlack,
-                  borderRadius: BorderRadius.circular(24),
+                  borderRadius: BorderRadius.circular(28),
                   border: Border.all(
-                    color: kFluxidiYellow.withOpacity(0.55),
-                    width: 1.5,
+                    color: frameAccent.withOpacity(0.98),
+                    width: 3.0,
                   ),
+                  boxShadow: const [
+                    BoxShadow(
+                      color: Color(0x33000000),
+                      blurRadius: 18,
+                      spreadRadius: 2,
+                      offset: Offset(0, 10),
+                    ),
+                  ],
                 ),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(22),
-                  child: child,
+                child: Padding(
+                  padding: const EdgeInsets.all(3),
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: kFluxidiBlack,
+                      borderRadius: BorderRadius.circular(24),
+                      border: Border.all(
+                        color: frameAccent.withOpacity(0.55),
+                        width: 1.5,
+                      ),
+                    ),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(22),
+                      child: child,
+                    ),
+                  ),
                 ),
               ),
             ),
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 }

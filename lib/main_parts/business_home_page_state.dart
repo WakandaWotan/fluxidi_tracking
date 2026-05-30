@@ -1624,6 +1624,9 @@ class _BusinessHomePageState extends State<BusinessHomePage>
   }
 
   Widget _panel({required Widget child, EdgeInsetsGeometry? padding}) {
+    final palette = _businessThemePalette;
+    final isCorporateBlue =
+        businessThemeNotifier.value == BusinessThemeVariant.corporateBlue;
     return Container(
       padding: padding ?? const EdgeInsets.all(12),
       decoration: BoxDecoration(
@@ -1633,10 +1636,16 @@ class _BusinessHomePageState extends State<BusinessHomePage>
           colors: [Color(0xFF101010), Color(0xFF07080C), Color(0xFF07080C)],
         ),
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: kFluxidiYellow.withOpacity(0.17)),
+        border: Border.all(
+          color: isCorporateBlue
+              ? palette.accent.withOpacity(0.22)
+              : kFluxidiYellow.withOpacity(0.17),
+        ),
         boxShadow: [
           BoxShadow(
-            color: kFluxidiYellow.withOpacity(0.07),
+            color: isCorporateBlue
+                ? palette.accent.withOpacity(0.10)
+                : kFluxidiYellow.withOpacity(0.07),
             blurRadius: 12,
             spreadRadius: 0.2,
           ),
@@ -1652,6 +1661,10 @@ class _BusinessHomePageState extends State<BusinessHomePage>
   }
 
   Widget _topBar(BuildContext context, CompanyProfile? profile) {
+    final palette = _businessThemePalette;
+    final isCorporateBlue =
+        businessThemeNotifier.value == BusinessThemeVariant.corporateBlue;
+    final currentLanguage = appLanguageNotifier.value;
     final publicCompanyCode = _resolvePublicBookingCompanyCodeForDashboard();
     final hasPublicCompanyCode = publicCompanyCode != null;
     String firstNonEmpty(List<String?> values) {
@@ -1690,6 +1703,32 @@ class _BusinessHomePageState extends State<BusinessHomePage>
       120.0,
       math.min(customerReferenceLogoWidth, screenW - 250),
     );
+    PopupMenuItem<String> languageMenuItem({
+      required String value,
+      required AppLanguage language,
+      required String code,
+    }) {
+      final selected = currentLanguage == language;
+      return PopupMenuItem<String>(
+        value: value,
+        child: Row(
+          children: [
+            Expanded(
+              child: Text(
+                code,
+                style: TextStyle(
+                  fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
+                  color: selected ? palette.accent : null,
+                ),
+              ),
+            ),
+            if (selected)
+              Icon(Icons.check_rounded, size: 16, color: palette.accent),
+          ],
+        ),
+      );
+    }
+
     return Row(
       children: [
         Image.asset(
@@ -1700,26 +1739,15 @@ class _BusinessHomePageState extends State<BusinessHomePage>
           errorBuilder: (_, __, ___) => const SizedBox.shrink(),
         ),
         const Spacer(),
-        Container(
-          width: 34,
-          height: 34,
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            border: Border.all(color: kFluxidiYellow.withOpacity(0.28)),
-            color: const Color(0xFF111111),
-          ),
-          child: Icon(
-            Icons.notifications_none_rounded,
-            size: 19,
-            color: kFluxidiYellow.withOpacity(0.93),
-          ),
-        ),
-        const SizedBox(width: 8),
         PopupMenuButton<String>(
-          color: const Color(0xFF111111),
+          color: isCorporateBlue ? palette.surface : const Color(0xFF111111),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(14),
-            side: BorderSide(color: kFluxidiYellow.withOpacity(0.36)),
+            side: BorderSide(
+              color: isCorporateBlue
+                  ? palette.accent.withOpacity(0.42)
+                  : kFluxidiYellow.withOpacity(0.36),
+            ),
           ),
           onSelected: (value) {
             if (value == 'details') {
@@ -1736,6 +1764,22 @@ class _BusinessHomePageState extends State<BusinessHomePage>
             }
             if (value == 'switch') {
               _switchCompany(context);
+              return;
+            }
+            if (value == 'lang_nl') {
+              setAppLanguage(AppLanguage.nl);
+              return;
+            }
+            if (value == 'lang_en') {
+              setAppLanguage(AppLanguage.en);
+              return;
+            }
+            if (value == 'lang_fr') {
+              setAppLanguage(AppLanguage.fr);
+              return;
+            }
+            if (value == 'lang_es') {
+              setAppLanguage(AppLanguage.es);
             }
           },
           itemBuilder: (_) => [
@@ -1882,13 +1926,49 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                 style: TextStyle(color: Colors.redAccent.shade100),
               ),
             ),
+            const PopupMenuDivider(),
+            PopupMenuItem<String>(
+              enabled: false,
+              child: Text(
+                _t(nl: 'Taal', en: 'Language', fr: 'Langue', es: 'Idioma'),
+                style: TextStyle(
+                  color: palette.textSecondary,
+                  fontWeight: FontWeight.w700,
+                  fontSize: 12.5,
+                ),
+              ),
+            ),
+            languageMenuItem(
+              value: 'lang_nl',
+              language: AppLanguage.nl,
+              code: 'NL',
+            ),
+            languageMenuItem(
+              value: 'lang_en',
+              language: AppLanguage.en,
+              code: 'EN',
+            ),
+            languageMenuItem(
+              value: 'lang_fr',
+              language: AppLanguage.fr,
+              code: 'FR',
+            ),
+            languageMenuItem(
+              value: 'lang_es',
+              language: AppLanguage.es,
+              code: 'ES',
+            ),
           ],
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
             decoration: BoxDecoration(
               color: const Color(0xFF101010),
               borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: kFluxidiYellow.withOpacity(0.32)),
+              border: Border.all(
+                color: isCorporateBlue
+                    ? palette.accent.withOpacity(0.38)
+                    : kFluxidiYellow.withOpacity(0.32),
+              ),
             ),
             child: Row(
               mainAxisSize: MainAxisSize.min,
@@ -1898,14 +1978,22 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                   height: 28,
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
-                    color: const Color(0xFF15120A),
-                    border: Border.all(color: kFluxidiYellow.withOpacity(0.5)),
+                    color: isCorporateBlue
+                        ? palette.surfaceAlt
+                        : const Color(0xFF15120A),
+                    border: Border.all(
+                      color: isCorporateBlue
+                          ? palette.accent.withOpacity(0.56)
+                          : kFluxidiYellow.withOpacity(0.5),
+                    ),
                   ),
                   alignment: Alignment.center,
                   child: Text(
                     _companyInitials(profile),
-                    style: const TextStyle(
-                      color: Color(0xFFE5B641),
+                    style: TextStyle(
+                      color: isCorporateBlue
+                          ? palette.accent
+                          : const Color(0xFFE5B641),
                       fontWeight: FontWeight.w800,
                       fontSize: 11,
                     ),
@@ -1947,7 +2035,9 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                 const SizedBox(width: 4),
                 Icon(
                   Icons.keyboard_arrow_down_rounded,
-                  color: kFluxidiYellow.withOpacity(0.95),
+                  color: isCorporateBlue
+                      ? palette.accent.withOpacity(0.96)
+                      : kFluxidiYellow.withOpacity(0.95),
                   size: 18,
                 ),
               ],
@@ -2043,6 +2133,9 @@ class _BusinessHomePageState extends State<BusinessHomePage>
   }
 
   Widget _primaryCta(BuildContext context, {bool compact = false}) {
+    final palette = _businessThemePalette;
+    final isCorporateBlue =
+        businessThemeNotifier.value == BusinessThemeVariant.corporateBlue;
     return InkWell(
       borderRadius: BorderRadius.circular(16),
       onTap: () => _openCalculator(context),
@@ -2053,15 +2146,23 @@ class _BusinessHomePageState extends State<BusinessHomePage>
         ),
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: kFluxidiYellow.withOpacity(0.48)),
-          gradient: const LinearGradient(
+          border: Border.all(
+            color: isCorporateBlue
+                ? palette.accent.withOpacity(0.55)
+                : kFluxidiYellow.withOpacity(0.48),
+          ),
+          gradient: LinearGradient(
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
-            colors: [Color(0xFF15120A), Color(0xFF07080C)],
+            colors: isCorporateBlue
+                ? const [Color(0xFF10213A), Color(0xFF0A1224)]
+                : const [Color(0xFF15120A), Color(0xFF07080C)],
           ),
           boxShadow: [
             BoxShadow(
-              color: kFluxidiYellow.withOpacity(0.13),
+              color: isCorporateBlue
+                  ? palette.accent.withOpacity(0.15)
+                  : kFluxidiYellow.withOpacity(0.13),
               blurRadius: 18,
               spreadRadius: 0.8,
             ),
@@ -2078,15 +2179,25 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                   begin: Alignment.topLeft,
                   end: Alignment.bottomRight,
                   colors: [
-                    kFluxidiYellow.withOpacity(0.35),
-                    const Color(0xFF15120A),
+                    isCorporateBlue
+                        ? palette.accent.withOpacity(0.34)
+                        : kFluxidiYellow.withOpacity(0.35),
+                    isCorporateBlue
+                        ? const Color(0xFF10213A)
+                        : const Color(0xFF15120A),
                   ],
                 ),
-                border: Border.all(color: kFluxidiYellow.withOpacity(0.55)),
+                border: Border.all(
+                  color: isCorporateBlue
+                      ? palette.accent.withOpacity(0.58)
+                      : kFluxidiYellow.withOpacity(0.55),
+                ),
               ),
-              child: const Icon(
+              child: Icon(
                 Icons.calculate_outlined,
-                color: Color(0xFFE5B641),
+                color: isCorporateBlue
+                    ? palette.textOnAccent
+                    : const Color(0xFFE5B641),
                 size: 22,
               ),
             ),
@@ -2115,7 +2226,9 @@ class _BusinessHomePageState extends State<BusinessHomePage>
             ),
             Icon(
               Icons.arrow_forward_rounded,
-              color: kFluxidiYellow.withOpacity(0.98),
+              color: isCorporateBlue
+                  ? palette.accent.withOpacity(0.98)
+                  : kFluxidiYellow.withOpacity(0.98),
               size: compact ? 20 : 22,
             ),
           ],
@@ -2143,10 +2256,14 @@ class _BusinessHomePageState extends State<BusinessHomePage>
     final cardBorderColor = palette.border.withOpacity(
       active ? (palette.isDark ? 0.72 : 1.0) : (palette.isDark ? 0.46 : 0.88),
     );
-    final warningSemantic = const Color(0xFFE5B641);
-    final warningBadgeBg = warningSemantic.withOpacity(
-      palette.isDark ? 0.22 : 0.24,
-    );
+    final warningSemantic =
+        businessThemeNotifier.value == BusinessThemeVariant.corporateBlue
+        ? palette.accent
+        : const Color(0xFFE5B641);
+    final warningBadgeBg =
+        businessThemeNotifier.value == BusinessThemeVariant.corporateBlue
+        ? palette.surfaceAlt.withOpacity(0.96)
+        : warningSemantic.withOpacity(palette.isDark ? 0.22 : 0.24);
     final iconSurfaceBase = active ? palette.accent : palette.textMuted;
     final iconTint = active
         ? palette.textOnAccent
@@ -2229,7 +2346,11 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                 child: Text(
                   statusBadge!,
                   style: TextStyle(
-                    color: palette.textOnWarning,
+                    color:
+                        businessThemeNotifier.value ==
+                            BusinessThemeVariant.corporateBlue
+                        ? palette.textSecondary
+                        : palette.textOnWarning,
                     fontSize: compact ? 9.5 : 10.3,
                     fontWeight: FontWeight.w700,
                   ),
@@ -2389,22 +2510,47 @@ class _BusinessHomePageState extends State<BusinessHomePage>
 
   @override
   Widget build(BuildContext context) {
+    final isCorporateBlue =
+        businessThemeNotifier.value == BusinessThemeVariant.corporateBlue;
     return ValueListenableBuilder<AppLanguage>(
       valueListenable: appLanguageNotifier,
       builder: (context, _, __) => Scaffold(
-        backgroundColor: const Color(0xFF07080C),
+        backgroundColor: isCorporateBlue
+            ? const Color(0xFF0A1324)
+            : const Color(0xFF07080C),
         body: SafeArea(
           child: DecoratedBox(
             decoration: BoxDecoration(
-              gradient: const LinearGradient(
+              gradient: LinearGradient(
                 begin: Alignment.topCenter,
                 end: Alignment.bottomCenter,
-                colors: [
-                  Color(0xFF101010),
-                  Color(0xFF07080C),
-                  Color(0xFF07080C),
-                ],
+                colors: isCorporateBlue
+                    ? const [
+                        Color(0xFF13213A),
+                        Color(0xFF0A1324),
+                        Color(0xFF0A1324),
+                      ]
+                    : const [
+                        Color(0xFF101010),
+                        Color(0xFF07080C),
+                        Color(0xFF07080C),
+                      ],
               ),
+              border: Border.all(
+                color: isCorporateBlue
+                    ? _businessThemePalette.accent.withOpacity(0.34)
+                    : Colors.transparent,
+                width: isCorporateBlue ? 1.2 : 0,
+              ),
+              boxShadow: isCorporateBlue
+                  ? [
+                      BoxShadow(
+                        color: _businessThemePalette.accent.withOpacity(0.16),
+                        blurRadius: 16,
+                        spreadRadius: 0.2,
+                      ),
+                    ]
+                  : null,
             ),
             child: ValueListenableBuilder<CompanyProfile?>(
               valueListenable: companyProfileNotifier,
@@ -2492,7 +2638,13 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                             decoration: BoxDecoration(
                               borderRadius: BorderRadius.circular(18),
                               border: Border.all(
-                                color: kFluxidiYellow.withOpacity(0.22),
+                                color:
+                                    businessThemeNotifier.value ==
+                                        BusinessThemeVariant.corporateBlue
+                                    ? _businessThemePalette.accent.withOpacity(
+                                        0.30,
+                                      )
+                                    : kFluxidiYellow.withOpacity(0.22),
                               ),
                             ),
                             child: Stack(
@@ -2816,7 +2968,11 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                       es: 'Pagado',
                                     ),
                                     value: _metricIncomeText(),
-                                    accentColor: const Color(0xFFE5B641),
+                                    accentColor:
+                                        businessThemeNotifier.value ==
+                                            BusinessThemeVariant.corporateBlue
+                                        ? const Color(0xFF38BDF8)
+                                        : const Color(0xFFE5B641),
                                     compact: isTabletLandscape,
                                   ),
                                 ),
@@ -2833,7 +2989,11 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                             es: 'Acciones rápidas',
                           ),
                           style: TextStyle(
-                            color: kFluxidiYellow.withOpacity(0.95),
+                            color:
+                                businessThemeNotifier.value ==
+                                    BusinessThemeVariant.corporateBlue
+                                ? _businessThemePalette.accent.withOpacity(0.95)
+                                : kFluxidiYellow.withOpacity(0.95),
                             fontSize: 14,
                             fontWeight: FontWeight.w700,
                           ),
@@ -2846,10 +3006,20 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                               vertical: 6,
                             ),
                             decoration: BoxDecoration(
-                              color: const Color(0xFF2A1B0F),
+                              color:
+                                  businessThemeNotifier.value ==
+                                      BusinessThemeVariant.corporateBlue
+                                  ? _businessThemePalette.surfaceAlt
+                                  : const Color(0xFF2A1B0F),
                               borderRadius: BorderRadius.circular(999),
                               border: Border.all(
-                                color: const Color(0xFFE5B641).withOpacity(0.5),
+                                color:
+                                    businessThemeNotifier.value ==
+                                        BusinessThemeVariant.corporateBlue
+                                    ? _businessThemePalette.accent.withOpacity(
+                                        0.62,
+                                      )
+                                    : const Color(0xFFE5B641).withOpacity(0.5),
                               ),
                             ),
                             child: Text(
@@ -2860,9 +3030,11 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                 es: 'Se requiere recuperar la sesión de empresa',
                               ),
                               style: TextStyle(
-                                color: const Color(
-                                  0xFFE5B641,
-                                ).withOpacity(0.98),
+                                color:
+                                    businessThemeNotifier.value ==
+                                        BusinessThemeVariant.corporateBlue
+                                    ? _businessThemePalette.textSecondary
+                                    : const Color(0xFFE5B641).withOpacity(0.98),
                                 fontSize: 10.7,
                                 fontWeight: FontWeight.w700,
                               ),
@@ -3134,8 +3306,12 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                     ),
                                     onTap: () =>
                                         _openDriverCockpitView(context),
-                                    backgroundAsset:
-                                        'assets/fluxidi/driver_view_background_company.png',
+                                    backgroundAsset: _businessImageAsset(
+                                      executiveGoldAsset:
+                                          'assets/fluxidi/driver_view_background_company.png',
+                                      corporateBlueAsset:
+                                          'assets/Corporate BLEU Compagny/company_driver_view_corporate_blue.png',
+                                    ),
                                     useImageBackground: useTabletVisualMode,
                                     compact: isTabletLandscape,
                                   ),
@@ -3277,7 +3453,10 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                           },
                         ),
                         SizedBox(height: businessBackButtonGap),
-                        const FluxidiBackToStartButton(),
+                        businessThemeNotifier.value ==
+                                BusinessThemeVariant.corporateBlue
+                            ? _businessBackToStartButton()
+                            : const FluxidiBackToStartButton(),
                       ],
                     );
                   },
@@ -3285,6 +3464,39 @@ class _BusinessHomePageState extends State<BusinessHomePage>
               },
             ),
           ),
+        ),
+      ),
+    );
+  }
+
+  Widget _businessBackToStartButton() {
+    final palette = _businessThemePalette;
+    return SizedBox(
+      width: double.infinity,
+      child: OutlinedButton.icon(
+        onPressed: () {
+          Navigator.of(context).pushAndRemoveUntil(
+            MaterialPageRoute(builder: (_) => const RoleEntryPage()),
+            (route) => false,
+          );
+        },
+        icon: const Icon(Icons.home_outlined),
+        label: Text(
+          _t(
+            nl: 'Terug naar startpagina',
+            en: 'Back to start page',
+            fr: 'Retour à l’accueil',
+            es: 'Volver a la pantalla inicial',
+          ),
+          style: TextStyle(color: palette.accent, fontWeight: FontWeight.w700),
+        ),
+        style: OutlinedButton.styleFrom(
+          backgroundColor: palette.background,
+          side: BorderSide(color: palette.accent.withOpacity(0.72), width: 1.1),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+          ),
+          padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 14),
         ),
       ),
     );
