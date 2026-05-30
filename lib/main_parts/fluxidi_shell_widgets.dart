@@ -49,9 +49,15 @@ class FluxidiFrame extends StatelessWidget {
     return ValueListenableBuilder<BusinessThemeVariant>(
       valueListenable: businessThemeNotifier,
       builder: (context, themeVariant, _) {
-        final frameAccent = themeVariant == BusinessThemeVariant.corporateBlue
-            ? paletteForBusinessTheme(BusinessThemeVariant.corporateBlue).accent
-            : kFluxidiYellow;
+        final frameAccent = switch (themeVariant) {
+          BusinessThemeVariant.executiveGold => kFluxidiYellow,
+          BusinessThemeVariant.corporateBlue => paletteForBusinessTheme(
+            BusinessThemeVariant.corporateBlue,
+          ).accent,
+          BusinessThemeVariant.cleanProfessional => paletteForBusinessTheme(
+            BusinessThemeVariant.cleanProfessional,
+          ).accent,
+        };
         // Hard Frame A: a visible HUD border that contains the whole UI.
         // Target: visually ~2–3mm on phone screens.
         return Container(

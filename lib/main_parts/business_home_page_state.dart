@@ -1625,8 +1625,8 @@ class _BusinessHomePageState extends State<BusinessHomePage>
 
   Widget _panel({required Widget child, EdgeInsetsGeometry? padding}) {
     final palette = _businessThemePalette;
-    final isCorporateBlue =
-        businessThemeNotifier.value == BusinessThemeVariant.corporateBlue;
+    final themeVariant = businessThemeNotifier.value;
+    final isExecutiveGold = themeVariant == BusinessThemeVariant.executiveGold;
     return Container(
       padding: padding ?? const EdgeInsets.all(12),
       decoration: BoxDecoration(
@@ -1637,15 +1637,15 @@ class _BusinessHomePageState extends State<BusinessHomePage>
         ),
         borderRadius: BorderRadius.circular(16),
         border: Border.all(
-          color: isCorporateBlue
-              ? palette.accent.withOpacity(0.22)
-              : kFluxidiYellow.withOpacity(0.17),
+          color: isExecutiveGold
+              ? kFluxidiYellow.withOpacity(0.17)
+              : palette.accent.withOpacity(0.22),
         ),
         boxShadow: [
           BoxShadow(
-            color: isCorporateBlue
-                ? palette.accent.withOpacity(0.10)
-                : kFluxidiYellow.withOpacity(0.07),
+            color: isExecutiveGold
+                ? kFluxidiYellow.withOpacity(0.07)
+                : palette.accent.withOpacity(0.10),
             blurRadius: 12,
             spreadRadius: 0.2,
           ),
@@ -1662,8 +1662,11 @@ class _BusinessHomePageState extends State<BusinessHomePage>
 
   Widget _topBar(BuildContext context, CompanyProfile? profile) {
     final palette = _businessThemePalette;
-    final isCorporateBlue =
-        businessThemeNotifier.value == BusinessThemeVariant.corporateBlue;
+    final themeVariant = businessThemeNotifier.value;
+    final isExecutiveGold = themeVariant == BusinessThemeVariant.executiveGold;
+    final isCorporateBlue = themeVariant == BusinessThemeVariant.corporateBlue;
+    final isCleanProfessional =
+        themeVariant == BusinessThemeVariant.cleanProfessional;
     final currentLanguage = appLanguageNotifier.value;
     final publicCompanyCode = _resolvePublicBookingCompanyCodeForDashboard();
     final hasPublicCompanyCode = publicCompanyCode != null;
@@ -1718,7 +1721,9 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                 code,
                 style: TextStyle(
                   fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
-                  color: selected ? palette.accent : null,
+                  color: selected
+                      ? palette.accent
+                      : (isCleanProfessional ? palette.textPrimary : null),
                 ),
               ),
             ),
@@ -1740,13 +1745,15 @@ class _BusinessHomePageState extends State<BusinessHomePage>
         ),
         const Spacer(),
         PopupMenuButton<String>(
-          color: isCorporateBlue ? palette.surface : const Color(0xFF111111),
+          color: isCleanProfessional
+              ? palette.surface
+              : (isCorporateBlue ? palette.surface : const Color(0xFF111111)),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(14),
             side: BorderSide(
-              color: isCorporateBlue
-                  ? palette.accent.withOpacity(0.42)
-                  : kFluxidiYellow.withOpacity(0.36),
+              color: isExecutiveGold
+                  ? kFluxidiYellow.withOpacity(0.36)
+                  : palette.accent.withOpacity(0.42),
             ),
           ),
           onSelected: (value) {
@@ -1796,10 +1803,14 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                           vertical: 3.5,
                         ),
                         decoration: BoxDecoration(
-                          color: const Color(0xFF12331F),
+                          color: isCleanProfessional
+                              ? palette.surfaceAlt
+                              : const Color(0xFF12331F),
                           borderRadius: BorderRadius.circular(20),
                           border: Border.all(
-                            color: const Color(0xFF4ADE80).withOpacity(0.45),
+                            color: isCleanProfessional
+                                ? palette.accent.withOpacity(0.34)
+                                : const Color(0xFF4ADE80).withOpacity(0.45),
                           ),
                         ),
                         child: Text(
@@ -1809,8 +1820,10 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                             fr: 'Vérifiée',
                             es: 'Verificada',
                           ),
-                          style: const TextStyle(
-                            color: Color(0xFFB8F5C8),
+                          style: TextStyle(
+                            color: isCleanProfessional
+                                ? palette.textSecondary
+                                : const Color(0xFFB8F5C8),
                             fontWeight: FontWeight.w700,
                             fontSize: 10.5,
                           ),
@@ -1825,8 +1838,10 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                       companyIdentityName,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: Colors.white,
+                      style: TextStyle(
+                        color: isCleanProfessional
+                            ? palette.textPrimary
+                            : Colors.white,
                         fontSize: 13,
                         fontWeight: FontWeight.w800,
                       ),
@@ -1835,8 +1850,10 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                     if (publicCompanyCode != null) ...[
                       Text(
                         '${_t(nl: 'Fluxidi-code', en: 'Fluxidi code', fr: 'Code Fluxidi', es: 'Código Fluxidi')}: $publicCompanyCode',
-                        style: const TextStyle(
-                          color: Colors.white70,
+                        style: TextStyle(
+                          color: isCleanProfessional
+                              ? palette.textSecondary
+                              : Colors.white70,
                           fontSize: 11.5,
                           fontFamily: 'monospace',
                         ),
@@ -1845,8 +1862,10 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                     ],
                     Text(
                       '${_t(nl: 'Interne referentie', en: 'Internal reference', fr: 'Référence interne', es: 'Referencia interna')}: ${profile.companyId}',
-                      style: const TextStyle(
-                        color: Colors.white54,
+                      style: TextStyle(
+                        color: isCleanProfessional
+                            ? palette.textMuted
+                            : Colors.white54,
                         fontSize: 10.5,
                         fontFamily: 'monospace',
                       ),
@@ -1856,8 +1875,10 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                       profile.email.trim(),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: Colors.white70,
+                      style: TextStyle(
+                        color: isCleanProfessional
+                            ? palette.textSecondary
+                            : Colors.white70,
                         fontSize: 11.5,
                       ),
                     ),
@@ -1870,8 +1891,10 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                         ),
                         maxLines: 3,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: Colors.white54,
+                        style: TextStyle(
+                          color: isCleanProfessional
+                              ? palette.textMuted
+                              : Colors.white54,
                           fontSize: 11,
                         ),
                       ),
@@ -1888,6 +1911,9 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                   fr: 'Données de l’entreprise',
                   es: 'Datos de empresa',
                 ),
+                style: isCleanProfessional
+                    ? TextStyle(color: palette.textPrimary)
+                    : null,
               ),
             ),
             if (!hasPublicCompanyCode)
@@ -1900,6 +1926,9 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                     fr: 'Vérifier l’entreprise',
                     es: 'Verificar empresa',
                   ),
+                  style: isCleanProfessional
+                      ? TextStyle(color: palette.textPrimary)
+                      : null,
                 ),
               ),
             if (hasPublicCompanyCode)
@@ -1912,6 +1941,9 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                     fr: 'Associer un nouvel appareil',
                     es: 'Vincular nuevo dispositivo',
                   ),
+                  style: isCleanProfessional
+                      ? TextStyle(color: palette.textPrimary)
+                      : null,
                 ),
               ),
             PopupMenuItem<String>(
@@ -1962,12 +1994,14 @@ class _BusinessHomePageState extends State<BusinessHomePage>
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
             decoration: BoxDecoration(
-              color: const Color(0xFF101010),
+              color: isCleanProfessional
+                  ? palette.surface
+                  : const Color(0xFF101010),
               borderRadius: BorderRadius.circular(14),
               border: Border.all(
-                color: isCorporateBlue
-                    ? palette.accent.withOpacity(0.38)
-                    : kFluxidiYellow.withOpacity(0.32),
+                color: isExecutiveGold
+                    ? kFluxidiYellow.withOpacity(0.32)
+                    : palette.accent.withOpacity(0.38),
               ),
             ),
             child: Row(
@@ -1978,22 +2012,22 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                   height: 28,
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
-                    color: isCorporateBlue
+                    color: isCleanProfessional || isCorporateBlue
                         ? palette.surfaceAlt
                         : const Color(0xFF15120A),
                     border: Border.all(
-                      color: isCorporateBlue
-                          ? palette.accent.withOpacity(0.56)
-                          : kFluxidiYellow.withOpacity(0.5),
+                      color: isExecutiveGold
+                          ? kFluxidiYellow.withOpacity(0.5)
+                          : palette.accent.withOpacity(0.56),
                     ),
                   ),
                   alignment: Alignment.center,
                   child: Text(
                     _companyInitials(profile),
                     style: TextStyle(
-                      color: isCorporateBlue
-                          ? palette.accent
-                          : const Color(0xFFE5B641),
+                      color: isExecutiveGold
+                          ? const Color(0xFFE5B641)
+                          : palette.accent,
                       fontWeight: FontWeight.w800,
                       fontSize: 11,
                     ),
@@ -2009,8 +2043,10 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                         companyName,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: Colors.white,
+                        style: TextStyle(
+                          color: isCleanProfessional
+                              ? palette.textPrimary
+                              : Colors.white,
                           fontWeight: FontWeight.w700,
                           fontSize: 12.5,
                         ),
@@ -2025,7 +2061,9 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
-                          color: Colors.white.withOpacity(0.68),
+                          color: isCleanProfessional
+                              ? palette.textSecondary
+                              : Colors.white.withOpacity(0.68),
                           fontSize: 10.5,
                         ),
                       ),
@@ -2035,9 +2073,9 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                 const SizedBox(width: 4),
                 Icon(
                   Icons.keyboard_arrow_down_rounded,
-                  color: isCorporateBlue
-                      ? palette.accent.withOpacity(0.96)
-                      : kFluxidiYellow.withOpacity(0.95),
+                  color: isExecutiveGold
+                      ? kFluxidiYellow.withOpacity(0.95)
+                      : palette.accent.withOpacity(0.96),
                   size: 18,
                 ),
               ],
@@ -2134,8 +2172,9 @@ class _BusinessHomePageState extends State<BusinessHomePage>
 
   Widget _primaryCta(BuildContext context, {bool compact = false}) {
     final palette = _businessThemePalette;
-    final isCorporateBlue =
-        businessThemeNotifier.value == BusinessThemeVariant.corporateBlue;
+    final themeVariant = businessThemeNotifier.value;
+    final isExecutiveGold = themeVariant == BusinessThemeVariant.executiveGold;
+    final isCorporateBlue = themeVariant == BusinessThemeVariant.corporateBlue;
     return InkWell(
       borderRadius: BorderRadius.circular(16),
       onTap: () => _openCalculator(context),
@@ -2147,22 +2186,24 @@ class _BusinessHomePageState extends State<BusinessHomePage>
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(16),
           border: Border.all(
-            color: isCorporateBlue
-                ? palette.accent.withOpacity(0.55)
-                : kFluxidiYellow.withOpacity(0.48),
+            color: isExecutiveGold
+                ? kFluxidiYellow.withOpacity(0.48)
+                : palette.accent.withOpacity(isCorporateBlue ? 0.55 : 0.45),
           ),
           gradient: LinearGradient(
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
             colors: isCorporateBlue
                 ? const [Color(0xFF10213A), Color(0xFF0A1224)]
-                : const [Color(0xFF15120A), Color(0xFF07080C)],
+                : isExecutiveGold
+                ? const [Color(0xFF15120A), Color(0xFF07080C)]
+                : <Color>[palette.surfaceAlt, palette.background],
           ),
           boxShadow: [
             BoxShadow(
-              color: isCorporateBlue
-                  ? palette.accent.withOpacity(0.15)
-                  : kFluxidiYellow.withOpacity(0.13),
+              color: isExecutiveGold
+                  ? kFluxidiYellow.withOpacity(0.13)
+                  : palette.accent.withOpacity(isCorporateBlue ? 0.15 : 0.10),
               blurRadius: 18,
               spreadRadius: 0.8,
             ),
@@ -2181,23 +2222,27 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                   colors: [
                     isCorporateBlue
                         ? palette.accent.withOpacity(0.34)
-                        : kFluxidiYellow.withOpacity(0.35),
+                        : isExecutiveGold
+                        ? kFluxidiYellow.withOpacity(0.35)
+                        : palette.accent.withOpacity(0.18),
                     isCorporateBlue
                         ? const Color(0xFF10213A)
-                        : const Color(0xFF15120A),
+                        : isExecutiveGold
+                        ? const Color(0xFF15120A)
+                        : palette.surface,
                   ],
                 ),
                 border: Border.all(
-                  color: isCorporateBlue
-                      ? palette.accent.withOpacity(0.58)
-                      : kFluxidiYellow.withOpacity(0.55),
+                  color: isExecutiveGold
+                      ? kFluxidiYellow.withOpacity(0.55)
+                      : palette.accent.withOpacity(0.58),
                 ),
               ),
               child: Icon(
                 Icons.calculate_outlined,
-                color: isCorporateBlue
-                    ? palette.textOnAccent
-                    : const Color(0xFFE5B641),
+                color: isExecutiveGold
+                    ? const Color(0xFFE5B641)
+                    : (isCorporateBlue ? palette.textOnAccent : palette.accent),
                 size: 22,
               ),
             ),
@@ -2216,7 +2261,9 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
-                      color: Colors.white,
+                      color: isExecutiveGold || isCorporateBlue
+                          ? Colors.white
+                          : palette.textPrimary,
                       fontSize: compact ? 14.0 : 15.3,
                       fontWeight: FontWeight.w800,
                     ),
@@ -2226,9 +2273,9 @@ class _BusinessHomePageState extends State<BusinessHomePage>
             ),
             Icon(
               Icons.arrow_forward_rounded,
-              color: isCorporateBlue
-                  ? palette.accent.withOpacity(0.98)
-                  : kFluxidiYellow.withOpacity(0.98),
+              color: isExecutiveGold
+                  ? kFluxidiYellow.withOpacity(0.98)
+                  : palette.accent.withOpacity(0.98),
               size: compact ? 20 : 22,
             ),
           ],
@@ -2250,240 +2297,299 @@ class _BusinessHomePageState extends State<BusinessHomePage>
     bool compact = false,
   }) {
     final palette = _businessThemePalette;
+    final themeVariant = businessThemeNotifier.value;
+    final isExecutiveGold = themeVariant == BusinessThemeVariant.executiveGold;
+    final isCleanProfessional =
+        themeVariant == BusinessThemeVariant.cleanProfessional;
     final active = onTap != null && !isFuture;
     final hasImageBackground =
         useImageBackground && (backgroundAsset ?? '').trim().isNotEmpty;
     final cardBorderColor = palette.border.withOpacity(
       active ? (palette.isDark ? 0.72 : 1.0) : (palette.isDark ? 0.46 : 0.88),
     );
-    final warningSemantic =
-        businessThemeNotifier.value == BusinessThemeVariant.corporateBlue
-        ? palette.accent
-        : const Color(0xFFE5B641);
-    final warningBadgeBg =
-        businessThemeNotifier.value == BusinessThemeVariant.corporateBlue
-        ? palette.surfaceAlt.withOpacity(0.96)
-        : warningSemantic.withOpacity(palette.isDark ? 0.22 : 0.24);
+    final warningSemantic = isExecutiveGold
+        ? const Color(0xFFE5B641)
+        : palette.accent;
+    final warningBadgeBg = isExecutiveGold
+        ? warningSemantic.withOpacity(palette.isDark ? 0.22 : 0.24)
+        : palette.surfaceAlt.withOpacity(0.96);
     final iconSurfaceBase = active ? palette.accent : palette.textMuted;
     final iconTint = active
         ? palette.textOnAccent
         : palette.textMuted.withOpacity(0.78);
-    final titleColor = palette.textPrimary.withOpacity(active ? 1.0 : 0.88);
-    final subtitleColor = palette.textMuted.withOpacity(active ? 0.94 : 0.76);
-    final cardPadding = EdgeInsets.fromLTRB(
+    final titleColor = isCleanProfessional && hasImageBackground
+        ? Colors.white.withOpacity(active ? 0.98 : 0.92)
+        : palette.textPrimary.withOpacity(active ? 1.0 : 0.88);
+    final subtitleColor = isCleanProfessional && hasImageBackground
+        ? Colors.white.withOpacity(active ? 0.86 : 0.78)
+        : palette.textMuted.withOpacity(active ? 0.94 : 0.76);
+    EdgeInsets cardPaddingFor(bool isTightHeight) => EdgeInsets.fromLTRB(
       compact ? 8 : 12,
+      (compact ? 8 : 12) - (isTightHeight ? 2 : 0),
       compact ? 8 : 12,
-      compact ? 8 : 12,
-      compact ? 6 : 10,
+      (compact ? 6 : 10) - (isTightHeight ? 2 : 0),
     );
-    final content = Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            Container(
-              width: compact ? 36 : 44,
-              height: compact ? 36 : 44,
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: [
-                    iconSurfaceBase.withOpacity(active ? 0.28 : 0.18),
-                    palette.surfaceAlt,
+    Widget cardContent(bool isTightHeight) {
+      final iconCircleSize = compact
+          ? (isTightHeight ? 34.0 : 36.0)
+          : (isTightHeight ? 40.0 : 44.0);
+      final iconGlyphSize = compact
+          ? (isTightHeight ? 20.0 : 22.0)
+          : (isTightHeight ? 26.0 : 29.0);
+      final titleGap = compact
+          ? (isTightHeight ? 4.0 : 5.0)
+          : (isTightHeight ? 6.0 : 9.0);
+      final titleFontSize =
+          (compact ? 12.5 : 14.3) - (isTightHeight ? 0.9 : 0.0);
+      final subtitleFontSize =
+          (compact ? 10.0 : 11.4) - (isTightHeight ? 0.8 : 0.0);
+      final subtitleGap = isTightHeight ? 3.0 : 4.0;
+      final chevronSize = compact
+          ? (isTightHeight ? 13.0 : 14.0)
+          : (isTightHeight ? 16.0 : 17.0);
+      final lockSize = compact
+          ? (isTightHeight ? 12.0 : 13.0)
+          : (isTightHeight ? 14.5 : 15.5);
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: iconCircleSize,
+                height: iconCircleSize,
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [
+                      iconSurfaceBase.withOpacity(active ? 0.28 : 0.18),
+                      palette.surfaceAlt,
+                    ],
+                  ),
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: (active ? palette.accent : palette.border)
+                        .withOpacity(active ? 0.50 : 0.26),
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: (active ? palette.accent : palette.shadow)
+                          .withOpacity(active ? 0.10 : 0.16),
+                      blurRadius: 10,
+                      spreadRadius: 0.2,
+                    ),
                   ],
                 ),
-                shape: BoxShape.circle,
-                border: Border.all(
-                  color: (active ? palette.accent : palette.border).withOpacity(
-                    active ? 0.50 : 0.26,
+                child: Icon(icon, color: iconTint, size: iconGlyphSize),
+              ),
+              const Spacer(),
+              if ((futureBadge ?? '').trim().isNotEmpty)
+                Container(
+                  padding: EdgeInsets.symmetric(
+                    horizontal: compact ? 7 : 8,
+                    vertical: compact ? 2 : 3,
+                  ),
+                  decoration: BoxDecoration(
+                    color: palette.surfaceAlt,
+                    borderRadius: BorderRadius.circular(999),
+                    border: Border.all(color: palette.accent.withOpacity(0.42)),
+                  ),
+                  child: Text(
+                    futureBadge!,
+                    style: TextStyle(
+                      color: palette.textSecondary,
+                      fontSize: compact ? 9.5 : 10.3,
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
                 ),
-                boxShadow: [
-                  BoxShadow(
-                    color: (active ? palette.accent : palette.shadow)
-                        .withOpacity(active ? 0.10 : 0.16),
-                    blurRadius: 10,
-                    spreadRadius: 0.2,
+              if ((futureBadge ?? '').trim().isEmpty &&
+                  (statusBadge ?? '').trim().isNotEmpty)
+                Container(
+                  padding: EdgeInsets.symmetric(
+                    horizontal: compact ? 7 : 8,
+                    vertical: compact ? 2 : 3,
                   ),
-                ],
-              ),
-              child: Icon(icon, color: iconTint, size: compact ? 22 : 29),
+                  decoration: BoxDecoration(
+                    color: warningBadgeBg,
+                    borderRadius: BorderRadius.circular(999),
+                    border: Border.all(
+                      color: warningSemantic.withOpacity(0.72),
+                    ),
+                  ),
+                  child: Text(
+                    statusBadge!,
+                    style: TextStyle(
+                      color: isExecutiveGold
+                          ? palette.textOnWarning
+                          : (isCleanProfessional
+                                ? palette.textPrimary
+                                : palette.textSecondary),
+                      fontSize: compact ? 9.5 : 10.3,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+            ],
+          ),
+          SizedBox(height: titleGap),
+          Text(
+            title,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: titleColor,
+              fontWeight: FontWeight.w800,
+              fontSize: titleFontSize,
+              shadows: hasImageBackground
+                  ? [
+                      Shadow(
+                        color: Colors.black.withOpacity(
+                          isCleanProfessional ? 0.76 : 0.62,
+                        ),
+                        blurRadius: 6,
+                        offset: const Offset(0, 1.2),
+                      ),
+                    ]
+                  : null,
             ),
-            const Spacer(),
-            if ((futureBadge ?? '').trim().isNotEmpty)
-              Container(
-                padding: EdgeInsets.symmetric(
-                  horizontal: compact ? 7 : 8,
-                  vertical: compact ? 2 : 3,
-                ),
-                decoration: BoxDecoration(
-                  color: palette.surfaceAlt,
-                  borderRadius: BorderRadius.circular(999),
-                  border: Border.all(color: palette.accent.withOpacity(0.42)),
-                ),
-                child: Text(
-                  futureBadge!,
-                  style: TextStyle(
-                    color: palette.textSecondary,
-                    fontSize: compact ? 9.5 : 10.3,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ),
-            if ((futureBadge ?? '').trim().isEmpty &&
-                (statusBadge ?? '').trim().isNotEmpty)
-              Container(
-                padding: EdgeInsets.symmetric(
-                  horizontal: compact ? 7 : 8,
-                  vertical: compact ? 2 : 3,
-                ),
-                decoration: BoxDecoration(
-                  color: warningBadgeBg,
-                  borderRadius: BorderRadius.circular(999),
-                  border: Border.all(color: warningSemantic.withOpacity(0.72)),
-                ),
-                child: Text(
-                  statusBadge!,
-                  style: TextStyle(
-                    color:
-                        businessThemeNotifier.value ==
-                            BusinessThemeVariant.corporateBlue
-                        ? palette.textSecondary
-                        : palette.textOnWarning,
-                    fontSize: compact ? 9.5 : 10.3,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ),
-          ],
-        ),
-        SizedBox(height: compact ? 5 : 9),
-        Text(
-          title,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: TextStyle(
-            color: titleColor,
-            fontWeight: FontWeight.w800,
-            fontSize: compact ? 12.5 : 14.3,
-            shadows: hasImageBackground
-                ? [
-                    Shadow(
-                      color: Colors.black.withOpacity(0.62),
-                      blurRadius: 6,
-                      offset: const Offset(0, 1.2),
-                    ),
-                  ]
-                : null,
           ),
-        ),
-        const SizedBox(height: 4),
-        Text(
-          subtitle,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: TextStyle(
-            color: subtitleColor,
-            fontSize: compact ? 10.0 : 11.4,
-            shadows: hasImageBackground
-                ? [
-                    Shadow(
-                      color: Colors.black.withOpacity(0.54),
-                      blurRadius: 5,
-                      offset: const Offset(0, 1.1),
-                    ),
-                  ]
-                : null,
+          SizedBox(height: subtitleGap),
+          Text(
+            subtitle,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: subtitleColor,
+              fontSize: subtitleFontSize,
+              shadows: hasImageBackground
+                  ? [
+                      Shadow(
+                        color: Colors.black.withOpacity(
+                          isCleanProfessional ? 0.68 : 0.54,
+                        ),
+                        blurRadius: 5,
+                        offset: const Offset(0, 1.1),
+                      ),
+                    ]
+                  : null,
+            ),
           ),
-        ),
-        const Spacer(),
-        Align(
-          alignment: Alignment.bottomRight,
-          child: active
-              ? Icon(
-                  Icons.chevron_right_rounded,
-                  size: compact ? 14 : 17,
-                  color: palette.accent.withOpacity(0.9),
-                )
-              : Icon(
-                  Icons.lock_clock_outlined,
-                  size: compact ? 13 : 15.5,
-                  color: palette.textMuted.withOpacity(0.72),
-                ),
-        ),
-      ],
-    );
+          const Spacer(),
+          Align(
+            alignment: Alignment.bottomRight,
+            child: active
+                ? Icon(
+                    Icons.chevron_right_rounded,
+                    size: chevronSize,
+                    color: palette.accent.withOpacity(0.9),
+                  )
+                : Icon(
+                    Icons.lock_clock_outlined,
+                    size: lockSize,
+                    color: palette.textMuted.withOpacity(0.72),
+                  ),
+          ),
+        ],
+      );
+    }
+
     if (!hasImageBackground) {
       return InkWell(
         borderRadius: BorderRadius.circular(15),
         onTap: active ? onTap : null,
-        child: Container(
-          padding: cardPadding,
-          decoration: BoxDecoration(
-            color: palette.surface,
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: cardBorderColor),
-            boxShadow: [
-              BoxShadow(
-                color: palette.shadow.withOpacity(palette.isDark ? 0.34 : 0.14),
-                blurRadius: 10,
-                offset: const Offset(0, 4),
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final isTightHeight = constraints.maxHeight < 126;
+            return Container(
+              padding: cardPaddingFor(isTightHeight),
+              decoration: BoxDecoration(
+                color: palette.surface,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: cardBorderColor),
+                boxShadow: [
+                  BoxShadow(
+                    color: palette.shadow.withOpacity(
+                      palette.isDark ? 0.34 : 0.14,
+                    ),
+                    blurRadius: 10,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
               ),
-            ],
-          ),
-          child: content,
+              child: cardContent(isTightHeight),
+            );
+          },
         ),
       );
     }
     return InkWell(
       borderRadius: BorderRadius.circular(15),
       onTap: active ? onTap : null,
-      child: Container(
-        decoration: BoxDecoration(
-          color: palette.surface,
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: cardBorderColor),
-          boxShadow: [
-            BoxShadow(
-              color: palette.shadow.withOpacity(palette.isDark ? 0.34 : 0.14),
-              blurRadius: 10,
-              offset: const Offset(0, 4),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final isTightHeight = constraints.maxHeight < 126;
+          return Container(
+            decoration: BoxDecoration(
+              color: palette.surface,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: cardBorderColor),
+              boxShadow: [
+                BoxShadow(
+                  color: palette.shadow.withOpacity(
+                    palette.isDark ? 0.34 : 0.14,
+                  ),
+                  blurRadius: 10,
+                  offset: const Offset(0, 4),
+                ),
+              ],
             ),
-          ],
-        ),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(16),
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
-              Image.asset(
-                backgroundAsset!,
-                fit: BoxFit.cover,
-                alignment: Alignment.centerRight,
-                errorBuilder: (_, __, ___) => const SizedBox.shrink(),
-              ),
-              Positioned.fill(
-                child: DecoratedBox(
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.centerLeft,
-                      end: Alignment.centerRight,
-                      colors: [
-                        Colors.black.withOpacity(0.62),
-                        Colors.black.withOpacity(0.40),
-                        Colors.black.withOpacity(0.24),
-                        Colors.black.withOpacity(0.10),
-                      ],
-                      stops: const [0.0, 0.42, 0.72, 1.0],
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(16),
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  Image.asset(
+                    backgroundAsset!,
+                    fit: BoxFit.cover,
+                    alignment: Alignment.centerRight,
+                    errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+                  ),
+                  Positioned.fill(
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.centerLeft,
+                          end: Alignment.centerRight,
+                          colors: [
+                            Colors.black.withOpacity(
+                              isCleanProfessional ? 0.74 : 0.62,
+                            ),
+                            Colors.black.withOpacity(
+                              isCleanProfessional ? 0.52 : 0.40,
+                            ),
+                            Colors.black.withOpacity(
+                              isCleanProfessional ? 0.30 : 0.24,
+                            ),
+                            Colors.black.withOpacity(
+                              isCleanProfessional ? 0.14 : 0.10,
+                            ),
+                          ],
+                          stops: const [0.0, 0.42, 0.72, 1.0],
+                        ),
+                      ),
                     ),
                   ),
-                ),
+                  Padding(
+                    padding: cardPaddingFor(isTightHeight),
+                    child: cardContent(isTightHeight),
+                  ),
+                ],
               ),
-              Padding(padding: cardPadding, child: content),
-            ],
-          ),
-        ),
+            ),
+          );
+        },
       ),
     );
   }
@@ -2510,13 +2616,18 @@ class _BusinessHomePageState extends State<BusinessHomePage>
 
   @override
   Widget build(BuildContext context) {
-    final isCorporateBlue =
-        businessThemeNotifier.value == BusinessThemeVariant.corporateBlue;
+    final themeVariant = businessThemeNotifier.value;
+    final isExecutiveGold = themeVariant == BusinessThemeVariant.executiveGold;
+    final isCleanProfessional =
+        themeVariant == BusinessThemeVariant.cleanProfessional;
+    final isCorporateBlue = themeVariant == BusinessThemeVariant.corporateBlue;
     return ValueListenableBuilder<AppLanguage>(
       valueListenable: appLanguageNotifier,
       builder: (context, _, __) => Scaffold(
         backgroundColor: isCorporateBlue
             ? const Color(0xFF0A1324)
+            : !isExecutiveGold
+            ? _businessThemePalette.background
             : const Color(0xFF07080C),
         body: SafeArea(
           child: DecoratedBox(
@@ -2530,6 +2641,12 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                         Color(0xFF0A1324),
                         Color(0xFF0A1324),
                       ]
+                    : !isExecutiveGold
+                    ? <Color>[
+                        _businessThemePalette.background,
+                        _businessThemePalette.background,
+                        _businessThemePalette.surfaceAlt,
+                      ]
                     : const [
                         Color(0xFF101010),
                         Color(0xFF07080C),
@@ -2537,12 +2654,12 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                       ],
               ),
               border: Border.all(
-                color: isCorporateBlue
+                color: !isExecutiveGold
                     ? _businessThemePalette.accent.withOpacity(0.34)
                     : Colors.transparent,
-                width: isCorporateBlue ? 1.2 : 0,
+                width: !isExecutiveGold ? 1.2 : 0,
               ),
-              boxShadow: isCorporateBlue
+              boxShadow: !isExecutiveGold
                   ? [
                       BoxShadow(
                         color: _businessThemePalette.accent.withOpacity(0.16),
@@ -2585,11 +2702,13 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                       'assets/fluxidi/zakelijke_tablet_header_foto.png',
                   corporateBlueAsset:
                       'assets/Corporate BLEU Compagny/company_header_fleet_corporate_blue.png',
+                  cleanProfessionalAsset:
+                      'assets/Clean & Professional Compagny/company_header_fleet_clean_professional.png',
                 );
                 final businessQuickActionCardHeight = isTabletLandscape
                     ? clampDouble(H * 0.21, 150.0, 188.0)
                     : isTabletPortrait
-                    ? clampDouble(H * 0.092, 118.0, 132.0)
+                    ? clampDouble(H * 0.105, 132.0, 148.0)
                     : 132.0;
                 final businessQuickActionSpacing = isTabletLandscape
                     ? 8.0
@@ -2638,13 +2757,11 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                             decoration: BoxDecoration(
                               borderRadius: BorderRadius.circular(18),
                               border: Border.all(
-                                color:
-                                    businessThemeNotifier.value ==
-                                        BusinessThemeVariant.corporateBlue
-                                    ? _businessThemePalette.accent.withOpacity(
+                                color: isExecutiveGold
+                                    ? kFluxidiYellow.withOpacity(0.22)
+                                    : _businessThemePalette.accent.withOpacity(
                                         0.30,
-                                      )
-                                    : kFluxidiYellow.withOpacity(0.22),
+                                      ),
                               ),
                             ),
                             child: Stack(
@@ -2968,11 +3085,9 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                       es: 'Pagado',
                                     ),
                                     value: _metricIncomeText(),
-                                    accentColor:
-                                        businessThemeNotifier.value ==
-                                            BusinessThemeVariant.corporateBlue
-                                        ? const Color(0xFF38BDF8)
-                                        : const Color(0xFFE5B641),
+                                    accentColor: isExecutiveGold
+                                        ? const Color(0xFFE5B641)
+                                        : _businessThemePalette.accent,
                                     compact: isTabletLandscape,
                                   ),
                                 ),
@@ -2989,11 +3104,11 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                             es: 'Acciones rápidas',
                           ),
                           style: TextStyle(
-                            color:
-                                businessThemeNotifier.value ==
-                                    BusinessThemeVariant.corporateBlue
-                                ? _businessThemePalette.accent.withOpacity(0.95)
-                                : kFluxidiYellow.withOpacity(0.95),
+                            color: isExecutiveGold
+                                ? kFluxidiYellow.withOpacity(0.95)
+                                : _businessThemePalette.accent.withOpacity(
+                                    0.95,
+                                  ),
                             fontSize: 14,
                             fontWeight: FontWeight.w700,
                           ),
@@ -3006,20 +3121,16 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                               vertical: 6,
                             ),
                             decoration: BoxDecoration(
-                              color:
-                                  businessThemeNotifier.value ==
-                                      BusinessThemeVariant.corporateBlue
-                                  ? _businessThemePalette.surfaceAlt
-                                  : const Color(0xFF2A1B0F),
+                              color: isExecutiveGold
+                                  ? const Color(0xFF2A1B0F)
+                                  : _businessThemePalette.surfaceAlt,
                               borderRadius: BorderRadius.circular(999),
                               border: Border.all(
-                                color:
-                                    businessThemeNotifier.value ==
-                                        BusinessThemeVariant.corporateBlue
-                                    ? _businessThemePalette.accent.withOpacity(
+                                color: isExecutiveGold
+                                    ? const Color(0xFFE5B641).withOpacity(0.5)
+                                    : _businessThemePalette.accent.withOpacity(
                                         0.62,
-                                      )
-                                    : const Color(0xFFE5B641).withOpacity(0.5),
+                                      ),
                               ),
                             ),
                             child: Text(
@@ -3030,11 +3141,12 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                 es: 'Se requiere recuperar la sesión de empresa',
                               ),
                               style: TextStyle(
-                                color:
-                                    businessThemeNotifier.value ==
-                                        BusinessThemeVariant.corporateBlue
-                                    ? _businessThemePalette.textSecondary
-                                    : const Color(0xFFE5B641).withOpacity(0.98),
+                                color: isExecutiveGold
+                                    ? const Color(0xFFE5B641).withOpacity(0.98)
+                                    : (isCleanProfessional
+                                          ? _businessThemePalette.textPrimary
+                                          : _businessThemePalette
+                                                .textSecondary),
                                 fontSize: 10.7,
                                 fontWeight: FontWeight.w700,
                               ),
@@ -3088,6 +3200,8 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                           'assets/fluxidi/settings_background_company.png',
                                       corporateBlueAsset:
                                           'assets/Corporate BLEU Compagny/company_settings_corporate_blue.png',
+                                      cleanProfessionalAsset:
+                                          'assets/Clean & Professional Compagny/company_settings_clean_professional.png',
                                     ),
                                     useImageBackground: useTabletVisualMode,
                                     compact: isTabletLandscape,
@@ -3120,6 +3234,8 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                             'assets/fluxidi/bookings_background_company.png',
                                         corporateBlueAsset:
                                             'assets/Corporate BLEU Compagny/company_bookings_corporate_blue.png',
+                                        cleanProfessionalAsset:
+                                            'assets/Clean & Professional Compagny/company_bookings_clean_professional.png',
                                       ),
                                       useImageBackground: useTabletVisualMode,
                                       compact: isTabletLandscape,
@@ -3155,6 +3271,8 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                           'assets/fluxidi/plan_background_company.png',
                                       corporateBlueAsset:
                                           'assets/Corporate BLEU Compagny/company_subscriptions_corporate_blue.png',
+                                      cleanProfessionalAsset:
+                                          'assets/Clean & Professional Compagny/company_subscriptions_clean_professional.png',
                                     ),
                                     useImageBackground: useTabletVisualMode,
                                     compact: isTabletLandscape,
@@ -3190,6 +3308,8 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                           'assets/fluxidi/vehicles_background_company.png',
                                       corporateBlueAsset:
                                           'assets/Corporate BLEU Compagny/company_vehicles_corporate_blue.png',
+                                      cleanProfessionalAsset:
+                                          'assets/Clean & Professional Compagny/company_vehicles_clean_professional.png',
                                     ),
                                     useImageBackground: useTabletVisualMode,
                                     compact: isTabletLandscape,
@@ -3220,6 +3340,8 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                           'assets/fluxidi/chiron_background_company.png',
                                       corporateBlueAsset:
                                           'assets/Corporate BLEU Compagny/company_branding_corporate_blue.png',
+                                      cleanProfessionalAsset:
+                                          'assets/Clean & Professional Compagny/company_chiron_clean_professional.png',
                                     ),
                                     useImageBackground: useTabletVisualMode,
                                     compact: isTabletLandscape,
@@ -3282,6 +3404,8 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                           'assets/fluxidi/drivers_background_company.png',
                                       corporateBlueAsset:
                                           'assets/Corporate BLEU Compagny/company_drivers_corporate_blue.png',
+                                      cleanProfessionalAsset:
+                                          'assets/Clean & Professional Compagny/company_drivers_clean_professional.png',
                                     ),
                                     useImageBackground: useTabletVisualMode,
                                     compact: isTabletLandscape,
@@ -3311,6 +3435,8 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                           'assets/fluxidi/driver_view_background_company.png',
                                       corporateBlueAsset:
                                           'assets/Corporate BLEU Compagny/company_driver_view_corporate_blue.png',
+                                      cleanProfessionalAsset:
+                                          'assets/Clean & Professional Compagny/company_driver_view_clean_professional.png',
                                     ),
                                     useImageBackground: useTabletVisualMode,
                                     compact: isTabletLandscape,
@@ -3346,6 +3472,8 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                           'assets/fluxidi/demand_radar_background_company.png',
                                       corporateBlueAsset:
                                           'assets/Corporate BLEU Compagny/company_network_corporate_blue.png',
+                                      cleanProfessionalAsset:
+                                          'assets/Clean & Professional Compagny/company_demand_radar_clean_professional.png',
                                     ),
                                     useImageBackground: useTabletVisualMode,
                                     compact: isTabletLandscape,
@@ -3377,6 +3505,8 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                           'assets/fluxidi/share_booking_link_background_company.png',
                                       corporateBlueAsset:
                                           'assets/Corporate BLEU Compagny/company_mobile_app_corporate_blue.png',
+                                      cleanProfessionalAsset:
+                                          'assets/Clean & Professional Compagny/company_share_booking_link_clean_professional.png',
                                     ),
                                     useImageBackground: useTabletVisualMode,
                                     compact: isTabletLandscape,
@@ -3409,6 +3539,8 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                             'assets/fluxidi/bookings_background_company.png',
                                         corporateBlueAsset:
                                             'assets/Corporate BLEU Compagny/company_bookings_corporate_blue.png',
+                                        cleanProfessionalAsset:
+                                            'assets/Clean & Professional Compagny/company_bookings_clean_professional.png',
                                       ),
                                       useImageBackground: useTabletVisualMode,
                                       compact: isTabletLandscape,
@@ -3443,6 +3575,8 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                           'assets/fluxidi/ai_dispatch_background_company.png',
                                       corporateBlueAsset:
                                           'assets/Corporate BLEU Compagny/company_ai_dispatch_corporate_blue.png',
+                                      cleanProfessionalAsset:
+                                          'assets/Clean & Professional Compagny/company_ai_dispatch_clean_professional.png',
                                     ),
                                     useImageBackground: useTabletVisualMode,
                                     compact: isTabletLandscape,
@@ -3453,8 +3587,8 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                           },
                         ),
                         SizedBox(height: businessBackButtonGap),
-                        businessThemeNotifier.value ==
-                                BusinessThemeVariant.corporateBlue
+                        businessThemeNotifier.value !=
+                                BusinessThemeVariant.executiveGold
                             ? _businessBackToStartButton()
                             : const FluxidiBackToStartButton(),
                       ],
