@@ -10,6 +10,8 @@ class BusinessRegionalDemandPage extends StatefulWidget {
 
 class _BusinessRegionalDemandPageState
     extends State<BusinessRegionalDemandPage> {
+  BusinessThemePalette get _businessThemePalette =>
+      paletteForBusinessTheme(businessThemeNotifier.value);
   bool _loading = false;
   String _country = 'BE';
   String _city = '';
@@ -413,7 +415,7 @@ class _BusinessRegionalDemandPageState
     await _coverageRadiusManager!.create(
       mb.PolylineAnnotationOptions(
         geometry: mb.LineString(coordinates: ring),
-        lineColor: kFluxidiYellow.value,
+        lineColor: _businessThemePalette.accent.value,
         lineWidth: 2.2,
         lineOpacity: 0.82,
       ),
@@ -593,24 +595,29 @@ class _BusinessRegionalDemandPageState
   }
 
   Widget _panel({required Widget child, EdgeInsetsGeometry? padding}) {
+    final palette = _businessThemePalette;
     return Container(
       padding: padding ?? const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        gradient: const LinearGradient(
+        gradient: LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          colors: [Color(0xFF101010), Color(0xFF07080C), Color(0xFF07080C)],
+          colors: palette.isDark
+              ? <Color>[palette.surface, palette.background, palette.background]
+              : <Color>[palette.surface, palette.surfaceAlt, palette.surface],
         ),
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: kFluxidiYellow.withOpacity(0.17)),
+        border: Border.all(
+          color: palette.border.withOpacity(palette.isDark ? 0.7 : 0.92),
+        ),
         boxShadow: [
           BoxShadow(
-            color: kFluxidiYellow.withOpacity(0.07),
+            color: palette.accent.withOpacity(palette.isDark ? 0.07 : 0.03),
             blurRadius: 12,
             spreadRadius: 0.2,
           ),
           BoxShadow(
-            color: Colors.black.withOpacity(0.36),
+            color: palette.shadow.withOpacity(palette.isDark ? 0.52 : 0.24),
             blurRadius: 10,
             offset: const Offset(0, 4),
           ),
@@ -622,545 +629,574 @@ class _BusinessRegionalDemandPageState
 
   @override
   Widget build(BuildContext context) {
-    return ValueListenableBuilder<AppLanguage>(
-      valueListenable: appLanguageNotifier,
-      builder: (context, _, __) => Scaffold(
-        backgroundColor: const Color(0xFF07080C),
-        appBar: AppBar(
-          backgroundColor: const Color(0xFF07080C),
-          title: Text(
-            _t(
-              nl: 'Vraagradar',
-              en: 'Demand radar',
-              fr: 'Radar demande',
-              es: 'Radar demanda',
-            ),
-          ),
-          actions: [
-            IconButton(
-              tooltip: _t(
-                nl: 'Vernieuwen',
-                en: 'Refresh',
-                fr: 'Actualiser',
-                es: 'Actualizar',
-              ),
-              onPressed: _loading ? null : _loadDemand,
-              icon: const Icon(Icons.refresh_rounded),
-            ),
-          ],
-        ),
-        body: SafeArea(
-          child: ListView(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
-            children: [
-              _panel(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      _t(
-                        nl: 'Vraag in jouw regio',
-                        en: 'Demand in your area',
-                        fr: 'Demande dans votre région',
-                        es: 'Demanda en tu zona',
-                      ),
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.w800,
-                        fontSize: 17.5,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Row(
-                      children: [
-                        Container(
-                          width: 36,
-                          height: 36,
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: const Color(0xFF15120A),
-                            border: Border.all(
-                              color: kFluxidiYellow.withOpacity(0.52),
-                            ),
-                          ),
-                          child: Icon(
-                            Icons.radar_rounded,
-                            color: kFluxidiYellow.withOpacity(0.98),
-                            size: 22,
-                          ),
-                        ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                _loading ? '…' : _totalDisplayCount(),
-                                style: TextStyle(
-                                  color: kFluxidiYellow.withOpacity(0.98),
-                                  fontWeight: FontWeight.w900,
-                                  fontSize: 29,
-                                ),
-                              ),
-                              Text(
-                                _t(
-                                  nl: 'potentiële klanten',
-                                  en: 'potential customers',
-                                  fr: 'clients potentiels',
-                                  es: 'clientes potenciales',
-                                ),
-                                style: TextStyle(
-                                  color: Colors.white.withOpacity(0.84),
-                                  fontSize: 11.8,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 8,
-                            vertical: 4,
-                          ),
-                          decoration: BoxDecoration(
-                            color: kFluxidiYellow.withOpacity(0.12),
-                            borderRadius: BorderRadius.circular(999),
-                            border: Border.all(
-                              color: kFluxidiYellow.withOpacity(0.44),
-                            ),
-                          ),
-                          child: Text(
-                            _locationLabel(),
-                            style: TextStyle(
-                              color: kFluxidiYellow.withOpacity(0.98),
-                              fontSize: 10.7,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                    if (_serviceRadiusKm.isNotEmpty) ...[
-                      const SizedBox(height: 8),
-                      Text(
-                        _t(
-                          nl: 'Service radius: $_serviceRadiusKm km (context, geen postcode-generator).',
-                          en: 'Service radius: $_serviceRadiusKm km (context only, no postcode generator).',
-                          fr: 'Rayon de service : $_serviceRadiusKm km (contexte uniquement, sans générateur de codes postaux).',
-                          es: 'Radio de servicio: $_serviceRadiusKm km (solo contexto, sin generador de códigos postales).',
-                        ),
-                        style: TextStyle(
-                          color: Colors.white.withOpacity(0.62),
-                          fontSize: 10.8,
-                        ),
-                      ),
-                    ],
-                    const SizedBox(height: 8),
-                    Text(
-                      _t(
-                        nl: 'Alleen geaggregeerde en anonieme regionale interesse wordt getoond.',
-                        en: 'Only aggregated and anonymous regional interest is shown.',
-                        fr: 'Seul l’intérêt régional agrégé et anonyme est affiché.',
-                        es: 'Solo se muestra interés regional agregado y anónimo.',
-                      ),
-                      style: TextStyle(
-                        color: Colors.white.withOpacity(0.58),
-                        fontSize: 10.9,
-                      ),
-                    ),
-                  ],
+    return ValueListenableBuilder<BusinessThemeVariant>(
+      valueListenable: businessThemeNotifier,
+      builder: (context, themeVariant, __) {
+        final palette = paletteForBusinessTheme(themeVariant);
+        return ValueListenableBuilder<AppLanguage>(
+          valueListenable: appLanguageNotifier,
+          builder: (context, _, __) => Scaffold(
+            backgroundColor: palette.background,
+            appBar: AppBar(
+              backgroundColor: palette.background,
+              foregroundColor: palette.textPrimary,
+              title: Text(
+                _t(
+                  nl: 'Vraagradar',
+                  en: 'Demand radar',
+                  fr: 'Radar demande',
+                  es: 'Radar demanda',
                 ),
               ),
-              const SizedBox(height: 12),
-              _panel(
-                padding: const EdgeInsets.all(10),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
+              actions: [
+                IconButton(
+                  tooltip: _t(
+                    nl: 'Vernieuwen',
+                    en: 'Refresh',
+                    fr: 'Actualiser',
+                    es: 'Actualizar',
+                  ),
+                  onPressed: _loading ? null : _loadDemand,
+                  icon: const Icon(Icons.refresh_rounded),
+                ),
+              ],
+            ),
+            body: SafeArea(
+              child: ListView(
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
+                children: [
+                  _panel(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Icon(
-                          Icons.map_outlined,
-                          color: kFluxidiYellow.withOpacity(0.95),
-                          size: 16,
-                        ),
-                        const SizedBox(width: 6),
                         Text(
                           _t(
-                            nl: 'Regionale kaart',
-                            en: 'Regional map',
-                            fr: 'Carte régionale',
-                            es: 'Mapa regional',
+                            nl: 'Vraag in jouw regio',
+                            en: 'Demand in your area',
+                            fr: 'Demande dans votre région',
+                            es: 'Demanda en tu zona',
                           ),
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.w700,
-                            fontSize: 13.2,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    if (_canRenderCoverageMap)
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(12),
-                        child: SizedBox(
-                          height: 228,
-                          child: Stack(
-                            fit: StackFit.expand,
-                            children: [
-                              mb.MapWidget(
-                                key: ValueKey<String>(
-                                  'business_demand_map_$_coverageLat$_coverageLng$_coverageRadiusKm',
-                                ),
-                                textureView: true,
-                                androidHostingMode:
-                                    mb.AndroidPlatformViewHostingMode.HC,
-                                styleUri:
-                                    'mapbox://styles/mapbox/navigation-night-v1',
-                                cameraOptions: mb.CameraOptions(
-                                  center: mb.Point(
-                                    coordinates: mb.Position(
-                                      _coverageLng!,
-                                      _coverageLat!,
-                                    ),
-                                  ),
-                                  zoom: _mapZoomForRadius(_coverageRadiusKm),
-                                ),
-                                onMapCreated: _onCoverageMapCreated,
-                              ),
-                              Positioned.fill(
-                                child: IgnorePointer(
-                                  child: CustomPaint(
-                                    painter: _BusinessDemandMapOverlayPainter(
-                                      totalDemand: _totalCount,
-                                      demandColor: kFluxidiYellow,
-                                      centerColor: const Color(0xFF34D29A),
-                                    ),
-                                  ),
-                                ),
-                              ),
-                              Positioned(
-                                top: 8,
-                                left: 8,
-                                child: IgnorePointer(
-                                  child: Container(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 8,
-                                      vertical: 4,
-                                    ),
-                                    decoration: BoxDecoration(
-                                      color: Colors.black.withOpacity(0.52),
-                                      borderRadius: BorderRadius.circular(999),
-                                      border: Border.all(
-                                        color: kFluxidiYellow.withOpacity(0.34),
-                                      ),
-                                    ),
-                                    child: Text(
-                                      _t(
-                                        nl: 'Geaggregeerde vraag',
-                                        en: 'Aggregated demand',
-                                        fr: 'Demande agrégée',
-                                        es: 'Demanda agregada',
-                                      ),
-                                      style: TextStyle(
-                                        color: Colors.white.withOpacity(0.93),
-                                        fontSize: 10.3,
-                                        fontWeight: FontWeight.w700,
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ],
+                          style: TextStyle(
+                            color: palette.textPrimary,
+                            fontWeight: FontWeight.w800,
+                            fontSize: 17.5,
                           ),
                         ),
-                      )
-                    else
-                      Container(
-                        height: 168,
-                        width: double.infinity,
-                        decoration: BoxDecoration(
-                          color: const Color(0xFF111317),
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(
-                            color: kFluxidiYellow.withOpacity(0.26),
-                          ),
-                        ),
-                        child: Stack(
+                        const SizedBox(height: 8),
+                        Row(
                           children: [
-                            Positioned.fill(
-                              child: CustomPaint(
-                                painter: _RegionRadarPainter(
-                                  customerColor: kFluxidiYellow.withOpacity(
-                                    0.95,
-                                  ),
-                                  partnerColor: const Color(0xFF34D29A),
-                                  showPartnerOpportunity: true,
+                            Container(
+                              width: 36,
+                              height: 36,
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                color: palette.surfaceAlt,
+                                border: Border.all(
+                                  color: palette.accent.withOpacity(0.52),
                                 ),
+                              ),
+                              child: Icon(
+                                Icons.radar_rounded,
+                                color: palette.accent.withOpacity(0.98),
+                                size: 22,
                               ),
                             ),
-                            Center(
-                              child: Padding(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 14,
-                                ),
-                                child: Column(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    Text(
-                                      _hasCoverageCenter
-                                          ? _t(
-                                              nl: 'Mapbox-token ontbreekt. Configureer de kaarttoegang om de kaart te tonen.',
-                                              en: 'Mapbox token is missing. Configure map access to show the map.',
-                                              fr: 'Le jeton Mapbox manque. Configurez l’accès carte pour afficher la carte.',
-                                              es: 'Falta el token de Mapbox. Configura el acceso al mapa para mostrarlo.',
-                                            )
-                                          : _t(
-                                              nl: 'Stel je bedrijfslocatie in om de kaart te tonen.',
-                                              en: 'Set your business location to show the map.',
-                                              fr: 'Définissez l’emplacement de votre entreprise pour afficher la carte.',
-                                              es: 'Configura la ubicación de tu empresa para mostrar el mapa.',
-                                            ),
-                                      textAlign: TextAlign.center,
-                                      style: TextStyle(
-                                        color: Colors.white.withOpacity(0.84),
-                                        fontWeight: FontWeight.w700,
-                                        fontSize: 12.1,
-                                      ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    _loading ? '…' : _totalDisplayCount(),
+                                    style: TextStyle(
+                                      color: palette.accent.withOpacity(0.98),
+                                      fontWeight: FontWeight.w900,
+                                      fontSize: 29,
                                     ),
-                                    if (!_hasCoverageCenter) ...[
-                                      const SizedBox(height: 10),
-                                      OutlinedButton.icon(
-                                        onPressed:
-                                            _useCurrentLocationAsBusinessLocation,
-                                        style: OutlinedButton.styleFrom(
-                                          foregroundColor: kFluxidiYellow
-                                              .withOpacity(0.98),
-                                          side: BorderSide(
-                                            color: kFluxidiYellow.withOpacity(
-                                              0.44,
-                                            ),
-                                          ),
-                                        ),
-                                        icon: const Icon(
-                                          Icons.my_location_outlined,
-                                          size: 16,
-                                        ),
-                                        label: Text(
-                                          _t(
-                                            nl: 'Gebruik huidige locatie als bedrijfslocatie',
-                                            en: 'Use current location as business location',
-                                            fr: 'Utiliser ma position actuelle comme emplacement d’entreprise',
-                                            es: 'Usar ubicación actual como ubicación de empresa',
-                                          ),
-                                        ),
+                                  ),
+                                  Text(
+                                    _t(
+                                      nl: 'potentiële klanten',
+                                      en: 'potential customers',
+                                      fr: 'clients potentiels',
+                                      es: 'clientes potenciales',
+                                    ),
+                                    style: TextStyle(
+                                      color: palette.textSecondary.withOpacity(
+                                        0.92,
                                       ),
-                                      const SizedBox(height: 8),
-                                      OutlinedButton.icon(
-                                        onPressed: () {
-                                          Navigator.of(context).push(
-                                            MaterialPageRoute<void>(
-                                              builder: (_) =>
-                                                  const BusinessSettingsPage(),
-                                            ),
-                                          );
-                                        },
-                                        style: OutlinedButton.styleFrom(
-                                          foregroundColor: Colors.white
-                                              .withOpacity(0.92),
-                                          side: BorderSide(
-                                            color: Colors.white.withOpacity(
-                                              0.22,
-                                            ),
-                                          ),
-                                        ),
-                                        icon: const Icon(
-                                          Icons.settings_outlined,
-                                          size: 16,
-                                        ),
-                                        label: Text(
-                                          _t(
-                                            nl: 'Bedrijfslocatie instellen',
-                                            en: 'Set business location',
-                                            fr: 'Définir l’emplacement',
-                                            es: 'Configurar ubicación',
-                                          ),
-                                        ),
-                                      ),
-                                    ],
-                                  ],
+                                      fontSize: 11.8,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 4,
+                              ),
+                              decoration: BoxDecoration(
+                                color: palette.accent.withOpacity(
+                                  palette.isDark ? 0.12 : 0.14,
+                                ),
+                                borderRadius: BorderRadius.circular(999),
+                                border: Border.all(
+                                  color: palette.accent.withOpacity(0.44),
+                                ),
+                              ),
+                              child: Text(
+                                _locationLabel(),
+                                style: TextStyle(
+                                  color: palette.accent.withOpacity(0.98),
+                                  fontSize: 10.7,
+                                  fontWeight: FontWeight.w700,
                                 ),
                               ),
                             ),
                           ],
                         ),
-                      ),
-                    const SizedBox(height: 7),
-                    Text(
-                      _t(
-                        nl: 'Kaart toont alleen geaggregeerde regio-indicatie en servicebereik.',
-                        en: 'Map shows only aggregated regional indication and service range.',
-                        fr: 'La carte affiche uniquement une indication régionale agrégée et la zone de service.',
-                        es: 'El mapa solo muestra una indicación regional agregada y el rango de servicio.',
-                      ),
-                      style: TextStyle(
-                        color: Colors.white.withOpacity(0.56),
-                        fontSize: 10.7,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 12),
-              _panel(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Container(
-                          width: 8,
-                          height: 8,
-                          decoration: BoxDecoration(
-                            color: kFluxidiYellow.withOpacity(0.96),
-                            shape: BoxShape.circle,
-                          ),
-                        ),
-                        const SizedBox(width: 6),
-                        Container(
-                          width: 8,
-                          height: 8,
-                          decoration: const BoxDecoration(
-                            color: Color(0xFF34D29A),
-                            shape: BoxShape.circle,
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
+                        if (_serviceRadiusKm.isNotEmpty) ...[
+                          const SizedBox(height: 8),
+                          Text(
                             _t(
-                              nl: 'Postcode-niveau vraag (geaggregeerd)',
-                              en: 'Postcode-level demand (aggregated)',
-                              fr: 'Demande par code postal (agrégée)',
-                              es: 'Demanda por código postal (agregada)',
+                              nl: 'Service radius: $_serviceRadiusKm km (context, geen postcode-generator).',
+                              en: 'Service radius: $_serviceRadiusKm km (context only, no postcode generator).',
+                              fr: 'Rayon de service : $_serviceRadiusKm km (contexte uniquement, sans générateur de codes postaux).',
+                              es: 'Radio de servicio: $_serviceRadiusKm km (solo contexto, sin generador de códigos postales).',
                             ),
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.w700,
-                              fontSize: 13.1,
+                            style: TextStyle(
+                              color: palette.textMuted.withOpacity(0.92),
+                              fontSize: 10.8,
                             ),
+                          ),
+                        ],
+                        const SizedBox(height: 8),
+                        Text(
+                          _t(
+                            nl: 'Alleen geaggregeerde en anonieme regionale interesse wordt getoond.',
+                            en: 'Only aggregated and anonymous regional interest is shown.',
+                            fr: 'Seul l’intérêt régional agrégé et anonyme est affiché.',
+                            es: 'Solo se muestra interés regional agregado y anónimo.',
+                          ),
+                          style: TextStyle(
+                            color: palette.textMuted.withOpacity(0.88),
+                            fontSize: 10.9,
                           ),
                         ),
                       ],
                     ),
-                    const SizedBox(height: 8),
-                    if (_postcodes.isEmpty)
-                      Text(
-                        _t(
-                          nl: 'Voeg je bedrijfsregio toe om lokale vraag te zien.',
-                          en: 'Add your business area to see local demand.',
-                          fr: 'Ajoutez votre région d’activité pour voir la demande locale.',
-                          es: 'Añade tu zona de actividad para ver la demanda local.',
+                  ),
+                  const SizedBox(height: 12),
+                  _panel(
+                    padding: const EdgeInsets.all(10),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Icon(
+                              Icons.map_outlined,
+                              color: palette.accent.withOpacity(0.95),
+                              size: 16,
+                            ),
+                            const SizedBox(width: 6),
+                            Text(
+                              _t(
+                                nl: 'Regionale kaart',
+                                en: 'Regional map',
+                                fr: 'Carte régionale',
+                                es: 'Mapa regional',
+                              ),
+                              style: TextStyle(
+                                color: palette.textPrimary,
+                                fontWeight: FontWeight.w700,
+                                fontSize: 13.2,
+                              ),
+                            ),
+                          ],
                         ),
-                        style: TextStyle(
-                          color: Colors.white.withOpacity(0.76),
-                          fontSize: 12.0,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      )
-                    else if (_rows.isEmpty && _loading)
-                      const Padding(
-                        padding: EdgeInsets.symmetric(vertical: 20),
-                        child: Center(child: CircularProgressIndicator()),
-                      )
-                    else
-                      Column(
-                        children: _rows
-                            .map(
-                              (row) => Container(
-                                margin: const EdgeInsets.only(bottom: 8),
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 10,
-                                  vertical: 9,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: const Color(0xFF111317),
-                                  borderRadius: BorderRadius.circular(12),
-                                  border: Border.all(
-                                    color: kFluxidiYellow.withOpacity(0.24),
-                                  ),
-                                ),
-                                child: Row(
-                                  children: [
-                                    Icon(
-                                      Icons.location_on_outlined,
-                                      color: kFluxidiYellow.withOpacity(0.95),
-                                      size: 16,
+                        const SizedBox(height: 8),
+                        if (_canRenderCoverageMap)
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(12),
+                            child: SizedBox(
+                              height: 228,
+                              child: Stack(
+                                fit: StackFit.expand,
+                                children: [
+                                  mb.MapWidget(
+                                    key: ValueKey<String>(
+                                      'business_demand_map_$_coverageLat$_coverageLng$_coverageRadiusKm',
                                     ),
-                                    const SizedBox(width: 8),
-                                    Expanded(
-                                      child: Text(
-                                        row.postcode,
-                                        style: const TextStyle(
-                                          color: Colors.white,
-                                          fontWeight: FontWeight.w700,
-                                          fontSize: 13.1,
+                                    textureView: true,
+                                    androidHostingMode:
+                                        mb.AndroidPlatformViewHostingMode.HC,
+                                    styleUri:
+                                        'mapbox://styles/mapbox/navigation-night-v1',
+                                    cameraOptions: mb.CameraOptions(
+                                      center: mb.Point(
+                                        coordinates: mb.Position(
+                                          _coverageLng!,
+                                          _coverageLat!,
+                                        ),
+                                      ),
+                                      zoom: _mapZoomForRadius(
+                                        _coverageRadiusKm,
+                                      ),
+                                    ),
+                                    onMapCreated: _onCoverageMapCreated,
+                                  ),
+                                  Positioned.fill(
+                                    child: IgnorePointer(
+                                      child: CustomPaint(
+                                        painter:
+                                            _BusinessDemandMapOverlayPainter(
+                                              totalDemand: _totalCount,
+                                              demandColor: palette.accent,
+                                              centerColor: palette.success,
+                                            ),
+                                      ),
+                                    ),
+                                  ),
+                                  Positioned(
+                                    top: 8,
+                                    left: 8,
+                                    child: IgnorePointer(
+                                      child: Container(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 8,
+                                          vertical: 4,
+                                        ),
+                                        decoration: BoxDecoration(
+                                          color: palette.isDark
+                                              ? Colors.black.withOpacity(0.52)
+                                              : palette.background.withOpacity(
+                                                  0.74,
+                                                ),
+                                          borderRadius: BorderRadius.circular(
+                                            999,
+                                          ),
+                                          border: Border.all(
+                                            color: palette.accent.withOpacity(
+                                              0.34,
+                                            ),
+                                          ),
+                                        ),
+                                        child: Text(
+                                          _t(
+                                            nl: 'Geaggregeerde vraag',
+                                            en: 'Aggregated demand',
+                                            fr: 'Demande agrégée',
+                                            es: 'Demanda agregada',
+                                          ),
+                                          style: TextStyle(
+                                            color: palette.textPrimary
+                                                .withOpacity(0.94),
+                                            fontSize: 10.3,
+                                            fontWeight: FontWeight.w700,
+                                          ),
                                         ),
                                       ),
                                     ),
-                                    Text(
-                                      row.displayCount,
-                                      style: TextStyle(
-                                        color: row.unavailable
-                                            ? Colors.white.withOpacity(0.66)
-                                            : kFluxidiYellow.withOpacity(0.98),
-                                        fontWeight: FontWeight.w800,
-                                        fontSize: 14.8,
+                                  ),
+                                ],
+                              ),
+                            ),
+                          )
+                        else
+                          Container(
+                            height: 168,
+                            width: double.infinity,
+                            decoration: BoxDecoration(
+                              color: palette.surfaceAlt,
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(
+                                color: palette.accent.withOpacity(0.26),
+                              ),
+                            ),
+                            child: Stack(
+                              children: [
+                                Positioned.fill(
+                                  child: CustomPaint(
+                                    painter: _RegionRadarPainter(
+                                      customerColor: palette.accent.withOpacity(
+                                        0.95,
                                       ),
+                                      partnerColor: palette.success,
+                                      showPartnerOpportunity: true,
                                     ),
-                                  ],
+                                  ),
+                                ),
+                                Center(
+                                  child: Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 14,
+                                    ),
+                                    child: Column(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Text(
+                                          _hasCoverageCenter
+                                              ? _t(
+                                                  nl: 'Mapbox-token ontbreekt. Configureer de kaarttoegang om de kaart te tonen.',
+                                                  en: 'Mapbox token is missing. Configure map access to show the map.',
+                                                  fr: 'Le jeton Mapbox manque. Configurez l’accès carte pour afficher la carte.',
+                                                  es: 'Falta el token de Mapbox. Configura el acceso al mapa para mostrarlo.',
+                                                )
+                                              : _t(
+                                                  nl: 'Stel je bedrijfslocatie in om de kaart te tonen.',
+                                                  en: 'Set your business location to show the map.',
+                                                  fr: 'Définissez l’emplacement de votre entreprise pour afficher la carte.',
+                                                  es: 'Configura la ubicación de tu empresa para mostrar el mapa.',
+                                                ),
+                                          textAlign: TextAlign.center,
+                                          style: TextStyle(
+                                            color: palette.textSecondary
+                                                .withOpacity(0.92),
+                                            fontWeight: FontWeight.w700,
+                                            fontSize: 12.1,
+                                          ),
+                                        ),
+                                        if (!_hasCoverageCenter) ...[
+                                          const SizedBox(height: 10),
+                                          OutlinedButton.icon(
+                                            onPressed:
+                                                _useCurrentLocationAsBusinessLocation,
+                                            style: OutlinedButton.styleFrom(
+                                              foregroundColor: palette.accent
+                                                  .withOpacity(0.98),
+                                              side: BorderSide(
+                                                color: palette.accent
+                                                    .withOpacity(0.44),
+                                              ),
+                                            ),
+                                            icon: const Icon(
+                                              Icons.my_location_outlined,
+                                              size: 16,
+                                            ),
+                                            label: Text(
+                                              _t(
+                                                nl: 'Gebruik huidige locatie als bedrijfslocatie',
+                                                en: 'Use current location as business location',
+                                                fr: 'Utiliser ma position actuelle comme emplacement d’entreprise',
+                                                es: 'Usar ubicación actual como ubicación de empresa',
+                                              ),
+                                            ),
+                                          ),
+                                          const SizedBox(height: 8),
+                                          OutlinedButton.icon(
+                                            onPressed: () {
+                                              Navigator.of(context).push(
+                                                MaterialPageRoute<void>(
+                                                  builder: (_) =>
+                                                      const BusinessSettingsPage(),
+                                                ),
+                                              );
+                                            },
+                                            style: OutlinedButton.styleFrom(
+                                              foregroundColor: palette
+                                                  .textSecondary
+                                                  .withOpacity(0.92),
+                                              side: BorderSide(
+                                                color: palette.border
+                                                    .withOpacity(0.22),
+                                              ),
+                                            ),
+                                            icon: const Icon(
+                                              Icons.settings_outlined,
+                                              size: 16,
+                                            ),
+                                            label: Text(
+                                              _t(
+                                                nl: 'Bedrijfslocatie instellen',
+                                                en: 'Set business location',
+                                                fr: 'Définir l’emplacement',
+                                                es: 'Configurar ubicación',
+                                              ),
+                                            ),
+                                          ),
+                                        ],
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        const SizedBox(height: 7),
+                        Text(
+                          _t(
+                            nl: 'Kaart toont alleen geaggregeerde regio-indicatie en servicebereik.',
+                            en: 'Map shows only aggregated regional indication and service range.',
+                            fr: 'La carte affiche uniquement une indication régionale agrégée et la zone de service.',
+                            es: 'El mapa solo muestra una indicación regional agregada y el rango de servicio.',
+                          ),
+                          style: TextStyle(
+                            color: palette.textMuted.withOpacity(0.86),
+                            fontSize: 10.7,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  _panel(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Container(
+                              width: 8,
+                              height: 8,
+                              decoration: BoxDecoration(
+                                color: palette.accent.withOpacity(0.96),
+                                shape: BoxShape.circle,
+                              ),
+                            ),
+                            const SizedBox(width: 6),
+                            Container(
+                              width: 8,
+                              height: 8,
+                              decoration: BoxDecoration(
+                                color: palette.success,
+                                shape: BoxShape.circle,
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                _t(
+                                  nl: 'Postcode-niveau vraag (geaggregeerd)',
+                                  en: 'Postcode-level demand (aggregated)',
+                                  fr: 'Demande par code postal (agrégée)',
+                                  es: 'Demanda por código postal (agregada)',
+                                ),
+                                style: TextStyle(
+                                  color: palette.textPrimary,
+                                  fontWeight: FontWeight.w700,
+                                  fontSize: 13.1,
                                 ),
                               ),
-                            )
-                            .toList(growable: false),
-                      ),
-                    if (_postcodes.length >= 50) ...[
-                      const SizedBox(height: 4),
-                      Text(
-                        _t(
-                          nl: 'Toont de eerste 50 postcodes om requests beperkt te houden.',
-                          en: 'Showing the first 50 postcodes to keep requests bounded.',
-                          fr: 'Affiche les 50 premiers codes postaux pour limiter les requêtes.',
-                          es: 'Mostrando los primeros 50 códigos postales para limitar solicitudes.',
+                            ),
+                          ],
                         ),
-                        style: TextStyle(
-                          color: Colors.white.withOpacity(0.55),
-                          fontSize: 10.8,
+                        const SizedBox(height: 8),
+                        if (_postcodes.isEmpty)
+                          Text(
+                            _t(
+                              nl: 'Voeg je bedrijfsregio toe om lokale vraag te zien.',
+                              en: 'Add your business area to see local demand.',
+                              fr: 'Ajoutez votre région d’activité pour voir la demande locale.',
+                              es: 'Añade tu zona de actividad para ver la demanda local.',
+                            ),
+                            style: TextStyle(
+                              color: palette.textSecondary.withOpacity(0.92),
+                              fontSize: 12.0,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          )
+                        else if (_rows.isEmpty && _loading)
+                          const Padding(
+                            padding: EdgeInsets.symmetric(vertical: 20),
+                            child: Center(child: CircularProgressIndicator()),
+                          )
+                        else
+                          Column(
+                            children: _rows
+                                .map(
+                                  (row) => Container(
+                                    margin: const EdgeInsets.only(bottom: 8),
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 10,
+                                      vertical: 9,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: palette.surfaceAlt,
+                                      borderRadius: BorderRadius.circular(12),
+                                      border: Border.all(
+                                        color: palette.accent.withOpacity(0.24),
+                                      ),
+                                    ),
+                                    child: Row(
+                                      children: [
+                                        Icon(
+                                          Icons.location_on_outlined,
+                                          color: palette.accent.withOpacity(
+                                            0.95,
+                                          ),
+                                          size: 16,
+                                        ),
+                                        const SizedBox(width: 8),
+                                        Expanded(
+                                          child: Text(
+                                            row.postcode,
+                                            style: TextStyle(
+                                              color: palette.textPrimary,
+                                              fontWeight: FontWeight.w700,
+                                              fontSize: 13.1,
+                                            ),
+                                          ),
+                                        ),
+                                        Text(
+                                          row.displayCount,
+                                          style: TextStyle(
+                                            color: row.unavailable
+                                                ? palette.textMuted.withOpacity(
+                                                    0.92,
+                                                  )
+                                                : palette.accent.withOpacity(
+                                                    0.98,
+                                                  ),
+                                            fontWeight: FontWeight.w800,
+                                            fontSize: 14.8,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                )
+                                .toList(growable: false),
+                          ),
+                        if (_postcodes.length >= 50) ...[
+                          const SizedBox(height: 4),
+                          Text(
+                            _t(
+                              nl: 'Toont de eerste 50 postcodes om requests beperkt te houden.',
+                              en: 'Showing the first 50 postcodes to keep requests bounded.',
+                              fr: 'Affiche les 50 premiers codes postaux pour limiter les requêtes.',
+                              es: 'Mostrando los primeros 50 códigos postales para limitar solicitudes.',
+                            ),
+                            style: TextStyle(
+                              color: palette.textMuted.withOpacity(0.84),
+                              fontSize: 10.8,
+                            ),
+                          ),
+                        ],
+                        const SizedBox(height: 4),
+                        Text(
+                          _t(
+                            nl: 'Landcontext: $_country',
+                            en: 'Country context: $_country',
+                            fr: 'Contexte pays : $_country',
+                            es: 'Contexto de país: $_country',
+                          ),
+                          style: TextStyle(
+                            color: palette.textMuted.withOpacity(0.84),
+                            fontSize: 10.6,
+                          ),
                         ),
-                      ),
-                    ],
-                    const SizedBox(height: 4),
-                    Text(
-                      _t(
-                        nl: 'Landcontext: $_country',
-                        en: 'Country context: $_country',
-                        fr: 'Contexte pays : $_country',
-                        es: 'Contexto de país: $_country',
-                      ),
-                      style: TextStyle(
-                        color: Colors.white.withOpacity(0.55),
-                        fontSize: 10.6,
-                      ),
+                      ],
                     ),
-                  ],
-                ),
+                  ),
+                ],
               ),
-            ],
+            ),
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 }
