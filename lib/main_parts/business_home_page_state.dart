@@ -18,6 +18,24 @@ class _BusinessHomePageState extends State<BusinessHomePage>
   bool _routeObserverSubscribed = false;
   bool _businessAccessGuardTriggered = false;
 
+  BusinessThemePalette get _businessThemePalette =>
+      paletteForBusinessTheme(businessThemeNotifier.value);
+
+  String _businessImageAsset({
+    required String executiveGoldAsset,
+    String? corporateBlueAsset,
+    String? cleanProfessionalAsset,
+  }) {
+    switch (businessThemeNotifier.value) {
+      case BusinessThemeVariant.executiveGold:
+        return executiveGoldAsset;
+      case BusinessThemeVariant.corporateBlue:
+        return corporateBlueAsset ?? executiveGoldAsset;
+      case BusinessThemeVariant.cleanProfessional:
+        return cleanProfessionalAsset ?? executiveGoldAsset;
+    }
+  }
+
   void _guardBusinessAccessOrRedirect({required String reason}) {
     if (_businessAccessGuardTriggered || !mounted) return;
     if (CompanySessionStore.instance.hasValidCompanyContext) return;
@@ -1948,10 +1966,24 @@ class _BusinessHomePageState extends State<BusinessHomePage>
     required Color accentColor,
     bool compact = false,
   }) {
-    return _panel(
+    final palette = _businessThemePalette;
+    final cardBorder = palette.border.withOpacity(palette.isDark ? 0.54 : 0.92);
+    return Container(
       padding: EdgeInsets.symmetric(
         horizontal: compact ? 9 : 12,
         vertical: compact ? 8 : 11,
+      ),
+      decoration: BoxDecoration(
+        color: palette.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: cardBorder),
+        boxShadow: [
+          BoxShadow(
+            color: palette.shadow.withOpacity(palette.isDark ? 0.34 : 0.12),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
       ),
       child: Row(
         children: [
@@ -1975,7 +2007,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                    color: Colors.white,
+                    color: palette.textPrimary,
                     fontSize: compact ? 11.6 : 13.2,
                     fontWeight: FontWeight.w700,
                   ),
@@ -1986,7 +2018,9 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                    color: Colors.white.withOpacity(0.58),
+                    color: palette.textSecondary.withOpacity(
+                      palette.isDark ? 0.84 : 1,
+                    ),
                     fontSize: compact ? 10.0 : 11.2,
                     fontWeight: FontWeight.w500,
                   ),
@@ -1998,7 +2032,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
           Text(
             value,
             style: TextStyle(
-              color: Colors.white,
+              color: palette.textPrimary,
               fontWeight: FontWeight.w900,
               fontSize: compact ? 19 : 24,
             ),
@@ -2102,9 +2136,23 @@ class _BusinessHomePageState extends State<BusinessHomePage>
     bool useImageBackground = false,
     bool compact = false,
   }) {
+    final palette = _businessThemePalette;
     final active = onTap != null && !isFuture;
     final hasImageBackground =
         useImageBackground && (backgroundAsset ?? '').trim().isNotEmpty;
+    final cardBorderColor = palette.border.withOpacity(
+      active ? (palette.isDark ? 0.72 : 1.0) : (palette.isDark ? 0.46 : 0.88),
+    );
+    final warningSemantic = const Color(0xFFE5B641);
+    final warningBadgeBg = warningSemantic.withOpacity(
+      palette.isDark ? 0.22 : 0.24,
+    );
+    final iconSurfaceBase = active ? palette.accent : palette.textMuted;
+    final iconTint = active
+        ? palette.textOnAccent
+        : palette.textMuted.withOpacity(0.78);
+    final titleColor = palette.textPrimary.withOpacity(active ? 1.0 : 0.88);
+    final subtitleColor = palette.textMuted.withOpacity(active ? 0.94 : 0.76);
     final cardPadding = EdgeInsets.fromLTRB(
       compact ? 8 : 12,
       compact ? 8 : 12,
@@ -2124,34 +2172,26 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                   begin: Alignment.topLeft,
                   end: Alignment.bottomRight,
                   colors: [
-                    (active ? kFluxidiYellow : const Color(0xFF8A8A8A))
-                        .withOpacity(0.28),
-                    const Color(0xFF15120A),
+                    iconSurfaceBase.withOpacity(active ? 0.28 : 0.18),
+                    palette.surfaceAlt,
                   ],
                 ),
                 shape: BoxShape.circle,
                 border: Border.all(
-                  color: (active ? kFluxidiYellow : Colors.white).withOpacity(
+                  color: (active ? palette.accent : palette.border).withOpacity(
                     active ? 0.50 : 0.26,
                   ),
                 ),
                 boxShadow: [
                   BoxShadow(
-                    color: (active ? kFluxidiYellow : Colors.black).withOpacity(
-                      active ? 0.10 : 0.16,
-                    ),
+                    color: (active ? palette.accent : palette.shadow)
+                        .withOpacity(active ? 0.10 : 0.16),
                     blurRadius: 10,
                     spreadRadius: 0.2,
                   ),
                 ],
               ),
-              child: Icon(
-                icon,
-                color: active
-                    ? kFluxidiYellow.withOpacity(0.98)
-                    : Colors.white.withOpacity(0.60),
-                size: compact ? 22 : 29,
-              ),
+              child: Icon(icon, color: iconTint, size: compact ? 22 : 29),
             ),
             const Spacer(),
             if ((futureBadge ?? '').trim().isNotEmpty)
@@ -2161,14 +2201,14 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                   vertical: compact ? 2 : 3,
                 ),
                 decoration: BoxDecoration(
-                  color: const Color(0xFF15120A),
+                  color: palette.surfaceAlt,
                   borderRadius: BorderRadius.circular(999),
-                  border: Border.all(color: kFluxidiYellow.withOpacity(0.42)),
+                  border: Border.all(color: palette.accent.withOpacity(0.42)),
                 ),
                 child: Text(
                   futureBadge!,
                   style: TextStyle(
-                    color: kFluxidiYellow.withOpacity(0.95),
+                    color: palette.textSecondary,
                     fontSize: compact ? 9.5 : 10.3,
                     fontWeight: FontWeight.w700,
                   ),
@@ -2182,16 +2222,14 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                   vertical: compact ? 2 : 3,
                 ),
                 decoration: BoxDecoration(
-                  color: const Color(0xFF2A1B0F),
+                  color: warningBadgeBg,
                   borderRadius: BorderRadius.circular(999),
-                  border: Border.all(
-                    color: const Color(0xFFE5B641).withOpacity(0.55),
-                  ),
+                  border: Border.all(color: warningSemantic.withOpacity(0.72)),
                 ),
                 child: Text(
                   statusBadge!,
                   style: TextStyle(
-                    color: const Color(0xFFE5B641).withOpacity(0.98),
+                    color: palette.textOnWarning,
                     fontSize: compact ? 9.5 : 10.3,
                     fontWeight: FontWeight.w700,
                   ),
@@ -2205,7 +2243,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
           style: TextStyle(
-            color: Colors.white.withOpacity(active ? 1.0 : 0.78),
+            color: titleColor,
             fontWeight: FontWeight.w800,
             fontSize: compact ? 12.5 : 14.3,
             shadows: hasImageBackground
@@ -2225,7 +2263,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
           style: TextStyle(
-            color: Colors.white.withOpacity(active ? 0.64 : 0.5),
+            color: subtitleColor,
             fontSize: compact ? 10.0 : 11.4,
             shadows: hasImageBackground
                 ? [
@@ -2245,12 +2283,12 @@ class _BusinessHomePageState extends State<BusinessHomePage>
               ? Icon(
                   Icons.chevron_right_rounded,
                   size: compact ? 14 : 17,
-                  color: kFluxidiYellow.withOpacity(0.9),
+                  color: palette.accent.withOpacity(0.9),
                 )
               : Icon(
                   Icons.lock_clock_outlined,
                   size: compact ? 13 : 15.5,
-                  color: Colors.white.withOpacity(0.44),
+                  color: palette.textMuted.withOpacity(0.72),
                 ),
         ),
       ],
@@ -2259,29 +2297,52 @@ class _BusinessHomePageState extends State<BusinessHomePage>
       return InkWell(
         borderRadius: BorderRadius.circular(15),
         onTap: active ? onTap : null,
-        child: _panel(padding: cardPadding, child: content),
+        child: Container(
+          padding: cardPadding,
+          decoration: BoxDecoration(
+            color: palette.surface,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: cardBorderColor),
+            boxShadow: [
+              BoxShadow(
+                color: palette.shadow.withOpacity(palette.isDark ? 0.34 : 0.14),
+                blurRadius: 10,
+                offset: const Offset(0, 4),
+              ),
+            ],
+          ),
+          child: content,
+        ),
       );
     }
     return InkWell(
       borderRadius: BorderRadius.circular(15),
       onTap: active ? onTap : null,
-      child: _panel(
-        padding: EdgeInsets.zero,
-        child: Stack(
-          fit: StackFit.expand,
-          children: [
-            ClipRRect(
-              borderRadius: BorderRadius.circular(16),
-              child: Image.asset(
+      child: Container(
+        decoration: BoxDecoration(
+          color: palette.surface,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: cardBorderColor),
+          boxShadow: [
+            BoxShadow(
+              color: palette.shadow.withOpacity(palette.isDark ? 0.34 : 0.14),
+              blurRadius: 10,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(16),
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              Image.asset(
                 backgroundAsset!,
                 fit: BoxFit.cover,
                 alignment: Alignment.centerRight,
                 errorBuilder: (_, __, ___) => const SizedBox.shrink(),
               ),
-            ),
-            Positioned.fill(
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(16),
+              Positioned.fill(
                 child: DecoratedBox(
                   decoration: BoxDecoration(
                     gradient: LinearGradient(
@@ -2298,9 +2359,9 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                   ),
                 ),
               ),
-            ),
-            Padding(padding: cardPadding, child: content),
-          ],
+              Padding(padding: cardPadding, child: content),
+            ],
+          ),
         ),
       ),
     );
@@ -2373,8 +2434,12 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                     : isTabletPortrait
                     ? clampDouble(H * 0.23, 300.0, 360.0)
                     : null;
-                const businessHeaderAsset =
-                    'assets/fluxidi/zakelijke_tablet_header_foto.png';
+                final businessHeaderAsset = _businessImageAsset(
+                  executiveGoldAsset:
+                      'assets/fluxidi/zakelijke_tablet_header_foto.png',
+                  corporateBlueAsset:
+                      'assets/Corporate BLEU Compagny/company_header_fleet_corporate_blue.png',
+                );
                 final businessQuickActionCardHeight = isTabletLandscape
                     ? clampDouble(H * 0.21, 150.0, 188.0)
                     : isTabletPortrait
@@ -2409,743 +2474,813 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                     ? const EdgeInsets.fromLTRB(10, 8, 10, 10)
                     : const EdgeInsets.fromLTRB(12, 12, 12, 14);
 
-                return ListView(
-                  padding: EdgeInsets.fromLTRB(
-                    16,
-                    12,
-                    16,
-                    businessListBottomPadding,
-                  ),
-                  children: [
-                    if (usesTabletHeader)
-                      Container(
-                        height: businessHeaderHeight,
-                        clipBehavior: Clip.antiAlias,
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(18),
-                          border: Border.all(
-                            color: kFluxidiYellow.withOpacity(0.22),
-                          ),
-                        ),
-                        child: Stack(
-                          fit: StackFit.expand,
-                          children: [
-                            Image.asset(
-                              businessHeaderAsset,
-                              fit: BoxFit.cover,
-                              alignment: isTabletLandscape
-                                  ? const Alignment(0.25, 0.35)
-                                  : Alignment.center,
-                              errorBuilder: (_, __, ___) => const DecoratedBox(
-                                decoration: BoxDecoration(
-                                  gradient: LinearGradient(
-                                    begin: Alignment.topCenter,
-                                    end: Alignment.bottomCenter,
-                                    colors: [
-                                      Color(0xFF101010),
-                                      Color(0xFF07080C),
-                                    ],
+                return ValueListenableBuilder<BusinessThemeVariant>(
+                  valueListenable: businessThemeNotifier,
+                  builder: (context, _, __) {
+                    return ListView(
+                      padding: EdgeInsets.fromLTRB(
+                        16,
+                        12,
+                        16,
+                        businessListBottomPadding,
+                      ),
+                      children: [
+                        if (usesTabletHeader)
+                          Container(
+                            height: businessHeaderHeight,
+                            clipBehavior: Clip.antiAlias,
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(18),
+                              border: Border.all(
+                                color: kFluxidiYellow.withOpacity(0.22),
+                              ),
+                            ),
+                            child: Stack(
+                              fit: StackFit.expand,
+                              children: [
+                                Image.asset(
+                                  businessHeaderAsset,
+                                  fit: BoxFit.cover,
+                                  alignment: isTabletLandscape
+                                      ? const Alignment(0.25, 0.35)
+                                      : Alignment.center,
+                                  errorBuilder: (_, __, ___) =>
+                                      const DecoratedBox(
+                                        decoration: BoxDecoration(
+                                          gradient: LinearGradient(
+                                            begin: Alignment.topCenter,
+                                            end: Alignment.bottomCenter,
+                                            colors: [
+                                              Color(0xFF101010),
+                                              Color(0xFF07080C),
+                                            ],
+                                          ),
+                                        ),
+                                      ),
+                                ),
+                                Positioned.fill(
+                                  child: DecoratedBox(
+                                    decoration: BoxDecoration(
+                                      gradient: LinearGradient(
+                                        begin: Alignment.topCenter,
+                                        end: Alignment.bottomCenter,
+                                        colors: [
+                                          Colors.black.withOpacity(0.12),
+                                          Colors.black.withOpacity(0.22),
+                                          Colors.black.withOpacity(0.58),
+                                        ],
+                                      ),
+                                    ),
                                   ),
                                 ),
-                              ),
-                            ),
-                            Positioned.fill(
-                              child: DecoratedBox(
-                                decoration: BoxDecoration(
-                                  gradient: LinearGradient(
-                                    begin: Alignment.topCenter,
-                                    end: Alignment.bottomCenter,
-                                    colors: [
-                                      Colors.black.withOpacity(0.12),
-                                      Colors.black.withOpacity(0.22),
-                                      Colors.black.withOpacity(0.58),
-                                    ],
+                                Positioned.fill(
+                                  child: Padding(
+                                    padding: headerContentPadding,
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        ValueListenableBuilder<
+                                          ActiveCompanySession?
+                                        >(
+                                          valueListenable:
+                                              activeCompanySessionNotifier,
+                                          builder: (context, _, __) =>
+                                              _topBar(context, profile),
+                                        ),
+                                        const Spacer(),
+                                        Text(
+                                          _t(
+                                            nl: 'Goedemorgen! 👋',
+                                            en: 'Good morning! 👋',
+                                            fr: 'Bonjour ! 👋',
+                                            es: '¡Buenos días! 👋',
+                                          ),
+                                          style: TextStyle(
+                                            color: Colors.white,
+                                            fontWeight: FontWeight.w800,
+                                            fontSize: headerTitleFontSize,
+                                          ),
+                                        ),
+                                        SizedBox(height: headerTextBottomGap),
+                                        Text(
+                                          _t(
+                                            nl: 'Bedrijfsoverzicht',
+                                            en: 'Business overview',
+                                            fr: 'Aperçu de l’entreprise',
+                                            es: 'Resumen de empresa',
+                                          ),
+                                          style: TextStyle(
+                                            color: Colors.white.withOpacity(
+                                              0.78,
+                                            ),
+                                            fontSize: headerSubtitleFontSize,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
                                   ),
                                 ),
-                              ),
+                              ],
                             ),
-                            Positioned.fill(
-                              child: Padding(
-                                padding: headerContentPadding,
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    ValueListenableBuilder<
-                                      ActiveCompanySession?
-                                    >(
-                                      valueListenable:
-                                          activeCompanySessionNotifier,
-                                      builder: (context, _, __) =>
-                                          _topBar(context, profile),
-                                    ),
-                                    const Spacer(),
-                                    Text(
-                                      _t(
-                                        nl: 'Goedemorgen! 👋',
-                                        en: 'Good morning! 👋',
-                                        fr: 'Bonjour ! 👋',
-                                        es: '¡Buenos días! 👋',
-                                      ),
-                                      style: TextStyle(
-                                        color: Colors.white,
-                                        fontWeight: FontWeight.w800,
-                                        fontSize: headerTitleFontSize,
-                                      ),
-                                    ),
-                                    SizedBox(height: headerTextBottomGap),
-                                    Text(
-                                      _t(
-                                        nl: 'Bedrijfsoverzicht',
-                                        en: 'Business overview',
-                                        fr: 'Aperçu de l’entreprise',
-                                        es: 'Resumen de empresa',
-                                      ),
-                                      style: TextStyle(
-                                        color: Colors.white.withOpacity(0.78),
-                                        fontSize: headerSubtitleFontSize,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      )
-                    else ...[
-                      ValueListenableBuilder<ActiveCompanySession?>(
-                        valueListenable: activeCompanySessionNotifier,
-                        builder: (context, _, __) => _topBar(context, profile),
-                      ),
-                      const SizedBox(height: 12),
-                      _panel(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              _t(
-                                nl: 'Goedemorgen! 👋',
-                                en: 'Good morning! 👋',
-                                fr: 'Bonjour ! 👋',
-                                es: '¡Buenos días! 👋',
-                              ),
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontWeight: FontWeight.w800,
-                                fontSize: 19,
-                              ),
-                            ),
-                            const SizedBox(height: 3),
-                            Text(
-                              _t(
-                                nl: 'Bedrijfsoverzicht',
-                                en: 'Business overview',
-                                fr: 'Aperçu de l’entreprise',
-                                es: 'Resumen de empresa',
-                              ),
-                              style: TextStyle(
-                                color: Colors.white.withOpacity(0.74),
-                                fontSize: 12.5,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                    SizedBox(height: businessSectionGap),
-                    _primaryCta(context, compact: isTabletLandscape),
-                    SizedBox(height: businessSectionGap),
-                    LayoutBuilder(
-                      builder: (context, constraints) {
-                        final stacked =
-                            !isTabletLandscape && constraints.maxWidth < 430;
-                        if (stacked) {
-                          return Column(
-                            children: [
-                              _metricCard(
-                                icon: Icons.calendar_month_outlined,
-                                title: _t(
-                                  nl: 'Open boekingen',
-                                  en: 'Open bookings',
-                                  fr: 'Réservations ouvertes',
-                                  es: 'Reservas abiertas',
-                                ),
-                                subtitle: _t(
-                                  nl: 'Gepland',
-                                  en: 'Planned',
-                                  fr: 'Planifiées',
-                                  es: 'Planificadas',
-                                ),
-                                value: _metricCountText(_openBookingsCount),
-                                accentColor: const Color(0xFF60A5FA),
-                                compact: isTabletLandscape,
-                              ),
-                              SizedBox(height: isTabletLandscape ? 6 : 8),
-                              _metricCard(
-                                icon: Icons.directions_car_outlined,
-                                title: _t(
-                                  nl: 'Voltooide ritten',
-                                  en: 'Completed rides',
-                                  fr: 'Courses terminées',
-                                  es: 'Viajes completados',
-                                ),
-                                subtitle: _t(
-                                  nl: 'Afgerond',
-                                  en: 'Completed',
-                                  fr: 'Terminées',
-                                  es: 'Completados',
-                                ),
-                                value: _metricCountText(_completedRidesCount),
-                                accentColor: const Color(0xFF4ADE80),
-                                compact: isTabletLandscape,
-                              ),
-                              SizedBox(height: isTabletLandscape ? 6 : 8),
-                              _metricCard(
-                                icon: Icons.payments_outlined,
-                                title: _t(
-                                  nl: 'Nog te betalen',
-                                  en: 'To be paid',
-                                  fr: 'À payer',
-                                  es: 'Por pagar',
-                                ),
-                                subtitle: _t(
-                                  nl: 'Afgerond maar onbetaald',
-                                  en: 'Completed but unpaid',
-                                  fr: 'Terminées mais impayées',
-                                  es: 'Completados sin pagar',
-                                ),
-                                value: _metricCountText(
-                                  _unpaidCompletedRidesCount,
-                                ),
-                                accentColor: const Color(0xFFF97373),
-                                compact: isTabletLandscape,
-                              ),
-                              SizedBox(height: isTabletLandscape ? 6 : 8),
-                              _metricCard(
-                                icon: Icons.euro_rounded,
-                                title: _t(
-                                  nl: 'Maandomzet',
-                                  en: 'Monthly income',
-                                  fr: 'Revenus mensuels',
-                                  es: 'Ingresos mensuales',
-                                ),
-                                subtitle: _t(
-                                  nl: 'Betaald',
-                                  en: 'Paid',
-                                  fr: 'Payées',
-                                  es: 'Pagado',
-                                ),
-                                value: _metricIncomeText(),
-                                accentColor: const Color(0xFFE5B641),
-                                compact: isTabletLandscape,
-                              ),
-                            ],
-                          );
-                        }
-                        final columns = isTabletLandscape
-                            ? 4
-                            : constraints.maxWidth < 760
-                            ? 2
-                            : 4;
-                        final spacing = isTabletLandscape ? 6.0 : 8.0;
-                        final cardWidth =
-                            (constraints.maxWidth - ((columns - 1) * spacing)) /
-                            columns;
-                        return Wrap(
-                          spacing: spacing,
-                          runSpacing: spacing,
-                          children: [
-                            SizedBox(
-                              width: cardWidth,
-                              child: _metricCard(
-                                icon: Icons.calendar_month_outlined,
-                                title: _t(
-                                  nl: 'Open boekingen',
-                                  en: 'Open bookings',
-                                  fr: 'Réservations ouvertes',
-                                  es: 'Reservas abiertas',
-                                ),
-                                subtitle: _t(
-                                  nl: 'Gepland',
-                                  en: 'Planned',
-                                  fr: 'Planifiées',
-                                  es: 'Planificadas',
-                                ),
-                                value: _metricCountText(_openBookingsCount),
-                                accentColor: const Color(0xFF60A5FA),
-                                compact: isTabletLandscape,
-                              ),
-                            ),
-                            SizedBox(
-                              width: cardWidth,
-                              child: _metricCard(
-                                icon: Icons.directions_car_outlined,
-                                title: _t(
-                                  nl: 'Voltooide ritten',
-                                  en: 'Completed rides',
-                                  fr: 'Courses terminées',
-                                  es: 'Viajes completados',
-                                ),
-                                subtitle: _t(
-                                  nl: 'Afgerond',
-                                  en: 'Completed',
-                                  fr: 'Terminées',
-                                  es: 'Completados',
-                                ),
-                                value: _metricCountText(_completedRidesCount),
-                                accentColor: const Color(0xFF4ADE80),
-                                compact: isTabletLandscape,
-                              ),
-                            ),
-                            SizedBox(
-                              width: cardWidth,
-                              child: _metricCard(
-                                icon: Icons.payments_outlined,
-                                title: _t(
-                                  nl: 'Nog te betalen',
-                                  en: 'To be paid',
-                                  fr: 'À payer',
-                                  es: 'Por pagar',
-                                ),
-                                subtitle: _t(
-                                  nl: 'Afgerond maar onbetaald',
-                                  en: 'Completed but unpaid',
-                                  fr: 'Terminées mais impayées',
-                                  es: 'Completados sin pagar',
-                                ),
-                                value: _metricCountText(
-                                  _unpaidCompletedRidesCount,
-                                ),
-                                accentColor: const Color(0xFFF97373),
-                                compact: isTabletLandscape,
-                              ),
-                            ),
-                            SizedBox(
-                              width: cardWidth,
-                              child: _metricCard(
-                                icon: Icons.euro_rounded,
-                                title: _t(
-                                  nl: 'Maandomzet',
-                                  en: 'Monthly income',
-                                  fr: 'Revenus mensuels',
-                                  es: 'Ingresos mensuales',
-                                ),
-                                subtitle: _t(
-                                  nl: 'Betaald',
-                                  en: 'Paid',
-                                  fr: 'Payées',
-                                  es: 'Pagado',
-                                ),
-                                value: _metricIncomeText(),
-                                accentColor: const Color(0xFFE5B641),
-                                compact: isTabletLandscape,
-                              ),
-                            ),
-                          ],
-                        );
-                      },
-                    ),
-                    SizedBox(height: businessQuickActionsTitleGap),
-                    Text(
-                      _t(
-                        nl: 'Snelle acties',
-                        en: 'Quick actions',
-                        fr: 'Actions rapides',
-                        es: 'Acciones rápidas',
-                      ),
-                      style: TextStyle(
-                        color: kFluxidiYellow.withOpacity(0.95),
-                        fontSize: 14,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    if (_isBusinessAdminSessionRecoveryRequired()) ...[
-                      const SizedBox(height: 6),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 10,
-                          vertical: 6,
-                        ),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFF2A1B0F),
-                          borderRadius: BorderRadius.circular(999),
-                          border: Border.all(
-                            color: const Color(0xFFE5B641).withOpacity(0.5),
+                          )
+                        else ...[
+                          ValueListenableBuilder<ActiveCompanySession?>(
+                            valueListenable: activeCompanySessionNotifier,
+                            builder: (context, _, __) =>
+                                _topBar(context, profile),
                           ),
+                          const SizedBox(height: 12),
+                          _panel(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  _t(
+                                    nl: 'Goedemorgen! 👋',
+                                    en: 'Good morning! 👋',
+                                    fr: 'Bonjour ! 👋',
+                                    es: '¡Buenos días! 👋',
+                                  ),
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.w800,
+                                    fontSize: 19,
+                                  ),
+                                ),
+                                const SizedBox(height: 3),
+                                Text(
+                                  _t(
+                                    nl: 'Bedrijfsoverzicht',
+                                    en: 'Business overview',
+                                    fr: 'Aperçu de l’entreprise',
+                                    es: 'Resumen de empresa',
+                                  ),
+                                  style: TextStyle(
+                                    color: Colors.white.withOpacity(0.74),
+                                    fontSize: 12.5,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                        SizedBox(height: businessSectionGap),
+                        _primaryCta(context, compact: isTabletLandscape),
+                        SizedBox(height: businessSectionGap),
+                        LayoutBuilder(
+                          builder: (context, constraints) {
+                            final stacked =
+                                !isTabletLandscape &&
+                                constraints.maxWidth < 430;
+                            if (stacked) {
+                              return Column(
+                                children: [
+                                  _metricCard(
+                                    icon: Icons.calendar_month_outlined,
+                                    title: _t(
+                                      nl: 'Open boekingen',
+                                      en: 'Open bookings',
+                                      fr: 'Réservations ouvertes',
+                                      es: 'Reservas abiertas',
+                                    ),
+                                    subtitle: _t(
+                                      nl: 'Gepland',
+                                      en: 'Planned',
+                                      fr: 'Planifiées',
+                                      es: 'Planificadas',
+                                    ),
+                                    value: _metricCountText(_openBookingsCount),
+                                    accentColor: const Color(0xFF60A5FA),
+                                    compact: isTabletLandscape,
+                                  ),
+                                  SizedBox(height: isTabletLandscape ? 6 : 8),
+                                  _metricCard(
+                                    icon: Icons.directions_car_outlined,
+                                    title: _t(
+                                      nl: 'Voltooide ritten',
+                                      en: 'Completed rides',
+                                      fr: 'Courses terminées',
+                                      es: 'Viajes completados',
+                                    ),
+                                    subtitle: _t(
+                                      nl: 'Afgerond',
+                                      en: 'Completed',
+                                      fr: 'Terminées',
+                                      es: 'Completados',
+                                    ),
+                                    value: _metricCountText(
+                                      _completedRidesCount,
+                                    ),
+                                    accentColor: const Color(0xFF4ADE80),
+                                    compact: isTabletLandscape,
+                                  ),
+                                  SizedBox(height: isTabletLandscape ? 6 : 8),
+                                  _metricCard(
+                                    icon: Icons.payments_outlined,
+                                    title: _t(
+                                      nl: 'Nog te betalen',
+                                      en: 'To be paid',
+                                      fr: 'À payer',
+                                      es: 'Por pagar',
+                                    ),
+                                    subtitle: _t(
+                                      nl: 'Afgerond maar onbetaald',
+                                      en: 'Completed but unpaid',
+                                      fr: 'Terminées mais impayées',
+                                      es: 'Completados sin pagar',
+                                    ),
+                                    value: _metricCountText(
+                                      _unpaidCompletedRidesCount,
+                                    ),
+                                    accentColor: const Color(0xFFF97373),
+                                    compact: isTabletLandscape,
+                                  ),
+                                  SizedBox(height: isTabletLandscape ? 6 : 8),
+                                  _metricCard(
+                                    icon: Icons.euro_rounded,
+                                    title: _t(
+                                      nl: 'Maandomzet',
+                                      en: 'Monthly income',
+                                      fr: 'Revenus mensuels',
+                                      es: 'Ingresos mensuales',
+                                    ),
+                                    subtitle: _t(
+                                      nl: 'Betaald',
+                                      en: 'Paid',
+                                      fr: 'Payées',
+                                      es: 'Pagado',
+                                    ),
+                                    value: _metricIncomeText(),
+                                    accentColor: const Color(0xFFE5B641),
+                                    compact: isTabletLandscape,
+                                  ),
+                                ],
+                              );
+                            }
+                            final columns = isTabletLandscape
+                                ? 4
+                                : constraints.maxWidth < 760
+                                ? 2
+                                : 4;
+                            final spacing = isTabletLandscape ? 6.0 : 8.0;
+                            final cardWidth =
+                                (constraints.maxWidth -
+                                    ((columns - 1) * spacing)) /
+                                columns;
+                            return Wrap(
+                              spacing: spacing,
+                              runSpacing: spacing,
+                              children: [
+                                SizedBox(
+                                  width: cardWidth,
+                                  child: _metricCard(
+                                    icon: Icons.calendar_month_outlined,
+                                    title: _t(
+                                      nl: 'Open boekingen',
+                                      en: 'Open bookings',
+                                      fr: 'Réservations ouvertes',
+                                      es: 'Reservas abiertas',
+                                    ),
+                                    subtitle: _t(
+                                      nl: 'Gepland',
+                                      en: 'Planned',
+                                      fr: 'Planifiées',
+                                      es: 'Planificadas',
+                                    ),
+                                    value: _metricCountText(_openBookingsCount),
+                                    accentColor: const Color(0xFF60A5FA),
+                                    compact: isTabletLandscape,
+                                  ),
+                                ),
+                                SizedBox(
+                                  width: cardWidth,
+                                  child: _metricCard(
+                                    icon: Icons.directions_car_outlined,
+                                    title: _t(
+                                      nl: 'Voltooide ritten',
+                                      en: 'Completed rides',
+                                      fr: 'Courses terminées',
+                                      es: 'Viajes completados',
+                                    ),
+                                    subtitle: _t(
+                                      nl: 'Afgerond',
+                                      en: 'Completed',
+                                      fr: 'Terminées',
+                                      es: 'Completados',
+                                    ),
+                                    value: _metricCountText(
+                                      _completedRidesCount,
+                                    ),
+                                    accentColor: const Color(0xFF4ADE80),
+                                    compact: isTabletLandscape,
+                                  ),
+                                ),
+                                SizedBox(
+                                  width: cardWidth,
+                                  child: _metricCard(
+                                    icon: Icons.payments_outlined,
+                                    title: _t(
+                                      nl: 'Nog te betalen',
+                                      en: 'To be paid',
+                                      fr: 'À payer',
+                                      es: 'Por pagar',
+                                    ),
+                                    subtitle: _t(
+                                      nl: 'Afgerond maar onbetaald',
+                                      en: 'Completed but unpaid',
+                                      fr: 'Terminées mais impayées',
+                                      es: 'Completados sin pagar',
+                                    ),
+                                    value: _metricCountText(
+                                      _unpaidCompletedRidesCount,
+                                    ),
+                                    accentColor: const Color(0xFFF97373),
+                                    compact: isTabletLandscape,
+                                  ),
+                                ),
+                                SizedBox(
+                                  width: cardWidth,
+                                  child: _metricCard(
+                                    icon: Icons.euro_rounded,
+                                    title: _t(
+                                      nl: 'Maandomzet',
+                                      en: 'Monthly income',
+                                      fr: 'Revenus mensuels',
+                                      es: 'Ingresos mensuales',
+                                    ),
+                                    subtitle: _t(
+                                      nl: 'Betaald',
+                                      en: 'Paid',
+                                      fr: 'Payées',
+                                      es: 'Pagado',
+                                    ),
+                                    value: _metricIncomeText(),
+                                    accentColor: const Color(0xFFE5B641),
+                                    compact: isTabletLandscape,
+                                  ),
+                                ),
+                              ],
+                            );
+                          },
                         ),
-                        child: Text(
+                        SizedBox(height: businessQuickActionsTitleGap),
+                        Text(
                           _t(
-                            nl: 'Bedrijfssessie herstellen vereist',
-                            en: 'Company admin session recovery required',
-                            fr: "Récupération de session entreprise requise",
-                            es: 'Se requiere recuperar la sesión de empresa',
+                            nl: 'Snelle acties',
+                            en: 'Quick actions',
+                            fr: 'Actions rapides',
+                            es: 'Acciones rápidas',
                           ),
                           style: TextStyle(
-                            color: const Color(0xFFE5B641).withOpacity(0.98),
-                            fontSize: 10.7,
+                            color: kFluxidiYellow.withOpacity(0.95),
+                            fontSize: 14,
                             fontWeight: FontWeight.w700,
                           ),
                         ),
-                      ),
-                    ],
-                    SizedBox(height: businessQuickActionsGridTopGap),
-                    LayoutBuilder(
-                      builder: (context, constraints) {
-                        final quickActionColumns = isTabletLandscape ? 5 : 2;
-                        final totalHorizontalSpacing =
-                            businessQuickActionSpacing *
-                            (quickActionColumns - 1);
-                        final cardWidth =
-                            (constraints.maxWidth - totalHorizontalSpacing) /
-                            quickActionColumns;
-                        return Wrap(
-                          spacing: businessQuickActionSpacing,
-                          runSpacing: businessQuickActionSpacing,
-                          children: [
-                            SizedBox(
-                              width: cardWidth,
-                              height: businessQuickActionCardHeight,
-                              child: _quickActionCard(
-                                icon: Icons.business_center_outlined,
-                                title: _t(
-                                  nl: 'Instellingen',
-                                  en: 'Settings',
-                                  fr: 'Réglages',
-                                  es: 'Ajustes',
-                                ),
-                                subtitle: _t(
-                                  nl: 'Profiel & branding',
-                                  en: 'Profile & branding',
-                                  fr: 'Profil & branding',
-                                  es: 'Perfil y marca',
-                                ),
-                                onTap: () {
-                                  Navigator.of(context).push(
-                                    MaterialPageRoute(
-                                      builder: (_) =>
-                                          const BusinessSettingsPage(),
-                                    ),
-                                  );
-                                },
-                                backgroundAsset:
-                                    'assets/fluxidi/settings_background_company.png',
-                                useImageBackground: useTabletVisualMode,
-                                compact: isTabletLandscape,
+                        if (_isBusinessAdminSessionRecoveryRequired()) ...[
+                          const SizedBox(height: 6),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 6,
+                            ),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF2A1B0F),
+                              borderRadius: BorderRadius.circular(999),
+                              border: Border.all(
+                                color: const Color(0xFFE5B641).withOpacity(0.5),
                               ),
                             ),
-                            if (isTabletLandscape)
-                              SizedBox(
-                                width: cardWidth,
-                                height: businessQuickActionCardHeight,
-                                child: _quickActionCard(
-                                  icon: Icons.calendar_month_outlined,
-                                  title: _t(
-                                    nl: 'Boekingen',
-                                    en: 'Bookings',
-                                    fr: 'Réservations',
-                                    es: 'Reservas',
-                                  ),
-                                  subtitle: _t(
-                                    nl: 'Alle boekingen',
-                                    en: 'All bookings',
-                                    fr: 'Toutes les réservations',
-                                    es: 'Todas las reservas',
-                                  ),
-                                  onTap: () =>
-                                      _openBusinessBookingsOverview(context),
-                                  backgroundAsset:
-                                      'assets/fluxidi/bookings_background_company.png',
-                                  useImageBackground: useTabletVisualMode,
-                                  compact: isTabletLandscape,
-                                ),
+                            child: Text(
+                              _t(
+                                nl: 'Bedrijfssessie herstellen vereist',
+                                en: 'Company admin session recovery required',
+                                fr: "Récupération de session entreprise requise",
+                                es: 'Se requiere recuperar la sesión de empresa',
                               ),
-                            SizedBox(
-                              width: cardWidth,
-                              height: businessQuickActionCardHeight,
-                              child: _quickActionCard(
-                                icon: Icons.credit_card_outlined,
-                                title: _t(
-                                  nl: 'Abonnement',
-                                  en: 'Plan',
-                                  fr: 'Abonnement',
-                                  es: 'Plan',
-                                ),
-                                subtitle: _t(
-                                  nl: 'Facturatie',
-                                  en: 'Billing',
-                                  fr: 'Facturation',
-                                  es: 'Facturación',
-                                ),
-                                onTap: () {
-                                  Navigator.of(context).push(
-                                    MaterialPageRoute(
-                                      builder: (_) =>
-                                          const CompanySubscriptionBillingPage(),
-                                    ),
-                                  );
-                                },
-                                backgroundAsset:
-                                    'assets/fluxidi/plan_background_company.png',
-                                useImageBackground: useTabletVisualMode,
-                                compact: isTabletLandscape,
+                              style: TextStyle(
+                                color: const Color(
+                                  0xFFE5B641,
+                                ).withOpacity(0.98),
+                                fontSize: 10.7,
+                                fontWeight: FontWeight.w700,
                               ),
                             ),
-                            SizedBox(
-                              width: cardWidth,
-                              height: businessQuickActionCardHeight,
-                              child: _quickActionCard(
-                                icon: Icons.directions_car_filled_outlined,
-                                title: _t(
-                                  nl: 'Voertuigen',
-                                  en: 'Vehicles',
-                                  fr: 'Véhicules',
-                                  es: 'Vehículos',
-                                ),
-                                subtitle: _t(
-                                  nl: 'Wagenpark',
-                                  en: 'Fleet',
-                                  fr: 'Flotte',
-                                  es: 'Flota',
-                                ),
-                                onTap: () {
-                                  Navigator.of(context).push(
-                                    MaterialPageRoute(
-                                      builder: (_) =>
-                                          const VehicleManagementPage(),
+                          ),
+                        ],
+                        SizedBox(height: businessQuickActionsGridTopGap),
+                        LayoutBuilder(
+                          builder: (context, constraints) {
+                            final quickActionColumns = isTabletLandscape
+                                ? 5
+                                : 2;
+                            final totalHorizontalSpacing =
+                                businessQuickActionSpacing *
+                                (quickActionColumns - 1);
+                            final cardWidth =
+                                (constraints.maxWidth -
+                                    totalHorizontalSpacing) /
+                                quickActionColumns;
+                            return Wrap(
+                              spacing: businessQuickActionSpacing,
+                              runSpacing: businessQuickActionSpacing,
+                              children: [
+                                SizedBox(
+                                  width: cardWidth,
+                                  height: businessQuickActionCardHeight,
+                                  child: _quickActionCard(
+                                    icon: Icons.business_center_outlined,
+                                    title: _t(
+                                      nl: 'Instellingen',
+                                      en: 'Settings',
+                                      fr: 'Réglages',
+                                      es: 'Ajustes',
                                     ),
-                                  );
-                                },
-                                backgroundAsset:
-                                    'assets/fluxidi/vehicles_background_company.png',
-                                useImageBackground: useTabletVisualMode,
-                                compact: isTabletLandscape,
-                              ),
-                            ),
-                            SizedBox(
-                              width: cardWidth,
-                              height: businessQuickActionCardHeight,
-                              child: _quickActionCard(
-                                icon: Icons.fact_check_outlined,
-                                title: _t(
-                                  nl: 'Chiron',
-                                  en: 'Chiron',
-                                  fr: 'Chiron',
-                                  es: 'Chiron',
-                                ),
-                                subtitle: 'Compliance',
-                                onTap: () {
-                                  Navigator.of(context).push(
-                                    MaterialPageRoute<void>(
-                                      builder: (_) =>
-                                          const ChironComplianceDashboardPage(),
+                                    subtitle: _t(
+                                      nl: 'Profiel & branding',
+                                      en: 'Profile & branding',
+                                      fr: 'Profil & branding',
+                                      es: 'Perfil y marca',
                                     ),
-                                  );
-                                },
-                                backgroundAsset:
-                                    'assets/fluxidi/chiron_background_company.png',
-                                useImageBackground: useTabletVisualMode,
-                                compact: isTabletLandscape,
-                              ),
-                            ),
-                            SizedBox(
-                              width: cardWidth,
-                              height: businessQuickActionCardHeight,
-                              child: _quickActionCard(
-                                icon: Icons.local_taxi_outlined,
-                                title: _t(
-                                  nl: 'Chauffeurs',
-                                  en: 'Drivers',
-                                  fr: 'Chauffeurs',
-                                  es: 'Conductores',
-                                ),
-                                subtitle: _t(
-                                  nl: 'Team',
-                                  en: 'Team',
-                                  fr: 'Équipe',
-                                  es: 'Equipo',
-                                ),
-                                statusBadge:
-                                    _isBusinessAdminSessionRecoveryRequired()
-                                    ? _t(
-                                        nl: 'Herstel vereist',
-                                        en: 'Recovery required',
-                                        fr: 'Récupération requise',
-                                        es: 'Recuperación requerida',
-                                      )
-                                    : null,
-                                onTap: () async {
-                                  final backendContext =
-                                      await _resolveBackendUsableCompanyContextForAdmin(
-                                        reason: 'business_home_manage_drivers',
-                                        logDegraded: true,
+                                    onTap: () {
+                                      Navigator.of(context).push(
+                                        MaterialPageRoute(
+                                          builder: (_) =>
+                                              const BusinessSettingsPage(),
+                                        ),
                                       );
-                                  if (!context.mounted) return;
-                                  if (!backendContext.usable) {
-                                    debugPrint(
-                                      '[COMPANY_SESSION][ADMIN_ENTRY_BLOCKED] flow=business_home_manage_drivers code=${backendContext.reasonCode} source=${backendContext.tokenSource}',
-                                    );
-                                    await _showDegradedCompanySessionRecoveryDialog(
-                                      context,
-                                      reason: 'business_home_manage_drivers',
-                                    );
-                                    return;
-                                  }
-                                  Navigator.of(context).push(
-                                    MaterialPageRoute<void>(
-                                      builder: (_) =>
-                                          const CompanyDriverManagementPage(),
+                                    },
+                                    backgroundAsset: _businessImageAsset(
+                                      executiveGoldAsset:
+                                          'assets/fluxidi/settings_background_company.png',
+                                      corporateBlueAsset:
+                                          'assets/Corporate BLEU Compagny/company_settings_corporate_blue.png',
                                     ),
-                                  );
-                                },
-                                backgroundAsset:
-                                    'assets/fluxidi/drivers_background_company.png',
-                                useImageBackground: useTabletVisualMode,
-                                compact: isTabletLandscape,
-                              ),
-                            ),
-                            SizedBox(
-                              width: cardWidth,
-                              height: businessQuickActionCardHeight,
-                              child: _quickActionCard(
-                                icon: Icons.speed_rounded,
-                                title: _t(
-                                  nl: 'Chauffeur weergave',
-                                  en: 'Driver view',
-                                  fr: 'Vue chauffeur',
-                                  es: 'Vista de conductor',
+                                    useImageBackground: useTabletVisualMode,
+                                    compact: isTabletLandscape,
+                                  ),
                                 ),
-                                subtitle: _t(
-                                  nl: 'Ga naar de bestaande chauffeurcockpit zonder uit te loggen.',
-                                  en: 'Open the existing driver cockpit without signing out.',
-                                  fr: 'Ouvrir le cockpit chauffeur existant sans se déconnecter.',
-                                  es: 'Abre la cabina de conductor existente sin cerrar sesión.',
-                                ),
-                                onTap: () => _openDriverCockpitView(context),
-                                backgroundAsset:
-                                    'assets/fluxidi/driver_view_background_company.png',
-                                useImageBackground: useTabletVisualMode,
-                                compact: isTabletLandscape,
-                              ),
-                            ),
-                            SizedBox(
-                              width: cardWidth,
-                              height: businessQuickActionCardHeight,
-                              child: _quickActionCard(
-                                icon: Icons.radar_rounded,
-                                title: _t(
-                                  nl: 'Vraagradar',
-                                  en: 'Demand radar',
-                                  fr: 'Radar demande',
-                                  es: 'Radar demanda',
-                                ),
-                                subtitle: _t(
-                                  nl: 'Klantvraag',
-                                  en: 'Customer demand',
-                                  fr: 'Demande clients',
-                                  es: 'Demanda clientes',
-                                ),
-                                onTap: () {
-                                  Navigator.of(context).push(
-                                    MaterialPageRoute<void>(
-                                      builder: (_) =>
-                                          const BusinessRegionalDemandPage(),
+                                if (isTabletLandscape)
+                                  SizedBox(
+                                    width: cardWidth,
+                                    height: businessQuickActionCardHeight,
+                                    child: _quickActionCard(
+                                      icon: Icons.calendar_month_outlined,
+                                      title: _t(
+                                        nl: 'Boekingen',
+                                        en: 'Bookings',
+                                        fr: 'Réservations',
+                                        es: 'Reservas',
+                                      ),
+                                      subtitle: _t(
+                                        nl: 'Alle boekingen',
+                                        en: 'All bookings',
+                                        fr: 'Toutes les réservations',
+                                        es: 'Todas las reservas',
+                                      ),
+                                      onTap: () =>
+                                          _openBusinessBookingsOverview(
+                                            context,
+                                          ),
+                                      backgroundAsset: _businessImageAsset(
+                                        executiveGoldAsset:
+                                            'assets/fluxidi/bookings_background_company.png',
+                                        corporateBlueAsset:
+                                            'assets/Corporate BLEU Compagny/company_bookings_corporate_blue.png',
+                                      ),
+                                      useImageBackground: useTabletVisualMode,
+                                      compact: isTabletLandscape,
                                     ),
-                                  );
-                                },
-                                backgroundAsset:
-                                    'assets/fluxidi/demand_radar_background_company.png',
-                                useImageBackground: useTabletVisualMode,
-                                compact: isTabletLandscape,
-                              ),
-                            ),
-                            SizedBox(
-                              width: cardWidth,
-                              height: businessQuickActionCardHeight,
-                              child: _quickActionCard(
-                                icon: Icons.qr_code_2_outlined,
-                                title: _t(
-                                  nl: 'Deel boekingslink',
-                                  en: 'Share booking link',
-                                  fr: 'Partager le lien de réservation',
-                                  es: 'Compartir enlace de reserva',
-                                ),
-                                subtitle: _t(
-                                  nl: 'Link + QR',
-                                  en: 'Link + QR',
-                                  fr: 'Lien + QR',
-                                  es: 'Enlace + QR',
-                                ),
-                                onTap: () =>
-                                    _showPublicBookingShareQuickAccess(context),
-                                backgroundAsset:
-                                    'assets/fluxidi/share_booking_link_background_company.png',
-                                useImageBackground: useTabletVisualMode,
-                                compact: isTabletLandscape,
-                              ),
-                            ),
-                            if (!isTabletLandscape)
-                              SizedBox(
-                                width: cardWidth,
-                                height: businessQuickActionCardHeight,
-                                child: _quickActionCard(
-                                  icon: Icons.calendar_month_outlined,
-                                  title: _t(
-                                    nl: 'Boekingen',
-                                    en: 'Bookings',
-                                    fr: 'Réservations',
-                                    es: 'Reservas',
                                   ),
-                                  subtitle: _t(
-                                    nl: 'Planning & opvolging',
-                                    en: 'Planning & follow-up',
-                                    fr: 'Planification & suivi',
-                                    es: 'Planificación y seguimiento',
+                                SizedBox(
+                                  width: cardWidth,
+                                  height: businessQuickActionCardHeight,
+                                  child: _quickActionCard(
+                                    icon: Icons.credit_card_outlined,
+                                    title: _t(
+                                      nl: 'Abonnement',
+                                      en: 'Plan',
+                                      fr: 'Abonnement',
+                                      es: 'Plan',
+                                    ),
+                                    subtitle: _t(
+                                      nl: 'Facturatie',
+                                      en: 'Billing',
+                                      fr: 'Facturation',
+                                      es: 'Facturación',
+                                    ),
+                                    onTap: () {
+                                      Navigator.of(context).push(
+                                        MaterialPageRoute(
+                                          builder: (_) =>
+                                              const CompanySubscriptionBillingPage(),
+                                        ),
+                                      );
+                                    },
+                                    backgroundAsset: _businessImageAsset(
+                                      executiveGoldAsset:
+                                          'assets/fluxidi/plan_background_company.png',
+                                      corporateBlueAsset:
+                                          'assets/Corporate BLEU Compagny/company_subscriptions_corporate_blue.png',
+                                    ),
+                                    useImageBackground: useTabletVisualMode,
+                                    compact: isTabletLandscape,
                                   ),
-                                  onTap: () =>
-                                      _openBusinessBookingsOverview(context),
-                                  backgroundAsset:
-                                      'assets/fluxidi/bookings_background_company.png',
-                                  useImageBackground: useTabletVisualMode,
-                                  compact: isTabletLandscape,
                                 ),
-                              ),
-                            SizedBox(
-                              width: cardWidth,
-                              height: businessQuickActionCardHeight,
-                              child: _quickActionCard(
-                                icon: Icons.auto_awesome_outlined,
-                                title: _t(
-                                  nl: 'AI Dispatch',
-                                  en: 'AI Dispatch',
-                                  fr: 'Dispatch IA',
-                                  es: 'Despacho IA',
+                                SizedBox(
+                                  width: cardWidth,
+                                  height: businessQuickActionCardHeight,
+                                  child: _quickActionCard(
+                                    icon: Icons.directions_car_filled_outlined,
+                                    title: _t(
+                                      nl: 'Voertuigen',
+                                      en: 'Vehicles',
+                                      fr: 'Véhicules',
+                                      es: 'Vehículos',
+                                    ),
+                                    subtitle: _t(
+                                      nl: 'Wagenpark',
+                                      en: 'Fleet',
+                                      fr: 'Flotte',
+                                      es: 'Flota',
+                                    ),
+                                    onTap: () {
+                                      Navigator.of(context).push(
+                                        MaterialPageRoute(
+                                          builder: (_) =>
+                                              const VehicleManagementPage(),
+                                        ),
+                                      );
+                                    },
+                                    backgroundAsset: _businessImageAsset(
+                                      executiveGoldAsset:
+                                          'assets/fluxidi/vehicles_background_company.png',
+                                      corporateBlueAsset:
+                                          'assets/Corporate BLEU Compagny/company_vehicles_corporate_blue.png',
+                                    ),
+                                    useImageBackground: useTabletVisualMode,
+                                    compact: isTabletLandscape,
+                                  ),
                                 ),
-                                subtitle: _t(
-                                  nl: 'Binnenkort',
-                                  en: 'Coming soon',
-                                  fr: 'Bientôt',
-                                  es: 'Próximamente',
+                                SizedBox(
+                                  width: cardWidth,
+                                  height: businessQuickActionCardHeight,
+                                  child: _quickActionCard(
+                                    icon: Icons.fact_check_outlined,
+                                    title: _t(
+                                      nl: 'Chiron',
+                                      en: 'Chiron',
+                                      fr: 'Chiron',
+                                      es: 'Chiron',
+                                    ),
+                                    subtitle: 'Compliance',
+                                    onTap: () {
+                                      Navigator.of(context).push(
+                                        MaterialPageRoute<void>(
+                                          builder: (_) =>
+                                              const ChironComplianceDashboardPage(),
+                                        ),
+                                      );
+                                    },
+                                    backgroundAsset: _businessImageAsset(
+                                      executiveGoldAsset:
+                                          'assets/fluxidi/chiron_background_company.png',
+                                      corporateBlueAsset:
+                                          'assets/Corporate BLEU Compagny/company_branding_corporate_blue.png',
+                                    ),
+                                    useImageBackground: useTabletVisualMode,
+                                    compact: isTabletLandscape,
+                                  ),
                                 ),
-                                isFuture: true,
-                                futureBadge: _t(
-                                  nl: 'Binnenkort',
-                                  en: 'Soon',
-                                  fr: 'Bientôt',
-                                  es: 'Pronto',
+                                SizedBox(
+                                  width: cardWidth,
+                                  height: businessQuickActionCardHeight,
+                                  child: _quickActionCard(
+                                    icon: Icons.local_taxi_outlined,
+                                    title: _t(
+                                      nl: 'Chauffeurs',
+                                      en: 'Drivers',
+                                      fr: 'Chauffeurs',
+                                      es: 'Conductores',
+                                    ),
+                                    subtitle: _t(
+                                      nl: 'Team',
+                                      en: 'Team',
+                                      fr: 'Équipe',
+                                      es: 'Equipo',
+                                    ),
+                                    statusBadge:
+                                        _isBusinessAdminSessionRecoveryRequired()
+                                        ? _t(
+                                            nl: 'Herstel vereist',
+                                            en: 'Recovery required',
+                                            fr: 'Récupération requise',
+                                            es: 'Recuperación requerida',
+                                          )
+                                        : null,
+                                    onTap: () async {
+                                      final backendContext =
+                                          await _resolveBackendUsableCompanyContextForAdmin(
+                                            reason:
+                                                'business_home_manage_drivers',
+                                            logDegraded: true,
+                                          );
+                                      if (!context.mounted) return;
+                                      if (!backendContext.usable) {
+                                        debugPrint(
+                                          '[COMPANY_SESSION][ADMIN_ENTRY_BLOCKED] flow=business_home_manage_drivers code=${backendContext.reasonCode} source=${backendContext.tokenSource}',
+                                        );
+                                        await _showDegradedCompanySessionRecoveryDialog(
+                                          context,
+                                          reason:
+                                              'business_home_manage_drivers',
+                                        );
+                                        return;
+                                      }
+                                      Navigator.of(context).push(
+                                        MaterialPageRoute<void>(
+                                          builder: (_) =>
+                                              const CompanyDriverManagementPage(),
+                                        ),
+                                      );
+                                    },
+                                    backgroundAsset: _businessImageAsset(
+                                      executiveGoldAsset:
+                                          'assets/fluxidi/drivers_background_company.png',
+                                      corporateBlueAsset:
+                                          'assets/Corporate BLEU Compagny/company_drivers_corporate_blue.png',
+                                    ),
+                                    useImageBackground: useTabletVisualMode,
+                                    compact: isTabletLandscape,
+                                  ),
                                 ),
-                                backgroundAsset:
-                                    'assets/fluxidi/ai_dispatch_background_company.png',
-                                useImageBackground: useTabletVisualMode,
-                                compact: isTabletLandscape,
-                              ),
-                            ),
-                          ],
-                        );
-                      },
-                    ),
-                    SizedBox(height: businessBackButtonGap),
-                    const FluxidiBackToStartButton(),
-                  ],
+                                SizedBox(
+                                  width: cardWidth,
+                                  height: businessQuickActionCardHeight,
+                                  child: _quickActionCard(
+                                    icon: Icons.speed_rounded,
+                                    title: _t(
+                                      nl: 'Chauffeur weergave',
+                                      en: 'Driver view',
+                                      fr: 'Vue chauffeur',
+                                      es: 'Vista de conductor',
+                                    ),
+                                    subtitle: _t(
+                                      nl: 'Ga naar de bestaande chauffeurcockpit zonder uit te loggen.',
+                                      en: 'Open the existing driver cockpit without signing out.',
+                                      fr: 'Ouvrir le cockpit chauffeur existant sans se déconnecter.',
+                                      es: 'Abre la cabina de conductor existente sin cerrar sesión.',
+                                    ),
+                                    onTap: () =>
+                                        _openDriverCockpitView(context),
+                                    backgroundAsset:
+                                        'assets/fluxidi/driver_view_background_company.png',
+                                    useImageBackground: useTabletVisualMode,
+                                    compact: isTabletLandscape,
+                                  ),
+                                ),
+                                SizedBox(
+                                  width: cardWidth,
+                                  height: businessQuickActionCardHeight,
+                                  child: _quickActionCard(
+                                    icon: Icons.radar_rounded,
+                                    title: _t(
+                                      nl: 'Vraagradar',
+                                      en: 'Demand radar',
+                                      fr: 'Radar demande',
+                                      es: 'Radar demanda',
+                                    ),
+                                    subtitle: _t(
+                                      nl: 'Klantvraag',
+                                      en: 'Customer demand',
+                                      fr: 'Demande clients',
+                                      es: 'Demanda clientes',
+                                    ),
+                                    onTap: () {
+                                      Navigator.of(context).push(
+                                        MaterialPageRoute<void>(
+                                          builder: (_) =>
+                                              const BusinessRegionalDemandPage(),
+                                        ),
+                                      );
+                                    },
+                                    backgroundAsset: _businessImageAsset(
+                                      executiveGoldAsset:
+                                          'assets/fluxidi/demand_radar_background_company.png',
+                                      corporateBlueAsset:
+                                          'assets/Corporate BLEU Compagny/company_network_corporate_blue.png',
+                                    ),
+                                    useImageBackground: useTabletVisualMode,
+                                    compact: isTabletLandscape,
+                                  ),
+                                ),
+                                SizedBox(
+                                  width: cardWidth,
+                                  height: businessQuickActionCardHeight,
+                                  child: _quickActionCard(
+                                    icon: Icons.qr_code_2_outlined,
+                                    title: _t(
+                                      nl: 'Deel boekingslink',
+                                      en: 'Share booking link',
+                                      fr: 'Partager le lien de réservation',
+                                      es: 'Compartir enlace de reserva',
+                                    ),
+                                    subtitle: _t(
+                                      nl: 'Link + QR',
+                                      en: 'Link + QR',
+                                      fr: 'Lien + QR',
+                                      es: 'Enlace + QR',
+                                    ),
+                                    onTap: () =>
+                                        _showPublicBookingShareQuickAccess(
+                                          context,
+                                        ),
+                                    backgroundAsset: _businessImageAsset(
+                                      executiveGoldAsset:
+                                          'assets/fluxidi/share_booking_link_background_company.png',
+                                      corporateBlueAsset:
+                                          'assets/Corporate BLEU Compagny/company_mobile_app_corporate_blue.png',
+                                    ),
+                                    useImageBackground: useTabletVisualMode,
+                                    compact: isTabletLandscape,
+                                  ),
+                                ),
+                                if (!isTabletLandscape)
+                                  SizedBox(
+                                    width: cardWidth,
+                                    height: businessQuickActionCardHeight,
+                                    child: _quickActionCard(
+                                      icon: Icons.calendar_month_outlined,
+                                      title: _t(
+                                        nl: 'Boekingen',
+                                        en: 'Bookings',
+                                        fr: 'Réservations',
+                                        es: 'Reservas',
+                                      ),
+                                      subtitle: _t(
+                                        nl: 'Planning & opvolging',
+                                        en: 'Planning & follow-up',
+                                        fr: 'Planification & suivi',
+                                        es: 'Planificación y seguimiento',
+                                      ),
+                                      onTap: () =>
+                                          _openBusinessBookingsOverview(
+                                            context,
+                                          ),
+                                      backgroundAsset: _businessImageAsset(
+                                        executiveGoldAsset:
+                                            'assets/fluxidi/bookings_background_company.png',
+                                        corporateBlueAsset:
+                                            'assets/Corporate BLEU Compagny/company_bookings_corporate_blue.png',
+                                      ),
+                                      useImageBackground: useTabletVisualMode,
+                                      compact: isTabletLandscape,
+                                    ),
+                                  ),
+                                SizedBox(
+                                  width: cardWidth,
+                                  height: businessQuickActionCardHeight,
+                                  child: _quickActionCard(
+                                    icon: Icons.auto_awesome_outlined,
+                                    title: _t(
+                                      nl: 'AI Dispatch',
+                                      en: 'AI Dispatch',
+                                      fr: 'Dispatch IA',
+                                      es: 'Despacho IA',
+                                    ),
+                                    subtitle: _t(
+                                      nl: 'Binnenkort',
+                                      en: 'Coming soon',
+                                      fr: 'Bientôt',
+                                      es: 'Próximamente',
+                                    ),
+                                    isFuture: true,
+                                    futureBadge: _t(
+                                      nl: 'Binnenkort',
+                                      en: 'Soon',
+                                      fr: 'Bientôt',
+                                      es: 'Pronto',
+                                    ),
+                                    backgroundAsset: _businessImageAsset(
+                                      executiveGoldAsset:
+                                          'assets/fluxidi/ai_dispatch_background_company.png',
+                                      corporateBlueAsset:
+                                          'assets/Corporate BLEU Compagny/company_ai_dispatch_corporate_blue.png',
+                                    ),
+                                    useImageBackground: useTabletVisualMode,
+                                    compact: isTabletLandscape,
+                                  ),
+                                ),
+                              ],
+                            );
+                          },
+                        ),
+                        SizedBox(height: businessBackButtonGap),
+                        const FluxidiBackToStartButton(),
+                      ],
+                    );
+                  },
                 );
               },
             ),

@@ -9,7 +9,10 @@ class BusinessThemePalette {
     required this.surface,
     required this.surfaceAlt,
     required this.textPrimary,
+    required this.textSecondary,
     required this.textMuted,
+    required this.textOnAccent,
+    required this.textOnWarning,
     required this.accent,
     required this.border,
     required this.danger,
@@ -22,7 +25,10 @@ class BusinessThemePalette {
   final Color surface;
   final Color surfaceAlt;
   final Color textPrimary;
+  final Color textSecondary;
   final Color textMuted;
+  final Color textOnAccent;
+  final Color textOnWarning;
   final Color accent;
   final Color border;
   final Color danger;
@@ -36,7 +42,10 @@ const BusinessThemePalette _executiveGoldPalette = BusinessThemePalette(
   surface: Color(0xFF101010),
   surfaceAlt: Color(0xFF16120A),
   textPrimary: Color(0xFFFFFFFF),
+  textSecondary: Color(0xFFE9E9E9),
   textMuted: Color(0xFFB4B4B4),
+  textOnAccent: Color(0xFF1B1B1B),
+  textOnWarning: Color(0xFFFFF2CC),
   accent: Color(0xFFE5B641),
   border: Color(0xFF3B2C14),
   danger: Color(0xFFCD5C6C),
@@ -50,7 +59,10 @@ const BusinessThemePalette _corporateBluePalette = BusinessThemePalette(
   surface: Color(0xFF111827),
   surfaceAlt: Color(0xFF1A2437),
   textPrimary: Color(0xFFF4F8FF),
+  textSecondary: Color(0xFFDCE7F8),
   textMuted: Color(0xFFB8C4D6),
+  textOnAccent: Color(0xFF0E1422),
+  textOnWarning: Color(0xFFFFF0CC),
   accent: Color(0xFF60A5FA),
   border: Color(0xFF31445F),
   danger: Color(0xFFD46A7B),
@@ -64,7 +76,10 @@ const BusinessThemePalette _cleanProfessionalPalette = BusinessThemePalette(
   surface: Color(0xFFFFFFFF),
   surfaceAlt: Color(0xFFEFF2F8),
   textPrimary: Color(0xFF1C2430),
+  textSecondary: Color(0xFF2D3A4C),
   textMuted: Color(0xFF5F6B7A),
+  textOnAccent: Color(0xFFFFFFFF),
+  textOnWarning: Color(0xFF3C2900),
   accent: Color(0xFF3B82F6),
   border: Color(0xFFD7DEE9),
   danger: Color(0xFFC95D6D),

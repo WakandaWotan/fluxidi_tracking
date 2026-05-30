@@ -48,5 +48,6 @@ flutter:
 
   assets:
     - assets/fluxidi/
+    - assets/Corporate BLEU Compagny/
     - assets/events/categories/
     - assets/payment/png/
