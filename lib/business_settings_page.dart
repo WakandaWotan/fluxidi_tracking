@@ -8,6 +8,7 @@ import 'package:flutter/services.dart';
 import 'package:fluxidi_tracking/airport/airport_catalog.generated.dart';
 import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
+import 'package:fluxidi_tracking/business_theme_page.dart';
 import 'package:fluxidi_tracking/company_session_store.dart';
 import 'package:geolocator/geolocator.dart' as geo;
 import 'package:image_picker/image_picker.dart';
@@ -6170,6 +6171,44 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
               const SizedBox(height: 10),
             ],
             _buildSetupCockpit(),
+            Container(
+              margin: const EdgeInsets.only(bottom: 10),
+              decoration: BoxDecoration(
+                color: const Color(0xFF101113),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: const Color(0x22FFFFFF)),
+              ),
+              child: ListTile(
+                leading: const Icon(
+                  Icons.palette_outlined,
+                  color: Color(0xFFE5B641),
+                ),
+                title: Text(
+                  _t(
+                    nl: "Thema's & uitstraling",
+                    en: 'Themes & appearance',
+                    fr: 'Thèmes et apparence',
+                    es: 'Temas y apariencia',
+                  ),
+                ),
+                subtitle: Text(
+                  _t(
+                    nl: 'Kies de kleuren voor bedrijf, chauffeurs en klantweergave.',
+                    en: 'Choose colors for business, drivers, and customer display.',
+                    fr: 'Choisissez les couleurs pour l’entreprise, les chauffeurs et la vue client.',
+                    es: 'Elige los colores para empresa, conductores y vista cliente.',
+                  ),
+                ),
+                trailing: const Icon(Icons.chevron_right_rounded),
+                onTap: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => const BusinessThemePage(),
+                    ),
+                  );
+                },
+              ),
+            ),
             _collapsibleSettingsCard(
               id: 'local_company',
               icon: Icons.apartment_outlined,
