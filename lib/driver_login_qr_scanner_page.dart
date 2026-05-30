@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:fluxidi_tracking/driver_theme_palette.dart';
+import 'package:fluxidi_tracking/driver_theme_store.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
 class DriverLoginQrScannerPage extends StatefulWidget {
@@ -23,61 +25,69 @@ class _DriverLoginQrScannerPageState extends State<DriverLoginQrScannerPage> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFF07080C),
-      appBar: AppBar(
-        backgroundColor: const Color(0xFF07080C),
-        foregroundColor: Colors.white,
-        title: const Text('Scan bedrijfs QR'),
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back),
-          onPressed: () => Navigator.of(context).pop(),
-        ),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.close),
-            onPressed: () => Navigator.of(context).pop(),
-          ),
-        ],
-      ),
-      body: Column(
-        children: [
-          const SizedBox(height: 12),
-          Text(
-            'Richt de camera op de QR-code van de bedrijfsleider.',
-            style: TextStyle(
-              color: Colors.white.withOpacity(0.86),
-              fontSize: 14,
+    return ValueListenableBuilder<DriverThemeVariant>(
+      valueListenable: driverThemeNotifier,
+      builder: (context, variant, __) {
+        final palette = paletteForDriverTheme(variant);
+        return Scaffold(
+          backgroundColor: palette.background,
+          appBar: AppBar(
+            backgroundColor: palette.background,
+            foregroundColor: palette.textPrimary,
+            title: const Text('Scan bedrijfs QR'),
+            leading: IconButton(
+              icon: const Icon(Icons.arrow_back),
+              onPressed: () => Navigator.of(context).pop(),
             ),
-            textAlign: TextAlign.center,
+            actions: [
+              IconButton(
+                icon: const Icon(Icons.close),
+                onPressed: () => Navigator.of(context).pop(),
+              ),
+            ],
           ),
-          const SizedBox(height: 12),
-          Expanded(
-            child: Padding(
-              padding: const EdgeInsets.all(12),
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(16),
-                child: Stack(
-                  fit: StackFit.expand,
-                  children: [
-                    MobileScanner(onDetect: _handleDetect),
-                    Container(
-                      decoration: BoxDecoration(
-                        border: Border.all(
-                          color: const Color(0xFFE5B641).withOpacity(0.7),
-                          width: 1.4,
+          body: Column(
+            children: [
+              const SizedBox(height: 12),
+              Text(
+                'Richt de camera op de QR-code van de bedrijfsleider.',
+                style: TextStyle(
+                  color: palette.textMuted.withOpacity(
+                    palette.isDark ? 0.9 : 1,
+                  ),
+                  fontSize: 14,
+                ),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 12),
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(16),
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        MobileScanner(onDetect: _handleDetect),
+                        Container(
+                          decoration: BoxDecoration(
+                            border: Border.all(
+                              color: palette.accent.withOpacity(0.7),
+                              width: 1.4,
+                            ),
+                            borderRadius: BorderRadius.circular(16),
+                          ),
                         ),
-                        borderRadius: BorderRadius.circular(16),
-                      ),
+                      ],
                     ),
-                  ],
+                  ),
                 ),
               ),
-            ),
+              const SizedBox(height: 8),
+            ],
           ),
-          const SizedBox(height: 8),
-        ],
-      ),
+        );
+      },
     );
   }
 }

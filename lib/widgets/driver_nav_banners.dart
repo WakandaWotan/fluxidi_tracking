@@ -1,6 +1,8 @@
 import 'dart:ui' show ImageFilter;
 
 import 'package:flutter/material.dart';
+import 'package:fluxidi_tracking/driver_theme_palette.dart';
+import 'package:fluxidi_tracking/driver_theme_store.dart';
 
 class DriverTurnInstructionBanner extends StatelessWidget {
   final bool compact;
@@ -22,85 +24,106 @@ class DriverTurnInstructionBanner extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(compact ? 14 : 16),
-      child: BackdropFilter(
-        filter: ImageFilter.blur(
-          sigmaX: compact ? 7 : 9,
-          sigmaY: compact ? 7 : 9,
-        ),
-        child: Container(
-          constraints: BoxConstraints(maxHeight: compact ? 58 : 64),
-          padding: EdgeInsets.symmetric(
-            horizontal: compact ? 8 : 10,
-            vertical: compact ? 4 : 5,
-          ),
-          decoration: BoxDecoration(
-            color: const Color(0xFF07142D).withOpacity(0.88),
-            borderRadius: BorderRadius.circular(compact ? 14 : 16),
-            border: Border.all(color: const Color(0x662D8CFF), width: 1.2),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(0.30),
-                blurRadius: 12,
-                offset: const Offset(0, 4),
+    return ValueListenableBuilder<DriverThemeVariant>(
+      valueListenable: driverThemeNotifier,
+      builder: (context, variant, _) {
+        final palette = paletteForDriverTheme(variant);
+        return ClipRRect(
+          borderRadius: BorderRadius.circular(compact ? 14 : 16),
+          child: BackdropFilter(
+            filter: ImageFilter.blur(
+              sigmaX: compact ? 7 : 9,
+              sigmaY: compact ? 7 : 9,
+            ),
+            child: Container(
+              constraints: BoxConstraints(maxHeight: compact ? 58 : 64),
+              padding: EdgeInsets.symmetric(
+                horizontal: compact ? 8 : 10,
+                vertical: compact ? 4 : 5,
               ),
-            ],
-          ),
-          child: Row(
-            children: [
-              Container(
-                width: compact ? 34 : 38,
-                height: compact ? 34 : 38,
-                decoration: BoxDecoration(
-                  color: const Color(0xFF2D8CFF),
-                  borderRadius: BorderRadius.circular(compact ? 10 : 12),
-                  border: Border.all(
-                    color: Colors.white.withOpacity(0.80),
-                    width: 1.2,
-                  ),
+              decoration: BoxDecoration(
+                color: palette.surface.withOpacity(
+                  palette.isDark ? 0.88 : 0.95,
                 ),
-                child: Icon(icon, size: compact ? 22 : 24, color: Colors.white),
+                borderRadius: BorderRadius.circular(compact ? 14 : 16),
+                border: Border.all(
+                  color: palette.border.withOpacity(
+                    palette.isDark ? 0.68 : 0.9,
+                  ),
+                  width: 1.2,
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: palette.shadow.withOpacity(
+                      palette.isDark ? 0.6 : 0.35,
+                    ),
+                    blurRadius: 12,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
               ),
-              SizedBox(width: compact ? 6 : 8),
-              if (!isArrival)
-                Container(
-                  padding: EdgeInsets.symmetric(
-                    horizontal: compact ? 6 : 7,
-                    vertical: compact ? 3 : 4,
-                  ),
-                  decoration: BoxDecoration(
-                    color: const Color(0x332D8CFF),
-                    borderRadius: BorderRadius.circular(999),
-                    border: Border.all(color: Colors.white.withOpacity(0.18)),
-                  ),
-                  child: Text(
-                    distanceText,
-                    style: TextStyle(
-                      fontSize: compact ? 10 : 11,
-                      fontWeight: FontWeight.w800,
-                      color: Colors.white.withOpacity(0.96),
+              child: Row(
+                children: [
+                  Container(
+                    width: compact ? 34 : 38,
+                    height: compact ? 34 : 38,
+                    decoration: BoxDecoration(
+                      color: palette.accent,
+                      borderRadius: BorderRadius.circular(compact ? 10 : 12),
+                      border: Border.all(
+                        color: palette.textPrimary.withOpacity(0.80),
+                        width: 1.2,
+                      ),
+                    ),
+                    child: Icon(
+                      icon,
+                      size: compact ? 22 : 24,
+                      color: palette.isDark ? Colors.black : Colors.white,
                     ),
                   ),
-                ),
-              if (!isArrival) SizedBox(width: compact ? 6 : 8),
-              Expanded(
-                child: Text(
-                  street.isNotEmpty ? '$line1 • $street' : line1,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: compact ? 13 : 14,
-                    fontWeight: FontWeight.w800,
-                    color: Colors.white,
-                    height: 1.12,
+                  SizedBox(width: compact ? 6 : 8),
+                  if (!isArrival)
+                    Container(
+                      padding: EdgeInsets.symmetric(
+                        horizontal: compact ? 6 : 7,
+                        vertical: compact ? 3 : 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: palette.accent.withOpacity(0.22),
+                        borderRadius: BorderRadius.circular(999),
+                        border: Border.all(
+                          color: palette.textPrimary.withOpacity(0.18),
+                        ),
+                      ),
+                      child: Text(
+                        distanceText,
+                        style: TextStyle(
+                          fontSize: compact ? 10 : 11,
+                          fontWeight: FontWeight.w800,
+                          color: palette.textPrimary.withOpacity(0.96),
+                        ),
+                      ),
+                    ),
+                  if (!isArrival) SizedBox(width: compact ? 6 : 8),
+                  Expanded(
+                    child: Text(
+                      street.isNotEmpty ? '$line1 • $street' : line1,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: compact ? 13 : 14,
+                        fontWeight: FontWeight.w800,
+                        color: palette.textPrimary,
+                        height: 1.12,
+                      ),
+                    ),
                   ),
-                ),
+                ],
               ),
-            ],
+            ),
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 }
@@ -117,36 +140,48 @@ class DriverNavLoadingBanner extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(compact ? 9 : 10),
-      child: BackdropFilter(
-        filter: ImageFilter.blur(
-          sigmaX: compact ? 7 : 8,
-          sigmaY: compact ? 7 : 8,
-        ),
-        child: Container(
-          constraints: BoxConstraints(maxHeight: compact ? 44 : 48),
-          padding: EdgeInsets.symmetric(
-            horizontal: compact ? 8 : 9,
-            vertical: compact ? 3 : 4,
-          ),
-          decoration: BoxDecoration(
-            color: const Color(0xFF0B1733).withOpacity(0.78),
-            borderRadius: BorderRadius.circular(compact ? 9 : 10),
-            border: Border.all(color: const Color(0x332D8CFF)),
-          ),
-          child: Text(
-            text,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              fontSize: compact ? 11 : 12,
-              fontWeight: FontWeight.w700,
-              color: Colors.white.withOpacity(0.92),
+    return ValueListenableBuilder<DriverThemeVariant>(
+      valueListenable: driverThemeNotifier,
+      builder: (context, variant, _) {
+        final palette = paletteForDriverTheme(variant);
+        return ClipRRect(
+          borderRadius: BorderRadius.circular(compact ? 9 : 10),
+          child: BackdropFilter(
+            filter: ImageFilter.blur(
+              sigmaX: compact ? 7 : 8,
+              sigmaY: compact ? 7 : 8,
+            ),
+            child: Container(
+              constraints: BoxConstraints(maxHeight: compact ? 44 : 48),
+              padding: EdgeInsets.symmetric(
+                horizontal: compact ? 8 : 9,
+                vertical: compact ? 3 : 4,
+              ),
+              decoration: BoxDecoration(
+                color: palette.surfaceAlt.withOpacity(
+                  palette.isDark ? 0.82 : 0.95,
+                ),
+                borderRadius: BorderRadius.circular(compact ? 9 : 10),
+                border: Border.all(
+                  color: palette.border.withOpacity(
+                    palette.isDark ? 0.55 : 0.85,
+                  ),
+                ),
+              ),
+              child: Text(
+                text,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: compact ? 11 : 12,
+                  fontWeight: FontWeight.w700,
+                  color: palette.textPrimary.withOpacity(0.92),
+                ),
+              ),
             ),
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 }
@@ -163,36 +198,44 @@ class DriverNoNavInstructionsBanner extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(compact ? 9 : 10),
-      child: BackdropFilter(
-        filter: ImageFilter.blur(
-          sigmaX: compact ? 7 : 8,
-          sigmaY: compact ? 7 : 8,
-        ),
-        child: Container(
-          constraints: BoxConstraints(maxHeight: compact ? 44 : 48),
-          padding: EdgeInsets.symmetric(
-            horizontal: compact ? 8 : 9,
-            vertical: compact ? 3 : 4,
-          ),
-          decoration: BoxDecoration(
-            color: const Color(0xFF0B1733).withOpacity(0.78),
-            borderRadius: BorderRadius.circular(compact ? 9 : 10),
-            border: Border.all(color: const Color(0x33FF8A80)),
-          ),
-          child: Text(
-            text,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              fontSize: compact ? 11 : 12,
-              fontWeight: FontWeight.w700,
-              color: Colors.white.withOpacity(0.92),
+    return ValueListenableBuilder<DriverThemeVariant>(
+      valueListenable: driverThemeNotifier,
+      builder: (context, variant, _) {
+        final palette = paletteForDriverTheme(variant);
+        return ClipRRect(
+          borderRadius: BorderRadius.circular(compact ? 9 : 10),
+          child: BackdropFilter(
+            filter: ImageFilter.blur(
+              sigmaX: compact ? 7 : 8,
+              sigmaY: compact ? 7 : 8,
+            ),
+            child: Container(
+              constraints: BoxConstraints(maxHeight: compact ? 44 : 48),
+              padding: EdgeInsets.symmetric(
+                horizontal: compact ? 8 : 9,
+                vertical: compact ? 3 : 4,
+              ),
+              decoration: BoxDecoration(
+                color: palette.surfaceAlt.withOpacity(
+                  palette.isDark ? 0.82 : 0.95,
+                ),
+                borderRadius: BorderRadius.circular(compact ? 9 : 10),
+                border: Border.all(color: palette.danger.withOpacity(0.55)),
+              ),
+              child: Text(
+                text,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: compact ? 11 : 12,
+                  fontWeight: FontWeight.w700,
+                  color: palette.textPrimary.withOpacity(0.92),
+                ),
+              ),
             ),
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 }
