@@ -260,11 +260,13 @@ class _BusinessThemePageState extends State<BusinessThemePage> {
                   paletteForBusinessTheme(variant).surface,
                   paletteForBusinessTheme(variant).accent,
                 ],
-                onTap: () {
-                  unawaited(saveBusinessThemePreference(variant));
+                onTap: () async {
+                  await saveBusinessThemePreference(variant);
                   _showSavedSnack(
                     'Bedrijfsthema opgeslagen: ${_labelForBusiness(variant)}',
                   );
+                  if (!context.mounted) return;
+                  Navigator.of(context).pop(true);
                 },
                 visuals: _activeVisuals,
               ),

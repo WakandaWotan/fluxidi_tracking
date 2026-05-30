@@ -6200,12 +6200,15 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                   ),
                 ),
                 trailing: const Icon(Icons.chevron_right_rounded),
-                onTap: () {
-                  Navigator.of(context).push(
+                onTap: () async {
+                  final result = await Navigator.of(context).push<bool>(
                     MaterialPageRoute(
                       builder: (_) => const BusinessThemePage(),
                     ),
                   );
+                  if (result == true && context.mounted) {
+                    Navigator.of(context).pop();
+                  }
                 },
               ),
             ),
