@@ -604,7 +604,9 @@ class _CompanySubscriptionBillingPageState
             child: LinearProgressIndicator(
               minHeight: 7,
               value: progress,
-              backgroundColor: Colors.white12,
+              backgroundColor: _businessThemePalette.border.withOpacity(
+                _businessThemePalette.isDark ? 0.30 : 0.55,
+              ),
               valueColor: AlwaysStoppedAnimation<Color>(accent),
             ),
           ),
@@ -934,8 +936,9 @@ class _CompanySubscriptionBillingPageState
                                         fr: 'Creations PDF',
                                         es: 'Creaciones PDF',
                                       ),
-                                      style: const TextStyle(
-                                        color: Colors.white,
+                                      style: TextStyle(
+                                        color:
+                                            _businessThemePalette.textPrimary,
                                         fontWeight: FontWeight.w800,
                                         fontSize: 12.8,
                                       ),
@@ -948,8 +951,8 @@ class _CompanySubscriptionBillingPageState
                                         fr: 'Limite : 200 par vehicule / mois',
                                         es: 'Limite: 200 por vehiculo / mes',
                                       ),
-                                      style: const TextStyle(
-                                        color: Colors.white70,
+                                      style: TextStyle(
+                                        color: _businessThemePalette.textMuted,
                                         fontSize: 12.1,
                                       ),
                                     ),
@@ -961,8 +964,9 @@ class _CompanySubscriptionBillingPageState
                                         fr: 'La consommation n est pas encore reliee',
                                         es: 'El consumo aun no esta vinculado',
                                       ),
-                                      style: const TextStyle(
-                                        color: Colors.white60,
+                                      style: TextStyle(
+                                        color: _businessThemePalette.textMuted
+                                            .withOpacity(0.86),
                                         fontSize: 11.8,
                                       ),
                                     ),
@@ -995,8 +999,9 @@ class _CompanySubscriptionBillingPageState
                                         fr: 'Peppol',
                                         es: 'Peppol',
                                       ),
-                                      style: const TextStyle(
-                                        color: Colors.white,
+                                      style: TextStyle(
+                                        color:
+                                            _businessThemePalette.textPrimary,
                                         fontWeight: FontWeight.w800,
                                         fontSize: 12.8,
                                       ),
@@ -1013,9 +1018,20 @@ class _CompanySubscriptionBillingPageState
                                             fr: 'Inactif',
                                             es: 'No activo',
                                           ),
-                                          bg: Colors.white10,
-                                          border: Colors.white24,
-                                          textColor: Colors.white70,
+                                          bg: _businessThemePalette.surfaceAlt
+                                              .withOpacity(
+                                                _businessThemePalette.isDark
+                                                    ? 0.66
+                                                    : 0.92,
+                                              ),
+                                          border: _businessThemePalette.border
+                                              .withOpacity(
+                                                _businessThemePalette.isDark
+                                                    ? 0.52
+                                                    : 0.78,
+                                              ),
+                                          textColor:
+                                              _businessThemePalette.textMuted,
                                         ),
                                         _chip(
                                           text: _t(
@@ -1341,8 +1357,9 @@ class _CompanySubscriptionBillingPageState
                               fr: 'À ce stade, les limites et options sont affichées à titre informatif. L’activation et la facturation passent par la gestion.',
                               es: 'En esta fase, los limites y complementos se muestran de forma informativa. La activacion y la facturacion se gestionan desde administracion.',
                             ),
-                            style: const TextStyle(
-                              color: Colors.white60,
+                            style: TextStyle(
+                              color: _businessThemePalette.textMuted
+                                  .withOpacity(0.88),
                               fontSize: 12,
                             ),
                           ),
