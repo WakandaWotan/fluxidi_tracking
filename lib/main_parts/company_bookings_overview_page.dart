@@ -25,6 +25,60 @@ class _CompanyBookingsOverviewPageState
     required String es,
   }) => _tr(nl: nl, en: en, fr: fr, es: es);
 
+  _CompanyBookingsThemeTokens _themeTokensFor(BusinessThemeVariant variant) {
+    final palette = paletteForBusinessTheme(variant);
+    final isExecutiveGold = variant == BusinessThemeVariant.executiveGold;
+    final isClean = variant == BusinessThemeVariant.cleanProfessional;
+    final cardGradient = isClean
+        ? <Color>[palette.surface, palette.surface, palette.surfaceAlt]
+        : <Color>[palette.surface, palette.background, palette.surfaceAlt];
+    final legAccent = isExecutiveGold
+        ? const Color(0xFF52B6FF)
+        : palette.accent;
+    return _CompanyBookingsThemeTokens(
+      palette: palette,
+      background: palette.background,
+      appBar: palette.background,
+      cardGradient: cardGradient,
+      cardBorder: palette.border.withOpacity(isClean ? 0.95 : 0.58),
+      shadow: Colors.black.withOpacity(isClean ? 0.08 : 0.26),
+      accent: palette.accent,
+      legAccent: legAccent,
+      textPrimary: palette.textPrimary,
+      textSecondary: palette.textMuted,
+      textTertiary: palette.textMuted.withOpacity(isClean ? 0.88 : 0.74),
+      chipSelectedBg: palette.accent.withOpacity(isClean ? 0.14 : 0.16),
+      chipUnselectedBg: palette.surfaceAlt.withOpacity(isClean ? 0.9 : 0.78),
+      chipSelectedBorder: palette.accent.withOpacity(0.62),
+      chipUnselectedBorder: palette.border.withOpacity(isClean ? 0.84 : 0.42),
+      chipSelectedText: palette.accent,
+      chipUnselectedText: palette.textMuted,
+      paidBg: palette.success.withOpacity(isClean ? 0.12 : 0.14),
+      paidBorder: palette.success.withOpacity(0.45),
+      paidText: palette.success,
+      unpaidBg: palette.accent.withOpacity(isClean ? 0.12 : 0.13),
+      unpaidBorder: palette.accent.withOpacity(0.42),
+      unpaidText: palette.accent,
+      warningText: const Color(0xFFF6B94D),
+      danger: palette.danger,
+      reviewPrimaryText: isClean ? palette.textPrimary : palette.textPrimary,
+      reviewSecondaryText: isClean
+          ? palette.textMuted.withOpacity(0.96)
+          : palette.textMuted.withOpacity(0.9),
+      reviewPlaceholderText: isClean
+          ? palette.textMuted.withOpacity(0.98)
+          : palette.textMuted.withOpacity(0.92),
+      reviewWarningText: isClean
+          ? const Color(0xFF8A5A00)
+          : const Color(0xFFF6B94D),
+    );
+  }
+
+  bool _isMissingValue(String value) {
+    final text = value.trim();
+    return text.isEmpty || text == '—' || text == '-';
+  }
+
   Map<String, String> _adminHeaders() {
     final headers = <String, String>{'Content-Type': 'application/json'};
     final token = kAdminToken.trim();
@@ -84,9 +138,12 @@ class _CompanyBookingsOverviewPageState
     if (_bulkArchiving) return;
     final bookingId = item.bookingId.trim();
     if (bookingId.isEmpty) return;
+    final tokens = _themeTokensFor(businessThemeNotifier.value);
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
+        backgroundColor: tokens.palette.surface,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
         title: Text(
           _t(
             nl: 'Boeking verbergen?',
@@ -94,6 +151,7 @@ class _CompanyBookingsOverviewPageState
             fr: 'Masquer la réservation ?',
             es: '¿Ocultar reserva?',
           ),
+          style: TextStyle(color: tokens.textPrimary),
         ),
         content: Text(
           _t(
@@ -102,15 +160,23 @@ class _CompanyBookingsOverviewPageState
             fr: 'Cette réservation sera masquée uniquement de cet aperçu des réservations de l’entreprise. Les factures, paiements, l’historique client et les données d’audit restent conservés.',
             es: 'Esta reserva se ocultará solo de esta vista de reservas de la empresa. Las facturas, pagos, historial del cliente y datos de auditoría se conservan.',
           ),
+          style: TextStyle(color: tokens.textSecondary),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(false),
             child: Text(
               _t(nl: 'Annuleren', en: 'Cancel', fr: 'Annuler', es: 'Cancelar'),
+              style: TextStyle(color: tokens.textSecondary),
             ),
           ),
           FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: tokens.accent,
+              foregroundColor: tokens.palette.isDark
+                  ? const Color(0xFF0B0B0B)
+                  : Colors.white,
+            ),
             onPressed: () => Navigator.of(ctx).pop(true),
             child: Text(
               _t(nl: 'Verberg', en: 'Hide', fr: 'Masquer', es: 'Ocultar'),
@@ -168,9 +234,12 @@ class _CompanyBookingsOverviewPageState
     final visibleItems = _filteredItems;
     if (visibleItems.isEmpty) return;
     final count = visibleItems.length;
+    final tokens = _themeTokensFor(businessThemeNotifier.value);
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
+        backgroundColor: tokens.palette.surface,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
         title: Text(
           _t(
             nl: 'Zichtbare boekingen verbergen?',
@@ -178,6 +247,7 @@ class _CompanyBookingsOverviewPageState
             fr: 'Masquer les réservations visibles ?',
             es: '¿Ocultar reservas visibles?',
           ),
+          style: TextStyle(color: tokens.textPrimary),
         ),
         content: Text(
           _t(
@@ -186,15 +256,23 @@ class _CompanyBookingsOverviewPageState
             fr: 'Vous masquez $count réservations de cette liste. Les factures, paiements, l’historique client et les données d’audit restent conservés.',
             es: 'Ocultarás $count reservas de esta lista. Las facturas, pagos, historial del cliente y datos de auditoría se conservan.',
           ),
+          style: TextStyle(color: tokens.textSecondary),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(false),
             child: Text(
               _t(nl: 'Annuleren', en: 'Cancel', fr: 'Annuler', es: 'Cancelar'),
+              style: TextStyle(color: tokens.textSecondary),
             ),
           ),
           FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: tokens.accent,
+              foregroundColor: tokens.palette.isDark
+                  ? const Color(0xFF0B0B0B)
+                  : Colors.white,
+            ),
             onPressed: () => Navigator.of(ctx).pop(true),
             child: Text(
               _t(
@@ -516,19 +594,22 @@ class _CompanyBookingsOverviewPageState
     return normalized.replaceAll('_', ' ');
   }
 
-  Color _statusColor(_CompanyBookingOverviewItem item) {
+  Color _statusColor(
+    _CompanyBookingOverviewItem item,
+    _CompanyBookingsThemeTokens tokens,
+  ) {
     switch (item.bucket) {
       case _CompanyBookingsFilter.completed:
-        return const Color(0xFF66D9A8);
+        return tokens.palette.success;
       case _CompanyBookingsFilter.cancelled:
-        return const Color(0xFFE88989);
+        return tokens.danger;
       case _CompanyBookingsFilter.review:
-        return const Color(0xFFF6B94D);
+        return tokens.warningText;
       case _CompanyBookingsFilter.open:
         if (item.statusText.trim().toUpperCase() == 'CONFIRMED') {
-          return const Color(0xFF34D29A);
+          return tokens.palette.success;
         }
-        return kFluxidiYellow;
+        return tokens.accent;
     }
   }
 
@@ -565,8 +646,12 @@ class _CompanyBookingsOverviewPageState
     return _t(nl: 'Rit', en: 'Ride leg', fr: 'Trajet', es: 'Tramo');
   }
 
-  Widget _buildCompanyBookingPremiumCard(_CompanyBookingOverviewItem item) {
-    final statusColor = _statusColor(item);
+  Widget _buildCompanyBookingPremiumCard(
+    _CompanyBookingOverviewItem item,
+    _CompanyBookingsThemeTokens tokens,
+  ) {
+    final isReview = item.bucket == _CompanyBookingsFilter.review;
+    final statusColor = _statusColor(item, tokens);
     final localizedStatus = _localizedBookingStatus(item.statusText);
     final localizedPayment = _localizedPaymentStatus(item.paymentStatus);
     final isPaid =
@@ -578,19 +663,26 @@ class _CompanyBookingsOverviewPageState
       item.currency,
     );
     final legLabel = _companyLegLabel(item);
+    final pickupText = _formatPickup(item.pickupIso);
+    final fromMissing = _isMissingValue(item.fromAddress);
+    final toMissing = _isMissingValue(item.toAddress);
+    final pickupMissing = _isMissingValue(pickupText);
+    final driverMissing = _isMissingValue(item.assignedDriverText);
+    final vehicleMissing = _isMissingValue(item.assignedVehicleText);
+    final customerMissing = _isMissingValue(item.customerName);
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       decoration: BoxDecoration(
-        gradient: const LinearGradient(
+        gradient: LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          colors: [Color(0xFF121212), Color(0xFF0A0A0B), Color(0xFF080809)],
+          colors: tokens.cardGradient,
         ),
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: kFluxidiYellow.withOpacity(0.2)),
+        border: Border.all(color: tokens.cardBorder),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.28),
+            color: tokens.shadow,
             blurRadius: 16,
             offset: const Offset(0, 8),
           ),
@@ -611,16 +703,16 @@ class _CompanyBookingsOverviewPageState
                       vertical: 6,
                     ),
                     decoration: BoxDecoration(
-                      color: const Color(0xFF52B6FF).withOpacity(0.14),
+                      color: tokens.legAccent.withOpacity(0.14),
                       borderRadius: BorderRadius.circular(999),
                       border: Border.all(
-                        color: const Color(0xFF52B6FF).withOpacity(0.45),
+                        color: tokens.legAccent.withOpacity(0.45),
                       ),
                     ),
                     child: Text(
                       legLabel,
-                      style: const TextStyle(
-                        color: Color(0xFF9DD8FF),
+                      style: TextStyle(
+                        color: tokens.legAccent.withOpacity(0.95),
                         fontSize: 11.2,
                         fontWeight: FontWeight.w800,
                       ),
@@ -650,7 +742,7 @@ class _CompanyBookingsOverviewPageState
                   Text(
                     amountText,
                     style: TextStyle(
-                      color: kFluxidiYellow.withOpacity(0.98),
+                      color: tokens.accent.withOpacity(0.98),
                       fontSize: 16,
                       fontWeight: FontWeight.w900,
                     ),
@@ -662,7 +754,7 @@ class _CompanyBookingsOverviewPageState
               Text(
                 '${_t(nl: 'Parent', en: 'Parent', fr: 'Parent', es: 'Padre')}: ${item.parentReferenceText.isEmpty ? item.referenceText : item.parentReferenceText}',
                 style: TextStyle(
-                  color: Colors.white.withOpacity(0.62),
+                  color: tokens.textTertiary,
                   fontSize: 11.2,
                   fontWeight: FontWeight.w600,
                 ),
@@ -673,7 +765,7 @@ class _CompanyBookingsOverviewPageState
                   child: Text(
                     '${_t(nl: 'Totaal parent', en: 'Parent total', fr: 'Total parent', es: 'Total padre')}: $parentAmountText',
                     style: TextStyle(
-                      color: Colors.white.withOpacity(0.56),
+                      color: tokens.textTertiary.withOpacity(0.9),
                       fontSize: 10.8,
                       fontWeight: FontWeight.w500,
                     ),
@@ -682,9 +774,13 @@ class _CompanyBookingsOverviewPageState
             ],
             const SizedBox(height: 10),
             Text(
-              '${_t(nl: 'Geplande ophaal', en: 'Scheduled pickup', fr: 'Prise en charge prévue', es: 'Recogida programada')}: ${_formatPickup(item.pickupIso)}',
+              '${_t(nl: 'Geplande ophaal', en: 'Scheduled pickup', fr: 'Prise en charge prévue', es: 'Recogida programada')}: $pickupText',
               style: TextStyle(
-                color: Colors.white.withOpacity(0.86),
+                color: isReview && pickupMissing
+                    ? tokens.reviewPlaceholderText
+                    : (isReview
+                          ? tokens.reviewPrimaryText
+                          : tokens.textPrimary),
                 fontSize: 12.1,
                 fontWeight: FontWeight.w600,
               ),
@@ -698,18 +794,18 @@ class _CompanyBookingsOverviewPageState
                     Icon(
                       Icons.radio_button_checked,
                       size: 11.5,
-                      color: kFluxidiYellow.withOpacity(0.94),
+                      color: tokens.accent.withOpacity(0.94),
                     ),
                     Container(
                       width: 1.8,
                       height: 30,
                       margin: const EdgeInsets.symmetric(vertical: 3),
-                      color: kFluxidiYellow.withOpacity(0.35),
+                      color: tokens.accent.withOpacity(0.35),
                     ),
-                    const Icon(
+                    Icon(
                       Icons.location_on,
                       size: 13.5,
-                      color: Color(0xFF34D29A),
+                      color: tokens.palette.success,
                     ),
                   ],
                 ),
@@ -722,8 +818,12 @@ class _CompanyBookingsOverviewPageState
                         item.fromAddress,
                         maxLines: 3,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: Colors.white,
+                        style: TextStyle(
+                          color: isReview && fromMissing
+                              ? tokens.reviewPlaceholderText
+                              : (isReview
+                                    ? tokens.reviewPrimaryText
+                                    : tokens.textPrimary),
                           fontSize: 12.8,
                           fontWeight: FontWeight.w600,
                           height: 1.24,
@@ -735,7 +835,11 @@ class _CompanyBookingsOverviewPageState
                         maxLines: 3,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
-                          color: Colors.white.withOpacity(0.9),
+                          color: isReview && toMissing
+                              ? tokens.reviewPlaceholderText
+                              : (isReview
+                                    ? tokens.reviewPrimaryText
+                                    : tokens.textPrimary),
                           fontSize: 12.8,
                           fontWeight: FontWeight.w600,
                           height: 1.24,
@@ -755,7 +859,11 @@ class _CompanyBookingsOverviewPageState
                   Text(
                     '${_t(nl: 'Klant', en: 'Customer', fr: 'Client', es: 'Cliente')}: ${item.customerName}',
                     style: TextStyle(
-                      color: Colors.white.withOpacity(0.7),
+                      color: isReview && customerMissing
+                          ? tokens.reviewPlaceholderText
+                          : (isReview
+                                ? tokens.reviewSecondaryText
+                                : tokens.textSecondary),
                       fontSize: 11.4,
                     ),
                     maxLines: 1,
@@ -764,7 +872,11 @@ class _CompanyBookingsOverviewPageState
                 Text(
                   '${_t(nl: 'Chauffeur', en: 'Driver', fr: 'Chauffeur', es: 'Conductor')}: ${item.assignedDriverText}',
                   style: TextStyle(
-                    color: Colors.white.withOpacity(0.64),
+                    color: isReview && driverMissing
+                        ? tokens.reviewPlaceholderText
+                        : (isReview
+                              ? tokens.reviewSecondaryText
+                              : tokens.textTertiary),
                     fontSize: 11.4,
                   ),
                   maxLines: 1,
@@ -773,7 +885,11 @@ class _CompanyBookingsOverviewPageState
                 Text(
                   '${_t(nl: 'Voertuig', en: 'Vehicle', fr: 'Véhicule', es: 'Vehículo')}: ${item.assignedVehicleText}',
                   style: TextStyle(
-                    color: Colors.white.withOpacity(0.64),
+                    color: isReview && vehicleMissing
+                        ? tokens.reviewPlaceholderText
+                        : (isReview
+                              ? tokens.reviewSecondaryText
+                              : tokens.textTertiary),
                     fontSize: 11.4,
                   ),
                   maxLines: 1,
@@ -788,9 +904,9 @@ class _CompanyBookingsOverviewPageState
                       es: 'Reserva antigua/incompleta',
                     ),
                     style: TextStyle(
-                      color: const Color(0xFFF6B94D).withOpacity(0.9),
+                      color: tokens.reviewWarningText,
                       fontSize: 11.1,
-                      fontWeight: FontWeight.w600,
+                      fontWeight: FontWeight.w700,
                     ),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
@@ -809,22 +925,16 @@ class _CompanyBookingsOverviewPageState
                     vertical: 5,
                   ),
                   decoration: BoxDecoration(
-                    color: isPaid
-                        ? const Color(0xFF34D29A).withOpacity(0.14)
-                        : kFluxidiYellow.withOpacity(0.12),
+                    color: isPaid ? tokens.paidBg : tokens.unpaidBg,
                     borderRadius: BorderRadius.circular(999),
                     border: Border.all(
-                      color: isPaid
-                          ? const Color(0xFF34D29A).withOpacity(0.4)
-                          : kFluxidiYellow.withOpacity(0.35),
+                      color: isPaid ? tokens.paidBorder : tokens.unpaidBorder,
                     ),
                   ),
                   child: Text(
                     localizedPayment,
                     style: TextStyle(
-                      color: isPaid
-                          ? const Color(0xFF9DF2CF)
-                          : kFluxidiYellow.withOpacity(0.97),
+                      color: isPaid ? tokens.paidText : tokens.unpaidText,
                       fontSize: 11.1,
                       fontWeight: FontWeight.w700,
                     ),
@@ -834,10 +944,7 @@ class _CompanyBookingsOverviewPageState
                   '${_t(nl: 'Ref', en: 'Ref', fr: 'Ref', es: 'Ref')}: ${_shortBookingReference(item)}',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: Colors.white.withOpacity(0.58),
-                    fontSize: 10.8,
-                  ),
+                  style: TextStyle(color: tokens.textTertiary, fontSize: 10.8),
                 ),
                 if (_filter != _CompanyBookingsFilter.open)
                   OutlinedButton(
@@ -846,8 +953,8 @@ class _CompanyBookingsOverviewPageState
                         ? null
                         : () => _hideSingleBooking(item),
                     style: OutlinedButton.styleFrom(
-                      foregroundColor: kFluxidiYellow.withOpacity(0.96),
-                      side: BorderSide(color: kFluxidiYellow.withOpacity(0.35)),
+                      foregroundColor: tokens.accent.withOpacity(0.96),
+                      side: BorderSide(color: tokens.accent.withOpacity(0.42)),
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(999),
                       ),
@@ -886,21 +993,25 @@ class _CompanyBookingsOverviewPageState
     );
   }
 
-  Widget _filterChip(_CompanyBookingsFilter filter, String label) {
+  Widget _filterChip(
+    _CompanyBookingsFilter filter,
+    String label,
+    _CompanyBookingsThemeTokens tokens,
+  ) {
     final selected = _filter == filter;
     return ChoiceChip(
       label: Text('$label (${_countText(filter)})'),
       selected: selected,
       onSelected: (_) => setState(() => _filter = filter),
-      selectedColor: const Color(0xFF2A2410),
-      backgroundColor: const Color(0xFF111318),
+      selectedColor: tokens.chipSelectedBg,
+      backgroundColor: tokens.chipUnselectedBg,
       side: BorderSide(
         color: selected
-            ? kFluxidiYellow.withOpacity(0.65)
-            : kFluxidiYellow.withOpacity(0.24),
+            ? tokens.chipSelectedBorder
+            : tokens.chipUnselectedBorder,
       ),
       labelStyle: TextStyle(
-        color: selected ? kFluxidiYellow.withOpacity(0.95) : Colors.white70,
+        color: selected ? tokens.chipSelectedText : tokens.chipUnselectedText,
         fontWeight: FontWeight.w700,
       ),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(999)),
@@ -910,206 +1021,298 @@ class _CompanyBookingsOverviewPageState
   @override
   Widget build(BuildContext context) {
     final items = _filteredItems;
-    return Scaffold(
-      backgroundColor: const Color(0xFF07080C),
-      appBar: AppBar(
-        backgroundColor: const Color(0xFF07080C),
-        title: Text(
-          _t(
-            nl: 'Boekingen',
-            en: 'Bookings',
-            fr: 'Réservations',
-            es: 'Reservas',
-          ),
-          style: const TextStyle(fontWeight: FontWeight.w800),
-        ),
-        actions: [
-          IconButton(
-            tooltip: _t(
-              nl: 'Vernieuwen',
-              en: 'Refresh',
-              fr: 'Actualiser',
-              es: 'Actualizar',
-            ),
-            onPressed: _loadBookings,
-            icon: Icon(
-              Icons.refresh_rounded,
-              color: kFluxidiYellow.withOpacity(0.96),
-            ),
-          ),
-        ],
-      ),
-      body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  _filterChip(
-                    _CompanyBookingsFilter.open,
-                    _t(
-                      nl: 'Open / gepland',
-                      en: 'Open / scheduled',
-                      fr: 'Ouvertes / planifiées',
-                      es: 'Abiertas / planificadas',
-                    ),
-                  ),
-                  _filterChip(
-                    _CompanyBookingsFilter.completed,
-                    _t(
-                      nl: 'Afgerond / voltooid',
-                      en: 'Completed',
-                      fr: 'Terminées',
-                      es: 'Completadas',
-                    ),
-                  ),
-                  _filterChip(
-                    _CompanyBookingsFilter.cancelled,
-                    _t(
-                      nl: 'Geannuleerd',
-                      en: 'Cancelled',
-                      fr: 'Annulées',
-                      es: 'Canceladas',
-                    ),
-                  ),
-                  _filterChip(
-                    _CompanyBookingsFilter.review,
-                    _t(
-                      nl: 'Nazicht',
-                      en: 'Review',
-                      fr: 'À vérifier',
-                      es: 'Revisión',
-                    ),
-                  ),
-                ],
+    return ValueListenableBuilder<BusinessThemeVariant>(
+      valueListenable: businessThemeNotifier,
+      builder: (context, themeVariant, _) {
+        final tokens = _themeTokensFor(themeVariant);
+        return Scaffold(
+          backgroundColor: tokens.background,
+          appBar: AppBar(
+            backgroundColor: tokens.appBar,
+            title: Text(
+              _t(
+                nl: 'Boekingen',
+                en: 'Bookings',
+                fr: 'Réservations',
+                es: 'Reservas',
               ),
-              if (items.isNotEmpty &&
-                  _filter != _CompanyBookingsFilter.open) ...[
-                const SizedBox(height: 10),
-                SizedBox(
-                  width: double.infinity,
-                  child: OutlinedButton.icon(
-                    onPressed: _bulkArchiving
-                        ? null
-                        : _hideAllVisiblePageBookings,
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: kFluxidiYellow.withOpacity(0.96),
-                      side: BorderSide(color: kFluxidiYellow.withOpacity(0.35)),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 10,
-                      ),
-                    ),
-                    icon: const Icon(Icons.visibility_off_outlined, size: 18),
-                    label: Text(
-                      _bulkArchiving
-                          ? _t(
-                              nl: 'Bezig met verbergen...',
-                              en: 'Hiding...',
-                              fr: 'Masquage en cours...',
-                              es: 'Ocultando...',
-                            )
-                          : _t(
-                              nl: 'Verberg alles op deze pagina',
-                              en: 'Hide all on this page',
-                              fr: 'Tout masquer sur cette page',
-                              es: 'Ocultar todo en esta página',
-                            ),
-                    ),
-                  ),
+              style: TextStyle(
+                fontWeight: FontWeight.w800,
+                color: tokens.textPrimary,
+              ),
+            ),
+            iconTheme: IconThemeData(color: tokens.textPrimary),
+            actions: [
+              IconButton(
+                tooltip: _t(
+                  nl: 'Vernieuwen',
+                  en: 'Refresh',
+                  fr: 'Actualiser',
+                  es: 'Actualizar',
                 ),
-              ],
-              const SizedBox(height: 10),
-              Expanded(
-                child: _loading
-                    ? const Center(child: CircularProgressIndicator())
-                    : (_errorCode != null)
-                    ? Center(
-                        child: Container(
-                          width: double.infinity,
-                          padding: const EdgeInsets.all(14),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF101113),
-                            borderRadius: BorderRadius.circular(14),
-                            border: Border.all(
-                              color: kFluxidiYellow.withOpacity(0.28),
-                            ),
-                          ),
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Text(
-                                _friendlyError(_errorCode),
-                                textAlign: TextAlign.center,
-                                style: TextStyle(
-                                  color: Colors.white.withOpacity(0.88),
-                                  height: 1.35,
-                                ),
-                              ),
-                              const SizedBox(height: 10),
-                              OutlinedButton.icon(
-                                onPressed: _loadBookings,
-                                style: OutlinedButton.styleFrom(
-                                  foregroundColor: kFluxidiYellow.withOpacity(
-                                    0.95,
-                                  ),
-                                  side: BorderSide(
-                                    color: kFluxidiYellow.withOpacity(0.38),
-                                  ),
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(999),
-                                  ),
-                                ),
-                                icon: const Icon(
-                                  Icons.refresh_rounded,
-                                  size: 18,
-                                ),
-                                label: Text(
-                                  _t(
-                                    nl: 'Opnieuw proberen',
-                                    en: 'Try again',
-                                    fr: 'Réessayer',
-                                    es: 'Intentar de nuevo',
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      )
-                    : items.isEmpty
-                    ? Center(
-                        child: Text(
-                          _t(
-                            nl: 'Geen boekingen gevonden voor deze filter.',
-                            en: 'No bookings found for this filter.',
-                            fr: 'Aucune réservation trouvée pour ce filtre.',
-                            es: 'No se encontraron reservas para este filtro.',
-                          ),
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                            color: Colors.white.withOpacity(0.72),
-                          ),
-                        ),
-                      )
-                    : ListView.separated(
-                        itemCount: items.length,
-                        separatorBuilder: (_, __) => const SizedBox(height: 8),
-                        itemBuilder: (context, index) =>
-                            _buildCompanyBookingPremiumCard(items[index]),
-                      ),
+                onPressed: _loadBookings,
+                icon: Icon(
+                  Icons.refresh_rounded,
+                  color: tokens.accent.withOpacity(0.96),
+                ),
               ),
             ],
           ),
-        ),
-      ),
+          body: SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      _filterChip(
+                        _CompanyBookingsFilter.open,
+                        _t(
+                          nl: 'Open / gepland',
+                          en: 'Open / scheduled',
+                          fr: 'Ouvertes / planifiées',
+                          es: 'Abiertas / planificadas',
+                        ),
+                        tokens,
+                      ),
+                      _filterChip(
+                        _CompanyBookingsFilter.completed,
+                        _t(
+                          nl: 'Afgerond / voltooid',
+                          en: 'Completed',
+                          fr: 'Terminées',
+                          es: 'Completadas',
+                        ),
+                        tokens,
+                      ),
+                      _filterChip(
+                        _CompanyBookingsFilter.cancelled,
+                        _t(
+                          nl: 'Geannuleerd',
+                          en: 'Cancelled',
+                          fr: 'Annulées',
+                          es: 'Canceladas',
+                        ),
+                        tokens,
+                      ),
+                      _filterChip(
+                        _CompanyBookingsFilter.review,
+                        _t(
+                          nl: 'Nazicht',
+                          en: 'Review',
+                          fr: 'À vérifier',
+                          es: 'Revisión',
+                        ),
+                        tokens,
+                      ),
+                    ],
+                  ),
+                  if (items.isNotEmpty &&
+                      _filter != _CompanyBookingsFilter.open) ...[
+                    const SizedBox(height: 10),
+                    SizedBox(
+                      width: double.infinity,
+                      child: OutlinedButton.icon(
+                        onPressed: _bulkArchiving
+                            ? null
+                            : _hideAllVisiblePageBookings,
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: tokens.accent.withOpacity(0.96),
+                          side: BorderSide(
+                            color: tokens.accent.withOpacity(0.42),
+                          ),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 10,
+                          ),
+                        ),
+                        icon: const Icon(
+                          Icons.visibility_off_outlined,
+                          size: 18,
+                        ),
+                        label: Text(
+                          _bulkArchiving
+                              ? _t(
+                                  nl: 'Bezig met verbergen...',
+                                  en: 'Hiding...',
+                                  fr: 'Masquage en cours...',
+                                  es: 'Ocultando...',
+                                )
+                              : _t(
+                                  nl: 'Verberg alles op deze pagina',
+                                  en: 'Hide all on this page',
+                                  fr: 'Tout masquer sur cette page',
+                                  es: 'Ocultar todo en esta página',
+                                ),
+                        ),
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 10),
+                  Expanded(
+                    child: _loading
+                        ? Center(
+                            child: CircularProgressIndicator(
+                              valueColor: AlwaysStoppedAnimation<Color>(
+                                tokens.accent,
+                              ),
+                            ),
+                          )
+                        : (_errorCode != null)
+                        ? Center(
+                            child: Container(
+                              width: double.infinity,
+                              padding: const EdgeInsets.all(14),
+                              decoration: BoxDecoration(
+                                color: tokens.palette.surface,
+                                borderRadius: BorderRadius.circular(14),
+                                border: Border.all(
+                                  color: tokens.accent.withOpacity(0.34),
+                                ),
+                              ),
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Text(
+                                    _friendlyError(_errorCode),
+                                    textAlign: TextAlign.center,
+                                    style: TextStyle(
+                                      color: tokens.textPrimary,
+                                      height: 1.35,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 10),
+                                  OutlinedButton.icon(
+                                    onPressed: _loadBookings,
+                                    style: OutlinedButton.styleFrom(
+                                      foregroundColor: tokens.accent
+                                          .withOpacity(0.95),
+                                      side: BorderSide(
+                                        color: tokens.accent.withOpacity(0.42),
+                                      ),
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(
+                                          999,
+                                        ),
+                                      ),
+                                    ),
+                                    icon: const Icon(
+                                      Icons.refresh_rounded,
+                                      size: 18,
+                                    ),
+                                    label: Text(
+                                      _t(
+                                        nl: 'Opnieuw proberen',
+                                        en: 'Try again',
+                                        fr: 'Réessayer',
+                                        es: 'Intentar de nuevo',
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          )
+                        : items.isEmpty
+                        ? Center(
+                            child: Text(
+                              _t(
+                                nl: 'Geen boekingen gevonden voor deze filter.',
+                                en: 'No bookings found for this filter.',
+                                fr: 'Aucune réservation trouvée pour ce filtre.',
+                                es: 'No se encontraron reservas para este filtro.',
+                              ),
+                              textAlign: TextAlign.center,
+                              style: TextStyle(color: tokens.textSecondary),
+                            ),
+                          )
+                        : ListView.separated(
+                            itemCount: items.length,
+                            separatorBuilder: (_, __) =>
+                                const SizedBox(height: 8),
+                            itemBuilder: (context, index) =>
+                                _buildCompanyBookingPremiumCard(
+                                  items[index],
+                                  tokens,
+                                ),
+                          ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
+}
+
+class _CompanyBookingsThemeTokens {
+  const _CompanyBookingsThemeTokens({
+    required this.palette,
+    required this.background,
+    required this.appBar,
+    required this.cardGradient,
+    required this.cardBorder,
+    required this.shadow,
+    required this.accent,
+    required this.legAccent,
+    required this.textPrimary,
+    required this.textSecondary,
+    required this.textTertiary,
+    required this.chipSelectedBg,
+    required this.chipUnselectedBg,
+    required this.chipSelectedBorder,
+    required this.chipUnselectedBorder,
+    required this.chipSelectedText,
+    required this.chipUnselectedText,
+    required this.paidBg,
+    required this.paidBorder,
+    required this.paidText,
+    required this.unpaidBg,
+    required this.unpaidBorder,
+    required this.unpaidText,
+    required this.warningText,
+    required this.danger,
+    required this.reviewPrimaryText,
+    required this.reviewSecondaryText,
+    required this.reviewPlaceholderText,
+    required this.reviewWarningText,
+  });
+
+  final BusinessThemePalette palette;
+  final Color background;
+  final Color appBar;
+  final List<Color> cardGradient;
+  final Color cardBorder;
+  final Color shadow;
+  final Color accent;
+  final Color legAccent;
+  final Color textPrimary;
+  final Color textSecondary;
+  final Color textTertiary;
+  final Color chipSelectedBg;
+  final Color chipUnselectedBg;
+  final Color chipSelectedBorder;
+  final Color chipUnselectedBorder;
+  final Color chipSelectedText;
+  final Color chipUnselectedText;
+  final Color paidBg;
+  final Color paidBorder;
+  final Color paidText;
+  final Color unpaidBg;
+  final Color unpaidBorder;
+  final Color unpaidText;
+  final Color warningText;
+  final Color danger;
+  final Color reviewPrimaryText;
+  final Color reviewSecondaryText;
+  final Color reviewPlaceholderText;
+  final Color reviewWarningText;
 }
