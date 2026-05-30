@@ -391,61 +391,91 @@ bool _isSeededOrPlaceholderBridgeDriver(DriverProfile driver) {
 List<DriverProfile> _resolveSelectableDriverBridgeCandidatesGlobal({
   bool logCandidates = true,
 }) {
-  final activeCompanyId = _firstBootstrapText(<dynamic>[
-    companyProfileNotifier.value?.companyId,
-    activeCompanySessionNotifier.value?.companyId,
-  ]);
-  if (activeCompanyId.isEmpty) return const <DriverProfile>[];
-  final activeCompanyPresent = activeCompanyId.isNotEmpty;
-  final hasValidCompanyContext =
-      CompanySessionStore.instance.hasValidCompanyContext;
-  final hasFreshBootstrapForScope =
-      hasValidCompanyContext &&
-      _isBridgeBootstrapFreshForCompany(activeCompanyId);
+  return _resolveDriverBridgeCandidatesReportGlobal(
+    logCandidates: logCandidates,
+  ).selectable;
+}
+
+({
+  List<DriverProfile> selectable,
+  List<DriverProfile> visibleCompanyDrivers,
+  Map<String, int> excludedCounts,
+})
+_resolveDriverBridgeCandidatesReportGlobal({
+  bool logCandidates = true,
+  String? excludeDriverId,
+}) {
+  final normalizedExcludedDriverId = (excludeDriverId ?? '').trim();
   final selected = <DriverProfile>[];
+  final visibleCompanyDrivers = <DriverProfile>[];
+  final excludedCounts = <String, int>{
+    'inactive': 0,
+    'placeholder': 0,
+    'missing_id': 0,
+    'missing_employee_number': 0,
+    'company_mismatch': 0,
+    'current_driver': 0,
+  };
+  final totalDrivers = driversNotifier.value.length;
+
+  void incrementReason(String reason) {
+    excludedCounts[reason] = (excludedCounts[reason] ?? 0) + 1;
+  }
+
   for (final driver in driversNotifier.value) {
     final driverId = driver.id.trim();
     final companyId = (driver.companyId ?? '').trim();
-    final companyIdPresent = companyId.isNotEmpty;
     final employeePresent = driver.employeeNumber.trim().isNotEmpty;
     final placeholder = _isSeededOrPlaceholderBridgeDriver(driver);
     final active = driver.isActive;
     final idPresent = driverId.isNotEmpty;
-    var scoped = false;
+    final companyVisible = fleetRecordBelongsToActiveCompanyOrLegacy(companyId);
+    final isCurrentDriver =
+        normalizedExcludedDriverId.isNotEmpty &&
+        idPresent &&
+        driverId == normalizedExcludedDriverId;
     var reason = 'selectable';
 
-    if (!active) {
+    if (!companyVisible) {
+      reason = 'company_mismatch';
+    } else if (!active) {
       reason = 'inactive';
     } else if (placeholder) {
       reason = 'placeholder';
     } else if (!idPresent) {
       reason = 'missing_id';
+    } else if (isCurrentDriver) {
+      reason = 'current_driver';
     } else if (!employeePresent) {
       // Required because DriverSessionStore validation expects employeeNumber.
       reason = 'missing_employee_number';
-    } else if (companyIdPresent && companyId != activeCompanyId) {
-      reason = 'company_mismatch';
-    } else if (companyIdPresent && companyId == activeCompanyId) {
-      scoped = true;
-    } else if (hasFreshBootstrapForScope) {
-      scoped = true;
-      reason = 'scoped_from_bootstrap_context';
-    } else {
-      reason = 'missing_company_scope';
     }
 
-    final isSelected =
-        active && !placeholder && idPresent && employeePresent && scoped;
+    if (companyVisible) {
+      visibleCompanyDrivers.add(driver);
+    }
+    final isSelected = reason == 'selectable';
     if (isSelected) {
       selected.add(driver);
+    } else {
+      incrementReason(reason);
     }
     if (logCandidates) {
       debugPrint(
-        '[DRIVER_OWNER_BRIDGE][CANDIDATE] driver=${_maskBridgeDriverIdGlobal(driverId)} active=$active scoped=$scoped companyIdPresent=$companyIdPresent activeCompanyPresent=$activeCompanyPresent employeePresent=$employeePresent placeholder=$placeholder selected=$isSelected reason=${isSelected ? "selectable" : reason}',
+        '[DRIVER_OWNER_BRIDGE][CANDIDATE] driver=${_maskBridgeDriverIdGlobal(driverId)} active=$active companyVisible=$companyVisible employeePresent=$employeePresent placeholder=$placeholder selected=$isSelected reason=${isSelected ? "selectable" : reason}',
       );
     }
   }
-  return selected;
+  if (logCandidates) {
+    debugPrint(
+      '[DRIVER_OWNER_BRIDGE][COUNTS] total=$totalDrivers visible=${visibleCompanyDrivers.length} selectable=${selected.length} inactive=${excludedCounts["inactive"] ?? 0} placeholder=${excludedCounts["placeholder"] ?? 0} missing_id=${excludedCounts["missing_id"] ?? 0} missing_employee_number=${excludedCounts["missing_employee_number"] ?? 0} company_mismatch=${excludedCounts["company_mismatch"] ?? 0} current_driver=${excludedCounts["current_driver"] ?? 0}',
+    );
+  }
+  return (
+    selectable: selected,
+    visibleCompanyDrivers: visibleCompanyDrivers,
+    excludedCounts: excludedCounts,
+  );
 }
 
 Future<DriverProfile?> _showDriverOwnerBridgePickerSheet(

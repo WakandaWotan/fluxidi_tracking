@@ -65,6 +65,7 @@ class _DriverHomePageState extends State<DriverHomePage>
   static const Duration _manualRefreshCooldown = Duration(seconds: 4);
   static const Duration _statusRefreshCooldown = Duration(seconds: 8);
   int _activeBookingRefreshTimerCount = 0;
+  String? _businessPreviewDriverId;
 
   // Boot splash (logo on dark background + loader)
   bool _bootSplashVisible = true;
@@ -7530,6 +7531,11 @@ class _DriverHomePageState extends State<DriverHomePage>
   }
 
   String _dashboardDriverName() {
+    final profile = _dashboardActiveDriverProfile();
+    final profileName = profile?.fullName.trim() ?? '';
+    if (profileName.isNotEmpty) return profileName;
+    final profileEmployee = profile?.employeeNumber.trim() ?? '';
+    if (profileEmployee.isNotEmpty) return profileEmployee;
     final session = activeDriverSessionNotifier.value;
     final fullName = session?.fullName.trim() ?? '';
     if (fullName.isNotEmpty) return fullName;
@@ -7540,12 +7546,41 @@ class _DriverHomePageState extends State<DriverHomePage>
 
   DriverProfile? _dashboardActiveDriverProfile() {
     final session = activeDriverSessionNotifier.value;
+    final previewDriverId = (_businessPreviewDriverId ?? '').trim();
     final sessionDriverId = session?.driverId.trim() ?? '';
+    final preferredDriverId =
+        widget.openedFromBusinessHome && previewDriverId.isNotEmpty
+        ? previewDriverId
+        : sessionDriverId;
+    if (preferredDriverId.isNotEmpty) {
+      for (final driver in driversNotifier.value) {
+        if (driver.id.trim() == preferredDriverId) return driver;
+      }
+    }
     if (sessionDriverId.isEmpty) return null;
     for (final driver in driversNotifier.value) {
       if (driver.id.trim() == sessionDriverId) return driver;
     }
     return null;
+  }
+
+  String _effectiveCurrentDriverIdForBusinessPreview() {
+    final previewDriverId = (_businessPreviewDriverId ?? '').trim();
+    if (widget.openedFromBusinessHome && previewDriverId.isNotEmpty) {
+      return previewDriverId;
+    }
+    return activeDriverSessionNotifier.value?.driverId.trim() ?? '';
+  }
+
+  void _logCurrentDriverOrigin({required String reason}) {
+    if (!widget.openedFromBusinessHome) return;
+    final previewDriverId = (_businessPreviewDriverId ?? '').trim();
+    final sessionDriverId =
+        activeDriverSessionNotifier.value?.driverId.trim() ?? '';
+    final effectiveDriverId = _effectiveCurrentDriverIdForBusinessPreview();
+    debugPrint(
+      '[DRIVER_VIEW_ORIGIN][CURRENT] source=business_home reason=$reason preview=${_maskBridgeDriverIdGlobal(previewDriverId)} session=${_maskBridgeDriverIdGlobal(sessionDriverId)} effective=${_maskBridgeDriverIdGlobal(effectiveDriverId)}',
+    );
   }
 
   String? _dashboardAvatarPhotoPath() {
@@ -7910,9 +7945,11 @@ class _DriverHomePageState extends State<DriverHomePage>
           companyId: scope.companyId,
         );
     if ((previewDriverId ?? '').trim().isEmpty) {
+      _businessPreviewDriverId = null;
       debugPrint(
         '[DRIVER_VIEW_ORIGIN][PREVIEW_LOAD] source=business_home driver=missing reason=no_saved_preview',
       );
+      _logCurrentDriverOrigin(reason: 'preview_load_empty');
       return;
     }
     final selectableDrivers = _resolveSelectableDriverBridgeCandidatesGlobal(
@@ -7926,6 +7963,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       }
     }
     if (selectedDriver == null) {
+      _businessPreviewDriverId = null;
       await DriverSessionStore.instance.clearBusinessPreviewDriverSelection(
         tenantId: scope.tenantId,
         companyId: scope.companyId,
@@ -7933,8 +7971,10 @@ class _DriverHomePageState extends State<DriverHomePage>
       debugPrint(
         '[DRIVER_VIEW_ORIGIN][PREVIEW_LOAD] source=business_home driver=missing reason=invalid_or_inactive',
       );
+      _logCurrentDriverOrigin(reason: 'preview_load_invalid');
       return;
     }
+    _businessPreviewDriverId = selectedDriver.id.trim();
     final previous = activeDriverSessionNotifier.value;
     activeDriverSessionNotifier.value = _buildBusinessPreviewDriverSession(
       driver: selectedDriver,
@@ -7943,6 +7983,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     debugPrint(
       '[DRIVER_VIEW_ORIGIN][PREVIEW_LOAD] source=business_home driver=${_maskBridgeDriverIdGlobal(selectedDriver.id)}',
     );
+    _logCurrentDriverOrigin(reason: 'preview_load_applied');
     if (mounted) setState(() {});
     unawaited(
       _refreshBookings(force: true, trigger: 'business_preview_restore'),
@@ -7962,45 +8003,284 @@ class _DriverHomePageState extends State<DriverHomePage>
     );
   }
 
+  Future<void> _refreshDriverBridgeCandidatesIfNeeded() async {
+    final activeCompanyId = _firstBootstrapText(<dynamic>[
+      companyProfileNotifier.value?.companyId,
+      activeCompanySessionNotifier.value?.companyId,
+    ]);
+    if (activeCompanyId.isEmpty) {
+      debugPrint(
+        '[DRIVER_OWNER_BRIDGE][REFRESH_SKIP] reason=missing_company_context',
+      );
+      return;
+    }
+    if (_isBridgeBootstrapFreshForCompany(activeCompanyId)) {
+      debugPrint(
+        '[DRIVER_OWNER_BRIDGE][REFRESH_SKIP] reason=fresh_bootstrap company=${_maskBridgeDriverIdGlobal(activeCompanyId)}',
+      );
+      return;
+    }
+    final hasToken = await _hasUsableCompanyBootstrapToken(
+      reason: 'driver_switch_candidates',
+    );
+    if (!hasToken) {
+      debugPrint('[DRIVER_OWNER_BRIDGE][REFRESH_SKIP] reason=no_company_token');
+      return;
+    }
+    final hydrated = await _hydrateCompanyBootstrapFromActiveSession(
+      reason: 'driver_switch_candidates',
+    );
+    debugPrint('[DRIVER_OWNER_BRIDGE][REFRESH_DONE] ok=$hydrated');
+  }
+
+  String _driverPickerAvailabilityLabel(DriverProfile driver) {
+    final normalized = normalizeDriverAvailabilityState(
+      driver.availabilityStatus,
+      fallback: 'available',
+    );
+    if (!driver.isActive) {
+      return _tr(nl: 'Inactief', en: 'Inactive', fr: 'Inactif', es: 'Inactivo');
+    }
+    switch (normalized) {
+      case 'paused':
+        return _tr(
+          nl: 'Gepauzeerd',
+          en: 'Paused',
+          fr: 'En pause',
+          es: 'En pausa',
+        );
+      case 'busy':
+        return _tr(nl: 'Bezet', en: 'Busy', fr: 'Occupe', es: 'Ocupado');
+      default:
+        return _tr(
+          nl: 'Beschikbaar',
+          en: 'Available',
+          fr: 'Disponible',
+          es: 'Disponible',
+        );
+    }
+  }
+
+  String _driverPickerVehicleLabel(DriverProfile driver) {
+    final driverId = driver.id.trim();
+    if (driverId.isEmpty) return '';
+    for (final vehicle in vehiclesNotifier.value) {
+      if (!vehicle.isActive) continue;
+      if ((vehicle.driverId ?? '').trim() != driverId) continue;
+      final name = vehicle.vehicleName.trim();
+      final plate = vehicle.licensePlate.trim();
+      if (name.isNotEmpty && plate.isNotEmpty) return '$name ($plate)';
+      if (name.isNotEmpty) return name;
+      if (plate.isNotEmpty) return plate;
+      return vehicle.id.trim();
+    }
+    return '';
+  }
+
+  Future<DriverProfile?> _showDriverSwitchPickerForDashboard({
+    required List<DriverProfile> selectableDrivers,
+    required String currentDriverId,
+  }) {
+    return showModalBottomSheet<DriverProfile>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) {
+        return SafeArea(
+          child: Container(
+            margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+            decoration: BoxDecoration(
+              color: const Color(0xFF121A2E),
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(color: const Color(0xFFE5B641), width: 1.15),
+              boxShadow: [
+                BoxShadow(
+                  color: const Color(0xFFE5B641).withOpacity(0.12),
+                  blurRadius: 14,
+                ),
+              ],
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 14, 12, 10),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          _tr(
+                            nl: 'Kies chauffeurweergave',
+                            en: 'Choose driver view',
+                            fr: 'Choisir la vue chauffeur',
+                            es: 'Elegir vista de conductor',
+                          ),
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 17,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ),
+                      IconButton(
+                        onPressed: () => Navigator.of(sheetContext).pop(),
+                        icon: const Icon(Icons.close, color: Color(0xFFE5B641)),
+                        splashRadius: 18,
+                      ),
+                    ],
+                  ),
+                ),
+                const Divider(height: 1, color: Color(0x22E5B641)),
+                Flexible(
+                  child: ListView.separated(
+                    shrinkWrap: true,
+                    itemCount: selectableDrivers.length,
+                    separatorBuilder: (_, __) =>
+                        const Divider(height: 1, color: Color(0x16E5B641)),
+                    itemBuilder: (itemContext, index) {
+                      final driver = selectableDrivers[index];
+                      final driverId = driver.id.trim();
+                      final isCurrent =
+                          driverId.isNotEmpty &&
+                          currentDriverId.isNotEmpty &&
+                          driverId == currentDriverId;
+                      final vehicleLabel = _driverPickerVehicleLabel(driver);
+                      final statusLabel = _driverPickerAvailabilityLabel(
+                        driver,
+                      );
+                      final subtitleParts = <String>[
+                        if (driver.employeeNumber.trim().isNotEmpty)
+                          driver.employeeNumber.trim(),
+                        if (vehicleLabel.isNotEmpty)
+                          _tr(
+                            nl: 'Voertuig: $vehicleLabel',
+                            en: 'Vehicle: $vehicleLabel',
+                            fr: 'Véhicule : $vehicleLabel',
+                            es: 'Vehículo: $vehicleLabel',
+                          ),
+                        statusLabel,
+                      ];
+                      return ListTile(
+                        dense: true,
+                        leading: const Icon(
+                          Icons.person_outline_rounded,
+                          color: Color(0xFFE5B641),
+                        ),
+                        title: Text(
+                          driver.fullName.trim().isEmpty
+                              ? driver.employeeNumber.trim()
+                              : driver.fullName.trim(),
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        subtitle: Text(
+                          subtitleParts.join(' • '),
+                          style: TextStyle(
+                            color: Colors.white.withOpacity(0.75),
+                            fontSize: 12,
+                          ),
+                        ),
+                        trailing: isCurrent
+                            ? Text(
+                                _tr(
+                                  nl: 'Huidig',
+                                  en: 'Current',
+                                  fr: 'Actuel',
+                                  es: 'Actual',
+                                ),
+                                style: const TextStyle(
+                                  color: Color(0xFFE5B641),
+                                  fontWeight: FontWeight.w700,
+                                  fontSize: 11.5,
+                                ),
+                              )
+                            : null,
+                        onTap: () => Navigator.of(sheetContext).pop(driver),
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   Future<void> _changeDriverViewFromDashboard() async {
     if (!_canSwitchCompanyDriversFromDashboard()) return;
     if (widget.openedFromBusinessHome) {
       debugPrint('[DRIVER_VIEW_ORIGIN][SWITCH] source=business_home');
     }
-    final selectableDrivers = _resolveSelectableDriverBridgeCandidatesGlobal(
+    await _refreshDriverBridgeCandidatesIfNeeded();
+    final currentDriverId = _effectiveCurrentDriverIdForBusinessPreview();
+    _logCurrentDriverOrigin(reason: 'switch_candidates');
+    final candidateReport = _resolveDriverBridgeCandidatesReportGlobal(
       logCandidates: true,
+      excludeDriverId: currentDriverId,
     );
+    final selectableDrivers = candidateReport.selectable;
+    final visibleCompanyDrivers = candidateReport.visibleCompanyDrivers;
+    final excludedCounts = candidateReport.excludedCounts;
     if (selectableDrivers.isEmpty) {
       debugPrint('[DRIVER_OWNER_BRIDGE][SKIP] reason=no_selectable_driver');
+      final currentExcluded = excludedCounts['current_driver'] ?? 0;
+      final missingEmployee = excludedCounts['missing_employee_number'] ?? 0;
+      final hasOnlyCurrentVisible =
+          visibleCompanyDrivers.isNotEmpty &&
+          currentExcluded == visibleCompanyDrivers.length;
+      final hasOtherVisibleDrivers =
+          visibleCompanyDrivers.length > currentExcluded;
       _toast(
-        _tr(
-          nl: 'Geen beschikbare chauffeursweergave gevonden.',
-          en: 'No selectable driver view found.',
-          fr: 'Aucune vue chauffeur disponible.',
-          es: 'No se encontró vista de conductor seleccionable.',
-        ),
+        hasOnlyCurrentVisible
+            ? _tr(
+                nl: 'Geen andere chauffeur beschikbaar.',
+                en: 'No other driver available.',
+                fr: 'Aucun autre chauffeur disponible.',
+                es: 'No hay otro conductor disponible.',
+              )
+            : (hasOtherVisibleDrivers && missingEmployee > 0)
+            ? _tr(
+                nl: 'Deze chauffeur mist een koppelcode/werknemersnummer.',
+                en: 'This driver is missing a pairing code/employee number.',
+                fr: 'Ce chauffeur n’a pas de code de liaison/numéro employé.',
+                es: 'Este conductor no tiene código de vinculación/número de empleado.',
+              )
+            : _tr(
+                nl: 'Geen beschikbare chauffeursweergave gevonden.',
+                en: 'No selectable driver view found.',
+                fr: 'Aucune vue chauffeur disponible.',
+                es: 'No se encontró vista de conductor seleccionable.',
+              ),
       );
       return;
     }
     DriverProfile? selectedDriver;
-    if (selectableDrivers.length == 1) {
-      selectedDriver = selectableDrivers.first;
-    } else {
+    if (!mounted) return;
+    debugPrint(
+      '[DRIVER_VIEW_ORIGIN][PICKER_OPEN] source=${widget.openedFromBusinessHome ? "business_home" : "driver_home"} count=${selectableDrivers.length}',
+    );
+    selectedDriver = await _showDriverSwitchPickerForDashboard(
+      selectableDrivers: selectableDrivers,
+      currentDriverId: currentDriverId,
+    );
+    if (!mounted) return;
+    if (selectedDriver == null) {
       debugPrint(
-        '[DRIVER_OWNER_BRIDGE][PICKER_OPEN] count=${selectableDrivers.length}',
+        '[DRIVER_VIEW_ORIGIN][PICKER_CANCELLED] source=${widget.openedFromBusinessHome ? "business_home" : "driver_home"}',
       );
-      selectedDriver = await _showDriverOwnerBridgePickerSheet(
-        context,
-        selectableDrivers: selectableDrivers,
-        tr: _tr,
-      );
-      if (!mounted) return;
+      return;
     }
-    if (selectedDriver == null) return;
+    debugPrint(
+      '[DRIVER_VIEW_ORIGIN][PICKER_SELECTED] source=${widget.openedFromBusinessHome ? "business_home" : "driver_home"} driver=${_maskBridgeDriverIdGlobal(selectedDriver.id)}',
+    );
     debugPrint(
       '[DRIVER_OWNER_BRIDGE][SELECTED] driver=${_maskBridgeDriverIdGlobal(selectedDriver.id)}',
     );
     if (widget.openedFromBusinessHome) {
+      _businessPreviewDriverId = selectedDriver.id.trim();
       final previous = activeDriverSessionNotifier.value;
       final previewSession = _buildBusinessPreviewDriverSession(
         driver: selectedDriver,
@@ -8018,6 +8298,8 @@ class _DriverHomePageState extends State<DriverHomePage>
           '[DRIVER_VIEW_ORIGIN][PREVIEW_SAVE] source=business_home driver=${_maskBridgeDriverIdGlobal(selectedDriver.id)}',
         );
       }
+      _logCurrentDriverOrigin(reason: 'preview_save_applied');
+      if (mounted) setState(() {});
     } else {
       await DriverSessionStore.instance.saveFromDriverProfile(
         selectedDriver,
@@ -8456,10 +8738,10 @@ class _DriverHomePageState extends State<DriverHomePage>
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Padding(
-          padding: const EdgeInsets.only(
-            left: headerLeftPull,
+          padding: EdgeInsets.only(
+            left: math.max(0.0, headerLeftPull),
             right: -headerLeftPull,
-            top: headerTopPull,
+            top: math.max(0.0, headerTopPull),
           ),
           child: SizedBox(
             height: topBandHeight,
