@@ -8,7 +8,9 @@ import 'package:flutter/services.dart';
 import 'package:fluxidi_tracking/airport/airport_catalog.generated.dart';
 import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
+import 'package:fluxidi_tracking/business_theme_palette.dart';
 import 'package:fluxidi_tracking/business_theme_page.dart';
+import 'package:fluxidi_tracking/business_theme_store.dart';
 import 'package:fluxidi_tracking/company_session_store.dart';
 import 'package:geolocator/geolocator.dart' as geo;
 import 'package:image_picker/image_picker.dart';
@@ -241,6 +243,32 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
   }
 
   AppLanguage get _lang => appConfig.currentLanguage;
+  BusinessThemePalette get _palette =>
+      paletteForBusinessTheme(businessThemeNotifier.value);
+  bool get _isDark => _palette.isDark;
+  bool get _isCorporateBlue =>
+      businessThemeNotifier.value == BusinessThemeVariant.corporateBlue;
+  bool get _isCleanProfessional =>
+      businessThemeNotifier.value == BusinessThemeVariant.cleanProfessional;
+  Color get _pageBg => _palette.background;
+  Color get _panelBg => _palette.surface;
+  Color get _subPanelBg => _palette.surfaceAlt;
+  Color get _accent => _palette.accent;
+  Color get _textPrimary => _palette.textPrimary;
+  Color get _textSecondary => _palette.textSecondary;
+  Color get _textMuted => _palette.textMuted;
+  Color get _textOnAccent => _palette.textOnAccent;
+  Color get _border => _palette.border;
+  Color get _success => _palette.success;
+  Color get _danger => _palette.danger;
+  Color get _shadow => _palette.shadow;
+  Color get _inputFill => _isDark
+      ? (_isCorporateBlue ? const Color(0xFF0F1A2F) : const Color(0xFF0B0B0B))
+      : const Color(0xFFF7F9FC);
+  Color get _inputBorderColor =>
+      _border.withOpacity(_isDark ? (_isCorporateBlue ? 0.72 : 0.55) : 0.92);
+  Color get _inputFocusColor =>
+      _isCleanProfessional ? _accent : _accent.withOpacity(0.92);
 
   String _t({
     required String nl,
@@ -1360,47 +1388,43 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
           const SizedBox(height: 6),
           Text(
             _googleCalendarDescription(),
-            style: TextStyle(
-              color: Colors.white.withOpacity(0.72),
-              fontSize: 12,
-              height: 1.35,
-            ),
+            style: TextStyle(color: _textSecondary, fontSize: 12, height: 1.35),
           ),
           const SizedBox(height: 10),
           if (calendarId != null)
             Text(
               '${_t(nl: 'Kalender-ID', en: 'Calendar ID', fr: 'ID agenda', es: 'ID de calendario')}: $calendarId',
-              style: const TextStyle(color: Colors.white70, fontSize: 11.5),
+              style: TextStyle(color: _textSecondary, fontSize: 11.5),
             ),
           if (accountEmail != null)
             Text(
               '${_t(nl: 'Account', en: 'Account', fr: 'Compte', es: 'Cuenta')}: $accountEmail',
-              style: const TextStyle(color: Colors.white70, fontSize: 11.5),
+              style: TextStyle(color: _textSecondary, fontSize: 11.5),
             ),
           if (lastConnectedAt != null)
             Text(
               '${_t(nl: 'Laatste koppeling', en: 'Last connected', fr: 'Dernière connexion', es: 'Última conexión')}: $lastConnectedAt',
-              style: const TextStyle(color: Colors.white60, fontSize: 11),
+              style: TextStyle(color: _textMuted, fontSize: 11),
             ),
           if (lastDisconnectedAt != null)
             Text(
               '${_t(nl: 'Laatst losgekoppeld', en: 'Last disconnected', fr: 'Dernière déconnexion', es: 'Última desconexión')}: $lastDisconnectedAt',
-              style: const TextStyle(color: Colors.white60, fontSize: 11),
+              style: TextStyle(color: _textMuted, fontSize: 11),
             ),
           if (lastSyncAt != null)
             Text(
               '${_t(nl: 'Laatste sync', en: 'Last sync', fr: 'Dernière synchro', es: 'Última sincronización')}: $lastSyncAt',
-              style: const TextStyle(color: Colors.white60, fontSize: 11),
+              style: TextStyle(color: _textMuted, fontSize: 11),
             ),
           if (lastErrorCode != null)
             Text(
               '${_t(nl: 'Foutcode', en: 'Error code', fr: 'Code erreur', es: 'Código de error')}: $lastErrorCode',
-              style: const TextStyle(color: Colors.white60, fontSize: 11),
+              style: TextStyle(color: _textMuted, fontSize: 11),
             ),
           if (lastErrorAt != null)
             Text(
               '${_t(nl: 'Laatste fout', en: 'Last error', fr: 'Dernière erreur', es: 'Último error')}: $lastErrorAt',
-              style: const TextStyle(color: Colors.white60, fontSize: 11),
+              style: TextStyle(color: _textMuted, fontSize: 11),
             ),
           const SizedBox(height: 10),
           Wrap(
@@ -1525,9 +1549,9 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
             width: double.infinity,
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
-              color: const Color(0xFF0B0B0B),
+              color: _subPanelBg,
               borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: const Color(0x22FFFFFF)),
+              border: Border.all(color: _inputBorderColor),
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -1539,8 +1563,8 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                     fr: 'Blocage intelligent des annulations',
                     es: 'Bloqueo inteligente de cancelaciones',
                   ),
-                  style: const TextStyle(
-                    color: Colors.white,
+                  style: TextStyle(
+                    color: _textPrimary,
                     fontSize: 12.8,
                     fontWeight: FontWeight.w700,
                   ),
@@ -1553,7 +1577,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                     fr: 'Fluxidi détermine automatiquement si le chauffeur est déjà clairement en route vers le client. Si c’est le cas, le client ne peut plus annuler en ligne.',
                     es: 'Fluxidi determina automáticamente si el conductor ya está claramente en camino hacia el cliente. Si es así, el cliente ya no puede cancelar en línea.',
                   ),
-                  style: const TextStyle(color: Colors.white70, fontSize: 11.6),
+                  style: TextStyle(color: _textSecondary, fontSize: 11.6),
                 ),
                 const SizedBox(height: 6),
                 SwitchListTile(
@@ -1585,9 +1609,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                           es: 'Desactivado. Los clientes pueden cancelar según las reglas de tiempo normales.',
                         ),
                   style: TextStyle(
-                    color: _blockWhenDriverEnRoute
-                        ? const Color(0xFF7BE2B4)
-                        : Colors.white60,
+                    color: _blockWhenDriverEnRoute ? _success : _textMuted,
                     fontSize: 11.4,
                   ),
                 ),
@@ -1613,9 +1635,9 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
             width: double.infinity,
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
             decoration: BoxDecoration(
-              color: const Color(0xFF0B0B0B),
+              color: _subPanelBg,
               borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: const Color(0x22FFFFFF)),
+              border: Border.all(color: _inputBorderColor),
             ),
             child: Text(
               _t(
@@ -1624,8 +1646,8 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                 fr: 'Verification manuelle requise',
                 es: 'Revision manual requerida',
               ),
-              style: const TextStyle(
-                color: Colors.white,
+              style: TextStyle(
+                color: _textPrimary,
                 fontSize: 12.5,
                 fontWeight: FontWeight.w600,
               ),
@@ -1975,16 +1997,12 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         width: double.infinity,
         decoration: BoxDecoration(
           gradient: LinearGradient(
-            colors: [
-              const Color(0xFF17110A),
-              const Color(0xFF111214),
-              _setupGold.withOpacity(0.18),
-            ],
+            colors: [_subPanelBg, _panelBg, _setupGold.withOpacity(0.18)],
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
           ),
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: _setupGold.withOpacity(0.22)),
+          border: Border.all(color: _border.withOpacity(_isDark ? 0.55 : 0.95)),
         ),
         padding: const EdgeInsets.symmetric(horizontal: 12),
         child: Row(
@@ -1995,7 +2013,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
               child: Text(
                 label,
                 style: TextStyle(
-                  color: Colors.white.withOpacity(0.86),
+                  color: _textPrimary,
                   fontWeight: FontWeight.w600,
                 ),
               ),
@@ -2009,9 +2027,9 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
       width: double.infinity,
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
-        color: const Color(0xFF0D0F12),
+        color: _panelBg,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: _setupGold.withOpacity(0.25)),
+        border: Border.all(color: _border.withOpacity(_isDark ? 0.58 : 0.95)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -2099,10 +2117,14 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                             width: 46,
                             height: 46,
                             decoration: BoxDecoration(
-                              color: Colors.black.withOpacity(0.82),
+                              color: _isDark
+                                  ? Colors.black.withOpacity(0.62)
+                                  : Colors.white.withOpacity(0.88),
                               borderRadius: BorderRadius.circular(10),
                               border: Border.all(
-                                color: Colors.white.withOpacity(0.25),
+                                color: _border.withOpacity(
+                                  _isDark ? 0.48 : 0.95,
+                                ),
                               ),
                             ),
                             clipBehavior: Clip.antiAlias,
@@ -2140,8 +2162,10 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                 height: 72,
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: _setupGold.withOpacity(0.24)),
-                  color: const Color(0xFF0F1014),
+                  border: Border.all(
+                    color: _border.withOpacity(_isDark ? 0.5 : 0.95),
+                  ),
+                  color: _subPanelBg,
                 ),
                 clipBehavior: Clip.antiAlias,
                 child: Image.network(
@@ -3382,9 +3406,9 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                 width: double.infinity,
                 height: 120,
                 decoration: BoxDecoration(
-                  color: const Color(0xFF0B0B0B),
+                  color: _inputFill,
                   borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: Colors.white24),
+                  border: Border.all(color: _inputBorderColor),
                 ),
                 child: previewChild,
               ),
@@ -3472,7 +3496,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Icon(Icons.image_outlined, size: 28, color: Colors.white54),
+          Icon(Icons.image_outlined, size: 28, color: _textMuted),
           const SizedBox(height: 6),
           Text(
             _t(
@@ -3482,7 +3506,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
               es: 'No hay logotipo de empresa configurado',
             ),
             textAlign: TextAlign.center,
-            style: const TextStyle(color: Colors.white70, fontSize: 12),
+            style: TextStyle(color: _textSecondary, fontSize: 12),
           ),
         ],
       ),
@@ -3504,16 +3528,16 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        gradient: const LinearGradient(
+        gradient: LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          colors: [Color(0xFF101010), Color(0xFF07080C)],
+          colors: [_panelBg, _isDark ? _pageBg : _subPanelBg],
         ),
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: _setupGold.withOpacity(0.22)),
+        border: Border.all(color: _border.withOpacity(_isDark ? 0.55 : 0.95)),
         boxShadow: [
           BoxShadow(
-            color: _setupGold.withOpacity(0.05),
+            color: _shadow.withOpacity(_isDark ? 0.22 : 0.12),
             blurRadius: 10,
             spreadRadius: 0.2,
           ),
@@ -3541,8 +3565,8 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                   height: 34,
                   decoration: BoxDecoration(
                     borderRadius: BorderRadius.circular(10),
-                    color: const Color(0xFF15120A),
-                    border: Border.all(color: _setupGold.withOpacity(0.32)),
+                    color: _subPanelBg,
+                    border: Border.all(color: _border.withOpacity(0.9)),
                   ),
                   child: Icon(icon, size: 19, color: _setupGold),
                 ),
@@ -3553,8 +3577,8 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                     children: [
                       Text(
                         title,
-                        style: const TextStyle(
-                          color: Colors.white,
+                        style: TextStyle(
+                          color: _textPrimary,
                           fontSize: 14,
                           fontWeight: FontWeight.w800,
                         ),
@@ -3564,10 +3588,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                         subtitle,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: Colors.white.withOpacity(0.65),
-                          fontSize: 11.4,
-                        ),
+                        style: TextStyle(color: _textMuted, fontSize: 11.4),
                       ),
                     ],
                   ),
@@ -3602,7 +3623,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                       isExpanded
                           ? Icons.keyboard_arrow_up_rounded
                           : Icons.keyboard_arrow_down_rounded,
-                      color: _setupGold.withOpacity(0.95),
+                      color: _setupGold,
                       size: 22,
                     ),
                   ],
@@ -3618,7 +3639,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                         const SizedBox(height: 10),
                         Container(
                           height: 1,
-                          color: Colors.white.withOpacity(0.10),
+                          color: _border.withOpacity(_isDark ? 0.4 : 0.9),
                         ),
                         const SizedBox(height: 10),
                         child,
@@ -3636,20 +3657,20 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: isError ? const Color(0xFF3A1010) : const Color(0xFF12331F),
+        color: isError
+            ? (_isDark ? const Color(0xFF3A1010) : const Color(0xFFFBECEF))
+            : (_isDark ? const Color(0xFF12331F) : const Color(0xFFE9F7F0)),
         borderRadius: BorderRadius.circular(12),
         border: Border.all(
-          color: isError
-              ? Colors.redAccent.withOpacity(.45)
-              : Colors.greenAccent.withOpacity(.35),
+          color: isError ? _danger.withOpacity(.55) : _success.withOpacity(.45),
         ),
       ),
       child: Text(
         text,
         style: TextStyle(
           color: isError
-              ? Colors.redAccent.shade100
-              : Colors.greenAccent.shade100,
+              ? (_isDark ? Colors.redAccent.shade100 : _danger)
+              : (_isDark ? Colors.greenAccent.shade100 : _success),
           fontWeight: FontWeight.w700,
         ),
       ),
@@ -4685,12 +4706,10 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                                     ExpansionTile(
                                       tilePadding: EdgeInsets.zero,
                                       childrenPadding: EdgeInsets.zero,
-                                      collapsedIconColor: const Color(
-                                        0xFFE5B641,
-                                      ),
-                                      iconColor: const Color(0xFFE5B641),
-                                      textColor: Colors.white,
-                                      collapsedTextColor: Colors.white70,
+                                      collapsedIconColor: _accent,
+                                      iconColor: _accent,
+                                      textColor: _textPrimary,
+                                      collapsedTextColor: _textSecondary,
                                       initiallyExpanded:
                                           showAdvancedRadiusCoordinates,
                                       title: Text(
@@ -5204,7 +5223,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                   fr: 'Aucune règle de tarif fixe aéroport configurée.',
                   es: 'Aún no hay reglas de tarifa fija de aeropuerto configuradas.',
                 ),
-                style: TextStyle(color: Colors.white.withOpacity(0.74)),
+                style: TextStyle(color: _textSecondary),
               ),
             ),
           ..._airportFixedFareRules.asMap().entries.map((entry) {
@@ -5449,12 +5468,12 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         onChanged: onChanged,
         maxLines: maxLines,
         readOnly: readOnly,
-        style: const TextStyle(color: Colors.white),
+        style: TextStyle(color: _textPrimary),
         decoration: InputDecoration(
           labelText: label,
-          labelStyle: const TextStyle(color: Colors.white70),
+          labelStyle: TextStyle(color: _textSecondary),
           hintText: hint,
-          hintStyle: const TextStyle(color: Colors.white38),
+          hintStyle: TextStyle(color: _textMuted.withOpacity(0.85)),
           floatingLabelBehavior: FloatingLabelBehavior.always,
           alignLabelWithHint: maxLines > 1,
           contentPadding: const EdgeInsets.symmetric(
@@ -5462,14 +5481,18 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
             vertical: 16,
           ),
           filled: true,
-          fillColor: const Color(0xFF0B0B0B),
+          fillColor: _inputFill,
           border: OutlineInputBorder(
             borderRadius: BorderRadius.circular(10),
-            borderSide: const BorderSide(color: Color(0x22FFFFFF)),
+            borderSide: BorderSide(color: _inputBorderColor),
           ),
           enabledBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(10),
-            borderSide: const BorderSide(color: Color(0x22FFFFFF)),
+            borderSide: BorderSide(color: _inputBorderColor),
+          ),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(10),
+            borderSide: BorderSide(color: _inputFocusColor, width: 1.2),
           ),
         ),
       ),
@@ -5492,10 +5515,10 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
             allowDecimal ? RegExp(r'[0-9\.,]') : RegExp(r'[0-9]'),
           ),
         ],
-        style: const TextStyle(color: Colors.white),
+        style: TextStyle(color: _textPrimary),
         decoration: InputDecoration(
           labelText: label,
-          labelStyle: const TextStyle(color: Colors.white70),
+          labelStyle: TextStyle(color: _textSecondary),
           helperText:
               helperText ??
               _t(
@@ -5504,21 +5527,25 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                 fr: 'Minutes avant depart (0-10080)',
                 es: 'Minutos antes de la salida (0-10080)',
               ),
-          helperStyle: const TextStyle(color: Colors.white54, fontSize: 11.5),
+          helperStyle: TextStyle(color: _textMuted, fontSize: 11.5),
           floatingLabelBehavior: FloatingLabelBehavior.always,
           contentPadding: const EdgeInsets.symmetric(
             horizontal: 14,
             vertical: 16,
           ),
           filled: true,
-          fillColor: const Color(0xFF0B0B0B),
+          fillColor: _inputFill,
           border: OutlineInputBorder(
             borderRadius: BorderRadius.circular(10),
-            borderSide: const BorderSide(color: Color(0x22FFFFFF)),
+            borderSide: BorderSide(color: _inputBorderColor),
           ),
           enabledBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(10),
-            borderSide: const BorderSide(color: Color(0x22FFFFFF)),
+            borderSide: BorderSide(color: _inputBorderColor),
+          ),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(10),
+            borderSide: BorderSide(color: _inputFocusColor, width: 1.2),
           ),
         ),
       ),
@@ -5550,7 +5577,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
               title: Text(o.labelFor(_lang)),
               subtitle: Text(
                 o.payloadValue,
-                style: const TextStyle(color: Colors.white54, fontSize: 12),
+                style: TextStyle(color: _textMuted, fontSize: 12),
               ),
             );
           })
@@ -5565,7 +5592,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     return parsed != null && parsed.isFinite && parsed > 0;
   }
 
-  Color get _setupGold => appConfig.primaryColor;
+  Color get _setupGold => _accent;
 
   String _statusLabel(_SetupStatus status) {
     switch (status) {
@@ -5929,13 +5956,13 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
       width: width,
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        gradient: const LinearGradient(
+        gradient: LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          colors: [Color(0xFF101010), Color(0xFF07080C)],
+          colors: [_panelBg, _isDark ? _pageBg : _subPanelBg],
         ),
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: _setupGold.withOpacity(0.20)),
+        border: Border.all(color: _border.withOpacity(_isDark ? 0.52 : 0.92)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -5961,8 +5988,8 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
             item.title,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              color: Colors.white,
+            style: TextStyle(
+              color: _textPrimary,
               fontSize: 13,
               fontWeight: FontWeight.w800,
             ),
@@ -5972,11 +5999,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
             item.subtitle,
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              color: Colors.white.withOpacity(0.66),
-              fontSize: 11.2,
-              height: 1.25,
-            ),
+            style: TextStyle(color: _textMuted, fontSize: 11.2, height: 1.25),
           ),
         ],
       ),
@@ -5992,16 +6015,16 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        gradient: const LinearGradient(
+        gradient: LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          colors: [Color(0xFF15120A), Color(0xFF101010), Color(0xFF07080C)],
+          colors: [_subPanelBg, _panelBg, _isDark ? _pageBg : _subPanelBg],
         ),
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: _setupGold.withOpacity(0.32)),
+        border: Border.all(color: _border.withOpacity(_isDark ? 0.62 : 0.95)),
         boxShadow: [
           BoxShadow(
-            color: _setupGold.withOpacity(0.09),
+            color: _shadow.withOpacity(_isDark ? 0.24 : 0.14),
             blurRadius: 14,
             spreadRadius: 0.4,
           ),
@@ -6017,8 +6040,8 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
               fr: 'Progression de configuration',
               es: 'Progreso de configuración',
             ),
-            style: const TextStyle(
-              color: Colors.white,
+            style: TextStyle(
+              color: _textPrimary,
               fontSize: 16.5,
               fontWeight: FontWeight.w900,
             ),
@@ -6031,19 +6054,20 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
               fr: 'Préparez votre entreprise pour les réservations.',
               es: 'Prepara tu empresa para recibir reservas.',
             ),
-            style: TextStyle(
-              color: Colors.white.withOpacity(0.72),
-              fontSize: 12.3,
-            ),
+            style: TextStyle(color: _textSecondary, fontSize: 12.3),
           ),
           const SizedBox(height: 10),
           Container(
             width: double.infinity,
             padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 10),
             decoration: BoxDecoration(
-              color: const Color(0xFF07080C).withOpacity(0.86),
+              color: _isDark
+                  ? _pageBg.withOpacity(0.82)
+                  : _subPanelBg.withOpacity(0.95),
               borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: _setupGold.withOpacity(0.28)),
+              border: Border.all(
+                color: _border.withOpacity(_isDark ? 0.58 : 0.95),
+              ),
             ),
             child: Row(
               children: [
@@ -6054,8 +6078,8 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                     fr: 'Aperçu des paramètres',
                     es: 'Resumen de ajustes',
                   ),
-                  style: const TextStyle(
-                    color: Colors.white,
+                  style: TextStyle(
+                    color: _textPrimary,
                     fontSize: 12.5,
                     fontWeight: FontWeight.w700,
                   ),
@@ -6140,518 +6164,609 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
 
   @override
   Widget build(BuildContext context) {
-    return ValueListenableBuilder(
-      valueListenable: appLanguageNotifier,
-      builder: (context, _, __) => Scaffold(
-        backgroundColor: const Color(0xFF0B1020),
-        appBar: AppBar(
-          backgroundColor: const Color(0xFF0B1020),
-          title: Text(
-            _t(
-              nl: 'Bedrijfsinstellingen',
-              en: 'Business settings',
-              fr: 'Parametres entreprise',
-              es: 'Configuracion de empresa',
+    return AnimatedBuilder(
+      animation: Listenable.merge([appLanguageNotifier, businessThemeNotifier]),
+      builder: (context, _) => Theme(
+        data: Theme.of(context).copyWith(
+          scaffoldBackgroundColor: _pageBg,
+          colorScheme: Theme.of(context).colorScheme.copyWith(
+            primary: _accent,
+            secondary: _accent,
+            surface: _panelBg,
+            onSurface: _textPrimary,
+          ),
+          appBarTheme: AppBarTheme(
+            backgroundColor: _pageBg,
+            foregroundColor: _textPrimary,
+            elevation: 0,
+          ),
+          iconTheme: IconThemeData(color: _textSecondary),
+          inputDecorationTheme: InputDecorationTheme(
+            labelStyle: TextStyle(color: _textSecondary),
+            hintStyle: TextStyle(color: _textMuted),
+            helperStyle: TextStyle(color: _textMuted, fontSize: 11.5),
+            filled: true,
+            fillColor: _inputFill,
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(10),
+              borderSide: BorderSide(color: _inputBorderColor),
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(10),
+              borderSide: BorderSide(color: _inputBorderColor),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(10),
+              borderSide: BorderSide(color: _inputFocusColor, width: 1.2),
             ),
           ),
+          outlinedButtonTheme: OutlinedButtonThemeData(
+            style: OutlinedButton.styleFrom(
+              foregroundColor: _accent,
+              side: BorderSide(
+                color: _border.withOpacity(_isDark ? 0.75 : 0.98),
+              ),
+            ),
+          ),
+          filledButtonTheme: FilledButtonThemeData(
+            style: FilledButton.styleFrom(
+              backgroundColor: _accent,
+              foregroundColor: _textOnAccent,
+            ),
+          ),
+          switchTheme: SwitchThemeData(
+            thumbColor: MaterialStateProperty.resolveWith((states) {
+              if (states.contains(MaterialState.selected)) return _accent;
+              return _isDark ? _textMuted : _textSecondary;
+            }),
+            trackColor: MaterialStateProperty.resolveWith((states) {
+              if (states.contains(MaterialState.selected)) {
+                return _accent.withOpacity(_isDark ? 0.5 : 0.42);
+              }
+              return _isDark
+                  ? _border.withOpacity(0.6)
+                  : _border.withOpacity(0.95);
+            }),
+          ),
         ),
-        body: ListView(
-          padding: const EdgeInsets.all(12),
-          children: [
-            if (_backendProfilesLoading) ...[
-              const LinearProgressIndicator(),
-              const SizedBox(height: 10),
-            ],
-            if (_backendProfilesError != null) ...[
-              _notice(_backendProfilesError!, isError: true),
-              const SizedBox(height: 10),
-            ],
-            if (_backendProfilesStatus != null) ...[
-              _notice(_backendProfilesStatus!),
-              const SizedBox(height: 10),
-            ],
-            _buildSetupCockpit(),
-            Container(
-              margin: const EdgeInsets.only(bottom: 10),
-              decoration: BoxDecoration(
-                color: const Color(0xFF101113),
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: const Color(0x22FFFFFF)),
+        child: Scaffold(
+          backgroundColor: _pageBg,
+          appBar: AppBar(
+            backgroundColor: _pageBg,
+            title: Text(
+              _t(
+                nl: 'Bedrijfsinstellingen',
+                en: 'Business settings',
+                fr: 'Parametres entreprise',
+                es: 'Configuracion de empresa',
               ),
-              child: ListTile(
-                leading: const Icon(
-                  Icons.palette_outlined,
-                  color: Color(0xFFE5B641),
-                ),
-                title: Text(
-                  _t(
-                    nl: "Thema's & uitstraling",
-                    en: 'Themes & appearance',
-                    fr: 'Thèmes et apparence',
-                    es: 'Temas y apariencia',
+            ),
+          ),
+          body: ListView(
+            padding: const EdgeInsets.all(12),
+            children: [
+              if (_backendProfilesLoading) ...[
+                const LinearProgressIndicator(),
+                const SizedBox(height: 10),
+              ],
+              if (_backendProfilesError != null) ...[
+                _notice(_backendProfilesError!, isError: true),
+                const SizedBox(height: 10),
+              ],
+              if (_backendProfilesStatus != null) ...[
+                _notice(_backendProfilesStatus!),
+                const SizedBox(height: 10),
+              ],
+              _buildSetupCockpit(),
+              Container(
+                margin: const EdgeInsets.only(bottom: 10),
+                decoration: BoxDecoration(
+                  color: _panelBg,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: _border.withOpacity(_isDark ? 0.55 : 0.95),
                   ),
                 ),
-                subtitle: Text(
-                  _t(
-                    nl: 'Kies de kleuren voor bedrijf, chauffeurs en klantweergave.',
-                    en: 'Choose colors for business, drivers, and customer display.',
-                    fr: 'Choisissez les couleurs pour l’entreprise, les chauffeurs et la vue client.',
-                    es: 'Elige los colores para empresa, conductores y vista cliente.',
-                  ),
-                ),
-                trailing: const Icon(Icons.chevron_right_rounded),
-                onTap: () async {
-                  final result = await Navigator.of(context).push<bool>(
-                    MaterialPageRoute(
-                      builder: (_) => const BusinessThemePage(),
+                child: ListTile(
+                  leading: Icon(Icons.palette_outlined, color: _accent),
+                  title: Text(
+                    _t(
+                      nl: "Thema's & uitstraling",
+                      en: 'Themes & appearance',
+                      fr: 'Thèmes et apparence',
+                      es: 'Temas y apariencia',
                     ),
-                  );
-                  if (result == true && context.mounted) {
-                    Navigator.of(context).pop();
-                  }
-                },
-              ),
-            ),
-            _collapsibleSettingsCard(
-              id: 'local_company',
-              icon: Icons.apartment_outlined,
-              title: _t(
-                nl: 'Lokaal bedrijf (dit toestel)',
-                en: 'Local company (this device)',
-                fr: 'Entreprise locale (cet appareil)',
-                es: 'Empresa local (este dispositivo)',
-              ),
-              subtitle: _t(
-                nl: 'Tenant-ID en lokale status',
-                en: 'Tenant ID and local status',
-                fr: 'ID tenant et statut local',
-                es: 'ID de tenant y estado local',
-              ),
-              status: _detailsStatus(),
-              child: ValueListenableBuilder<CompanyProfile?>(
-                valueListenable: companyProfileNotifier,
-                builder: (context, _, __) {
-                  final p = companyProfileNotifier.value;
-                  return Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  _t(
-                                    nl: 'Bedrijfs-/tenant-ID (alleen lezen)',
-                                    en: 'Company / tenant ID (read-only)',
-                                    fr: 'ID entreprise / tenant (lecture seule)',
-                                    es: 'ID de empresa / tenant (solo lectura)',
-                                  ),
-                                  style: const TextStyle(
-                                    color: Colors.white54,
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                                const SizedBox(height: 8),
-                                SelectableText(
-                                  resolvedCompanyId,
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontFamily: 'monospace',
-                                    fontSize: 13,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                          IconButton(
-                            tooltip: _t(
-                              nl: 'ID kopiëren',
-                              en: 'Copy ID',
-                              fr: 'Copier l ID',
-                              es: 'Copiar ID',
-                            ),
-                            onPressed: () async {
-                              await Clipboard.setData(
-                                ClipboardData(text: resolvedCompanyId),
-                              );
-                              if (!context.mounted) return;
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(
-                                  content: Text(
-                                    _t(
-                                      nl: 'Bedrijfs-ID gekopieerd.',
-                                      en: 'Company ID copied.',
-                                      fr: 'ID entreprise copie.',
-                                      es: 'ID de empresa copiado.',
-                                    ),
-                                  ),
-                                ),
-                              );
-                            },
-                            icon: const Icon(Icons.copy, color: Colors.white54),
-                          ),
-                        ],
+                  ),
+                  subtitle: Text(
+                    _t(
+                      nl: 'Kies de kleuren voor bedrijf, chauffeurs en klantweergave.',
+                      en: 'Choose colors for business, drivers, and customer display.',
+                      fr: 'Choisissez les couleurs pour l’entreprise, les chauffeurs et la vue client.',
+                      es: 'Elige los colores para empresa, conductores y vista cliente.',
+                    ),
+                  ),
+                  trailing: Icon(
+                    Icons.chevron_right_rounded,
+                    color: _textSecondary,
+                  ),
+                  onTap: () async {
+                    final result = await Navigator.of(context).push<bool>(
+                      MaterialPageRoute(
+                        builder: (_) => const BusinessThemePage(),
                       ),
-                      if (p != null) ...[
-                        const SizedBox(height: 14),
-                        Text(
-                          _t(
-                            nl: 'Bedrijfsstatus',
-                            en: 'Company status',
-                            fr: 'Statut de l’entreprise',
-                            es: 'Estado de la empresa',
-                          ),
-                          style: const TextStyle(
-                            color: Colors.white54,
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        Align(
-                          alignment: Alignment.centerLeft,
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 10,
-                              vertical: 5,
-                            ),
-                            decoration: BoxDecoration(
-                              color: p.isSuspended
-                                  ? const Color(0xFF3A1010)
-                                  : p.isVerified
-                                  ? const Color(0xFF12331F)
-                                  : const Color(0xFF2A2410),
-                              borderRadius: BorderRadius.circular(20),
-                              border: Border.all(
-                                color: p.isSuspended
-                                    ? Colors.red.withOpacity(0.45)
-                                    : p.isVerified
-                                    ? const Color(0xFF4ADE80).withOpacity(0.45)
-                                    : const Color(0xFFE5B641).withOpacity(0.55),
-                              ),
-                            ),
-                            child: Text(
-                              p.verificationBadgeLabel(_lang),
-                              style: TextStyle(
-                                color: p.isSuspended
-                                    ? const Color(0xFFFFB4B4)
-                                    : p.isVerified
-                                    ? const Color(0xFFB8F5C8)
-                                    : const Color(0xFFE5D4A1),
-                                fontWeight: FontWeight.w700,
-                                fontSize: 12,
-                              ),
-                            ),
-                          ),
-                        ),
-                        if (p.showsPendingVerificationNotice) ...[
-                          const SizedBox(height: 8),
-                          Text(
-                            p.verificationPendingNotice(_lang),
-                            style: TextStyle(
-                              color: Colors.white.withOpacity(0.62),
-                              fontSize: 12,
-                              height: 1.35,
-                            ),
-                          ),
-                        ],
-                      ],
-                    ],
-                  );
-                },
+                    );
+                    if (result == true && context.mounted) {
+                      Navigator.of(context).pop();
+                    }
+                  },
+                ),
               ),
-            ),
-            ValueListenableBuilder<ActiveCompanySession?>(
-              valueListenable: activeCompanySessionNotifier,
-              builder: (context, activeSession, __) {
-                return _collapsibleSettingsCard(
-                  id: 'public_booking_link',
-                  icon: Icons.link_outlined,
-                  title: _t(
-                    nl: 'Publieke boekingslink',
-                    en: 'Public booking link',
-                    fr: 'Lien de réservation public',
-                    es: 'Enlace público de reserva',
-                  ),
-                  subtitle: _t(
-                    nl: 'Web/QR-link voorbereiding',
-                    en: 'Web/QR link preparation',
-                    fr: 'Préparation lien web/QR',
-                    es: 'Preparación de enlace web/QR',
-                  ),
-                  status: _publicLinkStatus(),
-                  child: ValueListenableBuilder<CompanyProfile?>(
-                    valueListenable: companyProfileNotifier,
-                    builder: (context, profile, _) {
-                      final publicCompanyCode = _activePublicCompanyCode(
-                        session: activeSession,
-                        profile: profile,
-                      );
-                      final hasPublicCompanyCode = publicCompanyCode != null;
-                      final effectivePublicCompanyCode = hasPublicCompanyCode
-                          ? publicCompanyCode
-                          : '';
-                      final publicBookingUrl = hasPublicCompanyCode
-                          ? _preparedPublicBookingUrl(
-                              effectivePublicCompanyCode,
-                            )
-                          : '';
-                      return Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          if (!hasPublicCompanyCode) ...[
-                            const SizedBox(height: 10),
-                            Container(
-                              width: double.infinity,
-                              padding: const EdgeInsets.all(10),
-                              decoration: BoxDecoration(
-                                color: Colors.orange.withOpacity(0.12),
-                                borderRadius: BorderRadius.circular(10),
-                                border: Border.all(
-                                  color: Colors.orangeAccent.withOpacity(0.45),
-                                ),
-                              ),
+              _collapsibleSettingsCard(
+                id: 'local_company',
+                icon: Icons.apartment_outlined,
+                title: _t(
+                  nl: 'Lokaal bedrijf (dit toestel)',
+                  en: 'Local company (this device)',
+                  fr: 'Entreprise locale (cet appareil)',
+                  es: 'Empresa local (este dispositivo)',
+                ),
+                subtitle: _t(
+                  nl: 'Tenant-ID en lokale status',
+                  en: 'Tenant ID and local status',
+                  fr: 'ID tenant et statut local',
+                  es: 'ID de tenant y estado local',
+                ),
+                status: _detailsStatus(),
+                child: ValueListenableBuilder<CompanyProfile?>(
+                  valueListenable: companyProfileNotifier,
+                  builder: (context, _, __) {
+                    final p = companyProfileNotifier.value;
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Expanded(
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
                                   Text(
                                     _t(
-                                      nl: 'Verifieer uw bedrijf eerst om een publieke boekingslink te gebruiken.',
-                                      en: 'Verify your company first to use a public booking link.',
-                                      fr: 'Vérifiez d’abord votre entreprise pour utiliser un lien de réservation public.',
-                                      es: 'Verifica primero tu empresa para usar un enlace público de reserva.',
+                                      nl: 'Bedrijfs-/tenant-ID (alleen lezen)',
+                                      en: 'Company / tenant ID (read-only)',
+                                      fr: 'ID entreprise / tenant (lecture seule)',
+                                      es: 'ID de empresa / tenant (solo lectura)',
                                     ),
                                     style: const TextStyle(
-                                      color: Colors.orangeAccent,
-                                      fontSize: 11.5,
+                                      color: Colors.white54,
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w600,
                                     ),
                                   ),
-                                  const SizedBox(height: 6),
-                                  Text(
-                                    _t(
-                                      nl: 'Geen publieke Fluxidi-code gevonden.',
-                                      en: 'No public Fluxidi code found.',
-                                      fr: 'Aucun code Fluxidi public trouvé.',
-                                      es: 'No se encontró ningún código público de Fluxidi.',
-                                    ),
+                                  const SizedBox(height: 8),
+                                  SelectableText(
+                                    resolvedCompanyId,
                                     style: TextStyle(
-                                      color: Colors.orangeAccent.withOpacity(
-                                        0.82,
-                                      ),
-                                      fontSize: 10.5,
+                                      color: _textPrimary,
+                                      fontFamily: 'monospace',
+                                      fontSize: 13,
                                     ),
                                   ),
                                 ],
                               ),
                             ),
-                          ] else ...[
-                            Text(
-                              _t(
-                                nl: 'Deel deze link of QR-code met klanten zodat zij rechtstreeks kunnen boeken.',
-                                en: 'Share this link or QR code with customers so they can book directly.',
-                                fr: 'Partagez ce lien ou ce code QR avec les clients afin qu’ils puissent réserver directement.',
-                                es: 'Comparte este enlace o código QR con los clientes para que puedan reservar directamente.',
+                            IconButton(
+                              tooltip: _t(
+                                nl: 'ID kopiëren',
+                                en: 'Copy ID',
+                                fr: 'Copier l ID',
+                                es: 'Copiar ID',
                               ),
+                              onPressed: () async {
+                                await Clipboard.setData(
+                                  ClipboardData(text: resolvedCompanyId),
+                                );
+                                if (!context.mounted) return;
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text(
+                                      _t(
+                                        nl: 'Bedrijfs-ID gekopieerd.',
+                                        en: 'Company ID copied.',
+                                        fr: 'ID entreprise copie.',
+                                        es: 'ID de empresa copiado.',
+                                      ),
+                                    ),
+                                  ),
+                                );
+                              },
+                              icon: Icon(Icons.copy, color: _textMuted),
+                            ),
+                          ],
+                        ),
+                        if (p != null) ...[
+                          const SizedBox(height: 14),
+                          Text(
+                            _t(
+                              nl: 'Bedrijfsstatus',
+                              en: 'Company status',
+                              fr: 'Statut de l’entreprise',
+                              es: 'Estado de la empresa',
+                            ),
+                            style: TextStyle(
+                              color: _textMuted,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          Align(
+                            alignment: Alignment.centerLeft,
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 10,
+                                vertical: 5,
+                              ),
+                              decoration: BoxDecoration(
+                                color: p.isSuspended
+                                    ? const Color(0xFF3A1010)
+                                    : p.isVerified
+                                    ? const Color(0xFF12331F)
+                                    : const Color(0xFF2A2410),
+                                borderRadius: BorderRadius.circular(20),
+                                border: Border.all(
+                                  color: p.isSuspended
+                                      ? Colors.red.withOpacity(0.45)
+                                      : p.isVerified
+                                      ? const Color(
+                                          0xFF4ADE80,
+                                        ).withOpacity(0.45)
+                                      : _accent.withOpacity(0.55),
+                                ),
+                              ),
+                              child: Text(
+                                p.verificationBadgeLabel(_lang),
+                                style: TextStyle(
+                                  color: p.isSuspended
+                                      ? const Color(0xFFFFB4B4)
+                                      : p.isVerified
+                                      ? const Color(0xFFB8F5C8)
+                                      : const Color(0xFFE5D4A1),
+                                  fontWeight: FontWeight.w700,
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ),
+                          ),
+                          if (p.showsPendingVerificationNotice) ...[
+                            const SizedBox(height: 8),
+                            Text(
+                              p.verificationPendingNotice(_lang),
                               style: TextStyle(
-                                color: Colors.white.withOpacity(0.78),
-                                fontSize: 12.5,
+                                color: _textMuted,
+                                fontSize: 12,
                                 height: 1.35,
                               ),
                             ),
-                            const SizedBox(height: 10),
-                            Container(
-                              width: double.infinity,
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 12,
-                                vertical: 10,
-                              ),
-                              decoration: BoxDecoration(
-                                color: const Color(0xFF0B0B0B),
-                                borderRadius: BorderRadius.circular(10),
-                                border: Border.all(
-                                  color: const Color(
-                                    0xFFD4AF4A,
-                                  ).withOpacity(0.45),
-                                ),
-                              ),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    _t(
-                                      nl: 'Publieke bedrijfscode',
-                                      en: 'Public company code',
-                                      fr: 'Code entreprise public',
-                                      es: 'Código público de empresa',
-                                    ),
-                                    style: TextStyle(
-                                      color: Colors.white.withOpacity(0.72),
-                                      fontSize: 11.5,
-                                      fontWeight: FontWeight.w600,
+                          ],
+                        ],
+                      ],
+                    );
+                  },
+                ),
+              ),
+              ValueListenableBuilder<ActiveCompanySession?>(
+                valueListenable: activeCompanySessionNotifier,
+                builder: (context, activeSession, __) {
+                  return _collapsibleSettingsCard(
+                    id: 'public_booking_link',
+                    icon: Icons.link_outlined,
+                    title: _t(
+                      nl: 'Publieke boekingslink',
+                      en: 'Public booking link',
+                      fr: 'Lien de réservation public',
+                      es: 'Enlace público de reserva',
+                    ),
+                    subtitle: _t(
+                      nl: 'Web/QR-link voorbereiding',
+                      en: 'Web/QR link preparation',
+                      fr: 'Préparation lien web/QR',
+                      es: 'Preparación de enlace web/QR',
+                    ),
+                    status: _publicLinkStatus(),
+                    child: ValueListenableBuilder<CompanyProfile?>(
+                      valueListenable: companyProfileNotifier,
+                      builder: (context, profile, _) {
+                        final publicCompanyCode = _activePublicCompanyCode(
+                          session: activeSession,
+                          profile: profile,
+                        );
+                        final hasPublicCompanyCode = publicCompanyCode != null;
+                        final effectivePublicCompanyCode = hasPublicCompanyCode
+                            ? publicCompanyCode
+                            : '';
+                        final publicBookingUrl = hasPublicCompanyCode
+                            ? _preparedPublicBookingUrl(
+                                effectivePublicCompanyCode,
+                              )
+                            : '';
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            if (!hasPublicCompanyCode) ...[
+                              const SizedBox(height: 10),
+                              Container(
+                                width: double.infinity,
+                                padding: const EdgeInsets.all(10),
+                                decoration: BoxDecoration(
+                                  color: Colors.orange.withOpacity(0.12),
+                                  borderRadius: BorderRadius.circular(10),
+                                  border: Border.all(
+                                    color: Colors.orangeAccent.withOpacity(
+                                      0.45,
                                     ),
                                   ),
-                                  const SizedBox(height: 6),
-                                  Row(
-                                    children: [
-                                      Expanded(
-                                        child: SelectableText(
-                                          effectivePublicCompanyCode,
-                                          style: const TextStyle(
-                                            color: Color(0xFFF0C85D),
-                                            fontFamily: 'monospace',
-                                            fontSize: 13.2,
-                                            fontWeight: FontWeight.w700,
+                                ),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      _t(
+                                        nl: 'Verifieer uw bedrijf eerst om een publieke boekingslink te gebruiken.',
+                                        en: 'Verify your company first to use a public booking link.',
+                                        fr: 'Vérifiez d’abord votre entreprise pour utiliser un lien de réservation public.',
+                                        es: 'Verifica primero tu empresa para usar un enlace público de reserva.',
+                                      ),
+                                      style: const TextStyle(
+                                        color: Colors.orangeAccent,
+                                        fontSize: 11.5,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 6),
+                                    Text(
+                                      _t(
+                                        nl: 'Geen publieke Fluxidi-code gevonden.',
+                                        en: 'No public Fluxidi code found.',
+                                        fr: 'Aucun code Fluxidi public trouvé.',
+                                        es: 'No se encontró ningún código público de Fluxidi.',
+                                      ),
+                                      style: TextStyle(
+                                        color: Colors.orangeAccent.withOpacity(
+                                          0.82,
+                                        ),
+                                        fontSize: 10.5,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ] else ...[
+                              Text(
+                                _t(
+                                  nl: 'Deel deze link of QR-code met klanten zodat zij rechtstreeks kunnen boeken.',
+                                  en: 'Share this link or QR code with customers so they can book directly.',
+                                  fr: 'Partagez ce lien ou ce code QR avec les clients afin qu’ils puissent réserver directement.',
+                                  es: 'Comparte este enlace o código QR con los clientes para que puedan reservar directamente.',
+                                ),
+                                style: TextStyle(
+                                  color: Colors.white.withOpacity(0.78),
+                                  fontSize: 12.5,
+                                  height: 1.35,
+                                ),
+                              ),
+                              const SizedBox(height: 10),
+                              Container(
+                                width: double.infinity,
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 12,
+                                  vertical: 10,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: _subPanelBg,
+                                  borderRadius: BorderRadius.circular(10),
+                                  border: Border.all(
+                                    color: _border.withOpacity(
+                                      _isDark ? 0.58 : 0.95,
+                                    ),
+                                  ),
+                                ),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      _t(
+                                        nl: 'Publieke bedrijfscode',
+                                        en: 'Public company code',
+                                        fr: 'Code entreprise public',
+                                        es: 'Código público de empresa',
+                                      ),
+                                      style: TextStyle(
+                                        color: _textSecondary,
+                                        fontSize: 11.5,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 6),
+                                    Row(
+                                      children: [
+                                        Expanded(
+                                          child: SelectableText(
+                                            effectivePublicCompanyCode,
+                                            style: TextStyle(
+                                              color: _accent,
+                                              fontFamily: 'monospace',
+                                              fontSize: 13.2,
+                                              fontWeight: FontWeight.w700,
+                                            ),
                                           ),
                                         ),
-                                      ),
-                                      const SizedBox(width: 8),
-                                      TextButton.icon(
-                                        onPressed: () async {
-                                          await Clipboard.setData(
-                                            ClipboardData(
-                                              text: effectivePublicCompanyCode,
+                                        const SizedBox(width: 8),
+                                        TextButton.icon(
+                                          onPressed: () async {
+                                            await Clipboard.setData(
+                                              ClipboardData(
+                                                text:
+                                                    effectivePublicCompanyCode,
+                                              ),
+                                            );
+                                            if (!context.mounted) return;
+                                            ScaffoldMessenger.of(
+                                              context,
+                                            ).showSnackBar(
+                                              SnackBar(
+                                                content: Text(
+                                                  _t(
+                                                    nl: 'Publieke bedrijfscode gekopieerd',
+                                                    en: 'Public company code copied',
+                                                    fr: 'Code entreprise public copié',
+                                                    es: 'Código público de empresa copiado',
+                                                  ),
+                                                ),
+                                              ),
+                                            );
+                                          },
+                                          icon: const Icon(
+                                            Icons.copy_outlined,
+                                            size: 16,
+                                          ),
+                                          label: Text(
+                                            _t(
+                                              nl: 'Kopieer code',
+                                              en: 'Copy code',
+                                              fr: 'Copier le code',
+                                              es: 'Copiar código',
                                             ),
-                                          );
-                                          if (!context.mounted) return;
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(height: 10),
+                              Container(
+                                width: double.infinity,
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 12,
+                                  vertical: 10,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: _subPanelBg,
+                                  borderRadius: BorderRadius.circular(10),
+                                  border: Border.all(
+                                    color: _border.withOpacity(
+                                      _isDark ? 0.5 : 0.95,
+                                    ),
+                                  ),
+                                ),
+                                child: SelectableText(
+                                  publicBookingUrl,
+                                  style: TextStyle(
+                                    color: _textPrimary,
+                                    fontFamily: 'monospace',
+                                    fontSize: 12.2,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(height: 12),
+                              Center(
+                                child: Container(
+                                  padding: const EdgeInsets.all(10),
+                                  decoration: BoxDecoration(
+                                    color: Colors.white,
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                  child: QrImageView(
+                                    data: publicBookingUrl,
+                                    version: QrVersions.auto,
+                                    size: 180,
+                                    backgroundColor: Colors.white,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(height: 12),
+                              Wrap(
+                                spacing: 8,
+                                runSpacing: 8,
+                                children: [
+                                  OutlinedButton.icon(
+                                    onPressed: () async {
+                                      await Clipboard.setData(
+                                        ClipboardData(text: publicBookingUrl),
+                                      );
+                                      if (!context.mounted) return;
+                                      ScaffoldMessenger.of(
+                                        context,
+                                      ).showSnackBar(
+                                        SnackBar(
+                                          content: Text(
+                                            _t(
+                                              nl: 'Publieke boekingslink gekopieerd',
+                                              en: 'Public booking link copied',
+                                              fr: 'Lien de réservation public copié',
+                                              es: 'Enlace público de reserva copiado',
+                                            ),
+                                          ),
+                                        ),
+                                      );
+                                    },
+                                    icon: const Icon(
+                                      Icons.copy_outlined,
+                                      size: 16,
+                                    ),
+                                    label: Text(
+                                      _t(
+                                        nl: 'Kopiëren',
+                                        en: 'Copy',
+                                        fr: 'Copier',
+                                        es: 'Copiar',
+                                      ),
+                                    ),
+                                  ),
+                                  OutlinedButton.icon(
+                                    onPressed: () async {
+                                      await Share.share(publicBookingUrl);
+                                    },
+                                    icon: const Icon(
+                                      Icons.share_outlined,
+                                      size: 16,
+                                    ),
+                                    label: Text(
+                                      _t(
+                                        nl: 'Delen',
+                                        en: 'Share',
+                                        fr: 'Partager',
+                                        es: 'Compartir',
+                                      ),
+                                    ),
+                                  ),
+                                  OutlinedButton.icon(
+                                    onPressed: () async {
+                                      try {
+                                        final uri = Uri.parse(publicBookingUrl);
+                                        final launched = await launchUrl(
+                                          uri,
+                                          mode: LaunchMode.externalApplication,
+                                        );
+                                        if (!launched && context.mounted) {
                                           ScaffoldMessenger.of(
                                             context,
                                           ).showSnackBar(
                                             SnackBar(
                                               content: Text(
                                                 _t(
-                                                  nl: 'Publieke bedrijfscode gekopieerd',
-                                                  en: 'Public company code copied',
-                                                  fr: 'Code entreprise public copié',
-                                                  es: 'Código público de empresa copiado',
+                                                  nl: 'Publieke boekingslink kon niet geopend worden.',
+                                                  en: 'Could not open public booking link.',
+                                                  fr: 'Impossible d’ouvrir le lien de réservation public.',
+                                                  es: 'No se pudo abrir el enlace público de reserva.',
                                                 ),
                                               ),
                                             ),
                                           );
-                                        },
-                                        icon: const Icon(
-                                          Icons.copy_outlined,
-                                          size: 16,
-                                        ),
-                                        label: Text(
-                                          _t(
-                                            nl: 'Kopieer code',
-                                            en: 'Copy code',
-                                            fr: 'Copier le code',
-                                            es: 'Copiar código',
-                                          ),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ],
-                              ),
-                            ),
-                            const SizedBox(height: 10),
-                            Container(
-                              width: double.infinity,
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 12,
-                                vertical: 10,
-                              ),
-                              decoration: BoxDecoration(
-                                color: const Color(0xFF0B0B0B),
-                                borderRadius: BorderRadius.circular(10),
-                                border: Border.all(
-                                  color: Colors.white.withOpacity(0.16),
-                                ),
-                              ),
-                              child: SelectableText(
-                                publicBookingUrl,
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontFamily: 'monospace',
-                                  fontSize: 12.2,
-                                ),
-                              ),
-                            ),
-                            const SizedBox(height: 12),
-                            Center(
-                              child: Container(
-                                padding: const EdgeInsets.all(10),
-                                decoration: BoxDecoration(
-                                  color: Colors.white,
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
-                                child: QrImageView(
-                                  data: publicBookingUrl,
-                                  version: QrVersions.auto,
-                                  size: 180,
-                                  backgroundColor: Colors.white,
-                                ),
-                              ),
-                            ),
-                            const SizedBox(height: 12),
-                            Wrap(
-                              spacing: 8,
-                              runSpacing: 8,
-                              children: [
-                                OutlinedButton.icon(
-                                  onPressed: () async {
-                                    await Clipboard.setData(
-                                      ClipboardData(text: publicBookingUrl),
-                                    );
-                                    if (!context.mounted) return;
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      SnackBar(
-                                        content: Text(
-                                          _t(
-                                            nl: 'Publieke boekingslink gekopieerd',
-                                            en: 'Public booking link copied',
-                                            fr: 'Lien de réservation public copié',
-                                            es: 'Enlace público de reserva copiado',
-                                          ),
-                                        ),
-                                      ),
-                                    );
-                                  },
-                                  icon: const Icon(
-                                    Icons.copy_outlined,
-                                    size: 16,
-                                  ),
-                                  label: Text(
-                                    _t(
-                                      nl: 'Kopiëren',
-                                      en: 'Copy',
-                                      fr: 'Copier',
-                                      es: 'Copiar',
-                                    ),
-                                  ),
-                                ),
-                                OutlinedButton.icon(
-                                  onPressed: () async {
-                                    await Share.share(publicBookingUrl);
-                                  },
-                                  icon: const Icon(
-                                    Icons.share_outlined,
-                                    size: 16,
-                                  ),
-                                  label: Text(
-                                    _t(
-                                      nl: 'Delen',
-                                      en: 'Share',
-                                      fr: 'Partager',
-                                      es: 'Compartir',
-                                    ),
-                                  ),
-                                ),
-                                OutlinedButton.icon(
-                                  onPressed: () async {
-                                    try {
-                                      final uri = Uri.parse(publicBookingUrl);
-                                      final launched = await launchUrl(
-                                        uri,
-                                        mode: LaunchMode.externalApplication,
-                                      );
-                                      if (!launched && context.mounted) {
+                                        }
+                                      } catch (_) {
+                                        if (!context.mounted) return;
                                         ScaffoldMessenger.of(
                                           context,
                                         ).showSnackBar(
@@ -6667,1401 +6782,1408 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                                           ),
                                         );
                                       }
-                                    } catch (_) {
-                                      if (!context.mounted) return;
-                                      ScaffoldMessenger.of(
-                                        context,
-                                      ).showSnackBar(
-                                        SnackBar(
-                                          content: Text(
-                                            _t(
-                                              nl: 'Publieke boekingslink kon niet geopend worden.',
-                                              en: 'Could not open public booking link.',
-                                              fr: 'Impossible d’ouvrir le lien de réservation public.',
-                                              es: 'No se pudo abrir el enlace público de reserva.',
-                                            ),
-                                          ),
-                                        ),
-                                      );
-                                    }
-                                  },
-                                  icon: const Icon(
-                                    Icons.open_in_new_outlined,
-                                    size: 16,
-                                  ),
-                                  label: Text(
-                                    _t(
-                                      nl: 'Open link',
-                                      en: 'Open link',
-                                      fr: 'Ouvrir le lien',
-                                      es: 'Abrir enlace',
+                                    },
+                                    icon: const Icon(
+                                      Icons.open_in_new_outlined,
+                                      size: 16,
+                                    ),
+                                    label: Text(
+                                      _t(
+                                        nl: 'Open link',
+                                        en: 'Open link',
+                                        fr: 'Ouvrir le lien',
+                                        es: 'Abrir enlace',
+                                      ),
                                     ),
                                   ),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 10),
-                            Text(
-                              _t(
-                                nl: 'De publieke boekingspagina wordt verder gekoppeld aan deze Fluxidi-code.',
-                                en: 'The public booking page will be further connected to this Fluxidi code.',
-                                fr: 'La page de réservation publique sera davantage liée à ce code Fluxidi.',
-                                es: 'La página pública de reserva se vinculará más a este código Fluxidi.',
+                                ],
                               ),
+                              const SizedBox(height: 10),
+                              Text(
+                                _t(
+                                  nl: 'De publieke boekingspagina wordt verder gekoppeld aan deze Fluxidi-code.',
+                                  en: 'The public booking page will be further connected to this Fluxidi code.',
+                                  fr: 'La page de réservation publique sera davantage liée à ce code Fluxidi.',
+                                  es: 'La página pública de reserva se vinculará más a este código Fluxidi.',
+                                ),
+                                style: TextStyle(
+                                  color: Colors.white.withOpacity(0.66),
+                                  fontSize: 12,
+                                  height: 1.3,
+                                ),
+                              ),
+                            ],
+                          ],
+                        );
+                      },
+                    ),
+                  );
+                },
+              ),
+              _googleCalendarCard(),
+              _collapsibleSettingsCard(
+                id: 'official_company_details',
+                icon: Icons.business_outlined,
+                title: _t(
+                  nl: 'Officiële bedrijfsgegevens',
+                  en: 'Official company details',
+                  fr: 'Informations officielles de l’entreprise',
+                  es: 'Datos oficiales de la empresa',
+                ),
+                subtitle: _t(
+                  nl: 'Juridische en factuurgegevens',
+                  en: 'Legal and invoice details',
+                  fr: 'Données juridiques et de facturation',
+                  es: 'Datos legales y de facturación',
+                ),
+                status: _detailsStatus(),
+                child: Column(
+                  children: [
+                    _txt(
+                      _backendCompanyNameCtrl,
+                      _t(
+                        nl: 'Bedrijfsnaam',
+                        en: 'Company name',
+                        fr: 'Nom de l’entreprise',
+                        es: 'Nombre de la empresa',
+                      ),
+                    ),
+                    _txt(
+                      _backendLegalNameCtrl,
+                      _t(
+                        nl: 'Juridische naam',
+                        en: 'Legal name',
+                        fr: 'Nom legal',
+                        es: 'Nombre legal',
+                      ),
+                    ),
+                    _txt(
+                      _backendVatNumberCtrl,
+                      _t(
+                        nl: 'BTW-nummer',
+                        en: 'VAT number',
+                        fr: 'Numero TVA',
+                        es: 'Numero de IVA',
+                      ),
+                    ),
+                    _txt(
+                      _backendRegistrationCtrl,
+                      _t(
+                        nl: 'Ondernemingsnummer',
+                        en: 'Company registration number',
+                        fr: 'Numero d entreprise',
+                        es: 'Numero de registro',
+                      ),
+                    ),
+                    _txt(
+                      _backendAddressCtrl,
+                      _t(
+                        nl: 'Adres',
+                        en: 'Address',
+                        fr: 'Adresse',
+                        es: 'Dirección',
+                      ),
+                    ),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: _txt(
+                            _backendPostcodeCtrl,
+                            _t(
+                              nl: 'Postcode',
+                              en: 'Postcode',
+                              fr: 'Code postal',
+                              es: 'Codigo postal',
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: _txt(
+                            _backendCityCtrl,
+                            _t(
+                              nl: 'Stad',
+                              en: 'City',
+                              fr: 'Ville',
+                              es: 'Ciudad',
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    _txt(
+                      _backendCountryCtrl,
+                      _t(nl: 'Land', en: 'Country', fr: 'Pays', es: 'Pais'),
+                    ),
+                    _txt(
+                      _backendPhoneCtrl,
+                      _t(
+                        nl: 'Telefoon',
+                        en: 'Phone',
+                        fr: 'Téléphone',
+                        es: 'Teléfono',
+                      ),
+                    ),
+                    _txt(
+                      _backendEmailCtrl,
+                      _t(nl: 'E-mail', en: 'Email', fr: 'E-mail', es: 'Correo'),
+                    ),
+                    _txt(
+                      _backendBookingEmailCtrl,
+                      _t(
+                        nl: 'Boekingen e-mail',
+                        en: 'Bookings email',
+                        fr: 'E-mail des reservations',
+                        es: 'Correo de reservas',
+                      ),
+                    ),
+                    _txt(
+                      _backendInvoiceEmailCtrl,
+                      _t(
+                        nl: 'Facturatie e-mail',
+                        en: 'Invoice email',
+                        fr: 'E-mail facturation',
+                        es: 'Correo de facturacion',
+                      ),
+                    ),
+                    _txt(
+                      _backendWebsiteCtrl,
+                      _t(
+                        nl: 'Website',
+                        en: 'Website',
+                        fr: 'Site web',
+                        es: 'Sitio web',
+                      ),
+                    ),
+                    _txt(
+                      _backendIbanCtrl,
+                      _t(nl: 'IBAN', en: 'IBAN', fr: 'IBAN', es: 'IBAN'),
+                    ),
+                    _txt(
+                      _backendPaymentPrefixCtrl,
+                      _t(
+                        nl: 'Betaalreferentie prefix',
+                        en: 'Payment reference prefix',
+                        fr: 'Prefixe reference paiement',
+                        es: 'Prefijo referencia pago',
+                      ),
+                    ),
+                    _txt(
+                      _backendFooterCtrl,
+                      _t(
+                        nl: 'Factuur/ritbon footer',
+                        en: 'Invoice/receipt footer',
+                        fr: 'Pied facture/recu',
+                        es: 'Pie factura/recibo',
+                      ),
+                      maxLines: 3,
+                    ),
+                    const SizedBox(height: 8),
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          FilledButton.icon(
+                            onPressed: _backendBusinessSaving
+                                ? null
+                                : _saveBackendBusinessProfile,
+                            icon: _backendBusinessSaving
+                                ? const SizedBox(
+                                    width: 16,
+                                    height: 16,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                    ),
+                                  )
+                                : const Icon(Icons.cloud_upload_outlined),
+                            label: Text(
+                              _t(
+                                nl: 'Bedrijfsgegevens opslaan',
+                                en: 'Save company details',
+                                fr: 'Enregistrer les informations',
+                                es: 'Guardar datos de empresa',
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            _t(
+                              nl: 'Slaat alleen de officiële bedrijfsgegevens op.',
+                              en: 'Saves only the official company details.',
+                              fr: 'Enregistre uniquement les informations officielles de l’entreprise.',
+                              es: 'Guarda solo los datos oficiales de la empresa.',
+                            ),
+                            style: const TextStyle(
+                              color: Colors.white54,
+                              fontSize: 11,
+                            ),
+                            textAlign: TextAlign.right,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              _collapsibleSettingsCard(
+                id: 'vat_settings',
+                icon: Icons.receipt_long_outlined,
+                title: _t(
+                  nl: 'BTW-instellingen',
+                  en: 'VAT settings',
+                  fr: 'Parametres TVA',
+                  es: 'Configuracion de IVA',
+                ),
+                subtitle: _t(
+                  nl: 'BTW-profiel en weergavemodus',
+                  en: 'VAT profile and display mode',
+                  fr: 'Profil TVA et mode d’affichage',
+                  es: 'Perfil de IVA y modo de visualización',
+                ),
+                status: _billingVatStatus(),
+                child: Column(
+                  children: [
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      value: _backendVatEnabled,
+                      onChanged: (v) => setState(() => _backendVatEnabled = v),
+                      title: Text(
+                        _t(
+                          nl: 'BTW ingeschakeld',
+                          en: 'VAT enabled',
+                          fr: 'TVA activee',
+                          es: 'IVA activado',
+                        ),
+                      ),
+                    ),
+                    _txt(
+                      _backendVatRateCtrl,
+                      _t(
+                        nl: 'BTW-percentage',
+                        en: 'VAT percentage',
+                        fr: 'Pourcentage TVA',
+                        es: 'Porcentaje IVA',
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    DropdownButtonFormField<String>(
+                      value: _backendVatDisplayMode,
+                      items: [
+                        DropdownMenuItem(
+                          value: 'incl',
+                          child: Text(
+                            _t(
+                              nl: 'Prijzen inclusief BTW',
+                              en: 'Prices including VAT',
+                              fr: 'Prix TVA incluse',
+                              es: 'Precios con IVA incluido',
+                            ),
+                          ),
+                        ),
+                        DropdownMenuItem(
+                          value: 'excl',
+                          child: Text(
+                            _t(
+                              nl: 'Prijzen exclusief BTW',
+                              en: 'Prices excluding VAT',
+                              fr: 'Prix hors TVA',
+                              es: 'Precios sin IVA',
+                            ),
+                          ),
+                        ),
+                      ],
+                      onChanged: (v) {
+                        if (v == null) return;
+                        setState(() => _backendVatDisplayMode = v);
+                      },
+                      decoration: InputDecoration(
+                        labelText: _t(
+                          nl: 'BTW weergavemodus',
+                          en: 'VAT display mode',
+                          fr: 'Mode affichage TVA',
+                          es: 'Modo visualizacion IVA',
+                        ),
+                        floatingLabelBehavior: FloatingLabelBehavior.always,
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 14,
+                          vertical: 16,
+                        ),
+                        filled: true,
+                        fillColor: _inputFill,
+                      ),
+                      dropdownColor: _subPanelBg,
+                    ),
+                    const SizedBox(height: 8),
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          FilledButton.icon(
+                            onPressed: _backendTaxSaving
+                                ? null
+                                : _saveBackendTaxProfile,
+                            icon: _backendTaxSaving
+                                ? const SizedBox(
+                                    width: 16,
+                                    height: 16,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                    ),
+                                  )
+                                : const Icon(Icons.cloud_upload_outlined),
+                            label: Text(
+                              _t(
+                                nl: 'BTW-instellingen opslaan',
+                                en: 'Save VAT settings',
+                                fr: 'Enregistrer TVA',
+                                es: 'Guardar IVA',
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            _t(
+                              nl: 'Slaat alleen de BTW-instellingen op.',
+                              en: 'Saves only the VAT settings.',
+                              fr: 'Enregistre uniquement les paramètres TVA.',
+                              es: 'Guarda solo la configuración de IVA.',
+                            ),
+                            style: const TextStyle(
+                              color: Colors.white54,
+                              fontSize: 11,
+                            ),
+                            textAlign: TextAlign.right,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              _collapsibleSettingsCard(
+                id: 'public_partner_profile',
+                icon: Icons.public_outlined,
+                title: _t(
+                  nl: 'Publiek partnerprofiel',
+                  en: 'Public partner profile',
+                  fr: 'Profil partenaire public',
+                  es: 'Perfil público de socio',
+                ),
+                subtitle: _t(
+                  nl: 'Publiceer veilige profielgegevens voor klanten',
+                  en: 'Publish safe profile data for customers',
+                  fr: 'Publier des donnees de profil securisees',
+                  es: 'Publicar datos de perfil seguros',
+                ),
+                status: _publicPartnerProfileError != null
+                    ? _SetupStatus.attention
+                    : (_isPublicPartnerProfilePublished() ||
+                              _publicPartnerProfileStatus != null
+                          ? _SetupStatus.complete
+                          : _SetupStatus.incomplete),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      _t(
+                        nl: 'Publiceer veilige bedrijfsinformatie zodat klanten je kunnen vinden via Taxi’s in de buurt.',
+                        en: 'Publish safe company information so customers can find you through Nearby taxis.',
+                        fr: 'Publiez des informations publiques sécurisées afin que les clients puissent vous trouver.',
+                        es: 'Publica información segura de la empresa para que los clientes puedan encontrarte.',
+                      ),
+                      style: const TextStyle(
+                        color: Colors.white70,
+                        fontSize: 12.5,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    Text(
+                      _t(
+                        nl: 'Upload een logo of coverfoto. Fluxidi maakt automatisch een publieke veilige link.',
+                        en: 'Upload a logo or cover photo. Fluxidi automatically creates a safe public link.',
+                        fr: 'Téléversez un logo ou une photo de couverture. Fluxidi crée automatiquement un lien public sécurisé.',
+                        es: 'Sube un logo o una foto de portada. Fluxidi crea automáticamente un enlace público seguro.',
+                      ),
+                      style: const TextStyle(
+                        color: Colors.white60,
+                        fontSize: 11.4,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    _txt(
+                      _publicServedPostcodesCtrl,
+                      _t(
+                        nl: 'Bediende postcodes',
+                        en: 'Served postcodes',
+                        fr: 'Codes postaux desservis',
+                        es: 'Códigos postales atendidos',
+                      ),
+                      hint: _t(
+                        nl: 'Bijv. 9688, 9680, 9600, 9700',
+                        en: 'E.g. 9688, 9680, 9600, 9700',
+                        fr: 'Ex. 9688, 9680, 9600, 9700',
+                        es: 'Ej. 9688, 9680, 9600, 9700',
+                      ),
+                      maxLines: 2,
+                      onChanged: (_) => setState(() {}),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      _t(
+                        nl: 'Gebruik komma, spatie of nieuwe lijn tussen postcodes.',
+                        en: 'Use commas, spaces, or new lines between postcodes.',
+                        fr: 'Utilisez des virgules, espaces ou retours à la ligne entre les codes postaux.',
+                        es: 'Usa comas, espacios o saltos de línea entre códigos postales.',
+                      ),
+                      style: const TextStyle(
+                        color: Colors.white60,
+                        fontSize: 11.2,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    Text(
+                      _t(
+                        nl: 'Publieke dekking voor Taxi’s in de buurt (optioneel).',
+                        en: 'Public coverage for Taxis nearby (optional).',
+                        fr: 'Couverture publique pour Taxis à proximité (optionnel).',
+                        es: 'Cobertura pública para Taxis cercanos (opcional).',
+                      ),
+                      style: const TextStyle(
+                        color: Colors.white60,
+                        fontSize: 11.2,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    SizedBox(
+                      width: double.infinity,
+                      child: OutlinedButton.icon(
+                        onPressed: _useCurrentLocationAsBusinessLocation,
+                        icon: const Icon(Icons.my_location_outlined),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: _accent,
+                          side: BorderSide(
+                            color: _border.withOpacity(_isDark ? 0.72 : 0.95),
+                          ),
+                          backgroundColor: _subPanelBg,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                        label: Text(
+                          _t(
+                            nl: 'Gebruik huidige locatie als bedrijfslocatie',
+                            en: 'Use current location as business location',
+                            fr: 'Utiliser ma position actuelle comme adresse professionnelle',
+                            es: 'Usar mi ubicación actual como ubicación de empresa',
+                          ),
+                          style: const TextStyle(fontWeight: FontWeight.w700),
+                          textAlign: TextAlign.center,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 10,
+                      ),
+                      decoration: BoxDecoration(
+                        color: _subPanelBg,
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(
+                          color: _border.withOpacity(_isDark ? 0.45 : 0.95),
+                        ),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            _hasPublicCoverageLocationSet()
+                                ? _t(
+                                    nl: 'Bedrijfslocatie ingesteld via GPS',
+                                    en: 'Business location set via GPS',
+                                    fr: 'Emplacement professionnel défini via GPS',
+                                    es: 'Ubicación de empresa configurada por GPS',
+                                  )
+                                : _t(
+                                    nl: 'Nog geen bedrijfslocatie ingesteld.',
+                                    en: 'No business location set yet.',
+                                    fr: 'Aucun emplacement professionnel défini.',
+                                    es: 'Aún no se ha configurado la ubicación de empresa.',
+                                  ),
+                            style: TextStyle(
+                              color: _hasPublicCoverageLocationSet()
+                                  ? _success
+                                  : _textSecondary,
+                              fontSize: 12.2,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          if (_hasPublicCoverageLocationSet()) ...[
+                            const SizedBox(height: 4),
+                            Text(
+                              _publicCoverageCoordsLabel(),
                               style: TextStyle(
-                                color: Colors.white.withOpacity(0.66),
-                                fontSize: 12,
-                                height: 1.3,
+                                color: _textMuted,
+                                fontSize: 10.8,
                               ),
                             ),
                           ],
                         ],
-                      );
-                    },
-                  ),
-                );
-              },
-            ),
-            _googleCalendarCard(),
-            _collapsibleSettingsCard(
-              id: 'official_company_details',
-              icon: Icons.business_outlined,
-              title: _t(
-                nl: 'Officiële bedrijfsgegevens',
-                en: 'Official company details',
-                fr: 'Informations officielles de l’entreprise',
-                es: 'Datos oficiales de la empresa',
-              ),
-              subtitle: _t(
-                nl: 'Juridische en factuurgegevens',
-                en: 'Legal and invoice details',
-                fr: 'Données juridiques et de facturation',
-                es: 'Datos legales y de facturación',
-              ),
-              status: _detailsStatus(),
-              child: Column(
-                children: [
-                  _txt(
-                    _backendCompanyNameCtrl,
-                    _t(
-                      nl: 'Bedrijfsnaam',
-                      en: 'Company name',
-                      fr: 'Nom de l’entreprise',
-                      es: 'Nombre de la empresa',
-                    ),
-                  ),
-                  _txt(
-                    _backendLegalNameCtrl,
-                    _t(
-                      nl: 'Juridische naam',
-                      en: 'Legal name',
-                      fr: 'Nom legal',
-                      es: 'Nombre legal',
-                    ),
-                  ),
-                  _txt(
-                    _backendVatNumberCtrl,
-                    _t(
-                      nl: 'BTW-nummer',
-                      en: 'VAT number',
-                      fr: 'Numero TVA',
-                      es: 'Numero de IVA',
-                    ),
-                  ),
-                  _txt(
-                    _backendRegistrationCtrl,
-                    _t(
-                      nl: 'Ondernemingsnummer',
-                      en: 'Company registration number',
-                      fr: 'Numero d entreprise',
-                      es: 'Numero de registro',
-                    ),
-                  ),
-                  _txt(
-                    _backendAddressCtrl,
-                    _t(
-                      nl: 'Adres',
-                      en: 'Address',
-                      fr: 'Adresse',
-                      es: 'Dirección',
-                    ),
-                  ),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: _txt(
-                          _backendPostcodeCtrl,
-                          _t(
-                            nl: 'Postcode',
-                            en: 'Postcode',
-                            fr: 'Code postal',
-                            es: 'Codigo postal',
-                          ),
-                        ),
                       ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: _txt(
-                          _backendCityCtrl,
-                          _t(nl: 'Stad', en: 'City', fr: 'Ville', es: 'Ciudad'),
-                        ),
-                      ),
-                    ],
-                  ),
-                  _txt(
-                    _backendCountryCtrl,
-                    _t(nl: 'Land', en: 'Country', fr: 'Pays', es: 'Pais'),
-                  ),
-                  _txt(
-                    _backendPhoneCtrl,
-                    _t(
-                      nl: 'Telefoon',
-                      en: 'Phone',
-                      fr: 'Téléphone',
-                      es: 'Teléfono',
                     ),
-                  ),
-                  _txt(
-                    _backendEmailCtrl,
-                    _t(nl: 'E-mail', en: 'Email', fr: 'E-mail', es: 'Correo'),
-                  ),
-                  _txt(
-                    _backendBookingEmailCtrl,
-                    _t(
-                      nl: 'Boekingen e-mail',
-                      en: 'Bookings email',
-                      fr: 'E-mail des reservations',
-                      es: 'Correo de reservas',
-                    ),
-                  ),
-                  _txt(
-                    _backendInvoiceEmailCtrl,
-                    _t(
-                      nl: 'Facturatie e-mail',
-                      en: 'Invoice email',
-                      fr: 'E-mail facturation',
-                      es: 'Correo de facturacion',
-                    ),
-                  ),
-                  _txt(
-                    _backendWebsiteCtrl,
-                    _t(
-                      nl: 'Website',
-                      en: 'Website',
-                      fr: 'Site web',
-                      es: 'Sitio web',
-                    ),
-                  ),
-                  _txt(
-                    _backendIbanCtrl,
-                    _t(nl: 'IBAN', en: 'IBAN', fr: 'IBAN', es: 'IBAN'),
-                  ),
-                  _txt(
-                    _backendPaymentPrefixCtrl,
-                    _t(
-                      nl: 'Betaalreferentie prefix',
-                      en: 'Payment reference prefix',
-                      fr: 'Prefixe reference paiement',
-                      es: 'Prefijo referencia pago',
-                    ),
-                  ),
-                  _txt(
-                    _backendFooterCtrl,
-                    _t(
-                      nl: 'Factuur/ritbon footer',
-                      en: 'Invoice/receipt footer',
-                      fr: 'Pied facture/recu',
-                      es: 'Pie factura/recibo',
-                    ),
-                    maxLines: 3,
-                  ),
-                  const SizedBox(height: 8),
-                  Align(
-                    alignment: Alignment.centerRight,
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.end,
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        FilledButton.icon(
-                          onPressed: _backendBusinessSaving
-                              ? null
-                              : _saveBackendBusinessProfile,
-                          icon: _backendBusinessSaving
-                              ? const SizedBox(
-                                  width: 16,
-                                  height: 16,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                  ),
-                                )
-                              : const Icon(Icons.cloud_upload_outlined),
-                          label: Text(
-                            _t(
-                              nl: 'Bedrijfsgegevens opslaan',
-                              en: 'Save company details',
-                              fr: 'Enregistrer les informations',
-                              es: 'Guardar datos de empresa',
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: 6),
-                        Text(
-                          _t(
-                            nl: 'Slaat alleen de officiële bedrijfsgegevens op.',
-                            en: 'Saves only the official company details.',
-                            fr: 'Enregistre uniquement les informations officielles de l’entreprise.',
-                            es: 'Guarda solo los datos oficiales de la empresa.',
-                          ),
-                          style: const TextStyle(
-                            color: Colors.white54,
-                            fontSize: 11,
-                          ),
-                          textAlign: TextAlign.right,
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            _collapsibleSettingsCard(
-              id: 'vat_settings',
-              icon: Icons.receipt_long_outlined,
-              title: _t(
-                nl: 'BTW-instellingen',
-                en: 'VAT settings',
-                fr: 'Parametres TVA',
-                es: 'Configuracion de IVA',
-              ),
-              subtitle: _t(
-                nl: 'BTW-profiel en weergavemodus',
-                en: 'VAT profile and display mode',
-                fr: 'Profil TVA et mode d’affichage',
-                es: 'Perfil de IVA y modo de visualización',
-              ),
-              status: _billingVatStatus(),
-              child: Column(
-                children: [
-                  SwitchListTile(
-                    contentPadding: EdgeInsets.zero,
-                    value: _backendVatEnabled,
-                    onChanged: (v) => setState(() => _backendVatEnabled = v),
-                    title: Text(
+                    _txt(
+                      _publicServiceRadiusKmCtrl,
                       _t(
-                        nl: 'BTW ingeschakeld',
-                        en: 'VAT enabled',
-                        fr: 'TVA activee',
-                        es: 'IVA activado',
+                        nl: 'Service radius (km)',
+                        en: 'Service radius (km)',
+                        fr: 'Rayon de service (km)',
+                        es: 'Radio de servicio (km)',
+                      ),
+                      hint: _t(
+                        nl: '1 t/m 100',
+                        en: '1 to 100',
+                        fr: '1 à 100',
+                        es: '1 a 100',
                       ),
                     ),
-                  ),
-                  _txt(
-                    _backendVatRateCtrl,
-                    _t(
-                      nl: 'BTW-percentage',
-                      en: 'VAT percentage',
-                      fr: 'Pourcentage TVA',
-                      es: 'Porcentaje IVA',
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  DropdownButtonFormField<String>(
-                    value: _backendVatDisplayMode,
-                    items: [
-                      DropdownMenuItem(
-                        value: 'incl',
-                        child: Text(
-                          _t(
-                            nl: 'Prijzen inclusief BTW',
-                            en: 'Prices including VAT',
-                            fr: 'Prix TVA incluse',
-                            es: 'Precios con IVA incluido',
-                          ),
-                        ),
-                      ),
-                      DropdownMenuItem(
-                        value: 'excl',
-                        child: Text(
-                          _t(
-                            nl: 'Prijzen exclusief BTW',
-                            en: 'Prices excluding VAT',
-                            fr: 'Prix hors TVA',
-                            es: 'Precios sin IVA',
-                          ),
-                        ),
-                      ),
-                    ],
-                    onChanged: (v) {
-                      if (v == null) return;
-                      setState(() => _backendVatDisplayMode = v);
-                    },
-                    decoration: InputDecoration(
-                      labelText: _t(
-                        nl: 'BTW weergavemodus',
-                        en: 'VAT display mode',
-                        fr: 'Mode affichage TVA',
-                        es: 'Modo visualizacion IVA',
-                      ),
-                      floatingLabelBehavior: FloatingLabelBehavior.always,
-                      contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 14,
-                        vertical: 16,
-                      ),
-                      filled: true,
-                      fillColor: const Color(0xFF0B0B0B),
-                    ),
-                    dropdownColor: const Color(0xFF111111),
-                  ),
-                  const SizedBox(height: 8),
-                  Align(
-                    alignment: Alignment.centerRight,
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.end,
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        FilledButton.icon(
-                          onPressed: _backendTaxSaving
-                              ? null
-                              : _saveBackendTaxProfile,
-                          icon: _backendTaxSaving
-                              ? const SizedBox(
-                                  width: 16,
-                                  height: 16,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                  ),
-                                )
-                              : const Icon(Icons.cloud_upload_outlined),
-                          label: Text(
-                            _t(
-                              nl: 'BTW-instellingen opslaan',
-                              en: 'Save VAT settings',
-                              fr: 'Enregistrer TVA',
-                              es: 'Guardar IVA',
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: 6),
-                        Text(
-                          _t(
-                            nl: 'Slaat alleen de BTW-instellingen op.',
-                            en: 'Saves only the VAT settings.',
-                            fr: 'Enregistre uniquement les paramètres TVA.',
-                            es: 'Guarda solo la configuración de IVA.',
-                          ),
-                          style: const TextStyle(
-                            color: Colors.white54,
-                            fontSize: 11,
-                          ),
-                          textAlign: TextAlign.right,
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            _collapsibleSettingsCard(
-              id: 'public_partner_profile',
-              icon: Icons.public_outlined,
-              title: _t(
-                nl: 'Publiek partnerprofiel',
-                en: 'Public partner profile',
-                fr: 'Profil partenaire public',
-                es: 'Perfil público de socio',
-              ),
-              subtitle: _t(
-                nl: 'Publiceer veilige profielgegevens voor klanten',
-                en: 'Publish safe profile data for customers',
-                fr: 'Publier des donnees de profil securisees',
-                es: 'Publicar datos de perfil seguros',
-              ),
-              status: _publicPartnerProfileError != null
-                  ? _SetupStatus.attention
-                  : (_isPublicPartnerProfilePublished() ||
-                            _publicPartnerProfileStatus != null
-                        ? _SetupStatus.complete
-                        : _SetupStatus.incomplete),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    _t(
-                      nl: 'Publiceer veilige bedrijfsinformatie zodat klanten je kunnen vinden via Taxi’s in de buurt.',
-                      en: 'Publish safe company information so customers can find you through Nearby taxis.',
-                      fr: 'Publiez des informations publiques sécurisées afin que les clients puissent vous trouver.',
-                      es: 'Publica información segura de la empresa para que los clientes puedan encontrarte.',
-                    ),
-                    style: const TextStyle(
-                      color: Colors.white70,
-                      fontSize: 12.5,
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  Text(
-                    _t(
-                      nl: 'Upload een logo of coverfoto. Fluxidi maakt automatisch een publieke veilige link.',
-                      en: 'Upload a logo or cover photo. Fluxidi automatically creates a safe public link.',
-                      fr: 'Téléversez un logo ou une photo de couverture. Fluxidi crée automatiquement un lien public sécurisé.',
-                      es: 'Sube un logo o una foto de portada. Fluxidi crea automáticamente un enlace público seguro.',
-                    ),
-                    style: const TextStyle(
-                      color: Colors.white60,
-                      fontSize: 11.4,
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  _txt(
-                    _publicServedPostcodesCtrl,
-                    _t(
-                      nl: 'Bediende postcodes',
-                      en: 'Served postcodes',
-                      fr: 'Codes postaux desservis',
-                      es: 'Códigos postales atendidos',
-                    ),
-                    hint: _t(
-                      nl: 'Bijv. 9688, 9680, 9600, 9700',
-                      en: 'E.g. 9688, 9680, 9600, 9700',
-                      fr: 'Ex. 9688, 9680, 9600, 9700',
-                      es: 'Ej. 9688, 9680, 9600, 9700',
-                    ),
-                    maxLines: 2,
-                    onChanged: (_) => setState(() {}),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    _t(
-                      nl: 'Gebruik komma, spatie of nieuwe lijn tussen postcodes.',
-                      en: 'Use commas, spaces, or new lines between postcodes.',
-                      fr: 'Utilisez des virgules, espaces ou retours à la ligne entre les codes postaux.',
-                      es: 'Usa comas, espacios o saltos de línea entre códigos postales.',
-                    ),
-                    style: const TextStyle(
-                      color: Colors.white60,
-                      fontSize: 11.2,
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  Text(
-                    _t(
-                      nl: 'Publieke dekking voor Taxi’s in de buurt (optioneel).',
-                      en: 'Public coverage for Taxis nearby (optional).',
-                      fr: 'Couverture publique pour Taxis à proximité (optionnel).',
-                      es: 'Cobertura pública para Taxis cercanos (opcional).',
-                    ),
-                    style: const TextStyle(
-                      color: Colors.white60,
-                      fontSize: 11.2,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  SizedBox(
-                    width: double.infinity,
-                    child: OutlinedButton.icon(
-                      onPressed: _useCurrentLocationAsBusinessLocation,
-                      icon: const Icon(Icons.my_location_outlined),
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: const Color(0xFFE5B641),
-                        side: BorderSide(
-                          color: const Color(0xFFE5B641).withOpacity(0.42),
-                        ),
-                        backgroundColor: const Color(0xFF0B0B0B),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                      ),
-                      label: Text(
-                        _t(
-                          nl: 'Gebruik huidige locatie als bedrijfslocatie',
-                          en: 'Use current location as business location',
-                          fr: 'Utiliser ma position actuelle comme adresse professionnelle',
-                          es: 'Usar mi ubicación actual como ubicación de empresa',
-                        ),
-                        style: const TextStyle(fontWeight: FontWeight.w700),
-                        textAlign: TextAlign.center,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 10,
-                    ),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF0B0B0B),
-                      borderRadius: BorderRadius.circular(10),
-                      border: Border.all(color: Colors.white.withOpacity(0.14)),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          _hasPublicCoverageLocationSet()
-                              ? _t(
-                                  nl: 'Bedrijfslocatie ingesteld via GPS',
-                                  en: 'Business location set via GPS',
-                                  fr: 'Emplacement professionnel défini via GPS',
-                                  es: 'Ubicación de empresa configurada por GPS',
-                                )
-                              : _t(
-                                  nl: 'Nog geen bedrijfslocatie ingesteld.',
-                                  en: 'No business location set yet.',
-                                  fr: 'Aucun emplacement professionnel défini.',
-                                  es: 'Aún no se ha configurado la ubicación de empresa.',
-                                ),
-                          style: TextStyle(
-                            color: _hasPublicCoverageLocationSet()
-                                ? const Color(0xFF34D29A)
-                                : Colors.white70,
-                            fontSize: 12.2,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                        if (_hasPublicCoverageLocationSet()) ...[
-                          const SizedBox(height: 4),
-                          Text(
-                            _publicCoverageCoordsLabel(),
-                            style: TextStyle(
-                              color: Colors.white.withOpacity(0.5),
-                              fontSize: 10.8,
-                            ),
-                          ),
-                        ],
-                      ],
-                    ),
-                  ),
-                  _txt(
-                    _publicServiceRadiusKmCtrl,
-                    _t(
-                      nl: 'Service radius (km)',
-                      en: 'Service radius (km)',
-                      fr: 'Rayon de service (km)',
-                      es: 'Radio de servicio (km)',
-                    ),
-                    hint: _t(
-                      nl: '1 t/m 100',
-                      en: '1 to 100',
-                      fr: '1 à 100',
-                      es: '1 a 100',
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  Text(
-                    _t(
-                      nl: 'Publieke services en profielzichtbaarheid',
-                      en: 'Public services and profile visibility',
-                      fr: 'Services publics et visibilité du profil',
-                      es: 'Servicios públicos y visibilidad del perfil',
-                    ),
-                    style: const TextStyle(
-                      color: Colors.white70,
-                      fontSize: 12.6,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    _t(
-                      nl: 'Dit is los van Service setup. Service setup stuurt calculator/pricing; deze toggles sturen publiek profiel en boekings-CTA’s.',
-                      en: 'This is separate from Service setup. Service setup drives calculator/pricing; these toggles drive public profile and booking CTAs.',
-                      fr: 'Ceci est séparé de la configuration des services. Cette section contrôle le profil public et les CTA de réservation.',
-                      es: 'Esto es independiente de la configuración de servicios. Estos controles afectan el perfil público y los CTA de reserva.',
-                    ),
-                    style: const TextStyle(
-                      color: Colors.white60,
-                      fontSize: 11.2,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: _publicServiceCatalog
-                        .map((id) {
-                          final selected = _publicServiceIds.contains(id);
-                          return FilterChip(
-                            label: Text(_publicServiceLabel(id)),
-                            selected: selected,
-                            onSelected: (value) {
-                              setState(() {
-                                _publicServicesConfigured = true;
-                                if (value) {
-                                  _publicServiceIds.add(id);
-                                } else {
-                                  _publicServiceIds.remove(id);
-                                }
-                              });
-                            },
-                            selectedColor: const Color(
-                              0xFFE5B641,
-                            ).withOpacity(0.22),
-                            checkmarkColor: const Color(0xFFE5B641),
-                            backgroundColor: const Color(0xFF111315),
-                            side: BorderSide(
-                              color: selected
-                                  ? const Color(0xFFE5B641).withOpacity(0.75)
-                                  : Colors.white.withOpacity(0.18),
-                            ),
-                            labelStyle: TextStyle(
-                              color: selected
-                                  ? const Color(0xFFFFF2CC)
-                                  : Colors.white.withOpacity(0.86),
-                              fontWeight: FontWeight.w600,
-                              fontSize: 11.6,
-                            ),
-                          );
-                        })
-                        .toList(growable: false),
-                  ),
-                  const SizedBox(height: 12),
-                  Text(
-                    _t(
-                      nl: 'Betaalopties zichtbaar voor klanten',
-                      en: 'Payment options visible to customers',
-                      fr: 'Moyens de paiement visibles par les clients',
-                      es: 'Opciones de pago visibles para clientes',
-                    ),
-                    style: const TextStyle(
-                      color: Colors.white70,
-                      fontSize: 12.6,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: _publicPaymentOptionCatalog
-                        .map((id) {
-                          final selected = _publicPaymentOptionIds.contains(id);
-                          return FilterChip(
-                            label: Text(_publicPaymentOptionLabel(id)),
-                            selected: selected,
-                            onSelected: (value) {
-                              setState(() {
-                                if (value) {
-                                  _publicPaymentOptionIds.add(id);
-                                } else {
-                                  _publicPaymentOptionIds.remove(id);
-                                }
-                              });
-                            },
-                            selectedColor: const Color(
-                              0xFFE5B641,
-                            ).withOpacity(0.22),
-                            checkmarkColor: const Color(0xFFE5B641),
-                            backgroundColor: const Color(0xFF111315),
-                            side: BorderSide(
-                              color: selected
-                                  ? const Color(0xFFE5B641).withOpacity(0.75)
-                                  : Colors.white.withOpacity(0.18),
-                            ),
-                            labelStyle: TextStyle(
-                              color: selected
-                                  ? const Color(0xFFFFF2CC)
-                                  : Colors.white.withOpacity(0.86),
-                              fontWeight: FontWeight.w600,
-                              fontSize: 11.6,
-                            ),
-                          );
-                        })
-                        .toList(growable: false),
-                  ),
-                  const SizedBox(height: 10),
-                  _publicMediaPreview(),
-                  const SizedBox(height: 10),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: FilledButton.icon(
-                          onPressed:
-                              (_publicLogoUploading ||
-                                  _publicHeroUploading ||
-                                  _publicPartnerProfilePublishing)
-                              ? null
-                              : () => _uploadPublicCompanyMedia(
-                                  mediaType: 'company_logo',
-                                ),
-                          icon: _publicLogoUploading
-                              ? const SizedBox(
-                                  width: 15,
-                                  height: 15,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                  ),
-                                )
-                              : const Icon(Icons.upload_file_outlined),
-                          label: Text(
-                            _isPublicHttpsUrl(_publicLogoUrlCtrl.text)
-                                ? _t(
-                                    nl: 'Vervang logo',
-                                    en: 'Replace logo',
-                                    fr: 'Remplacer le logo',
-                                    es: 'Reemplazar logo',
-                                  )
-                                : _t(
-                                    nl: 'Upload publiek logo',
-                                    en: 'Upload public logo',
-                                    fr: 'Téléverser le logo public',
-                                    es: 'Subir logo público',
-                                  ),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: FilledButton.icon(
-                          onPressed:
-                              (_publicLogoUploading ||
-                                  _publicHeroUploading ||
-                                  _publicPartnerProfilePublishing)
-                              ? null
-                              : () => _uploadPublicCompanyMedia(
-                                  mediaType: 'company_hero',
-                                ),
-                          icon: _publicHeroUploading
-                              ? const SizedBox(
-                                  width: 15,
-                                  height: 15,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                  ),
-                                )
-                              : const Icon(Icons.image_outlined),
-                          label: Text(
-                            _isPublicHttpsUrl(_publicHeroPhotoUrlCtrl.text)
-                                ? _t(
-                                    nl: 'Vervang coverfoto',
-                                    en: 'Replace cover photo',
-                                    fr: 'Remplacer la photo de couverture',
-                                    es: 'Reemplazar foto de portada',
-                                  )
-                                : _t(
-                                    nl: 'Upload publieke coverfoto',
-                                    en: 'Upload public cover photo',
-                                    fr: 'Téléverser la couverture publique',
-                                    es: 'Subir portada pública',
-                                  ),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  ExpansionTile(
-                    tilePadding: EdgeInsets.zero,
-                    childrenPadding: EdgeInsets.zero,
-                    initiallyExpanded: _showAdvancedPublicMediaUrls,
-                    onExpansionChanged: (v) {
-                      setState(() => _showAdvancedPublicMediaUrls = v);
-                    },
-                    title: Text(
+                    const SizedBox(height: 12),
+                    Text(
                       _t(
-                        nl: 'Geavanceerd: handmatige publieke URL\'s (fallback)',
-                        en: 'Advanced: manual public URLs (fallback)',
-                        fr: 'Avancé : URLs publiques manuelles (secours)',
-                        es: 'Avanzado: URLs públicas manuales (respaldo)',
+                        nl: 'Publieke services en profielzichtbaarheid',
+                        en: 'Public services and profile visibility',
+                        fr: 'Services publics et visibilité du profil',
+                        es: 'Servicios públicos y visibilidad del perfil',
                       ),
                       style: const TextStyle(
                         color: Colors.white70,
-                        fontSize: 12.3,
+                        fontSize: 12.6,
+                        fontWeight: FontWeight.w700,
                       ),
                     ),
-                    children: [
-                      _txt(
-                        _publicLogoUrlCtrl,
-                        _t(
-                          nl: 'Publieke logo-URL',
-                          en: 'Public logo URL',
-                          fr: 'URL du logo public',
-                          es: 'URL del logo público',
-                        ),
-                        onChanged: (_) => setState(() {}),
-                      ),
-                      _txt(
-                        _publicHeroPhotoUrlCtrl,
-                        _t(
-                          nl: 'Publieke coverfoto-URL',
-                          en: 'Public cover photo URL',
-                          fr: 'URL de la photo de couverture publique',
-                          es: 'URL de la foto de portada pública',
-                        ),
-                        onChanged: (_) => setState(() {}),
-                      ),
-                      if (_publicLogoUrlCtrl.text.trim().isNotEmpty &&
-                          !_isPublicHttpsUrl(_publicLogoUrlCtrl.text)) ...[
-                        Text(
-                          _t(
-                            nl: 'Waarschuwing: logo-URL moet met https:// starten om gepubliceerd te worden.',
-                            en: 'Warning: logo URL must start with https:// to be published.',
-                            fr: 'Avertissement : l’URL du logo doit commencer par https:// pour être publiée.',
-                            es: 'Advertencia: la URL del logo debe empezar con https:// para publicarse.',
-                          ),
-                          style: const TextStyle(
-                            color: Colors.orangeAccent,
-                            fontSize: 11,
-                          ),
-                        ),
-                        const SizedBox(height: 6),
-                      ],
-                      if (_publicHeroPhotoUrlCtrl.text.trim().isNotEmpty &&
-                          !_isPublicHttpsUrl(_publicHeroPhotoUrlCtrl.text)) ...[
-                        Text(
-                          _t(
-                            nl: 'Waarschuwing: coverfoto-URL moet met https:// starten om gepubliceerd te worden.',
-                            en: 'Warning: cover photo URL must start with https:// to be published.',
-                            fr: 'Avertissement : l’URL de couverture doit commencer par https:// pour être publiée.',
-                            es: 'Advertencia: la URL de portada debe empezar con https:// para publicarse.',
-                          ),
-                          style: const TextStyle(
-                            color: Colors.orangeAccent,
-                            fontSize: 11,
-                          ),
-                        ),
-                        const SizedBox(height: 6),
-                      ],
-                    ],
-                  ),
-                  const SizedBox(height: 10),
-                  FilledButton.icon(
-                    onPressed: _publicPartnerProfilePublishing
-                        ? null
-                        : _publishPublicPartnerProfile,
-                    icon: _publicPartnerProfilePublishing
-                        ? const SizedBox(
-                            width: 16,
-                            height: 16,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Icon(Icons.publish_outlined),
-                    label: Text(
+                    const SizedBox(height: 6),
+                    Text(
                       _t(
-                        nl: 'Publiek profiel publiceren',
-                        en: 'Publish public profile',
-                        fr: 'Publier le profil public',
-                        es: 'Publicar perfil público',
+                        nl: 'Dit is los van Service setup. Service setup stuurt calculator/pricing; deze toggles sturen publiek profiel en boekings-CTA’s.',
+                        en: 'This is separate from Service setup. Service setup drives calculator/pricing; these toggles drive public profile and booking CTAs.',
+                        fr: 'Ceci est séparé de la configuration des services. Cette section contrôle le profil public et les CTA de réservation.',
+                        es: 'Esto es independiente de la configuración de servicios. Estos controles afectan el perfil público y los CTA de reserva.',
+                      ),
+                      style: const TextStyle(
+                        color: Colors.white60,
+                        fontSize: 11.2,
                       ),
                     ),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    _t(
-                      nl: 'Gebruik alleen publieke HTTPS-links. Lokale foto’s worden niet gepubliceerd.',
-                      en: 'Use public HTTPS links only. Local photos are not published.',
-                      fr: 'Les photos locales ne sont pas encore publiées. Seules les images HTTPS publiques sont incluses.',
-                      es: 'Las fotos locales aún no se publican. Solo se incluyen imágenes HTTPS públicas.',
-                    ),
-                    style: const TextStyle(color: Colors.white54, fontSize: 11),
-                  ),
-                  if (_publicPartnerProfileStatus != null) ...[
                     const SizedBox(height: 8),
-                    Text(
-                      _publicPartnerProfileStatus!,
-                      style: const TextStyle(
-                        color: Color(0xFF34D29A),
-                        fontSize: 11.8,
-                      ),
-                    ),
-                  ],
-                  if (_isPublicPartnerProfilePublished() &&
-                      _publicPartnerProfilePublishedAt.trim().isNotEmpty) ...[
-                    const SizedBox(height: 4),
-                    Text(
-                      _t(
-                        nl: 'Laatst gepubliceerd op: ${_publicPartnerProfilePublishedAt.trim()}',
-                        en: 'Last published at: ${_publicPartnerProfilePublishedAt.trim()}',
-                        fr: 'Derniere publication: ${_publicPartnerProfilePublishedAt.trim()}',
-                        es: 'Ultima publicacion: ${_publicPartnerProfilePublishedAt.trim()}',
-                      ),
-                      style: const TextStyle(
-                        color: Colors.white54,
-                        fontSize: 10.8,
-                      ),
-                    ),
-                  ],
-                  if (_publicPartnerProfileError != null) ...[
-                    const SizedBox(height: 8),
-                    Text(
-                      _publicPartnerProfileError!,
-                      style: const TextStyle(
-                        color: Colors.redAccent,
-                        fontSize: 11.8,
-                      ),
-                    ),
-                  ],
-                ],
-              ),
-            ),
-            _collapsibleSettingsCard(
-              id: 'branding_support',
-              icon: Icons.brush_outlined,
-              title: _t(
-                nl: 'Branding & support',
-                en: 'Branding & support',
-                fr: 'Branding et support',
-                es: 'Marca y soporte',
-              ),
-              subtitle: _t(
-                nl: 'Merknaam, contact en logo',
-                en: 'Brand name, contact and logo',
-                fr: 'Marque, contact et logo',
-                es: 'Marca, contacto y logo',
-              ),
-              status: _brandingSupportStatus(),
-              child: Column(
-                children: [
-                  _txt(
-                    _companyCtrl,
-                    _t(
-                      nl: 'Naam in app/branding',
-                      en: 'App/branding name',
-                      fr: 'Nom dans l app/branding',
-                      es: 'Nombre en app/marca',
-                    ),
-                  ),
-                  _txt(
-                    _supportEmailCtrl,
-                    _t(
-                      nl: 'Support e-mail',
-                      en: 'Support email',
-                      fr: 'E-mail support',
-                      es: 'Correo de soporte',
-                    ),
-                  ),
-                  _txt(
-                    _supportPhoneCtrl,
-                    _t(
-                      nl: 'Support telefoon',
-                      en: 'Support phone',
-                      fr: 'Téléphone support',
-                      es: 'Teléfono de soporte',
-                    ),
-                  ),
-                  _txt(
-                    _senderCtrl,
-                    _t(
-                      nl: 'E-mail afzendernaam',
-                      en: 'Email sender name',
-                      fr: 'Nom expediteur e-mail',
-                      es: 'Nombre remitente email',
-                    ),
-                  ),
-                  _txt(
-                    _replyToCtrl,
-                    _t(
-                      nl: 'Reply-to e-mail',
-                      en: 'Reply-to email',
-                      fr: 'E-mail de reponse',
-                      es: 'Email de respuesta',
-                    ),
-                  ),
-                  _txt(
-                    _whatsAppCtrl,
-                    _t(
-                      nl: 'WhatsApp nummer',
-                      en: 'WhatsApp number',
-                      fr: 'Numero WhatsApp',
-                      es: 'Numero WhatsApp',
-                    ),
-                  ),
-                  _logoPreviewBlock(),
-                  const SizedBox(height: 8),
-                  DropdownButtonFormField<AppLanguage>(
-                    value: _defaultLanguage,
-                    items: const [
-                      DropdownMenuItem(
-                        value: AppLanguage.nl,
-                        child: Text('Nederlands'),
-                      ),
-                      DropdownMenuItem(
-                        value: AppLanguage.en,
-                        child: Text('English'),
-                      ),
-                      DropdownMenuItem(
-                        value: AppLanguage.fr,
-                        child: Text('Français'),
-                      ),
-                      DropdownMenuItem(
-                        value: AppLanguage.es,
-                        child: Text('Español'),
-                      ),
-                    ],
-                    onChanged: (v) {
-                      if (v == null) return;
-                      setState(() => _defaultLanguage = v);
-                    },
-                    decoration: InputDecoration(
-                      labelText: _t(
-                        nl: 'Standaard taal',
-                        en: 'Default language',
-                        fr: 'Langue par defaut',
-                        es: 'Idioma predeterminado',
-                      ),
-                      floatingLabelBehavior: FloatingLabelBehavior.always,
-                      contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 14,
-                        vertical: 16,
-                      ),
-                      filled: true,
-                      fillColor: const Color(0xFF0B0B0B),
-                    ),
-                    dropdownColor: const Color(0xFF111111),
-                  ),
-                  const SizedBox(height: 8),
-                  DropdownButtonFormField<String>(
-                    value: _defaultCurrency,
-                    items: const ['EUR', 'USD', 'GBP', 'CHF']
-                        .map((c) => DropdownMenuItem(value: c, child: Text(c)))
-                        .toList(growable: false),
-                    onChanged: (v) {
-                      if (v == null) return;
-                      setState(() => _defaultCurrency = v);
-                    },
-                    decoration: InputDecoration(
-                      labelText: _t(
-                        nl: 'Standaard valuta',
-                        en: 'Default currency',
-                        fr: 'Devise par defaut',
-                        es: 'Moneda predeterminada',
-                      ),
-                      floatingLabelBehavior: FloatingLabelBehavior.always,
-                      contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 14,
-                        vertical: 16,
-                      ),
-                      filled: true,
-                      fillColor: const Color(0xFF0B0B0B),
-                    ),
-                    dropdownColor: const Color(0xFF111111),
-                  ),
-                  const SizedBox(height: 8),
-                  DropdownButtonFormField<String>(
-                    value: _taxLabel,
-                    items: const ['BTW', 'VAT', 'TVA', 'IVA', 'GST', 'Tax']
-                        .map((t) => DropdownMenuItem(value: t, child: Text(t)))
-                        .toList(growable: false),
-                    onChanged: (v) {
-                      if (v == null) return;
-                      setState(() => _taxLabel = v);
-                    },
-                    decoration: InputDecoration(
-                      labelText: _t(
-                        nl: 'Belastinglabel',
-                        en: 'Tax label',
-                        fr: 'Libelle taxe',
-                        es: 'Etiqueta de impuesto',
-                      ),
-                      floatingLabelBehavior: FloatingLabelBehavior.always,
-                      contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 14,
-                        vertical: 16,
-                      ),
-                      filled: true,
-                      fillColor: const Color(0xFF0B0B0B),
-                    ),
-                    dropdownColor: const Color(0xFF111111),
-                  ),
-                  SwitchListTile(
-                    contentPadding: EdgeInsets.zero,
-                    value: _use24Hour,
-                    onChanged: (v) => setState(() => _use24Hour = v),
-                    title: Text(
-                      _t(
-                        nl: 'Gebruik 24-uurs notatie',
-                        en: 'Use 24-hour time',
-                        fr: 'Utiliser format 24h',
-                        es: 'Usar formato 24 horas',
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            _collapsibleSettingsCard(
-              id: 'pricing_engine',
-              icon: Icons.local_offer_outlined,
-              title: _t(
-                nl: 'Pricing engine',
-                en: 'Pricing engine',
-                fr: 'Moteur tarifaire',
-                es: 'Motor de precios',
-              ),
-              subtitle: _t(
-                nl: 'Basistarieven en toeslagen',
-                en: 'Base rates and surcharges',
-                fr: 'Tarifs de base et suppléments',
-                es: 'Tarifas base y recargos',
-              ),
-              status: _pricingStatus(),
-              child: Column(
-                children: [
-                  _txt(
-                    _baseFareCtrl,
-                    _t(
-                      nl: 'Basistarief',
-                      en: 'Base fare',
-                      fr: 'Tarif de base',
-                      es: 'Tarifa base',
-                    ),
-                  ),
-                  _txt(
-                    _perKmCtrl,
-                    _t(
-                      nl: 'Prijs per km',
-                      en: 'Price per km',
-                      fr: 'Prix par km',
-                      es: 'Precio por km',
-                    ),
-                  ),
-                  _txt(
-                    _perMinCtrl,
-                    _t(
-                      nl: 'Prijs per minuut',
-                      en: 'Price per minute',
-                      fr: 'Prix par minute',
-                      es: 'Precio por minuto',
-                    ),
-                  ),
-                  _txt(
-                    _minimumFareCtrl,
-                    _t(
-                      nl: 'Minimumtarief',
-                      en: 'Minimum fare',
-                      fr: 'Tarif minimum',
-                      es: 'Tarifa minima',
-                    ),
-                  ),
-                  _txt(
-                    _waitPerMinCtrl,
-                    _t(
-                      nl: 'Wachttarief per minuut',
-                      en: 'Waiting price per minute',
-                      fr: 'Tarif d attente par minute',
-                      es: 'Tarifa de espera por minuto',
-                    ),
-                  ),
-                  Builder(
-                    builder: (_) {
-                      final vat = _activeVatConfig();
-                      final vatPercent = (vat.vatRate * 100).clamp(0.0, 100.0);
-                      final vatModeLabel = vat.vatMode == 'incl'
-                          ? _t(
-                              nl: 'inclusief',
-                              en: 'inclusive',
-                              fr: 'incluse',
-                              es: 'incluido',
-                            )
-                          : _t(
-                              nl: 'exclusief',
-                              en: 'exclusive',
-                              fr: 'hors taxe',
-                              es: 'excluido',
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: _publicServiceCatalog
+                          .map((id) {
+                            final selected = _publicServiceIds.contains(id);
+                            return FilterChip(
+                              label: Text(_publicServiceLabel(id)),
+                              selected: selected,
+                              onSelected: (value) {
+                                setState(() {
+                                  _publicServicesConfigured = true;
+                                  if (value) {
+                                    _publicServiceIds.add(id);
+                                  } else {
+                                    _publicServiceIds.remove(id);
+                                  }
+                                });
+                              },
+                              selectedColor: _accent.withOpacity(
+                                _isDark ? 0.22 : 0.14,
+                              ),
+                              checkmarkColor: _accent,
+                              backgroundColor: _subPanelBg,
+                              side: BorderSide(
+                                color: selected
+                                    ? _accent.withOpacity(0.75)
+                                    : _border.withOpacity(
+                                        _isDark ? 0.48 : 0.95,
+                                      ),
+                              ),
+                              labelStyle: TextStyle(
+                                color: selected
+                                    ? (_isDark ? _textOnAccent : _accent)
+                                    : _textPrimary,
+                                fontWeight: FontWeight.w600,
+                                fontSize: 11.6,
+                              ),
                             );
-                      return Padding(
-                        padding: const EdgeInsets.only(bottom: 8),
-                        child: Text(
-                          '${_t(nl: 'BTW wordt beheerd via BTW-instellingen hierboven.', en: 'VAT is managed in the VAT settings above.', fr: 'La TVA est gérée dans les paramètres TVA ci-dessus.', es: 'El IVA se gestiona en los ajustes de IVA de arriba.')} (${vatPercent % 1 == 0 ? vatPercent.toStringAsFixed(0) : vatPercent.toStringAsFixed(2)}%, $vatModeLabel)',
-                          style: const TextStyle(
-                            color: Colors.white70,
-                            fontSize: 12,
-                          ),
-                        ),
-                      );
-                    },
-                  ),
-                  _txt(
-                    _bagFeeCtrl,
-                    _t(
-                      nl: 'Bagagekost per stuk',
-                      en: 'Bag fee each',
-                      fr: 'Frais bagage par piece',
-                      es: 'Tarifa por equipaje',
+                          })
+                          .toList(growable: false),
                     ),
-                  ),
-                  _txt(
-                    _stopFeeCtrl,
-                    _t(
-                      nl: 'Stopkost per stop',
-                      en: 'Stop fee each',
-                      fr: 'Frais par arret',
-                      es: 'Tarifa por parada',
-                    ),
-                  ),
-                  _txt(
-                    _tierComfortFeeCtrl,
-                    _t(
-                      nl: 'Tier fee comfort',
-                      en: 'Tier fee comfort',
-                      fr: 'Frais niveau confort',
-                      es: 'Tarifa nivel comfort',
-                    ),
-                  ),
-                  _txt(
-                    _tierPrivateFeeCtrl,
-                    _t(
-                      nl: 'Tier fee private',
-                      en: 'Tier fee private',
-                      fr: 'Frais niveau prive',
-                      es: 'Tarifa nivel private',
-                    ),
-                  ),
-                  _txt(
-                    _tierPremiumFeeCtrl,
-                    _t(
-                      nl: 'Tier fee premium',
-                      en: 'Tier fee premium',
-                      fr: 'Frais niveau premium',
-                      es: 'Tarifa nivel premium',
-                    ),
-                  ),
-                  _txt(
-                    _nightSurchargeCtrl,
-                    _t(
-                      nl: 'Nachttoeslag (0-1)',
-                      en: 'Night surcharge (0-1)',
-                      fr: 'Surcharge nuit (0-1)',
-                      es: 'Recargo nocturno (0-1)',
-                    ),
-                  ),
-                  _txt(
-                    _weekendSurchargeCtrl,
-                    _t(
-                      nl: 'Weekendtoeslag (0-1)',
-                      en: 'Weekend surcharge (0-1)',
-                      fr: 'Surcharge weekend (0-1)',
-                      es: 'Recargo fin de semana (0-1)',
-                    ),
-                  ),
-                  _txt(
-                    _surchargeCapCtrl,
-                    _t(
-                      nl: 'Toeslag plafond (0-1)',
-                      en: 'Surcharge cap (0-1)',
-                      fr: 'Plafond surcharge (0-1)',
-                      es: 'Tope de recargo (0-1)',
-                    ),
-                  ),
-                  SwitchListTile(
-                    contentPadding: EdgeInsets.zero,
-                    value: _pricingReturnEnabled,
-                    onChanged: (v) => setState(() => _pricingReturnEnabled = v),
-                    title: Text(
+                    const SizedBox(height: 12),
+                    Text(
                       _t(
-                        nl: 'Retourritten inschakelen',
-                        en: 'Enable return trips',
-                        fr: 'Activer les trajets retour',
-                        es: 'Activar viajes de regreso',
+                        nl: 'Betaalopties zichtbaar voor klanten',
+                        en: 'Payment options visible to customers',
+                        fr: 'Moyens de paiement visibles par les clients',
+                        es: 'Opciones de pago visibles para clientes',
+                      ),
+                      style: const TextStyle(
+                        color: Colors.white70,
+                        fontSize: 12.6,
+                        fontWeight: FontWeight.w700,
                       ),
                     ),
-                  ),
-                  _txt(
-                    _returnFeeCtrl,
-                    _t(
-                      nl: 'Retourtoeslag',
-                      en: 'Return fee',
-                      fr: 'Supplement retour',
-                      es: 'Recargo de regreso',
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: _publicPaymentOptionCatalog
+                          .map((id) {
+                            final selected = _publicPaymentOptionIds.contains(
+                              id,
+                            );
+                            return FilterChip(
+                              label: Text(_publicPaymentOptionLabel(id)),
+                              selected: selected,
+                              onSelected: (value) {
+                                setState(() {
+                                  if (value) {
+                                    _publicPaymentOptionIds.add(id);
+                                  } else {
+                                    _publicPaymentOptionIds.remove(id);
+                                  }
+                                });
+                              },
+                              selectedColor: _accent.withOpacity(
+                                _isDark ? 0.22 : 0.14,
+                              ),
+                              checkmarkColor: _accent,
+                              backgroundColor: _subPanelBg,
+                              side: BorderSide(
+                                color: selected
+                                    ? _accent.withOpacity(0.75)
+                                    : _border.withOpacity(
+                                        _isDark ? 0.48 : 0.95,
+                                      ),
+                              ),
+                              labelStyle: TextStyle(
+                                color: selected
+                                    ? (_isDark ? _textOnAccent : _accent)
+                                    : _textPrimary,
+                                fontWeight: FontWeight.w600,
+                                fontSize: 11.6,
+                              ),
+                            );
+                          })
+                          .toList(growable: false),
                     ),
-                  ),
-                  _txt(
-                    _fuelSurchargeCtrl,
-                    _t(
-                      nl: 'Brandstoftoeslag',
-                      en: 'Fuel surcharge',
-                      fr: 'Supplement carburant',
-                      es: 'Recargo de combustible',
+                    const SizedBox(height: 10),
+                    _publicMediaPreview(),
+                    const SizedBox(height: 10),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: FilledButton.icon(
+                            onPressed:
+                                (_publicLogoUploading ||
+                                    _publicHeroUploading ||
+                                    _publicPartnerProfilePublishing)
+                                ? null
+                                : () => _uploadPublicCompanyMedia(
+                                    mediaType: 'company_logo',
+                                  ),
+                            icon: _publicLogoUploading
+                                ? const SizedBox(
+                                    width: 15,
+                                    height: 15,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                    ),
+                                  )
+                                : const Icon(Icons.upload_file_outlined),
+                            label: Text(
+                              _isPublicHttpsUrl(_publicLogoUrlCtrl.text)
+                                  ? _t(
+                                      nl: 'Vervang logo',
+                                      en: 'Replace logo',
+                                      fr: 'Remplacer le logo',
+                                      es: 'Reemplazar logo',
+                                    )
+                                  : _t(
+                                      nl: 'Upload publiek logo',
+                                      en: 'Upload public logo',
+                                      fr: 'Téléverser le logo public',
+                                      es: 'Subir logo público',
+                                    ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: FilledButton.icon(
+                            onPressed:
+                                (_publicLogoUploading ||
+                                    _publicHeroUploading ||
+                                    _publicPartnerProfilePublishing)
+                                ? null
+                                : () => _uploadPublicCompanyMedia(
+                                    mediaType: 'company_hero',
+                                  ),
+                            icon: _publicHeroUploading
+                                ? const SizedBox(
+                                    width: 15,
+                                    height: 15,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                    ),
+                                  )
+                                : const Icon(Icons.image_outlined),
+                            label: Text(
+                              _isPublicHttpsUrl(_publicHeroPhotoUrlCtrl.text)
+                                  ? _t(
+                                      nl: 'Vervang coverfoto',
+                                      en: 'Replace cover photo',
+                                      fr: 'Remplacer la photo de couverture',
+                                      es: 'Reemplazar foto de portada',
+                                    )
+                                  : _t(
+                                      nl: 'Upload publieke coverfoto',
+                                      en: 'Upload public cover photo',
+                                      fr: 'Téléverser la couverture publique',
+                                      es: 'Subir portada pública',
+                                    ),
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
-                  ),
-                ],
-              ),
-            ),
-            _cancellationPolicyCard(),
-            _collapsibleSettingsCard(
-              id: 'service_setup',
-              icon: Icons.local_taxi_outlined,
-              title: _t(
-                nl: 'Service setup',
-                en: 'Service setup',
-                fr: 'Configuration des services',
-                es: 'Configuracion de servicios',
-              ),
-              subtitle: _t(
-                nl: 'Services, tiers en opties',
-                en: 'Services, tiers and options',
-                fr: 'Services, categories et options',
-                es: 'Servicios, categorias y opciones',
-              ),
-              status: _servicesTiersStatus(),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    _t(
-                      nl: 'Ingeschakelde services',
-                      en: 'Enabled services',
-                      fr: 'Services actifs',
-                      es: 'Servicios habilitados',
+                    const SizedBox(height: 8),
+                    ExpansionTile(
+                      tilePadding: EdgeInsets.zero,
+                      childrenPadding: EdgeInsets.zero,
+                      initiallyExpanded: _showAdvancedPublicMediaUrls,
+                      onExpansionChanged: (v) {
+                        setState(() => _showAdvancedPublicMediaUrls = v);
+                      },
+                      title: Text(
+                        _t(
+                          nl: 'Geavanceerd: handmatige publieke URL\'s (fallback)',
+                          en: 'Advanced: manual public URLs (fallback)',
+                          fr: 'Avancé : URLs publiques manuelles (secours)',
+                          es: 'Avanzado: URLs públicas manuales (respaldo)',
+                        ),
+                        style: const TextStyle(
+                          color: Colors.white70,
+                          fontSize: 12.3,
+                        ),
+                      ),
+                      children: [
+                        _txt(
+                          _publicLogoUrlCtrl,
+                          _t(
+                            nl: 'Publieke logo-URL',
+                            en: 'Public logo URL',
+                            fr: 'URL du logo public',
+                            es: 'URL del logo público',
+                          ),
+                          onChanged: (_) => setState(() {}),
+                        ),
+                        _txt(
+                          _publicHeroPhotoUrlCtrl,
+                          _t(
+                            nl: 'Publieke coverfoto-URL',
+                            en: 'Public cover photo URL',
+                            fr: 'URL de la photo de couverture publique',
+                            es: 'URL de la foto de portada pública',
+                          ),
+                          onChanged: (_) => setState(() {}),
+                        ),
+                        if (_publicLogoUrlCtrl.text.trim().isNotEmpty &&
+                            !_isPublicHttpsUrl(_publicLogoUrlCtrl.text)) ...[
+                          Text(
+                            _t(
+                              nl: 'Waarschuwing: logo-URL moet met https:// starten om gepubliceerd te worden.',
+                              en: 'Warning: logo URL must start with https:// to be published.',
+                              fr: 'Avertissement : l’URL du logo doit commencer par https:// pour être publiée.',
+                              es: 'Advertencia: la URL del logo debe empezar con https:// para publicarse.',
+                            ),
+                            style: const TextStyle(
+                              color: Colors.orangeAccent,
+                              fontSize: 11,
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                        ],
+                        if (_publicHeroPhotoUrlCtrl.text.trim().isNotEmpty &&
+                            !_isPublicHttpsUrl(
+                              _publicHeroPhotoUrlCtrl.text,
+                            )) ...[
+                          Text(
+                            _t(
+                              nl: 'Waarschuwing: coverfoto-URL moet met https:// starten om gepubliceerd te worden.',
+                              en: 'Warning: cover photo URL must start with https:// to be published.',
+                              fr: 'Avertissement : l’URL de couverture doit commencer par https:// pour être publiée.',
+                              es: 'Advertencia: la URL de portada debe empezar con https:// para publicarse.',
+                            ),
+                            style: const TextStyle(
+                              color: Colors.orangeAccent,
+                              fontSize: 11,
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                        ],
+                      ],
                     ),
-                  ),
-                  _optionsChecklist(
-                    options: appConfig.enabledServices,
-                    selected: _serviceIds,
-                    onChanged: (next) => setState(() => _serviceIds = next),
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    _t(
-                      nl: 'Ingeschakelde tiers',
-                      en: 'Enabled tiers',
-                      fr: 'Categories actives',
-                      es: 'Categorias habilitadas',
+                    const SizedBox(height: 10),
+                    FilledButton.icon(
+                      onPressed: _publicPartnerProfilePublishing
+                          ? null
+                          : _publishPublicPartnerProfile,
+                      icon: _publicPartnerProfilePublishing
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.publish_outlined),
+                      label: Text(
+                        _t(
+                          nl: 'Publiek profiel publiceren',
+                          en: 'Publish public profile',
+                          fr: 'Publier le profil public',
+                          es: 'Publicar perfil público',
+                        ),
+                      ),
                     ),
-                  ),
-                  _optionsChecklist(
-                    options: appConfig.enabledTiers,
-                    selected: _tierIds,
-                    onChanged: (next) => setState(() => _tierIds = next),
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    _t(
-                      nl: 'Ingeschakelde extra opties',
-                      en: 'Enabled extra options',
-                      fr: 'Options extra actives',
-                      es: 'Opciones extra habilitadas',
+                    const SizedBox(height: 8),
+                    Text(
+                      _t(
+                        nl: 'Gebruik alleen publieke HTTPS-links. Lokale foto’s worden niet gepubliceerd.',
+                        en: 'Use public HTTPS links only. Local photos are not published.',
+                        fr: 'Les photos locales ne sont pas encore publiées. Seules les images HTTPS publiques sont incluses.',
+                        es: 'Las fotos locales aún no se publican. Solo se incluyen imágenes HTTPS públicas.',
+                      ),
+                      style: TextStyle(color: _textMuted, fontSize: 11),
                     ),
-                  ),
-                  _optionsChecklist(
-                    options: appConfig.enabledExtraOptions,
-                    selected: _extraIds,
-                    onChanged: (next) => setState(() => _extraIds = next),
-                  ),
-                ],
-              ),
-            ),
-            _airportFixedFareCard(),
-            const SizedBox(height: 4),
-            FilledButton.icon(
-              onPressed: _saveAllBusy ? null : _save,
-              icon: _saveAllBusy
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.save),
-              label: Text(
-                _t(
-                  nl: 'Alles opslaan en publiceren',
-                  en: 'Save and publish everything',
-                  fr: 'Tout enregistrer et publier',
-                  es: 'Guardar y publicar todo',
+                    if (_publicPartnerProfileStatus != null) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        _publicPartnerProfileStatus!,
+                        style: const TextStyle(
+                          color: Color(0xFF34D29A),
+                          fontSize: 11.8,
+                        ),
+                      ),
+                    ],
+                    if (_isPublicPartnerProfilePublished() &&
+                        _publicPartnerProfilePublishedAt.trim().isNotEmpty) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        _t(
+                          nl: 'Laatst gepubliceerd op: ${_publicPartnerProfilePublishedAt.trim()}',
+                          en: 'Last published at: ${_publicPartnerProfilePublishedAt.trim()}',
+                          fr: 'Derniere publication: ${_publicPartnerProfilePublishedAt.trim()}',
+                          es: 'Ultima publicacion: ${_publicPartnerProfilePublishedAt.trim()}',
+                        ),
+                        style: const TextStyle(
+                          color: Colors.white54,
+                          fontSize: 10.8,
+                        ),
+                      ),
+                    ],
+                    if (_publicPartnerProfileError != null) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        _publicPartnerProfileError!,
+                        style: const TextStyle(
+                          color: Colors.redAccent,
+                          fontSize: 11.8,
+                        ),
+                      ),
+                    ],
+                  ],
                 ),
               ),
-            ),
-          ],
+              _collapsibleSettingsCard(
+                id: 'branding_support',
+                icon: Icons.brush_outlined,
+                title: _t(
+                  nl: 'Branding & support',
+                  en: 'Branding & support',
+                  fr: 'Branding et support',
+                  es: 'Marca y soporte',
+                ),
+                subtitle: _t(
+                  nl: 'Merknaam, contact en logo',
+                  en: 'Brand name, contact and logo',
+                  fr: 'Marque, contact et logo',
+                  es: 'Marca, contacto y logo',
+                ),
+                status: _brandingSupportStatus(),
+                child: Column(
+                  children: [
+                    _txt(
+                      _companyCtrl,
+                      _t(
+                        nl: 'Naam in app/branding',
+                        en: 'App/branding name',
+                        fr: 'Nom dans l app/branding',
+                        es: 'Nombre en app/marca',
+                      ),
+                    ),
+                    _txt(
+                      _supportEmailCtrl,
+                      _t(
+                        nl: 'Support e-mail',
+                        en: 'Support email',
+                        fr: 'E-mail support',
+                        es: 'Correo de soporte',
+                      ),
+                    ),
+                    _txt(
+                      _supportPhoneCtrl,
+                      _t(
+                        nl: 'Support telefoon',
+                        en: 'Support phone',
+                        fr: 'Téléphone support',
+                        es: 'Teléfono de soporte',
+                      ),
+                    ),
+                    _txt(
+                      _senderCtrl,
+                      _t(
+                        nl: 'E-mail afzendernaam',
+                        en: 'Email sender name',
+                        fr: 'Nom expediteur e-mail',
+                        es: 'Nombre remitente email',
+                      ),
+                    ),
+                    _txt(
+                      _replyToCtrl,
+                      _t(
+                        nl: 'Reply-to e-mail',
+                        en: 'Reply-to email',
+                        fr: 'E-mail de reponse',
+                        es: 'Email de respuesta',
+                      ),
+                    ),
+                    _txt(
+                      _whatsAppCtrl,
+                      _t(
+                        nl: 'WhatsApp nummer',
+                        en: 'WhatsApp number',
+                        fr: 'Numero WhatsApp',
+                        es: 'Numero WhatsApp',
+                      ),
+                    ),
+                    _logoPreviewBlock(),
+                    const SizedBox(height: 8),
+                    DropdownButtonFormField<AppLanguage>(
+                      value: _defaultLanguage,
+                      items: const [
+                        DropdownMenuItem(
+                          value: AppLanguage.nl,
+                          child: Text('Nederlands'),
+                        ),
+                        DropdownMenuItem(
+                          value: AppLanguage.en,
+                          child: Text('English'),
+                        ),
+                        DropdownMenuItem(
+                          value: AppLanguage.fr,
+                          child: Text('Français'),
+                        ),
+                        DropdownMenuItem(
+                          value: AppLanguage.es,
+                          child: Text('Español'),
+                        ),
+                      ],
+                      onChanged: (v) {
+                        if (v == null) return;
+                        setState(() => _defaultLanguage = v);
+                      },
+                      decoration: InputDecoration(
+                        labelText: _t(
+                          nl: 'Standaard taal',
+                          en: 'Default language',
+                          fr: 'Langue par defaut',
+                          es: 'Idioma predeterminado',
+                        ),
+                        floatingLabelBehavior: FloatingLabelBehavior.always,
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 14,
+                          vertical: 16,
+                        ),
+                        filled: true,
+                        fillColor: _inputFill,
+                      ),
+                      dropdownColor: _subPanelBg,
+                    ),
+                    const SizedBox(height: 8),
+                    DropdownButtonFormField<String>(
+                      value: _defaultCurrency,
+                      items: const ['EUR', 'USD', 'GBP', 'CHF']
+                          .map(
+                            (c) => DropdownMenuItem(value: c, child: Text(c)),
+                          )
+                          .toList(growable: false),
+                      onChanged: (v) {
+                        if (v == null) return;
+                        setState(() => _defaultCurrency = v);
+                      },
+                      decoration: InputDecoration(
+                        labelText: _t(
+                          nl: 'Standaard valuta',
+                          en: 'Default currency',
+                          fr: 'Devise par defaut',
+                          es: 'Moneda predeterminada',
+                        ),
+                        floatingLabelBehavior: FloatingLabelBehavior.always,
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 14,
+                          vertical: 16,
+                        ),
+                        filled: true,
+                        fillColor: _inputFill,
+                      ),
+                      dropdownColor: _subPanelBg,
+                    ),
+                    const SizedBox(height: 8),
+                    DropdownButtonFormField<String>(
+                      value: _taxLabel,
+                      items: const ['BTW', 'VAT', 'TVA', 'IVA', 'GST', 'Tax']
+                          .map(
+                            (t) => DropdownMenuItem(value: t, child: Text(t)),
+                          )
+                          .toList(growable: false),
+                      onChanged: (v) {
+                        if (v == null) return;
+                        setState(() => _taxLabel = v);
+                      },
+                      decoration: InputDecoration(
+                        labelText: _t(
+                          nl: 'Belastinglabel',
+                          en: 'Tax label',
+                          fr: 'Libelle taxe',
+                          es: 'Etiqueta de impuesto',
+                        ),
+                        floatingLabelBehavior: FloatingLabelBehavior.always,
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 14,
+                          vertical: 16,
+                        ),
+                        filled: true,
+                        fillColor: _inputFill,
+                      ),
+                      dropdownColor: _subPanelBg,
+                    ),
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      value: _use24Hour,
+                      onChanged: (v) => setState(() => _use24Hour = v),
+                      title: Text(
+                        _t(
+                          nl: 'Gebruik 24-uurs notatie',
+                          en: 'Use 24-hour time',
+                          fr: 'Utiliser format 24h',
+                          es: 'Usar formato 24 horas',
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              _collapsibleSettingsCard(
+                id: 'pricing_engine',
+                icon: Icons.local_offer_outlined,
+                title: _t(
+                  nl: 'Pricing engine',
+                  en: 'Pricing engine',
+                  fr: 'Moteur tarifaire',
+                  es: 'Motor de precios',
+                ),
+                subtitle: _t(
+                  nl: 'Basistarieven en toeslagen',
+                  en: 'Base rates and surcharges',
+                  fr: 'Tarifs de base et suppléments',
+                  es: 'Tarifas base y recargos',
+                ),
+                status: _pricingStatus(),
+                child: Column(
+                  children: [
+                    _txt(
+                      _baseFareCtrl,
+                      _t(
+                        nl: 'Basistarief',
+                        en: 'Base fare',
+                        fr: 'Tarif de base',
+                        es: 'Tarifa base',
+                      ),
+                    ),
+                    _txt(
+                      _perKmCtrl,
+                      _t(
+                        nl: 'Prijs per km',
+                        en: 'Price per km',
+                        fr: 'Prix par km',
+                        es: 'Precio por km',
+                      ),
+                    ),
+                    _txt(
+                      _perMinCtrl,
+                      _t(
+                        nl: 'Prijs per minuut',
+                        en: 'Price per minute',
+                        fr: 'Prix par minute',
+                        es: 'Precio por minuto',
+                      ),
+                    ),
+                    _txt(
+                      _minimumFareCtrl,
+                      _t(
+                        nl: 'Minimumtarief',
+                        en: 'Minimum fare',
+                        fr: 'Tarif minimum',
+                        es: 'Tarifa minima',
+                      ),
+                    ),
+                    _txt(
+                      _waitPerMinCtrl,
+                      _t(
+                        nl: 'Wachttarief per minuut',
+                        en: 'Waiting price per minute',
+                        fr: 'Tarif d attente par minute',
+                        es: 'Tarifa de espera por minuto',
+                      ),
+                    ),
+                    Builder(
+                      builder: (_) {
+                        final vat = _activeVatConfig();
+                        final vatPercent = (vat.vatRate * 100).clamp(
+                          0.0,
+                          100.0,
+                        );
+                        final vatModeLabel = vat.vatMode == 'incl'
+                            ? _t(
+                                nl: 'inclusief',
+                                en: 'inclusive',
+                                fr: 'incluse',
+                                es: 'incluido',
+                              )
+                            : _t(
+                                nl: 'exclusief',
+                                en: 'exclusive',
+                                fr: 'hors taxe',
+                                es: 'excluido',
+                              );
+                        return Padding(
+                          padding: const EdgeInsets.only(bottom: 8),
+                          child: Text(
+                            '${_t(nl: 'BTW wordt beheerd via BTW-instellingen hierboven.', en: 'VAT is managed in the VAT settings above.', fr: 'La TVA est gérée dans les paramètres TVA ci-dessus.', es: 'El IVA se gestiona en los ajustes de IVA de arriba.')} (${vatPercent % 1 == 0 ? vatPercent.toStringAsFixed(0) : vatPercent.toStringAsFixed(2)}%, $vatModeLabel)',
+                            style: const TextStyle(
+                              color: Colors.white70,
+                              fontSize: 12,
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                    _txt(
+                      _bagFeeCtrl,
+                      _t(
+                        nl: 'Bagagekost per stuk',
+                        en: 'Bag fee each',
+                        fr: 'Frais bagage par piece',
+                        es: 'Tarifa por equipaje',
+                      ),
+                    ),
+                    _txt(
+                      _stopFeeCtrl,
+                      _t(
+                        nl: 'Stopkost per stop',
+                        en: 'Stop fee each',
+                        fr: 'Frais par arret',
+                        es: 'Tarifa por parada',
+                      ),
+                    ),
+                    _txt(
+                      _tierComfortFeeCtrl,
+                      _t(
+                        nl: 'Tier fee comfort',
+                        en: 'Tier fee comfort',
+                        fr: 'Frais niveau confort',
+                        es: 'Tarifa nivel comfort',
+                      ),
+                    ),
+                    _txt(
+                      _tierPrivateFeeCtrl,
+                      _t(
+                        nl: 'Tier fee private',
+                        en: 'Tier fee private',
+                        fr: 'Frais niveau prive',
+                        es: 'Tarifa nivel private',
+                      ),
+                    ),
+                    _txt(
+                      _tierPremiumFeeCtrl,
+                      _t(
+                        nl: 'Tier fee premium',
+                        en: 'Tier fee premium',
+                        fr: 'Frais niveau premium',
+                        es: 'Tarifa nivel premium',
+                      ),
+                    ),
+                    _txt(
+                      _nightSurchargeCtrl,
+                      _t(
+                        nl: 'Nachttoeslag (0-1)',
+                        en: 'Night surcharge (0-1)',
+                        fr: 'Surcharge nuit (0-1)',
+                        es: 'Recargo nocturno (0-1)',
+                      ),
+                    ),
+                    _txt(
+                      _weekendSurchargeCtrl,
+                      _t(
+                        nl: 'Weekendtoeslag (0-1)',
+                        en: 'Weekend surcharge (0-1)',
+                        fr: 'Surcharge weekend (0-1)',
+                        es: 'Recargo fin de semana (0-1)',
+                      ),
+                    ),
+                    _txt(
+                      _surchargeCapCtrl,
+                      _t(
+                        nl: 'Toeslag plafond (0-1)',
+                        en: 'Surcharge cap (0-1)',
+                        fr: 'Plafond surcharge (0-1)',
+                        es: 'Tope de recargo (0-1)',
+                      ),
+                    ),
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      value: _pricingReturnEnabled,
+                      onChanged: (v) =>
+                          setState(() => _pricingReturnEnabled = v),
+                      title: Text(
+                        _t(
+                          nl: 'Retourritten inschakelen',
+                          en: 'Enable return trips',
+                          fr: 'Activer les trajets retour',
+                          es: 'Activar viajes de regreso',
+                        ),
+                      ),
+                    ),
+                    _txt(
+                      _returnFeeCtrl,
+                      _t(
+                        nl: 'Retourtoeslag',
+                        en: 'Return fee',
+                        fr: 'Supplement retour',
+                        es: 'Recargo de regreso',
+                      ),
+                    ),
+                    _txt(
+                      _fuelSurchargeCtrl,
+                      _t(
+                        nl: 'Brandstoftoeslag',
+                        en: 'Fuel surcharge',
+                        fr: 'Supplement carburant',
+                        es: 'Recargo de combustible',
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              _cancellationPolicyCard(),
+              _collapsibleSettingsCard(
+                id: 'service_setup',
+                icon: Icons.local_taxi_outlined,
+                title: _t(
+                  nl: 'Service setup',
+                  en: 'Service setup',
+                  fr: 'Configuration des services',
+                  es: 'Configuracion de servicios',
+                ),
+                subtitle: _t(
+                  nl: 'Services, tiers en opties',
+                  en: 'Services, tiers and options',
+                  fr: 'Services, categories et options',
+                  es: 'Servicios, categorias y opciones',
+                ),
+                status: _servicesTiersStatus(),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      _t(
+                        nl: 'Ingeschakelde services',
+                        en: 'Enabled services',
+                        fr: 'Services actifs',
+                        es: 'Servicios habilitados',
+                      ),
+                    ),
+                    _optionsChecklist(
+                      options: appConfig.enabledServices,
+                      selected: _serviceIds,
+                      onChanged: (next) => setState(() => _serviceIds = next),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      _t(
+                        nl: 'Ingeschakelde tiers',
+                        en: 'Enabled tiers',
+                        fr: 'Categories actives',
+                        es: 'Categorias habilitadas',
+                      ),
+                    ),
+                    _optionsChecklist(
+                      options: appConfig.enabledTiers,
+                      selected: _tierIds,
+                      onChanged: (next) => setState(() => _tierIds = next),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      _t(
+                        nl: 'Ingeschakelde extra opties',
+                        en: 'Enabled extra options',
+                        fr: 'Options extra actives',
+                        es: 'Opciones extra habilitadas',
+                      ),
+                    ),
+                    _optionsChecklist(
+                      options: appConfig.enabledExtraOptions,
+                      selected: _extraIds,
+                      onChanged: (next) => setState(() => _extraIds = next),
+                    ),
+                  ],
+                ),
+              ),
+              _airportFixedFareCard(),
+              const SizedBox(height: 4),
+              FilledButton.icon(
+                onPressed: _saveAllBusy ? null : _save,
+                icon: _saveAllBusy
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.save),
+                label: Text(
+                  _t(
+                    nl: 'Alles opslaan en publiceren',
+                    en: 'Save and publish everything',
+                    fr: 'Tout enregistrer et publier',
+                    es: 'Guardar y publicar todo',
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
