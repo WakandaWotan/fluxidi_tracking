@@ -608,11 +608,11 @@ class _DriverHomePageState extends State<DriverHomePage>
     );
   }
 
-  Color _middayGoldBorderColor([double opacity = 0.42]) =>
-      const Color(0xFFE8C57E).withOpacity(opacity);
+  Color _middayGoldBorderColor([double opacity = 0.48]) =>
+      const Color(0xFFFFDFA3).withOpacity(opacity);
 
-  Color _middayGoldTextPrimary() => const Color(0xFFF7E9C8);
-  Color _middayGoldTextMuted() => const Color(0xFFD8C79E);
+  Color _middayGoldTextPrimary() => const Color(0xFFFFF0D0);
+  Color _middayGoldTextMuted() => const Color(0xFFE1CCA0);
   Color _middayGoldTextOnSelected() => const Color(0xFF2B2113);
 
   Color _midnightBlueAccent() => const Color(0xFF4DA3FF);
@@ -648,8 +648,8 @@ class _DriverHomePageState extends State<DriverHomePage>
       begin: Alignment.topLeft,
       end: Alignment.bottomRight,
       colors: soft
-          ? const [Color(0xFF342B1E), Color(0xFF221B12), Color(0xFF18120C)]
-          : const [Color(0xFF3A3121), Color(0xFF261F15), Color(0xFF17120B)],
+          ? const [Color(0xFF21170D), Color(0xFF3A2B18), Color(0xFF6F5528)]
+          : const [Color(0xFF17110A), Color(0xFF2C2113), Color(0xFF4A371C)],
     );
   }
 
@@ -660,7 +660,8 @@ class _DriverHomePageState extends State<DriverHomePage>
       colors: [
         const Color(0xFFF6E8C2).withOpacity(0.96),
         const Color(0xFFD8BF7B).withOpacity(0.88),
-        const Color(0xFF8D7448).withOpacity(0.70),
+        const Color(0xFF8D7448).withOpacity(0.72),
+        const Color(0xFF3A2A10).withOpacity(0.80),
       ],
     );
   }
@@ -669,7 +670,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     required double radius,
     bool selected = false,
     bool elevated = true,
-    double borderOpacity = 0.42,
+    double borderOpacity = 0.52,
   }) {
     return BoxDecoration(
       gradient: selected
@@ -694,32 +695,32 @@ class _DriverHomePageState extends State<DriverHomePage>
   ButtonStyle _middayGoldOutlinedActionButtonStyle() {
     return OutlinedButton.styleFrom(
       foregroundColor: _middayGoldTextPrimary(),
-      side: BorderSide(color: _middayGoldBorderColor(0.52), width: 1.1),
-      backgroundColor: const Color(0x142A2113),
+      side: BorderSide(color: _middayGoldBorderColor(0.60), width: 1.1),
+      backgroundColor: const Color(0x26332214),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
     ).copyWith(
       overlayColor: MaterialStateProperty.all(
-        const Color(0xFF8D7448).withOpacity(0.18),
+        const Color(0xFFD8BF7B).withOpacity(0.24),
       ),
     );
   }
 
   ButtonStyle _middayGoldFilledActionButtonStyle() {
     return FilledButton.styleFrom(
-      backgroundColor: const Color(0xFF2B2113),
+      backgroundColor: const Color(0xFF4A371C),
       foregroundColor: _middayGoldTextPrimary(),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
       padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
     ).copyWith(
       side: MaterialStateProperty.all(
-        BorderSide(color: _middayGoldBorderColor(0.56), width: 1.1),
+        BorderSide(color: _middayGoldBorderColor(0.66), width: 1.1),
       ),
       shadowColor: MaterialStateProperty.all(
         const Color(0x66000000).withOpacity(0.58),
       ),
       elevation: MaterialStateProperty.all(0),
       overlayColor: MaterialStateProperty.all(
-        const Color(0xFFE8C57E).withOpacity(0.16),
+        const Color(0xFFFFE7A8).withOpacity(0.18),
       ),
     );
   }
