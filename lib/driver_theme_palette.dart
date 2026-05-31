@@ -60,16 +60,16 @@ const DriverThemePalette _midnightBluePalette = DriverThemePalette(
 );
 
 const DriverThemePalette _highContrastPalette = DriverThemePalette(
-  background: Color(0xFF000000),
-  surface: Color(0xFF0A0A0A),
-  surfaceAlt: Color(0xFF111111),
-  textPrimary: Color(0xFFFFFFFF),
-  textMuted: Color(0xFFE5E5E5),
-  accent: Color(0xFFFFD400),
-  border: Color(0xFFFFFFFF),
-  danger: Color(0xFFFF5A5A),
-  success: Color(0xFF7CFC9A),
-  shadow: Color(0x7A000000),
+  background: Color(0xFF120F0B),
+  surface: Color(0xFF1B1712),
+  surfaceAlt: Color(0xFF261F15),
+  textPrimary: Color(0xFFF7E9C8),
+  textMuted: Color(0xFFDAC9A6),
+  accent: Color(0xFFE8C57E),
+  border: Color(0xFF8A7040),
+  danger: Color(0xFFE27C7C),
+  success: Color(0xFF69C89F),
+  shadow: Color(0x68000000),
   isDark: true,
 );
 

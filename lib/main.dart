@@ -57,6 +57,8 @@ import 'package:fluxidi_tracking/chiron_compliance_dashboard_page.dart';
 import 'package:fluxidi_tracking/driver_documents_store.dart';
 import 'package:fluxidi_tracking/driver_document_sheet.dart';
 import 'package:fluxidi_tracking/driver_my_documents_page.dart';
+import 'package:fluxidi_tracking/driver_theme_palette.dart';
+import 'package:fluxidi_tracking/driver_theme_store.dart';
 import 'package:fluxidi_tracking/driver_session_store.dart';
 import 'package:fluxidi_tracking/fluxidi_responsive.dart';
 import 'package:fluxidi_tracking/security/fluxidi_app_lock_gate_page.dart';

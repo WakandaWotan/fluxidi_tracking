@@ -78,7 +78,7 @@ class _BusinessThemePageState extends State<BusinessThemePage> {
       case DriverThemeVariant.midnightBlue:
         return 'Midnight Blue';
       case DriverThemeVariant.highContrast:
-        return 'High Contrast';
+        return 'Midday Gold';
     }
   }
 

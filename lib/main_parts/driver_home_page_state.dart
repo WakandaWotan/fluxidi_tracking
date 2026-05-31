@@ -554,6 +554,142 @@ class _DriverHomePageState extends State<DriverHomePage>
     );
   }
 
+  String _driverAssetByTheme({
+    required String defaultAsset,
+    String? middayGoldAsset,
+  }) {
+    final isMiddayGold =
+        driverThemeNotifier.value == DriverThemeVariant.highContrast;
+    if (isMiddayGold && (middayGoldAsset ?? '').trim().isNotEmpty) {
+      return middayGoldAsset!;
+    }
+    return defaultAsset;
+  }
+
+  LinearGradient _middayGoldMetallicGradient() {
+    return LinearGradient(
+      begin: Alignment.topLeft,
+      end: Alignment.bottomRight,
+      colors: [
+        const Color(0xFFFFF0B8).withOpacity(0.90),
+        const Color(0xFFE8C57E).withOpacity(0.78),
+        const Color(0xFF8A7040).withOpacity(0.72),
+        const Color(0xFFFFDFA3).withOpacity(0.86),
+      ],
+      stops: const [0.0, 0.35, 0.68, 1.0],
+    );
+  }
+
+  Widget _middayGoldGradientFrame({
+    required Widget child,
+    required double radius,
+    double stroke = 1.0,
+    Color innerColor = Colors.transparent,
+  }) {
+    return Container(
+      decoration: BoxDecoration(
+        gradient: _middayGoldMetallicGradient(),
+        borderRadius: BorderRadius.circular(radius),
+      ),
+      padding: EdgeInsets.all(stroke),
+      child: Container(
+        decoration: BoxDecoration(
+          color: innerColor,
+          borderRadius: BorderRadius.circular(math.max(0.0, radius - stroke)),
+        ),
+        child: child,
+      ),
+    );
+  }
+
+  Color _middayGoldBorderColor([double opacity = 0.42]) =>
+      const Color(0xFFE8C57E).withOpacity(opacity);
+
+  Color _middayGoldTextPrimary() => const Color(0xFFF7E9C8);
+  Color _middayGoldTextMuted() => const Color(0xFFD8C79E);
+  Color _middayGoldTextOnSelected() => const Color(0xFF2B2113);
+
+  LinearGradient _middayGoldSurfaceGradient({bool soft = false}) {
+    return LinearGradient(
+      begin: Alignment.topLeft,
+      end: Alignment.bottomRight,
+      colors: soft
+          ? const [Color(0xFF342B1E), Color(0xFF221B12), Color(0xFF18120C)]
+          : const [Color(0xFF3A3121), Color(0xFF261F15), Color(0xFF17120B)],
+    );
+  }
+
+  LinearGradient _middayGoldSelectedSurfaceGradient() {
+    return LinearGradient(
+      begin: Alignment.topLeft,
+      end: Alignment.bottomRight,
+      colors: [
+        const Color(0xFFF6E8C2).withOpacity(0.96),
+        const Color(0xFFD8BF7B).withOpacity(0.88),
+        const Color(0xFF8D7448).withOpacity(0.70),
+      ],
+    );
+  }
+
+  BoxDecoration _middayGoldCardDecoration({
+    required double radius,
+    bool selected = false,
+    bool elevated = true,
+    double borderOpacity = 0.42,
+  }) {
+    return BoxDecoration(
+      gradient: selected
+          ? _middayGoldSelectedSurfaceGradient()
+          : _middayGoldSurfaceGradient(),
+      borderRadius: BorderRadius.circular(radius),
+      border: Border.all(color: _middayGoldBorderColor(borderOpacity)),
+      boxShadow: elevated
+          ? [
+              BoxShadow(
+                color: const Color(
+                  0x66000000,
+                ).withOpacity(selected ? 0.92 : 0.68),
+                blurRadius: selected ? 8 : 7,
+                offset: const Offset(0, 3),
+              ),
+            ]
+          : null,
+    );
+  }
+
+  ButtonStyle _middayGoldOutlinedActionButtonStyle() {
+    return OutlinedButton.styleFrom(
+      foregroundColor: _middayGoldTextPrimary(),
+      side: BorderSide(color: _middayGoldBorderColor(0.52), width: 1.1),
+      backgroundColor: const Color(0x142A2113),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+    ).copyWith(
+      overlayColor: MaterialStateProperty.all(
+        const Color(0xFF8D7448).withOpacity(0.18),
+      ),
+    );
+  }
+
+  ButtonStyle _middayGoldFilledActionButtonStyle() {
+    return FilledButton.styleFrom(
+      backgroundColor: const Color(0xFF2B2113),
+      foregroundColor: _middayGoldTextPrimary(),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+    ).copyWith(
+      side: MaterialStateProperty.all(
+        BorderSide(color: _middayGoldBorderColor(0.56), width: 1.1),
+      ),
+      shadowColor: MaterialStateProperty.all(
+        const Color(0x66000000).withOpacity(0.58),
+      ),
+      elevation: MaterialStateProperty.all(0),
+      overlayColor: MaterialStateProperty.all(
+        const Color(0xFFE8C57E).withOpacity(0.16),
+      ),
+    );
+  }
+
   // ===============================
   // JSON helpers (local)
   // ===============================
@@ -8881,6 +9017,8 @@ class _DriverHomePageState extends State<DriverHomePage>
     bool compactLandscape = false,
     double? compactMinHeight,
   }) {
+    final isMiddayGold =
+        driverThemeNotifier.value == DriverThemeVariant.highContrast;
     const summaryIconContainerSize = 52.0;
     const summaryIconGlyphSize = 30.0;
     const compactIconContainerSize = 36.0;
@@ -8892,110 +9030,149 @@ class _DriverHomePageState extends State<DriverHomePage>
       required Color accentColor,
       VoidCallback? onTap,
     }) {
-      return InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(13),
-        child: Container(
-          constraints: compactLandscape && compactMinHeight != null
-              ? BoxConstraints(minHeight: compactMinHeight)
-              : null,
-          padding: compactLandscape
-              ? const EdgeInsets.fromLTRB(8, 6, 8, 6)
-              : const EdgeInsets.fromLTRB(8, 8, 8, 8),
-          decoration: BoxDecoration(
-            color: const Color(0xFF111214),
-            borderRadius: BorderRadius.circular(13),
-            border: Border.all(color: Colors.white.withOpacity(0.10)),
+      final iconChipColor = isMiddayGold
+          ? Color.alphaBlend(
+              accentColor.withOpacity(0.15),
+              const Color(0xFF2A2216),
+            )
+          : accentColor.withOpacity(0.16);
+      final iconChipBorderColor = isMiddayGold
+          ? Color.alphaBlend(
+              accentColor.withOpacity(0.34),
+              const Color(0x88E8C57E),
+            )
+          : accentColor.withOpacity(0.55);
+      final cardBody = Container(
+        constraints: compactLandscape && compactMinHeight != null
+            ? BoxConstraints(minHeight: compactMinHeight)
+            : null,
+        padding: compactLandscape
+            ? const EdgeInsets.fromLTRB(8, 6, 8, 6)
+            : const EdgeInsets.fromLTRB(8, 8, 8, 8),
+        decoration: BoxDecoration(
+          color: isMiddayGold ? null : const Color(0xFF111214),
+          gradient: isMiddayGold ? _middayGoldSurfaceGradient() : null,
+          borderRadius: BorderRadius.circular(13),
+          border: Border.all(
+            color: isMiddayGold
+                ? _middayGoldBorderColor(0.40)
+                : Colors.white.withOpacity(0.10),
+            width: 1.0,
           ),
-          child: compactLandscape
-              ? Row(
-                  children: [
-                    Container(
-                      width: compactIconContainerSize,
-                      height: compactIconContainerSize,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: accentColor.withOpacity(0.16),
-                        border: Border.all(
-                          color: accentColor.withOpacity(0.55),
-                        ),
-                      ),
-                      child: Icon(
-                        icon,
-                        size: compactIconGlyphSize,
-                        color: accentColor,
-                      ),
+          boxShadow: isMiddayGold
+              ? [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.24),
+                    blurRadius: 8,
+                    offset: const Offset(0, 3),
+                  ),
+                ]
+              : null,
+        ),
+        child: compactLandscape
+            ? Row(
+                children: [
+                  Container(
+                    width: compactIconContainerSize,
+                    height: compactIconContainerSize,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: iconChipColor,
+                      border: Border.all(color: iconChipBorderColor),
                     ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        label,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: Colors.white.withOpacity(0.78),
-                          fontSize: 11.2,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
+                    child: Icon(
+                      icon,
+                      size: compactIconGlyphSize,
+                      color: accentColor,
                     ),
-                    const SizedBox(width: 6),
-                    Text(
-                      value,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 16,
-                        fontWeight: FontWeight.w900,
-                      ),
-                    ),
-                  ],
-                )
-              : Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Container(
-                      width: summaryIconContainerSize,
-                      height: summaryIconContainerSize,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: accentColor.withOpacity(0.16),
-                        border: Border.all(
-                          color: accentColor.withOpacity(0.55),
-                        ),
-                      ),
-                      child: Icon(
-                        icon,
-                        size: summaryIconGlyphSize,
-                        color: accentColor,
-                      ),
-                    ),
-                    const SizedBox(height: 7),
-                    Text(
-                      value,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 16,
-                        fontWeight: FontWeight.w900,
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
                       label,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
-                        color: Colors.white.withOpacity(0.66),
-                        fontSize: 10.2,
+                        color: isMiddayGold
+                            ? _middayGoldTextMuted()
+                            : Colors.white.withOpacity(0.78),
+                        fontSize: 11.2,
                         fontWeight: FontWeight.w700,
                       ),
                     ),
-                  ],
-                ),
-        ),
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    value,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: isMiddayGold
+                          ? _middayGoldTextPrimary()
+                          : Colors.white,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                ],
+              )
+            : Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Container(
+                    width: summaryIconContainerSize,
+                    height: summaryIconContainerSize,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: iconChipColor,
+                      border: Border.all(color: iconChipBorderColor),
+                    ),
+                    child: Icon(
+                      icon,
+                      size: summaryIconGlyphSize,
+                      color: accentColor,
+                    ),
+                  ),
+                  const SizedBox(height: 7),
+                  Text(
+                    value,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: isMiddayGold
+                          ? _middayGoldTextPrimary()
+                          : Colors.white,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: isMiddayGold
+                          ? _middayGoldTextMuted()
+                          : Colors.white.withOpacity(0.66),
+                      fontSize: 10.2,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
+              ),
+      );
+      return InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(13),
+        child: isMiddayGold
+            ? _middayGoldGradientFrame(
+                radius: 13,
+                stroke: 1.05,
+                innerColor: const Color(0xFF19120B),
+                child: cardBody,
+              )
+            : cardBody,
       );
     }
 
@@ -9051,14 +9228,31 @@ class _DriverHomePageState extends State<DriverHomePage>
     required BookingItem? nextRide,
     double? routePreviewHeight,
   }) {
+    final isMiddayGold =
+        driverThemeNotifier.value == DriverThemeVariant.highContrast;
     if (nextRide == null) {
-      return Container(
+      Widget wrapMiddayButton(Widget button) {
+        if (!isMiddayGold) return button;
+        return _middayGoldGradientFrame(
+          radius: 12,
+          stroke: 1.0,
+          innerColor: const Color(0xFF221B11),
+          child: button,
+        );
+      }
+
+      final panel = Container(
         width: double.infinity,
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
-          color: const Color(0xFF101113),
+          color: isMiddayGold ? null : const Color(0xFF101113),
+          gradient: isMiddayGold ? _middayGoldSurfaceGradient() : null,
           borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: Colors.white.withOpacity(0.10)),
+          border: Border.all(
+            color: isMiddayGold
+                ? _middayGoldBorderColor(0.38)
+                : Colors.white.withOpacity(0.10),
+          ),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -9070,8 +9264,8 @@ class _DriverHomePageState extends State<DriverHomePage>
                 fr: 'Aucune course planifiee',
                 es: 'No hay viajes planificados',
               ),
-              style: const TextStyle(
-                color: Colors.white,
+              style: TextStyle(
+                color: isMiddayGold ? _middayGoldTextPrimary() : Colors.white,
                 fontSize: 14.5,
                 fontWeight: FontWeight.w800,
               ),
@@ -9085,7 +9279,9 @@ class _DriverHomePageState extends State<DriverHomePage>
                 es: 'Actualiza la planificación o inicia un viaje directo.',
               ),
               style: TextStyle(
-                color: Colors.white.withOpacity(0.68),
+                color: isMiddayGold
+                    ? _middayGoldTextMuted()
+                    : Colors.white.withOpacity(0.68),
                 fontSize: 11.2,
                 fontWeight: FontWeight.w600,
               ),
@@ -9094,33 +9290,41 @@ class _DriverHomePageState extends State<DriverHomePage>
             Row(
               children: [
                 Expanded(
-                  child: OutlinedButton.icon(
-                    style: _ghostButtonStyle(),
-                    onPressed: () =>
-                        _refreshBookings(force: true, trigger: 'list_manual'),
-                    icon: const Icon(Icons.refresh, size: 17),
-                    label: Text(
-                      _tr(
-                        nl: 'Vernieuw',
-                        en: 'Refresh',
-                        fr: 'Actualiser',
-                        es: 'Actualizar',
+                  child: wrapMiddayButton(
+                    OutlinedButton.icon(
+                      style: isMiddayGold
+                          ? _middayGoldOutlinedActionButtonStyle()
+                          : _ghostButtonStyle(),
+                      onPressed: () =>
+                          _refreshBookings(force: true, trigger: 'list_manual'),
+                      icon: const Icon(Icons.refresh, size: 17),
+                      label: Text(
+                        _tr(
+                          nl: 'Vernieuw',
+                          en: 'Refresh',
+                          fr: 'Actualiser',
+                          es: 'Actualizar',
+                        ),
                       ),
                     ),
                   ),
                 ),
                 const SizedBox(width: 8),
                 Expanded(
-                  child: FilledButton.icon(
-                    style: _startButtonStyle(),
-                    onPressed: _openDirectRideEntry,
-                    icon: const Icon(Icons.local_taxi_outlined, size: 18),
-                    label: Text(
-                      _tr(
-                        nl: 'Straatrit starten',
-                        en: 'Start direct ride',
-                        fr: 'Demarrer course directe',
-                        es: 'Iniciar viaje directo',
+                  child: wrapMiddayButton(
+                    FilledButton.icon(
+                      style: isMiddayGold
+                          ? _middayGoldFilledActionButtonStyle()
+                          : _startButtonStyle(),
+                      onPressed: _openDirectRideEntry,
+                      icon: const Icon(Icons.local_taxi_outlined, size: 18),
+                      label: Text(
+                        _tr(
+                          nl: 'Straatrit starten',
+                          en: 'Start direct ride',
+                          fr: 'Demarrer course directe',
+                          es: 'Iniciar viaje directo',
+                        ),
                       ),
                     ),
                   ),
@@ -9130,6 +9334,14 @@ class _DriverHomePageState extends State<DriverHomePage>
           ],
         ),
       );
+      return isMiddayGold
+          ? _middayGoldGradientFrame(
+              radius: 16,
+              stroke: 1.1,
+              innerColor: const Color(0xFF19120B),
+              child: panel,
+            )
+          : panel;
     }
 
     final pickup = _formatPickup(nextRide.pickupIso);
@@ -9262,21 +9474,36 @@ class _DriverHomePageState extends State<DriverHomePage>
       return Container(
         padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
         decoration: BoxDecoration(
-          color: const Color(0xFF17191C),
+          gradient: isMiddayGold
+              ? _middayGoldSurfaceGradient(soft: true)
+              : null,
+          color: isMiddayGold ? null : const Color(0xFF17191C),
           borderRadius: BorderRadius.circular(999),
-          border: Border.all(color: const Color(0x33FFD36A)),
+          border: Border.all(
+            color: isMiddayGold
+                ? _middayGoldBorderColor(0.40)
+                : const Color(0x33FFD36A),
+          ),
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
             if (icon != null) ...[
-              Icon(icon, size: 12, color: const Color(0xFFFFD36A)),
+              Icon(
+                icon,
+                size: 12,
+                color: isMiddayGold
+                    ? const Color(0xFFE8C57E)
+                    : const Color(0xFFFFD36A),
+              ),
               const SizedBox(width: 4),
             ],
             Text(
               text,
-              style: const TextStyle(
-                color: Color(0xFFF2D691),
+              style: TextStyle(
+                color: isMiddayGold
+                    ? _middayGoldTextPrimary()
+                    : const Color(0xFFF2D691),
                 fontSize: 10.2,
                 fontWeight: FontWeight.w700,
               ),
@@ -9300,8 +9527,10 @@ class _DriverHomePageState extends State<DriverHomePage>
               text,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: Color(0xFFF3D486),
+              style: TextStyle(
+                color: isMiddayGold
+                    ? _middayGoldTextMuted()
+                    : const Color(0xFFF3D486),
                 fontSize: 10.8,
                 fontWeight: FontWeight.w600,
               ),
@@ -9315,9 +9544,14 @@ class _DriverHomePageState extends State<DriverHomePage>
       width: double.infinity,
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: const Color(0xFF101113),
+        color: isMiddayGold ? null : const Color(0xFF101113),
+        gradient: isMiddayGold ? _middayGoldSurfaceGradient() : null,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0x55FFD36A)),
+        border: Border.all(
+          color: isMiddayGold
+              ? _middayGoldBorderColor(0.44)
+              : const Color(0x55FFD36A),
+        ),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -9333,7 +9567,9 @@ class _DriverHomePageState extends State<DriverHomePage>
                     es: 'Siguiente viaje',
                   ),
                   style: TextStyle(
-                    color: const Color(0xFFFFD36A).withOpacity(0.95),
+                    color: isMiddayGold
+                        ? _middayGoldTextPrimary()
+                        : const Color(0xFFFFD36A).withOpacity(0.95),
                     fontWeight: FontWeight.w800,
                     fontSize: 11.5,
                   ),
@@ -9353,7 +9589,9 @@ class _DriverHomePageState extends State<DriverHomePage>
             child: Icon(
               Icons.south_rounded,
               size: 14,
-              color: Colors.white.withOpacity(0.35),
+              color: isMiddayGold
+                  ? _middayGoldTextMuted().withOpacity(0.50)
+                  : Colors.white.withOpacity(0.35),
             ),
           ),
           const SizedBox(height: 2),
@@ -9409,7 +9647,9 @@ class _DriverHomePageState extends State<DriverHomePage>
             children: [
               Expanded(
                 child: OutlinedButton.icon(
-                  style: _ghostButtonStyle(),
+                  style: isMiddayGold
+                      ? _middayGoldOutlinedActionButtonStyle()
+                      : _ghostButtonStyle(),
                   onPressed: () async {
                     await _goToRide(nextRide);
                     if (!mounted) return;
@@ -9422,7 +9662,9 @@ class _DriverHomePageState extends State<DriverHomePage>
               const SizedBox(width: 8),
               Expanded(
                 child: FilledButton.icon(
-                  style: _startButtonStyle(),
+                  style: isMiddayGold
+                      ? _middayGoldFilledActionButtonStyle()
+                      : _startButtonStyle(),
                   onPressed: () async {
                     await _goToRide(nextRide);
                   },
@@ -9448,6 +9690,8 @@ class _DriverHomePageState extends State<DriverHomePage>
     bool useImageBackgrounds = false,
     double? tabletPortraitSpacing,
   }) {
+    final isMiddayGold =
+        driverThemeNotifier.value == DriverThemeVariant.highContrast;
     const quickActionIconContainerSize = 56.0;
     const quickActionIconGlyphSize = 31.0;
     Widget quickAction({
@@ -9473,26 +9717,51 @@ class _DriverHomePageState extends State<DriverHomePage>
           ),
           decoration: BoxDecoration(
             color: hasImageBackground
-                ? const Color(0xFF0A0A0A).withOpacity(0.88)
-                : const Color(0xFF111111).withOpacity(0.96),
+                ? (isMiddayGold
+                      ? const Color(0xFF221B11).withOpacity(0.80)
+                      : const Color(0xFF0A0A0A).withOpacity(0.88))
+                : (isMiddayGold
+                      ? null
+                      : const Color(0xFF111111).withOpacity(0.96)),
+            gradient: !hasImageBackground && isMiddayGold
+                ? _middayGoldSurfaceGradient()
+                : null,
             borderRadius: BorderRadius.circular(14),
             border: Border.all(
-              color: active
-                  ? const Color(0x66FFD36A)
-                  : Colors.white.withOpacity(0.12),
+              color: isTabletPortrait
+                  ? Colors.transparent
+                  : (active
+                        ? (isMiddayGold
+                              ? _middayGoldBorderColor(0.48)
+                              : const Color(0x66FFD36A))
+                        : (isMiddayGold
+                              ? _middayGoldBorderColor(0.28)
+                              : Colors.white.withOpacity(0.12))),
             ),
           ),
+          foregroundDecoration: isTabletPortrait
+              ? BoxDecoration(
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(
+                    color: const Color(0xFFFFD36A).withOpacity(0.56),
+                    width: 1.0,
+                  ),
+                )
+              : null,
           child: Stack(
             children: [
               if (hasImageBackground)
                 Positioned.fill(
                   child: ClipRRect(
                     borderRadius: BorderRadius.circular(14),
-                    child: Image.asset(
-                      backgroundAsset!,
-                      fit: BoxFit.cover,
-                      alignment: Alignment.centerRight,
-                      errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+                    child: Transform.scale(
+                      scale: isTabletPortrait ? 1.055 : 1.0,
+                      child: Image.asset(
+                        backgroundAsset!,
+                        fit: BoxFit.cover,
+                        alignment: Alignment.centerRight,
+                        errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+                      ),
                     ),
                   ),
                 ),
@@ -9505,9 +9774,9 @@ class _DriverHomePageState extends State<DriverHomePage>
                         begin: Alignment.topCenter,
                         end: Alignment.bottomCenter,
                         colors: [
-                          Colors.black.withOpacity(0.16),
-                          Colors.black.withOpacity(0.26),
-                          Colors.black.withOpacity(0.56),
+                          Colors.black.withOpacity(isMiddayGold ? 0.10 : 0.16),
+                          Colors.black.withOpacity(isMiddayGold ? 0.20 : 0.26),
+                          Colors.black.withOpacity(isMiddayGold ? 0.44 : 0.56),
                         ],
                       ),
                     ),
@@ -9524,17 +9793,27 @@ class _DriverHomePageState extends State<DriverHomePage>
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
                         color: active
-                            ? const Color(0xFF21180A)
-                            : const Color(0xFF17130B),
+                            ? (isMiddayGold
+                                  ? const Color(0xFF3E2F1A)
+                                  : const Color(0xFF21180A))
+                            : (isMiddayGold
+                                  ? const Color(0xFF2D2316)
+                                  : const Color(0xFF17130B)),
                         border: Border.all(
                           color: active
-                              ? const Color(0x88FFD36A)
-                              : const Color(0x55FFD36A),
+                              ? (isMiddayGold
+                                    ? const Color(0xCCE8C57E)
+                                    : const Color(0x88FFD36A))
+                              : (isMiddayGold
+                                    ? const Color(0x88DDBB76)
+                                    : const Color(0x55FFD36A)),
                         ),
                       ),
                       child: Icon(
                         icon,
-                        color: const Color(0xFFFFD36A),
+                        color: isMiddayGold
+                            ? _middayGoldTextPrimary()
+                            : const Color(0xFFFFD36A),
                         size: quickActionIconGlyphSize,
                       ),
                     ),
@@ -9548,8 +9827,10 @@ class _DriverHomePageState extends State<DriverHomePage>
                             maxLines: 1,
                             softWrap: false,
                             overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              color: Colors.white,
+                            style: TextStyle(
+                              color: isMiddayGold
+                                  ? _middayGoldTextPrimary()
+                                  : Colors.white,
                               fontWeight: FontWeight.w800,
                               fontSize: 10.4,
                             ),
@@ -9561,7 +9842,9 @@ class _DriverHomePageState extends State<DriverHomePage>
                               maxLines: 2,
                               overflow: TextOverflow.ellipsis,
                               style: TextStyle(
-                                color: Colors.white.withOpacity(0.67),
+                                color: isMiddayGold
+                                    ? _middayGoldTextMuted()
+                                    : Colors.white.withOpacity(0.67),
                                 fontSize: 11.5,
                               ),
                             ),
@@ -9615,7 +9898,11 @@ class _DriverHomePageState extends State<DriverHomePage>
                   es: 'Viaje directo',
                 ),
                 onTap: _openDirectRideEntry,
-                backgroundAsset: 'assets/fluxidi/driver_action_street_ride.png',
+                backgroundAsset: _driverAssetByTheme(
+                  defaultAsset: 'assets/fluxidi/driver_action_street_ride.png',
+                  middayGoldAsset:
+                      'assets/Midday Gold Chauffeur/driver_street_ride_midday_gold.png',
+                ),
               ),
             ),
             SizedBox(
@@ -9629,8 +9916,12 @@ class _DriverHomePageState extends State<DriverHomePage>
                   es: 'Calcular tarifa',
                 ),
                 onTap: _openCalculatorFromDashboard,
-                backgroundAsset:
-                    'assets/fluxidi/driver_action_fare_calculator.png',
+                backgroundAsset: _driverAssetByTheme(
+                  defaultAsset:
+                      'assets/fluxidi/driver_action_fare_calculator.png',
+                  middayGoldAsset:
+                      'assets/Midday Gold Chauffeur/driver_fare_calculator_midday_gold.png',
+                ),
               ),
             ),
             SizedBox(
@@ -9644,7 +9935,11 @@ class _DriverHomePageState extends State<DriverHomePage>
                   es: 'Mis viajes',
                 ),
                 onTap: _openBookingsHubFromDashboard,
-                backgroundAsset: 'assets/fluxidi/driver_action_my_rides.png',
+                backgroundAsset: _driverAssetByTheme(
+                  defaultAsset: 'assets/fluxidi/driver_action_my_rides.png',
+                  middayGoldAsset:
+                      'assets/Midday Gold Chauffeur/driver_my_rides_midday_gold.png',
+                ),
               ),
             ),
             SizedBox(
@@ -9658,7 +9953,11 @@ class _DriverHomePageState extends State<DriverHomePage>
                   es: 'Historial',
                 ),
                 onTap: _openTripHistoryFromDashboard,
-                backgroundAsset: 'assets/fluxidi/driver_action_history.png',
+                backgroundAsset: _driverAssetByTheme(
+                  defaultAsset: 'assets/fluxidi/driver_action_history.png',
+                  middayGoldAsset:
+                      'assets/Midday Gold Chauffeur/driver_history_midday_gold.png',
+                ),
               ),
             ),
             SizedBox(
@@ -9672,7 +9971,11 @@ class _DriverHomePageState extends State<DriverHomePage>
                   es: 'Recibos',
                 ),
                 onTap: _openTripHistoryFromDashboard,
-                backgroundAsset: 'assets/fluxidi/driver_action_receipts.png',
+                backgroundAsset: _driverAssetByTheme(
+                  defaultAsset: 'assets/fluxidi/driver_action_receipts.png',
+                  middayGoldAsset:
+                      'assets/Midday Gold Chauffeur/driver_receipts_midday_gold.png',
+                ),
               ),
             ),
             SizedBox(
@@ -9692,7 +9995,11 @@ class _DriverHomePageState extends State<DriverHomePage>
                     ),
                   );
                 },
-                backgroundAsset: 'assets/fluxidi/driver_action_documents.png',
+                backgroundAsset: _driverAssetByTheme(
+                  defaultAsset: 'assets/fluxidi/driver_action_documents.png',
+                  middayGoldAsset:
+                      'assets/Midday Gold Chauffeur/driver_documents_midday_gold.png',
+                ),
               ),
             ),
           ],
@@ -9724,6 +10031,8 @@ class _DriverHomePageState extends State<DriverHomePage>
             screenClass == FluxidiScreenClass.desktop) &&
         W > H &&
         H >= 700;
+    final isMiddayGold =
+        driverThemeNotifier.value == DriverThemeVariant.highContrast;
     final driverHeaderHeight = isTabletPortrait
         ? clampDouble(H * 0.24, 300.0, 360.0)
         : 0.0;
@@ -9731,9 +10040,9 @@ class _DriverHomePageState extends State<DriverHomePage>
         ? clampDouble(H * 0.19, 140.0, 185.0)
         : 0.0;
     final driverQuickActionCardMinHeight = isTabletPortrait
-        ? clampDouble(H * 0.12, 110.0, 140.0)
+        ? clampDouble(H * 0.155, 165.0, 188.0)
         : 68.0;
-    final driverQuickActionGap = isTabletPortrait ? 11.0 : 8.0;
+    final driverQuickActionGap = isTabletPortrait ? 8.0 : 8.0;
     final driverLandscapeQuickActionCardMinHeight = isTabletLandscape
         ? clampDouble(H * 0.175, 132.0, 162.0)
         : 98.0;
@@ -9744,12 +10053,14 @@ class _DriverHomePageState extends State<DriverHomePage>
     final driverLandscapeRoutePreviewHeight = isTabletLandscape
         ? clampDouble(H * 0.24, 170.0, 220.0)
         : 136.0;
-    final driverScrollBottomPadding = isTabletLandscape ? 18.0 : 10.0;
+    final driverScrollBottomPadding = isTabletPortrait
+        ? 20.0
+        : (isTabletLandscape ? 18.0 : 10.0);
     Widget sectionTitle(String text) {
       return Text(
         text,
-        style: const TextStyle(
-          color: Colors.white,
+        style: TextStyle(
+          color: isMiddayGold ? const Color(0xFFF3E5C4) : Colors.white,
           fontSize: 13.5,
           fontWeight: FontWeight.w800,
         ),
@@ -9762,32 +10073,136 @@ class _DriverHomePageState extends State<DriverHomePage>
       required VoidCallback onTap,
       bool active = false,
     }) {
-      final color = active ? const Color(0xFFFFD36A) : Colors.white70;
+      final color = isMiddayGold
+          ? (active ? _middayGoldTextOnSelected() : _middayGoldTextMuted())
+          : (active ? const Color(0xFFFFD36A) : Colors.white70);
       return Expanded(
         child: InkWell(
           onTap: onTap,
           borderRadius: BorderRadius.circular(12),
           child: Padding(
             padding: const EdgeInsets.symmetric(vertical: 5),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(icon, size: navIconSize, color: color),
-                const SizedBox(height: 2),
-                Text(
-                  label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: color,
-                    fontSize: 10.1,
-                    fontWeight: FontWeight.w700,
-                  ),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 160),
+              curve: Curves.easeOut,
+              padding: EdgeInsets.symmetric(
+                horizontal: isMiddayGold ? 4 : (active ? 8 : 0),
+                vertical: isMiddayGold ? 3 : (active ? 3 : 0),
+              ),
+              decoration: isMiddayGold
+                  ? BoxDecoration(
+                      gradient: active
+                          ? _middayGoldSelectedSurfaceGradient()
+                          : _middayGoldSurfaceGradient(soft: true),
+                      borderRadius: BorderRadius.circular(11),
+                      border: Border.all(
+                        color: active
+                            ? _middayGoldBorderColor(0.72)
+                            : _middayGoldBorderColor(0.24),
+                      ),
+                      boxShadow: active
+                          ? const [
+                              BoxShadow(
+                                color: Color(0x66000000),
+                                blurRadius: 8,
+                                offset: Offset(0, 3),
+                              ),
+                            ]
+                          : [
+                              BoxShadow(
+                                color: Colors.black.withOpacity(0.20),
+                                blurRadius: 4,
+                                offset: const Offset(0, 1),
+                              ),
+                            ],
+                    )
+                  : (active
+                        ? BoxDecoration(
+                            gradient: _middayGoldMetallicGradient(),
+                            borderRadius: BorderRadius.circular(10),
+                          )
+                        : null),
+              child: Container(
+                decoration: isMiddayGold
+                    ? null
+                    : (active
+                          ? BoxDecoration(
+                              color: const Color(0xFFF1D79A).withOpacity(0.16),
+                              borderRadius: BorderRadius.circular(9),
+                            )
+                          : null),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (isMiddayGold)
+                      Container(
+                        width: 29,
+                        height: 29,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: active
+                              ? _middayGoldTextOnSelected().withOpacity(0.14)
+                              : _middayGoldBorderColor(0.10),
+                          border: Border.all(
+                            color: active
+                                ? _middayGoldBorderColor(0.44)
+                                : _middayGoldBorderColor(0.22),
+                          ),
+                        ),
+                        child: Icon(icon, size: 20, color: color),
+                      )
+                    else
+                      Icon(icon, size: navIconSize, color: color),
+                    const SizedBox(height: 2),
+                    Text(
+                      label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: color,
+                        fontSize: 10.1,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
                 ),
-              ],
+              ),
             ),
           ),
         ),
+      );
+    }
+
+    Widget bottomNavRow() {
+      return Row(
+        children: [
+          navItem(
+            icon: Icons.home_filled,
+            label: _tr(nl: 'Home', en: 'Home', fr: 'Accueil', es: 'Inicio'),
+            active: true,
+            onTap: () {},
+          ),
+          navItem(
+            icon: Icons.list_alt_rounded,
+            label: _tr(nl: 'Ritten', en: 'Rides', fr: 'Courses', es: 'Viajes'),
+            onTap: _openBookingsHubFromDashboard,
+          ),
+          navItem(
+            icon: Icons.local_taxi_outlined,
+            label: _tr(
+              nl: 'Straatrit',
+              en: 'Street ride',
+              fr: 'Course directe',
+              es: 'Viaje directo',
+            ),
+            onTap: _openDirectRideEntry,
+          ),
+          navItem(
+            icon: Icons.menu_rounded,
+            label: _tr(nl: 'Meer', en: 'More', fr: 'Plus', es: 'Mas'),
+            onTap: _showDashboardMoreSheet,
+          ),
+        ],
       );
     }
 
@@ -9803,7 +10218,9 @@ class _DriverHomePageState extends State<DriverHomePage>
               es: 'Conductor',
             ),
             style: TextStyle(
-              color: Colors.white.withOpacity(0.72),
+              color: isMiddayGold
+                  ? const Color(0xFFD7C8AA)
+                  : Colors.white.withOpacity(0.72),
               fontSize: 13.2,
               fontWeight: FontWeight.w700,
               letterSpacing: 0.30,
@@ -9835,12 +10252,17 @@ class _DriverHomePageState extends State<DriverHomePage>
                     vertical: 6,
                   ),
                   decoration: BoxDecoration(
-                    color: const Color(0xFF101113),
+                    color: isMiddayGold ? null : const Color(0xFF101113),
+                    gradient: isMiddayGold
+                        ? _middayGoldSurfaceGradient(soft: true)
+                        : null,
                     borderRadius: BorderRadius.circular(999),
                     border: Border.all(
                       color: statusReady
                           ? const Color(0x664CD964)
-                          : const Color(0x66FFD36A),
+                          : (isMiddayGold
+                                ? _middayGoldBorderColor(0.46)
+                                : const Color(0x66FFD36A)),
                     ),
                   ),
                   child: Row(
@@ -9862,7 +10284,9 @@ class _DriverHomePageState extends State<DriverHomePage>
                         style: TextStyle(
                           color: statusReady
                               ? const Color(0xFFBCF6D0)
-                              : const Color(0xFFFFE4A8),
+                              : (isMiddayGold
+                                    ? _middayGoldTextPrimary()
+                                    : const Color(0xFFFFE4A8)),
                           fontWeight: FontWeight.w800,
                           fontSize: 11.5,
                         ),
@@ -9884,7 +10308,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     }
 
     return ColoredBox(
-      color: const Color(0xFF050505),
+      color: isMiddayGold ? const Color(0xFF0F0D0A) : const Color(0xFF050505),
       child: SafeArea(
         child: Column(
           children: [
@@ -9906,13 +10330,22 @@ class _DriverHomePageState extends State<DriverHomePage>
                         clipBehavior: Clip.antiAlias,
                         decoration: BoxDecoration(
                           borderRadius: BorderRadius.circular(18),
-                          border: Border.all(color: const Color(0x55FFD36A)),
+                          border: Border.all(
+                            color: isMiddayGold
+                                ? const Color(0xFFFFD36A).withOpacity(0.56)
+                                : const Color(0x55FFD36A),
+                          ),
                         ),
                         child: Stack(
                           fit: StackFit.expand,
                           children: [
                             Image.asset(
-                              'assets/fluxidi/driver_header_portrait_tablet.png',
+                              _driverAssetByTheme(
+                                defaultAsset:
+                                    'assets/fluxidi/driver_header_portrait_tablet.png',
+                                middayGoldAsset:
+                                    'assets/Midday Gold Chauffeur/driver_home_header_midday_gold.png',
+                              ),
                               fit: BoxFit.cover,
                               alignment: Alignment.centerRight,
                               errorBuilder: (_, __, ___) => const DecoratedBox(
@@ -9985,19 +10418,29 @@ class _DriverHomePageState extends State<DriverHomePage>
                         useImageBackgrounds: isTabletPortrait,
                         tabletPortraitSpacing: driverQuickActionGap,
                       ),
+                      const SizedBox(height: 10),
                     ] else if (isTabletLandscape) ...[
                       Container(
                         height: driverLandscapeHeaderHeight,
                         clipBehavior: Clip.antiAlias,
                         decoration: BoxDecoration(
                           borderRadius: BorderRadius.circular(18),
-                          border: Border.all(color: const Color(0x55FFD36A)),
+                          border: Border.all(
+                            color: isMiddayGold
+                                ? const Color(0xFFFFD36A).withOpacity(0.56)
+                                : const Color(0x55FFD36A),
+                          ),
                         ),
                         child: Stack(
                           fit: StackFit.expand,
                           children: [
                             Image.asset(
-                              'assets/fluxidi/driver_header_landscape_tablet.png',
+                              _driverAssetByTheme(
+                                defaultAsset:
+                                    'assets/fluxidi/driver_header_landscape_tablet.png',
+                                middayGoldAsset:
+                                    'assets/Midday Gold Chauffeur/driver_navigation_midday_gold.png',
+                              ),
                               fit: BoxFit.cover,
                               alignment: Alignment.center,
                               errorBuilder: (_, __, ___) => const DecoratedBox(
@@ -10135,52 +10578,39 @@ class _DriverHomePageState extends State<DriverHomePage>
             ),
             Container(
               margin: const EdgeInsets.fromLTRB(10, 0, 10, 8),
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-              decoration: BoxDecoration(
-                color: const Color(0xFF101113),
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: Colors.white.withOpacity(0.10)),
-              ),
-              child: Row(
-                children: [
-                  navItem(
-                    icon: Icons.home_filled,
-                    label: _tr(
-                      nl: 'Home',
-                      en: 'Home',
-                      fr: 'Accueil',
-                      es: 'Inicio',
+              child: isMiddayGold
+                  ? _middayGoldGradientFrame(
+                      radius: 16,
+                      stroke: 1.1,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 6,
+                          vertical: 4,
+                        ),
+                        decoration: BoxDecoration(
+                          gradient: _middayGoldSurfaceGradient(soft: true),
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(
+                            color: _middayGoldBorderColor(0.20),
+                          ),
+                        ),
+                        child: bottomNavRow(),
+                      ),
+                    )
+                  : Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 6,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF101113),
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(
+                          color: Colors.white.withOpacity(0.10),
+                        ),
+                      ),
+                      child: bottomNavRow(),
                     ),
-                    active: true,
-                    onTap: () {},
-                  ),
-                  navItem(
-                    icon: Icons.list_alt_rounded,
-                    label: _tr(
-                      nl: 'Ritten',
-                      en: 'Rides',
-                      fr: 'Courses',
-                      es: 'Viajes',
-                    ),
-                    onTap: _openBookingsHubFromDashboard,
-                  ),
-                  navItem(
-                    icon: Icons.local_taxi_outlined,
-                    label: _tr(
-                      nl: 'Straatrit',
-                      en: 'Street ride',
-                      fr: 'Course directe',
-                      es: 'Viaje directo',
-                    ),
-                    onTap: _openDirectRideEntry,
-                  ),
-                  navItem(
-                    icon: Icons.menu_rounded,
-                    label: _tr(nl: 'Meer', en: 'More', fr: 'Plus', es: 'Mas'),
-                    onTap: _showDashboardMoreSheet,
-                  ),
-                ],
-              ),
             ),
           ],
         ),
