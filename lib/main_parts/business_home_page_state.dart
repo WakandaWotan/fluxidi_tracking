@@ -25,6 +25,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
     required String executiveGoldAsset,
     String? corporateBlueAsset,
     String? cleanProfessionalAsset,
+    String? emeraldIvoryAsset,
   }) {
     switch (businessThemeNotifier.value) {
       case BusinessThemeVariant.executiveGold:
@@ -33,6 +34,8 @@ class _BusinessHomePageState extends State<BusinessHomePage>
         return corporateBlueAsset ?? executiveGoldAsset;
       case BusinessThemeVariant.cleanProfessional:
         return cleanProfessionalAsset ?? executiveGoldAsset;
+      case BusinessThemeVariant.emeraldIvory:
+        return emeraldIvoryAsset ?? executiveGoldAsset;
     }
   }
 
@@ -782,15 +785,18 @@ class _BusinessHomePageState extends State<BusinessHomePage>
             themeVariant == BusinessThemeVariant.corporateBlue;
         final isCleanProfessional =
             themeVariant == BusinessThemeVariant.cleanProfessional;
-        final sheetBg = isCleanProfessional
-            ? palette.surface
-            : (isCorporateBlue ? palette.surface : const Color(0xFF0F0F0F));
-        final panelBg = isCleanProfessional
-            ? palette.surfaceAlt
-            : const Color(0xFF0B0B0B);
+        final isEmeraldIvory =
+            themeVariant == BusinessThemeVariant.emeraldIvory;
+        final sheetBg = palette.surface;
+        final panelBg = palette.surfaceAlt;
         final borderColor = palette.border.withOpacity(
           isCleanProfessional ? 0.9 : 0.62,
         );
+        final outerBorderColor = Color.lerp(
+          palette.border,
+          palette.accent,
+          isEmeraldIvory ? 0.28 : 0.16,
+        )!;
         final titleColor = palette.textPrimary;
         final bodyColor = palette.textMuted.withOpacity(
           isCleanProfessional ? 0.96 : 0.88,
@@ -799,9 +805,17 @@ class _BusinessHomePageState extends State<BusinessHomePage>
             ? palette.accent.withOpacity(0.98)
             : palette.accent;
         final urlColor = palette.textPrimary;
-        final qrCardBg = isCleanProfessional ? palette.surface : Colors.white;
+        final qrCardBg = isCleanProfessional
+            ? palette.surface
+            : (isEmeraldIvory
+                  ? const Color(0xFFF6EEDB)
+                  : (isExecutiveGold
+                        ? const Color(0xFFF8F2E3)
+                        : (isCorporateBlue
+                              ? const Color(0xFFF7FAFF)
+                              : Colors.white)));
         final qrCardBorderColor = palette.accent.withOpacity(
-          isCleanProfessional ? 0.42 : 0.55,
+          isCleanProfessional ? 0.42 : (isEmeraldIvory ? 0.72 : 0.55),
         );
         final qrCardTextColor = isCleanProfessional
             ? palette.textPrimary
@@ -811,10 +825,14 @@ class _BusinessHomePageState extends State<BusinessHomePage>
             : const Color(0xFF262626);
         final outlinedButtonStyle = OutlinedButton.styleFrom(
           foregroundColor: palette.textPrimary,
-          side: BorderSide(color: palette.accent.withOpacity(0.52)),
+          side: BorderSide(color: palette.accent.withOpacity(0.58)),
           backgroundColor: isCleanProfessional
               ? palette.surfaceAlt.withOpacity(0.72)
               : Colors.transparent,
+        );
+        final filledButtonStyle = FilledButton.styleFrom(
+          foregroundColor: palette.textOnAccent,
+          backgroundColor: palette.accent,
         );
         final maxQrSize = math.min(
           180.0,
@@ -827,11 +845,11 @@ class _BusinessHomePageState extends State<BusinessHomePage>
               decoration: BoxDecoration(
                 color: sheetBg,
                 borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: borderColor),
+                border: Border.all(color: outerBorderColor),
                 boxShadow: [
                   BoxShadow(
-                    color: Colors.black.withOpacity(
-                      isCleanProfessional ? 0.10 : 0.35,
+                    color: palette.shadow.withOpacity(
+                      isCleanProfessional ? 0.12 : 0.34,
                     ),
                     blurRadius: 22,
                     spreadRadius: 0.5,
@@ -947,6 +965,15 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                             color: qrCardBg,
                             borderRadius: BorderRadius.circular(12),
                             border: Border.all(color: qrCardBorderColor),
+                            boxShadow: [
+                              BoxShadow(
+                                color: palette.shadow.withOpacity(
+                                  isCleanProfessional ? 0.09 : 0.18,
+                                ),
+                                blurRadius: 14,
+                                spreadRadius: 0.2,
+                              ),
+                            ],
                           ),
                           child: Column(
                             mainAxisSize: MainAxisSize.min,
@@ -1081,8 +1108,8 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                             ),
                           ),
                         ),
-                        OutlinedButton.icon(
-                          style: outlinedButtonStyle,
+                        FilledButton.icon(
+                          style: filledButtonStyle,
                           onPressed: () => _sharePublicBookingQrCardImage(
                             context: context,
                             repaintBoundaryKey: qrCardBoundaryKey,
@@ -1114,8 +1141,8 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                             ),
                           ),
                         ),
-                        OutlinedButton.icon(
-                          style: outlinedButtonStyle,
+                        FilledButton.icon(
+                          style: filledButtonStyle,
                           onPressed: () async {
                             try {
                               final uri = Uri.parse(publicBookingUrl);
@@ -2747,6 +2774,8 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                       'assets/Corporate BLEU Compagny/company_header_fleet_corporate_blue.png',
                   cleanProfessionalAsset:
                       'assets/Clean & Professional Compagny/company_header_fleet_clean_professional.png',
+                  emeraldIvoryAsset:
+                      'assets/Emerald_Ivory_Company/company_header_emerald_ivory.png',
                 );
                 final businessQuickActionCardHeight = isTabletLandscape
                     ? clampDouble(H * 0.21, 150.0, 188.0)
@@ -3245,6 +3274,8 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                           'assets/Corporate BLEU Compagny/company_settings_corporate_blue.png',
                                       cleanProfessionalAsset:
                                           'assets/Clean & Professional Compagny/company_settings_clean_professional.png',
+                                      emeraldIvoryAsset:
+                                          'assets/Emerald_Ivory_Company/company_settings_alt_emerald_ivory.png',
                                     ),
                                     useImageBackground: useTabletVisualMode,
                                     compact: isTabletLandscape,
@@ -3279,6 +3310,8 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                             'assets/Corporate BLEU Compagny/company_bookings_corporate_blue.png',
                                         cleanProfessionalAsset:
                                             'assets/Clean & Professional Compagny/company_bookings_clean_professional.png',
+                                        emeraldIvoryAsset:
+                                            'assets/Emerald_Ivory_Company/company_bookings_emerald_ivory.png',
                                       ),
                                       useImageBackground: useTabletVisualMode,
                                       compact: isTabletLandscape,
@@ -3316,6 +3349,8 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                           'assets/Corporate BLEU Compagny/company_subscriptions_corporate_blue.png',
                                       cleanProfessionalAsset:
                                           'assets/Clean & Professional Compagny/company_subscriptions_clean_professional.png',
+                                      emeraldIvoryAsset:
+                                          'assets/Emerald_Ivory_Company/company_plan_emerald_ivory.png',
                                     ),
                                     useImageBackground: useTabletVisualMode,
                                     compact: isTabletLandscape,
@@ -3353,6 +3388,8 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                           'assets/Corporate BLEU Compagny/company_vehicles_corporate_blue.png',
                                       cleanProfessionalAsset:
                                           'assets/Clean & Professional Compagny/company_vehicles_clean_professional.png',
+                                      emeraldIvoryAsset:
+                                          'assets/Emerald_Ivory_Company/company_vehicle_emerald_ivory.png',
                                     ),
                                     useImageBackground: useTabletVisualMode,
                                     compact: isTabletLandscape,
@@ -3385,6 +3422,8 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                           'assets/Corporate BLEU Compagny/company_branding_corporate_blue.png',
                                       cleanProfessionalAsset:
                                           'assets/Clean & Professional Compagny/company_chiron_clean_professional.png',
+                                      emeraldIvoryAsset:
+                                          'assets/Emerald_Ivory_Company/company_chiron_emerald_ivory.png',
                                     ),
                                     useImageBackground: useTabletVisualMode,
                                     compact: isTabletLandscape,
@@ -3449,6 +3488,8 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                           'assets/Corporate BLEU Compagny/company_drivers_corporate_blue.png',
                                       cleanProfessionalAsset:
                                           'assets/Clean & Professional Compagny/company_drivers_clean_professional.png',
+                                      emeraldIvoryAsset:
+                                          'assets/Emerald_Ivory_Company/company_drivers_emerald_ivory.png',
                                     ),
                                     useImageBackground: useTabletVisualMode,
                                     compact: isTabletLandscape,
@@ -3480,6 +3521,8 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                           'assets/Corporate BLEU Compagny/company_driver_view_corporate_blue.png',
                                       cleanProfessionalAsset:
                                           'assets/Clean & Professional Compagny/company_driver_view_clean_professional.png',
+                                      emeraldIvoryAsset:
+                                          'assets/Emerald_Ivory_Company/company_driver_view_emerald_ivory.png',
                                     ),
                                     useImageBackground: useTabletVisualMode,
                                     compact: isTabletLandscape,
@@ -3517,6 +3560,8 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                           'assets/Corporate BLEU Compagny/company_network_corporate_blue.png',
                                       cleanProfessionalAsset:
                                           'assets/Clean & Professional Compagny/company_demand_radar_clean_professional.png',
+                                      emeraldIvoryAsset:
+                                          'assets/Emerald_Ivory_Company/company_demand_radar_emerald_ivory.png',
                                     ),
                                     useImageBackground: useTabletVisualMode,
                                     compact: isTabletLandscape,
@@ -3550,6 +3595,8 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                           'assets/Corporate BLEU Compagny/company_mobile_app_corporate_blue.png',
                                       cleanProfessionalAsset:
                                           'assets/Clean & Professional Compagny/company_share_booking_link_clean_professional.png',
+                                      emeraldIvoryAsset:
+                                          'assets/Emerald_Ivory_Company/company_share_booking_emerald_ivory.png',
                                     ),
                                     useImageBackground: useTabletVisualMode,
                                     compact: isTabletLandscape,
@@ -3584,6 +3631,8 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                             'assets/Corporate BLEU Compagny/company_bookings_corporate_blue.png',
                                         cleanProfessionalAsset:
                                             'assets/Clean & Professional Compagny/company_bookings_clean_professional.png',
+                                        emeraldIvoryAsset:
+                                            'assets/Emerald_Ivory_Company/company_bookings_emerald_ivory.png',
                                       ),
                                       useImageBackground: useTabletVisualMode,
                                       compact: isTabletLandscape,
@@ -3620,6 +3669,8 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                           'assets/Corporate BLEU Compagny/company_ai_dispatch_corporate_blue.png',
                                       cleanProfessionalAsset:
                                           'assets/Clean & Professional Compagny/company_ai_dispatch_clean_professional.png',
+                                      emeraldIvoryAsset:
+                                          'assets/Emerald_Ivory_Company/company_ai_dispatch_emerald_ivory.png',
                                     ),
                                     useImageBackground: useTabletVisualMode,
                                     compact: isTabletLandscape,

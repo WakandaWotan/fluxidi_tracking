@@ -66,6 +66,8 @@ class _BusinessThemePageState extends State<BusinessThemePage> {
         return 'Corporate Blue';
       case BusinessThemeVariant.cleanProfessional:
         return 'Clean Professional';
+      case BusinessThemeVariant.emeraldIvory:
+        return 'Emerald Ivory';
     }
   }
 
@@ -253,7 +255,9 @@ class _BusinessThemePageState extends State<BusinessThemePage> {
             for (final variant in BusinessThemeVariant.values) ...[
               _selectableThemeTile(
                 title: _labelForBusiness(variant),
-                subtitle: 'Business/admin weergave',
+                subtitle: variant == BusinessThemeVariant.emeraldIvory
+                    ? 'Luxury emerald, ivory and gold business look'
+                    : 'Business/admin weergave',
                 selected: variant == current,
                 swatches: [
                   paletteForBusinessTheme(variant).background,

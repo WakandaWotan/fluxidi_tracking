@@ -1,6 +1,11 @@
 import 'package:flutter/material.dart';
 
-enum BusinessThemeVariant { executiveGold, corporateBlue, cleanProfessional }
+enum BusinessThemeVariant {
+  executiveGold,
+  corporateBlue,
+  cleanProfessional,
+  emeraldIvory,
+}
 
 @immutable
 class BusinessThemePalette {
@@ -88,6 +93,23 @@ const BusinessThemePalette _cleanProfessionalPalette = BusinessThemePalette(
   isDark: false,
 );
 
+const BusinessThemePalette _emeraldIvoryPalette = BusinessThemePalette(
+  background: Color(0xFF081411),
+  surface: Color(0xFF10201B),
+  surfaceAlt: Color(0xFF1A2E27),
+  textPrimary: Color(0xFFF3E8CF),
+  textSecondary: Color(0xFFE5D7BA),
+  textMuted: Color(0xFFC1B99E),
+  textOnAccent: Color(0xFF1A1406),
+  textOnWarning: Color(0xFFFFF2CC),
+  accent: Color(0xFFC9A85F),
+  border: Color(0xFF5E573F),
+  danger: Color(0xFFD07A82),
+  success: Color(0xFF49B889),
+  shadow: Color(0x5C000000),
+  isDark: true,
+);
+
 BusinessThemePalette paletteForBusinessTheme(BusinessThemeVariant variant) {
   switch (variant) {
     case BusinessThemeVariant.executiveGold:
@@ -96,5 +118,7 @@ BusinessThemePalette paletteForBusinessTheme(BusinessThemeVariant variant) {
       return _corporateBluePalette;
     case BusinessThemeVariant.cleanProfessional:
       return _cleanProfessionalPalette;
+    case BusinessThemeVariant.emeraldIvory:
+      return _emeraldIvoryPalette;
   }
 }
