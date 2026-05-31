@@ -3,17 +3,120 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
+import 'package:fluxidi_tracking/business_theme_palette.dart';
+import 'package:fluxidi_tracking/business_theme_store.dart';
 import 'package:fluxidi_tracking/compliance_ledger_reader.dart';
 import 'package:fluxidi_tracking/company_session_store.dart';
 import 'package:fluxidi_tracking/customer_bookings_store.dart';
 import 'package:fluxidi_tracking/driver_documents_store.dart';
 import 'package:http/http.dart' as http;
 
-const Color _chironBg = Color(0xFF07080C);
-const Color _chironCard = Color(0xFF101113);
-const Color _chironPanel = Color(0xFF16120A);
-const Color _chironGold = Color(0xFFE5B641);
-const Color _chironBorder = Color(0x55E5B641);
+@immutable
+class _ChironThemeTokens {
+  const _ChironThemeTokens({
+    required this.variant,
+    required this.palette,
+    required this.background,
+    required this.card,
+    required this.panel,
+    required this.border,
+    required this.accent,
+    required this.textPrimary,
+    required this.textSecondary,
+    required this.textMuted,
+    required this.textFaint,
+    required this.chipText,
+    required this.progressTrack,
+    required this.success,
+    required this.warning,
+    required this.warningSoft,
+    required this.danger,
+    required this.dangerSoft,
+    required this.statusSuspendedBg,
+    required this.statusVerifiedBg,
+    required this.statusPendingBg,
+  });
+
+  final BusinessThemeVariant variant;
+  final BusinessThemePalette palette;
+  final Color background;
+  final Color card;
+  final Color panel;
+  final Color border;
+  final Color accent;
+  final Color textPrimary;
+  final Color textSecondary;
+  final Color textMuted;
+  final Color textFaint;
+  final Color chipText;
+  final Color progressTrack;
+  final Color success;
+  final Color warning;
+  final Color warningSoft;
+  final Color danger;
+  final Color dangerSoft;
+  final Color statusSuspendedBg;
+  final Color statusVerifiedBg;
+  final Color statusPendingBg;
+}
+
+_ChironThemeTokens _chironTokensForVariant(BusinessThemeVariant variant) {
+  final palette = paletteForBusinessTheme(variant);
+  final isClean = variant == BusinessThemeVariant.cleanProfessional;
+  return _ChironThemeTokens(
+    variant: variant,
+    palette: palette,
+    background: palette.background,
+    card: palette.surface,
+    panel: palette.surfaceAlt,
+    border: palette.border.withOpacity(isClean ? 0.92 : 0.62),
+    accent: palette.accent,
+    textPrimary: palette.textPrimary,
+    textSecondary: palette.textSecondary,
+    textMuted: palette.textMuted.withOpacity(isClean ? 0.98 : 0.9),
+    textFaint: palette.textMuted.withOpacity(isClean ? 0.9 : 0.78),
+    chipText: variant == BusinessThemeVariant.executiveGold
+        ? const Color(0xFFEAD9A3)
+        : palette.accent.withOpacity(isClean ? 0.94 : 0.96),
+    progressTrack: isClean
+        ? palette.border.withOpacity(0.55)
+        : palette.textPrimary.withOpacity(0.12),
+    success: palette.success,
+    warning: isClean ? const Color(0xFFB97600) : const Color(0xFFF6B94D),
+    warningSoft: isClean ? const Color(0x1AC98200) : const Color(0x1AFFB74D),
+    danger: palette.danger,
+    dangerSoft: isClean ? const Color(0x1AC95D6D) : const Color(0x33FF5A5A),
+    statusSuspendedBg: isClean
+        ? const Color(0x1AC95D6D)
+        : const Color(0xFF3A1010),
+    statusVerifiedBg: isClean
+        ? const Color(0x1A2FAE7B)
+        : const Color(0xFF12331F),
+    statusPendingBg: isClean
+        ? const Color(0x1AC98200)
+        : const Color(0xFF2A2410),
+  );
+}
+
+_ChironThemeTokens _chironTokens() =>
+    _chironTokensForVariant(businessThemeNotifier.value);
+
+Color get _chironBg => _chironTokens().background;
+Color get _chironCard => _chironTokens().card;
+Color get _chironPanel => _chironTokens().panel;
+Color get _chironGold => _chironTokens().accent;
+Color get _chironBorder => _chironTokens().border;
+Color get _chironTextPrimary => _chironTokens().textPrimary;
+Color get _chironTextSecondary => _chironTokens().textSecondary;
+Color get _chironTextMuted => _chironTokens().textMuted;
+Color get _chironTextFaint => _chironTokens().textFaint;
+Color get _chironChipText => _chironTokens().chipText;
+Color get _chironWarning => _chironTokens().warning;
+Color get _chironWarningSoft => _chironTokens().warningSoft;
+Color get _chironDanger => _chironTokens().danger;
+Color get _chironDangerSoft => _chironTokens().dangerSoft;
+Color get _chironSuccess => _chironTokens().success;
+Color get _chironProgressTrack => _chironTokens().progressTrack;
 
 class ChironComplianceDashboardPage extends StatelessWidget {
   const ChironComplianceDashboardPage({super.key});
@@ -40,119 +143,126 @@ class ChironComplianceDashboardPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: _chironBg,
-      appBar: AppBar(
-        backgroundColor: _chironBg,
-        title: Text(
-          _t(
-            nl: 'Chiron-compliance',
-            en: 'Chiron Compliance',
-            fr: 'Conformité Chiron',
-            es: 'Cumplimiento Chiron',
-          ),
-        ),
-      ),
-      body: ListView(
-        padding: const EdgeInsets.all(14),
-        children: [
-          _baseCard(
-            title: _t(
-              nl: 'Overzicht',
-              en: 'Overview',
-              fr: 'Aperçu',
-              es: 'Resumen',
-            ),
-            child: Text(
+    return ValueListenableBuilder<BusinessThemeVariant>(
+      valueListenable: businessThemeNotifier,
+      builder: (context, variant, _) {
+        final tokens = _chironTokensForVariant(variant);
+        return Scaffold(
+          backgroundColor: tokens.background,
+          appBar: AppBar(
+            backgroundColor: tokens.background,
+            foregroundColor: tokens.textPrimary,
+            title: Text(
               _t(
-                nl: 'Alleen-lezen compliance overzicht.',
-                en: 'Read-only compliance overview.',
-                fr: 'Aperçu de conformité en lecture seule.',
-                es: 'Resumen de cumplimiento de solo lectura.',
+                nl: 'Chiron-compliance',
+                en: 'Chiron Compliance',
+                fr: 'Conformité Chiron',
+                es: 'Cumplimiento Chiron',
               ),
-              style: const TextStyle(color: Colors.white70, fontSize: 13),
             ),
           ),
-          _HubActionCard(
-            title: _t(
-              nl: 'Checklist & voorbereiding',
-              en: 'Checklist & readiness',
-              fr: 'Checklist et préparation',
-              es: 'Checklist y preparación',
-            ),
-            subtitle: _t(
-              nl: 'Controleer bedrijf, chauffeurs, voertuigen en documenten.',
-              en: 'Check company, drivers, vehicles and documents.',
-              fr: 'Vérifiez l’entreprise, les chauffeurs, les véhicules et les documents.',
-              es: 'Revisa empresa, conductores, vehículos y documentos.',
-            ),
-            trailingIcon: Icons.fact_check_outlined,
-            onTap: () {
-              Navigator.of(context).push(
-                MaterialPageRoute(
-                  builder: (_) => const _ChironReadinessChecklistPage(),
+          body: ListView(
+            padding: const EdgeInsets.all(14),
+            children: [
+              _baseCard(
+                title: _t(
+                  nl: 'Overzicht',
+                  en: 'Overview',
+                  fr: 'Aperçu',
+                  es: 'Resumen',
                 ),
-              );
-            },
-          ),
-          _HubActionCard(
-            title: _t(
-              nl: 'Backendmeldingen',
-              en: 'Backend messages',
-              fr: 'Messages système',
-              es: 'Mensajes del sistema',
-            ),
-            subtitle: _t(
-              nl: 'Bekijk recente alleen-lezen meldingen uit de compliancemodule.',
-              en: 'View recent read-only messages from the compliance module.',
-              fr: 'Consultez les messages récents en lecture seule du module de conformité.',
-              es: 'Consulta los mensajes recientes de solo lectura del módulo de cumplimiento.',
-            ),
-            note: _t(
-              nl: 'Alleen lezen · handmatig verversen',
-              en: 'Read-only · manual refresh',
-              fr: 'Lecture seule · rafraîchissement manuel',
-              es: 'Solo lectura · actualización manual',
-            ),
-            trailingIcon: Icons.cloud_done_outlined,
-            onTap: () {
-              Navigator.of(context).push(
-                MaterialPageRoute(
-                  builder: (_) => const _ChironRemoteCompliancePage(),
+                child: Text(
+                  _t(
+                    nl: 'Alleen-lezen compliance overzicht.',
+                    en: 'Read-only compliance overview.',
+                    fr: 'Aperçu de conformité en lecture seule.',
+                    es: 'Resumen de cumplimiento de solo lectura.',
+                  ),
+                  style: TextStyle(color: tokens.textSecondary, fontSize: 13),
                 ),
-              );
-            },
-          ),
-          _HubActionCard(
-            title: _t(
-              nl: 'Lokaal rittenregister',
-              en: 'Local ride register',
-              fr: 'Registre local des trajets',
-              es: 'Registro local de viajes',
-            ),
-            subtitle: _t(
-              nl: 'Bekijk lokale ritregistraties van afgeronde ritten.',
-              en: 'View local compliance records of completed rides.',
-              fr: 'Consultez les enregistrements locaux de conformité des courses terminées.',
-              es: 'Consulta registros locales de cumplimiento de viajes completados.',
-            ),
-            note: _t(
-              nl: 'Alleen lezen',
-              en: 'Read-only',
-              fr: 'Lecture seule',
-              es: 'Solo lectura',
-            ),
-            trailingIcon: Icons.receipt_long_outlined,
-            onTap: () {
-              Navigator.of(context).push(
-                MaterialPageRoute(
-                  builder: (_) => const _ChironLocalLedgerPage(),
+              ),
+              _HubActionCard(
+                title: _t(
+                  nl: 'Checklist & voorbereiding',
+                  en: 'Checklist & readiness',
+                  fr: 'Checklist et préparation',
+                  es: 'Checklist y preparación',
                 ),
-              );
-            },
+                subtitle: _t(
+                  nl: 'Controleer bedrijf, chauffeurs, voertuigen en documenten.',
+                  en: 'Check company, drivers, vehicles and documents.',
+                  fr: 'Vérifiez l’entreprise, les chauffeurs, les véhicules et les documents.',
+                  es: 'Revisa empresa, conductores, vehículos y documentos.',
+                ),
+                trailingIcon: Icons.fact_check_outlined,
+                onTap: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => const _ChironReadinessChecklistPage(),
+                    ),
+                  );
+                },
+              ),
+              _HubActionCard(
+                title: _t(
+                  nl: 'Backendmeldingen',
+                  en: 'Backend messages',
+                  fr: 'Messages système',
+                  es: 'Mensajes del sistema',
+                ),
+                subtitle: _t(
+                  nl: 'Bekijk recente alleen-lezen meldingen uit de compliancemodule.',
+                  en: 'View recent read-only messages from the compliance module.',
+                  fr: 'Consultez les messages récents en lecture seule du module de conformité.',
+                  es: 'Consulta los mensajes recientes de solo lectura del módulo de cumplimiento.',
+                ),
+                note: _t(
+                  nl: 'Alleen lezen · handmatig verversen',
+                  en: 'Read-only · manual refresh',
+                  fr: 'Lecture seule · rafraîchissement manuel',
+                  es: 'Solo lectura · actualización manual',
+                ),
+                trailingIcon: Icons.cloud_done_outlined,
+                onTap: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => const _ChironRemoteCompliancePage(),
+                    ),
+                  );
+                },
+              ),
+              _HubActionCard(
+                title: _t(
+                  nl: 'Lokaal rittenregister',
+                  en: 'Local ride register',
+                  fr: 'Registre local des trajets',
+                  es: 'Registro local de viajes',
+                ),
+                subtitle: _t(
+                  nl: 'Bekijk lokale ritregistraties van afgeronde ritten.',
+                  en: 'View local compliance records of completed rides.',
+                  fr: 'Consultez les enregistrements locaux de conformité des courses terminées.',
+                  es: 'Consulta registros locales de cumplimiento de viajes completados.',
+                ),
+                note: _t(
+                  nl: 'Alleen lezen',
+                  en: 'Read-only',
+                  fr: 'Lecture seule',
+                  es: 'Solo lectura',
+                ),
+                trailingIcon: Icons.receipt_long_outlined,
+                onTap: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => const _ChironLocalLedgerPage(),
+                    ),
+                  );
+                },
+              ),
+            ],
           ),
-        ],
-      ),
+        );
+      },
     );
   }
 }
@@ -168,7 +278,7 @@ Widget _baseCard({
     margin: const EdgeInsets.only(bottom: 10),
     shape: RoundedRectangleBorder(
       borderRadius: BorderRadius.circular(14),
-      side: const BorderSide(color: _chironBorder),
+      side: BorderSide(color: _chironBorder),
     ),
     child: Padding(
       padding: const EdgeInsets.all(14),
@@ -177,7 +287,7 @@ Widget _baseCard({
         children: [
           Text(
             title,
-            style: const TextStyle(
+            style: TextStyle(
               color: _chironGold,
               fontWeight: FontWeight.w800,
               fontSize: 15,
@@ -187,7 +297,7 @@ Widget _baseCard({
             const SizedBox(height: 6),
             Text(
               subtitle,
-              style: const TextStyle(color: Colors.white70, fontSize: 12),
+              style: TextStyle(color: _chironTextSecondary, fontSize: 12),
             ),
           ],
           const SizedBox(height: 12),
@@ -221,7 +331,7 @@ class _HubActionCard extends StatelessWidget {
       margin: const EdgeInsets.only(bottom: 10),
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(14),
-        side: const BorderSide(color: _chironBorder),
+        side: BorderSide(color: _chironBorder),
       ),
       child: InkWell(
         borderRadius: BorderRadius.circular(14),
@@ -237,7 +347,7 @@ class _HubActionCard extends StatelessWidget {
                   children: [
                     Text(
                       title,
-                      style: const TextStyle(
+                      style: TextStyle(
                         color: _chironGold,
                         fontWeight: FontWeight.w800,
                         fontSize: 16,
@@ -246,8 +356,8 @@ class _HubActionCard extends StatelessWidget {
                     const SizedBox(height: 6),
                     Text(
                       subtitle,
-                      style: const TextStyle(
-                        color: Colors.white70,
+                      style: TextStyle(
+                        color: _chironTextSecondary,
                         fontSize: 12,
                       ),
                     ),
@@ -265,8 +375,8 @@ class _HubActionCard extends StatelessWidget {
                         ),
                         child: Text(
                           note!,
-                          style: const TextStyle(
-                            color: Color(0xFFEAD9A3),
+                          style: TextStyle(
+                            color: _chironChipText,
                             fontSize: 11,
                           ),
                         ),
@@ -325,8 +435,7 @@ class _ChironReadinessChecklistPage extends StatelessWidget {
     required bool ready,
     Color? accent,
   }) {
-    final resolvedAccent =
-        accent ?? (ready ? Colors.greenAccent : Colors.orangeAccent);
+    final resolvedAccent = accent ?? (ready ? _chironSuccess : _chironWarning);
     return Padding(
       padding: const EdgeInsets.only(bottom: 6),
       child: Row(
@@ -341,14 +450,14 @@ class _ChironReadinessChecklistPage extends StatelessWidget {
           Expanded(
             child: Text(
               label,
-              style: const TextStyle(color: Colors.white70, fontSize: 12),
+              style: TextStyle(color: _chironTextSecondary, fontSize: 12),
             ),
           ),
           const SizedBox(width: 8),
           Text(
             value,
-            style: const TextStyle(
-              color: Colors.white,
+            style: TextStyle(
+              color: _chironTextPrimary,
               fontWeight: FontWeight.w700,
               fontSize: 12,
             ),
@@ -375,7 +484,7 @@ class _ChironReadinessChecklistPage extends StatelessWidget {
       ),
       child: Text(
         text,
-        style: const TextStyle(color: Colors.white60, fontSize: 12),
+        style: TextStyle(color: _chironTextMuted, fontSize: 12),
       ),
     );
   }
@@ -388,7 +497,7 @@ class _ChironReadinessChecklistPage extends StatelessWidget {
     if (criticalCount > 0 || score < 50) {
       return (
         label: _t(nl: 'Kritiek', en: 'Critical', fr: 'Critique', es: 'Crítico'),
-        color: Colors.redAccent,
+        color: _chironDanger,
         icon: Icons.error_outline,
       );
     }
@@ -400,13 +509,13 @@ class _ChironReadinessChecklistPage extends StatelessWidget {
           fr: 'Attention requise',
           es: 'Atención requerida',
         ),
-        color: Colors.orangeAccent,
+        color: _chironWarning,
         icon: Icons.warning_amber_rounded,
       );
     }
     return (
       label: _t(nl: 'In orde', en: 'Healthy', fr: 'En ordre', es: 'En orden'),
-      color: Colors.greenAccent,
+      color: _chironSuccess,
       icon: Icons.check_circle_outline,
     );
   }
@@ -423,7 +532,7 @@ class _ChironReadinessChecklistPage extends StatelessWidget {
         children: [
           Text(
             title,
-            style: const TextStyle(
+            style: TextStyle(
               color: _chironGold,
               fontWeight: FontWeight.w700,
               fontSize: 13,
@@ -437,14 +546,12 @@ class _ChironReadinessChecklistPage extends StatelessWidget {
               margin: const EdgeInsets.only(bottom: 6),
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
               decoration: BoxDecoration(
-                color: critical
-                    ? const Color(0x33FF5A5A)
-                    : Colors.orange.withOpacity(0.12),
+                color: critical ? _chironDangerSoft : _chironWarningSoft,
                 borderRadius: BorderRadius.circular(10),
                 border: Border.all(
                   color: critical
-                      ? Colors.redAccent.withOpacity(0.5)
-                      : Colors.orangeAccent.withOpacity(0.45),
+                      ? _chironDanger.withOpacity(0.5)
+                      : _chironWarning.withOpacity(0.45),
                 ),
               ),
               child: Row(
@@ -455,14 +562,14 @@ class _ChironReadinessChecklistPage extends StatelessWidget {
                         ? Icons.priority_high_rounded
                         : Icons.warning_amber_rounded,
                     size: 16,
-                    color: critical ? Colors.redAccent : Colors.orangeAccent,
+                    color: critical ? _chironDanger : _chironWarning,
                   ),
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
                       item.text,
-                      style: const TextStyle(
-                        color: Colors.white70,
+                      style: TextStyle(
+                        color: _chironTextSecondary,
                         fontSize: 12,
                         height: 1.3,
                       ),
@@ -488,6 +595,7 @@ class _ChironReadinessChecklistPage extends StatelessWidget {
         vehiclesNotifier,
         driversNotifier,
         driverDocumentsNotifier,
+        businessThemeNotifier,
       ]),
       builder: (context, _) {
         final profile = companyProfileNotifier.value;
@@ -756,6 +864,7 @@ class _ChironReadinessChecklistPage extends StatelessWidget {
           backgroundColor: _chironBg,
           appBar: AppBar(
             backgroundColor: _chironBg,
+            foregroundColor: _chironTextPrimary,
             title: Text(
               _t(
                 nl: 'Checklist & readiness',
@@ -794,13 +903,13 @@ class _ChironReadinessChecklistPage extends StatelessWidget {
                               fr: 'Score de préparation',
                               es: 'Puntuación de preparación',
                             ),
-                            style: const TextStyle(color: Colors.white70),
+                            style: TextStyle(color: _chironTextSecondary),
                           ),
                         ),
                         Text(
                           '$overallScore%',
-                          style: const TextStyle(
-                            color: Colors.white,
+                          style: TextStyle(
+                            color: _chironTextPrimary,
                             fontWeight: FontWeight.w800,
                             fontSize: 18,
                           ),
@@ -848,8 +957,8 @@ class _ChironReadinessChecklistPage extends StatelessWidget {
                             fr: 'Entreprise $companyScore% • Chauffeurs $driverScore% • Véhicules $vehicleScore% • Documents $docScore%',
                             es: 'Empresa $companyScore% • Conductores $driverScore% • Vehículos $vehicleScore% • Documentos $docScore%',
                           ),
-                          style: const TextStyle(
-                            color: Colors.white60,
+                          style: TextStyle(
+                            color: _chironTextMuted,
                             fontSize: 11,
                           ),
                         ),
@@ -859,13 +968,13 @@ class _ChironReadinessChecklistPage extends StatelessWidget {
                     LinearProgressIndicator(
                       value: overallScore / 100,
                       minHeight: 8,
-                      backgroundColor: Colors.white12,
+                      backgroundColor: _chironProgressTrack,
                       valueColor: AlwaysStoppedAnimation<Color>(
                         overallScore >= 80
-                            ? Colors.greenAccent
+                            ? _chironSuccess
                             : (overallScore >= 50
-                                  ? Colors.amberAccent
-                                  : Colors.orangeAccent),
+                                  ? _chironWarning
+                                  : _chironWarning),
                       ),
                     ),
                     const SizedBox(height: 10),
@@ -903,7 +1012,7 @@ class _ChironReadinessChecklistPage extends StatelessWidget {
                           children: [
                             Text(
                               '${_t(nl: 'Status', en: 'Status', fr: 'Statut', es: 'Estado')}:',
-                              style: const TextStyle(color: Colors.white70),
+                              style: TextStyle(color: _chironTextSecondary),
                             ),
                             Container(
                               padding: const EdgeInsets.symmetric(
@@ -912,16 +1021,16 @@ class _ChironReadinessChecklistPage extends StatelessWidget {
                               ),
                               decoration: BoxDecoration(
                                 color: profile.isSuspended
-                                    ? const Color(0xFF3A1010)
+                                    ? _chironTokens().statusSuspendedBg
                                     : profile.isVerified
-                                    ? const Color(0xFF12331F)
-                                    : const Color(0xFF2A2410),
+                                    ? _chironTokens().statusVerifiedBg
+                                    : _chironTokens().statusPendingBg,
                                 borderRadius: BorderRadius.circular(20),
                               ),
                               child: Text(
                                 profile.verificationBadgeLabel(_lang),
-                                style: const TextStyle(
-                                  color: Colors.white,
+                                style: TextStyle(
+                                  color: _chironTextPrimary,
                                   fontWeight: FontWeight.w700,
                                   fontSize: 12,
                                 ),
@@ -1339,39 +1448,46 @@ class _ChironLocalLedgerPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: _chironBg,
-      appBar: AppBar(
-        backgroundColor: _chironBg,
-        title: Text(
-          _t(
-            nl: 'Lokaal rittenregister',
-            en: 'Local ride register',
-            fr: 'Registre local des trajets',
-            es: 'Registro local de viajes',
-          ),
-        ),
-      ),
-      body: ListView(
-        padding: const EdgeInsets.all(14),
-        children: [
-          _baseCard(
-            title: _t(
-              nl: 'Lokaal rittenregister',
-              en: 'Local ride register',
-              fr: 'Registre local des trajets',
-              es: 'Registro local de viajes',
+    return ValueListenableBuilder<BusinessThemeVariant>(
+      valueListenable: businessThemeNotifier,
+      builder: (context, variant, _) {
+        final tokens = _chironTokensForVariant(variant);
+        return Scaffold(
+          backgroundColor: tokens.background,
+          appBar: AppBar(
+            backgroundColor: tokens.background,
+            foregroundColor: tokens.textPrimary,
+            title: Text(
+              _t(
+                nl: 'Lokaal rittenregister',
+                en: 'Local ride register',
+                fr: 'Registre local des trajets',
+                es: 'Registro local de viajes',
+              ),
             ),
-            subtitle: _t(
-              nl: 'Laatste lokale ritten (alleen-lezen, geen synchronisatie).',
-              en: 'Latest local rides (read-only, no synchronization).',
-              fr: 'Derniers trajets locaux (lecture seule, sans synchronisation).',
-              es: 'Últimos viajes locales (solo lectura, sin sincronización).',
-            ),
-            child: _LocalComplianceLedgerSection(lang: _lang),
           ),
-        ],
-      ),
+          body: ListView(
+            padding: const EdgeInsets.all(14),
+            children: [
+              _baseCard(
+                title: _t(
+                  nl: 'Lokaal rittenregister',
+                  en: 'Local ride register',
+                  fr: 'Registre local des trajets',
+                  es: 'Registro local de viajes',
+                ),
+                subtitle: _t(
+                  nl: 'Laatste lokale ritten (alleen-lezen, geen synchronisatie).',
+                  en: 'Latest local rides (read-only, no synchronization).',
+                  fr: 'Derniers trajets locaux (lecture seule, sans synchronisation).',
+                  es: 'Últimos viajes locales (solo lectura, sin sincronización).',
+                ),
+                child: _LocalComplianceLedgerSection(lang: _lang),
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 }
@@ -1533,39 +1649,46 @@ class _ChironRemoteCompliancePage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: _chironBg,
-      appBar: AppBar(
-        backgroundColor: _chironBg,
-        title: Text(
-          _t(
-            nl: 'Backendmeldingen',
-            en: 'Backend messages',
-            fr: 'Messages système',
-            es: 'Mensajes del sistema',
-          ),
-        ),
-      ),
-      body: ListView(
-        padding: const EdgeInsets.all(14),
-        children: [
-          _baseCard(
-            title: _t(
-              nl: 'Backendmeldingen',
-              en: 'Backend messages',
-              fr: 'Messages système',
-              es: 'Mensajes del sistema',
+    return ValueListenableBuilder<BusinessThemeVariant>(
+      valueListenable: businessThemeNotifier,
+      builder: (context, variant, _) {
+        final tokens = _chironTokensForVariant(variant);
+        return Scaffold(
+          backgroundColor: tokens.background,
+          appBar: AppBar(
+            backgroundColor: tokens.background,
+            foregroundColor: tokens.textPrimary,
+            title: Text(
+              _t(
+                nl: 'Backendmeldingen',
+                en: 'Backend messages',
+                fr: 'Messages système',
+                es: 'Mensajes del sistema',
+              ),
             ),
-            subtitle: _t(
-              nl: 'Alleen-lezen meldingen uit de compliancemodule.',
-              en: 'Read-only messages from the compliance module.',
-              fr: 'Messages en lecture seule provenant du module de conformité.',
-              es: 'Mensajes de solo lectura del módulo de cumplimiento.',
-            ),
-            child: _RemoteComplianceEventsSection(lang: _lang),
           ),
-        ],
-      ),
+          body: ListView(
+            padding: const EdgeInsets.all(14),
+            children: [
+              _baseCard(
+                title: _t(
+                  nl: 'Backendmeldingen',
+                  en: 'Backend messages',
+                  fr: 'Messages système',
+                  es: 'Mensajes del sistema',
+                ),
+                subtitle: _t(
+                  nl: 'Alleen-lezen meldingen uit de compliancemodule.',
+                  en: 'Read-only messages from the compliance module.',
+                  fr: 'Messages en lecture seule provenant du module de conformité.',
+                  es: 'Mensajes de solo lectura del módulo de cumplimiento.',
+                ),
+                child: _RemoteComplianceEventsSection(lang: _lang),
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 }
@@ -2066,43 +2189,56 @@ class _RemoteComplianceEventsSectionState
       if (!mounted) return;
       final confirmed = await showDialog<bool>(
         context: context,
-        builder: (ctx) => AlertDialog(
-          title: Text(
-            _t(
-              nl: 'Backend test-events wissen?',
-              en: 'Clear backend test events?',
-              fr: 'Effacer les événements de test backend ?',
-              es: '¿Borrar eventos de prueba del backend?',
+        builder: (ctx) {
+          final tokens = _chironTokens();
+          return AlertDialog(
+            backgroundColor: tokens.card,
+            title: Text(
+              _t(
+                nl: 'Backend test-events wissen?',
+                en: 'Clear backend test events?',
+                fr: 'Effacer les événements de test backend ?',
+                es: '¿Borrar eventos de prueba del backend?',
+              ),
+              style: TextStyle(color: tokens.textPrimary),
             ),
-          ),
-          content: Text(
-            _t(
-              nl: 'Dit verwijdert alleen compliance/backendmeldingen voor tenant/bedrijf ${effective.tenantId}. Gevonden events: $totalCount. Bedrijfsinstellingen, chauffeurs, voertuigen, prijzen en abonnement blijven behouden.',
-              en: 'This only removes compliance/backend messages for tenant/company ${effective.tenantId}. Found events: $totalCount. Company settings, drivers, vehicles, pricing and subscription remain untouched.',
-              fr: 'Cela supprime uniquement les messages de conformité/backend pour le tenant/société ${effective.tenantId}. Événements trouvés : $totalCount. Les paramètres société, chauffeurs, véhicules, tarifs et abonnement restent inchangés.',
-              es: 'Esto solo elimina mensajes de cumplimiento/backend para el tenant/empresa ${effective.tenantId}. Eventos encontrados: $totalCount. La configuración de empresa, conductores, vehículos, precios y suscripción no se modifican.',
+            content: Text(
+              _t(
+                nl: 'Dit verwijdert alleen compliance/backendmeldingen voor tenant/bedrijf ${effective.tenantId}. Gevonden events: $totalCount. Bedrijfsinstellingen, chauffeurs, voertuigen, prijzen en abonnement blijven behouden.',
+                en: 'This only removes compliance/backend messages for tenant/company ${effective.tenantId}. Found events: $totalCount. Company settings, drivers, vehicles, pricing and subscription remain untouched.',
+                fr: 'Cela supprime uniquement les messages de conformité/backend pour le tenant/société ${effective.tenantId}. Événements trouvés : $totalCount. Les paramètres société, chauffeurs, véhicules, tarifs et abonnement restent inchangés.',
+                es: 'Esto solo elimina mensajes de cumplimiento/backend para el tenant/empresa ${effective.tenantId}. Eventos encontrados: $totalCount. La configuración de empresa, conductores, vehículos, precios y suscripción no se modifican.',
+              ),
+              style: TextStyle(color: tokens.textSecondary),
             ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(ctx).pop(false),
-              child: Text(
-                _t(
-                  nl: 'Annuleren',
-                  en: 'Cancel',
-                  fr: 'Annuler',
-                  es: 'Cancelar',
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(ctx).pop(false),
+                style: TextButton.styleFrom(
+                  foregroundColor: tokens.textSecondary,
+                ),
+                child: Text(
+                  _t(
+                    nl: 'Annuleren',
+                    en: 'Cancel',
+                    fr: 'Annuler',
+                    es: 'Cancelar',
+                  ),
                 ),
               ),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.of(ctx).pop(true),
-              child: Text(
-                _t(nl: 'Wissen', en: 'Clear', fr: 'Effacer', es: 'Borrar'),
+              FilledButton(
+                style: FilledButton.styleFrom(
+                  backgroundColor: tokens.accent,
+                  foregroundColor: tokens.palette.textOnAccent,
+                ),
+                onPressed: () => Navigator.of(ctx).pop(true),
+                child: Text(
+                  _t(nl: 'Wissen', en: 'Clear', fr: 'Effacer', es: 'Borrar'),
+                ),
               ),
-            ),
-          ],
-        ),
+            ],
+          );
+        },
       );
       if (confirmed != true || !mounted) return;
       final resetUri = Uri.parse(
@@ -2170,7 +2306,7 @@ class _RemoteComplianceEventsSectionState
       ),
       child: Text(
         label,
-        style: const TextStyle(color: Color(0xFFEAD9A3), fontSize: 11),
+        style: TextStyle(color: _chironChipText, fontSize: 11),
       ),
     );
   }
@@ -2644,7 +2780,8 @@ class _RemoteComplianceEventsSectionState
           _normalizeToken(event.bookingStatus),
           _normalizeToken(event.rideStatus),
         ];
-        if (statusTokens.contains('cancelled') || statusTokens.contains('canceled')) {
+        if (statusTokens.contains('cancelled') ||
+            statusTokens.contains('canceled')) {
           return _t(
             nl: 'geannuleerd',
             en: 'cancelled',
@@ -2686,7 +2823,12 @@ class _RemoteComplianceEventsSectionState
       case 'admin':
         return _t(nl: 'beheer', en: 'admin', fr: 'admin', es: 'admin');
       case 'driver':
-        return _t(nl: 'chauffeur', en: 'driver', fr: 'chauffeur', es: 'conductor');
+        return _t(
+          nl: 'chauffeur',
+          en: 'driver',
+          fr: 'chauffeur',
+          es: 'conductor',
+        );
       case 'system':
         return _t(nl: 'systeem', en: 'system', fr: 'système', es: 'sistema');
       default:
@@ -2712,7 +2854,9 @@ class _RemoteComplianceEventsSectionState
         es: 'estado de reserva',
       );
     }
-    if (token.contains('track') && token.contains('booking') && token.contains('status')) {
+    if (token.contains('track') &&
+        token.contains('booking') &&
+        token.contains('status')) {
       return _t(
         nl: 'boekingsstatus',
         en: 'booking status',
@@ -2735,9 +2879,15 @@ class _RemoteComplianceEventsSectionState
           ? e.lifecycleStatus
           : (e.status.isNotEmpty ? e.status : e.bookingStatus),
     );
-    final eventTitle = _normalizeToken(e.eventType) == 'booking_status_update' &&
+    final eventTitle =
+        _normalizeToken(e.eventType) == 'booking_status_update' &&
             (statusToken == 'cancelled' || statusToken == 'canceled')
-        ? _t(nl: 'Annulatie', en: 'Cancellation', fr: 'Annulation', es: 'Cancelación')
+        ? _t(
+            nl: 'Annulatie',
+            en: 'Cancellation',
+            fr: 'Annulation',
+            es: 'Cancelación',
+          )
         : _localizedEventTypeLabel(e.eventType);
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
@@ -2752,8 +2902,8 @@ class _RemoteComplianceEventsSectionState
         children: [
           Text(
             '$eventTitle • ${_localizedRideTypeLabel(e.rideType)}',
-            style: const TextStyle(
-              color: Colors.white,
+            style: TextStyle(
+              color: _chironTextPrimary,
               fontWeight: FontWeight.w700,
               fontSize: 12,
             ),
@@ -2761,7 +2911,7 @@ class _RemoteComplianceEventsSectionState
           const SizedBox(height: 4),
           Text(
             _fmtDateTime(e.createdAtUtc),
-            style: const TextStyle(color: Colors.white60, fontSize: 11),
+            style: TextStyle(color: _chironTextMuted, fontSize: 11),
           ),
           const SizedBox(height: 6),
           Wrap(
@@ -2794,8 +2944,7 @@ class _RemoteComplianceEventsSectionState
                 _chip(
                   '${_t(nl: 'Aangemaakt door', en: 'Created by', fr: 'Créé par', es: 'Creado por')}: ${_localizedProducerLabel(producer)}',
                 ),
-              if (actorRole.isNotEmpty &&
-                  actorRole.toLowerCase() != 'unknown')
+              if (actorRole.isNotEmpty && actorRole.toLowerCase() != 'unknown')
                 _chip(
                   '${_t(nl: 'Actor', en: 'Actor', fr: 'Acteur', es: 'Actor')}: ${_localizedActorRoleLabel(actorRole)}',
                 ),
@@ -2859,8 +3008,8 @@ class _RemoteComplianceEventsSectionState
         children: [
           Text(
             _localizedDossierTitle(latest.rideType),
-            style: const TextStyle(
-              color: Colors.white,
+            style: TextStyle(
+              color: _chironTextPrimary,
               fontWeight: FontWeight.w800,
               fontSize: 14,
             ),
@@ -2870,7 +3019,7 @@ class _RemoteComplianceEventsSectionState
             _labelValue(reference.label, reference.value),
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(color: Colors.white70, fontSize: 12),
+            style: TextStyle(color: _chironTextSecondary, fontSize: 12),
           ),
           if (showInternalBooking) ...[
             const SizedBox(height: 2),
@@ -2878,13 +3027,13 @@ class _RemoteComplianceEventsSectionState
               _labelValue(_localizedInternalBookingLabel(), bookingId),
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(color: Colors.white54, fontSize: 11),
+              style: TextStyle(color: _chironTextFaint, fontSize: 11),
             ),
           ],
           const SizedBox(height: 4),
           Text(
             '${_t(nl: 'Laatste melding', en: 'Latest message', fr: 'Dernier message', es: 'Último mensaje')}: ${_fmtDateTime(latest.createdAtUtc)}',
-            style: const TextStyle(color: Colors.white60, fontSize: 11),
+            style: TextStyle(color: _chironTextMuted, fontSize: 11),
           ),
           const SizedBox(height: 6),
           Wrap(
@@ -2926,7 +3075,7 @@ class _RemoteComplianceEventsSectionState
               fr: 'Historique d’audit',
               es: 'Historial de auditoría',
             ),
-            style: const TextStyle(
+            style: TextStyle(
               color: _chironGold,
               fontWeight: FontWeight.w700,
               fontSize: 12,
@@ -2956,7 +3105,7 @@ class _RemoteComplianceEventsSectionState
                   fr: 'Module de conformité',
                   es: 'Módulo de cumplimiento',
                 ),
-                style: const TextStyle(color: Colors.white70, fontSize: 12),
+                style: TextStyle(color: _chironTextSecondary, fontSize: 12),
               ),
             ),
             IconButton(
@@ -3001,7 +3150,7 @@ class _RemoteComplianceEventsSectionState
             if (snapshot.connectionState != ConnectionState.done) {
               return Row(
                 children: [
-                  const SizedBox(
+                  SizedBox(
                     width: 14,
                     height: 14,
                     child: CircularProgressIndicator(
@@ -3017,7 +3166,7 @@ class _RemoteComplianceEventsSectionState
                       fr: 'Chargement des messages système...',
                       es: 'Cargando mensajes del sistema...',
                     ),
-                    style: const TextStyle(color: Colors.white70, fontSize: 12),
+                    style: TextStyle(color: _chironTextSecondary, fontSize: 12),
                   ),
                 ],
               );
@@ -3060,10 +3209,7 @@ class _RemoteComplianceEventsSectionState
                           es: 'Los mensajes del sistema del módulo de cumplimiento no están disponibles.',
                         )
                       : result.errorMessage,
-                  style: const TextStyle(
-                    color: Colors.orangeAccent,
-                    fontSize: 12,
-                  ),
+                  style: TextStyle(color: _chironWarning, fontSize: 12),
                 ),
               );
             }
@@ -3084,7 +3230,7 @@ class _RemoteComplianceEventsSectionState
                     fr: 'Aucun événement backend trouvé.',
                     es: 'No se encontraron eventos del backend.',
                   ),
-                  style: const TextStyle(color: Colors.white60, fontSize: 12),
+                  style: TextStyle(color: _chironTextMuted, fontSize: 12),
                 ),
               );
             }
@@ -3123,8 +3269,8 @@ class _RemoteComplianceEventsSectionState
                         fr: '${result.malformedCount} événement(s) invalide(s) ignoré(s).',
                         es: '${result.malformedCount} evento(s) no válido(s) omitido(s).',
                       ),
-                      style: const TextStyle(
-                        color: Colors.orangeAccent,
+                      style: TextStyle(
+                        color: _chironWarning,
                         fontSize: 11,
                       ),
                     ),
@@ -3136,7 +3282,7 @@ class _RemoteComplianceEventsSectionState
                     fr: 'Tenant ${result.tenantId} • Société ${result.companyId} • ${result.count} événements',
                     es: 'Tenant ${result.tenantId} • Empresa ${result.companyId} • ${result.count} eventos',
                   ),
-                  style: const TextStyle(color: Colors.white60, fontSize: 11),
+                  style: TextStyle(color: _chironTextMuted, fontSize: 11),
                 ),
                 const SizedBox(height: 8),
                 ...dossiers.map(
@@ -3200,38 +3346,56 @@ class _LocalComplianceLedgerSectionState
     if (effective == null) return;
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(
-          _t(
-            nl: 'Lokale rittenregister-testdata wissen?',
-            en: 'Clear local ride-register test data?',
-            fr: 'Effacer les données de test locales du registre des courses ?',
-            es: '¿Borrar los datos de prueba locales del registro de viajes?',
-          ),
-        ),
-        content: Text(
-          _t(
-            nl: 'Dit wist alleen lokale rittenregister/Chiron-testdata voor tenant/bedrijf ${effective.companyId} op dit toestel. Bedrijfsinstellingen, voertuigen, chauffeurs en backenddata blijven behouden.',
-            en: 'This only clears local ride-register/Chiron test data for tenant/company ${effective.companyId} on this device. Company settings, vehicles, drivers and backend data are kept.',
-            fr: 'Cela efface uniquement les données de test locales du registre des courses/aperçu Chiron pour le tenant/société ${effective.companyId} sur cet appareil. Les paramètres d’entreprise, véhicules, chauffeurs et données backend sont conservés.',
-            es: 'Esto solo borra los datos de prueba locales del registro de viajes/vista Chiron para el tenant/empresa ${effective.companyId} en este dispositivo. La configuración de empresa, vehículos, conductores y datos backend se conservan.',
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(false),
-            child: Text(
-              _t(nl: 'Annuleren', en: 'Cancel', fr: 'Annuler', es: 'Cancelar'),
+      builder: (ctx) {
+        final tokens = _chironTokens();
+        return AlertDialog(
+          backgroundColor: tokens.card,
+          title: Text(
+            _t(
+              nl: 'Lokale rittenregister-testdata wissen?',
+              en: 'Clear local ride-register test data?',
+              fr: 'Effacer les données de test locales du registre des courses ?',
+              es: '¿Borrar los datos de prueba locales del registro de viajes?',
             ),
+            style: TextStyle(color: tokens.textPrimary),
           ),
-          FilledButton(
-            onPressed: () => Navigator.of(ctx).pop(true),
-            child: Text(
-              _t(nl: 'Wissen', en: 'Clear', fr: 'Effacer', es: 'Borrar'),
+          content: Text(
+            _t(
+              nl: 'Dit wist alleen lokale rittenregister/Chiron-testdata voor tenant/bedrijf ${effective.companyId} op dit toestel. Bedrijfsinstellingen, voertuigen, chauffeurs en backenddata blijven behouden.',
+              en: 'This only clears local ride-register/Chiron test data for tenant/company ${effective.companyId} on this device. Company settings, vehicles, drivers and backend data are kept.',
+              fr: 'Cela efface uniquement les données de test locales du registre des courses/aperçu Chiron pour le tenant/société ${effective.companyId} sur cet appareil. Les paramètres d’entreprise, véhicules, chauffeurs et données backend sont conservés.',
+              es: 'Esto solo borra los datos de prueba locales del registro de viajes/vista Chiron para el tenant/empresa ${effective.companyId} en este dispositivo. La configuración de empresa, vehículos, conductores y datos backend se conservan.',
             ),
+            style: TextStyle(color: tokens.textSecondary),
           ),
-        ],
-      ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              style: TextButton.styleFrom(
+                foregroundColor: tokens.textSecondary,
+              ),
+              child: Text(
+                _t(
+                  nl: 'Annuleren',
+                  en: 'Cancel',
+                  fr: 'Annuler',
+                  es: 'Cancelar',
+                ),
+              ),
+            ),
+            FilledButton(
+              style: FilledButton.styleFrom(
+                backgroundColor: tokens.accent,
+                foregroundColor: tokens.palette.textOnAccent,
+              ),
+              onPressed: () => Navigator.of(ctx).pop(true),
+              child: Text(
+                _t(nl: 'Wissen', en: 'Clear', fr: 'Effacer', es: 'Borrar'),
+              ),
+            ),
+          ],
+        );
+      },
     );
     if (confirmed != true || !mounted) return;
     setState(() => _isClearingLocalTestData = true);
@@ -3281,38 +3445,56 @@ class _LocalComplianceLedgerSectionState
     if (effective == null) return;
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(
-          _t(
-            nl: 'Lokale klantboekingen wissen?',
-            en: 'Clear local customer bookings?',
-            fr: 'Effacer les réservations client locales ?',
-            es: '¿Borrar reservas locales del cliente?',
-          ),
-        ),
-        content: Text(
-          _t(
-            nl: 'Dit wist alleen lokale testboekingen voor tenant/bedrijf ${effective.companyId} op dit toestel (Klant > Mijn boekingen). Bedrijfsinstellingen, chauffeurs, voertuigen, prijzen en backend operationele boekingen blijven behouden.',
-            en: 'This only clears local test bookings for tenant/company ${effective.companyId} on this device (Customer > My bookings). Company settings, drivers, vehicles, pricing and backend operational bookings are kept.',
-            fr: 'Cela efface uniquement les réservations de test locales pour le tenant/société ${effective.companyId} sur cet appareil (Client > Mes réservations). Les paramètres société, chauffeurs, véhicules, tarifs et réservations backend restent conservés.',
-            es: 'Esto solo borra reservas de prueba locales para el tenant/empresa ${effective.companyId} en este dispositivo (Cliente > Mis reservas). La configuración de empresa, conductores, vehículos, precios y reservas operativas del backend se conservan.',
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(false),
-            child: Text(
-              _t(nl: 'Annuleren', en: 'Cancel', fr: 'Annuler', es: 'Cancelar'),
+      builder: (ctx) {
+        final tokens = _chironTokens();
+        return AlertDialog(
+          backgroundColor: tokens.card,
+          title: Text(
+            _t(
+              nl: 'Lokale klantboekingen wissen?',
+              en: 'Clear local customer bookings?',
+              fr: 'Effacer les réservations client locales ?',
+              es: '¿Borrar reservas locales del cliente?',
             ),
+            style: TextStyle(color: tokens.textPrimary),
           ),
-          FilledButton(
-            onPressed: () => Navigator.of(ctx).pop(true),
-            child: Text(
-              _t(nl: 'Wissen', en: 'Clear', fr: 'Effacer', es: 'Borrar'),
+          content: Text(
+            _t(
+              nl: 'Dit wist alleen lokale testboekingen voor tenant/bedrijf ${effective.companyId} op dit toestel (Klant > Mijn boekingen). Bedrijfsinstellingen, chauffeurs, voertuigen, prijzen en backend operationele boekingen blijven behouden.',
+              en: 'This only clears local test bookings for tenant/company ${effective.companyId} on this device (Customer > My bookings). Company settings, drivers, vehicles, pricing and backend operational bookings are kept.',
+              fr: 'Cela efface uniquement les réservations de test locales pour le tenant/société ${effective.companyId} sur cet appareil (Client > Mes réservations). Les paramètres société, chauffeurs, véhicules, tarifs et réservations backend restent conservés.',
+              es: 'Esto solo borra reservas de prueba locales para el tenant/empresa ${effective.companyId} en este dispositivo (Cliente > Mis reservas). La configuración de empresa, conductores, vehículos, precios y reservas operativas del backend se conservan.',
             ),
+            style: TextStyle(color: tokens.textSecondary),
           ),
-        ],
-      ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              style: TextButton.styleFrom(
+                foregroundColor: tokens.textSecondary,
+              ),
+              child: Text(
+                _t(
+                  nl: 'Annuleren',
+                  en: 'Cancel',
+                  fr: 'Annuler',
+                  es: 'Cancelar',
+                ),
+              ),
+            ),
+            FilledButton(
+              style: FilledButton.styleFrom(
+                backgroundColor: tokens.accent,
+                foregroundColor: tokens.palette.textOnAccent,
+              ),
+              onPressed: () => Navigator.of(ctx).pop(true),
+              child: Text(
+                _t(nl: 'Wissen', en: 'Clear', fr: 'Effacer', es: 'Borrar'),
+              ),
+            ),
+          ],
+        );
+      },
     );
     if (confirmed != true || !mounted) return;
     setState(() => _isClearingLocalCustomerBookings = true);
@@ -3858,7 +4040,7 @@ class _LocalComplianceLedgerSectionState
       ),
       child: Text(
         label,
-        style: const TextStyle(color: Color(0xFFEAD9A3), fontSize: 11),
+        style: TextStyle(color: _chironChipText, fontSize: 11),
       ),
     );
   }
@@ -4398,8 +4580,8 @@ class _LocalComplianceLedgerSectionState
         children: [
           Text(
             '${_eventTypeLabel(entry.eventType, inferCompleted: inferCompleted)} • ${_rideTypeLabel(entry.rideType)}',
-            style: const TextStyle(
-              color: Colors.white,
+            style: TextStyle(
+              color: _chironTextPrimary,
               fontWeight: FontWeight.w600,
               fontSize: 11,
             ),
@@ -4407,7 +4589,7 @@ class _LocalComplianceLedgerSectionState
           const SizedBox(height: 2),
           Text(
             eventTime,
-            style: const TextStyle(color: Colors.white60, fontSize: 11),
+            style: TextStyle(color: _chironTextMuted, fontSize: 11),
           ),
           const SizedBox(height: 4),
           Wrap(
@@ -4514,8 +4696,8 @@ class _LocalComplianceLedgerSectionState
         children: [
           Text(
             title,
-            style: const TextStyle(
-              color: Colors.white,
+            style: TextStyle(
+              color: _chironTextPrimary,
               fontWeight: FontWeight.w700,
               fontSize: 13,
             ),
@@ -4527,7 +4709,7 @@ class _LocalComplianceLedgerSectionState
                 _localizedInternalBookingLabel(),
                 businessReference.internalBooking!,
               ),
-              style: const TextStyle(color: Colors.white54, fontSize: 11),
+              style: TextStyle(color: _chironTextFaint, fontSize: 11),
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
             ),
@@ -4535,34 +4717,34 @@ class _LocalComplianceLedgerSectionState
           const SizedBox(height: 4),
           Text(
             '${_t(nl: 'Laatste melding', en: 'Latest message', fr: 'Dernier message', es: 'Último mensaje')}: $latestTime',
-            style: const TextStyle(color: Colors.white60, fontSize: 11),
+            style: TextStyle(color: _chironTextMuted, fontSize: 11),
           ),
           Text(
             '${_t(nl: 'Ritmoment', en: 'Ride time', fr: 'Heure du trajet', es: 'Hora del viaje')}: $rideTime',
-            style: const TextStyle(color: Colors.white60, fontSize: 11),
+            style: TextStyle(color: _chironTextMuted, fontSize: 11),
           ),
           const SizedBox(height: 6),
           Text(
             route,
-            style: const TextStyle(color: Colors.white70, fontSize: 12),
+            style: TextStyle(color: _chironTextSecondary, fontSize: 12),
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
           ),
           const SizedBox(height: 6),
           Text(
             _labelValue(_driverLabel(), _driverDisplayForGroup(group)),
-            style: const TextStyle(color: Colors.white70, fontSize: 12),
+            style: TextStyle(color: _chironTextSecondary, fontSize: 12),
           ),
           Text(
             _labelValue(_vehicleLabel(), _vehicleDisplayForGroup(group)),
-            style: const TextStyle(color: Colors.white70, fontSize: 12),
+            style: TextStyle(color: _chironTextSecondary, fontSize: 12),
           ),
           if (fare != null)
             Padding(
               padding: const EdgeInsets.only(top: 4),
               child: Text(
                 _labelValue(_amountLabel(), fare),
-                style: const TextStyle(
+                style: TextStyle(
                   color: _chironGold,
                   fontWeight: FontWeight.w700,
                   fontSize: 12,
@@ -4628,17 +4810,17 @@ class _LocalComplianceLedgerSectionState
             const SizedBox(height: 6),
             Text(
               '${_paymentUpdatedLabel()}: $paymentUpdatedTime',
-              style: const TextStyle(color: Colors.white60, fontSize: 11),
+              style: TextStyle(color: _chironTextMuted, fontSize: 11),
             ),
           ],
           const SizedBox(height: 8),
           ExpansionTile(
             tilePadding: EdgeInsets.zero,
-            collapsedIconColor: Colors.white70,
-            iconColor: Colors.white70,
+            collapsedIconColor: _chironTextSecondary,
+            iconColor: _chironTextSecondary,
             title: Text(
               _auditHistoryLabel(),
-              style: const TextStyle(
+              style: TextStyle(
                 color: _chironGold,
                 fontWeight: FontWeight.w700,
                 fontSize: 12,
@@ -4666,7 +4848,7 @@ class _LocalComplianceLedgerSectionState
       elevation: 0,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(14),
-        side: const BorderSide(color: _chironBorder),
+        side: BorderSide(color: _chironBorder),
       ),
       child: Padding(
         padding: const EdgeInsets.all(14),
@@ -4683,7 +4865,7 @@ class _LocalComplianceLedgerSectionState
                       fr: 'Registre local des trajets',
                       es: 'Registro local de viajes',
                     ),
-                    style: const TextStyle(
+                    style: TextStyle(
                       color: _chironGold,
                       fontWeight: FontWeight.w800,
                       fontSize: 15,
@@ -4761,7 +4943,7 @@ class _LocalComplianceLedgerSectionState
                 fr: 'Derniers trajets locaux (lecture seule, sans synchronisation).',
                 es: 'Últimos viajes locales (solo lectura, sin sincronización).',
               ),
-              style: const TextStyle(color: Colors.white70, fontSize: 12),
+              style: TextStyle(color: _chironTextSecondary, fontSize: 12),
             ),
             const SizedBox(height: 10),
             FutureBuilder<ComplianceLedgerReadResult>(
@@ -4770,7 +4952,7 @@ class _LocalComplianceLedgerSectionState
                 if (snapshot.connectionState != ConnectionState.done) {
                   return Row(
                     children: [
-                      const SizedBox(
+                      SizedBox(
                         width: 14,
                         height: 14,
                         child: CircularProgressIndicator(
@@ -4786,8 +4968,8 @@ class _LocalComplianceLedgerSectionState
                           fr: 'Chargement du ledger local...',
                           es: 'Cargando ledger local...',
                         ),
-                        style: const TextStyle(
-                          color: Colors.white70,
+                        style: TextStyle(
+                          color: _chironTextSecondary,
                           fontSize: 12,
                         ),
                       ),
@@ -4821,10 +5003,7 @@ class _LocalComplianceLedgerSectionState
                         fr: 'Le contexte entreprise est manquant. Les données de conformité ne peuvent pas être chargées en toute sécurité.',
                         es: 'Falta el contexto de empresa. Los datos de cumplimiento no pueden cargarse de forma segura.',
                       ),
-                      style: const TextStyle(
-                        color: Colors.white60,
-                        fontSize: 12,
-                      ),
+                      style: TextStyle(color: _chironTextMuted, fontSize: 12),
                     ),
                   );
                 }
@@ -4845,10 +5024,7 @@ class _LocalComplianceLedgerSectionState
                         fr: 'Aucun trajet de conformité local trouvé.',
                         es: 'Aún no se encontraron trayectos locales de cumplimiento.',
                       ),
-                      style: const TextStyle(
-                        color: Colors.white60,
-                        fontSize: 12,
-                      ),
+                      style: TextStyle(color: _chironTextMuted, fontSize: 12),
                     ),
                   );
                 }
@@ -4862,10 +5038,7 @@ class _LocalComplianceLedgerSectionState
                         padding: const EdgeInsets.only(bottom: 8),
                         child: Text(
                           '${result.skippedMalformedLines} ${_t(nl: 'beschadigde ledgerregels overgeslagen.', en: 'malformed ledger lines skipped.', fr: 'lignes ledger endommagées ignorées.', es: 'líneas de ledger dañadas omitidas.')}',
-                          style: const TextStyle(
-                            color: Colors.orangeAccent,
-                            fontSize: 11,
-                          ),
+                          style: TextStyle(color: _chironWarning, fontSize: 11),
                         ),
                       ),
                     ...groupedEntries.map(_groupCard),
