@@ -51,7 +51,7 @@ const DriverThemePalette _midnightBluePalette = DriverThemePalette(
   surfaceAlt: Color(0xFF0F1A2F),
   textPrimary: Color(0xFFF4F8FF),
   textMuted: Color(0xFFB6C4DA),
-  accent: Color(0xFFFFD54F),
+  accent: Color(0xFF4DA3FF),
   border: Color(0xFF2D8CFF),
   danger: Color(0xFFFF6B5F),
   success: Color(0xFF4CD964),

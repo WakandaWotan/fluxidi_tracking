@@ -556,10 +556,16 @@ class _DriverHomePageState extends State<DriverHomePage>
 
   String _driverAssetByTheme({
     required String defaultAsset,
+    String? midnightBlueAsset,
     String? middayGoldAsset,
   }) {
+    final isMidnightBlue =
+        driverThemeNotifier.value == DriverThemeVariant.midnightBlue;
     final isMiddayGold =
         driverThemeNotifier.value == DriverThemeVariant.highContrast;
+    if (isMidnightBlue && (midnightBlueAsset ?? '').trim().isNotEmpty) {
+      return midnightBlueAsset!;
+    }
     if (isMiddayGold && (middayGoldAsset ?? '').trim().isNotEmpty) {
       return middayGoldAsset!;
     }
@@ -608,6 +614,34 @@ class _DriverHomePageState extends State<DriverHomePage>
   Color _middayGoldTextPrimary() => const Color(0xFFF7E9C8);
   Color _middayGoldTextMuted() => const Color(0xFFD8C79E);
   Color _middayGoldTextOnSelected() => const Color(0xFF2B2113);
+
+  Color _midnightBlueAccent() => const Color(0xFF4DA3FF);
+  Color _midnightBlueTextPrimary() => const Color(0xFFEAF6FF);
+  Color _midnightBlueTextMuted() => const Color(0xFFAFCBEA);
+  Color _midnightBlueBorderColor([double opacity = 0.46]) =>
+      _midnightBlueAccent().withOpacity(opacity);
+
+  LinearGradient _midnightBlueSurfaceGradient({bool soft = false}) {
+    return LinearGradient(
+      begin: Alignment.topLeft,
+      end: Alignment.bottomRight,
+      colors: soft
+          ? const [Color(0xFF0A172B), Color(0xFF0D203A), Color(0xFF102A4D)]
+          : const [Color(0xFF07111F), Color(0xFF0B1B33), Color(0xFF102A4D)],
+    );
+  }
+
+  LinearGradient _midnightBlueSelectedSurfaceGradient() {
+    return LinearGradient(
+      begin: Alignment.topLeft,
+      end: Alignment.bottomRight,
+      colors: [
+        const Color(0xFF1B4F9C).withOpacity(0.92),
+        const Color(0xFF0B2D5C).withOpacity(0.88),
+        const Color(0xFF061A35).withOpacity(0.92),
+      ],
+    );
+  }
 
   LinearGradient _middayGoldSurfaceGradient({bool soft = false}) {
     return LinearGradient(
@@ -686,6 +720,39 @@ class _DriverHomePageState extends State<DriverHomePage>
       elevation: MaterialStateProperty.all(0),
       overlayColor: MaterialStateProperty.all(
         const Color(0xFFE8C57E).withOpacity(0.16),
+      ),
+    );
+  }
+
+  ButtonStyle _midnightBlueOutlinedActionButtonStyle() {
+    return OutlinedButton.styleFrom(
+      foregroundColor: _midnightBlueTextPrimary(),
+      side: BorderSide(color: _midnightBlueBorderColor(0.62), width: 1.1),
+      backgroundColor: const Color(0x1408111F),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+    ).copyWith(
+      overlayColor: MaterialStateProperty.all(
+        _midnightBlueAccent().withOpacity(0.20),
+      ),
+    );
+  }
+
+  ButtonStyle _midnightBlueFilledActionButtonStyle() {
+    return FilledButton.styleFrom(
+      backgroundColor: const Color(0xFF0A2345),
+      foregroundColor: _midnightBlueTextPrimary(),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+    ).copyWith(
+      side: MaterialStateProperty.all(
+        BorderSide(color: _midnightBlueBorderColor(0.68), width: 1.1),
+      ),
+      shadowColor: MaterialStateProperty.all(
+        const Color(0x66000000).withOpacity(0.55),
+      ),
+      elevation: MaterialStateProperty.all(0),
+      overlayColor: MaterialStateProperty.all(
+        _midnightBlueAccent().withOpacity(0.18),
       ),
     );
   }
@@ -9017,6 +9084,8 @@ class _DriverHomePageState extends State<DriverHomePage>
     bool compactLandscape = false,
     double? compactMinHeight,
   }) {
+    final isMidnightBlue =
+        driverThemeNotifier.value == DriverThemeVariant.midnightBlue;
     final isMiddayGold =
         driverThemeNotifier.value == DriverThemeVariant.highContrast;
     const summaryIconContainerSize = 52.0;
@@ -9035,13 +9104,23 @@ class _DriverHomePageState extends State<DriverHomePage>
               accentColor.withOpacity(0.15),
               const Color(0xFF2A2216),
             )
-          : accentColor.withOpacity(0.16);
+          : (isMidnightBlue
+                ? Color.alphaBlend(
+                    accentColor.withOpacity(0.22),
+                    const Color(0xFF0A1A30),
+                  )
+                : accentColor.withOpacity(0.16));
       final iconChipBorderColor = isMiddayGold
           ? Color.alphaBlend(
               accentColor.withOpacity(0.34),
               const Color(0x88E8C57E),
             )
-          : accentColor.withOpacity(0.55);
+          : (isMidnightBlue
+                ? Color.alphaBlend(
+                    accentColor.withOpacity(0.48),
+                    _midnightBlueBorderColor(0.40),
+                  )
+                : accentColor.withOpacity(0.55));
       final cardBody = Container(
         constraints: compactLandscape && compactMinHeight != null
             ? BoxConstraints(minHeight: compactMinHeight)
@@ -9050,16 +9129,22 @@ class _DriverHomePageState extends State<DriverHomePage>
             ? const EdgeInsets.fromLTRB(8, 6, 8, 6)
             : const EdgeInsets.fromLTRB(8, 8, 8, 8),
         decoration: BoxDecoration(
-          color: isMiddayGold ? null : const Color(0xFF111214),
-          gradient: isMiddayGold ? _middayGoldSurfaceGradient() : null,
+          color: (isMiddayGold || isMidnightBlue)
+              ? null
+              : const Color(0xFF111214),
+          gradient: isMiddayGold
+              ? _middayGoldSurfaceGradient()
+              : (isMidnightBlue ? _midnightBlueSurfaceGradient() : null),
           borderRadius: BorderRadius.circular(13),
           border: Border.all(
             color: isMiddayGold
                 ? _middayGoldBorderColor(0.40)
-                : Colors.white.withOpacity(0.10),
+                : (isMidnightBlue
+                      ? _midnightBlueBorderColor(0.42)
+                      : Colors.white.withOpacity(0.10)),
             width: 1.0,
           ),
-          boxShadow: isMiddayGold
+          boxShadow: (isMiddayGold || isMidnightBlue)
               ? [
                   BoxShadow(
                     color: Colors.black.withOpacity(0.24),
@@ -9095,7 +9180,9 @@ class _DriverHomePageState extends State<DriverHomePage>
                       style: TextStyle(
                         color: isMiddayGold
                             ? _middayGoldTextMuted()
-                            : Colors.white.withOpacity(0.78),
+                            : (isMidnightBlue
+                                  ? _midnightBlueTextMuted()
+                                  : Colors.white.withOpacity(0.78)),
                         fontSize: 11.2,
                         fontWeight: FontWeight.w700,
                       ),
@@ -9109,7 +9196,9 @@ class _DriverHomePageState extends State<DriverHomePage>
                     style: TextStyle(
                       color: isMiddayGold
                           ? _middayGoldTextPrimary()
-                          : Colors.white,
+                          : (isMidnightBlue
+                                ? _midnightBlueTextPrimary()
+                                : Colors.white),
                       fontSize: 16,
                       fontWeight: FontWeight.w900,
                     ),
@@ -9141,7 +9230,9 @@ class _DriverHomePageState extends State<DriverHomePage>
                     style: TextStyle(
                       color: isMiddayGold
                           ? _middayGoldTextPrimary()
-                          : Colors.white,
+                          : (isMidnightBlue
+                                ? _midnightBlueTextPrimary()
+                                : Colors.white),
                       fontSize: 16,
                       fontWeight: FontWeight.w900,
                     ),
@@ -9154,7 +9245,9 @@ class _DriverHomePageState extends State<DriverHomePage>
                     style: TextStyle(
                       color: isMiddayGold
                           ? _middayGoldTextMuted()
-                          : Colors.white.withOpacity(0.66),
+                          : (isMidnightBlue
+                                ? _midnightBlueTextMuted()
+                                : Colors.white.withOpacity(0.66)),
                       fontSize: 10.2,
                       fontWeight: FontWeight.w700,
                     ),
@@ -9210,7 +9303,9 @@ class _DriverHomePageState extends State<DriverHomePage>
         Expanded(
           child: card(
             icon: Icons.schedule_rounded,
-            accentColor: const Color(0xFFFFB54D),
+            accentColor: isMidnightBlue
+                ? _midnightBlueAccent()
+                : const Color(0xFFFFB54D),
             label: _tr(
               nl: 'Volgende',
               en: 'Next',
@@ -9228,6 +9323,8 @@ class _DriverHomePageState extends State<DriverHomePage>
     required BookingItem? nextRide,
     double? routePreviewHeight,
   }) {
+    final isMidnightBlue =
+        driverThemeNotifier.value == DriverThemeVariant.midnightBlue;
     final isMiddayGold =
         driverThemeNotifier.value == DriverThemeVariant.highContrast;
     if (nextRide == null) {
@@ -9245,13 +9342,19 @@ class _DriverHomePageState extends State<DriverHomePage>
         width: double.infinity,
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
-          color: isMiddayGold ? null : const Color(0xFF101113),
-          gradient: isMiddayGold ? _middayGoldSurfaceGradient() : null,
+          color: (isMiddayGold || isMidnightBlue)
+              ? null
+              : const Color(0xFF101113),
+          gradient: isMiddayGold
+              ? _middayGoldSurfaceGradient()
+              : (isMidnightBlue ? _midnightBlueSurfaceGradient() : null),
           borderRadius: BorderRadius.circular(16),
           border: Border.all(
             color: isMiddayGold
                 ? _middayGoldBorderColor(0.38)
-                : Colors.white.withOpacity(0.10),
+                : (isMidnightBlue
+                      ? _midnightBlueBorderColor(0.42)
+                      : Colors.white.withOpacity(0.10)),
           ),
         ),
         child: Column(
@@ -9265,7 +9368,11 @@ class _DriverHomePageState extends State<DriverHomePage>
                 es: 'No hay viajes planificados',
               ),
               style: TextStyle(
-                color: isMiddayGold ? _middayGoldTextPrimary() : Colors.white,
+                color: isMiddayGold
+                    ? _middayGoldTextPrimary()
+                    : (isMidnightBlue
+                          ? _midnightBlueTextPrimary()
+                          : Colors.white),
                 fontSize: 14.5,
                 fontWeight: FontWeight.w800,
               ),
@@ -9281,7 +9388,9 @@ class _DriverHomePageState extends State<DriverHomePage>
               style: TextStyle(
                 color: isMiddayGold
                     ? _middayGoldTextMuted()
-                    : Colors.white.withOpacity(0.68),
+                    : (isMidnightBlue
+                          ? _midnightBlueTextMuted()
+                          : Colors.white.withOpacity(0.68)),
                 fontSize: 11.2,
                 fontWeight: FontWeight.w600,
               ),
@@ -9294,7 +9403,9 @@ class _DriverHomePageState extends State<DriverHomePage>
                     OutlinedButton.icon(
                       style: isMiddayGold
                           ? _middayGoldOutlinedActionButtonStyle()
-                          : _ghostButtonStyle(),
+                          : (isMidnightBlue
+                                ? _midnightBlueOutlinedActionButtonStyle()
+                                : _ghostButtonStyle()),
                       onPressed: () =>
                           _refreshBookings(force: true, trigger: 'list_manual'),
                       icon: const Icon(Icons.refresh, size: 17),
@@ -9315,7 +9426,9 @@ class _DriverHomePageState extends State<DriverHomePage>
                     FilledButton.icon(
                       style: isMiddayGold
                           ? _middayGoldFilledActionButtonStyle()
-                          : _startButtonStyle(),
+                          : (isMidnightBlue
+                                ? _midnightBlueFilledActionButtonStyle()
+                                : _startButtonStyle()),
                       onPressed: _openDirectRideEntry,
                       icon: const Icon(Icons.local_taxi_outlined, size: 18),
                       label: Text(
@@ -9476,13 +9589,19 @@ class _DriverHomePageState extends State<DriverHomePage>
         decoration: BoxDecoration(
           gradient: isMiddayGold
               ? _middayGoldSurfaceGradient(soft: true)
-              : null,
-          color: isMiddayGold ? null : const Color(0xFF17191C),
+              : (isMidnightBlue
+                    ? _midnightBlueSurfaceGradient(soft: true)
+                    : null),
+          color: (isMiddayGold || isMidnightBlue)
+              ? null
+              : const Color(0xFF17191C),
           borderRadius: BorderRadius.circular(999),
           border: Border.all(
             color: isMiddayGold
                 ? _middayGoldBorderColor(0.40)
-                : const Color(0x33FFD36A),
+                : (isMidnightBlue
+                      ? _midnightBlueBorderColor(0.45)
+                      : const Color(0x33FFD36A)),
           ),
         ),
         child: Row(
@@ -9494,7 +9613,9 @@ class _DriverHomePageState extends State<DriverHomePage>
                 size: 12,
                 color: isMiddayGold
                     ? const Color(0xFFE8C57E)
-                    : const Color(0xFFFFD36A),
+                    : (isMidnightBlue
+                          ? _midnightBlueAccent()
+                          : const Color(0xFFFFD36A)),
               ),
               const SizedBox(width: 4),
             ],
@@ -9503,7 +9624,9 @@ class _DriverHomePageState extends State<DriverHomePage>
               style: TextStyle(
                 color: isMiddayGold
                     ? _middayGoldTextPrimary()
-                    : const Color(0xFFF2D691),
+                    : (isMidnightBlue
+                          ? _midnightBlueTextPrimary()
+                          : const Color(0xFFF2D691)),
                 fontSize: 10.2,
                 fontWeight: FontWeight.w700,
               ),
@@ -9530,7 +9653,9 @@ class _DriverHomePageState extends State<DriverHomePage>
               style: TextStyle(
                 color: isMiddayGold
                     ? _middayGoldTextMuted()
-                    : const Color(0xFFF3D486),
+                    : (isMidnightBlue
+                          ? _midnightBlueTextMuted()
+                          : const Color(0xFFF3D486)),
                 fontSize: 10.8,
                 fontWeight: FontWeight.w600,
               ),
@@ -9544,13 +9669,19 @@ class _DriverHomePageState extends State<DriverHomePage>
       width: double.infinity,
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: isMiddayGold ? null : const Color(0xFF101113),
-        gradient: isMiddayGold ? _middayGoldSurfaceGradient() : null,
+        color: (isMiddayGold || isMidnightBlue)
+            ? null
+            : const Color(0xFF101113),
+        gradient: isMiddayGold
+            ? _middayGoldSurfaceGradient()
+            : (isMidnightBlue ? _midnightBlueSurfaceGradient() : null),
         borderRadius: BorderRadius.circular(16),
         border: Border.all(
           color: isMiddayGold
               ? _middayGoldBorderColor(0.44)
-              : const Color(0x55FFD36A),
+              : (isMidnightBlue
+                    ? _midnightBlueBorderColor(0.45)
+                    : const Color(0x55FFD36A)),
         ),
       ),
       child: Column(
@@ -9569,7 +9700,9 @@ class _DriverHomePageState extends State<DriverHomePage>
                   style: TextStyle(
                     color: isMiddayGold
                         ? _middayGoldTextPrimary()
-                        : const Color(0xFFFFD36A).withOpacity(0.95),
+                        : (isMidnightBlue
+                              ? _midnightBlueTextPrimary()
+                              : const Color(0xFFFFD36A).withOpacity(0.95)),
                     fontWeight: FontWeight.w800,
                     fontSize: 11.5,
                   ),
@@ -9582,7 +9715,13 @@ class _DriverHomePageState extends State<DriverHomePage>
             ],
           ),
           const SizedBox(height: 9),
-          infoLine(icon: Icons.radio_button_checked, text: from),
+          infoLine(
+            icon: Icons.radio_button_checked,
+            text: from,
+            color: isMidnightBlue
+                ? _midnightBlueAccent()
+                : const Color(0xFFFFD36A),
+          ),
           const SizedBox(height: 2),
           Padding(
             padding: const EdgeInsets.only(left: 2),
@@ -9591,11 +9730,19 @@ class _DriverHomePageState extends State<DriverHomePage>
               size: 14,
               color: isMiddayGold
                   ? _middayGoldTextMuted().withOpacity(0.50)
-                  : Colors.white.withOpacity(0.35),
+                  : (isMidnightBlue
+                        ? _midnightBlueTextMuted().withOpacity(0.58)
+                        : Colors.white.withOpacity(0.35)),
             ),
           ),
           const SizedBox(height: 2),
-          infoLine(icon: Icons.flag_rounded, text: to),
+          infoLine(
+            icon: Icons.flag_rounded,
+            text: to,
+            color: isMidnightBlue
+                ? _midnightBlueAccent()
+                : const Color(0xFFFFD36A),
+          ),
           const SizedBox(height: 8),
           Wrap(
             spacing: 6,
@@ -9649,7 +9796,9 @@ class _DriverHomePageState extends State<DriverHomePage>
                 child: OutlinedButton.icon(
                   style: isMiddayGold
                       ? _middayGoldOutlinedActionButtonStyle()
-                      : _ghostButtonStyle(),
+                      : (isMidnightBlue
+                            ? _midnightBlueOutlinedActionButtonStyle()
+                            : _ghostButtonStyle()),
                   onPressed: () async {
                     await _goToRide(nextRide);
                     if (!mounted) return;
@@ -9664,7 +9813,9 @@ class _DriverHomePageState extends State<DriverHomePage>
                 child: FilledButton.icon(
                   style: isMiddayGold
                       ? _middayGoldFilledActionButtonStyle()
-                      : _startButtonStyle(),
+                      : (isMidnightBlue
+                            ? _midnightBlueFilledActionButtonStyle()
+                            : _startButtonStyle()),
                   onPressed: () async {
                     await _goToRide(nextRide);
                   },
@@ -9690,6 +9841,8 @@ class _DriverHomePageState extends State<DriverHomePage>
     bool useImageBackgrounds = false,
     double? tabletPortraitSpacing,
   }) {
+    final isMidnightBlue =
+        driverThemeNotifier.value == DriverThemeVariant.midnightBlue;
     final isMiddayGold =
         driverThemeNotifier.value == DriverThemeVariant.highContrast;
     const quickActionIconContainerSize = 56.0;
@@ -9719,12 +9872,20 @@ class _DriverHomePageState extends State<DriverHomePage>
             color: hasImageBackground
                 ? (isMiddayGold
                       ? const Color(0xFF221B11).withOpacity(0.80)
-                      : const Color(0xFF0A0A0A).withOpacity(0.88))
+                      : (isMidnightBlue
+                            ? const Color(0xFF07111F).withOpacity(0.88)
+                            : const Color(0xFF0A0A0A).withOpacity(0.88)))
                 : (isMiddayGold
                       ? null
-                      : const Color(0xFF111111).withOpacity(0.96)),
-            gradient: !hasImageBackground && isMiddayGold
-                ? _middayGoldSurfaceGradient()
+                      : (isMidnightBlue
+                            ? null
+                            : const Color(0xFF111111).withOpacity(0.96))),
+            gradient: !hasImageBackground
+                ? (isMiddayGold
+                      ? _middayGoldSurfaceGradient()
+                      : (isMidnightBlue
+                            ? _midnightBlueSurfaceGradient()
+                            : null))
                 : null,
             borderRadius: BorderRadius.circular(14),
             border: Border.all(
@@ -9733,17 +9894,23 @@ class _DriverHomePageState extends State<DriverHomePage>
                   : (active
                         ? (isMiddayGold
                               ? _middayGoldBorderColor(0.48)
-                              : const Color(0x66FFD36A))
+                              : (isMidnightBlue
+                                    ? _midnightBlueBorderColor(0.52)
+                                    : const Color(0x66FFD36A)))
                         : (isMiddayGold
                               ? _middayGoldBorderColor(0.28)
-                              : Colors.white.withOpacity(0.12))),
+                              : (isMidnightBlue
+                                    ? _midnightBlueBorderColor(0.34)
+                                    : Colors.white.withOpacity(0.12)))),
             ),
           ),
           foregroundDecoration: isTabletPortrait
               ? BoxDecoration(
                   borderRadius: BorderRadius.circular(14),
                   border: Border.all(
-                    color: const Color(0xFFFFD36A).withOpacity(0.56),
+                    color: isMidnightBlue
+                        ? _midnightBlueBorderColor(0.56)
+                        : const Color(0xFFFFD36A).withOpacity(0.56),
                     width: 1.0,
                   ),
                 )
@@ -9795,25 +9962,35 @@ class _DriverHomePageState extends State<DriverHomePage>
                         color: active
                             ? (isMiddayGold
                                   ? const Color(0xFF3E2F1A)
-                                  : const Color(0xFF21180A))
+                                  : (isMidnightBlue
+                                        ? const Color(0xFF0F2747)
+                                        : const Color(0xFF21180A)))
                             : (isMiddayGold
                                   ? const Color(0xFF2D2316)
-                                  : const Color(0xFF17130B)),
+                                  : (isMidnightBlue
+                                        ? const Color(0xFF0A1A31)
+                                        : const Color(0xFF17130B))),
                         border: Border.all(
                           color: active
                               ? (isMiddayGold
                                     ? const Color(0xCCE8C57E)
-                                    : const Color(0x88FFD36A))
+                                    : (isMidnightBlue
+                                          ? _midnightBlueBorderColor(0.66)
+                                          : const Color(0x88FFD36A)))
                               : (isMiddayGold
                                     ? const Color(0x88DDBB76)
-                                    : const Color(0x55FFD36A)),
+                                    : (isMidnightBlue
+                                          ? _midnightBlueBorderColor(0.40)
+                                          : const Color(0x55FFD36A))),
                         ),
                       ),
                       child: Icon(
                         icon,
                         color: isMiddayGold
                             ? _middayGoldTextPrimary()
-                            : const Color(0xFFFFD36A),
+                            : (isMidnightBlue
+                                  ? _midnightBlueTextPrimary()
+                                  : const Color(0xFFFFD36A)),
                         size: quickActionIconGlyphSize,
                       ),
                     ),
@@ -9830,7 +10007,9 @@ class _DriverHomePageState extends State<DriverHomePage>
                             style: TextStyle(
                               color: isMiddayGold
                                   ? _middayGoldTextPrimary()
-                                  : Colors.white,
+                                  : (isMidnightBlue
+                                        ? _midnightBlueTextPrimary()
+                                        : Colors.white),
                               fontWeight: FontWeight.w800,
                               fontSize: 10.4,
                             ),
@@ -9844,7 +10023,9 @@ class _DriverHomePageState extends State<DriverHomePage>
                               style: TextStyle(
                                 color: isMiddayGold
                                     ? _middayGoldTextMuted()
-                                    : Colors.white.withOpacity(0.67),
+                                    : (isMidnightBlue
+                                          ? _midnightBlueTextMuted()
+                                          : Colors.white.withOpacity(0.67)),
                                 fontSize: 11.5,
                               ),
                             ),
@@ -9900,6 +10081,8 @@ class _DriverHomePageState extends State<DriverHomePage>
                 onTap: _openDirectRideEntry,
                 backgroundAsset: _driverAssetByTheme(
                   defaultAsset: 'assets/fluxidi/driver_action_street_ride.png',
+                  midnightBlueAsset:
+                      'assets/Midnight Bleu Chauffeur/driver_street_ride_midnight_blue.png',
                   middayGoldAsset:
                       'assets/Midday Gold Chauffeur/driver_street_ride_midday_gold.png',
                 ),
@@ -9919,6 +10102,8 @@ class _DriverHomePageState extends State<DriverHomePage>
                 backgroundAsset: _driverAssetByTheme(
                   defaultAsset:
                       'assets/fluxidi/driver_action_fare_calculator.png',
+                  midnightBlueAsset:
+                      'assets/Midnight Bleu Chauffeur/driver_fare_calculator_midnight_blue.png',
                   middayGoldAsset:
                       'assets/Midday Gold Chauffeur/driver_fare_calculator_midday_gold.png',
                 ),
@@ -9937,6 +10122,8 @@ class _DriverHomePageState extends State<DriverHomePage>
                 onTap: _openBookingsHubFromDashboard,
                 backgroundAsset: _driverAssetByTheme(
                   defaultAsset: 'assets/fluxidi/driver_action_my_rides.png',
+                  midnightBlueAsset:
+                      'assets/Midnight Bleu Chauffeur/driver_my_rides_midnight_blue.png',
                   middayGoldAsset:
                       'assets/Midday Gold Chauffeur/driver_my_rides_midday_gold.png',
                 ),
@@ -9955,6 +10142,8 @@ class _DriverHomePageState extends State<DriverHomePage>
                 onTap: _openTripHistoryFromDashboard,
                 backgroundAsset: _driverAssetByTheme(
                   defaultAsset: 'assets/fluxidi/driver_action_history.png',
+                  midnightBlueAsset:
+                      'assets/Midnight Bleu Chauffeur/driver_history_midnight_blue.png',
                   middayGoldAsset:
                       'assets/Midday Gold Chauffeur/driver_history_midday_gold.png',
                 ),
@@ -9973,6 +10162,8 @@ class _DriverHomePageState extends State<DriverHomePage>
                 onTap: _openTripHistoryFromDashboard,
                 backgroundAsset: _driverAssetByTheme(
                   defaultAsset: 'assets/fluxidi/driver_action_receipts.png',
+                  midnightBlueAsset:
+                      'assets/Midnight Bleu Chauffeur/driver_receipts_midnight_blue.png',
                   middayGoldAsset:
                       'assets/Midday Gold Chauffeur/driver_receipts_midday_gold.png',
                 ),
@@ -9997,6 +10188,8 @@ class _DriverHomePageState extends State<DriverHomePage>
                 },
                 backgroundAsset: _driverAssetByTheme(
                   defaultAsset: 'assets/fluxidi/driver_action_documents.png',
+                  midnightBlueAsset:
+                      'assets/Midnight Bleu Chauffeur/driver_documents_midnight_blue.png',
                   middayGoldAsset:
                       'assets/Midday Gold Chauffeur/driver_documents_midday_gold.png',
                 ),
@@ -10031,6 +10224,8 @@ class _DriverHomePageState extends State<DriverHomePage>
             screenClass == FluxidiScreenClass.desktop) &&
         W > H &&
         H >= 700;
+    final isMidnightBlue =
+        driverThemeNotifier.value == DriverThemeVariant.midnightBlue;
     final isMiddayGold =
         driverThemeNotifier.value == DriverThemeVariant.highContrast;
     final driverHeaderHeight = isTabletPortrait
@@ -10060,7 +10255,9 @@ class _DriverHomePageState extends State<DriverHomePage>
       return Text(
         text,
         style: TextStyle(
-          color: isMiddayGold ? const Color(0xFFF3E5C4) : Colors.white,
+          color: isMiddayGold
+              ? const Color(0xFFF3E5C4)
+              : (isMidnightBlue ? _midnightBlueTextMuted() : Colors.white),
           fontSize: 13.5,
           fontWeight: FontWeight.w800,
         ),
@@ -10075,7 +10272,11 @@ class _DriverHomePageState extends State<DriverHomePage>
     }) {
       final color = isMiddayGold
           ? (active ? _middayGoldTextOnSelected() : _middayGoldTextMuted())
-          : (active ? const Color(0xFFFFD36A) : Colors.white70);
+          : (isMidnightBlue
+                ? (active
+                      ? _midnightBlueTextPrimary()
+                      : _midnightBlueTextMuted())
+                : (active ? const Color(0xFFFFD36A) : Colors.white70));
       return Expanded(
         child: InkWell(
           onTap: onTap,
@@ -10116,12 +10317,39 @@ class _DriverHomePageState extends State<DriverHomePage>
                               ),
                             ],
                     )
-                  : (active
+                  : (isMidnightBlue
                         ? BoxDecoration(
-                            gradient: _middayGoldMetallicGradient(),
-                            borderRadius: BorderRadius.circular(10),
+                            gradient: active
+                                ? _midnightBlueSelectedSurfaceGradient()
+                                : _midnightBlueSurfaceGradient(soft: true),
+                            borderRadius: BorderRadius.circular(11),
+                            border: Border.all(
+                              color: active
+                                  ? _midnightBlueBorderColor(0.65)
+                                  : _midnightBlueBorderColor(0.30),
+                            ),
+                            boxShadow: active
+                                ? const [
+                                    BoxShadow(
+                                      color: Color(0x66000000),
+                                      blurRadius: 8,
+                                      offset: Offset(0, 3),
+                                    ),
+                                  ]
+                                : [
+                                    BoxShadow(
+                                      color: Colors.black.withOpacity(0.20),
+                                      blurRadius: 4,
+                                      offset: const Offset(0, 1),
+                                    ),
+                                  ],
                           )
-                        : null),
+                        : (active
+                              ? BoxDecoration(
+                                  gradient: _middayGoldMetallicGradient(),
+                                  borderRadius: BorderRadius.circular(10),
+                                )
+                              : null)),
               child: Container(
                 decoration: isMiddayGold
                     ? null
@@ -10134,19 +10362,29 @@ class _DriverHomePageState extends State<DriverHomePage>
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    if (isMiddayGold)
+                    if (isMiddayGold || isMidnightBlue)
                       Container(
                         width: 29,
                         height: 29,
                         decoration: BoxDecoration(
                           shape: BoxShape.circle,
-                          color: active
-                              ? _middayGoldTextOnSelected().withOpacity(0.14)
-                              : _middayGoldBorderColor(0.10),
+                          color: isMiddayGold
+                              ? (active
+                                    ? _middayGoldTextOnSelected().withOpacity(
+                                        0.14,
+                                      )
+                                    : _middayGoldBorderColor(0.10))
+                              : (active
+                                    ? _midnightBlueAccent().withOpacity(0.18)
+                                    : _midnightBlueAccent().withOpacity(0.10)),
                           border: Border.all(
-                            color: active
-                                ? _middayGoldBorderColor(0.44)
-                                : _middayGoldBorderColor(0.22),
+                            color: isMiddayGold
+                                ? (active
+                                      ? _middayGoldBorderColor(0.44)
+                                      : _middayGoldBorderColor(0.22))
+                                : (active
+                                      ? _midnightBlueBorderColor(0.55)
+                                      : _midnightBlueBorderColor(0.32)),
                           ),
                         ),
                         child: Icon(icon, size: 20, color: color),
@@ -10220,7 +10458,9 @@ class _DriverHomePageState extends State<DriverHomePage>
             style: TextStyle(
               color: isMiddayGold
                   ? const Color(0xFFD7C8AA)
-                  : Colors.white.withOpacity(0.72),
+                  : (isMidnightBlue
+                        ? _midnightBlueTextMuted().withOpacity(0.90)
+                        : Colors.white.withOpacity(0.72)),
               fontSize: 13.2,
               fontWeight: FontWeight.w700,
               letterSpacing: 0.30,
@@ -10252,17 +10492,23 @@ class _DriverHomePageState extends State<DriverHomePage>
                     vertical: 6,
                   ),
                   decoration: BoxDecoration(
-                    color: isMiddayGold ? null : const Color(0xFF101113),
+                    color: (isMiddayGold || isMidnightBlue)
+                        ? null
+                        : const Color(0xFF101113),
                     gradient: isMiddayGold
                         ? _middayGoldSurfaceGradient(soft: true)
-                        : null,
+                        : (isMidnightBlue
+                              ? _midnightBlueSurfaceGradient(soft: true)
+                              : null),
                     borderRadius: BorderRadius.circular(999),
                     border: Border.all(
                       color: statusReady
                           ? const Color(0x664CD964)
                           : (isMiddayGold
                                 ? _middayGoldBorderColor(0.46)
-                                : const Color(0x66FFD36A)),
+                                : (isMidnightBlue
+                                      ? _midnightBlueBorderColor(0.52)
+                                      : const Color(0x66FFD36A))),
                     ),
                   ),
                   child: Row(
@@ -10275,7 +10521,9 @@ class _DriverHomePageState extends State<DriverHomePage>
                           shape: BoxShape.circle,
                           color: statusReady
                               ? const Color(0xFF2ECC71)
-                              : const Color(0xFFFFD36A),
+                              : (isMidnightBlue
+                                    ? _midnightBlueAccent()
+                                    : const Color(0xFFFFD36A)),
                         ),
                       ),
                       const SizedBox(width: 6),
@@ -10286,7 +10534,9 @@ class _DriverHomePageState extends State<DriverHomePage>
                               ? const Color(0xFFBCF6D0)
                               : (isMiddayGold
                                     ? _middayGoldTextPrimary()
-                                    : const Color(0xFFFFE4A8)),
+                                    : (isMidnightBlue
+                                          ? _midnightBlueTextPrimary()
+                                          : const Color(0xFFFFE4A8))),
                           fontWeight: FontWeight.w800,
                           fontSize: 11.5,
                         ),
@@ -10308,7 +10558,11 @@ class _DriverHomePageState extends State<DriverHomePage>
     }
 
     return ColoredBox(
-      color: isMiddayGold ? const Color(0xFF0F0D0A) : const Color(0xFF050505),
+      color: isMiddayGold
+          ? const Color(0xFF0F0D0A)
+          : (isMidnightBlue
+                ? const Color(0xFF050E1B)
+                : const Color(0xFF050505)),
       child: SafeArea(
         child: Column(
           children: [
@@ -10333,7 +10587,9 @@ class _DriverHomePageState extends State<DriverHomePage>
                           border: Border.all(
                             color: isMiddayGold
                                 ? const Color(0xFFFFD36A).withOpacity(0.56)
-                                : const Color(0x55FFD36A),
+                                : (isMidnightBlue
+                                      ? _midnightBlueBorderColor(0.56)
+                                      : const Color(0x55FFD36A)),
                           ),
                         ),
                         child: Stack(
@@ -10343,6 +10599,8 @@ class _DriverHomePageState extends State<DriverHomePage>
                               _driverAssetByTheme(
                                 defaultAsset:
                                     'assets/fluxidi/driver_header_portrait_tablet.png',
+                                midnightBlueAsset:
+                                    'assets/Midnight Bleu Chauffeur/driver_home_header_midnight_blue.png',
                                 middayGoldAsset:
                                     'assets/Midday Gold Chauffeur/driver_home_header_midday_gold.png',
                               ),
@@ -10428,7 +10686,9 @@ class _DriverHomePageState extends State<DriverHomePage>
                           border: Border.all(
                             color: isMiddayGold
                                 ? const Color(0xFFFFD36A).withOpacity(0.56)
-                                : const Color(0x55FFD36A),
+                                : (isMidnightBlue
+                                      ? _midnightBlueBorderColor(0.56)
+                                      : const Color(0x55FFD36A)),
                           ),
                         ),
                         child: Stack(
@@ -10438,6 +10698,8 @@ class _DriverHomePageState extends State<DriverHomePage>
                               _driverAssetByTheme(
                                 defaultAsset:
                                     'assets/fluxidi/driver_header_landscape_tablet.png',
+                                midnightBlueAsset:
+                                    'assets/Midnight Bleu Chauffeur/driver_navigation_midnight_blue.png',
                                 middayGoldAsset:
                                     'assets/Midday Gold Chauffeur/driver_navigation_midday_gold.png',
                               ),
@@ -10597,20 +10859,37 @@ class _DriverHomePageState extends State<DriverHomePage>
                         child: bottomNavRow(),
                       ),
                     )
-                  : Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 6,
-                        vertical: 4,
-                      ),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF101113),
-                        borderRadius: BorderRadius.circular(16),
-                        border: Border.all(
-                          color: Colors.white.withOpacity(0.10),
-                        ),
-                      ),
-                      child: bottomNavRow(),
-                    ),
+                  : (isMidnightBlue
+                        ? Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 6,
+                              vertical: 4,
+                            ),
+                            decoration: BoxDecoration(
+                              gradient: _midnightBlueSurfaceGradient(
+                                soft: true,
+                              ),
+                              borderRadius: BorderRadius.circular(16),
+                              border: Border.all(
+                                color: _midnightBlueBorderColor(0.24),
+                              ),
+                            ),
+                            child: bottomNavRow(),
+                          )
+                        : Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 6,
+                              vertical: 4,
+                            ),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF101113),
+                              borderRadius: BorderRadius.circular(16),
+                              border: Border.all(
+                                color: Colors.white.withOpacity(0.10),
+                              ),
+                            ),
+                            child: bottomNavRow(),
+                          )),
             ),
           ],
         ),
