@@ -299,8 +299,9 @@ class _BusinessThemePageState extends State<BusinessThemePage> {
                   paletteForDriverTheme(variant).surface,
                   paletteForDriverTheme(variant).accent,
                 ],
-                onTap: () {
-                  unawaited(saveDriverThemePreference(variant));
+                onTap: () async {
+                  await saveDriverThemePreference(variant);
+                  if (!context.mounted) return;
                   _showSavedSnack(
                     'Chauffeursthema opgeslagen: ${_labelForDriver(variant)}',
                   );

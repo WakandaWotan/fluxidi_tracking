@@ -1198,6 +1198,7 @@ Future<void> _runStartupDeferredWork({
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await loadBusinessThemePreference();
+  await loadDriverThemePreference();
   await loadLocalTenantState();
   await CompanySessionStore.instance.bootstrap();
   var hasBootstrapToken = false;
