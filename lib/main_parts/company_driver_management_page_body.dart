@@ -19,10 +19,35 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
   final Set<String> documentRefreshFailedDriverIds;
   final void Function(DriverProfile updated)? onPropagateConfirmedDriverState;
 
-  static const Color _pageBg = Color(0xFF07080C);
-  static const Color _panelBg = Color(0xFF101113);
-  static const Color _subPanelBg = Color(0xFF15120A);
-  static const Color _gold = Color(0xFFE5B641);
+  BusinessThemePalette get _palette =>
+      paletteForBusinessTheme(businessThemeNotifier.value);
+  bool get _isDark => _palette.isDark;
+  Color get _pageBg => _palette.background;
+  Color get _panelBg => _palette.surface;
+  Color get _subPanelBg => _palette.surfaceAlt;
+  Color get _gold => _palette.accent;
+  Color get _textPrimary => _palette.textPrimary;
+  Color get _textSecondary => _palette.textSecondary;
+  Color get _textMuted => _palette.textMuted;
+  Color get _textOnAccent => _palette.textOnAccent;
+  Color get _border => _palette.border;
+  Color get _success => _palette.success;
+  Color get _danger => _palette.danger;
+  Color get _shadow => _palette.shadow;
+  bool get _isCleanProfessional =>
+      businessThemeNotifier.value == BusinessThemeVariant.cleanProfessional;
+  bool get _isCorporateBlue =>
+      businessThemeNotifier.value == BusinessThemeVariant.corporateBlue;
+  Color get _inputFill => _isDark
+      ? (_isCorporateBlue ? const Color(0xFF0F1A2F) : const Color(0xFF0B0B0B))
+      : const Color(0xFFF7F9FC);
+  Color get _inputBorderColor =>
+      _border.withOpacity(_isDark ? (_isCorporateBlue ? 0.72 : 0.55) : 0.92);
+  Color get _inputFocusColor =>
+      _gold.withOpacity(_isDark ? (_isCorporateBlue ? 0.95 : 0.9) : 0.95);
+  Color get _dialogBg => _isDark ? _panelBg : _subPanelBg;
+  Color get _dialogHelperTextColor =>
+      _textMuted.withOpacity(_isCleanProfessional ? 0.98 : 0.9);
   static final Set<String> _avatarPrecacheQueuedUrls = <String>{};
   static String _lastDriverPageLogSignature = '';
   static String _lastAdminDocVisibilitySignature = '';
@@ -462,19 +487,33 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
       child: TextField(
         controller: ctrl,
         enabled: enabled,
-        style: const TextStyle(color: Colors.white),
+        style: TextStyle(
+          color: enabled
+              ? _textPrimary
+              : _textMuted.withOpacity(_isDark ? 0.78 : 0.9),
+        ),
         decoration: InputDecoration(
           labelText: label,
-          labelStyle: const TextStyle(color: Colors.white70),
+          labelStyle: TextStyle(color: _textSecondary.withOpacity(0.96)),
           filled: true,
-          fillColor: const Color(0xFF0B0B0B),
+          fillColor: _inputFill,
           border: OutlineInputBorder(
             borderRadius: BorderRadius.circular(10),
-            borderSide: const BorderSide(color: Color(0x22FFFFFF)),
+            borderSide: BorderSide(color: _inputBorderColor),
           ),
           enabledBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(10),
-            borderSide: const BorderSide(color: Color(0x22FFFFFF)),
+            borderSide: BorderSide(color: _inputBorderColor),
+          ),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(10),
+            borderSide: BorderSide(color: _inputFocusColor, width: 1.25),
+          ),
+          disabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(10),
+            borderSide: BorderSide(
+              color: _inputBorderColor.withOpacity(_isDark ? 0.7 : 0.92),
+            ),
           ),
         ),
       ),
@@ -576,7 +615,7 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
   Future<ImageSource?> _askProfilePhotoSource(BuildContext context) {
     return showModalBottomSheet<ImageSource>(
       context: context,
-      backgroundColor: const Color(0xFF141B2F),
+      backgroundColor: _panelBg,
       builder: (ctx) => SafeArea(
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -669,7 +708,7 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
               horizontal: 16,
               vertical: 24,
             ),
-            backgroundColor: const Color(0xFF141B2F),
+            backgroundColor: _dialogBg,
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(16),
             ),
@@ -680,6 +719,7 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                 fr: 'Modifier le chauffeur',
                 es: 'Editar conductor',
               ),
+              style: TextStyle(color: _textPrimary),
             ),
             content: SingleChildScrollView(
               child: Column(
@@ -691,9 +731,11 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                     padding: const EdgeInsets.all(10),
                     margin: const EdgeInsets.only(bottom: 8),
                     decoration: BoxDecoration(
-                      color: const Color(0xFF0F1322),
+                      color: _subPanelBg,
                       borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: _gold.withOpacity(0.34)),
+                      border: Border.all(
+                        color: _border.withOpacity(_isDark ? 0.5 : 0.95),
+                      ),
                     ),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -704,10 +746,12 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                               width: 56,
                               height: 56,
                               decoration: BoxDecoration(
-                                color: const Color(0xFF17120A),
+                                color: _inputFill,
                                 shape: BoxShape.circle,
                                 border: Border.all(
-                                  color: _gold.withOpacity(0.46),
+                                  color: _border.withOpacity(
+                                    _isDark ? 0.58 : 0.95,
+                                  ),
                                 ),
                               ),
                               child: ClipOval(
@@ -718,8 +762,8 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                                         errorBuilder: (_, __, ___) => Center(
                                           child: Text(
                                             _initialsFromName(nameCtrl.text),
-                                            style: const TextStyle(
-                                              color: Colors.white,
+                                            style: TextStyle(
+                                              color: _textPrimary,
                                               fontWeight: FontWeight.w800,
                                             ),
                                           ),
@@ -735,8 +779,8 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                                                       _initialsFromName(
                                                         nameCtrl.text,
                                                       ),
-                                                      style: const TextStyle(
-                                                        color: Colors.white,
+                                                      style: TextStyle(
+                                                        color: _textPrimary,
                                                         fontWeight:
                                                             FontWeight.w800,
                                                       ),
@@ -748,8 +792,8 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                                                 _initialsFromName(
                                                   nameCtrl.text,
                                                 ),
-                                                style: const TextStyle(
-                                                  color: Colors.white,
+                                                style: TextStyle(
+                                                  color: _textPrimary,
                                                   fontWeight: FontWeight.w800,
                                                 ),
                                               ),
@@ -768,8 +812,8 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                                       fr: 'Photo de profil',
                                       es: 'Foto de perfil',
                                     ),
-                                    style: const TextStyle(
-                                      color: Colors.white,
+                                    style: TextStyle(
+                                      color: _textPrimary,
                                       fontWeight: FontWeight.w800,
                                       fontSize: 13.6,
                                     ),
@@ -791,7 +835,7 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                                             es: 'Aún sin foto',
                                           ),
                                     style: TextStyle(
-                                      color: Colors.white.withOpacity(0.64),
+                                      color: _textMuted.withOpacity(0.9),
                                       fontSize: 11.5,
                                     ),
                                   ),
@@ -809,7 +853,7 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                             es: 'Esta foto solo es visible dentro de la empresa.',
                           ),
                           style: TextStyle(
-                            color: Colors.white.withOpacity(0.58),
+                            color: _dialogHelperTextColor,
                             fontSize: 11.1,
                           ),
                         ),
@@ -824,7 +868,7 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                                 side: BorderSide(
                                   color: _gold.withOpacity(0.45),
                                 ),
-                                backgroundColor: const Color(0xFF16120A),
+                                backgroundColor: _subPanelBg,
                                 padding: const EdgeInsets.symmetric(
                                   horizontal: 10,
                                   vertical: 8,
@@ -926,9 +970,11 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                     padding: const EdgeInsets.all(10),
                     margin: const EdgeInsets.only(bottom: 8),
                     decoration: BoxDecoration(
-                      color: const Color(0xFF0F1322),
+                      color: _subPanelBg,
                       borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: _gold.withOpacity(0.34)),
+                      border: Border.all(
+                        color: _border.withOpacity(_isDark ? 0.5 : 0.95),
+                      ),
                     ),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -940,8 +986,8 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                             fr: 'Profil partenaire public',
                             es: 'Perfil público de socio',
                           ),
-                          style: const TextStyle(
-                            color: Colors.white,
+                          style: TextStyle(
+                            color: _textPrimary,
                             fontWeight: FontWeight.w800,
                             fontSize: 13.6,
                           ),
@@ -952,6 +998,7 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                           dense: true,
                           value: publicProfileEnabled,
                           activeColor: _gold,
+                          activeTrackColor: _gold.withOpacity(0.5),
                           onChanged: (v) => setDialogState(() {
                             publicProfileEnabled = v;
                             if (!publicProfileEnabled) {
@@ -965,7 +1012,11 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                               fr: 'Afficher le chauffeur publiquement',
                               es: 'Mostrar conductor públicamente',
                             ),
-                            style: const TextStyle(fontSize: 13),
+                            style: TextStyle(
+                              fontSize: 13,
+                              color: _textPrimary,
+                              fontWeight: FontWeight.w600,
+                            ),
                           ),
                         ),
                         SwitchListTile(
@@ -976,6 +1027,7 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                               hasUsablePublicPhotoSource &&
                               publicPhotoEnabled,
                           activeColor: _gold,
+                          activeTrackColor: _gold.withOpacity(0.5),
                           onChanged:
                               (!publicProfileEnabled ||
                                   !hasUsablePublicPhotoSource)
@@ -990,7 +1042,11 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                               fr: 'Afficher la photo publiquement',
                               es: 'Mostrar foto públicamente',
                             ),
-                            style: const TextStyle(fontSize: 13),
+                            style: TextStyle(
+                              fontSize: 13,
+                              color: _textPrimary,
+                              fontWeight: FontWeight.w600,
+                            ),
                           ),
                           subtitle: (!hasUsablePublicPhotoSource)
                               ? Text(
@@ -1001,7 +1057,7 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                                     es: 'Primero añade una foto interna o sube una foto pública del conductor.',
                                   ),
                                   style: TextStyle(
-                                    color: Colors.white.withOpacity(0.62),
+                                    color: _dialogHelperTextColor,
                                     fontSize: 11.2,
                                   ),
                                 )
@@ -1029,6 +1085,15 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                         Align(
                           alignment: Alignment.centerLeft,
                           child: OutlinedButton.icon(
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: _gold.withOpacity(0.98),
+                              side: BorderSide(
+                                color: _gold.withOpacity(_isDark ? 0.45 : 0.7),
+                              ),
+                              backgroundColor: _isCleanProfessional
+                                  ? Colors.white
+                                  : _subPanelBg,
+                            ),
                             onPressed: publicPhotoUploading
                                 ? null
                                 : () async {
@@ -1206,7 +1271,7 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                             es: 'Esta URL se usará más adelante para el perfil público. La foto interna permanece local.',
                           ),
                           style: TextStyle(
-                            color: Colors.white.withOpacity(0.58),
+                            color: _dialogHelperTextColor,
                             fontSize: 11.1,
                           ),
                         ),
@@ -1238,7 +1303,7 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                             es: 'Estos ajustes aún no publican nada automáticamente. La publicación se hará más adelante mediante el perfil público del socio.',
                           ),
                           style: TextStyle(
-                            color: Colors.white.withOpacity(0.58),
+                            color: _dialogHelperTextColor,
                             fontSize: 11.1,
                           ),
                         ),
@@ -1251,7 +1316,7 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                             es: 'Después de subir y guardar: vuelve a publicar el perfil del socio para actualizar la página pública.',
                           ),
                           style: TextStyle(
-                            color: Colors.white.withOpacity(0.58),
+                            color: _dialogHelperTextColor,
                             fontSize: 11.1,
                           ),
                         ),
@@ -1266,9 +1331,11 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                     width: double.infinity,
                     padding: const EdgeInsets.all(10),
                     decoration: BoxDecoration(
-                      color: const Color(0xFF0F1322),
+                      color: _subPanelBg,
                       borderRadius: BorderRadius.circular(10),
-                      border: Border.all(color: _gold.withOpacity(0.30)),
+                      border: Border.all(
+                        color: _border.withOpacity(_isDark ? 0.5 : 0.95),
+                      ),
                     ),
                     child: Text(
                       _t(
@@ -1278,7 +1345,7 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                         es: 'Gestion del codigo de conductor: usa "Generar nuevo codigo de conductor".',
                       ),
                       style: TextStyle(
-                        color: Colors.white.withOpacity(0.78),
+                        color: _textSecondary.withOpacity(0.92),
                         fontSize: 11.8,
                         fontWeight: FontWeight.w600,
                       ),
@@ -1315,9 +1382,15 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                   SwitchListTile(
                     contentPadding: EdgeInsets.zero,
                     value: active,
+                    activeColor: _gold,
+                    activeTrackColor: _gold.withOpacity(0.5),
                     onChanged: (v) => setDialogState(() => active = v),
                     title: Text(
                       _t(nl: 'Actief', en: 'Active', fr: 'Actif', es: 'Activo'),
+                      style: TextStyle(
+                        color: _textPrimary,
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
                   ),
                   const SizedBox(height: 8),
@@ -1326,6 +1399,11 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                       Expanded(
                         child: OutlinedButton(
                           onPressed: () => Navigator.pop(ctx),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: _textPrimary,
+                            side: BorderSide(color: _border.withOpacity(0.7)),
+                            backgroundColor: _subPanelBg,
+                          ),
                           child: Text(
                             _t(
                               nl: 'Annuleren',
@@ -1339,6 +1417,10 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                       const SizedBox(width: 8),
                       Expanded(
                         child: FilledButton(
+                          style: FilledButton.styleFrom(
+                            backgroundColor: _gold,
+                            foregroundColor: _textOnAccent,
+                          ),
                           onPressed: () async {
                             final messenger = ScaffoldMessenger.of(ctx);
                             final navigator = Navigator.of(ctx);
@@ -1495,7 +1577,10 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
           Expanded(
             child: RichText(
               text: TextSpan(
-                style: const TextStyle(color: Colors.white70, fontSize: 12),
+                style: TextStyle(
+                  color: _textMuted.withOpacity(0.9),
+                  fontSize: 12,
+                ),
                 children: [
                   TextSpan(
                     text: '$label: ',
@@ -2526,7 +2611,9 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
             '${_t(nl: 'Status', en: 'Status', fr: 'Statut', es: 'Estado')}: $statusLabel'
             '${doc.isExpiredByDate && doc.status != DriverDocumentStatuses.expired ? ' (${_t(nl: 'datum verlopen', en: 'date expired', fr: 'date expiree', es: 'fecha caducada')})' : ''}',
             style: TextStyle(
-              color: expiredVisual ? Colors.orangeAccent : Colors.white70,
+              color: expiredVisual
+                  ? Colors.orangeAccent
+                  : _textMuted.withOpacity(0.9),
               fontSize: 12,
             ),
             maxLines: 3,
@@ -2550,7 +2637,7 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
           const SizedBox(height: 4),
           Text(
             storageLabel(doc),
-            style: const TextStyle(fontSize: 11, color: Colors.white60),
+            style: TextStyle(fontSize: 11, color: _textMuted.withOpacity(0.8)),
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
           ),
@@ -2572,7 +2659,10 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
             const SizedBox(height: 4),
             Text(
               '${_t(nl: 'Notities', en: 'Notes', fr: 'Notes', es: 'Notas')}: ${doc.notes}',
-              style: const TextStyle(fontSize: 11, color: Colors.white60),
+              style: TextStyle(
+                fontSize: 11,
+                color: _textMuted.withOpacity(0.8),
+              ),
               maxLines: 3,
               overflow: TextOverflow.ellipsis,
             ),
@@ -2684,18 +2774,24 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
   }) {
     final decoration = compact
         ? BoxDecoration(
-            gradient: const LinearGradient(
+            gradient: LinearGradient(
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
-              colors: [Color(0xFF090909), Color(0xFF101010)],
+              colors: _isDark
+                  ? const [Color(0xFF090909), Color(0xFF101010)]
+                  : [_subPanelBg, _panelBg],
             ),
             borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: _gold.withOpacity(0.30)),
+            border: Border.all(
+              color: _border.withOpacity(_isDark ? 0.42 : 0.92),
+            ),
           )
         : BoxDecoration(
             color: _panelBg,
             borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: _gold.withOpacity(0.22)),
+            border: Border.all(
+              color: _border.withOpacity(_isDark ? 0.34 : 0.9),
+            ),
           );
     return Container(
       padding: EdgeInsets.fromLTRB(
@@ -2729,7 +2825,7 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                    color: Colors.white.withOpacity(0.62),
+                    color: _textMuted.withOpacity(0.9),
                     fontSize: compact ? 14.8 : 10.8,
                     fontWeight: FontWeight.w600,
                   ),
@@ -2740,7 +2836,7 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                    color: Colors.white,
+                    color: _textPrimary,
                     fontWeight: FontWeight.w900,
                     fontSize: compact ? 29 : 16,
                   ),
@@ -2754,7 +2850,7 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
-                      color: Colors.white.withOpacity(0.60),
+                      color: _textMuted.withOpacity(0.88),
                       fontSize: 12.8,
                       fontWeight: FontWeight.w500,
                     ),
@@ -2784,8 +2880,8 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
           Expanded(
             child: RichText(
               text: TextSpan(
-                style: const TextStyle(
-                  color: Colors.white70,
+                style: TextStyle(
+                  color: _textMuted.withOpacity(0.9),
                   fontSize: 13.6,
                   height: 1.26,
                 ),
@@ -2793,14 +2889,14 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                   TextSpan(
                     text: '$label: ',
                     style: TextStyle(
-                      color: Colors.white.withOpacity(0.62),
+                      color: _textMuted.withOpacity(0.9),
                       fontWeight: FontWeight.w600,
                     ),
                   ),
                   TextSpan(
                     text: shown,
-                    style: const TextStyle(
-                      color: Colors.white,
+                    style: TextStyle(
+                      color: _textPrimary,
                       fontWeight: FontWeight.w700,
                     ),
                   ),
@@ -2842,8 +2938,8 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                       fr: 'Documents',
                       es: 'Documentos',
                     ),
-                    style: const TextStyle(
-                      color: Colors.white,
+                    style: TextStyle(
+                      color: _textPrimary,
                       fontWeight: FontWeight.w800,
                       fontSize: 15,
                     ),
@@ -2859,7 +2955,9 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                                 fr: 'Aucun document.',
                                 es: 'Sin documentos.',
                               ),
-                              style: const TextStyle(color: Colors.white60),
+                              style: TextStyle(
+                                color: _textMuted.withOpacity(0.8),
+                              ),
                             ),
                           )
                         : ListView(
@@ -2881,7 +2979,7 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                         },
                         style: OutlinedButton.styleFrom(
                           foregroundColor: _gold.withOpacity(0.96),
-                          side: BorderSide(color: _gold.withOpacity(0.38)),
+                          side: BorderSide(color: _border.withOpacity(0.55)),
                           backgroundColor: _panelBg,
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(999),
@@ -2904,10 +3002,8 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                       OutlinedButton.icon(
                         onPressed: () => Navigator.of(sheetContext).pop(),
                         style: OutlinedButton.styleFrom(
-                          foregroundColor: Colors.white70,
-                          side: BorderSide(
-                            color: Colors.white.withOpacity(0.24),
-                          ),
+                          foregroundColor: _textMuted.withOpacity(0.92),
+                          side: BorderSide(color: _border.withOpacity(0.55)),
                           backgroundColor: _panelBg,
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(999),
@@ -3006,13 +3102,15 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
       margin: const EdgeInsets.only(bottom: 8),
       padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
       decoration: BoxDecoration(
-        gradient: const LinearGradient(
+        gradient: LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          colors: [Color(0xFF07080C), Color(0xFF101010)],
+          colors: _isDark
+              ? const [Color(0xFF07080C), Color(0xFF101010)]
+              : [_subPanelBg, _panelBg],
         ),
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: _gold.withOpacity(0.30)),
+        border: Border.all(color: _border.withOpacity(_isDark ? 0.42 : 0.92)),
       ),
       child: SizedBox(
         height: 248,
@@ -3059,22 +3157,20 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                                   vertical: 5,
                                 ),
                                 decoration: BoxDecoration(
-                                  color: driver.isActive
-                                      ? Colors.green.withOpacity(0.16)
-                                      : Colors.white.withOpacity(0.06),
+                                  color: _driverStatusChipBg(driver.isActive),
                                   borderRadius: BorderRadius.circular(999),
                                   border: Border.all(
-                                    color: driver.isActive
-                                        ? Colors.greenAccent.withOpacity(0.44)
-                                        : Colors.white24,
+                                    color: _driverStatusChipBorder(
+                                      driver.isActive,
+                                    ),
                                   ),
                                 ),
                                 child: Text(
                                   accountStatus,
                                   style: TextStyle(
-                                    color: driver.isActive
-                                        ? Colors.greenAccent
-                                        : Colors.white70,
+                                    color: _driverStatusChipText(
+                                      driver.isActive,
+                                    ),
                                     fontWeight: FontWeight.w700,
                                     fontSize: 13.4,
                                   ),
@@ -3256,8 +3352,8 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                               const SizedBox(height: 4),
                               Text(
                                 docsSubStatus,
-                                style: const TextStyle(
-                                  color: Colors.white60,
+                                style: TextStyle(
+                                  color: _textMuted.withOpacity(0.8),
                                   fontSize: 13,
                                   height: 1.22,
                                 ),
@@ -3280,9 +3376,11 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                         ),
                         style: OutlinedButton.styleFrom(
                           minimumSize: const Size(0, 50),
-                          foregroundColor: _gold.withOpacity(0.94),
-                          side: BorderSide(color: _gold.withOpacity(0.30)),
-                          backgroundColor: Colors.black.withOpacity(0.14),
+                          foregroundColor: _gold.withOpacity(0.98),
+                          side: BorderSide(
+                            color: _border.withOpacity(_isDark ? 0.45 : 0.92),
+                          ),
+                          backgroundColor: _subPanelBg,
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(12),
                           ),
@@ -3320,7 +3418,7 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                         minimumSize: const Size(0, 52),
                         foregroundColor: _gold.withOpacity(0.98),
                         side: BorderSide(color: _gold.withOpacity(0.34)),
-                        backgroundColor: const Color(0xFF16120A),
+                        backgroundColor: _subPanelBg,
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(12),
                         ),
@@ -3347,7 +3445,7 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                         minimumSize: const Size(0, 52),
                         foregroundColor: _gold.withOpacity(0.98),
                         side: BorderSide(color: _gold.withOpacity(0.34)),
-                        backgroundColor: const Color(0xFF16120A),
+                        backgroundColor: _subPanelBg,
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(12),
                         ),
@@ -3371,9 +3469,11 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                       onPressed: () => _openEditDriverDialog(context, driver),
                       style: OutlinedButton.styleFrom(
                         minimumSize: const Size(0, 52),
-                        foregroundColor: Colors.white,
-                        side: BorderSide(color: Colors.white.withOpacity(0.24)),
-                        backgroundColor: Colors.black.withOpacity(0.14),
+                        foregroundColor: _textPrimary,
+                        side: BorderSide(
+                          color: _border.withOpacity(_isDark ? 0.45 : 0.92),
+                        ),
+                        backgroundColor: _subPanelBg,
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(12),
                         ),
@@ -3466,21 +3566,63 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
   }
 
   Color _availabilityChipColor(DriverProfile driver) {
-    if (!driver.isActive) return Colors.white70;
+    if (!driver.isActive) {
+      return _isCleanProfessional
+          ? const Color(0xFF455468)
+          : _textMuted.withOpacity(0.9);
+    }
     final availability = normalizeDriverAvailabilityState(
       driver.availabilityStatus,
       fallback: 'available',
     );
     switch (availability) {
       case 'paused':
-        return Colors.orangeAccent;
+        return _isCleanProfessional
+            ? const Color(0xFF9A5A00)
+            : Colors.orangeAccent;
       case 'busy':
-        return Colors.deepOrangeAccent;
+        return _isCleanProfessional
+            ? const Color(0xFFA6430A)
+            : Colors.deepOrangeAccent;
       case 'offline':
-        return Colors.blueGrey.shade200;
+        return _isCleanProfessional
+            ? const Color(0xFF58677A)
+            : Colors.blueGrey.shade200;
       default:
-        return Colors.greenAccent;
+        return _isCleanProfessional ? const Color(0xFF1E7A4B) : _success;
     }
+  }
+
+  Color _driverStatusChipBg(bool isActive) {
+    if (isActive) {
+      return _isCleanProfessional
+          ? const Color(0xFFE2F3E8)
+          : Colors.green.withOpacity(0.16);
+    }
+    if (_isCleanProfessional) return const Color(0xFFE8EEF5);
+    if (_isCorporateBlue) return const Color(0xFF162538);
+    return Colors.white.withOpacity(0.06);
+  }
+
+  Color _driverStatusChipBorder(bool isActive) {
+    if (isActive) {
+      return _isCleanProfessional
+          ? const Color(0xFF90C8A7)
+          : Colors.greenAccent.withOpacity(0.44);
+    }
+    if (_isCleanProfessional) return const Color(0xFFB7C4D3);
+    if (_isCorporateBlue) return _border.withOpacity(0.8);
+    return Colors.white24;
+  }
+
+  Color _driverStatusChipText(bool isActive) {
+    if (isActive) {
+      return _isCleanProfessional
+          ? const Color(0xFF1A6E44)
+          : Colors.greenAccent;
+    }
+    if (_isCleanProfessional) return const Color(0xFF34465A);
+    return _textMuted.withOpacity(0.9);
   }
 
   String _driverVehicleSummary(
@@ -3565,7 +3707,7 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                    color: Colors.white.withOpacity(0.78),
+                    color: _textSecondary.withOpacity(0.92),
                     fontSize: 13.8,
                     fontWeight: FontWeight.w700,
                   ),
@@ -3593,7 +3735,7 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
   ) async {
     await showModalBottomSheet<void>(
       context: context,
-      backgroundColor: const Color(0xFF101113),
+      backgroundColor: _panelBg,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
@@ -3606,8 +3748,8 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
             children: [
               Text(
                 _displayDriverName(driver.fullName),
-                style: const TextStyle(
-                  color: Colors.white,
+                style: TextStyle(
+                  color: _textPrimary,
                   fontSize: 16,
                   fontWeight: FontWeight.w800,
                 ),
@@ -3617,9 +3759,11 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                 width: double.infinity,
                 padding: const EdgeInsets.all(10),
                 decoration: BoxDecoration(
-                  color: const Color(0xFF17120A),
+                  color: _subPanelBg,
                   borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: _gold.withOpacity(0.34)),
+                  border: Border.all(
+                    color: _border.withOpacity(_isDark ? 0.42 : 0.92),
+                  ),
                 ),
                 child: Row(
                   children: [
@@ -3638,7 +3782,7 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                           es: 'Para la gestión completa, gira la tablet a horizontal.',
                         ),
                         style: TextStyle(
-                          color: Colors.white.withOpacity(0.78),
+                          color: _textMuted.withOpacity(0.92),
                           fontSize: 11.4,
                         ),
                       ),
@@ -3649,10 +3793,13 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
               const SizedBox(height: 8),
               ListTile(
                 contentPadding: EdgeInsets.zero,
-                leading: const Icon(Icons.edit_outlined, color: Colors.white),
+                leading: Icon(
+                  Icons.edit_outlined,
+                  color: _textSecondary.withOpacity(0.96),
+                ),
                 title: Text(
                   _t(nl: 'Beheren', en: 'Manage', fr: 'Gérer', es: 'Gestionar'),
-                  style: const TextStyle(color: Colors.white),
+                  style: TextStyle(color: _textPrimary),
                 ),
                 onTap: () {
                   Navigator.of(sheetContext).pop();
@@ -3661,9 +3808,9 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
               ),
               ListTile(
                 contentPadding: EdgeInsets.zero,
-                leading: const Icon(
+                leading: Icon(
                   Icons.description_outlined,
-                  color: Colors.white,
+                  color: _textSecondary.withOpacity(0.96),
                 ),
                 title: Text(
                   _t(
@@ -3672,7 +3819,7 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                     fr: 'Documents',
                     es: 'Documentos',
                   ),
-                  style: const TextStyle(color: Colors.white),
+                  style: TextStyle(color: _textPrimary),
                 ),
                 onTap: () {
                   Navigator.of(sheetContext).pop();
@@ -3692,7 +3839,7 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                     fr: 'Générer un code',
                     es: 'Generar código',
                   ),
-                  style: const TextStyle(color: Colors.white),
+                  style: TextStyle(color: _textPrimary),
                 ),
                 onTap: () {
                   Navigator.of(sheetContext).pop();
@@ -3712,7 +3859,7 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
   ) async {
     await showModalBottomSheet<void>(
       context: context,
-      backgroundColor: const Color(0xFF101113),
+      backgroundColor: _panelBg,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
@@ -3818,7 +3965,7 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
     }
     await showModalBottomSheet<void>(
       context: context,
-      backgroundColor: const Color(0xFF101113),
+      backgroundColor: _panelBg,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
@@ -3853,9 +4000,9 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                     _driverCodeStatusLabel(driver),
                     style: TextStyle(color: Colors.white.withOpacity(0.62)),
                   ),
-                  trailing: const Icon(
+                  trailing: Icon(
                     Icons.chevron_right,
-                    color: Colors.white54,
+                    color: _textMuted.withOpacity(0.72),
                   ),
                   onTap: () {
                     Navigator.of(sheetContext).pop();
@@ -3898,7 +4045,7 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
     }
     await showModalBottomSheet<void>(
       context: context,
-      backgroundColor: const Color(0xFF101113),
+      backgroundColor: _panelBg,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
@@ -3940,9 +4087,9 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                     ),
                     style: TextStyle(color: Colors.white.withOpacity(0.62)),
                   ),
-                  trailing: const Icon(
+                  trailing: Icon(
                     Icons.chevron_right,
-                    color: Colors.white54,
+                    color: _textMuted.withOpacity(0.72),
                   ),
                   onTap: () {
                     Navigator.of(sheetContext).pop();
@@ -3963,12 +4110,24 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
     required VoidCallback onTap,
     bool active = false,
   }) {
-    final color = active ? const Color(0xFFFFD36A) : Colors.white70;
+    final color = active ? _gold : _textMuted.withOpacity(0.9);
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(12),
-      child: Padding(
+      child: Container(
+        margin: const EdgeInsets.symmetric(horizontal: 2, vertical: 1),
         padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 5),
+        decoration: BoxDecoration(
+          color: active
+              ? _gold.withOpacity(_isDark ? 0.14 : 0.12)
+              : Colors.transparent,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: active
+                ? _gold.withOpacity(_isDark ? 0.45 : 0.8)
+                : _border.withOpacity(_isDark ? 0.0 : 0.42),
+          ),
+        ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -3992,15 +4151,16 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ValueListenableBuilder<AppLanguage>(
-      valueListenable: appLanguageNotifier,
-      builder: (context, _, __) {
+    return AnimatedBuilder(
+      animation: Listenable.merge([appLanguageNotifier, businessThemeNotifier]),
+      builder: (context, _) {
         final appMedia = MediaQuery.of(context);
         final isPortraitHeader = appMedia.size.width < appMedia.size.height;
         return Scaffold(
           backgroundColor: _pageBg,
           appBar: AppBar(
             backgroundColor: _pageBg,
+            foregroundColor: _textPrimary,
             iconTheme: isPortraitHeader ? const IconThemeData(size: 29) : null,
             toolbarHeight: isPortraitHeader ? 92 : null,
             title: Column(
@@ -4014,7 +4174,7 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                     es: 'Gestionar conductores',
                   ),
                   style: TextStyle(
-                    color: Colors.white,
+                    color: _textPrimary,
                     fontWeight: FontWeight.w900,
                     fontSize: isPortraitHeader ? 27.0 : 20.0,
                   ),
@@ -4027,7 +4187,7 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                     es: 'Resumen rápido de tus conductores',
                   ),
                   style: TextStyle(
-                    color: Colors.white.withOpacity(0.72),
+                    color: _textMuted.withOpacity(0.88),
                     fontSize: isPortraitHeader ? 16.0 : 11.4,
                     fontWeight: FontWeight.w500,
                   ),
@@ -4141,7 +4301,7 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                           es: 'Todavía no hay conductores disponibles.',
                         ),
                         textAlign: TextAlign.center,
-                        style: const TextStyle(color: Colors.white70),
+                        style: TextStyle(color: _textMuted.withOpacity(0.92)),
                       ),
                     ),
                   );
@@ -4206,7 +4366,9 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                                 color: _subPanelBg,
                                 borderRadius: BorderRadius.circular(11),
                                 border: Border.all(
-                                  color: _gold.withOpacity(0.32),
+                                  color: _border.withOpacity(
+                                    _isDark ? 0.38 : 0.92,
+                                  ),
                                 ),
                               ),
                               child: Row(
@@ -4230,8 +4392,8 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                                             fr: 'Tournez votre tablette pour la gestion complète',
                                             es: 'Gira tu tablet para la gestión completa',
                                           ),
-                                          style: const TextStyle(
-                                            color: Colors.white,
+                                          style: TextStyle(
+                                            color: _textPrimary,
                                             fontWeight: FontWeight.w700,
                                             fontSize: 14.2,
                                           ),
@@ -4245,9 +4407,7 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                                             es: 'Para editar, documentos, códigos y ajustes.',
                                           ),
                                           style: TextStyle(
-                                            color: Colors.white.withOpacity(
-                                              0.68,
-                                            ),
+                                            color: _textMuted.withOpacity(0.9),
                                             fontSize: 12.0,
                                           ),
                                         ),
@@ -4269,7 +4429,9 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                                 color: _subPanelBg,
                                 borderRadius: BorderRadius.circular(12),
                                 border: Border.all(
-                                  color: _gold.withOpacity(0.30),
+                                  color: _border.withOpacity(
+                                    _isDark ? 0.36 : 0.9,
+                                  ),
                                 ),
                               ),
                               child: useThreeColumnPortrait
@@ -4321,7 +4483,7 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                                         Expanded(
                                           child: _portraitKpiChip(
                                             icon: Icons.person_off_outlined,
-                                            accent: Colors.white70,
+                                            accent: _textMuted.withOpacity(0.9),
                                             label: _t(
                                               nl: 'Inactief',
                                               en: 'Inactive',
@@ -4378,7 +4540,7 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                                         ),
                                         _portraitKpiChip(
                                           icon: Icons.person_off_outlined,
-                                          accent: Colors.white70,
+                                          accent: _textMuted.withOpacity(0.9),
                                           label: _t(
                                             nl: 'Inactief',
                                             en: 'Inactive',
@@ -4521,8 +4683,21 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                                       color: _panelBg,
                                       borderRadius: BorderRadius.circular(13),
                                       border: Border.all(
-                                        color: _gold.withOpacity(0.28),
+                                        color: _border.withOpacity(
+                                          _isDark ? 0.42 : 0.95,
+                                        ),
                                       ),
+                                      boxShadow: _isCleanProfessional
+                                          ? [
+                                              BoxShadow(
+                                                color: _shadow.withOpacity(
+                                                  0.18,
+                                                ),
+                                                blurRadius: 14,
+                                                offset: const Offset(0, 4),
+                                              ),
+                                            ]
+                                          : null,
                                     ),
                                     child: Column(
                                       crossAxisAlignment:
@@ -4569,9 +4744,9 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                                                                       : _displayDriverName(
                                                                           d.fullName,
                                                                         ),
-                                                                  style: const TextStyle(
-                                                                    color: Colors
-                                                                        .white,
+                                                                  style: TextStyle(
+                                                                    color:
+                                                                        _textPrimary,
                                                                     fontSize:
                                                                         22.0,
                                                                     fontWeight:
@@ -4692,8 +4867,8 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                                                   ),
                                                 ),
                                                 VerticalDivider(
-                                                  color: _gold.withOpacity(
-                                                    0.22,
+                                                  color: _border.withOpacity(
+                                                    _isDark ? 0.35 : 0.9,
                                                   ),
                                                   width: 16,
                                                   thickness: 1,
@@ -4717,40 +4892,28 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                                                                   vertical: 7,
                                                                 ),
                                                             decoration: BoxDecoration(
-                                                              color: d.isActive
-                                                                  ? Colors.green
-                                                                        .withOpacity(
-                                                                          0.16,
-                                                                        )
-                                                                  : Colors.white
-                                                                        .withOpacity(
-                                                                          0.06,
-                                                                        ),
+                                                              color:
+                                                                  _driverStatusChipBg(
+                                                                    d.isActive,
+                                                                  ),
                                                               borderRadius:
                                                                   BorderRadius.circular(
                                                                     999,
                                                                   ),
                                                               border: Border.all(
                                                                 color:
-                                                                    d.isActive
-                                                                    ? Colors
-                                                                          .greenAccent
-                                                                          .withOpacity(
-                                                                            0.44,
-                                                                          )
-                                                                    : Colors
-                                                                          .white24,
+                                                                    _driverStatusChipBorder(
+                                                                      d.isActive,
+                                                                    ),
                                                               ),
                                                             ),
                                                             child: Text(
                                                               status,
                                                               style: TextStyle(
                                                                 color:
-                                                                    d.isActive
-                                                                    ? Colors
-                                                                          .greenAccent
-                                                                    : Colors
-                                                                          .white70,
+                                                                    _driverStatusChipText(
+                                                                      d.isActive,
+                                                                    ),
                                                                 fontWeight:
                                                                     FontWeight
                                                                         .w700,
@@ -4826,8 +4989,8 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                                                   ),
                                                 ),
                                                 VerticalDivider(
-                                                  color: _gold.withOpacity(
-                                                    0.22,
+                                                  color: _border.withOpacity(
+                                                    _isDark ? 0.35 : 0.9,
                                                   ),
                                                   width: 16,
                                                   thickness: 1,
@@ -4841,8 +5004,8 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                                                     children: [
                                                       Text(
                                                         vehicleName,
-                                                        style: const TextStyle(
-                                                          color: Colors.white,
+                                                        style: TextStyle(
+                                                          color: _textPrimary,
                                                           fontWeight:
                                                               FontWeight.w700,
                                                           fontSize: 18.0,
@@ -5107,7 +5270,10 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                                                       style: TextStyle(
                                                         color: d.isActive
                                                             ? Colors.greenAccent
-                                                            : Colors.white70,
+                                                            : _textMuted
+                                                                  .withOpacity(
+                                                                    0.9,
+                                                                  ),
                                                         fontWeight:
                                                             FontWeight.w700,
                                                         fontSize: 13.8,
@@ -5272,11 +5438,20 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                           vertical: 4,
                         ),
                         decoration: BoxDecoration(
-                          color: const Color(0xFF101113),
+                          color: _panelBg,
                           borderRadius: BorderRadius.circular(16),
                           border: Border.all(
-                            color: Colors.white.withOpacity(0.10),
+                            color: _border.withOpacity(_isDark ? 0.3 : 0.9),
                           ),
+                          boxShadow: _isCleanProfessional
+                              ? [
+                                  BoxShadow(
+                                    color: _shadow.withOpacity(0.16),
+                                    blurRadius: 10,
+                                    offset: const Offset(0, 3),
+                                  ),
+                                ]
+                              : null,
                         ),
                         child: Row(
                           children: [
@@ -5391,7 +5566,9 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                       decoration: BoxDecoration(
                         color: _panelBg,
                         borderRadius: BorderRadius.circular(14),
-                        border: Border.all(color: _gold.withOpacity(0.30)),
+                        border: Border.all(
+                          color: _border.withOpacity(_isDark ? 0.38 : 0.92),
+                        ),
                       ),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -5404,7 +5581,7 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                               es: 'Gestionar conductores',
                             ),
                             style: TextStyle(
-                              color: Colors.white,
+                              color: _textPrimary,
                               fontWeight: FontWeight.w900,
                               fontSize: introTitleFontSize,
                             ),
@@ -5418,7 +5595,7 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                               es: 'Gestiona conductores, documentos y disponibilidad',
                             ),
                             style: TextStyle(
-                              color: Colors.white.withOpacity(0.72),
+                              color: _textMuted.withOpacity(0.9),
                               fontSize: introSubtitleFontSize,
                             ),
                           ),
@@ -5731,26 +5908,22 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                                         vertical: 4,
                                       ),
                                       decoration: BoxDecoration(
-                                        color: d.isActive
-                                            ? Colors.green.withOpacity(0.18)
-                                            : Colors.white.withOpacity(0.06),
+                                        color: _driverStatusChipBg(d.isActive),
                                         borderRadius: BorderRadius.circular(
                                           999,
                                         ),
                                         border: Border.all(
-                                          color: d.isActive
-                                              ? Colors.greenAccent.withOpacity(
-                                                  0.5,
-                                                )
-                                              : Colors.white24,
+                                          color: _driverStatusChipBorder(
+                                            d.isActive,
+                                          ),
                                         ),
                                       ),
                                       child: Text(
                                         status,
                                         style: TextStyle(
-                                          color: d.isActive
-                                              ? Colors.greenAccent
-                                              : Colors.white70,
+                                          color: _driverStatusChipText(
+                                            d.isActive,
+                                          ),
                                           fontSize: 11.6,
                                           fontWeight: FontWeight.w700,
                                         ),
@@ -5896,7 +6069,7 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                                     style: TextStyle(
                                       color: gap
                                           ? Colors.orangeAccent
-                                          : Colors.white70,
+                                          : _textMuted.withOpacity(0.9),
                                       fontSize: 12,
                                       fontWeight: FontWeight.w600,
                                     ),
@@ -5954,8 +6127,8 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                                                 fr: 'Touchez pour voir et gerer',
                                                 es: 'Toca para ver y gestionar',
                                               ),
-                                        style: const TextStyle(
-                                          color: Colors.white54,
+                                        style: TextStyle(
+                                          color: _textMuted.withOpacity(0.72),
                                           fontSize: 12,
                                         ),
                                       ),
@@ -5972,8 +6145,10 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                                                 fr: 'Aucun document.',
                                                 es: 'Sin documentos.',
                                               ),
-                                              style: const TextStyle(
-                                                color: Colors.white54,
+                                              style: TextStyle(
+                                                color: _textMuted.withOpacity(
+                                                  0.72,
+                                                ),
                                               ),
                                             ),
                                           )
@@ -6043,9 +6218,7 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                                           side: BorderSide(
                                             color: _gold.withOpacity(0.34),
                                           ),
-                                          backgroundColor: const Color(
-                                            0xFF16120A,
-                                          ),
+                                          backgroundColor: _subPanelBg,
                                           shape: RoundedRectangleBorder(
                                             borderRadius: BorderRadius.circular(
                                               999,
@@ -6082,9 +6255,7 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                                           side: BorderSide(
                                             color: _gold.withOpacity(0.34),
                                           ),
-                                          backgroundColor: const Color(
-                                            0xFF16120A,
-                                          ),
+                                          backgroundColor: _subPanelBg,
                                           shape: RoundedRectangleBorder(
                                             borderRadius: BorderRadius.circular(
                                               999,
