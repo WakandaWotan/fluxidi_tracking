@@ -8875,6 +8875,29 @@ class _DriverHomePageState extends State<DriverHomePage>
                       unawaited(_handleDriverStatusAction());
                     },
                   ),
+                  if (!widget.openedFromBusinessHome)
+                    ListTile(
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                      leading: Icon(Icons.palette_outlined, color: iconAccent),
+                      title: Text(
+                        _tr(nl: 'Thema', en: 'Theme', fr: 'Theme', es: 'Tema'),
+                        style: TextStyle(color: titleColor),
+                      ),
+                      subtitle: Text(
+                        _tr(
+                          nl: 'Kies je persoonlijke chauffeurweergave',
+                          en: 'Choose your personal driver theme',
+                          fr: 'Choisissez votre theme chauffeur personnel',
+                          es: 'Elige tu tema personal de conductor',
+                        ),
+                        style: TextStyle(color: subtitleColor, fontSize: 11.5),
+                      ),
+                      onTap: () {
+                        Navigator.of(ctx).pop();
+                        unawaited(_showDriverAppThemeSelectorSheet());
+                      },
+                    ),
                   if (_canSwitchCompanyDriversFromDashboard())
                     ListTile(
                       dense: true,
@@ -8930,6 +8953,192 @@ class _DriverHomePageState extends State<DriverHomePage>
               ),
             ),
           ),
+        );
+      },
+    );
+  }
+
+  Future<void> _showDriverAppThemeSelectorSheet() async {
+    if (widget.openedFromBusinessHome) return;
+
+    final selectorTitle = _tr(
+      nl: 'Persoonlijk thema',
+      en: 'Personal theme',
+      fr: 'Theme personnel',
+      es: 'Tema personal',
+    );
+
+    String labelForVariant(DriverThemeVariant variant) {
+      switch (variant) {
+        case DriverThemeVariant.nightGold:
+          return _tr(
+            nl: 'Night Gold',
+            en: 'Night Gold',
+            fr: 'Night Gold',
+            es: 'Night Gold',
+          );
+        case DriverThemeVariant.midnightBlue:
+          return _tr(
+            nl: 'Midnight Blue',
+            en: 'Midnight Blue',
+            fr: 'Midnight Blue',
+            es: 'Midnight Blue',
+          );
+        case DriverThemeVariant.highContrast:
+          return _tr(
+            nl: 'Midday Gold',
+            en: 'Midday Gold',
+            fr: 'Midday Gold',
+            es: 'Midday Gold',
+          );
+      }
+    }
+
+    String subtitleForVariant(DriverThemeVariant variant) {
+      switch (variant) {
+        case DriverThemeVariant.nightGold:
+          return _tr(
+            nl: 'Klassiek donker met gouden accenten',
+            en: 'Classic dark with golden accents',
+            fr: 'Sombre classique avec accents dores',
+            es: 'Oscuro clasico con acentos dorados',
+          );
+        case DriverThemeVariant.midnightBlue:
+          return _tr(
+            nl: 'Diep blauw met cyaan accenten',
+            en: 'Deep blue with cyan accents',
+            fr: 'Bleu profond avec accents cyan',
+            es: 'Azul profundo con acentos cian',
+          );
+        case DriverThemeVariant.highContrast:
+          return _tr(
+            nl: 'Espresso en champagne goud',
+            en: 'Espresso and champagne gold',
+            fr: 'Espresso et or champagne',
+            es: 'Espresso y oro champan',
+          );
+      }
+    }
+
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
+      builder: (ctx) {
+        return ValueListenableBuilder<DriverThemeVariant>(
+          valueListenable: driverAppThemeNotifier,
+          builder: (context, selectedVariant, _) {
+            final isMidnightBlue =
+                selectedVariant == DriverThemeVariant.midnightBlue;
+            final isMiddayGold =
+                selectedVariant == DriverThemeVariant.highContrast;
+            final sheetGradient = isMiddayGold
+                ? _middayGoldSurfaceGradient(soft: true)
+                : (isMidnightBlue
+                      ? const LinearGradient(
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                          colors: [
+                            Color(0xFF020711),
+                            Color(0xFF07111F),
+                            Color(0xFF0B1B33),
+                          ],
+                        )
+                      : const LinearGradient(
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                          colors: [Color(0xFF101113), Color(0xFF0D0E11)],
+                        ));
+            final sheetBorder = isMiddayGold
+                ? _middayGoldBorderColor(0.34)
+                : (isMidnightBlue
+                      ? _midnightBlueBorderColor(0.40)
+                      : Colors.white.withOpacity(0.10));
+            final iconAccent = isMidnightBlue
+                ? _midnightBlueAccent()
+                : (isMiddayGold
+                      ? const Color(0xFFE8C57E)
+                      : const Color(0xFFFFD36A));
+            final titleColor = isMiddayGold
+                ? _middayGoldTextPrimary()
+                : (isMidnightBlue ? _midnightBlueTextPrimary() : Colors.white);
+            final subtitleColor = isMiddayGold
+                ? _middayGoldTextMuted().withOpacity(0.92)
+                : (isMidnightBlue
+                      ? _midnightBlueTextMuted().withOpacity(0.92)
+                      : Colors.white.withOpacity(0.62));
+
+            return SafeArea(
+              top: false,
+              child: Container(
+                decoration: BoxDecoration(
+                  gradient: sheetGradient,
+                  borderRadius: const BorderRadius.vertical(
+                    top: Radius.circular(18),
+                  ),
+                  border: Border.all(color: sheetBorder),
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(14, 10, 14, 14),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        selectorTitle,
+                        style: TextStyle(
+                          color: titleColor,
+                          fontSize: 16,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      for (final variant in DriverThemeVariant.values)
+                        ListTile(
+                          dense: true,
+                          contentPadding: EdgeInsets.zero,
+                          leading: Icon(
+                            selectedVariant == variant
+                                ? Icons.radio_button_checked
+                                : Icons.radio_button_unchecked,
+                            color: iconAccent,
+                          ),
+                          title: Text(
+                            labelForVariant(variant),
+                            style: TextStyle(color: titleColor),
+                          ),
+                          subtitle: Text(
+                            subtitleForVariant(variant),
+                            style: TextStyle(
+                              color: subtitleColor,
+                              fontSize: 11.5,
+                            ),
+                          ),
+                          trailing: selectedVariant == variant
+                              ? Icon(Icons.check_rounded, color: iconAccent)
+                              : null,
+                          onTap: () async {
+                            await saveDriverAppThemePreference(variant);
+                            if (!mounted) return;
+                            Navigator.of(ctx).pop();
+                            _toast(
+                              _tr(
+                                nl: 'Persoonlijk thema opgeslagen',
+                                en: 'Personal theme saved',
+                                fr: 'Theme personnel enregistre',
+                                es: 'Tema personal guardado',
+                              ),
+                            );
+                          },
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          },
         );
       },
     );
