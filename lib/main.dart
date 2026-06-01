@@ -58,6 +58,8 @@ import 'package:fluxidi_tracking/driver_documents_store.dart';
 import 'package:fluxidi_tracking/driver_document_sheet.dart';
 import 'package:fluxidi_tracking/driver_my_documents_page.dart';
 import 'package:fluxidi_tracking/driver_theme_palette.dart';
+import 'package:fluxidi_tracking/company_driver_view_theme_store.dart';
+import 'package:fluxidi_tracking/driver_app_theme_store.dart';
 import 'package:fluxidi_tracking/driver_theme_store.dart';
 import 'package:fluxidi_tracking/driver_session_store.dart';
 import 'package:fluxidi_tracking/fluxidi_responsive.dart';
@@ -1198,7 +1200,8 @@ Future<void> _runStartupDeferredWork({
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await loadBusinessThemePreference();
-  await loadDriverThemePreference();
+  await loadCompanyDriverViewThemePreference();
+  await loadDriverAppThemePreference();
   await loadLocalTenantState();
   await CompanySessionStore.instance.bootstrap();
   var hasBootstrapToken = false;

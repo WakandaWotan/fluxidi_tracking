@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:fluxidi_tracking/business_theme_palette.dart';
 import 'package:fluxidi_tracking/business_theme_store.dart';
+import 'package:fluxidi_tracking/company_driver_view_theme_store.dart';
 import 'package:fluxidi_tracking/driver_theme_palette.dart';
-import 'package:fluxidi_tracking/driver_theme_store.dart';
 
 class BusinessThemePage extends StatefulWidget {
   const BusinessThemePage({super.key});
@@ -50,7 +50,7 @@ class _BusinessThemePageState extends State<BusinessThemePage> {
   Future<void> _loadPreferences() async {
     await Future.wait<void>([
       loadBusinessThemePreference(),
-      loadDriverThemePreference(),
+      loadCompanyDriverViewThemePreference(),
     ]);
   }
 
@@ -254,7 +254,7 @@ class _BusinessThemePageState extends State<BusinessThemePage> {
 
   Widget _driverSection() {
     return ValueListenableBuilder<DriverThemeVariant>(
-      valueListenable: driverThemeNotifier,
+      valueListenable: companyDriverViewThemeNotifier,
       builder: (context, current, _) {
         return Column(
           children: [
@@ -269,7 +269,7 @@ class _BusinessThemePageState extends State<BusinessThemePage> {
                   paletteForDriverTheme(variant).accent,
                 ],
                 onTap: () async {
-                  await saveDriverThemePreference(variant);
+                  await saveCompanyDriverViewThemePreference(variant);
                   if (!context.mounted) return;
                   _showSavedSnack(
                     'Chauffeursthema opgeslagen: ${_labelForDriver(variant)}',
