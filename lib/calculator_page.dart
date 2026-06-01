@@ -20,8 +20,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
+import 'package:fluxidi_tracking/business_theme_palette.dart';
+import 'package:fluxidi_tracking/business_theme_store.dart';
 import 'package:fluxidi_tracking/customer_theme_palette.dart';
 import 'package:fluxidi_tracking/customer_theme_store.dart';
+import 'package:fluxidi_tracking/driver_theme_palette.dart';
+import 'package:fluxidi_tracking/driver_theme_store.dart';
 import 'package:fluxidi_tracking/customer_bookings_store.dart';
 import 'package:fluxidi_tracking/customer_profile_store.dart';
 import 'package:fluxidi_tracking/customer_session_store.dart';
@@ -248,6 +252,113 @@ class _CalculatorScopeSelection {
 
 enum BookingEntryContext { customer, companyAdmin, driver }
 
+@immutable
+class _CalculatorVisualTheme {
+  const _CalculatorVisualTheme({
+    required this.background,
+    required this.surface,
+    required this.surfaceAlt,
+    required this.textPrimary,
+    required this.textMuted,
+    required this.accent,
+    required this.bronze,
+    required this.border,
+    required this.danger,
+    required this.success,
+    required this.shadow,
+    required this.isDark,
+  });
+
+  factory _CalculatorVisualTheme.fromCustomer(CustomerThemePalette palette) {
+    return _CalculatorVisualTheme(
+      background: palette.background,
+      surface: palette.surface,
+      surfaceAlt: palette.surfaceAlt,
+      textPrimary: palette.textPrimary,
+      textMuted: palette.textMuted,
+      accent: palette.gold,
+      bronze: palette.bronze,
+      border: palette.border,
+      danger: palette.danger,
+      success: palette.success,
+      shadow: palette.shadow,
+      isDark: palette.isDark,
+    );
+  }
+
+  factory _CalculatorVisualTheme.fromDriver(DriverThemePalette palette) {
+    return _CalculatorVisualTheme(
+      background: palette.background,
+      surface: palette.surface,
+      surfaceAlt: palette.surfaceAlt,
+      textPrimary: palette.textPrimary,
+      textMuted: palette.textMuted,
+      // Driver accent should drive calculator accent in driver context.
+      accent: palette.accent,
+      bronze: Color.alphaBlend(
+        palette.accent.withOpacity(0.72),
+        palette.surfaceAlt,
+      ),
+      border: palette.border,
+      danger: palette.danger,
+      success: palette.success,
+      shadow: palette.shadow,
+      isDark: palette.isDark,
+    );
+  }
+
+  factory _CalculatorVisualTheme.fromBusiness(BusinessThemePalette palette) {
+    return _CalculatorVisualTheme(
+      background: palette.background,
+      surface: palette.surface,
+      surfaceAlt: palette.surfaceAlt,
+      textPrimary: palette.textPrimary,
+      textMuted: palette.textMuted,
+      accent: palette.accent,
+      bronze: Color.alphaBlend(
+        palette.accent.withOpacity(0.72),
+        palette.surfaceAlt,
+      ),
+      border: palette.border,
+      danger: palette.danger,
+      success: palette.success,
+      shadow: palette.shadow,
+      isDark: palette.isDark,
+    );
+  }
+
+  final Color background;
+  final Color surface;
+  final Color surfaceAlt;
+  final Color textPrimary;
+  final Color textMuted;
+  final Color accent;
+  final Color bronze;
+  final Color border;
+  final Color danger;
+  final Color success;
+  final Color shadow;
+  final bool isDark;
+}
+
+_CalculatorVisualTheme _calculatorVisualThemeForContext(
+  BookingEntryContext entryContext,
+) {
+  if (entryContext == BookingEntryContext.driver) {
+    return _CalculatorVisualTheme.fromDriver(
+      paletteForDriverTheme(driverThemeNotifier.value),
+    );
+  }
+  if (entryContext == BookingEntryContext.companyAdmin) {
+    return _CalculatorVisualTheme.fromBusiness(
+      paletteForBusinessTheme(businessThemeNotifier.value),
+    );
+  }
+  return _CalculatorVisualTheme.fromCustomer(
+    paletteForCustomerTheme(customerThemeNotifier.value),
+  );
+}
+
 _CalculatorScopeSelection _selectCalculatorBookingScope({
   required String publicPartnerId,
 }) {
@@ -408,20 +519,20 @@ class _CalculatorPageState extends State<CalculatorPage> {
     }
   }
 
-  CustomerThemePalette get _themePalette =>
-      paletteForCustomerTheme(customerThemeNotifier.value);
-  bool get _isDarkTheme => _themePalette.isDark;
-  Color get _calcScaffoldColor => _themePalette.background;
-  Color get _calcPanelColor => _themePalette.surface;
-  Color get _calcPanelAltColor => _themePalette.surfaceAlt;
-  Color get _calcDropdownColor => _themePalette.surfaceAlt;
-  Color get _calcTextPrimary => _themePalette.textPrimary;
-  Color get _calcTextMuted => _themePalette.textMuted;
-  Color get _calcAccent => _themePalette.gold;
-  Color get _calcBorder => _themePalette.border;
-  Color get _calcShadow => _themePalette.shadow;
-  Color get _calcDanger => _themePalette.danger;
-  Color get _calcSuccess => _themePalette.success;
+  _CalculatorVisualTheme get _visualTheme =>
+      _calculatorVisualThemeForContext(widget.entryContext);
+  bool get _isDarkTheme => _visualTheme.isDark;
+  Color get _calcScaffoldColor => _visualTheme.background;
+  Color get _calcPanelColor => _visualTheme.surface;
+  Color get _calcPanelAltColor => _visualTheme.surfaceAlt;
+  Color get _calcDropdownColor => _visualTheme.surfaceAlt;
+  Color get _calcTextPrimary => _visualTheme.textPrimary;
+  Color get _calcTextMuted => _visualTheme.textMuted;
+  Color get _calcAccent => _visualTheme.accent;
+  Color get _calcBorder => _visualTheme.border;
+  Color get _calcShadow => _visualTheme.shadow;
+  Color get _calcDanger => _visualTheme.danger;
+  Color get _calcSuccess => _visualTheme.success;
   Color get _calcAccentOnColor =>
       _isDarkTheme ? Colors.black : const Color(0xFF1F1706);
   List<AppOption> get _services => appConfig.enabledServices;
@@ -991,6 +1102,8 @@ class _CalculatorPageState extends State<CalculatorPage> {
   void initState() {
     super.initState();
     customerThemeNotifier.addListener(_onThemeChanged);
+    driverThemeNotifier.addListener(_onThemeChanged);
+    businessThemeNotifier.addListener(_onThemeChanged);
     appLanguageNotifier.addListener(_onLanguageChanged);
     businessSettingsNotifier.addListener(_onBusinessSettingsChanged);
     localBackendTaxProfileNotifier.addListener(_onVatProfileChanged);
@@ -1057,6 +1170,8 @@ class _CalculatorPageState extends State<CalculatorPage> {
   @override
   void dispose() {
     customerThemeNotifier.removeListener(_onThemeChanged);
+    driverThemeNotifier.removeListener(_onThemeChanged);
+    businessThemeNotifier.removeListener(_onThemeChanged);
     appLanguageNotifier.removeListener(_onLanguageChanged);
     businessSettingsNotifier.removeListener(_onBusinessSettingsChanged);
     localBackendTaxProfileNotifier.removeListener(_onVatProfileChanged);
@@ -2690,7 +2805,7 @@ class _CalculatorPageState extends State<CalculatorPage> {
                         gradient: LinearGradient(
                           colors: [
                             _calcAccent.withOpacity(0.95),
-                            _themePalette.bronze.withOpacity(0.95),
+                            _visualTheme.bronze.withOpacity(0.95),
                           ],
                         ),
                         boxShadow: [
@@ -2926,19 +3041,19 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
   bool _paymentConfirmed = false;
   bool _postPaymentNavigated = false;
   _BookingPaymentChoice _selectedPaymentChoice = _BookingPaymentChoice.manual;
-  CustomerThemePalette get _themePalette =>
-      paletteForCustomerTheme(customerThemeNotifier.value);
-  bool get _isDarkTheme => _themePalette.isDark;
-  Color get _bg => _themePalette.background;
-  Color get _panel => _themePalette.surface;
-  Color get _panelAlt => _themePalette.surfaceAlt;
-  Color get _gold => _themePalette.gold;
-  Color get _textPrimary => _themePalette.textPrimary;
-  Color get _textMuted => _themePalette.textMuted;
-  Color get _border => _themePalette.border;
-  Color get _shadow => _themePalette.shadow;
-  Color get _danger => _themePalette.danger;
-  Color get _success => _themePalette.success;
+  _CalculatorVisualTheme get _visualTheme =>
+      _calculatorVisualThemeForContext(widget.entryContext);
+  bool get _isDarkTheme => _visualTheme.isDark;
+  Color get _bg => _visualTheme.background;
+  Color get _panel => _visualTheme.surface;
+  Color get _panelAlt => _visualTheme.surfaceAlt;
+  Color get _gold => _visualTheme.accent;
+  Color get _textPrimary => _visualTheme.textPrimary;
+  Color get _textMuted => _visualTheme.textMuted;
+  Color get _border => _visualTheme.border;
+  Color get _shadow => _visualTheme.shadow;
+  Color get _danger => _visualTheme.danger;
+  Color get _success => _visualTheme.success;
   Color get _actionOnGold =>
       _isDarkTheme ? Colors.black : const Color(0xFF1F1706);
   bool get _allowsCustomerSessionLink =>
@@ -2957,6 +3072,8 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
   void initState() {
     super.initState();
     customerThemeNotifier.addListener(_onThemeChanged);
+    driverThemeNotifier.addListener(_onThemeChanged);
+    businessThemeNotifier.addListener(_onThemeChanged);
     fluxidiPendingPaymentNotifier.addListener(_onPendingPaymentChanged);
     if (_allowsCustomerSessionLink) {
       unawaited(_prefillFromCustomerProfile());
@@ -3091,6 +3208,8 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
   @override
   void dispose() {
     customerThemeNotifier.removeListener(_onThemeChanged);
+    driverThemeNotifier.removeListener(_onThemeChanged);
+    businessThemeNotifier.removeListener(_onThemeChanged);
     fluxidiPendingPaymentNotifier.removeListener(_onPendingPaymentChanged);
     _nameCtrl.dispose();
     _phoneCtrl.dispose();
@@ -4856,7 +4975,7 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
                 gradient: LinearGradient(
                   colors: [
                     _gold.withOpacity(0.95),
-                    _themePalette.bronze.withOpacity(0.95),
+                    _visualTheme.bronze.withOpacity(0.95),
                   ],
                 ),
                 boxShadow: [
