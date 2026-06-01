@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter/material.dart';
 import 'package:fluxidi_tracking/driver_theme_palette.dart';
 import 'package:fluxidi_tracking/driver_theme_store.dart';
@@ -74,6 +75,7 @@ class DirectRideEstimatePanel extends StatelessWidget {
   final String loadingText;
   final String unavailableText;
   final String Function(double amount, String currency) formatAmount;
+  final ValueListenable<DriverThemeVariant>? themeListenable;
 
   const DirectRideEstimatePanel({
     super.key,
@@ -87,6 +89,7 @@ class DirectRideEstimatePanel extends StatelessWidget {
     required this.loadingText,
     required this.unavailableText,
     required this.formatAmount,
+    this.themeListenable,
   });
 
   @override
@@ -102,7 +105,7 @@ class DirectRideEstimatePanel extends StatelessWidget {
     final valueIsEstimate = !isLoading && estimateValue != null;
 
     return ValueListenableBuilder<DriverThemeVariant>(
-      valueListenable: driverThemeNotifier,
+      valueListenable: themeListenable ?? driverThemeNotifier,
       builder: (context, variant, _) {
         final theme = _themeForDriverVariant(variant);
         return Container(

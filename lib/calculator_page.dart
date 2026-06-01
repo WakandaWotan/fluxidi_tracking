@@ -16,6 +16,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:fluxidi_tracking/app_config.dart';
@@ -343,10 +344,11 @@ class _CalculatorVisualTheme {
 
 _CalculatorVisualTheme _calculatorVisualThemeForContext(
   BookingEntryContext entryContext,
+  ValueListenable<DriverThemeVariant> driverThemeListenable,
 ) {
   if (entryContext == BookingEntryContext.driver) {
     return _CalculatorVisualTheme.fromDriver(
-      paletteForDriverTheme(driverThemeNotifier.value),
+      paletteForDriverTheme(driverThemeListenable.value),
     );
   }
   if (entryContext == BookingEntryContext.companyAdmin) {
@@ -432,6 +434,7 @@ class CalculatorPage extends StatefulWidget {
     this.initialToLat,
     this.initialToLng,
     this.initialServiceId,
+    this.driverThemeListenable,
   });
 
   final String
@@ -451,12 +454,16 @@ class CalculatorPage extends StatefulWidget {
   final double? initialToLat;
   final double? initialToLng;
   final String? initialServiceId;
+  final ValueListenable<DriverThemeVariant>? driverThemeListenable;
 
   @override
   State<CalculatorPage> createState() => _CalculatorPageState();
 }
 
 class _CalculatorPageState extends State<CalculatorPage> {
+  ValueListenable<DriverThemeVariant> get _driverThemeListenable =>
+      widget.driverThemeListenable ?? driverThemeNotifier;
+
   final _fromCtrl = TextEditingController();
   final _toCtrl = TextEditingController();
 
@@ -519,8 +526,10 @@ class _CalculatorPageState extends State<CalculatorPage> {
     }
   }
 
-  _CalculatorVisualTheme get _visualTheme =>
-      _calculatorVisualThemeForContext(widget.entryContext);
+  _CalculatorVisualTheme get _visualTheme => _calculatorVisualThemeForContext(
+    widget.entryContext,
+    _driverThemeListenable,
+  );
   bool get _isDarkTheme => _visualTheme.isDark;
   Color get _calcScaffoldColor => _visualTheme.background;
   Color get _calcPanelColor => _visualTheme.surface;
@@ -1085,6 +1094,7 @@ class _CalculatorPageState extends State<CalculatorPage> {
           payload: payload,
           persistToCustomerBookings: widget.persistToCustomerBookings,
           entryContext: widget.entryContext,
+          driverThemeListenable: _driverThemeListenable,
           onGoToStartPage: widget.onGoToStartPage,
           currencySymbol: _currencySymbol,
           distanceUnitLabel: appConfig.distanceUnitLabel,
@@ -1102,7 +1112,7 @@ class _CalculatorPageState extends State<CalculatorPage> {
   void initState() {
     super.initState();
     customerThemeNotifier.addListener(_onThemeChanged);
-    driverThemeNotifier.addListener(_onThemeChanged);
+    _driverThemeListenable.addListener(_onThemeChanged);
     businessThemeNotifier.addListener(_onThemeChanged);
     appLanguageNotifier.addListener(_onLanguageChanged);
     businessSettingsNotifier.addListener(_onBusinessSettingsChanged);
@@ -1170,7 +1180,7 @@ class _CalculatorPageState extends State<CalculatorPage> {
   @override
   void dispose() {
     customerThemeNotifier.removeListener(_onThemeChanged);
-    driverThemeNotifier.removeListener(_onThemeChanged);
+    _driverThemeListenable.removeListener(_onThemeChanged);
     businessThemeNotifier.removeListener(_onThemeChanged);
     appLanguageNotifier.removeListener(_onLanguageChanged);
     businessSettingsNotifier.removeListener(_onBusinessSettingsChanged);
@@ -2997,6 +3007,7 @@ class _BookingConfirmationPage extends StatefulWidget {
     required this.payload,
     required this.persistToCustomerBookings,
     required this.entryContext,
+    required this.driverThemeListenable,
     this.onGoToStartPage,
     required this.currencySymbol,
     required this.distanceUnitLabel,
@@ -3011,6 +3022,7 @@ class _BookingConfirmationPage extends StatefulWidget {
   final Map<String, dynamic> payload;
   final bool persistToCustomerBookings;
   final BookingEntryContext entryContext;
+  final ValueListenable<DriverThemeVariant> driverThemeListenable;
   final VoidCallback? onGoToStartPage;
   final String currencySymbol;
   final String distanceUnitLabel;
@@ -3041,8 +3053,10 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
   bool _paymentConfirmed = false;
   bool _postPaymentNavigated = false;
   _BookingPaymentChoice _selectedPaymentChoice = _BookingPaymentChoice.manual;
-  _CalculatorVisualTheme get _visualTheme =>
-      _calculatorVisualThemeForContext(widget.entryContext);
+  _CalculatorVisualTheme get _visualTheme => _calculatorVisualThemeForContext(
+    widget.entryContext,
+    widget.driverThemeListenable,
+  );
   bool get _isDarkTheme => _visualTheme.isDark;
   Color get _bg => _visualTheme.background;
   Color get _panel => _visualTheme.surface;
@@ -3072,7 +3086,7 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
   void initState() {
     super.initState();
     customerThemeNotifier.addListener(_onThemeChanged);
-    driverThemeNotifier.addListener(_onThemeChanged);
+    widget.driverThemeListenable.addListener(_onThemeChanged);
     businessThemeNotifier.addListener(_onThemeChanged);
     fluxidiPendingPaymentNotifier.addListener(_onPendingPaymentChanged);
     if (_allowsCustomerSessionLink) {
@@ -3208,7 +3222,7 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
   @override
   void dispose() {
     customerThemeNotifier.removeListener(_onThemeChanged);
-    driverThemeNotifier.removeListener(_onThemeChanged);
+    widget.driverThemeListenable.removeListener(_onThemeChanged);
     businessThemeNotifier.removeListener(_onThemeChanged);
     fluxidiPendingPaymentNotifier.removeListener(_onPendingPaymentChanged);
     _nameCtrl.dispose();

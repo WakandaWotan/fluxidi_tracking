@@ -107,12 +107,14 @@ class _BookingsHubPage extends StatelessWidget {
   final Widget Function(double screenH) buildList;
   final VoidCallback onRefresh;
   final ValueListenable<int> repaintListenable;
+  final ValueListenable<DriverThemeVariant>? themeListenable;
 
   const _BookingsHubPage({
     required this.title,
     required this.buildList,
     required this.onRefresh,
     required this.repaintListenable,
+    this.themeListenable,
   });
 
   @override
@@ -137,7 +139,7 @@ class _BookingsHubPage extends StatelessWidget {
     }
 
     return ValueListenableBuilder<DriverThemeVariant>(
-      valueListenable: driverThemeNotifier,
+      valueListenable: themeListenable ?? driverThemeNotifier,
       builder: (context, variant, _) {
         final theme = _bookingsHubThemeForVariant(variant);
         return Scaffold(

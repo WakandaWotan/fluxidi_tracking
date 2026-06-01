@@ -1,6 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show ValueListenable, kIsWeb;
 import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/company_session_store.dart';
@@ -15,7 +15,9 @@ import 'dart:io' show Directory, File, Platform;
 
 /// Chauffeur-facing compliance documents (same store as company admin).
 class DriverMyDocumentsPage extends StatefulWidget {
-  const DriverMyDocumentsPage({super.key});
+  const DriverMyDocumentsPage({super.key, this.themeListenable});
+
+  final ValueListenable<DriverThemeVariant>? themeListenable;
 
   @override
   State<DriverMyDocumentsPage> createState() => _DriverMyDocumentsPageState();
@@ -582,7 +584,9 @@ class _DriverMyDocumentsPageState extends State<DriverMyDocumentsPage> {
   }
 
   Future<ImageSource?> _askProfilePhotoSource() async {
-    final theme = _themeTokens(driverThemeNotifier.value);
+    final theme = _themeTokens(
+      (widget.themeListenable ?? driverThemeNotifier).value,
+    );
     return showModalBottomSheet<ImageSource>(
       context: context,
       backgroundColor: theme.bottomSheetBackground,
@@ -832,7 +836,7 @@ class _DriverMyDocumentsPageState extends State<DriverMyDocumentsPage> {
       valueListenable: appLanguageNotifier,
       builder: (context, lang, _) {
         return ValueListenableBuilder<DriverThemeVariant>(
-          valueListenable: driverThemeNotifier,
+          valueListenable: widget.themeListenable ?? driverThemeNotifier,
           builder: (context, themeVariant, _) {
             final theme = _themeTokens(themeVariant);
             return Scaffold(

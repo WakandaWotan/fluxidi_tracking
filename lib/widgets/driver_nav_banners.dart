@@ -1,5 +1,6 @@
 import 'dart:ui' show ImageFilter;
 
+import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter/material.dart';
 import 'package:fluxidi_tracking/driver_theme_palette.dart';
 import 'package:fluxidi_tracking/driver_theme_store.dart';
@@ -11,6 +12,7 @@ class DriverTurnInstructionBanner extends StatelessWidget {
   final String line1;
   final String street;
   final IconData icon;
+  final ValueListenable<DriverThemeVariant>? themeListenable;
 
   const DriverTurnInstructionBanner({
     super.key,
@@ -20,12 +22,13 @@ class DriverTurnInstructionBanner extends StatelessWidget {
     required this.line1,
     required this.street,
     required this.icon,
+    this.themeListenable,
   });
 
   @override
   Widget build(BuildContext context) {
     return ValueListenableBuilder<DriverThemeVariant>(
-      valueListenable: driverThemeNotifier,
+      valueListenable: themeListenable ?? driverThemeNotifier,
       builder: (context, variant, _) {
         final palette = paletteForDriverTheme(variant);
         return ClipRRect(
@@ -131,17 +134,19 @@ class DriverTurnInstructionBanner extends StatelessWidget {
 class DriverNavLoadingBanner extends StatelessWidget {
   final bool compact;
   final String text;
+  final ValueListenable<DriverThemeVariant>? themeListenable;
 
   const DriverNavLoadingBanner({
     super.key,
     required this.compact,
     this.text = 'Route-instructies worden geladen...',
+    this.themeListenable,
   });
 
   @override
   Widget build(BuildContext context) {
     return ValueListenableBuilder<DriverThemeVariant>(
-      valueListenable: driverThemeNotifier,
+      valueListenable: themeListenable ?? driverThemeNotifier,
       builder: (context, variant, _) {
         final palette = paletteForDriverTheme(variant);
         return ClipRRect(
@@ -189,17 +194,19 @@ class DriverNavLoadingBanner extends StatelessWidget {
 class DriverNoNavInstructionsBanner extends StatelessWidget {
   final bool compact;
   final String text;
+  final ValueListenable<DriverThemeVariant>? themeListenable;
 
   const DriverNoNavInstructionsBanner({
     super.key,
     required this.compact,
     this.text = 'Geen route-instructies beschikbaar',
+    this.themeListenable,
   });
 
   @override
   Widget build(BuildContext context) {
     return ValueListenableBuilder<DriverThemeVariant>(
-      valueListenable: driverThemeNotifier,
+      valueListenable: themeListenable ?? driverThemeNotifier,
       builder: (context, variant, _) {
         final palette = paletteForDriverTheme(variant);
         return ClipRRect(

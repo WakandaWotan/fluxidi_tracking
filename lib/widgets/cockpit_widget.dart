@@ -1,4 +1,5 @@
 import 'dart:ui';
+import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter/material.dart';
 import 'package:fluxidi_tracking/driver_theme_palette.dart';
 import 'package:fluxidi_tracking/driver_theme_store.dart';
@@ -42,6 +43,7 @@ class CockpitWidget extends StatefulWidget {
   final VoidCallback onStop;
   final VoidCallback onWait;
   final VoidCallback onGo;
+  final ValueListenable<DriverThemeVariant>? themeListenable;
 
   const CockpitWidget({
     super.key,
@@ -56,6 +58,7 @@ class CockpitWidget extends StatefulWidget {
     required this.onStop,
     required this.onWait,
     required this.onGo,
+    this.themeListenable,
   });
 
   @override
@@ -139,7 +142,7 @@ class _CockpitWidgetState extends State<CockpitWidget>
   @override
   Widget build(BuildContext context) {
     return ValueListenableBuilder<DriverThemeVariant>(
-      valueListenable: driverThemeNotifier,
+      valueListenable: widget.themeListenable ?? driverThemeNotifier,
       builder: (context, variant, _) {
         _activeTheme = _themeForVariant(variant);
         final eta = (widget.etaText.trim().isEmpty) ? '—' : widget.etaText;

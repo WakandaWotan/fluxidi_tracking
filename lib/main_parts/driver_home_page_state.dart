@@ -2,6 +2,15 @@ part of '../main.dart';
 
 class _DriverHomePageState extends State<DriverHomePage>
     with TickerProviderStateMixin {
+  ValueListenable<DriverThemeVariant> get _activeDriverThemeListenable =>
+      widget.openedFromBusinessHome
+      ? companyDriverViewThemeNotifier
+      : driverAppThemeNotifier;
+
+  // Instance-level redirect so existing file-local theme reads stay context-aware.
+  ValueListenable<DriverThemeVariant> get driverThemeNotifier =>
+      _activeDriverThemeListenable;
+
   String? _lastPaymentConfirmationSnackbarId;
   DateTime? _trackingStartedAt; // tracking start timestamp
   bool _isStartingTrip = false; // UX: start button state
@@ -483,6 +492,11 @@ class _DriverHomePageState extends State<DriverHomePage>
     setState(() {});
   }
 
+  void _onDriverThemeSourceChanged() {
+    if (!mounted) return;
+    setState(() {});
+  }
+
   Widget _tenantLogo({
     required double height,
     BoxFit fit = BoxFit.contain,
@@ -862,6 +876,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       ),
     );
     appLanguageNotifier.addListener(_onAppLanguageChanged);
+    _activeDriverThemeListenable.addListener(_onDriverThemeSourceChanged);
     fluxidiPendingPaymentNotifier.addListener(_onPendingPaymentStatusChanged);
 
     _splashAnimCtrl = AnimationController(
@@ -962,6 +977,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     debugPrint('[MAP][DISPOSE] mounted=$mounted style=$_activeMapStyleUri');
     _setNavigationWakelock(false);
     appLanguageNotifier.removeListener(_onAppLanguageChanged);
+    _activeDriverThemeListenable.removeListener(_onDriverThemeSourceChanged);
     fluxidiPendingPaymentNotifier.removeListener(
       _onPendingPaymentStatusChanged,
     );
@@ -4770,6 +4786,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     final destination = await showDialog<DirectRideDestinationResult>(
       context: context,
       builder: (_) => DirectRideDestinationDialog(
+        themeListenable: _activeDriverThemeListenable,
         initialText: _directRideDestinationText ?? '',
         search: (query) async {
           final results = await _fetchPlaceSuggestions(query);
@@ -10231,7 +10248,9 @@ class _DriverHomePageState extends State<DriverHomePage>
                 onTap: () {
                   Navigator.of(context).push(
                     MaterialPageRoute(
-                      builder: (_) => const DriverMyDocumentsPage(),
+                      builder: (_) => DriverMyDocumentsPage(
+                        themeListenable: _activeDriverThemeListenable,
+                      ),
                     ),
                   );
                 },
@@ -10971,6 +10990,7 @@ class _DriverHomePageState extends State<DriverHomePage>
           );
     final icon = _maneuverIconData(_nextNavType, _nextNavModifier, instruction);
     return DriverTurnInstructionBanner(
+      themeListenable: _activeDriverThemeListenable,
       compact: compact,
       isArrival: isArrival,
       distanceText: distanceText,
@@ -10981,11 +11001,17 @@ class _DriverHomePageState extends State<DriverHomePage>
   }
 
   Widget _buildNavLoadingBanner({required bool compact}) {
-    return DriverNavLoadingBanner(compact: compact);
+    return DriverNavLoadingBanner(
+      compact: compact,
+      themeListenable: _activeDriverThemeListenable,
+    );
   }
 
   Widget _buildNoNavInstructionsBanner({required bool compact}) {
-    return DriverNoNavInstructionsBanner(compact: compact);
+    return DriverNoNavInstructionsBanner(
+      compact: compact,
+      themeListenable: _activeDriverThemeListenable,
+    );
   }
 
   Widget _buildRecenterButton() {
@@ -11315,6 +11341,8 @@ class _DriverHomePageState extends State<DriverHomePage>
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
                                   CockpitWidget(
+                                    themeListenable:
+                                        _activeDriverThemeListenable,
                                     etaText: _etaText,
                                     kmText: _kmRemainingText,
                                     priceText: _cockpitPriceText,
@@ -11353,6 +11381,7 @@ class _DriverHomePageState extends State<DriverHomePage>
                               mainAxisSize: MainAxisSize.min,
                               children: [
                                 CockpitWidget(
+                                  themeListenable: _activeDriverThemeListenable,
                                   etaText: _etaText,
                                   kmText: _kmRemainingText,
                                   priceText: _cockpitPriceText,
@@ -12783,6 +12812,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       es: 'Estimación no disponible. El taxímetro sigue funcionando.',
     );
     return DirectRideEstimatePanel(
+      themeListenable: _activeDriverThemeListenable,
       visible: showEstimate,
       estimatedFare: _directRideEstimatedFare,
       isLoading: _directRideEstimateLoading,
@@ -13569,6 +13599,7 @@ class _DriverHomePageState extends State<DriverHomePage>
           onRefresh: () =>
               _refreshBookings(force: true, trigger: 'list_manual'),
           repaintListenable: _bookingsUiVersion,
+          themeListenable: _activeDriverThemeListenable,
         ),
       ),
     );
@@ -13596,6 +13627,7 @@ class _DriverHomePageState extends State<DriverHomePage>
           onRefresh: () =>
               _refreshBookings(force: true, trigger: 'list_manual'),
           repaintListenable: _bookingsUiVersion,
+          themeListenable: _activeDriverThemeListenable,
         ),
       ),
     );
@@ -13727,6 +13759,7 @@ class _DriverHomePageState extends State<DriverHomePage>
           mapboxToken: kMapboxToken,
           persistToCustomerBookings: false,
           entryContext: BookingEntryContext.driver,
+          driverThemeListenable: _activeDriverThemeListenable,
         ),
       ),
     );
@@ -13751,6 +13784,7 @@ class _DriverHomePageState extends State<DriverHomePage>
           mapboxToken: kMapboxToken,
           persistToCustomerBookings: false,
           entryContext: BookingEntryContext.driver,
+          driverThemeListenable: _activeDriverThemeListenable,
         ),
       ),
     );
@@ -14118,7 +14152,10 @@ class _DriverHomePageState extends State<DriverHomePage>
                               Navigator.pop(context);
                               Navigator.of(context).push(
                                 MaterialPageRoute(
-                                  builder: (_) => const DriverMyDocumentsPage(),
+                                  builder: (_) => DriverMyDocumentsPage(
+                                    themeListenable:
+                                        _activeDriverThemeListenable,
+                                  ),
                                 ),
                               );
                             },

@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter/material.dart';
 import 'package:fluxidi_tracking/driver_theme_palette.dart';
 import 'package:fluxidi_tracking/driver_theme_store.dart';
@@ -106,12 +107,14 @@ class DirectRideDestinationDialog extends StatefulWidget {
   final String initialText;
   final Future<List<DirectRideSuggestion>> Function(String query) search;
   final DirectRideTranslate tr;
+  final ValueListenable<DriverThemeVariant>? themeListenable;
 
   const DirectRideDestinationDialog({
     super.key,
     required this.initialText,
     required this.search,
     required this.tr,
+    this.themeListenable,
   });
 
   @override
@@ -196,7 +199,7 @@ class _DirectRideDestinationDialogState
   @override
   Widget build(BuildContext context) {
     return ValueListenableBuilder<DriverThemeVariant>(
-      valueListenable: driverThemeNotifier,
+      valueListenable: widget.themeListenable ?? driverThemeNotifier,
       builder: (context, variant, _) {
         final theme = _themeForDriverVariant(variant);
         return AlertDialog(
