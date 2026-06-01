@@ -98,8 +98,12 @@ class _DriverHomePageState extends State<DriverHomePage>
   String? _directRideEstimateError;
   String _directRideEstimateCurrency = kDefaultCurrency;
   Timer? _directRideEstimateDebounce;
+  Timer? _directRideEstimateLocationRetryTimer;
   int _directRideEstimateRequestSeq = 0;
   String? _directRideEstimateSignature;
+  int _directRideLocationRetryCount = 0;
+  String? _directRideLocationRetryDestination;
+  static const int _maxDirectRideLocationRetries = 1;
 
   // Location tracking
   StreamSubscription<geo.Position>? _posSub;
@@ -294,6 +298,8 @@ class _DriverHomePageState extends State<DriverHomePage>
         _directRideEstimateError = null;
         _directRideEstimateCurrency = kDefaultCurrency;
         _directRideEstimateSignature = null;
+        _directRideLocationRetryCount = 0;
+        _directRideLocationRetryDestination = null;
         _lastPing = '—';
         _pingCount = 0;
         _kmDriven = 0.0;
@@ -994,6 +1000,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     _directRideDestinationText = null;
     _directRideDestinationPoint = null;
     _directRideEstimateDebounce?.cancel();
+    _directRideEstimateLocationRetryTimer?.cancel();
     _fromDebounce?.cancel();
     _toDebounce?.cancel();
     _fromFocus.dispose();
@@ -2779,7 +2786,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     return kDefaultCurrency;
   }
 
-  double? _extractQuoteEstimateTotal(dynamic data) {
+  ({double? amount, String? source}) _extractQuoteEstimateResult(dynamic data) {
     Map<String, dynamic> asMap(dynamic value) =>
         value is Map ? Map<String, dynamic>.from(value) : <String, dynamic>{};
     final root = asMap(data);
@@ -2790,51 +2797,117 @@ class _DriverHomePageState extends State<DriverHomePage>
       quote['pricing_main'] ?? quote['pricingMain'],
     );
     final pricingMain = asMap(root['pricing_main'] ?? root['pricingMain']);
-    final candidates = <dynamic>[
-      root['total_price_incl_vat'],
-      root['price_incl_vat'],
-      root['total_price'],
-      root['total'],
-      root['price'],
-      root['amount'],
-      root['eur'],
-      quote['total_price_incl_vat'],
-      quote['price_incl_vat'],
-      quote['total_price'],
-      quote['total'],
-      quote['price'],
-      quote['amount'],
-      quote['eur'],
-      pricing['price_incl_vat'],
-      pricing['total_price'],
-      pricing['total'],
-      pricing['price'],
-      pricing['amount'],
-      pricing['eur'],
-      quotePricing['price_incl_vat'],
-      quotePricing['total_price'],
-      quotePricing['total'],
-      quotePricing['price'],
-      quotePricing['amount'],
-      quotePricing['eur'],
-      quotePricingMain['price_incl_vat'],
-      pricingMain['price_incl_vat'],
+    final candidates = <({String source, dynamic value})>[
+      (
+        source: 'root.total_price_incl_vat',
+        value: root['total_price_incl_vat'],
+      ),
+      (source: 'root.price_incl_vat', value: root['price_incl_vat']),
+      (source: 'root.total_price', value: root['total_price']),
+      (source: 'root.total', value: root['total']),
+      (source: 'root.price', value: root['price']),
+      (source: 'root.amount', value: root['amount']),
+      (source: 'root.eur', value: root['eur']),
+      (
+        source: 'quote.total_price_incl_vat',
+        value: quote['total_price_incl_vat'],
+      ),
+      (source: 'quote.price_incl_vat', value: quote['price_incl_vat']),
+      (source: 'quote.total_price', value: quote['total_price']),
+      (source: 'quote.total', value: quote['total']),
+      (source: 'quote.price', value: quote['price']),
+      (source: 'quote.amount', value: quote['amount']),
+      (source: 'quote.eur', value: quote['eur']),
+      (source: 'pricing.price_incl_vat', value: pricing['price_incl_vat']),
+      (source: 'pricing.total_price', value: pricing['total_price']),
+      (source: 'pricing.total', value: pricing['total']),
+      (source: 'pricing.price', value: pricing['price']),
+      (source: 'pricing.amount', value: pricing['amount']),
+      (source: 'pricing.eur', value: pricing['eur']),
+      (
+        source: 'quote.pricing.price_incl_vat',
+        value: quotePricing['price_incl_vat'],
+      ),
+      (source: 'quote.pricing.total_price', value: quotePricing['total_price']),
+      (source: 'quote.pricing.total', value: quotePricing['total']),
+      (source: 'quote.pricing.price', value: quotePricing['price']),
+      (source: 'quote.pricing.amount', value: quotePricing['amount']),
+      (source: 'quote.pricing.eur', value: quotePricing['eur']),
+      (
+        source: 'quote.pricing_main.price_incl_vat',
+        value: quotePricingMain['price_incl_vat'],
+      ),
+      (
+        source: 'pricing_main.price_incl_vat',
+        value: pricingMain['price_incl_vat'],
+      ),
     ];
     for (final candidate in candidates) {
-      final parsed = _quoteNumber(candidate);
-      if (parsed != null) return parsed;
+      final parsed = _quoteNumber(candidate.value);
+      if (parsed != null) {
+        return (amount: parsed, source: candidate.source);
+      }
     }
-    return null;
+    return (amount: null, source: null);
+  }
+
+  double? _extractQuoteEstimateTotal(dynamic data) {
+    return _extractQuoteEstimateResult(data).amount;
+  }
+
+  String _estimateMapKeys(dynamic value) {
+    if (value is! Map) return '-';
+    final keys = value.keys.map((k) => k.toString()).toList(growable: false);
+    if (keys.isEmpty) return '-';
+    if (keys.length <= 10) return keys.join(',');
+    return '${keys.take(10).join(',')},...';
+  }
+
+  void _scheduleDirectRideLocationRetry({required String reason}) {
+    _directRideEstimateLocationRetryTimer?.cancel();
+    final destination = (_directRideDestinationText ?? '').trim();
+    if (!_directRideDraft || destination.isEmpty) {
+      return;
+    }
+    if (_directRideLocationRetryCount >= _maxDirectRideLocationRetries) {
+      debugPrint(
+        '[DIRECT_RIDE][ESTIMATE][RETRY_SKIP] reason=$reason retries=$_directRideLocationRetryCount max=$_maxDirectRideLocationRetries',
+      );
+      return;
+    }
+    _directRideLocationRetryCount += 1;
+    final retryAttempt = _directRideLocationRetryCount;
+    debugPrint(
+      '[DIRECT_RIDE][ESTIMATE][RETRY_SCHEDULE] reason=$reason attempt=$retryAttempt delay_ms=1800',
+    );
+    _directRideEstimateLocationRetryTimer = Timer(
+      const Duration(milliseconds: 1800),
+      () {
+        if (!mounted) return;
+        final latestDestination = (_directRideDestinationText ?? '').trim();
+        if (!_directRideDraft || latestDestination.isEmpty) return;
+        unawaited(
+          _refreshDirectRideEstimate(reason: 'location_retry_$retryAttempt'),
+        );
+      },
+    );
   }
 
   void _scheduleDirectRideEstimateRefresh({required String reason}) {
     if (!_directRideDraft) {
       _directRideEstimateDebounce?.cancel();
+      _directRideEstimateLocationRetryTimer?.cancel();
       return;
     }
     final destination = (_directRideDestinationText ?? '').trim();
+    if (_directRideLocationRetryDestination != destination) {
+      _directRideLocationRetryDestination = destination;
+      _directRideLocationRetryCount = 0;
+      _directRideEstimateLocationRetryTimer?.cancel();
+    }
     if (destination.isEmpty) {
       _directRideEstimateDebounce?.cancel();
+      _directRideEstimateLocationRetryTimer?.cancel();
       if (!mounted) return;
       setState(() {
         _directRideEstimatedFare = null;
@@ -2842,6 +2915,8 @@ class _DriverHomePageState extends State<DriverHomePage>
         _directRideEstimateError = null;
         _directRideEstimateCurrency = kDefaultCurrency;
         _directRideEstimateSignature = null;
+        _directRideLocationRetryCount = 0;
+        _directRideLocationRetryDestination = null;
       });
       return;
     }
@@ -2851,22 +2926,101 @@ class _DriverHomePageState extends State<DriverHomePage>
     });
   }
 
+  Future<({geo.Position? position, String source, String? failureReason})>
+  _resolveDirectRideEstimateOriginPosition({required String reason}) async {
+    final serviceEnabled = await geo.Geolocator.isLocationServiceEnabled();
+    var permission = await geo.Geolocator.checkPermission();
+    debugPrint(
+      '[DIRECT_RIDE][ESTIMATE][LOCATION_STATUS] reason=$reason serviceEnabled=$serviceEnabled permission=${permission.name} source=resolver',
+    );
+
+    final cached = _lastPos;
+    if (cached != null) {
+      debugPrint(
+        '[DIRECT_RIDE][ESTIMATE][POSITION_RESOLVED] reason=$reason source=lastPos',
+      );
+      return (position: cached, source: 'lastPos', failureReason: null);
+    }
+
+    if (!serviceEnabled) {
+      debugPrint(
+        '[DIRECT_RIDE][ESTIMATE][POSITION_FAILED] reason=service_disabled source=resolver',
+      );
+      return (
+        position: null,
+        source: 'none',
+        failureReason: 'service_disabled',
+      );
+    }
+
+    if (permission == geo.LocationPermission.denied) {
+      permission = await geo.Geolocator.requestPermission();
+      debugPrint(
+        '[DIRECT_RIDE][ESTIMATE][LOCATION_STATUS] reason=$reason serviceEnabled=$serviceEnabled permission=${permission.name} source=request',
+      );
+    }
+
+    if (permission == geo.LocationPermission.denied ||
+        permission == geo.LocationPermission.deniedForever) {
+      debugPrint(
+        '[DIRECT_RIDE][ESTIMATE][POSITION_FAILED] reason=permission_denied source=resolver',
+      );
+      return (
+        position: null,
+        source: 'none',
+        failureReason: 'permission_denied',
+      );
+    }
+
+    try {
+      final lastKnown = await geo.Geolocator.getLastKnownPosition();
+      if (lastKnown != null) {
+        _lastPos = lastKnown;
+        debugPrint(
+          '[DIRECT_RIDE][ESTIMATE][POSITION_RESOLVED] reason=$reason source=lastKnown',
+        );
+        return (position: lastKnown, source: 'lastKnown', failureReason: null);
+      }
+    } catch (e) {
+      debugPrint(
+        '[DIRECT_RIDE][ESTIMATE][POSITION_FAILED] reason=exception source=lastKnown error=$e',
+      );
+    }
+
+    try {
+      final current = await geo.Geolocator.getCurrentPosition(
+        desiredAccuracy: geo.LocationAccuracy.best,
+      ).timeout(const Duration(seconds: 8));
+      _lastPos = current;
+      debugPrint(
+        '[DIRECT_RIDE][ESTIMATE][POSITION_RESOLVED] reason=$reason source=current',
+      );
+      return (position: current, source: 'current', failureReason: null);
+    } on TimeoutException {
+      debugPrint(
+        '[DIRECT_RIDE][ESTIMATE][POSITION_FAILED] reason=timeout source=current',
+      );
+      return (position: null, source: 'none', failureReason: 'timeout');
+    } catch (e) {
+      debugPrint(
+        '[DIRECT_RIDE][ESTIMATE][POSITION_FAILED] reason=exception source=current error=$e',
+      );
+      return (position: null, source: 'none', failureReason: 'exception');
+    }
+  }
+
   Future<void> _refreshDirectRideEstimate({required String reason}) async {
     final destination = (_directRideDestinationText ?? '').trim();
     final shouldEstimate = _directRideDraft;
+    debugPrint(
+      '[DIRECT_RIDE][ESTIMATE][START] reason=$reason hasDestination=${destination.isNotEmpty} hasLastPos=${_lastPos != null} isDraft=$shouldEstimate',
+    );
     if (!shouldEstimate || destination.isEmpty) return;
 
-    var pos = _lastPos;
-    if (pos == null) {
-      try {
-        pos = await geo.Geolocator.getCurrentPosition(
-          desiredAccuracy: geo.LocationAccuracy.best,
-        );
-        _lastPos = pos;
-      } catch (_) {
-        pos = null;
-      }
-    }
+    final resolvedPosition = await _resolveDirectRideEstimateOriginPosition(
+      reason: reason,
+    );
+    final pos = resolvedPosition.position;
 
     if (pos == null) {
       if (!mounted) return;
@@ -2874,6 +3028,13 @@ class _DriverHomePageState extends State<DriverHomePage>
         _directRideEstimateLoading = false;
         _directRideEstimateError = 'location_unavailable';
       });
+      debugPrint(
+        '[DIRECT_RIDE][ESTIMATE][WARN] reason=$reason hasPosition=false failure=${resolvedPosition.failureReason ?? 'unknown'} error=location_unavailable',
+      );
+      if (resolvedPosition.failureReason != 'permission_denied' &&
+          resolvedPosition.failureReason != 'service_disabled') {
+        _scheduleDirectRideLocationRetry(reason: reason);
+      }
       return;
     }
 
@@ -2906,6 +3067,10 @@ class _DriverHomePageState extends State<DriverHomePage>
         ? 'incl'
         : (vat?.vatDisplayMode ?? 'incl').trim();
     final scope = _activeBookingScopeQuery();
+    final hasStrictScope = _strictActiveBookingScopeQuery() != null;
+    debugPrint(
+      '[DIRECT_RIDE][ESTIMATE][CONTEXT] reason=$reason hasPosition=true hasScope=${scope.isNotEmpty} hasStrictScope=$hasStrictScope tenant=${scope['tenant_id'] ?? '-'} company=${scope['company_id'] ?? '-'}',
+    );
     final pickupAt = DateTime.now().add(const Duration(minutes: 5));
     String two(int v) => v.toString().padLeft(2, '0');
     final date = '${pickupAt.year}-${two(pickupAt.month)}-${two(pickupAt.day)}';
@@ -2969,8 +3134,18 @@ class _DriverHomePageState extends State<DriverHomePage>
         );
       }
       final decoded = jsonDecode(res.body);
-      final estimate = _extractQuoteEstimateTotal(decoded);
+      final estimateResult = _extractQuoteEstimateResult(decoded);
+      final estimate = estimateResult.amount;
       if (estimate == null) {
+        if (decoded is Map) {
+          final root = Map<String, dynamic>.from(decoded);
+          final quote = root['quote'];
+          final pricing = root['pricing'];
+          final quotePricing = quote is Map ? quote['pricing'] : null;
+          debugPrint(
+            '[DIRECT_RIDE][ESTIMATE][PARSE_MISS] reason=$reason rootKeys=${_estimateMapKeys(root)} quoteKeys=${_estimateMapKeys(quote)} pricingKeys=${_estimateMapKeys(pricing)} quotePricingKeys=${_estimateMapKeys(quotePricing)}',
+          );
+        }
         throw Exception('quote_total_missing');
       }
       if (!mounted || requestSeq != _directRideEstimateRequestSeq) return;
@@ -2980,15 +3155,20 @@ class _DriverHomePageState extends State<DriverHomePage>
         _directRideEstimateLoading = false;
         _directRideEstimateError = null;
         _directRideEstimateSignature = signature;
+        _directRideLocationRetryCount = 0;
       });
       debugPrint(
-        '[DIRECT_RIDE][ESTIMATE][OK] reason=$reason amount=${estimate.toStringAsFixed(2)}',
+        '[DIRECT_RIDE][ESTIMATE][OK] reason=$reason amount=${estimate.toStringAsFixed(2)} source=${estimateResult.source ?? 'unknown'}',
       );
     } catch (e) {
       if (!mounted || requestSeq != _directRideEstimateRequestSeq) return;
+      final errorText = e.toString();
+      final safeError = errorText.contains('quote_total_missing')
+          ? 'quote_total_missing'
+          : errorText;
       setState(() {
         _directRideEstimateLoading = false;
-        _directRideEstimateError = e.toString();
+        _directRideEstimateError = safeError;
       });
       debugPrint('[DIRECT_RIDE][ESTIMATE][WARN] reason=$reason error=$e');
     }
@@ -4836,6 +5016,8 @@ class _DriverHomePageState extends State<DriverHomePage>
       _directRideEstimateError = null;
       _directRideEstimateCurrency = kDefaultCurrency;
       _directRideEstimateSignature = null;
+      _directRideLocationRetryCount = 0;
+      _directRideLocationRetryDestination = _directRideDestinationText;
     });
     _toast('Straatrit klaar. Druk START om te rijden.');
     _scheduleDirectRideEstimateRefresh(reason: 'destination_changed');
