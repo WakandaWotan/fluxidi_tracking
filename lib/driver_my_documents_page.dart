@@ -4,6 +4,8 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/company_session_store.dart';
+import 'package:fluxidi_tracking/driver_theme_palette.dart';
+import 'package:fluxidi_tracking/driver_theme_store.dart';
 import 'package:fluxidi_tracking/driver_document_sheet.dart';
 import 'package:fluxidi_tracking/driver_documents_store.dart';
 import 'package:fluxidi_tracking/driver_session_store.dart';
@@ -39,16 +41,133 @@ class _RequiredDocumentDef {
   final List<String> matchTypes;
 }
 
+class _DriverDocumentsThemeTokens {
+  const _DriverDocumentsThemeTokens({
+    required this.background,
+    required this.cardGradient,
+    required this.panelGradient,
+    required this.cardBorder,
+    required this.panelBorder,
+    required this.accentPrimary,
+    required this.accentSecondary,
+    required this.textPrimary,
+    required this.textMuted,
+    required this.textSubtle,
+    required this.primaryButtonForeground,
+    required this.bottomSheetBackground,
+  });
+
+  final Color background;
+  final Gradient cardGradient;
+  final Gradient panelGradient;
+  final Color cardBorder;
+  final Color panelBorder;
+  final Color accentPrimary;
+  final Color accentSecondary;
+  final Color textPrimary;
+  final Color textMuted;
+  final Color textSubtle;
+  final Color primaryButtonForeground;
+  final Color bottomSheetBackground;
+}
+
 class _DriverMyDocumentsPageState extends State<DriverMyDocumentsPage> {
   final ImagePicker _imagePicker = ImagePicker();
-  static const Color _bg = Color(0xFF07080C);
-  static const Color _card = Color(0xFF101113);
-  static const Color _panel = Color(0xFF15120A);
-  static const Color _gold = Color(0xFFE5B641);
   static const Color _green = Color(0xFF4ADE80);
   static const Color _red = Color(0xFFF97373);
   static const Color _orange = Color(0xFFF59E0B);
-  static const Color _muted = Color(0xFFA3A3A3);
+
+  _DriverDocumentsThemeTokens _themeTokens(DriverThemeVariant variant) {
+    if (variant == DriverThemeVariant.midnightBlue) {
+      return const _DriverDocumentsThemeTokens(
+        background: Color(0xFF060B16),
+        cardGradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xFF101F36), Color(0xFF0A1629)],
+        ),
+        panelGradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xFF163052), Color(0xFF0D2139)],
+        ),
+        cardBorder: Color(0x66559BD8),
+        panelBorder: Color(0x8062BBFF),
+        accentPrimary: Color(0xFF4DA3FF),
+        accentSecondary: Color(0xFF8FD0FF),
+        textPrimary: Color(0xFFEAF6FF),
+        textMuted: Color(0xFFAFCBEA),
+        textSubtle: Color(0xFF8FB4D8),
+        primaryButtonForeground: Color(0xFF04172C),
+        bottomSheetBackground: Color(0xFF0D1A2D),
+      );
+    }
+    if (variant == DriverThemeVariant.highContrast) {
+      return const _DriverDocumentsThemeTokens(
+        background: Color(0xFF171108),
+        cardGradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xFF3A2B17), Color(0xFF22170C)],
+        ),
+        panelGradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xFF5D4321), Color(0xFF362510)],
+        ),
+        cardBorder: Color(0x66E8C57E),
+        panelBorder: Color(0x99FFDFA3),
+        accentPrimary: Color(0xFFFFDFA3),
+        accentSecondary: Color(0xFFE8C57E),
+        textPrimary: Color(0xFFFFF0D0),
+        textMuted: Color(0xFFE1CCA0),
+        textSubtle: Color(0xFFC9B182),
+        primaryButtonForeground: Color(0xFF3A2406),
+        bottomSheetBackground: Color(0xFF2B1B09),
+      );
+    }
+    return const _DriverDocumentsThemeTokens(
+      background: Color(0xFF07080C),
+      cardGradient: LinearGradient(
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+        colors: [Color(0xFF101113), Color(0xFF0B0C0F)],
+      ),
+      panelGradient: LinearGradient(
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+        colors: [Color(0xFF1A140A), Color(0xFF13100A)],
+      ),
+      cardBorder: Color(0x4DE5B641),
+      panelBorder: Color(0x66E5B641),
+      accentPrimary: Color(0xFFE5B641),
+      accentSecondary: Color(0xFFFFDFA3),
+      textPrimary: Colors.white,
+      textMuted: Color(0xFFC5C5C5),
+      textSubtle: Color(0xFF8F8F8F),
+      primaryButtonForeground: Colors.black,
+      bottomSheetBackground: Color(0xFF141B2F),
+    );
+  }
+
+  BoxDecoration _cardDecoration(
+    _DriverDocumentsThemeTokens theme, {
+    Color? borderColor,
+  }) {
+    return BoxDecoration(
+      gradient: theme.cardGradient,
+      borderRadius: BorderRadius.circular(14),
+      border: Border.all(color: borderColor ?? theme.cardBorder),
+    );
+  }
+
+  BoxDecoration _panelCircleDecoration(_DriverDocumentsThemeTokens theme) {
+    return BoxDecoration(
+      gradient: theme.panelGradient,
+      shape: BoxShape.circle,
+      border: Border.all(color: theme.panelBorder),
+    );
+  }
 
   @override
   void initState() {
@@ -338,11 +457,11 @@ class _DriverMyDocumentsPageState extends State<DriverMyDocumentsPage> {
     );
   }
 
-  Widget _sectionTitle(String text) {
+  Widget _sectionTitle(String text, _DriverDocumentsThemeTokens theme) {
     return Text(
       text,
       style: TextStyle(
-        color: _gold.withOpacity(0.96),
+        color: theme.accentSecondary.withOpacity(0.96),
         fontWeight: FontWeight.w800,
       ),
     );
@@ -463,15 +582,19 @@ class _DriverMyDocumentsPageState extends State<DriverMyDocumentsPage> {
   }
 
   Future<ImageSource?> _askProfilePhotoSource() async {
+    final theme = _themeTokens(driverThemeNotifier.value);
     return showModalBottomSheet<ImageSource>(
       context: context,
-      backgroundColor: const Color(0xFF141B2F),
+      backgroundColor: theme.bottomSheetBackground,
       builder: (ctx) => SafeArea(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             ListTile(
-              leading: const Icon(Icons.photo_library_outlined),
+              leading: Icon(
+                Icons.photo_library_outlined,
+                color: theme.accentPrimary,
+              ),
               title: Text(
                 _tr(
                   nl: 'Foto kiezen',
@@ -479,11 +602,15 @@ class _DriverMyDocumentsPageState extends State<DriverMyDocumentsPage> {
                   fr: 'Choisir une photo',
                   es: 'Elegir foto',
                 ),
+                style: TextStyle(color: theme.textPrimary),
               ),
               onTap: () => Navigator.of(ctx).pop(ImageSource.gallery),
             ),
             ListTile(
-              leading: const Icon(Icons.photo_camera_outlined),
+              leading: Icon(
+                Icons.photo_camera_outlined,
+                color: theme.accentPrimary,
+              ),
               title: Text(
                 _tr(
                   nl: 'Selfie nemen',
@@ -491,11 +618,12 @@ class _DriverMyDocumentsPageState extends State<DriverMyDocumentsPage> {
                   fr: 'Prendre un selfie',
                   es: 'Tomar selfie',
                 ),
+                style: TextStyle(color: theme.textPrimary),
               ),
               onTap: () => Navigator.of(ctx).pop(ImageSource.camera),
             ),
             ListTile(
-              leading: const Icon(Icons.close),
+              leading: Icon(Icons.close, color: theme.textMuted),
               title: Text(
                 _tr(
                   nl: 'Annuleren',
@@ -503,6 +631,7 @@ class _DriverMyDocumentsPageState extends State<DriverMyDocumentsPage> {
                   fr: 'Annuler',
                   es: 'Cancelar',
                 ),
+                style: TextStyle(color: theme.textMuted),
               ),
               onTap: () => Navigator.of(ctx).pop(),
             ),
@@ -577,6 +706,7 @@ class _DriverMyDocumentsPageState extends State<DriverMyDocumentsPage> {
   Widget _profilePhotoActionCard(
     DriverProfile driver, {
     ActiveDriverSession? session,
+    required _DriverDocumentsThemeTokens theme,
   }) {
     final path = driver.profilePhotoPath?.trim() ?? '';
     final hasLocalPhoto = _driverPhotoExists(path);
@@ -585,21 +715,13 @@ class _DriverMyDocumentsPageState extends State<DriverMyDocumentsPage> {
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: _card,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: _gold.withOpacity(0.30)),
-      ),
+      decoration: _cardDecoration(theme),
       child: Row(
         children: [
           Container(
             width: 48,
             height: 48,
-            decoration: BoxDecoration(
-              color: const Color(0xFF17120A),
-              shape: BoxShape.circle,
-              border: Border.all(color: _gold.withOpacity(0.42)),
-            ),
+            decoration: _panelCircleDecoration(theme),
             child: ClipOval(
               child: hasLocalPhoto
                   ? Image.file(
@@ -608,8 +730,8 @@ class _DriverMyDocumentsPageState extends State<DriverMyDocumentsPage> {
                       errorBuilder: (_, __, ___) => Center(
                         child: Text(
                           _driverInitials(driver),
-                          style: const TextStyle(
-                            color: Colors.white,
+                          style: TextStyle(
+                            color: theme.textPrimary,
                             fontWeight: FontWeight.w800,
                           ),
                         ),
@@ -622,8 +744,8 @@ class _DriverMyDocumentsPageState extends State<DriverMyDocumentsPage> {
                             errorBuilder: (_, __, ___) => Center(
                               child: Text(
                                 _driverInitials(driver),
-                                style: const TextStyle(
-                                  color: Colors.white,
+                                style: TextStyle(
+                                  color: theme.textPrimary,
                                   fontWeight: FontWeight.w800,
                                 ),
                               ),
@@ -632,8 +754,8 @@ class _DriverMyDocumentsPageState extends State<DriverMyDocumentsPage> {
                         : Center(
                             child: Text(
                               _driverInitials(driver),
-                              style: const TextStyle(
-                                color: Colors.white,
+                              style: TextStyle(
+                                color: theme.textPrimary,
                                 fontWeight: FontWeight.w800,
                               ),
                             ),
@@ -652,8 +774,8 @@ class _DriverMyDocumentsPageState extends State<DriverMyDocumentsPage> {
                     fr: 'Photo de profil',
                     es: 'Foto de perfil',
                   ),
-                  style: const TextStyle(
-                    color: Colors.white,
+                  style: TextStyle(
+                    color: theme.textPrimary,
                     fontSize: 13.5,
                     fontWeight: FontWeight.w800,
                   ),
@@ -674,7 +796,7 @@ class _DriverMyDocumentsPageState extends State<DriverMyDocumentsPage> {
                           es: 'Aún sin foto',
                         ),
                   style: TextStyle(
-                    color: Colors.white.withOpacity(0.62),
+                    color: theme.textMuted.withOpacity(0.92),
                     fontSize: 11.5,
                     fontWeight: FontWeight.w600,
                   ),
@@ -684,9 +806,10 @@ class _DriverMyDocumentsPageState extends State<DriverMyDocumentsPage> {
           ),
           OutlinedButton(
             style: OutlinedButton.styleFrom(
-              foregroundColor: _gold.withOpacity(0.98),
-              side: BorderSide(color: _gold.withOpacity(0.44)),
-              backgroundColor: _panel,
+              foregroundColor: theme.accentPrimary.withOpacity(0.98),
+              side: BorderSide(color: theme.panelBorder),
+              backgroundColor:
+                  (theme.panelGradient as LinearGradient).colors.first,
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
               minimumSize: const Size(0, 36),
               shape: RoundedRectangleBorder(
@@ -708,411 +831,420 @@ class _DriverMyDocumentsPageState extends State<DriverMyDocumentsPage> {
     return ValueListenableBuilder<AppLanguage>(
       valueListenable: appLanguageNotifier,
       builder: (context, lang, _) {
-        return Scaffold(
-          backgroundColor: _bg,
-          appBar: AppBar(
-            backgroundColor: _bg,
-            title: Text(
-              _tr(
-                nl: 'Mijn documenten',
-                en: 'My documents',
-                fr: 'Mes documents',
-                es: 'Mis documentos',
+        return ValueListenableBuilder<DriverThemeVariant>(
+          valueListenable: driverThemeNotifier,
+          builder: (context, themeVariant, _) {
+            final theme = _themeTokens(themeVariant);
+            return Scaffold(
+              backgroundColor: theme.background,
+              appBar: AppBar(
+                backgroundColor: theme.background,
+                foregroundColor: theme.textPrimary,
+                title: Text(
+                  _tr(
+                    nl: 'Mijn documenten',
+                    en: 'My documents',
+                    fr: 'Mes documents',
+                    es: 'Mis documentos',
+                  ),
+                  style: TextStyle(color: theme.textPrimary),
+                ),
               ),
-            ),
-          ),
-          body: ValueListenableBuilder<ActiveDriverSession?>(
-            valueListenable: activeDriverSessionNotifier,
-            builder: (context, session, _) {
-              if (session == null) {
-                return Center(
-                  child: Padding(
-                    padding: const EdgeInsets.all(24),
-                    child: Text(
-                      _tr(
-                        nl: 'Log in met je chauffeur-ID om je documenten te zien.',
-                        en: 'Sign in with your driver ID to view your documents.',
-                        fr: 'Connectez-vous avec votre ID chauffeur pour voir vos documents.',
-                        es: 'Inicia sesión con tu ID de conductor para ver tus documentos.',
-                      ),
-                      style: const TextStyle(color: Colors.white70),
-                      textAlign: TextAlign.center,
-                    ),
-                  ),
-                );
-              }
-              final driver = _driverForSession(session);
-              if (driver == null) {
-                return Center(
-                  child: Padding(
-                    padding: const EdgeInsets.all(24),
-                    child: Text(
-                      _tr(
-                        nl: 'Je chauffeurprofiel is niet gevonden in deze app. Neem contact op met je bedrijf.',
-                        en: 'Your driver profile was not found in this app. Contact your company.',
-                        fr: 'Profil chauffeur introuvable dans cette application. Contactez votre entreprise.',
-                        es: 'No se encontró tu perfil de conductor en esta app. Contacta a tu empresa.',
-                      ),
-                      style: const TextStyle(color: Colors.white70),
-                      textAlign: TextAlign.center,
-                    ),
-                  ),
-                );
-              }
-
-              return ValueListenableBuilder<List<DriverDocument>>(
-                valueListenable: driverDocumentsNotifier,
-                builder: (context, _, __) {
-                  final docs = DriverDocumentsStore.instance
-                      .documentsVisibleForDriver(driver.id);
-                  final scopedTenant = (session.tenantId ?? '').trim();
-                  final scopedCompany = (session.companyId ?? '').trim();
-                  final scopedDriver = session.driverId.trim();
-                  final pending = docs
-                      .where(
-                        (e) => e.status == DriverDocumentStatuses.pendingReview,
-                      )
-                      .length;
-
-                  final hasCoreGap = DriverDocumentsStore.instance
-                      .hasCoreDocumentGapForDriver(driver.id);
-                  final actionRequired = docs.isEmpty || hasCoreGap;
-                  final requiredDocs = _requiredDocumentDefs
-                      .map(
-                        (def) => (
-                          def: def,
-                          doc: _bestRequiredDocForScope(
-                            tenantId: scopedTenant,
-                            companyId: scopedCompany,
-                            driverId: scopedDriver,
-                            types: def.matchTypes,
+              body: ValueListenableBuilder<ActiveDriverSession?>(
+                valueListenable: activeDriverSessionNotifier,
+                builder: (context, session, _) {
+                  if (session == null) {
+                    return Center(
+                      child: Padding(
+                        padding: const EdgeInsets.all(24),
+                        child: Text(
+                          _tr(
+                            nl: 'Log in met je chauffeur-ID om je documenten te zien.',
+                            en: 'Sign in with your driver ID to view your documents.',
+                            fr: 'Connectez-vous avec votre ID chauffeur pour voir vos documents.',
+                            es: 'Inicia sesión con tu ID de conductor para ver tus documentos.',
                           ),
+                          style: TextStyle(color: theme.textMuted),
+                          textAlign: TextAlign.center,
                         ),
-                      )
-                      .toList(growable: false);
-                  final presentRequired = requiredDocs
-                      .where((entry) => entry.doc != null)
-                      .length;
+                      ),
+                    );
+                  }
+                  final driver = _driverForSession(session);
+                  if (driver == null) {
+                    return Center(
+                      child: Padding(
+                        padding: const EdgeInsets.all(24),
+                        child: Text(
+                          _tr(
+                            nl: 'Je chauffeurprofiel is niet gevonden in deze app. Neem contact op met je bedrijf.',
+                            en: 'Your driver profile was not found in this app. Contact your company.',
+                            fr: 'Profil chauffeur introuvable dans cette application. Contactez votre entreprise.',
+                            es: 'No se encontró tu perfil de conductor en esta app. Contacta a tu empresa.',
+                          ),
+                          style: TextStyle(color: theme.textMuted),
+                          textAlign: TextAlign.center,
+                        ),
+                      ),
+                    );
+                  }
 
-                  return ListView(
-                    padding: const EdgeInsets.fromLTRB(14, 14, 14, 24),
-                    children: [
-                      Container(
-                        margin: const EdgeInsets.only(bottom: 12),
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: _card,
-                          borderRadius: BorderRadius.circular(14),
-                          border: Border.all(color: _gold.withOpacity(0.30)),
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
+                  return ValueListenableBuilder<List<DriverDocument>>(
+                    valueListenable: driverDocumentsNotifier,
+                    builder: (context, _, __) {
+                      final docs = DriverDocumentsStore.instance
+                          .documentsVisibleForDriver(driver.id);
+                      final scopedTenant = (session.tenantId ?? '').trim();
+                      final scopedCompany = (session.companyId ?? '').trim();
+                      final scopedDriver = session.driverId.trim();
+                      final pending = docs
+                          .where(
+                            (e) =>
+                                e.status ==
+                                DriverDocumentStatuses.pendingReview,
+                          )
+                          .length;
+
+                      final hasCoreGap = DriverDocumentsStore.instance
+                          .hasCoreDocumentGapForDriver(driver.id);
+                      final actionRequired = docs.isEmpty || hasCoreGap;
+                      final requiredDocs = _requiredDocumentDefs
+                          .map(
+                            (def) => (
+                              def: def,
+                              doc: _bestRequiredDocForScope(
+                                tenantId: scopedTenant,
+                                companyId: scopedCompany,
+                                driverId: scopedDriver,
+                                types: def.matchTypes,
+                              ),
+                            ),
+                          )
+                          .toList(growable: false);
+                      final presentRequired = requiredDocs
+                          .where((entry) => entry.doc != null)
+                          .length;
+
+                      return ListView(
+                        padding: const EdgeInsets.fromLTRB(14, 14, 14, 24),
+                        children: [
+                          Container(
+                            margin: const EdgeInsets.only(bottom: 12),
+                            padding: const EdgeInsets.all(12),
+                            decoration: _cardDecoration(theme),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Container(
-                                  width: 34,
-                                  height: 34,
-                                  decoration: BoxDecoration(
-                                    shape: BoxShape.circle,
-                                    color: _gold.withOpacity(0.15),
-                                    border: Border.all(
-                                      color: _gold.withOpacity(0.45),
+                                Row(
+                                  children: [
+                                    Container(
+                                      width: 34,
+                                      height: 34,
+                                      decoration: _panelCircleDecoration(theme),
+                                      child: Icon(
+                                        Icons.verified_user_outlined,
+                                        color: theme.accentPrimary.withOpacity(
+                                          0.98,
+                                        ),
+                                        size: 18,
+                                      ),
                                     ),
+                                    const SizedBox(width: 10),
+                                    Expanded(
+                                      child: Text(
+                                        _tr(
+                                          nl: 'Documentstatus',
+                                          en: 'Document status',
+                                          fr: 'Statut des documents',
+                                          es: 'Estado de documentos',
+                                        ),
+                                        style: TextStyle(
+                                          color: theme.textPrimary,
+                                          fontWeight: FontWeight.w800,
+                                          fontSize: 14.2,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 8),
+                                Text(
+                                  _tr(
+                                    nl: '$presentRequired/4 compleet',
+                                    en: '$presentRequired/4 complete',
+                                    fr: '$presentRequired/4 complets',
+                                    es: '$presentRequired/4 completos',
                                   ),
-                                  child: Icon(
-                                    Icons.verified_user_outlined,
-                                    color: _gold.withOpacity(0.98),
-                                    size: 18,
+                                  style: TextStyle(
+                                    color: theme.textMuted.withOpacity(0.92),
+                                    fontWeight: FontWeight.w600,
                                   ),
                                 ),
-                                const SizedBox(width: 10),
-                                Expanded(
-                                  child: Text(
-                                    _tr(
-                                      nl: 'Documentstatus',
-                                      en: 'Document status',
-                                      fr: 'Statut des documents',
-                                      es: 'Estado de documentos',
-                                    ),
-                                    style: const TextStyle(
-                                      color: Colors.white,
-                                      fontWeight: FontWeight.w800,
-                                      fontSize: 14.2,
-                                    ),
+                                const SizedBox(height: 7),
+                                _chip(
+                                  _tr(
+                                    nl: actionRequired
+                                        ? 'Actie vereist'
+                                        : 'Documenten aanwezig',
+                                    en: actionRequired
+                                        ? 'Action required'
+                                        : 'Documents available',
+                                    fr: actionRequired
+                                        ? 'Action requise'
+                                        : 'Documents disponibles',
+                                    es: actionRequired
+                                        ? 'Acción requerida'
+                                        : 'Documentos disponibles',
                                   ),
+                                  actionRequired ? _orange : _green,
                                 ),
                               ],
                             ),
-                            const SizedBox(height: 8),
-                            Text(
-                              _tr(
-                                nl: '$presentRequired/4 compleet',
-                                en: '$presentRequired/4 complete',
-                                fr: '$presentRequired/4 complets',
-                                es: '$presentRequired/4 completos',
-                              ),
-                              style: TextStyle(
-                                color: Colors.white.withOpacity(0.72),
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                            const SizedBox(height: 7),
-                            _chip(
-                              _tr(
-                                nl: actionRequired
-                                    ? 'Actie vereist'
-                                    : 'Documenten aanwezig',
-                                en: actionRequired
-                                    ? 'Action required'
-                                    : 'Documents available',
-                                fr: actionRequired
-                                    ? 'Action requise'
-                                    : 'Documents disponibles',
-                                es: actionRequired
-                                    ? 'Acción requerida'
-                                    : 'Documentos disponibles',
-                              ),
-                              actionRequired ? _orange : _green,
-                            ),
-                          ],
-                        ),
-                      ),
-                      _profilePhotoActionCard(driver, session: session),
-                      const SizedBox(height: 2),
-                      _sectionTitle(
-                        _tr(
-                          nl: 'Vereiste documenten',
-                          en: 'Required documents',
-                          fr: 'Documents requis',
-                          es: 'Documentos requeridos',
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      ...requiredDocs.map((entry) {
-                        final def = entry.def;
-                        final doc = entry.doc;
-                        final state = _docStateChip(doc);
-                        return Container(
-                          margin: const EdgeInsets.only(bottom: 8),
-                          padding: const EdgeInsets.fromLTRB(10, 9, 10, 9),
-                          decoration: BoxDecoration(
-                            color: _card,
-                            borderRadius: BorderRadius.circular(12),
-                            border: Border.all(color: _gold.withOpacity(0.26)),
                           ),
-                          child: Row(
-                            children: [
-                              Container(
-                                width: 34,
-                                height: 34,
-                                decoration: BoxDecoration(
-                                  color: _panel,
-                                  shape: BoxShape.circle,
-                                  border: Border.all(
-                                    color: _gold.withOpacity(0.35),
-                                  ),
-                                ),
-                                child: Icon(
-                                  def.icon,
-                                  size: 18,
-                                  color: _gold.withOpacity(0.96),
-                                ),
-                              ),
-                              const SizedBox(width: 10),
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      _requiredDocLabel(def),
-                                      maxLines: 2,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: const TextStyle(
-                                        color: Colors.white,
-                                        fontWeight: FontWeight.w700,
-                                        height: 1.2,
+                          _profilePhotoActionCard(
+                            driver,
+                            session: session,
+                            theme: theme,
+                          ),
+                          const SizedBox(height: 2),
+                          _sectionTitle(
+                            _tr(
+                              nl: 'Vereiste documenten',
+                              en: 'Required documents',
+                              fr: 'Documents requis',
+                              es: 'Documentos requeridos',
+                            ),
+                            theme,
+                          ),
+                          const SizedBox(height: 8),
+                          ...requiredDocs.map((entry) {
+                            final def = entry.def;
+                            final doc = entry.doc;
+                            final state = _docStateChip(doc);
+                            return Container(
+                              margin: const EdgeInsets.only(bottom: 8),
+                              padding: const EdgeInsets.fromLTRB(10, 9, 10, 9),
+                              decoration: _cardDecoration(theme),
+                              child: Row(
+                                children: [
+                                  Container(
+                                    width: 34,
+                                    height: 34,
+                                    decoration: _panelCircleDecoration(theme),
+                                    child: Icon(
+                                      def.icon,
+                                      size: 18,
+                                      color: theme.accentPrimary.withOpacity(
+                                        0.96,
                                       ),
                                     ),
-                                    const SizedBox(height: 4),
-                                    _chip(state.text, state.color),
-                                  ],
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                              OutlinedButton(
-                                style: OutlinedButton.styleFrom(
-                                  foregroundColor: _gold.withOpacity(0.95),
-                                  side: BorderSide(
-                                    color: _gold.withOpacity(0.38),
                                   ),
-                                  backgroundColor: _panel,
-                                  minimumSize: const Size(0, 34),
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 10,
-                                    vertical: 7,
-                                  ),
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(999),
-                                  ),
-                                ),
-                                onPressed: () => showDriverDocumentEditorSheet(
-                                  context,
-                                  driver: driver,
-                                  existing: doc,
-                                  driverSelfService: true,
-                                  initialDocumentType: doc == null
-                                      ? def.matchTypes.first
-                                      : null,
-                                ),
-                                child: Text(
-                                  doc == null
-                                      ? _tr(
-                                          nl: 'Toevoegen',
-                                          en: 'Add',
-                                          fr: 'Ajouter',
-                                          es: 'Añadir',
-                                        )
-                                      : _tr(
-                                          nl: 'Beheer',
-                                          en: 'Manage',
-                                          fr: 'Gérer',
-                                          es: 'Gestionar',
+                                  const SizedBox(width: 10),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          _requiredDocLabel(def),
+                                          maxLines: 2,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: TextStyle(
+                                            color: theme.textPrimary,
+                                            fontWeight: FontWeight.w700,
+                                            height: 1.2,
+                                          ),
                                         ),
+                                        const SizedBox(height: 4),
+                                        _chip(state.text, state.color),
+                                      ],
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  OutlinedButton(
+                                    style: OutlinedButton.styleFrom(
+                                      foregroundColor: theme.accentPrimary
+                                          .withOpacity(0.95),
+                                      side: BorderSide(
+                                        color: theme.panelBorder,
+                                      ),
+                                      backgroundColor:
+                                          (theme.panelGradient
+                                                  as LinearGradient)
+                                              .colors
+                                              .first,
+                                      minimumSize: const Size(0, 34),
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 10,
+                                        vertical: 7,
+                                      ),
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(
+                                          999,
+                                        ),
+                                      ),
+                                    ),
+                                    onPressed: () =>
+                                        showDriverDocumentEditorSheet(
+                                          context,
+                                          driver: driver,
+                                          existing: doc,
+                                          driverSelfService: true,
+                                          initialDocumentType: doc == null
+                                              ? def.matchTypes.first
+                                              : null,
+                                        ),
+                                    child: Text(
+                                      doc == null
+                                          ? _tr(
+                                              nl: 'Toevoegen',
+                                              en: 'Add',
+                                              fr: 'Ajouter',
+                                              es: 'Añadir',
+                                            )
+                                          : _tr(
+                                              nl: 'Beheer',
+                                              en: 'Manage',
+                                              fr: 'Gérer',
+                                              es: 'Gestionar',
+                                            ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            );
+                          }),
+                          const SizedBox(height: 4),
+                          if (docs.isEmpty)
+                            Container(
+                              margin: const EdgeInsets.only(bottom: 12),
+                              padding: const EdgeInsets.all(12),
+                              decoration: _cardDecoration(theme),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    _tr(
+                                      nl: 'Nog geen documenten',
+                                      en: 'No documents yet',
+                                      fr: 'Pas encore de documents',
+                                      es: 'Aún sin documentos',
+                                    ),
+                                    style: TextStyle(
+                                      color: theme.textPrimary,
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w800,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    _tr(
+                                      nl: 'Voeg je rijbewijs, bestuurderspas of andere vereiste documenten toe.',
+                                      en: 'Add your driving license, driver card, or other required documents.',
+                                      fr: 'Ajoutez votre permis, carte chauffeur ou autres documents requis.',
+                                      es: 'Añade tu permiso, tarjeta de conductor u otros documentos requeridos.',
+                                    ),
+                                    style: TextStyle(
+                                      color: theme.textMuted.withOpacity(0.92),
+                                      fontSize: 12,
+                                      height: 1.35,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            )
+                          else ...[
+                            if (pending > 0)
+                              Padding(
+                                padding: const EdgeInsets.only(bottom: 10),
+                                child: Text(
+                                  _tr(
+                                    nl: 'Documenten in behandeling worden zichtbaar voor je bedrijf en moeten nog nagekeken worden.',
+                                    en: 'Documents under review are visible to your company and still need to be checked.',
+                                    fr: 'Les documents en cours de vérification sont visibles par votre entreprise et doivent encore être contrôlés.',
+                                    es: 'Los documentos en revisión son visibles para tu empresa y aún deben comprobarse.',
+                                  ),
+                                  style: TextStyle(
+                                    color: theme.textMuted.withOpacity(0.92),
+                                    fontSize: 12,
+                                    height: 1.35,
+                                  ),
                                 ),
                               ),
-                            ],
-                          ),
-                        );
-                      }),
-                      const SizedBox(height: 4),
-                      if (docs.isEmpty)
-                        Container(
-                          margin: const EdgeInsets.only(bottom: 12),
-                          padding: const EdgeInsets.all(12),
-                          decoration: BoxDecoration(
-                            color: _card,
-                            borderRadius: BorderRadius.circular(14),
-                            border: Border.all(color: _gold.withOpacity(0.28)),
-                          ),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                _tr(
-                                  nl: 'Nog geen documenten',
-                                  en: 'No documents yet',
-                                  fr: 'Pas encore de documents',
-                                  es: 'Aún sin documentos',
-                                ),
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.w800,
-                                ),
-                              ),
-                              const SizedBox(height: 4),
-                              Text(
-                                _tr(
-                                  nl: 'Voeg je rijbewijs, bestuurderspas of andere vereiste documenten toe.',
-                                  en: 'Add your driving license, driver card, or other required documents.',
-                                  fr: 'Ajoutez votre permis, carte chauffeur ou autres documents requis.',
-                                  es: 'Añade tu permiso, tarjeta de conductor u otros documentos requeridos.',
-                                ),
-                                style: TextStyle(
-                                  color: Colors.white.withOpacity(0.72),
-                                  fontSize: 12,
-                                  height: 1.35,
-                                ),
-                              ),
-                            ],
-                          ),
-                        )
-                      else ...[
-                        if (pending > 0)
-                          Padding(
-                            padding: const EdgeInsets.only(bottom: 10),
-                            child: Text(
+                            _sectionTitle(
                               _tr(
-                                nl: 'Documenten in behandeling worden zichtbaar voor je bedrijf en moeten nog nagekeken worden.',
-                                en: 'Documents under review are visible to your company and still need to be checked.',
-                                fr: 'Les documents en cours de vérification sont visibles par votre entreprise et doivent encore être contrôlés.',
-                                es: 'Los documentos en revisión son visibles para tu empresa y aún deben comprobarse.',
+                                nl: 'Geüploade documenten',
+                                en: 'Uploaded documents',
+                                fr: 'Documents téléversés',
+                                es: 'Documentos subidos',
                               ),
-                              style: TextStyle(
-                                color: Colors.white.withOpacity(0.72),
-                                fontSize: 12,
-                                height: 1.35,
+                              theme,
+                            ),
+                            const SizedBox(height: 8),
+                            ...docs.map(
+                              (doc) => Padding(
+                                padding: const EdgeInsets.only(bottom: 10),
+                                child: _driverSelfDocTile(context, doc, theme),
+                              ),
+                            ),
+                          ],
+                          const SizedBox(height: 2),
+                          FilledButton.icon(
+                            style: FilledButton.styleFrom(
+                              backgroundColor: theme.accentSecondary,
+                              foregroundColor: theme.primaryButtonForeground,
+                              minimumSize: const Size.fromHeight(44),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                            ),
+                            onPressed: () => showDriverDocumentEditorSheet(
+                              context,
+                              driver: driver,
+                              driverSelfService: true,
+                            ),
+                            icon: const Icon(Icons.add, size: 20),
+                            label: Text(
+                              _tr(
+                                nl: 'Document toevoegen',
+                                en: 'Add document',
+                                fr: 'Ajouter un document',
+                                es: 'Añadir documento',
                               ),
                             ),
                           ),
-                        _sectionTitle(
-                          _tr(
-                            nl: 'Geüploade documenten',
-                            en: 'Uploaded documents',
-                            fr: 'Documents téléversés',
-                            es: 'Documentos subidos',
+                          const SizedBox(height: 10),
+                          Text(
+                            _tr(
+                              nl: 'Gevoelige documenten moeten in productie veilig en versleuteld worden opgeslagen.',
+                              en: 'Sensitive documents must be stored securely and encrypted in production.',
+                              fr: 'Les documents sensibles doivent être stockés de manière sécurisée et chiffrée en production.',
+                              es: 'Los documentos sensibles deben almacenarse de forma segura y cifrada en producción.',
+                            ),
+                            style: TextStyle(
+                              color: theme.textSubtle.withOpacity(0.9),
+                              fontSize: 11.2,
+                              height: 1.35,
+                            ),
                           ),
-                        ),
-                        const SizedBox(height: 8),
-                        ...docs.map(
-                          (doc) => Padding(
-                            padding: const EdgeInsets.only(bottom: 10),
-                            child: _driverSelfDocTile(context, doc),
-                          ),
-                        ),
-                      ],
-                      const SizedBox(height: 2),
-                      FilledButton.icon(
-                        style: FilledButton.styleFrom(
-                          backgroundColor: _gold,
-                          foregroundColor: Colors.black,
-                          minimumSize: const Size.fromHeight(44),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                        ),
-                        onPressed: () => showDriverDocumentEditorSheet(
-                          context,
-                          driver: driver,
-                          driverSelfService: true,
-                        ),
-                        icon: const Icon(Icons.add, size: 20),
-                        label: Text(
-                          _tr(
-                            nl: 'Document toevoegen',
-                            en: 'Add document',
-                            fr: 'Ajouter un document',
-                            es: 'Añadir documento',
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 10),
-                      Text(
-                        _tr(
-                          nl: 'Gevoelige documenten moeten in productie veilig en versleuteld worden opgeslagen.',
-                          en: 'Sensitive documents must be stored securely and encrypted in production.',
-                          fr: 'Les documents sensibles doivent être stockés de manière sécurisée et chiffrée en production.',
-                          es: 'Los documentos sensibles deben almacenarse de forma segura y cifrada en producción.',
-                        ),
-                        style: TextStyle(
-                          color: Colors.white.withOpacity(0.54),
-                          fontSize: 11.2,
-                          height: 1.35,
-                        ),
-                      ),
-                    ],
+                        ],
+                      );
+                    },
                   );
                 },
-              );
-            },
-          ),
+              ),
+            );
+          },
         );
       },
     );
   }
 
-  Widget _driverSelfDocTile(BuildContext context, DriverDocument doc) {
+  Widget _driverSelfDocTile(
+    BuildContext context,
+    DriverDocument doc,
+    _DriverDocumentsThemeTokens theme,
+  ) {
     bool isBackendSynced(DriverDocument d) =>
         d.storageState.trim().toLowerCase() == 'stored' ||
         d.backendSyncedAt.trim().isNotEmpty;
@@ -1195,22 +1327,19 @@ class _DriverMyDocumentsPageState extends State<DriverMyDocumentsPage> {
 
     return Container(
       padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: _card,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(
-          color: expiredVisual
-              ? _orange.withOpacity(0.55)
-              : _gold.withOpacity(0.28),
-        ),
+      decoration: _cardDecoration(
+        theme,
+        borderColor: expiredVisual
+            ? _orange.withOpacity(0.55)
+            : theme.cardBorder,
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
             typeLabel,
-            style: const TextStyle(
-              color: Colors.white,
+            style: TextStyle(
+              color: theme.textPrimary,
               fontWeight: FontWeight.w800,
               fontSize: 14,
             ),
@@ -1223,7 +1352,7 @@ class _DriverMyDocumentsPageState extends State<DriverMyDocumentsPage> {
               child: Text(
                 doc.title,
                 style: TextStyle(
-                  color: Colors.white.withOpacity(0.88),
+                  color: theme.textPrimary.withOpacity(0.9),
                   fontSize: 13,
                 ),
                 maxLines: 2,
@@ -1235,7 +1364,7 @@ class _DriverMyDocumentsPageState extends State<DriverMyDocumentsPage> {
             '${_tr(nl: 'Status', en: 'Status', fr: 'Statut', es: 'Estado')}: ${driverDocumentStatusLabel(doc.status, _lang)}'
             '${doc.isExpiredByDate && doc.status != DriverDocumentStatuses.expired ? ' (${_tr(nl: 'datum verlopen', en: 'date expired', fr: 'date expirée', es: 'fecha caducada')})' : ''}',
             style: TextStyle(
-              color: expiredVisual ? _orange : Colors.white70,
+              color: expiredVisual ? _orange : theme.textMuted,
               fontSize: 12,
             ),
             maxLines: 3,
@@ -1246,7 +1375,7 @@ class _DriverMyDocumentsPageState extends State<DriverMyDocumentsPage> {
               padding: const EdgeInsets.only(top: 4),
               child: Text(
                 '${_tr(nl: 'Vervaldatum', en: 'Expiry', fr: 'Expiration', es: 'Caducidad')}: ${doc.expiryDate}',
-                style: const TextStyle(fontSize: 11, color: Colors.white54),
+                style: TextStyle(fontSize: 11, color: theme.textSubtle),
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
               ),
@@ -1259,7 +1388,7 @@ class _DriverMyDocumentsPageState extends State<DriverMyDocumentsPage> {
           Text(
             storageLabel(doc),
             style: TextStyle(
-              color: Colors.white.withOpacity(0.70),
+              color: theme.textMuted.withOpacity(0.9),
               fontSize: 11,
               fontWeight: FontWeight.w600,
             ),
@@ -1277,8 +1406,9 @@ class _DriverMyDocumentsPageState extends State<DriverMyDocumentsPage> {
                 ),
                 minimumSize: Size.zero,
                 tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                foregroundColor: _gold.withOpacity(0.95),
-                backgroundColor: _panel,
+                foregroundColor: theme.accentPrimary.withOpacity(0.95),
+                backgroundColor:
+                    (theme.panelGradient as LinearGradient).colors.first,
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(999),
                 ),
