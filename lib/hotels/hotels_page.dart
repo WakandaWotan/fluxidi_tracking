@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
@@ -17,9 +18,13 @@ import 'package:path_provider/path_provider.dart';
 
 import '../discovery/discovery_geo.dart';
 import '../discovery/discovery_nearby.dart';
+import '../customer_profile_store.dart';
+import '../nearby_partners_page.dart';
 import 'hotel_geo_taxonomy.dart';
 import 'hotel_model.dart';
 import 'hotel_seed_data.dart';
+
+enum _HotelExternalProvider { stay22Allez, bookingComFallback }
 
 class HotelsPage extends StatefulWidget {
   const HotelsPage({
@@ -66,6 +71,7 @@ class _HotelsPageState extends State<HotelsPage> {
     namespace: 'hotels',
   );
   static const String _allKey = 'all';
+  static const String _stay22Aid = 'fluxidi';
 
   late final List<HotelStay> _allStays;
   Set<String> _savedStayIds = <String>{};
@@ -155,7 +161,7 @@ class _HotelsPageState extends State<HotelsPage> {
     return hotelGeoCountryOptions(_languageCode);
   }
 
-  List<HotelStay> get _visibleStays {
+  List<HotelStay> _filterStays(List<HotelStay> sourceStays) {
     final query = _searchController.text.trim().toLowerCase();
     final countryMatchValues = _selectedCountryCode == _allKey
         ? const <String>{}
@@ -183,7 +189,7 @@ class _HotelsPageState extends State<HotelsPage> {
               settlementKey: _selectedSettlementKey,
             ),
           );
-    return _allStays
+    return sourceStays
         .where((stay) {
           if (countryMatchValues.isNotEmpty &&
               !countryMatchValues.contains(
@@ -220,6 +226,120 @@ class _HotelsPageState extends State<HotelsPage> {
           return searchBlob.contains(query);
         })
         .toList(growable: false);
+  }
+
+  List<HotelStay> get _visibleStays => _filterStays(_allStays);
+
+  List<HotelStay> get _discoveryRegionStays => _filterStays(const <HotelStay>[
+    HotelStay(
+      id: 'discovery-vlaamse-ardennen',
+      name: "Hotels & B&B's in de Vlaamse Ardennen",
+      type: HotelStayType.guesthouse,
+      city: 'Vlaamse Ardennen',
+      region: 'Oost-Vlaanderen',
+      country: 'Belgium',
+      address: 'Vlaamse Ardennen, Belgium',
+      description: 'Ontdek verblijven en plan je rit.',
+      imageRef: 'approved_asset:assets/fluxidi/Hotel&B&B_background.png',
+      lat: 50.7655,
+      lng: 3.6231,
+      provider: 'fluxidi-discovery',
+      source: 'discovery',
+      sourceId: 'discovery-vlaamse-ardennen',
+    ),
+    HotelStay(
+      id: 'discovery-boutique-gent',
+      name: 'Boutique stays rond Gent',
+      type: HotelStayType.hotel,
+      city: 'Gent',
+      region: 'Oost-Vlaanderen',
+      country: 'Belgium',
+      address: 'Gent, Belgium',
+      description: 'Ontdek verblijven en plan je rit.',
+      imageRef:
+          'approved_asset:assets/fluxidi/customer_home_hotel_bb_banner.png',
+      lat: 51.0543,
+      lng: 3.7174,
+      provider: 'fluxidi-discovery',
+      source: 'discovery',
+      sourceId: 'discovery-boutique-gent',
+    ),
+    HotelStay(
+      id: 'discovery-brussels-airport',
+      name: 'Hotels bij Brussels Airport',
+      type: HotelStayType.hotel,
+      city: 'Brussel',
+      region: 'Brussels Hoofdstedelijk Gewest',
+      country: 'Belgium',
+      address: 'Brussels Airport, Belgium',
+      description: 'Ontdek verblijven en plan je rit.',
+      imageRef:
+          'approved_asset:assets/fluxidi/customer_home_airport_banner.png',
+      lat: 50.9014,
+      lng: 4.4844,
+      provider: 'fluxidi-discovery',
+      source: 'discovery',
+      sourceId: 'discovery-brussels-airport',
+    ),
+    HotelStay(
+      id: 'discovery-city-brugge',
+      name: 'City hotels in Brugge',
+      type: HotelStayType.hotel,
+      city: 'Brugge',
+      region: 'West-Vlaanderen',
+      country: 'Belgium',
+      address: 'Brugge, Belgium',
+      description: 'Ontdek verblijven en plan je rit.',
+      imageRef:
+          'approved_asset:assets/fluxidi/customer_home_business_banner.png',
+      lat: 51.2093,
+      lng: 3.2247,
+      provider: 'fluxidi-discovery',
+      source: 'discovery',
+      sourceId: 'discovery-city-brugge',
+    ),
+    HotelStay(
+      id: 'discovery-coast-stays',
+      name: 'Verblijven aan de kust',
+      type: HotelStayType.bedAndBreakfast,
+      city: 'Kust',
+      region: 'West-Vlaanderen',
+      country: 'Belgium',
+      address: 'Belgische kust, Belgium',
+      description: 'Ontdek verblijven en plan je rit.',
+      imageRef: 'approved_asset:assets/fluxidi/customer_home_events_banner.png',
+      lat: 51.2301,
+      lng: 2.9196,
+      provider: 'fluxidi-discovery',
+      source: 'discovery',
+      sourceId: 'discovery-coast-stays',
+    ),
+  ]);
+
+  bool _isApprovedImageUrl(String url) {
+    final parsed = Uri.tryParse(url);
+    if (parsed == null || !parsed.hasScheme) return false;
+    return parsed.scheme == 'http' || parsed.scheme == 'https';
+  }
+
+  bool _isApprovedCustomerFacingStay(HotelStay stay) {
+    if (!stay.isRealApproved) return false;
+    final imageRef = stay.imageRef.trim();
+    if (imageRef.startsWith('seed:')) return false;
+    final imageUrl = (stay.imageUrl ?? '').trim();
+    if (imageUrl.isNotEmpty && _isApprovedImageUrl(imageUrl)) return true;
+    if (imageRef.startsWith('approved_asset:')) {
+      final pathSuffix = imageRef.substring('approved_asset:'.length).trim();
+      return pathSuffix.isNotEmpty;
+    }
+    return false;
+  }
+
+  String _approvedAssetPath(HotelStay stay) {
+    final imageRef = stay.imageRef.trim();
+    if (!imageRef.startsWith('approved_asset:')) return '';
+    final pathSuffix = imageRef.substring('approved_asset:'.length).trim();
+    return pathSuffix;
   }
 
   String _typeLabel(String typeKey) {
@@ -279,12 +399,74 @@ class _HotelsPageState extends State<HotelsPage> {
     );
   }
 
+  String get _viewOptionsLabel {
+    return _t(
+      nl: 'Bekijk opties',
+      en: 'View options',
+      fr: 'Voir les options',
+      es: 'Ver opciones',
+    );
+  }
+
   String get _saveStayLabel {
     return _t(nl: 'Opslaan', en: 'Save', fr: 'Enregistrer', es: 'Guardar');
   }
 
   String get _savedStayLabel {
     return _t(nl: 'Opgeslagen', en: 'Saved', fr: 'Enregistré', es: 'Guardado');
+  }
+
+  String get _externalAvailabilityLabel {
+    return _t(
+      nl: 'Bekijk beschikbaarheid extern',
+      en: 'Check availability externally',
+      fr: 'Voir les disponibilités externes',
+      es: 'Ver disponibilidad externa',
+    );
+  }
+
+  String get _safeDiscoveryCopy {
+    return _t(
+      nl: 'Zoek een hotel, B&B, stad of regio. Beschikbaarheid en prijzen worden extern getoond.',
+      en: 'Search a hotel, B&B, city or region. Availability and prices are shown externally.',
+      fr: 'Recherchez un hôtel, B&B, ville ou région. Les disponibilités et les prix sont affichés en externe.',
+      es: 'Busca un hotel, B&B, ciudad o región. La disponibilidad y los precios se muestran externamente.',
+    );
+  }
+
+  String get _planTaxiToStayLabel {
+    return _t(
+      nl: 'Taxi naar verblijf plannen',
+      en: 'Plan taxi to stay',
+      fr: 'Planifier un taxi vers l’hébergement',
+      es: 'Planificar taxi al alojamiento',
+    );
+  }
+
+  String get _destinationQueryRequiredLabel {
+    return _t(
+      nl: 'Voer eerst een bestemming in om taxi te plannen.',
+      en: 'Enter a destination first to plan taxi.',
+      fr: 'Saisissez d’abord une destination pour planifier le taxi.',
+      es: 'Introduce primero un destino para planificar el taxi.',
+    );
+  }
+
+  bool _canShowStayTaxiCta(HotelStay stay) {
+    if (!stay.isRealApproved) return false;
+    if (stay.source == 'discovery') return false;
+    final hasAddress =
+        stay.address.trim().isNotEmpty || stay.city.trim().isNotEmpty;
+    final lat = stay.latitude ?? stay.lat;
+    final lng = stay.longitude ?? stay.lng;
+    final hasCoordinates =
+        lat.isFinite &&
+        lng.isFinite &&
+        lat >= -90 &&
+        lat <= 90 &&
+        lng >= -180 &&
+        lng <= 180;
+    return hasAddress || hasCoordinates;
   }
 
   String _staySavedMessage(String name) {
@@ -411,34 +593,138 @@ class _HotelsPageState extends State<HotelsPage> {
     return highlights;
   }
 
-  Uri? _preferredStayUri(HotelStay stay) {
-    final candidate = (stay.effectiveBookingUrl ?? '').trim();
-    if (candidate.isEmpty) return null;
-    return Uri.tryParse(candidate);
+  String _bookingLanguageCode() {
+    switch (_languageCode) {
+      case 'fr':
+        return 'fr';
+      case 'es':
+        return 'es';
+      case 'en':
+        return 'en-gb';
+      case 'nl':
+      default:
+        return 'nl';
+    }
   }
 
-  Future<void> _openStayLink(HotelStay stay) async {
-    final uri = _preferredStayUri(stay);
-    if (uri == null) {
-      _showThemedSnackBar(
-        _t(
-          nl: 'Verblijflink is nog niet beschikbaar.',
-          en: 'Stay link is not available yet.',
-          fr: 'Le lien du séjour n’est pas encore disponible.',
-          es: 'El enlace del alojamiento aún no está disponible.',
-        ),
-      );
-      return;
+  String _hotelExternalSearchQuery({HotelStay? stay, String? query}) {
+    final preferredQuery = (query ?? '').trim();
+    if (preferredQuery.isNotEmpty) return preferredQuery;
+    if (stay != null) {
+      final fromStay = <String>[
+        stay.name.trim(),
+        stay.city.trim(),
+        stay.country.trim(),
+      ].where((segment) => segment.isNotEmpty).join(', ');
+      if (fromStay.isNotEmpty) return fromStay;
     }
-    final opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    final typedQuery = _searchController.text.trim();
+    if (typedQuery.isNotEmpty) return typedQuery;
+    final settlementLabel = _settlementOptions
+        .where((option) => option.value == _selectedSettlementKey)
+        .map((option) => option.label.trim())
+        .firstWhere((label) => label.isNotEmpty, orElse: () => '');
+    if (settlementLabel.isNotEmpty) return settlementLabel;
+    final regionLabel = _regionOptions
+        .where((option) => option.value == _selectedRegionKey)
+        .map((option) => option.label.trim())
+        .firstWhere((label) => label.isNotEmpty, orElse: () => '');
+    if (regionLabel.isNotEmpty) return regionLabel;
+    final countryLabel = _countryOptions
+        .where((option) => option.value == _selectedCountryCode)
+        .map((option) => option.label.trim())
+        .firstWhere((label) => label.isNotEmpty, orElse: () => '');
+    if (countryLabel.isNotEmpty) return countryLabel;
+    return _t(nl: 'België', en: 'Belgium', fr: 'Belgique', es: 'Bélgica');
+  }
+
+  Uri _hotelProviderSearchUri({
+    required _HotelExternalProvider provider,
+    HotelStay? stay,
+    String? query,
+    String? campaign,
+  }) {
+    final resolvedQuery = _hotelExternalSearchQuery(stay: stay, query: query);
+    final resolvedCampaign = (campaign ?? '').trim().isNotEmpty
+        ? campaign!.trim()
+        : (stay == null ? 'fluxidi_hotels_discovery' : 'fluxidi_hotels_detail');
+    switch (provider) {
+      case _HotelExternalProvider.stay22Allez:
+        // TODO(H1-F): Verify exact Stay22 AID from the Stay22 Hub before production rollout.
+        // TODO(H1-F): Stay22 Map can later power event/venue accommodation map surfaces.
+        return Uri.https('www.stay22.com', '/allez', <String, String>{
+          'aid': _stay22Aid,
+          'address': resolvedQuery,
+          'campaign': resolvedCampaign,
+          'product_medium': 'apps',
+        });
+      case _HotelExternalProvider.bookingComFallback:
+        // TODO(H1-F): Keep as fallback only; Stay22 is the primary external availability layer.
+        return Uri.https(
+          'www.booking.com',
+          '/searchresults.html',
+          <String, String>{
+            'ss': resolvedQuery,
+            'lang': _bookingLanguageCode(),
+            'group_adults': '2',
+            'group_children': '0',
+            'no_rooms': '1',
+          },
+        );
+    }
+  }
+
+  Uri _hotelExternalAvailabilityUri({
+    HotelStay? stay,
+    String? query,
+    String? campaign,
+  }) {
+    // TODO(H1-F): Verify exact customer-facing Stay22 deep-link pattern/AID from Hub.
+    // Until verified, do not route customers to /allez generator-style links.
+    return _hotelProviderSearchUri(
+      provider: _HotelExternalProvider.bookingComFallback,
+      stay: stay,
+      query: query,
+      campaign: campaign,
+    );
+  }
+
+  Future<void> _openExternalHotelSearch({
+    HotelStay? stay,
+    String? query,
+    String? campaign,
+  }) async {
+    final primaryUri = _hotelExternalAvailabilityUri(
+      stay: stay,
+      query: query,
+      campaign: campaign,
+    );
+    var opened = await launchUrl(
+      primaryUri,
+      mode: LaunchMode.externalApplication,
+    );
+    if (!opened) {
+      final fallbackUri = _hotelProviderSearchUri(
+        provider: _HotelExternalProvider.bookingComFallback,
+        stay: stay,
+        query: query,
+        campaign: campaign,
+      );
+      if (fallbackUri.toString() != primaryUri.toString()) {
+        opened = await launchUrl(
+          fallbackUri,
+          mode: LaunchMode.externalApplication,
+        );
+      }
+    }
     if (opened) return;
     if (!mounted) return;
     _showThemedSnackBar(
       _t(
-        nl: 'Kon verblijflink niet openen.',
-        en: 'Could not open stay link.',
-        fr: 'Impossible d’ouvrir le lien du séjour.',
-        es: 'No se pudo abrir el enlace del alojamiento.',
+        nl: 'Kon externe hotellijst niet openen.',
+        en: 'Could not open external hotel search.',
+        fr: 'Impossible d’ouvrir la recherche d’hôtels externe.',
+        es: 'No se pudo abrir la búsqueda externa de hoteles.',
       ),
     );
   }
@@ -530,6 +816,41 @@ class _HotelsPageState extends State<HotelsPage> {
     return segments.join(', ');
   }
 
+  String _partnerSelectionValue(Map<String, String>? map, String key) {
+    if (map == null) return '';
+    return (map[key] ?? '').trim();
+  }
+
+  Future<Map<String, String>?> _selectTaxiPartnerForHotelsEvent() async {
+    // TODO(H1-F): Add dedicated hotel/event partner prefill in NearbyPartnersPage.
+    final selected = await Navigator.of(context).push<Map<String, String>>(
+      MaterialPageRoute(
+        builder: (_) => NearbyPartnersPage(
+          customerHomeBuilder: (_) => const HotelsPage(),
+          regionRegistrationBuilder: (_) => const HotelsPage(),
+          syncCustomerProfileFromBackend: ({required String reason}) async {
+            return await CustomerProfileStore.instance.load();
+          },
+          selectionMode: true,
+        ),
+      ),
+    );
+    if (selected == null || !mounted) return null;
+    final partnerId = _partnerSelectionValue(selected, 'partner_id');
+    if (partnerId.isEmpty) {
+      _showThemedSnackBar(
+        _t(
+          nl: 'Kies eerst een taxipartner.',
+          en: 'Select a taxi partner first.',
+          fr: "Sélectionnez d'abord un partenaire taxi.",
+          es: 'Selecciona primero un socio de taxi.',
+        ),
+      );
+      return null;
+    }
+    return selected;
+  }
+
   void _onTaxiCtaTap(HotelStay stay) {
     final destination = stay.toDiscoveryDestination(
       tenantId: widget.tenantId,
@@ -583,7 +904,10 @@ class _HotelsPageState extends State<HotelsPage> {
         });
   }
 
-  void _onNearbyEventTaxiTap(HotelStay stay, EventDetailData event) {
+  Future<void> _onNearbyEventTaxiTap(
+    HotelStay stay,
+    EventDetailData event,
+  ) async {
     final origin = stay.toDiscoveryDestination(
       tenantId: widget.tenantId,
       companyId: widget.companyId,
@@ -631,6 +955,10 @@ class _HotelsPageState extends State<HotelsPage> {
       region: destination.region,
       country: destination.country,
     );
+    final selectedPartner = await _selectTaxiPartnerForHotelsEvent();
+    if (selectedPartner == null || !mounted) return;
+    final partnerId = _partnerSelectionValue(selectedPartner, 'partner_id');
+    final partnerName = _partnerSelectionValue(selectedPartner, 'company_name');
     debugPrint(
       '[hotels.nearby_event_handoff] eventId=${event.id} title="${event.title}" city="${event.city}"',
     );
@@ -649,6 +977,8 @@ class _HotelsPageState extends State<HotelsPage> {
               initialToLng: destination.longitude,
               initialDestinationLabel: destination.destinationName,
               initialServiceId: 'event',
+              publicPartnerId: partnerId.isEmpty ? null : partnerId,
+              publicPartnerName: partnerName.isEmpty ? null : partnerName,
             ),
           ),
         )
@@ -668,15 +998,46 @@ class _HotelsPageState extends State<HotelsPage> {
           saveLabel: _saveStayLabel,
           savedLabel: _savedStayLabel,
           onToggleSaved: () => _toggleSaved(stay),
-          onNearbyEventTaxiTap: (event) => _onNearbyEventTaxiTap(stay, event),
+          onNearbyEventTaxiTap: (event) {
+            unawaited(_onNearbyEventTaxiTap(stay, event));
+          },
           onAirportTransferTap: () {
             _onAirportTransferTap(stay);
           },
           onTaxiTap: () => _onTaxiCtaTap(stay),
-          onViewStayTap: () => _openStayLink(stay),
+          onProviderSearchTap: () => _openExternalHotelSearch(
+            stay: stay,
+            campaign: stay.source == 'discovery'
+                ? 'fluxidi_hotels_discovery_detail'
+                : 'fluxidi_hotels_real_stay_detail',
+          ),
+          externalAvailabilityLabel: _externalAvailabilityLabel,
         ),
       ),
     );
+  }
+
+  void _onPlanTaxiToSearchQueryTap() {
+    final destinationQuery = _searchController.text.trim();
+    if (destinationQuery.isEmpty) {
+      _showThemedSnackBar(_destinationQueryRequiredLabel);
+      return;
+    }
+    Navigator.of(context)
+        .push(
+          MaterialPageRoute(
+            builder: (_) => CalculatorPage(
+              bookingBaseUrl: appConfig.bookingBaseUrl,
+              mapboxToken: kMapboxToken,
+              initialToAddress: destinationQuery,
+              initialServiceId: 'hotel',
+            ),
+          ),
+        )
+        .catchError((_) {
+          if (!mounted) return;
+          _showThemedSnackBar(_taxiNavigationFallbackLabel);
+        });
   }
 
   Future<void> _onAirportTransferTap(HotelStay stay) async {
@@ -696,6 +1057,13 @@ class _HotelsPageState extends State<HotelsPage> {
   @override
   Widget build(BuildContext context) {
     final stays = _visibleStays;
+    // TODO(H1-F): Real customer cards require provider API/widget or partner-approved photos.
+    final approvedRealStays = stays
+        .where(_isApprovedCustomerFacingStay)
+        .toList(growable: false);
+    final displayCards = approvedRealStays.isNotEmpty
+        ? approvedRealStays
+        : _discoveryRegionStays;
 
     return Scaffold(
       backgroundColor: _bgBlack,
@@ -711,9 +1079,9 @@ class _HotelsPageState extends State<HotelsPage> {
                   const SizedBox(height: 8),
                   _buildCompactFilterChips(),
                   const SizedBox(height: 8),
-                  _buildResultSummary(stays.length),
+                  _buildResultSummary(approvedRealStays.length),
                   const SizedBox(height: 8),
-                  _buildCardsGrid(stays),
+                  _buildCardsGrid(displayCards),
                 ],
               ),
             ),
@@ -1504,28 +1872,89 @@ class _HotelsPageState extends State<HotelsPage> {
     );
   }
 
+  Widget _buildSafeDiscoveryPanel() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: _panelBlack,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: _border.withOpacity(_isDarkTheme ? 0.35 : 0.95),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                Icons.travel_explore_rounded,
+                color: _gold.withOpacity(0.95),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  _safeDiscoveryCopy,
+                  style: TextStyle(
+                    color: _textPrimary.withOpacity(0.96),
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton.icon(
+              onPressed: _onPlanTaxiToSearchQueryTap,
+              style: FilledButton.styleFrom(
+                backgroundColor: _gold,
+                foregroundColor: _actionOnGold,
+                minimumSize: const Size.fromHeight(42),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
+              ),
+              icon: const Icon(Icons.local_taxi_rounded, size: 18),
+              label: Text(
+                _planTaxiToStayLabel,
+                style: const TextStyle(fontWeight: FontWeight.w800),
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: () => _openExternalHotelSearch(
+                campaign: 'fluxidi_hotels_discovery',
+              ),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: _textPrimary,
+                side: BorderSide(color: _gold.withOpacity(0.42)),
+                minimumSize: const Size.fromHeight(42),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
+              ),
+              icon: Icon(Icons.open_in_new_rounded, size: 16, color: _gold),
+              label: Text(
+                _externalAvailabilityLabel,
+                style: const TextStyle(fontWeight: FontWeight.w700),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildCardsGrid(List<HotelStay> stays) {
     if (stays.isEmpty) {
-      return Container(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: _panelBlack,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(
-            color: _border.withOpacity(_isDarkTheme ? 0.35 : 0.95),
-          ),
-        ),
-        child: Text(
-          _t(
-            nl: 'Geen verblijven gevonden voor deze selectie.',
-            en: 'No stays found for this selection.',
-            fr: 'Aucun séjour trouvé pour cette sélection.',
-            es: 'No se encontraron alojamientos para esta selección.',
-          ),
-          textAlign: TextAlign.center,
-          style: TextStyle(color: _softText, fontSize: 13),
-        ),
-      );
+      return _buildSafeDiscoveryPanel();
     }
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -1566,7 +1995,9 @@ class _HotelsPageState extends State<HotelsPage> {
     final displayPrice = _displayPriceHint(stay);
     final highlights = _semanticHighlights(stay);
     final imageUrl = (stay.imageUrl ?? '').trim();
-    final hasExternalLink = _preferredStayUri(stay) != null;
+    final approvedAssetPath = _approvedAssetPath(stay);
+    final isDiscoveryCard = stay.source == 'discovery';
+    final canShowTaxiCta = _canShowStayTaxiCta(stay);
     final isSaved = _isSaved(stay);
     return Material(
       color: Colors.transparent,
@@ -1623,27 +2054,52 @@ class _HotelsPageState extends State<HotelsPage> {
                         ),
                       ),
                     ),
-                    if (imageUrl.isNotEmpty)
-                      Positioned.fill(
-                        child: Image.network(
-                          imageUrl,
-                          fit: BoxFit.cover,
-                          loadingBuilder: (context, child, loadingProgress) {
-                            if (loadingProgress == null) return child;
-                            return Center(
-                              child: SizedBox(
-                                width: 24,
-                                height: 24,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  color: _gold.withOpacity(0.9),
-                                ),
-                              ),
-                            );
-                          },
-                          errorBuilder: (_, __, ___) => const SizedBox.shrink(),
-                        ),
-                      ),
+                    Positioned.fill(
+                      child: imageUrl.isNotEmpty
+                          ? Image.network(
+                              imageUrl,
+                              fit: BoxFit.cover,
+                              loadingBuilder:
+                                  (context, child, loadingProgress) {
+                                    if (loadingProgress == null) return child;
+                                    return Center(
+                                      child: SizedBox(
+                                        width: 24,
+                                        height: 24,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                          color: _gold.withOpacity(0.9),
+                                        ),
+                                      ),
+                                    );
+                                  },
+                              errorBuilder: (_, __, ___) =>
+                                  approvedAssetPath.isNotEmpty
+                                  ? Image.asset(
+                                      approvedAssetPath,
+                                      fit: BoxFit.cover,
+                                    )
+                                  : Center(
+                                      child: Icon(
+                                        Icons.hotel_rounded,
+                                        size: 50,
+                                        color: _gold.withOpacity(0.92),
+                                      ),
+                                    ),
+                            )
+                          : (approvedAssetPath.isNotEmpty
+                                ? Image.asset(
+                                    approvedAssetPath,
+                                    fit: BoxFit.cover,
+                                  )
+                                : Center(
+                                    child: Icon(
+                                      Icons.hotel_rounded,
+                                      size: 50,
+                                      color: _gold.withOpacity(0.92),
+                                    ),
+                                  )),
+                    ),
                     Positioned.fill(
                       child: DecoratedBox(
                         decoration: BoxDecoration(
@@ -1657,13 +2113,6 @@ class _HotelsPageState extends State<HotelsPage> {
                             ],
                           ),
                         ),
-                      ),
-                    ),
-                    Center(
-                      child: Icon(
-                        Icons.hotel_rounded,
-                        size: 50,
-                        color: _gold.withOpacity(0.92),
                       ),
                     ),
                     Positioned(
@@ -1713,27 +2162,28 @@ class _HotelsPageState extends State<HotelsPage> {
                           ),
                         ),
                       ),
-                    Positioned(
-                      right: 8,
-                      top: 6,
-                      child: IconButton(
-                        onPressed: () => _toggleSaved(stay),
-                        tooltip: isSaved ? _savedStayLabel : _saveStayLabel,
-                        icon: Icon(
-                          isSaved
-                              ? Icons.favorite_rounded
-                              : Icons.favorite_border_rounded,
-                          color: isSaved
-                              ? _gold
-                              : _textPrimary.withOpacity(0.9),
-                          size: 22,
-                        ),
-                        style: IconButton.styleFrom(
-                          backgroundColor: Colors.black.withOpacity(0.35),
-                          side: BorderSide(color: _gold.withOpacity(0.34)),
+                    if (!isDiscoveryCard)
+                      Positioned(
+                        right: 8,
+                        top: 6,
+                        child: IconButton(
+                          onPressed: () => _toggleSaved(stay),
+                          tooltip: isSaved ? _savedStayLabel : _saveStayLabel,
+                          icon: Icon(
+                            isSaved
+                                ? Icons.favorite_rounded
+                                : Icons.favorite_border_rounded,
+                            color: isSaved
+                                ? _gold
+                                : _textPrimary.withOpacity(0.9),
+                            size: 22,
+                          ),
+                          style: IconButton.styleFrom(
+                            backgroundColor: Colors.black.withOpacity(0.35),
+                            side: BorderSide(color: _gold.withOpacity(0.34)),
+                          ),
                         ),
                       ),
-                    ),
                     if (premium)
                       Positioned(
                         left: 10,
@@ -1790,7 +2240,14 @@ class _HotelsPageState extends State<HotelsPage> {
                       ),
                       const SizedBox(height: 6),
                       Text(
-                        stay.description,
+                        isDiscoveryCard
+                            ? _t(
+                                nl: 'Ontdek verblijven en plan je rit.',
+                                en: 'Discover stays and plan your ride.',
+                                fr: 'Découvrez des hébergements et planifiez votre trajet.',
+                                es: 'Descubre alojamientos y planifica tu trayecto.',
+                              )
+                            : stay.description,
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
@@ -1846,36 +2303,68 @@ class _HotelsPageState extends State<HotelsPage> {
                         ),
                       ],
                       const Spacer(),
-                      SizedBox(
-                        width: double.infinity,
-                        child: ElevatedButton.icon(
-                          onPressed: () => _onTaxiCtaTap(stay),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: _gold,
-                            foregroundColor: _actionOnGold,
-                            minimumSize: const Size.fromHeight(39),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(11),
+                      if (isDiscoveryCard || !canShowTaxiCta)
+                        SizedBox(
+                          width: double.infinity,
+                          child: ElevatedButton.icon(
+                            onPressed: () => _openStayDetail(stay),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: _gold,
+                              foregroundColor: _actionOnGold,
+                              minimumSize: const Size.fromHeight(39),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(11),
+                              ),
+                            ),
+                            icon: const Icon(
+                              Icons.visibility_rounded,
+                              size: 16,
+                            ),
+                            label: Text(
+                              isDiscoveryCard
+                                  ? _viewOptionsLabel
+                                  : _viewStayLabel,
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w800,
+                              ),
                             ),
                           ),
-                          icon: const Icon(Icons.local_taxi_rounded, size: 16),
-                          label: Text(
-                            _t(
-                              nl: 'Taxi naar dit verblijf',
-                              en: 'Taxi to this stay',
-                              fr: 'Taxi vers cet hébergement',
-                              es: 'Taxi a este alojamiento',
+                        )
+                      else ...[
+                        SizedBox(
+                          width: double.infinity,
+                          child: ElevatedButton.icon(
+                            onPressed: () => _onTaxiCtaTap(stay),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: _gold,
+                              foregroundColor: _actionOnGold,
+                              minimumSize: const Size.fromHeight(39),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(11),
+                              ),
                             ),
-                            style: const TextStyle(fontWeight: FontWeight.w800),
+                            icon: const Icon(
+                              Icons.local_taxi_rounded,
+                              size: 16,
+                            ),
+                            label: Text(
+                              _t(
+                                nl: 'Taxi naar dit verblijf',
+                                en: 'Taxi to this stay',
+                                fr: 'Taxi vers cet hébergement',
+                                es: 'Taxi a este alojamiento',
+                              ),
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
                           ),
                         ),
-                      ),
-                      if (hasExternalLink) ...[
                         const SizedBox(height: 6),
                         SizedBox(
                           width: double.infinity,
                           child: OutlinedButton.icon(
-                            onPressed: () => _openStayLink(stay),
+                            onPressed: () => _openStayDetail(stay),
                             style: OutlinedButton.styleFrom(
                               backgroundColor: _panelBlack,
                               foregroundColor: _textPrimary.withOpacity(0.92),
@@ -1890,7 +2379,7 @@ class _HotelsPageState extends State<HotelsPage> {
                               ),
                             ),
                             icon: Icon(
-                              Icons.open_in_new_rounded,
+                              Icons.visibility_rounded,
                               size: 15,
                               color: _gold.withOpacity(0.92),
                             ),
@@ -1928,7 +2417,8 @@ class HotelStayDetailPage extends StatelessWidget {
     required this.onNearbyEventTaxiTap,
     required this.onAirportTransferTap,
     required this.onTaxiTap,
-    required this.onViewStayTap,
+    required this.onProviderSearchTap,
+    required this.externalAvailabilityLabel,
     super.key,
   });
 
@@ -1941,7 +2431,8 @@ class HotelStayDetailPage extends StatelessWidget {
   final void Function(EventDetailData event) onNearbyEventTaxiTap;
   final VoidCallback onAirportTransferTap;
   final VoidCallback onTaxiTap;
-  final VoidCallback onViewStayTap;
+  final VoidCallback onProviderSearchTap;
+  final String externalAvailabilityLabel;
   CustomerThemePalette get _themePalette =>
       paletteForCustomerTheme(customerThemeNotifier.value);
   bool get _isDarkTheme => _themePalette.isDark;
@@ -2007,12 +2498,12 @@ class HotelStayDetailPage extends StatelessWidget {
     return _t(nl: 'Vanaf', en: 'From', fr: 'À partir de', es: 'Desde');
   }
 
-  String get _viewStayLabel {
+  String get _externalAvailabilityHint {
     return _t(
-      nl: 'Bekijk verblijf',
-      en: 'View stay',
-      fr: 'Voir le séjour',
-      es: 'Ver alojamiento',
+      nl: 'Beschikbaarheid en prijzen worden extern getoond.',
+      en: 'Availability and prices are shown externally.',
+      fr: 'Les disponibilités et les prix sont affichés en externe.',
+      es: 'La disponibilidad y los precios se muestran externamente.',
     );
   }
 
@@ -2295,6 +2786,12 @@ class HotelStayDetailPage extends StatelessWidget {
     return formatDiscoveryPriceHint(stay.priceHint, fromLabel: _fromLabel);
   }
 
+  String _approvedAssetPath() {
+    final imageRef = stay.imageRef.trim();
+    if (!imageRef.startsWith('approved_asset:')) return '';
+    return imageRef.substring('approved_asset:'.length).trim();
+  }
+
   Widget _buildNearbyEventCard(BuildContext context, EventDetailData event) {
     final distance = _distanceLabel(event);
     return Material(
@@ -2404,7 +2901,20 @@ class HotelStayDetailPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final imageUrl = (stay.imageUrl ?? '').trim();
-    final hasExternalLink = (stay.effectiveBookingUrl ?? '').trim().isNotEmpty;
+    final isDiscoveryCard = stay.source == 'discovery';
+    final canShowTaxiCta =
+        stay.isRealApproved &&
+        !isDiscoveryCard &&
+        (stay.address.trim().isNotEmpty ||
+            stay.city.trim().isNotEmpty ||
+            (((stay.latitude ?? stay.lat).isFinite &&
+                    (stay.longitude ?? stay.lng).isFinite) &&
+                (stay.latitude ?? stay.lat) >= -90 &&
+                (stay.latitude ?? stay.lat) <= 90 &&
+                (stay.longitude ?? stay.lng) >= -180 &&
+                (stay.longitude ?? stay.lng) <= 180));
+    final canShowAirportTransferCta = canShowTaxiCta;
+    final approvedAssetPath = _approvedAssetPath();
     final displayPrice = _displayPriceHint();
     final highlights = _highlights();
     final hasAnyNearbyEvents = _nearbyEventsForRadiusMode(
@@ -2456,28 +2966,51 @@ class HotelStayDetailPage extends StatelessWidget {
                       ),
                       child: Stack(
                         children: [
-                          if (imageUrl.isNotEmpty)
-                            Positioned.fill(
-                              child: Image.network(
-                                imageUrl,
-                                fit: BoxFit.cover,
-                                loadingBuilder: (context, child, progress) {
-                                  if (progress == null) return child;
-                                  return Center(
-                                    child: SizedBox(
-                                      width: 28,
-                                      height: 28,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2.2,
-                                        color: _gold.withOpacity(0.9),
-                                      ),
-                                    ),
-                                  );
-                                },
-                                errorBuilder: (_, __, ___) =>
-                                    const SizedBox.shrink(),
-                              ),
-                            ),
+                          Positioned.fill(
+                            child: imageUrl.isNotEmpty
+                                ? Image.network(
+                                    imageUrl,
+                                    fit: BoxFit.cover,
+                                    loadingBuilder: (context, child, progress) {
+                                      if (progress == null) return child;
+                                      return Center(
+                                        child: SizedBox(
+                                          width: 28,
+                                          height: 28,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2.2,
+                                            color: _gold.withOpacity(0.9),
+                                          ),
+                                        ),
+                                      );
+                                    },
+                                    errorBuilder: (_, __, ___) =>
+                                        approvedAssetPath.isNotEmpty
+                                        ? Image.asset(
+                                            approvedAssetPath,
+                                            fit: BoxFit.cover,
+                                          )
+                                        : Center(
+                                            child: Icon(
+                                              Icons.hotel_rounded,
+                                              color: _gold.withOpacity(0.95),
+                                              size: 64,
+                                            ),
+                                          ),
+                                  )
+                                : (approvedAssetPath.isNotEmpty
+                                      ? Image.asset(
+                                          approvedAssetPath,
+                                          fit: BoxFit.cover,
+                                        )
+                                      : Center(
+                                          child: Icon(
+                                            Icons.hotel_rounded,
+                                            color: _gold.withOpacity(0.95),
+                                            size: 64,
+                                          ),
+                                        )),
+                          ),
                           Positioned.fill(
                             child: DecoratedBox(
                               decoration: BoxDecoration(
@@ -2491,13 +3024,6 @@ class HotelStayDetailPage extends StatelessWidget {
                                   ],
                                 ),
                               ),
-                            ),
-                          ),
-                          Center(
-                            child: Icon(
-                              Icons.hotel_rounded,
-                              color: _gold.withOpacity(0.95),
-                              size: 64,
                             ),
                           ),
                           Positioned(
@@ -2742,30 +3268,32 @@ class HotelStayDetailPage extends StatelessWidget {
                 padding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
                 child: Column(
                   children: [
-                    SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton.icon(
-                        onPressed: onTaxiTap,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: _gold,
-                          foregroundColor: _actionOnGold,
-                          minimumSize: const Size.fromHeight(46),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
+                    if (canShowTaxiCta) ...[
+                      SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton.icon(
+                          onPressed: onTaxiTap,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: _gold,
+                            foregroundColor: _actionOnGold,
+                            minimumSize: const Size.fromHeight(46),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                          ),
+                          icon: const Icon(Icons.local_taxi_rounded, size: 17),
+                          label: Text(
+                            _taxiLabel,
+                            style: const TextStyle(fontWeight: FontWeight.w800),
                           ),
                         ),
-                        icon: const Icon(Icons.local_taxi_rounded, size: 17),
-                        label: Text(
-                          _taxiLabel,
-                          style: const TextStyle(fontWeight: FontWeight.w800),
-                        ),
                       ),
-                    ),
-                    const SizedBox(height: 8),
+                      const SizedBox(height: 8),
+                    ],
                     SizedBox(
                       width: double.infinity,
                       child: OutlinedButton.icon(
-                        onPressed: onAirportTransferTap,
+                        onPressed: onProviderSearchTap,
                         style: OutlinedButton.styleFrom(
                           backgroundColor: _panelBlack,
                           foregroundColor: _textPrimary.withOpacity(0.94),
@@ -2778,22 +3306,32 @@ class HotelStayDetailPage extends StatelessWidget {
                           ),
                         ),
                         icon: Icon(
-                          Icons.flight_takeoff_rounded,
+                          Icons.open_in_new_rounded,
                           size: 16,
                           color: _gold.withOpacity(0.92),
                         ),
                         label: Text(
-                          _airportTransferLabel,
+                          externalAvailabilityLabel,
                           style: const TextStyle(fontWeight: FontWeight.w700),
                         ),
                       ),
                     ),
-                    if (hasExternalLink) ...[
+                    const SizedBox(height: 6),
+                    Text(
+                      _externalAvailabilityHint,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: _softText.withOpacity(0.9),
+                        fontSize: 11.2,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    if (canShowAirportTransferCta) ...[
                       const SizedBox(height: 8),
                       SizedBox(
                         width: double.infinity,
                         child: OutlinedButton.icon(
-                          onPressed: onViewStayTap,
+                          onPressed: onAirportTransferTap,
                           style: OutlinedButton.styleFrom(
                             backgroundColor: _panelBlack,
                             foregroundColor: _textPrimary.withOpacity(0.94),
@@ -2808,12 +3346,12 @@ class HotelStayDetailPage extends StatelessWidget {
                             ),
                           ),
                           icon: Icon(
-                            Icons.open_in_new_rounded,
+                            Icons.flight_takeoff_rounded,
                             size: 16,
                             color: _gold.withOpacity(0.92),
                           ),
                           label: Text(
-                            _viewStayLabel,
+                            _airportTransferLabel,
                             style: const TextStyle(fontWeight: FontWeight.w700),
                           ),
                         ),

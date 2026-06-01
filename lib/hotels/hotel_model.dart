@@ -45,6 +45,7 @@ class HotelStay {
     this.travelStyles = const <String>[],
     this.ambience,
     this.popularFor = const <String>[],
+    this.isRealApproved = false,
   });
 
   final String id;
@@ -79,6 +80,7 @@ class HotelStay {
   final List<String> travelStyles;
   final String? ambience;
   final List<String> popularFor;
+  final bool isRealApproved;
 
   String? get effectiveBookingUrl {
     // TODO(H1-F): Support provider-built deep links
