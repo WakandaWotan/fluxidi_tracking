@@ -20,9 +20,9 @@ import '../discovery/discovery_geo.dart';
 import '../discovery/discovery_nearby.dart';
 import '../customer_profile_store.dart';
 import '../nearby_partners_page.dart';
+import 'approved_hotel_data.dart';
 import 'hotel_geo_taxonomy.dart';
 import 'hotel_model.dart';
-import 'hotel_seed_data.dart';
 
 enum _HotelExternalProvider { stay22Allez, bookingComFallback }
 
@@ -105,7 +105,7 @@ class _HotelsPageState extends State<HotelsPage> {
   void initState() {
     super.initState();
     customerThemeNotifier.addListener(_onThemeChanged);
-    _allStays = List<HotelStay>.from(widget.stays ?? kBelgiumHotelSeedData);
+    _allStays = List<HotelStay>.from(widget.stays ?? kApprovedBelgiumHotelData);
     _searchController.addListener(_onSearchChanged);
     _loadSavedStayIds();
   }
