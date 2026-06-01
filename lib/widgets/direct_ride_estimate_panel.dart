@@ -1,4 +1,67 @@
 import 'package:flutter/material.dart';
+import 'package:fluxidi_tracking/driver_theme_palette.dart';
+import 'package:fluxidi_tracking/driver_theme_store.dart';
+
+class _DirectRideEstimateTheme {
+  const _DirectRideEstimateTheme({
+    required this.panelGradient,
+    required this.panelBorder,
+    required this.accent,
+    required this.valueAccent,
+    required this.primaryText,
+    required this.mutedText,
+  });
+
+  final Gradient panelGradient;
+  final Color panelBorder;
+  final Color accent;
+  final Color valueAccent;
+  final Color primaryText;
+  final Color mutedText;
+}
+
+_DirectRideEstimateTheme _themeForDriverVariant(DriverThemeVariant variant) {
+  if (variant == DriverThemeVariant.midnightBlue) {
+    return const _DirectRideEstimateTheme(
+      panelGradient: LinearGradient(
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+        colors: [Color(0xFF0E1D33), Color(0xFF0A1426)],
+      ),
+      panelBorder: Color(0x66599CDA),
+      accent: Color(0xFF4DA3FF),
+      valueAccent: Color(0xFF8FD0FF),
+      primaryText: Color(0xFFEAF6FF),
+      mutedText: Color(0xFFAFCBEA),
+    );
+  }
+  if (variant == DriverThemeVariant.highContrast) {
+    return const _DirectRideEstimateTheme(
+      panelGradient: LinearGradient(
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+        colors: [Color(0xFF3A2A17), Color(0xFF21160B)],
+      ),
+      panelBorder: Color(0x99E8C57E),
+      accent: Color(0xFFE8C57E),
+      valueAccent: Color(0xFFFFDFA3),
+      primaryText: Color(0xFFFFF0D0),
+      mutedText: Color(0xFFE1CCA0),
+    );
+  }
+  return const _DirectRideEstimateTheme(
+    panelGradient: LinearGradient(
+      begin: Alignment.topLeft,
+      end: Alignment.bottomRight,
+      colors: [Color(0xFF111111), Color(0xFF090909)],
+    ),
+    panelBorder: Color(0x55E5B641),
+    accent: Color(0xFFE5B641),
+    valueAccent: Color(0xFFFFD36A),
+    primaryText: Colors.white,
+    mutedText: Color(0xFFB2B2B2),
+  );
+}
 
 class DirectRideEstimatePanel extends StatelessWidget {
   final bool visible;
@@ -38,64 +101,74 @@ class DirectRideEstimatePanel extends StatelessWidget {
         : (estimateValue ?? unavailableText);
     final valueIsEstimate = !isLoading && estimateValue != null;
 
-    return Container(
-      width: double.infinity,
-      margin: const EdgeInsets.only(top: 8),
-      padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
-      decoration: BoxDecoration(
-        color: const Color(0xFF090909).withOpacity(0.86),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0x55E5B641)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
+    return ValueListenableBuilder<DriverThemeVariant>(
+      valueListenable: driverThemeNotifier,
+      builder: (context, variant, _) {
+        final theme = _themeForDriverVariant(variant);
+        return Container(
+          width: double.infinity,
+          margin: const EdgeInsets.only(top: 8),
+          padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
+          decoration: BoxDecoration(
+            gradient: theme.panelGradient,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: theme.panelBorder),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Icon(
-                Icons.local_taxi_outlined,
-                size: 14,
-                color: Color(0xFFE5B641),
-              ),
-              const SizedBox(width: 6),
-              Expanded(
-                child: Text(
-                  label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: Color(0xFFE5B641),
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
+              Row(
+                children: [
+                  Icon(
+                    Icons.local_taxi_outlined,
+                    size: 14,
+                    color: theme.accent,
                   ),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: theme.accent,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 4),
+              Text(
+                statusText,
+                maxLines: valueIsEstimate ? 1 : 2,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: valueIsEstimate
+                      ? theme.valueAccent
+                      : theme.primaryText,
+                  fontSize: valueIsEstimate ? 15 : 11.5,
+                  fontWeight: valueIsEstimate
+                      ? FontWeight.w800
+                      : FontWeight.w600,
+                ),
+              ),
+              const SizedBox(height: 3),
+              Text(
+                note,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: theme.mutedText,
+                  fontSize: 10.5,
+                  fontWeight: FontWeight.w500,
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 4),
-          Text(
-            statusText,
-            maxLines: valueIsEstimate ? 1 : 2,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              color: valueIsEstimate ? const Color(0xFFFFD36A) : Colors.white70,
-              fontSize: valueIsEstimate ? 15 : 11.5,
-              fontWeight: valueIsEstimate ? FontWeight.w800 : FontWeight.w600,
-            ),
-          ),
-          const SizedBox(height: 3),
-          Text(
-            note,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              color: Colors.white.withOpacity(0.63),
-              fontSize: 10.5,
-              fontWeight: FontWeight.w500,
-            ),
-          ),
-        ],
-      ),
+        );
+      },
     );
   }
 }

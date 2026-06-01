@@ -1,6 +1,82 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:fluxidi_tracking/driver_theme_palette.dart';
+import 'package:fluxidi_tracking/driver_theme_store.dart';
+
+class _DirectRideDestinationTheme {
+  const _DirectRideDestinationTheme({
+    required this.dialogBg,
+    required this.fieldFill,
+    required this.fieldBorder,
+    required this.fieldFocusedBorder,
+    required this.panelBg,
+    required this.panelBorder,
+    required this.divider,
+    required this.primaryText,
+    required this.mutedText,
+    required this.accent,
+    required this.buttonForeground,
+  });
+
+  final Color dialogBg;
+  final Color fieldFill;
+  final Color fieldBorder;
+  final Color fieldFocusedBorder;
+  final Color panelBg;
+  final Color panelBorder;
+  final Color divider;
+  final Color primaryText;
+  final Color mutedText;
+  final Color accent;
+  final Color buttonForeground;
+}
+
+_DirectRideDestinationTheme _themeForDriverVariant(DriverThemeVariant variant) {
+  if (variant == DriverThemeVariant.midnightBlue) {
+    return const _DirectRideDestinationTheme(
+      dialogBg: Color(0xFF0A1222),
+      fieldFill: Color(0xFF0E1A2D),
+      fieldBorder: Color(0x665A9DD9),
+      fieldFocusedBorder: Color(0xFF4DA3FF),
+      panelBg: Color(0xFF0E1A2E),
+      panelBorder: Color(0x665A9DD9),
+      divider: Color(0x3378B5E5),
+      primaryText: Color(0xFFEAF6FF),
+      mutedText: Color(0xFFAFCBEA),
+      accent: Color(0xFF4DA3FF),
+      buttonForeground: Color(0xFF041729),
+    );
+  }
+  if (variant == DriverThemeVariant.highContrast) {
+    return const _DirectRideDestinationTheme(
+      dialogBg: Color(0xFF1E1409),
+      fieldFill: Color(0xFF2A1B0D),
+      fieldBorder: Color(0x66E0BE79),
+      fieldFocusedBorder: Color(0xFFE8C57E),
+      panelBg: Color(0xFF24170A),
+      panelBorder: Color(0x66E8C57E),
+      divider: Color(0x33E8C57E),
+      primaryText: Color(0xFFFFF0D0),
+      mutedText: Color(0xFFE1CCA0),
+      accent: Color(0xFFFFDFA3),
+      buttonForeground: Color(0xFF3C2405),
+    );
+  }
+  return const _DirectRideDestinationTheme(
+    dialogBg: Color(0xFF121212),
+    fieldFill: Color(0xFF121212),
+    fieldBorder: Color(0x55E5B641),
+    fieldFocusedBorder: Color(0xFFE5B641),
+    panelBg: Color(0xFF0B0F1C),
+    panelBorder: Color(0x44FFD54A),
+    divider: Color(0x22FFFFFF),
+    primaryText: Colors.white,
+    mutedText: Color(0xFFB6B6B6),
+    accent: Color(0xFFE5B641),
+    buttonForeground: Colors.black,
+  );
+}
 
 typedef DirectRideTranslate =
     String Function({
@@ -119,125 +195,154 @@ class _DirectRideDestinationDialogState
 
   @override
   Widget build(BuildContext context) {
-    return AlertDialog(
-      title: Text(
-        widget.tr(
-          nl: 'Straatrit',
-          en: 'Direct ride',
-          fr: 'Course directe',
-          es: 'Viaje directo',
-        ),
-      ),
-      content: SizedBox(
-        width: 420,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: _controller,
-              autofocus: true,
-              textInputAction: TextInputAction.done,
-              decoration: InputDecoration(
-                labelText: widget.tr(
-                  nl: 'Bestemming',
-                  en: 'Destination',
-                  fr: 'Destination',
-                  es: 'Destino',
-                ),
-                hintText: widget.tr(
-                  nl: 'Typ minstens 3 tekens',
-                  en: 'Type at least 3 characters',
-                  fr: 'Tapez au moins 3 caracteres',
-                  es: 'Escribe al menos 3 caracteres',
-                ),
-                suffixIcon: _loading
-                    ? const Padding(
-                        padding: EdgeInsets.all(12),
-                        child: SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        ),
-                      )
-                    : null,
-              ),
-              onChanged: _onChanged,
-              onSubmitted: (_) => _submit(),
+    return ValueListenableBuilder<DriverThemeVariant>(
+      valueListenable: driverThemeNotifier,
+      builder: (context, variant, _) {
+        final theme = _themeForDriverVariant(variant);
+        return AlertDialog(
+          backgroundColor: theme.dialogBg,
+          title: Text(
+            widget.tr(
+              nl: 'Straatrit',
+              en: 'Direct ride',
+              fr: 'Course directe',
+              es: 'Viaje directo',
             ),
-            if (_suggestions.isNotEmpty)
-              Container(
-                margin: const EdgeInsets.only(top: 10),
-                constraints: const BoxConstraints(maxHeight: 220),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF0B0F1C),
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: const Color(0x44FFD54A)),
-                ),
-                child: ListView.separated(
-                  shrinkWrap: true,
-                  itemCount: _suggestions.length,
-                  separatorBuilder: (_, __) =>
-                      const Divider(height: 1, color: Color(0x22FFFFFF)),
-                  itemBuilder: (context, index) {
-                    final suggestion = _suggestions[index];
-                    return ListTile(
-                      dense: true,
-                      title: Text(
-                        suggestion.label,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      onTap: () => _pick(suggestion),
-                    );
-                  },
-                ),
-              )
-            else if (_searched && !_loading)
-              Padding(
-                padding: const EdgeInsets.only(top: 10),
-                child: Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    widget.tr(
-                      nl: 'Geen adres gevonden',
-                      en: 'No address found',
-                      fr: 'Aucune adresse trouvee',
-                      es: 'No se encontro direccion',
+            style: TextStyle(color: theme.primaryText),
+          ),
+          content: SizedBox(
+            width: 420,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: _controller,
+                  autofocus: true,
+                  textInputAction: TextInputAction.done,
+                  style: TextStyle(color: theme.primaryText),
+                  decoration: InputDecoration(
+                    labelText: widget.tr(
+                      nl: 'Bestemming',
+                      en: 'Destination',
+                      fr: 'Destination',
+                      es: 'Destino',
                     ),
-                    style: TextStyle(
-                      color: Colors.white.withOpacity(0.70),
-                      fontSize: 12,
+                    labelStyle: TextStyle(color: theme.mutedText),
+                    hintText: widget.tr(
+                      nl: 'Typ minstens 3 tekens',
+                      en: 'Type at least 3 characters',
+                      fr: 'Tapez au moins 3 caracteres',
+                      es: 'Escribe al menos 3 caracteres',
+                    ),
+                    hintStyle: TextStyle(color: theme.mutedText),
+                    filled: true,
+                    fillColor: theme.fieldFill,
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide(color: theme.fieldBorder),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide(color: theme.fieldFocusedBorder),
+                    ),
+                    suffixIcon: _loading
+                        ? Padding(
+                            padding: const EdgeInsets.all(12),
+                            child: SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                valueColor: AlwaysStoppedAnimation<Color>(
+                                  theme.accent,
+                                ),
+                              ),
+                            ),
+                          )
+                        : null,
+                  ),
+                  onChanged: _onChanged,
+                  onSubmitted: (_) => _submit(),
+                ),
+                if (_suggestions.isNotEmpty)
+                  Container(
+                    margin: const EdgeInsets.only(top: 10),
+                    constraints: const BoxConstraints(maxHeight: 220),
+                    decoration: BoxDecoration(
+                      color: theme.panelBg,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: theme.panelBorder),
+                    ),
+                    child: ListView.separated(
+                      shrinkWrap: true,
+                      itemCount: _suggestions.length,
+                      separatorBuilder: (_, __) =>
+                          Divider(height: 1, color: theme.divider),
+                      itemBuilder: (context, index) {
+                        final suggestion = _suggestions[index];
+                        return ListTile(
+                          dense: true,
+                          title: Text(
+                            suggestion.label,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(color: theme.primaryText),
+                          ),
+                          onTap: () => _pick(suggestion),
+                        );
+                      },
+                    ),
+                  )
+                else if (_searched && !_loading)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 10),
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        widget.tr(
+                          nl: 'Geen adres gevonden',
+                          en: 'No address found',
+                          fr: 'Aucune adresse trouvee',
+                          es: 'No se encontro direccion',
+                        ),
+                        style: TextStyle(color: theme.mutedText, fontSize: 12),
+                      ),
                     ),
                   ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              style: TextButton.styleFrom(foregroundColor: theme.mutedText),
+              onPressed: () => Navigator.of(context).pop(),
+              child: Text(
+                widget.tr(
+                  nl: 'Annuleren',
+                  en: 'Cancel',
+                  fr: 'Annuler',
+                  es: 'Cancelar',
                 ),
               ),
+            ),
+            FilledButton(
+              style: FilledButton.styleFrom(
+                backgroundColor: theme.accent,
+                foregroundColor: theme.buttonForeground,
+              ),
+              onPressed: _submit,
+              child: Text(
+                widget.tr(
+                  nl: 'Doorgaan',
+                  en: 'Continue',
+                  fr: 'Continuer',
+                  es: 'Continuar',
+                ),
+              ),
+            ),
           ],
-        ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: Text(
-            widget.tr(
-              nl: 'Annuleren',
-              en: 'Cancel',
-              fr: 'Annuler',
-              es: 'Cancelar',
-            ),
-          ),
-        ),
-        FilledButton(
-          onPressed: _submit,
-          child: Text(
-            widget.tr(
-              nl: 'Doorgaan',
-              en: 'Continue',
-              fr: 'Continuer',
-              es: 'Continuar',
-            ),
-          ),
-        ),
-      ],
+        );
+      },
     );
   }
 }

@@ -5901,10 +5901,23 @@ class _DriverHomePageState extends State<DriverHomePage>
 
   Widget _buildExternalNavButtons() {
     if (_resolveExternalNavTarget() == null) return const SizedBox.shrink();
+    final isMidnightBlue =
+        driverThemeNotifier.value == DriverThemeVariant.midnightBlue;
+    final isMiddayGold =
+        driverThemeNotifier.value == DriverThemeVariant.highContrast;
+    final navAccent = isMidnightBlue
+        ? _midnightBlueAccent()
+        : (isMiddayGold ? const Color(0xFFE8C57E) : kFluxidiYellow);
+    final navText = isMidnightBlue
+        ? _midnightBlueTextPrimary()
+        : (isMiddayGold ? _middayGoldTextPrimary() : Colors.white);
+    final navSurface = isMidnightBlue
+        ? const Color(0xCC07111F)
+        : (isMiddayGold ? const Color(0xCC2C2113) : const Color(0xCC0B1326));
     final buttonStyle = OutlinedButton.styleFrom(
-      foregroundColor: Colors.white,
-      backgroundColor: const Color(0xCC0B1326),
-      side: BorderSide(color: kFluxidiYellow.withOpacity(0.78), width: 1.2),
+      foregroundColor: navText,
+      backgroundColor: navSurface,
+      side: BorderSide(color: navAccent.withOpacity(0.78), width: 1.2),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
     );
@@ -8709,160 +8722,195 @@ class _DriverHomePageState extends State<DriverHomePage>
   }
 
   void _showDashboardMoreSheet() {
+    final isMidnightBlue =
+        driverThemeNotifier.value == DriverThemeVariant.midnightBlue;
+    final isMiddayGold =
+        driverThemeNotifier.value == DriverThemeVariant.highContrast;
+    final sheetGradient = isMiddayGold
+        ? _middayGoldSurfaceGradient(soft: true)
+        : (isMidnightBlue
+              ? const LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [
+                    Color(0xFF020711),
+                    Color(0xFF07111F),
+                    Color(0xFF0B1B33),
+                  ],
+                )
+              : const LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [Color(0xFF101113), Color(0xFF0D0E11)],
+                ));
+    final sheetBorder = isMiddayGold
+        ? _middayGoldBorderColor(0.34)
+        : (isMidnightBlue
+              ? _midnightBlueBorderColor(0.40)
+              : Colors.white.withOpacity(0.10));
+    final iconAccent = isMidnightBlue
+        ? _midnightBlueAccent()
+        : (isMiddayGold ? const Color(0xFFE8C57E) : const Color(0xFFFFD36A));
+    final titleColor = isMiddayGold
+        ? _middayGoldTextPrimary()
+        : (isMidnightBlue ? _midnightBlueTextPrimary() : Colors.white);
+    final subtitleColor = isMiddayGold
+        ? _middayGoldTextMuted().withOpacity(0.92)
+        : (isMidnightBlue
+              ? _midnightBlueTextMuted().withOpacity(0.92)
+              : Colors.white.withOpacity(0.62));
+
     showModalBottomSheet<void>(
       context: context,
-      backgroundColor: const Color(0xFF101113),
+      backgroundColor: Colors.transparent,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
       ),
       builder: (ctx) {
         return SafeArea(
           top: false,
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(14, 10, 14, 14),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  _tr(nl: 'Meer', en: 'More', fr: 'Plus', es: 'Mas'),
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 16,
-                    fontWeight: FontWeight.w900,
-                  ),
-                ),
-                const SizedBox(height: 10),
-                ListTile(
-                  dense: true,
-                  contentPadding: EdgeInsets.zero,
-                  leading: const Icon(
-                    Icons.calculate_rounded,
-                    color: Color(0xFFFFD36A),
-                  ),
-                  title: Text(
-                    _tr(
-                      nl: 'Prijs berekenen',
-                      en: 'Fare calculator',
-                      fr: 'Calcul de tarif',
-                      es: 'Calcular tarifa',
-                    ),
-                    style: const TextStyle(color: Colors.white),
-                  ),
-                  onTap: () {
-                    Navigator.of(ctx).pop();
-                    _openCalculatorFromDashboard();
-                  },
-                ),
-                ListTile(
-                  dense: true,
-                  contentPadding: EdgeInsets.zero,
-                  leading: const Icon(
-                    Icons.receipt_long_outlined,
-                    color: Color(0xFFFFD36A),
-                  ),
-                  title: Text(
-                    _tr(
-                      nl: 'Ritbonnen / bewijzen',
-                      en: 'Receipts / proofs',
-                      fr: 'Recus / preuves',
-                      es: 'Recibos / comprobantes',
-                    ),
-                    style: const TextStyle(color: Colors.white),
-                  ),
-                  subtitle: Text(
-                    _tr(
-                      nl: 'Via afgewerkte ritten in historiek',
-                      en: 'Via completed rides in history',
-                      fr: 'Via les courses terminees',
-                      es: 'Via viajes completados en historial',
-                    ),
+          child: Container(
+            decoration: BoxDecoration(
+              gradient: sheetGradient,
+              borderRadius: const BorderRadius.vertical(
+                top: Radius.circular(18),
+              ),
+              border: Border.all(color: sheetBorder),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(14, 10, 14, 14),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    _tr(nl: 'Meer', en: 'More', fr: 'Plus', es: 'Mas'),
                     style: TextStyle(
-                      color: Colors.white.withOpacity(0.62),
-                      fontSize: 11.5,
+                      color: titleColor,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w900,
                     ),
                   ),
-                  onTap: () {
-                    Navigator.of(ctx).pop();
-                    _openTripHistoryFromDashboard();
-                  },
-                ),
-                ListTile(
-                  dense: true,
-                  contentPadding: EdgeInsets.zero,
-                  leading: const Icon(
-                    Icons.toggle_on_outlined,
-                    color: Color(0xFFFFD36A),
-                  ),
-                  title: Text(
-                    _tr(
-                      nl: 'Beschikbaarheid',
-                      en: 'Availability',
-                      fr: 'Disponibilite',
-                      es: 'Disponibilidad',
-                    ),
-                    style: const TextStyle(color: Colors.white),
-                  ),
-                  onTap: () {
-                    Navigator.of(ctx).pop();
-                    unawaited(_handleDriverStatusAction());
-                  },
-                ),
-                if (_canSwitchCompanyDriversFromDashboard())
+                  const SizedBox(height: 10),
                   ListTile(
                     dense: true,
                     contentPadding: EdgeInsets.zero,
-                    leading: const Icon(
-                      Icons.switch_account_outlined,
-                      color: Color(0xFFFFD36A),
-                    ),
+                    leading: Icon(Icons.calculate_rounded, color: iconAccent),
                     title: Text(
                       _tr(
-                        nl: 'Chauffeur wisselen',
-                        en: 'Switch driver',
-                        fr: 'Changer de chauffeur',
-                        es: 'Cambiar conductor',
+                        nl: 'Prijs berekenen',
+                        en: 'Fare calculator',
+                        fr: 'Calcul de tarif',
+                        es: 'Calcular tarifa',
                       ),
-                      style: const TextStyle(color: Colors.white),
+                      style: TextStyle(color: titleColor),
                     ),
                     onTap: () {
                       Navigator.of(ctx).pop();
-                      unawaited(_changeDriverViewFromDashboard());
+                      _openCalculatorFromDashboard();
                     },
                   ),
-                ListTile(
-                  dense: true,
-                  contentPadding: EdgeInsets.zero,
-                  leading: const Icon(
-                    Icons.home_outlined,
-                    color: Color(0xFFFFD36A),
+                  ListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    leading: Icon(
+                      Icons.receipt_long_outlined,
+                      color: iconAccent,
+                    ),
+                    title: Text(
+                      _tr(
+                        nl: 'Ritbonnen / bewijzen',
+                        en: 'Receipts / proofs',
+                        fr: 'Recus / preuves',
+                        es: 'Recibos / comprobantes',
+                      ),
+                      style: TextStyle(color: titleColor),
+                    ),
+                    subtitle: Text(
+                      _tr(
+                        nl: 'Via afgewerkte ritten in historiek',
+                        en: 'Via completed rides in history',
+                        fr: 'Via les courses terminees',
+                        es: 'Via viajes completados en historial',
+                      ),
+                      style: TextStyle(color: subtitleColor, fontSize: 11.5),
+                    ),
+                    onTap: () {
+                      Navigator.of(ctx).pop();
+                      _openTripHistoryFromDashboard();
+                    },
                   ),
-                  title: Text(
-                    widget.openedFromBusinessHome
-                        ? _tr(
-                            nl: 'Terug naar bedrijfspagina',
-                            en: 'Back to business page',
-                            fr: 'Retour a la page entreprise',
-                            es: 'Volver a la pagina de empresa',
-                          )
-                        : _tr(
-                            nl: 'Terug naar startpagina',
-                            en: 'Back to start page',
-                            fr: "Retour a l'accueil",
-                            es: 'Volver al inicio',
-                          ),
-                    style: const TextStyle(color: Colors.white),
+                  ListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    leading: Icon(Icons.toggle_on_outlined, color: iconAccent),
+                    title: Text(
+                      _tr(
+                        nl: 'Beschikbaarheid',
+                        en: 'Availability',
+                        fr: 'Disponibilite',
+                        es: 'Disponibilidad',
+                      ),
+                      style: TextStyle(color: titleColor),
+                    ),
+                    onTap: () {
+                      Navigator.of(ctx).pop();
+                      unawaited(_handleDriverStatusAction());
+                    },
                   ),
-                  onTap: () {
-                    Navigator.of(ctx).pop();
-                    if (widget.openedFromBusinessHome) {
-                      _goBackToBusinessPageFromDashboard();
-                      return;
-                    }
-                    _goBackToStartFromDashboard();
-                  },
-                ),
-              ],
+                  if (_canSwitchCompanyDriversFromDashboard())
+                    ListTile(
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                      leading: Icon(
+                        Icons.switch_account_outlined,
+                        color: iconAccent,
+                      ),
+                      title: Text(
+                        _tr(
+                          nl: 'Chauffeur wisselen',
+                          en: 'Switch driver',
+                          fr: 'Changer de chauffeur',
+                          es: 'Cambiar conductor',
+                        ),
+                        style: TextStyle(color: titleColor),
+                      ),
+                      onTap: () {
+                        Navigator.of(ctx).pop();
+                        unawaited(_changeDriverViewFromDashboard());
+                      },
+                    ),
+                  ListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    leading: Icon(Icons.home_outlined, color: iconAccent),
+                    title: Text(
+                      widget.openedFromBusinessHome
+                          ? _tr(
+                              nl: 'Terug naar bedrijfspagina',
+                              en: 'Back to business page',
+                              fr: 'Retour a la page entreprise',
+                              es: 'Volver a la pagina de empresa',
+                            )
+                          : _tr(
+                              nl: 'Terug naar startpagina',
+                              en: 'Back to start page',
+                              fr: "Retour a l'accueil",
+                              es: 'Volver al inicio',
+                            ),
+                      style: TextStyle(color: titleColor),
+                    ),
+                    onTap: () {
+                      Navigator.of(ctx).pop();
+                      if (widget.openedFromBusinessHome) {
+                        _goBackToBusinessPageFromDashboard();
+                        return;
+                      }
+                      _goBackToStartFromDashboard();
+                    },
+                  ),
+                ],
+              ),
             ),
           ),
         );
@@ -11440,6 +11488,27 @@ class _DriverHomePageState extends State<DriverHomePage>
 
   Widget _buildBookingsSheet(double screenH) {
     final padding = MediaQuery.of(context).padding.bottom;
+    final isMidnightBlue =
+        driverThemeNotifier.value == DriverThemeVariant.midnightBlue;
+    final isMiddayGold =
+        driverThemeNotifier.value == DriverThemeVariant.highContrast;
+    final sheetGradient = isMiddayGold
+        ? _middayGoldSurfaceGradient(soft: true)
+        : (isMidnightBlue
+              ? _midnightBlueSurfaceGradient(soft: true)
+              : const LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [Color(0xFF141B2F), Color(0xFF101113)],
+                ));
+    final sheetBorder = isMiddayGold
+        ? _middayGoldBorderColor(0.34)
+        : (isMidnightBlue ? _midnightBlueBorderColor(0.38) : Colors.white12);
+    final sheetGlow = isMidnightBlue
+        ? _midnightBlueAccent().withOpacity(0.20)
+        : (isMiddayGold
+              ? const Color(0x66E8C57E).withOpacity(0.34)
+              : kFluxidiYellowSoft);
 
     return Container(
       margin: const EdgeInsets.all(12),
@@ -11450,12 +11519,12 @@ class _DriverHomePageState extends State<DriverHomePage>
         bottom: 14 + padding,
       ),
       decoration: BoxDecoration(
-        color: const Color(0xFF141B2F).withOpacity(0.94),
+        gradient: sheetGradient,
         borderRadius: BorderRadius.circular(22),
-        border: Border.all(color: Colors.white12),
+        border: Border.all(color: sheetBorder),
         boxShadow: [
           BoxShadow(blurRadius: 18, spreadRadius: 2, color: Colors.black54),
-          BoxShadow(blurRadius: 26, spreadRadius: 1, color: kFluxidiYellowSoft),
+          BoxShadow(blurRadius: 26, spreadRadius: 1, color: sheetGlow),
         ],
       ),
       child: _buildBookingsList(screenH),
@@ -11463,6 +11532,32 @@ class _DriverHomePageState extends State<DriverHomePage>
   }
 
   Widget _buildBookingsList(double screenH) {
+    final isMidnightBlue =
+        driverThemeNotifier.value == DriverThemeVariant.midnightBlue;
+    final isMiddayGold =
+        driverThemeNotifier.value == DriverThemeVariant.highContrast;
+    final panelGradient = isMiddayGold
+        ? _middayGoldSurfaceGradient(soft: true)
+        : (isMidnightBlue ? _midnightBlueSurfaceGradient(soft: true) : null);
+    final panelFill = (isMiddayGold || isMidnightBlue)
+        ? null
+        : const Color(0xFF101113);
+    final panelBorder = isMiddayGold
+        ? _middayGoldBorderColor(0.34)
+        : (isMidnightBlue
+              ? _midnightBlueBorderColor(0.40)
+              : kFluxidiYellow.withOpacity(0.30));
+    final textPrimary = isMiddayGold
+        ? _middayGoldTextPrimary()
+        : (isMidnightBlue ? _midnightBlueTextPrimary() : Colors.white);
+    final textMuted = isMiddayGold
+        ? _middayGoldTextMuted()
+        : (isMidnightBlue
+              ? _midnightBlueTextMuted()
+              : Colors.white.withOpacity(0.72));
+    final spinnerColor = isMidnightBlue
+        ? _midnightBlueAccent()
+        : (isMiddayGold ? const Color(0xFFE8C57E) : kFluxidiYellow);
     final visibleBookings = _visibleBookings;
     final emptyTitle = _tr(
       nl: 'Geen ritten klaar',
@@ -11495,9 +11590,10 @@ class _DriverHomePageState extends State<DriverHomePage>
           width: double.infinity,
           padding: const EdgeInsets.all(5),
           decoration: BoxDecoration(
-            color: const Color(0xFF101113),
+            color: panelFill,
+            gradient: panelGradient,
             borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: kFluxidiYellow.withOpacity(0.30)),
+            border: Border.all(color: panelBorder),
           ),
           child: SingleChildScrollView(
             scrollDirection: Axis.horizontal,
@@ -11540,9 +11636,10 @@ class _DriverHomePageState extends State<DriverHomePage>
             width: double.infinity,
             padding: const EdgeInsets.symmetric(vertical: 26, horizontal: 18),
             decoration: BoxDecoration(
-              color: const Color(0xFF101113),
+              color: panelFill,
+              gradient: panelGradient,
               borderRadius: BorderRadius.circular(18),
-              border: Border.all(color: kFluxidiYellow.withOpacity(0.30)),
+              border: Border.all(color: panelBorder),
             ),
             child: Column(
               children: [
@@ -11551,7 +11648,7 @@ class _DriverHomePageState extends State<DriverHomePage>
                   height: 24,
                   child: CircularProgressIndicator(
                     strokeWidth: 2.2,
-                    color: kFluxidiYellow,
+                    color: spinnerColor,
                   ),
                 ),
                 const SizedBox(height: 10),
@@ -11563,7 +11660,7 @@ class _DriverHomePageState extends State<DriverHomePage>
                     es: 'Cargando viajes...',
                   ),
                   style: TextStyle(
-                    color: Colors.white.withOpacity(0.78),
+                    color: textMuted,
                     fontWeight: FontWeight.w600,
                   ),
                 ),
@@ -11611,17 +11708,18 @@ class _DriverHomePageState extends State<DriverHomePage>
                 width: double.infinity,
                 padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
-                  color: const Color(0xFF101113),
+                  color: panelFill,
+                  gradient: panelGradient,
                   borderRadius: BorderRadius.circular(18),
-                  border: Border.all(color: kFluxidiYellow.withOpacity(0.30)),
+                  border: Border.all(color: panelBorder),
                 ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
                       emptyTitle,
-                      style: const TextStyle(
-                        color: Colors.white,
+                      style: TextStyle(
+                        color: textPrimary,
                         fontSize: 15.5,
                         fontWeight: FontWeight.w800,
                       ),
@@ -11629,10 +11727,7 @@ class _DriverHomePageState extends State<DriverHomePage>
                     const SizedBox(height: 6),
                     Text(
                       emptyBody,
-                      style: TextStyle(
-                        color: Colors.white.withOpacity(0.72),
-                        height: 1.35,
-                      ),
+                      style: TextStyle(color: textMuted, height: 1.35),
                     ),
                   ],
                 ),
@@ -11642,17 +11737,24 @@ class _DriverHomePageState extends State<DriverHomePage>
                 width: double.infinity,
                 padding: const EdgeInsets.all(14),
                 decoration: BoxDecoration(
-                  color: const Color(0xFF101113),
+                  color: panelFill,
+                  gradient: panelGradient,
                   borderRadius: BorderRadius.circular(14),
-                  border: Border.all(color: kFluxidiYellow.withOpacity(0.25)),
+                  border: Border.all(
+                    color: isMiddayGold
+                        ? _middayGoldBorderColor(0.28)
+                        : (isMidnightBlue
+                              ? _midnightBlueBorderColor(0.34)
+                              : kFluxidiYellow.withOpacity(0.25)),
+                  ),
                 ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
                       emptyInfoTitle,
-                      style: const TextStyle(
-                        color: Colors.white,
+                      style: TextStyle(
+                        color: textPrimary,
                         fontWeight: FontWeight.w700,
                       ),
                     ),
@@ -11660,7 +11762,7 @@ class _DriverHomePageState extends State<DriverHomePage>
                     Text(
                       emptyInfoBody,
                       style: TextStyle(
-                        color: Colors.white.withOpacity(0.70),
+                        color: textMuted,
                         fontSize: 12.4,
                         height: 1.35,
                       ),
@@ -11777,6 +11879,27 @@ class _DriverHomePageState extends State<DriverHomePage>
   }
 
   Widget _bookingCard(BookingItem b) {
+    final isMidnightBlue =
+        driverThemeNotifier.value == DriverThemeVariant.midnightBlue;
+    final isMiddayGold =
+        driverThemeNotifier.value == DriverThemeVariant.highContrast;
+    final cardPrimary = isMiddayGold
+        ? _middayGoldTextPrimary()
+        : (isMidnightBlue ? _midnightBlueTextPrimary() : Colors.white);
+    final cardMuted = isMiddayGold
+        ? _middayGoldTextMuted()
+        : (isMidnightBlue
+              ? _midnightBlueTextMuted()
+              : Colors.white.withOpacity(0.66));
+    final cardAccent = isMidnightBlue
+        ? _midnightBlueAccent()
+        : (isMiddayGold ? const Color(0xFFE8C57E) : const Color(0xFFFFD36A));
+    final cardActionStyle = isMiddayGold
+        ? _middayGoldFilledActionButtonStyle()
+        : (isMidnightBlue ? _midnightBlueFilledActionButtonStyle() : null);
+    final cardOutlineStyle = isMiddayGold
+        ? _middayGoldOutlinedActionButtonStyle()
+        : (isMidnightBlue ? _midnightBlueOutlinedActionButtonStyle() : null);
     final dt = _formatPickup(b.pickupIso);
     final actionBusy = _bookingActionInFlight.contains(
       _bookingActionKeyForUi(b),
@@ -11831,13 +11954,23 @@ class _DriverHomePageState extends State<DriverHomePage>
           return Container(
             padding: const EdgeInsets.fromLTRB(14, 14, 14, 12),
             decoration: BoxDecoration(
-              gradient: const LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [Color(0xFF151515), Color(0xFF0B0B0B)],
-              ),
+              gradient: isMiddayGold
+                  ? _middayGoldSurfaceGradient()
+                  : (isMidnightBlue
+                        ? _midnightBlueSurfaceGradient()
+                        : const LinearGradient(
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                            colors: [Color(0xFF151515), Color(0xFF0B0B0B)],
+                          )),
               borderRadius: BorderRadius.circular(22),
-              border: Border.all(color: kFluxidiYellow.withOpacity(0.24)),
+              border: Border.all(
+                color: isMiddayGold
+                    ? _middayGoldBorderColor(0.36)
+                    : (isMidnightBlue
+                          ? _midnightBlueBorderColor(0.42)
+                          : kFluxidiYellow.withOpacity(0.24)),
+              ),
               boxShadow: [
                 BoxShadow(
                   color: Colors.black.withOpacity(0.24),
@@ -11852,8 +11985,12 @@ class _DriverHomePageState extends State<DriverHomePage>
                 _pill(
                   icon: Icons.schedule,
                   text: dt,
-                  borderColor: const Color(0x55FFD36A),
-                  textColor: const Color(0xFFFFD98A),
+                  borderColor: isMidnightBlue
+                      ? _midnightBlueBorderColor(0.50)
+                      : const Color(0x55FFD36A),
+                  textColor: isMidnightBlue
+                      ? _midnightBlueTextPrimary()
+                      : const Color(0xFFFFD98A),
                   compact: true,
                 ),
                 const SizedBox(height: 10),
@@ -11867,8 +12004,8 @@ class _DriverHomePageState extends State<DriverHomePage>
                           Container(
                             width: 13,
                             height: 13,
-                            decoration: const BoxDecoration(
-                              color: Color(0xFFFFD36A),
+                            decoration: BoxDecoration(
+                              color: cardAccent,
                               shape: BoxShape.circle,
                             ),
                           ),
@@ -11884,7 +12021,7 @@ class _DriverHomePageState extends State<DriverHomePage>
                           Icon(
                             Icons.flag_rounded,
                             size: 19,
-                            color: Colors.white.withOpacity(0.86),
+                            color: cardPrimary.withOpacity(0.88),
                           ),
                         ],
                       ),
@@ -11911,7 +12048,7 @@ class _DriverHomePageState extends State<DriverHomePage>
                             maxLines: 2,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
-                              color: Colors.white.withOpacity(0.90),
+                              color: cardPrimary.withOpacity(0.92),
                               fontSize: 15.0,
                               fontWeight: FontWeight.w600,
                               height: 1.2,
@@ -11924,7 +12061,7 @@ class _DriverHomePageState extends State<DriverHomePage>
                               maxLines: 2,
                               overflow: TextOverflow.ellipsis,
                               style: TextStyle(
-                                color: Colors.white.withOpacity(0.62),
+                                color: cardMuted.withOpacity(0.92),
                                 fontSize: 11.8,
                                 fontWeight: FontWeight.w500,
                               ),
@@ -11949,8 +12086,12 @@ class _DriverHomePageState extends State<DriverHomePage>
                       ),
                     _pill(
                       text: statusText,
-                      borderColor: const Color(0xFFB07A2A),
-                      textColor: const Color(0xFFE7B46A),
+                      borderColor: isMidnightBlue
+                          ? _midnightBlueBorderColor(0.62)
+                          : const Color(0xFFB07A2A),
+                      textColor: isMidnightBlue
+                          ? _midnightBlueAccent()
+                          : const Color(0xFFE7B46A),
                       compact: true,
                     ),
                     _pill(
@@ -11967,8 +12108,12 @@ class _DriverHomePageState extends State<DriverHomePage>
                     if (b.price != null)
                       _pill(
                         text: _fmtMoney(b.price!, b.currency ?? 'EUR'),
-                        borderColor: const Color(0x55FFD36A),
-                        textColor: const Color(0xFFFFD98A),
+                        borderColor: isMidnightBlue
+                            ? _midnightBlueBorderColor(0.50)
+                            : const Color(0x55FFD36A),
+                        textColor: isMidnightBlue
+                            ? _midnightBlueTextPrimary()
+                            : const Color(0xFFFFD98A),
                         compact: true,
                       ),
                     const Spacer(),
@@ -11978,8 +12123,12 @@ class _DriverHomePageState extends State<DriverHomePage>
                       child: FilledButton(
                         style: FilledButton.styleFrom(
                           padding: EdgeInsets.zero,
-                          backgroundColor: const Color(0x33FFD36A),
-                          foregroundColor: const Color(0xFFFFE4AA),
+                          backgroundColor: isMidnightBlue
+                              ? _midnightBlueAccent().withOpacity(0.20)
+                              : (isMiddayGold
+                                    ? const Color(0x40E8C57E)
+                                    : const Color(0x33FFD36A)),
+                          foregroundColor: cardPrimary,
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(12),
                           ),
@@ -12004,7 +12153,7 @@ class _DriverHomePageState extends State<DriverHomePage>
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
-                      color: Colors.white.withOpacity(0.44),
+                      color: cardMuted.withOpacity(0.82),
                       fontSize: 10.8,
                       fontWeight: FontWeight.w500,
                     ),
@@ -12015,13 +12164,15 @@ class _DriverHomePageState extends State<DriverHomePage>
                   width: double.infinity,
                   height: compactActionHeight,
                   child: FilledButton.icon(
-                    style: FilledButton.styleFrom(
-                      backgroundColor: kFluxidiYellow,
-                      foregroundColor: Colors.black,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                    ),
+                    style:
+                        cardActionStyle ??
+                        FilledButton.styleFrom(
+                          backgroundColor: kFluxidiYellow,
+                          foregroundColor: Colors.black,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
                     onPressed: actionBusy ? null : () => _goToRide(b),
                     icon: const Icon(Icons.navigation_rounded, size: 16),
                     label: Text(
@@ -12036,7 +12187,7 @@ class _DriverHomePageState extends State<DriverHomePage>
                   width: double.infinity,
                   height: compactActionHeight,
                   child: OutlinedButton.icon(
-                    style: _ghostButtonStyle(),
+                    style: cardOutlineStyle ?? _ghostButtonStyle(),
                     onPressed: actionBusy
                         ? null
                         : () =>
@@ -12057,7 +12208,7 @@ class _DriverHomePageState extends State<DriverHomePage>
                       child: SizedBox(
                         height: compactActionHeight,
                         child: OutlinedButton.icon(
-                          style: _ghostButtonStyle(),
+                          style: cardOutlineStyle ?? _ghostButtonStyle(),
                           onPressed: actionBusy
                               ? null
                               : () =>
@@ -12093,13 +12244,23 @@ class _DriverHomePageState extends State<DriverHomePage>
         return Container(
           padding: EdgeInsets.all(tight ? 11 : 12),
           decoration: BoxDecoration(
-            gradient: const LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [Color(0xFF151515), Color(0xFF0B0B0B)],
-            ),
+            gradient: isMiddayGold
+                ? _middayGoldSurfaceGradient()
+                : (isMidnightBlue
+                      ? _midnightBlueSurfaceGradient()
+                      : const LinearGradient(
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                          colors: [Color(0xFF151515), Color(0xFF0B0B0B)],
+                        )),
             borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: kFluxidiYellow.withOpacity(0.24)),
+            border: Border.all(
+              color: isMiddayGold
+                  ? _middayGoldBorderColor(0.36)
+                  : (isMidnightBlue
+                        ? _midnightBlueBorderColor(0.42)
+                        : kFluxidiYellow.withOpacity(0.24)),
+            ),
             boxShadow: [
               BoxShadow(
                 color: Colors.black.withOpacity(0.24),
@@ -12127,8 +12288,8 @@ class _DriverHomePageState extends State<DriverHomePage>
                         Container(
                           width: 10,
                           height: 10,
-                          decoration: const BoxDecoration(
-                            color: Color(0xFFFFD36A),
+                          decoration: BoxDecoration(
+                            color: cardAccent,
                             shape: BoxShape.circle,
                           ),
                         ),
@@ -12144,7 +12305,7 @@ class _DriverHomePageState extends State<DriverHomePage>
                         Icon(
                           Icons.flag_rounded,
                           size: 15,
-                          color: Colors.white.withOpacity(0.80),
+                          color: cardPrimary.withOpacity(0.86),
                         ),
                       ],
                     ),
@@ -12169,7 +12330,7 @@ class _DriverHomePageState extends State<DriverHomePage>
                             maxLines: 2,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
-                              color: Colors.white.withOpacity(0.85),
+                              color: cardPrimary.withOpacity(0.90),
                               fontWeight: FontWeight.w600,
                               height: 1.2,
                             ),
@@ -12181,7 +12342,7 @@ class _DriverHomePageState extends State<DriverHomePage>
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: TextStyle(
-                                color: Colors.white.withOpacity(0.66),
+                                color: cardMuted.withOpacity(0.92),
                                 fontSize: 12,
                                 fontWeight: FontWeight.w500,
                               ),
@@ -12197,8 +12358,12 @@ class _DriverHomePageState extends State<DriverHomePage>
                         _pill(
                           icon: Icons.schedule,
                           text: dt,
-                          borderColor: const Color(0x55FFD36A),
-                          textColor: const Color(0xFFFFD98A),
+                          borderColor: isMidnightBlue
+                              ? _midnightBlueBorderColor(0.50)
+                              : const Color(0x55FFD36A),
+                          textColor: isMidnightBlue
+                              ? _midnightBlueTextPrimary()
+                              : const Color(0xFFFFD98A),
                         ),
                         const SizedBox(height: 8),
                         SizedBox(
@@ -12207,8 +12372,12 @@ class _DriverHomePageState extends State<DriverHomePage>
                           child: FilledButton(
                             style: FilledButton.styleFrom(
                               padding: EdgeInsets.zero,
-                              backgroundColor: const Color(0x33FFD36A),
-                              foregroundColor: const Color(0xFFFFE4AA),
+                              backgroundColor: isMidnightBlue
+                                  ? _midnightBlueAccent().withOpacity(0.20)
+                                  : (isMiddayGold
+                                        ? const Color(0x40E8C57E)
+                                        : const Color(0x33FFD36A)),
+                              foregroundColor: cardPrimary,
                               shape: RoundedRectangleBorder(
                                 borderRadius: BorderRadius.circular(10),
                               ),
@@ -12238,8 +12407,12 @@ class _DriverHomePageState extends State<DriverHomePage>
                     ),
                   _pill(
                     text: statusText,
-                    borderColor: const Color(0xFFB07A2A),
-                    textColor: const Color(0xFFE7B46A),
+                    borderColor: isMidnightBlue
+                        ? _midnightBlueBorderColor(0.62)
+                        : const Color(0xFFB07A2A),
+                    textColor: isMidnightBlue
+                        ? _midnightBlueAccent()
+                        : const Color(0xFFE7B46A),
                   ),
                   _pill(text: (b.tier ?? 'premium').toUpperCase()),
                   _pill(text: '${b.pax ?? 0} pax'),
@@ -12259,7 +12432,7 @@ class _DriverHomePageState extends State<DriverHomePage>
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                    color: Colors.white.withOpacity(0.48),
+                    color: cardMuted.withOpacity(0.84),
                     fontSize: 11.5,
                     fontWeight: FontWeight.w500,
                   ),
@@ -12271,13 +12444,15 @@ class _DriverHomePageState extends State<DriverHomePage>
                   width: double.infinity,
                   height: actionHeight,
                   child: FilledButton.icon(
-                    style: FilledButton.styleFrom(
-                      backgroundColor: kFluxidiYellow,
-                      foregroundColor: Colors.black,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                    ),
+                    style:
+                        cardActionStyle ??
+                        FilledButton.styleFrom(
+                          backgroundColor: kFluxidiYellow,
+                          foregroundColor: Colors.black,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
                     onPressed: actionBusy ? null : () => _goToRide(b),
                     icon: const Icon(Icons.navigation_rounded, size: 16),
                     label: Text(
@@ -12292,7 +12467,7 @@ class _DriverHomePageState extends State<DriverHomePage>
                   width: double.infinity,
                   height: actionHeight,
                   child: OutlinedButton.icon(
-                    style: _ghostButtonStyle(),
+                    style: cardOutlineStyle ?? _ghostButtonStyle(),
                     onPressed: actionBusy
                         ? null
                         : () =>
@@ -12313,7 +12488,7 @@ class _DriverHomePageState extends State<DriverHomePage>
                       child: SizedBox(
                         height: actionHeight,
                         child: OutlinedButton.icon(
-                          style: _ghostButtonStyle(),
+                          style: cardOutlineStyle ?? _ghostButtonStyle(),
                           onPressed: actionBusy
                               ? null
                               : () =>
@@ -12346,13 +12521,15 @@ class _DriverHomePageState extends State<DriverHomePage>
                   width: double.infinity,
                   height: actionHeight,
                   child: FilledButton.icon(
-                    style: FilledButton.styleFrom(
-                      backgroundColor: kFluxidiYellow,
-                      foregroundColor: Colors.black,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                    ),
+                    style:
+                        cardActionStyle ??
+                        FilledButton.styleFrom(
+                          backgroundColor: kFluxidiYellow,
+                          foregroundColor: Colors.black,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
                     onPressed: actionBusy ? null : () => _goToRide(b),
                     icon: const Icon(Icons.navigation_rounded, size: 16),
                     label: Text(
@@ -12369,7 +12546,7 @@ class _DriverHomePageState extends State<DriverHomePage>
                       child: SizedBox(
                         height: actionHeight,
                         child: OutlinedButton.icon(
-                          style: _ghostButtonStyle(),
+                          style: cardOutlineStyle ?? _ghostButtonStyle(),
                           onPressed: actionBusy
                               ? null
                               : () =>
@@ -12390,7 +12567,7 @@ class _DriverHomePageState extends State<DriverHomePage>
                       child: SizedBox(
                         height: actionHeight,
                         child: OutlinedButton.icon(
-                          style: _ghostButtonStyle(),
+                          style: cardOutlineStyle ?? _ghostButtonStyle(),
                           onPressed: actionBusy
                               ? null
                               : () =>
@@ -12432,6 +12609,29 @@ class _DriverHomePageState extends State<DriverHomePage>
 
     final bool tripStarted = _activeTripId != null;
     final bool waiting = _isWaiting;
+    final isMidnightBlue =
+        driverThemeNotifier.value == DriverThemeVariant.midnightBlue;
+    final isMiddayGold =
+        driverThemeNotifier.value == DriverThemeVariant.highContrast;
+    final cockpitGradient = isMiddayGold
+        ? _middayGoldSurfaceGradient(soft: true)
+        : (isMidnightBlue
+              ? _midnightBlueSurfaceGradient(soft: true)
+              : const LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [Color(0xFF0B1733), Color(0xFF0A1328)],
+                ));
+    final cockpitBorder = isMiddayGold
+        ? _middayGoldBorderColor(tripStarted ? 0.52 : 0.34)
+        : (isMidnightBlue
+              ? _midnightBlueBorderColor(tripStarted ? 0.56 : 0.36)
+              : kGlow.withOpacity(tripStarted ? 0.50 : 0.22));
+    final cockpitGlow = isMidnightBlue
+        ? _midnightBlueAccent().withOpacity(tripStarted ? 0.18 : 0.10)
+        : (isMiddayGold
+              ? const Color(0x66E8C57E).withOpacity(tripStarted ? 0.22 : 0.12)
+              : kGlow.withOpacity(tripStarted ? 0.18 : 0.10));
 
     return SafeArea(
       minimum: const EdgeInsets.fromLTRB(12, 0, 12, 12),
@@ -12445,15 +12645,12 @@ class _DriverHomePageState extends State<DriverHomePage>
               width: double.infinity,
               padding: const EdgeInsets.fromLTRB(16, 14, 16, 12),
               decoration: BoxDecoration(
-                color: const Color(0xFF0B1733).withOpacity(0.78),
+                gradient: cockpitGradient,
                 borderRadius: BorderRadius.circular(22),
-                border: Border.all(
-                  color: kGlow.withOpacity(tripStarted ? 0.50 : 0.22),
-                  width: 1.2,
-                ),
+                border: Border.all(color: cockpitBorder, width: 1.2),
                 boxShadow: [
                   BoxShadow(
-                    color: kGlow.withOpacity(tripStarted ? 0.18 : 0.10),
+                    color: cockpitGlow,
                     blurRadius: tripStarted ? 16 : 10,
                     spreadRadius: 0.5,
                   ),
@@ -12466,11 +12663,22 @@ class _DriverHomePageState extends State<DriverHomePage>
                   Row(
                     children: [
                       Expanded(
-                        child: _bigMetric(label: 'ETA', value: eta),
+                        child: _bigMetric(
+                          label: 'ETA',
+                          value: eta,
+                          isMidnightBlue: isMidnightBlue,
+                          isMiddayGold: isMiddayGold,
+                        ),
                       ),
                       const SizedBox(width: 12),
                       Expanded(
-                        child: _bigMetric(label: 'KM', value: km, suffix: 'km'),
+                        child: _bigMetric(
+                          label: 'KM',
+                          value: km,
+                          suffix: 'km',
+                          isMidnightBlue: isMidnightBlue,
+                          isMiddayGold: isMiddayGold,
+                        ),
                       ),
                     ],
                   ),
@@ -12485,6 +12693,8 @@ class _DriverHomePageState extends State<DriverHomePage>
                           icon: Icons.navigation,
                           onTap: _openNavigation,
                           enabled: _routeCoords.isNotEmpty,
+                          isMidnightBlue: isMidnightBlue,
+                          isMiddayGold: isMiddayGold,
                         ),
                       ),
                       const SizedBox(width: 10),
@@ -12508,6 +12718,8 @@ class _DriverHomePageState extends State<DriverHomePage>
                           },
                           emphasis: true,
                           enabled: (tripStarted || _activeBooking != null),
+                          isMidnightBlue: isMidnightBlue,
+                          isMiddayGold: isMiddayGold,
                         ),
                       ),
                       const SizedBox(width: 10),
@@ -12527,6 +12739,8 @@ class _DriverHomePageState extends State<DriverHomePage>
                             }
                           },
                           enabled: tripStarted,
+                          isMidnightBlue: isMidnightBlue,
+                          isMiddayGold: isMiddayGold,
                         ),
                       ),
                     ],
@@ -12586,12 +12800,34 @@ class _DriverHomePageState extends State<DriverHomePage>
     required String label,
     required String value,
     String? suffix,
+    required bool isMidnightBlue,
+    required bool isMiddayGold,
   }) {
+    final fill = isMidnightBlue
+        ? const Color(0xCC0B1B33)
+        : (isMiddayGold
+              ? const Color(0xCC2C2113)
+              : Colors.white.withOpacity(0.06));
+    final titleColor = isMidnightBlue
+        ? _midnightBlueTextMuted()
+        : (isMiddayGold
+              ? _middayGoldTextMuted()
+              : Colors.white.withOpacity(0.70));
+    final valueColor = isMidnightBlue
+        ? _midnightBlueTextPrimary()
+        : (isMiddayGold ? _middayGoldTextPrimary() : Colors.white);
     return Container(
       padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(18),
-        color: Colors.white.withOpacity(0.06),
+        color: fill,
+        border: Border.all(
+          color: isMidnightBlue
+              ? _midnightBlueBorderColor(0.34)
+              : (isMiddayGold
+                    ? _middayGoldBorderColor(0.30)
+                    : Colors.white.withOpacity(0.10)),
+        ),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -12599,7 +12835,7 @@ class _DriverHomePageState extends State<DriverHomePage>
           Text(
             label,
             style: TextStyle(
-              color: Colors.white.withOpacity(0.70),
+              color: titleColor,
               fontSize: 12,
               fontWeight: FontWeight.w600,
               letterSpacing: 0.6,
@@ -12611,7 +12847,8 @@ class _DriverHomePageState extends State<DriverHomePage>
             children: [
               Text(
                 value,
-                style: const TextStyle(
+                style: TextStyle(
+                  color: valueColor,
                   fontSize: 30,
                   fontWeight: FontWeight.w900,
                 ),
@@ -12623,7 +12860,7 @@ class _DriverHomePageState extends State<DriverHomePage>
                   child: Text(
                     suffix,
                     style: TextStyle(
-                      color: Colors.white.withOpacity(0.70),
+                      color: titleColor,
                       fontSize: 12,
                       fontWeight: FontWeight.w700,
                     ),
@@ -12643,7 +12880,12 @@ class _DriverHomePageState extends State<DriverHomePage>
     required VoidCallback onTap,
     bool enabled = true,
     bool emphasis = false,
+    required bool isMidnightBlue,
+    required bool isMiddayGold,
   }) {
+    final accent = isMidnightBlue
+        ? _midnightBlueAccent()
+        : (isMiddayGold ? const Color(0xFFE8C57E) : kGlow);
     final baseOpacity = enabled ? 1.0 : 0.45;
     return InkWell(
       borderRadius: BorderRadius.circular(16),
@@ -12652,9 +12894,13 @@ class _DriverHomePageState extends State<DriverHomePage>
         height: 46,
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(16),
-          color: Colors.white.withOpacity(emphasis ? 0.10 : 0.06),
+          color: isMidnightBlue
+              ? const Color(0xCC0B1B33).withOpacity(emphasis ? 1.0 : 0.88)
+              : (isMiddayGold
+                    ? const Color(0xCC2C2113).withOpacity(emphasis ? 1.0 : 0.88)
+                    : Colors.white.withOpacity(emphasis ? 0.10 : 0.06)),
           border: Border.all(
-            color: kGlow.withOpacity(
+            color: accent.withOpacity(
               emphasis ? 0.55 * baseOpacity : 0.28 * baseOpacity,
             ),
             width: 1.1,
@@ -12663,14 +12909,38 @@ class _DriverHomePageState extends State<DriverHomePage>
         child: Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(icon, size: 18, color: Colors.white.withOpacity(baseOpacity)),
+            Icon(
+              icon,
+              size: 18,
+              color: (isMidnightBlue || isMiddayGold)
+                  ? (emphasis
+                        ? accent.withOpacity(baseOpacity)
+                        : (isMidnightBlue
+                              ? _midnightBlueTextPrimary().withOpacity(
+                                  baseOpacity,
+                                )
+                              : _middayGoldTextPrimary().withOpacity(
+                                  baseOpacity,
+                                )))
+                  : Colors.white.withOpacity(baseOpacity),
+            ),
             const SizedBox(width: 8),
             Text(
               label,
               style: TextStyle(
                 fontWeight: FontWeight.w800,
                 letterSpacing: 0.4,
-                color: Colors.white.withOpacity(baseOpacity),
+                color: (isMidnightBlue || isMiddayGold)
+                    ? (emphasis
+                          ? accent.withOpacity(baseOpacity)
+                          : (isMidnightBlue
+                                ? _midnightBlueTextPrimary().withOpacity(
+                                    baseOpacity,
+                                  )
+                                : _middayGoldTextPrimary().withOpacity(
+                                    baseOpacity,
+                                  )))
+                    : Colors.white.withOpacity(baseOpacity),
               ),
             ),
           ],
@@ -13107,17 +13377,30 @@ class _DriverHomePageState extends State<DriverHomePage>
     Color? textColor,
     bool compact = false,
   }) {
+    final isMidnightBlue =
+        driverThemeNotifier.value == DriverThemeVariant.midnightBlue;
+    final isMiddayGold =
+        driverThemeNotifier.value == DriverThemeVariant.highContrast;
+    final defaultFill = isMiddayGold
+        ? const Color(0xFF21170D)
+        : (isMidnightBlue ? const Color(0xFF0A172B) : const Color(0xFF111111));
+    final defaultBorder = isMiddayGold
+        ? _middayGoldBorderColor(0.34)
+        : (isMidnightBlue
+              ? _midnightBlueBorderColor(0.38)
+              : Colors.white.withOpacity(0.18));
+    final defaultText = isMiddayGold
+        ? _middayGoldTextPrimary()
+        : (isMidnightBlue ? _midnightBlueTextPrimary() : Colors.white);
     return Container(
       padding: EdgeInsets.symmetric(
         horizontal: compact ? 8 : 10,
         vertical: compact ? 5 : 6,
       ),
       decoration: BoxDecoration(
-        color: const Color(0xFF111111),
+        color: defaultFill,
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(
-          color: borderColor ?? Colors.white.withOpacity(0.18),
-        ),
+        border: Border.all(color: borderColor ?? defaultBorder),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -13126,14 +13409,14 @@ class _DriverHomePageState extends State<DriverHomePage>
             Icon(
               icon,
               size: compact ? 14 : 16,
-              color: (textColor ?? Colors.white70),
+              color: (textColor ?? defaultText.withOpacity(0.82)),
             ),
             SizedBox(width: compact ? 4 : 6),
           ],
           Text(
             text,
             style: TextStyle(
-              color: textColor ?? Colors.white,
+              color: textColor ?? defaultText,
               fontSize: compact ? 12.2 : null,
             ),
           ),
@@ -13143,18 +13426,42 @@ class _DriverHomePageState extends State<DriverHomePage>
   }
 
   Widget _ridesSegmentChip({required String label, bool active = false}) {
+    final isMidnightBlue =
+        driverThemeNotifier.value == DriverThemeVariant.midnightBlue;
+    final isMiddayGold =
+        driverThemeNotifier.value == DriverThemeVariant.highContrast;
+    final activeFill = isMiddayGold
+        ? const Color(0xFF3A2A15)
+        : (isMidnightBlue ? const Color(0xFF0F2747) : const Color(0xFF17120A));
+    final idleFill = isMiddayGold
+        ? const Color(0xFF23190D)
+        : (isMidnightBlue ? const Color(0xFF0A1A31) : const Color(0xFF111214));
+    final activeBorder = isMiddayGold
+        ? _middayGoldBorderColor(0.68)
+        : (isMidnightBlue
+              ? _midnightBlueBorderColor(0.72)
+              : kFluxidiYellow.withOpacity(0.68));
+    final idleBorder = isMiddayGold
+        ? _middayGoldBorderColor(0.34)
+        : (isMidnightBlue
+              ? _midnightBlueBorderColor(0.36)
+              : Colors.white.withOpacity(0.14));
+    final activeText = isMiddayGold
+        ? _middayGoldTextPrimary()
+        : (isMidnightBlue ? _midnightBlueTextPrimary() : kFluxidiYellow);
+    final idleText = isMiddayGold
+        ? _middayGoldTextMuted()
+        : (isMidnightBlue
+              ? _midnightBlueTextMuted()
+              : Colors.white.withOpacity(0.78));
     return Container(
       constraints: const BoxConstraints(minHeight: 34, minWidth: 108),
       padding: const EdgeInsets.symmetric(horizontal: 12),
       alignment: Alignment.center,
       decoration: BoxDecoration(
-        color: active ? const Color(0xFF17120A) : const Color(0xFF111214),
+        color: active ? activeFill : idleFill,
         borderRadius: BorderRadius.circular(999),
-        border: Border.all(
-          color: active
-              ? kFluxidiYellow.withOpacity(0.68)
-              : Colors.white.withOpacity(0.14),
-        ),
+        border: Border.all(color: active ? activeBorder : idleBorder),
       ),
       child: Text(
         label,
@@ -13162,9 +13469,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         overflow: TextOverflow.fade,
         softWrap: false,
         style: TextStyle(
-          color: active
-              ? kFluxidiYellow.withOpacity(0.98)
-              : Colors.white.withOpacity(0.78),
+          color: active ? activeText.withOpacity(0.98) : idleText,
           fontWeight: active ? FontWeight.w700 : FontWeight.w600,
           fontSize: 11.9,
         ),
@@ -13488,11 +13793,62 @@ class _DriverHomePageState extends State<DriverHomePage>
     final canSeeAdminManagement = isCompanyAdmin;
     final canSeeCustomerBooking = isCustomer || isDriver || isCompanyAdmin;
 
-    const drawerBg = Color(0xFF050505);
-    const cardBg = Color(0xFF101010);
-    const rowBg = Color(0xFF121212);
-    const gold = Color(0xFFE5B641);
-    const divider = Color(0x33E5B641);
+    final isMidnightBlue =
+        driverThemeNotifier.value == DriverThemeVariant.midnightBlue;
+    final isMiddayGold =
+        driverThemeNotifier.value == DriverThemeVariant.highContrast;
+
+    final drawerBg = isMidnightBlue
+        ? const Color(0xFF020711)
+        : (isMiddayGold ? const Color(0xFF100B06) : const Color(0xFF050505));
+    final drawerGradient = isMidnightBlue
+        ? const LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [Color(0xFF020711), Color(0xFF07111F), Color(0xFF0B1B33)],
+          )
+        : (isMiddayGold
+              ? const LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    Color(0xFF100B06),
+                    Color(0xFF17110A),
+                    Color(0xFF2C2113),
+                  ],
+                )
+              : const LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [Color(0xFF050505), Color(0xFF101010)],
+                ));
+    final cardBg = isMidnightBlue
+        ? const Color(0xFF07111F)
+        : (isMiddayGold ? const Color(0xFF17110A) : const Color(0xFF101010));
+    final rowBg = isMidnightBlue
+        ? const Color(0xFF0B1B33)
+        : (isMiddayGold ? const Color(0xFF2C2113) : const Color(0xFF121212));
+    final sidebarAccent = isMidnightBlue
+        ? const Color(0xFF4DA3FF)
+        : (isMiddayGold ? const Color(0xFFFFDFA3) : const Color(0xFFE5B641));
+    final sidebarAccentSoft = isMidnightBlue
+        ? const Color(0xFF4DA3FF).withOpacity(0.50)
+        : (isMiddayGold
+              ? const Color(0xFFE8C57E).withOpacity(0.52)
+              : const Color(0x33E5B641));
+    final sidebarTextPrimary = isMidnightBlue
+        ? const Color(0xFFEAF6FF)
+        : (isMiddayGold ? const Color(0xFFFFF0D0) : Colors.white);
+    final sidebarTextMuted = isMidnightBlue
+        ? const Color(0xFFAFCBEA)
+        : (isMiddayGold
+              ? const Color(0xFFE1CCA0)
+              : Colors.white.withOpacity(0.83));
+    final divider = isMidnightBlue
+        ? const Color(0xFF4DA3FF).withOpacity(0.32)
+        : (isMiddayGold
+              ? const Color(0xFFE8C57E).withOpacity(0.34)
+              : const Color(0x33E5B641));
 
     InputDecoration compactSelectDecoration() => InputDecoration(
       isDense: true,
@@ -13501,18 +13857,18 @@ class _DriverHomePageState extends State<DriverHomePage>
       contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
       border: OutlineInputBorder(
         borderRadius: BorderRadius.circular(10),
-        borderSide: const BorderSide(color: Color(0x35E5B641)),
+        borderSide: BorderSide(color: sidebarAccentSoft),
       ),
       enabledBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(10),
-        borderSide: const BorderSide(color: Color(0x35E5B641)),
+        borderSide: BorderSide(color: sidebarAccentSoft),
       ),
     );
 
     Widget controlLabel(String text) => Text(
       text,
       style: TextStyle(
-        color: Colors.white.withOpacity(0.83),
+        color: sidebarTextMuted,
         fontSize: 12,
         fontWeight: FontWeight.w700,
         letterSpacing: 0.2,
@@ -13547,9 +13903,9 @@ class _DriverHomePageState extends State<DriverHomePage>
                   height: 48,
                   decoration: BoxDecoration(
                     borderRadius: BorderRadius.circular(13),
-                    border: Border.all(color: const Color(0x33E5B641)),
+                    border: Border.all(color: sidebarAccentSoft),
                   ),
-                  child: Icon(icon, size: 24, color: gold),
+                  child: Icon(icon, size: 24, color: sidebarAccent),
                 ),
               ),
             ),
@@ -13576,9 +13932,12 @@ class _DriverHomePageState extends State<DriverHomePage>
               child: OutlinedButton(
                 onPressed: onTap,
                 style: OutlinedButton.styleFrom(
-                  foregroundColor: gold,
+                  foregroundColor: sidebarAccent,
                   backgroundColor: cardBg,
-                  side: BorderSide(color: gold.withOpacity(0.66), width: 1),
+                  side: BorderSide(
+                    color: sidebarAccent.withOpacity(0.66),
+                    width: 1,
+                  ),
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(13),
                   ),
@@ -13614,317 +13973,322 @@ class _DriverHomePageState extends State<DriverHomePage>
       width: railWidth + 20,
       backgroundColor: drawerBg,
       child: SafeArea(
-        child: Center(
-          child: SizedBox(
-            width: railWidth,
-            child: ListView(
-              padding: const EdgeInsets.fromLTRB(0, 10, 0, 12),
-              children: [
-                Text(
-                  _tr(
-                    nl: 'Cockpit',
-                    en: 'Cockpit',
-                    fr: 'Cockpit',
-                    es: 'Cabina',
+        child: DecoratedBox(
+          decoration: BoxDecoration(gradient: drawerGradient),
+          child: Center(
+            child: SizedBox(
+              width: railWidth,
+              child: ListView(
+                padding: const EdgeInsets.fromLTRB(0, 10, 0, 12),
+                children: [
+                  Text(
+                    _tr(
+                      nl: 'Cockpit',
+                      en: 'Cockpit',
+                      fr: 'Cockpit',
+                      es: 'Cabina',
+                    ),
+                    style: TextStyle(
+                      color: sidebarTextPrimary,
+                      fontSize: 18,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 0.3,
+                    ),
                   ),
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 18,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: 0.3,
+                  Text(
+                    'Fluxidi',
+                    style: TextStyle(
+                      color: sidebarAccent.withOpacity(0.92),
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 0.35,
+                    ),
                   ),
-                ),
-                Text(
-                  'Fluxidi',
-                  style: TextStyle(
-                    color: gold.withOpacity(0.92),
-                    fontSize: 11,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: 0.35,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Container(
-                  decoration: BoxDecoration(
-                    color: cardBg,
-                    borderRadius: BorderRadius.circular(14),
-                    border: Border.all(color: const Color(0x24E5B641)),
-                  ),
-                  padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      controlLabel(
-                        _tr(
-                          nl: 'Taal',
-                          en: 'Language',
-                          fr: 'Langue',
-                          es: 'Idioma',
-                        ),
+                  const SizedBox(height: 8),
+                  Container(
+                    decoration: BoxDecoration(
+                      color: cardBg,
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(
+                        color: sidebarAccent.withOpacity(0.24),
                       ),
-                      const SizedBox(height: 5),
-                      DropdownButtonFormField<String>(
-                        value: currentLanguageCode,
-                        items: const [
-                          DropdownMenuItem(value: 'nl', child: Text('NL')),
-                          DropdownMenuItem(value: 'en', child: Text('EN')),
-                          DropdownMenuItem(value: 'fr', child: Text('FR')),
-                          DropdownMenuItem(value: 'es', child: Text('ES')),
-                        ],
-                        onChanged: (v) {
-                          if (v == null) return;
-                          setAppLanguageByCode(v);
-                          setState(() {});
-                        },
-                        dropdownColor: cardBg,
-                        decoration: compactSelectDecoration(),
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                        ),
-                        iconEnabledColor: gold,
-                      ),
-                      const SizedBox(height: 9),
-                      controlLabel(
-                        _tr(nl: 'Kaart', en: 'Map', fr: 'Carte', es: 'Mapa'),
-                      ),
-                      const SizedBox(height: 5),
-                      DropdownButtonFormField<MapThemeMode>(
-                        value: _effectiveMapThemeFor(_cameraMode),
-                        items: [
-                          DropdownMenuItem(
-                            value: MapThemeMode.light,
-                            child: Text(
-                              _tr(
-                                nl: 'Licht',
-                                en: 'Light',
-                                fr: 'Clair',
-                                es: 'Claro',
-                              ),
-                            ),
-                          ),
-                          DropdownMenuItem(
-                            value: MapThemeMode.dark,
-                            child: Text(
-                              _tr(
-                                nl: 'Donker',
-                                en: 'Dark',
-                                fr: 'Sombre',
-                                es: 'Oscuro',
-                              ),
-                            ),
-                          ),
-                        ],
-                        onChanged: (v) {
-                          if (v == null) return;
-                          _setMapTheme(v);
-                        },
-                        dropdownColor: cardBg,
-                        decoration: compactSelectDecoration(),
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                        ),
-                        iconEnabledColor: gold,
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 10),
-                const Divider(color: divider),
-                const SizedBox(height: 6),
-                ValueListenableBuilder<ActiveDriverSession?>(
-                  valueListenable: activeDriverSessionNotifier,
-                  builder: (context, session, _) {
-                    if (!(isDriver && session != null)) {
-                      return const SizedBox.shrink();
-                    }
-                    return Column(
+                    ),
+                    padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        cockpitRailButton(
-                          icon: Icons.folder_copy_outlined,
-                          semanticLabel: _tr(
-                            nl: 'Documenten',
-                            en: 'Documents',
-                            fr: 'Documents',
-                            es: 'Documentos',
+                        controlLabel(
+                          _tr(
+                            nl: 'Taal',
+                            en: 'Language',
+                            fr: 'Langue',
+                            es: 'Idioma',
+                          ),
+                        ),
+                        const SizedBox(height: 5),
+                        DropdownButtonFormField<String>(
+                          value: currentLanguageCode,
+                          items: const [
+                            DropdownMenuItem(value: 'nl', child: Text('NL')),
+                            DropdownMenuItem(value: 'en', child: Text('EN')),
+                            DropdownMenuItem(value: 'fr', child: Text('FR')),
+                            DropdownMenuItem(value: 'es', child: Text('ES')),
+                          ],
+                          onChanged: (v) {
+                            if (v == null) return;
+                            setAppLanguageByCode(v);
+                            setState(() {});
+                          },
+                          dropdownColor: cardBg,
+                          decoration: compactSelectDecoration(),
+                          style: TextStyle(
+                            color: sidebarTextPrimary,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
+                          iconEnabledColor: sidebarAccent,
+                        ),
+                        const SizedBox(height: 9),
+                        controlLabel(
+                          _tr(nl: 'Kaart', en: 'Map', fr: 'Carte', es: 'Mapa'),
+                        ),
+                        const SizedBox(height: 5),
+                        DropdownButtonFormField<MapThemeMode>(
+                          value: _effectiveMapThemeFor(_cameraMode),
+                          items: [
+                            DropdownMenuItem(
+                              value: MapThemeMode.light,
+                              child: Text(
+                                _tr(
+                                  nl: 'Licht',
+                                  en: 'Light',
+                                  fr: 'Clair',
+                                  es: 'Claro',
+                                ),
+                              ),
+                            ),
+                            DropdownMenuItem(
+                              value: MapThemeMode.dark,
+                              child: Text(
+                                _tr(
+                                  nl: 'Donker',
+                                  en: 'Dark',
+                                  fr: 'Sombre',
+                                  es: 'Oscuro',
+                                ),
+                              ),
+                            ),
+                          ],
+                          onChanged: (v) {
+                            if (v == null) return;
+                            _setMapTheme(v);
+                          },
+                          dropdownColor: cardBg,
+                          decoration: compactSelectDecoration(),
+                          style: TextStyle(
+                            color: sidebarTextPrimary,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
+                          iconEnabledColor: sidebarAccent,
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  Divider(color: divider),
+                  const SizedBox(height: 6),
+                  ValueListenableBuilder<ActiveDriverSession?>(
+                    valueListenable: activeDriverSessionNotifier,
+                    builder: (context, session, _) {
+                      if (!(isDriver && session != null)) {
+                        return const SizedBox.shrink();
+                      }
+                      return Column(
+                        children: [
+                          cockpitRailButton(
+                            icon: Icons.folder_copy_outlined,
+                            semanticLabel: _tr(
+                              nl: 'Documenten',
+                              en: 'Documents',
+                              fr: 'Documents',
+                              es: 'Documentos',
+                            ),
+                            onTap: () {
+                              Navigator.pop(context);
+                              Navigator.of(context).push(
+                                MaterialPageRoute(
+                                  builder: (_) => const DriverMyDocumentsPage(),
+                                ),
+                              );
+                            },
+                          ),
+                          cockpitRailButton(
+                            icon: Icons.swap_horiz_rounded,
+                            semanticLabel: _tr(
+                              nl: 'Wissel',
+                              en: 'Switch',
+                              fr: 'Changer',
+                              es: 'Cambiar',
+                            ),
+                            onTap: () async {
+                              Navigator.pop(context);
+                              await DriverSessionStore.instance.clear();
+                              if (!context.mounted) return;
+                              Navigator.of(context).pushAndRemoveUntil(
+                                MaterialPageRoute(
+                                  builder: (_) => const ChauffeurLoginPage(),
+                                ),
+                                (route) => false,
+                              );
+                            },
+                          ),
+                        ],
+                      );
+                    },
+                  ),
+                  if (canSeeDriverOps)
+                    cockpitRailButton(
+                      icon: Icons.list_alt_rounded,
+                      semanticLabel: _tr(
+                        nl: 'Ritten',
+                        en: 'Rides',
+                        fr: 'Courses',
+                        es: 'Viajes',
+                      ),
+                      onTap: _openBookingsHub,
+                    ),
+                  if (canSeeDriverOps)
+                    cockpitRailButton(
+                      icon: Icons.local_taxi_outlined,
+                      semanticLabel: _tr(
+                        nl: 'Straatrit',
+                        en: 'Street',
+                        fr: 'Rue',
+                        es: 'Calle',
+                      ),
+                      onTap: _openDirectRideEntry,
+                    ),
+                  if (canSeeDriverOps)
+                    cockpitRailButton(
+                      icon: Icons.history,
+                      semanticLabel: _tr(
+                        nl: 'Historiek',
+                        en: 'History',
+                        fr: 'Historique',
+                        es: 'Historial',
+                      ),
+                      onTap: _openTripHistory,
+                    ),
+                  if (canSeeCustomerBooking)
+                    cockpitRailButton(
+                      icon: Icons.calculate_outlined,
+                      semanticLabel: _tr(
+                        nl: 'Prijs',
+                        en: 'Price',
+                        fr: 'Prix',
+                        es: 'Precio',
+                      ),
+                      onTap: _openCalculator,
+                    ),
+                  if (canSeeAdminManagement)
+                    cockpitRailButton(
+                      icon: Icons.business_center_outlined,
+                      semanticLabel: _tr(
+                        nl: 'Bedrijf',
+                        en: 'Business',
+                        fr: 'Entreprise',
+                        es: 'Empresa',
+                      ),
+                      onTap: _openBusinessSettings,
+                    ),
+                  if (canSeeAdminManagement)
+                    cockpitRailButton(
+                      icon: Icons.directions_car_filled_outlined,
+                      semanticLabel: _tr(
+                        nl: 'Voertuigen',
+                        en: 'Vehicles',
+                        fr: 'Vehicules',
+                        es: 'Vehiculos',
+                      ),
+                      onTap: _openVehicles,
+                    ),
+                  const SizedBox(height: 2),
+                  Divider(color: divider),
+                  const SizedBox(height: 6),
+                  if (canSeeDriverOps)
+                    cockpitRailButton(
+                      icon: Icons.refresh_rounded,
+                      semanticLabel: _tr(
+                        nl: 'Vernieuw',
+                        en: 'Refresh',
+                        fr: 'Actualiser',
+                        es: 'Actualizar',
+                      ),
+                      onTap: () {
+                        Navigator.pop(context);
+                        _refreshBookings(force: true, trigger: 'drawer_manual');
+                      },
+                    ),
+                  if (canSeeDriverOps)
+                    cockpitRailButton(
+                      icon: Icons.my_location_rounded,
+                      semanticLabel: _tr(
+                        nl: 'Centreer',
+                        en: 'Center',
+                        fr: 'Centrer',
+                        es: 'Centrar',
+                      ),
+                      onTap: () async {
+                        Navigator.pop(context);
+                        await _centerOnMe();
+                      },
+                    ),
+                  if (canSeeDriverOps) const SizedBox(height: 6),
+                  if (canSeeDriverOps)
+                    Column(
+                      children: [
+                        miniAction(
+                          icon: Icons.home_outlined,
+                          label: _tr(
+                            nl: 'Start',
+                            en: 'Start',
+                            fr: 'Accueil',
+                            es: 'Inicio',
                           ),
                           onTap: () {
-                            Navigator.pop(context);
-                            Navigator.of(context).push(
+                            Navigator.of(context).pushAndRemoveUntil(
                               MaterialPageRoute(
-                                builder: (_) => const DriverMyDocumentsPage(),
+                                builder: (_) => const RoleEntryPage(),
                               ),
+                              (route) => false,
                             );
                           },
                         ),
-                        cockpitRailButton(
-                          icon: Icons.swap_horiz_rounded,
-                          semanticLabel: _tr(
-                            nl: 'Wissel',
-                            en: 'Switch',
-                            fr: 'Changer',
-                            es: 'Cambiar',
+                        miniAction(
+                          icon: Icons.badge_outlined,
+                          label: _tr(
+                            nl: 'Chauffeur',
+                            en: 'Driver',
+                            fr: 'Chauffeur',
+                            es: 'Conductor',
                           ),
-                          onTap: () async {
-                            Navigator.pop(context);
-                            await DriverSessionStore.instance.clear();
-                            if (!context.mounted) return;
+                          onTap: () {
                             Navigator.of(context).pushAndRemoveUntil(
                               MaterialPageRoute(
-                                builder: (_) => const ChauffeurLoginPage(),
+                                builder: (_) => DriverHomePage(
+                                  openedFromBusinessHome:
+                                      widget.openedFromBusinessHome,
+                                ),
                               ),
                               (route) => false,
                             );
                           },
                         ),
                       ],
-                    );
-                  },
-                ),
-                if (canSeeDriverOps)
-                  cockpitRailButton(
-                    icon: Icons.list_alt_rounded,
-                    semanticLabel: _tr(
-                      nl: 'Ritten',
-                      en: 'Rides',
-                      fr: 'Courses',
-                      es: 'Viajes',
                     ),
-                    onTap: _openBookingsHub,
-                  ),
-                if (canSeeDriverOps)
-                  cockpitRailButton(
-                    icon: Icons.local_taxi_outlined,
-                    semanticLabel: _tr(
-                      nl: 'Straatrit',
-                      en: 'Street',
-                      fr: 'Rue',
-                      es: 'Calle',
-                    ),
-                    onTap: _openDirectRideEntry,
-                  ),
-                if (canSeeDriverOps)
-                  cockpitRailButton(
-                    icon: Icons.history,
-                    semanticLabel: _tr(
-                      nl: 'Historiek',
-                      en: 'History',
-                      fr: 'Historique',
-                      es: 'Historial',
-                    ),
-                    onTap: _openTripHistory,
-                  ),
-                if (canSeeCustomerBooking)
-                  cockpitRailButton(
-                    icon: Icons.calculate_outlined,
-                    semanticLabel: _tr(
-                      nl: 'Prijs',
-                      en: 'Price',
-                      fr: 'Prix',
-                      es: 'Precio',
-                    ),
-                    onTap: _openCalculator,
-                  ),
-                if (canSeeAdminManagement)
-                  cockpitRailButton(
-                    icon: Icons.business_center_outlined,
-                    semanticLabel: _tr(
-                      nl: 'Bedrijf',
-                      en: 'Business',
-                      fr: 'Entreprise',
-                      es: 'Empresa',
-                    ),
-                    onTap: _openBusinessSettings,
-                  ),
-                if (canSeeAdminManagement)
-                  cockpitRailButton(
-                    icon: Icons.directions_car_filled_outlined,
-                    semanticLabel: _tr(
-                      nl: 'Voertuigen',
-                      en: 'Vehicles',
-                      fr: 'Vehicules',
-                      es: 'Vehiculos',
-                    ),
-                    onTap: _openVehicles,
-                  ),
-                const SizedBox(height: 2),
-                const Divider(color: divider),
-                const SizedBox(height: 6),
-                if (canSeeDriverOps)
-                  cockpitRailButton(
-                    icon: Icons.refresh_rounded,
-                    semanticLabel: _tr(
-                      nl: 'Vernieuw',
-                      en: 'Refresh',
-                      fr: 'Actualiser',
-                      es: 'Actualizar',
-                    ),
-                    onTap: () {
-                      Navigator.pop(context);
-                      _refreshBookings(force: true, trigger: 'drawer_manual');
-                    },
-                  ),
-                if (canSeeDriverOps)
-                  cockpitRailButton(
-                    icon: Icons.my_location_rounded,
-                    semanticLabel: _tr(
-                      nl: 'Centreer',
-                      en: 'Center',
-                      fr: 'Centrer',
-                      es: 'Centrar',
-                    ),
-                    onTap: () async {
-                      Navigator.pop(context);
-                      await _centerOnMe();
-                    },
-                  ),
-                if (canSeeDriverOps) const SizedBox(height: 6),
-                if (canSeeDriverOps)
-                  Column(
-                    children: [
-                      miniAction(
-                        icon: Icons.home_outlined,
-                        label: _tr(
-                          nl: 'Start',
-                          en: 'Start',
-                          fr: 'Accueil',
-                          es: 'Inicio',
-                        ),
-                        onTap: () {
-                          Navigator.of(context).pushAndRemoveUntil(
-                            MaterialPageRoute(
-                              builder: (_) => const RoleEntryPage(),
-                            ),
-                            (route) => false,
-                          );
-                        },
-                      ),
-                      miniAction(
-                        icon: Icons.badge_outlined,
-                        label: _tr(
-                          nl: 'Chauffeur',
-                          en: 'Driver',
-                          fr: 'Chauffeur',
-                          es: 'Conductor',
-                        ),
-                        onTap: () {
-                          Navigator.of(context).pushAndRemoveUntil(
-                            MaterialPageRoute(
-                              builder: (_) => DriverHomePage(
-                                openedFromBusinessHome:
-                                    widget.openedFromBusinessHome,
-                              ),
-                            ),
-                            (route) => false,
-                          );
-                        },
-                      ),
-                    ],
-                  ),
-              ],
+                ],
+              ),
             ),
           ),
         ),

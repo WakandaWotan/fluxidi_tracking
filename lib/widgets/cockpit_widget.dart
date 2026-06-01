@@ -1,5 +1,31 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
+import 'package:fluxidi_tracking/driver_theme_palette.dart';
+import 'package:fluxidi_tracking/driver_theme_store.dart';
+
+class _CockpitThemeTokens {
+  const _CockpitThemeTokens({
+    required this.panelBackground,
+    required this.panelBorder,
+    required this.panelGlow,
+    required this.tileBackground,
+    required this.tileBorder,
+    required this.primaryText,
+    required this.mutedText,
+    required this.accent,
+    required this.hotBackground,
+  });
+
+  final Color panelBackground;
+  final Color panelBorder;
+  final Color panelGlow;
+  final Color tileBackground;
+  final Color tileBorder;
+  final Color primaryText;
+  final Color mutedText;
+  final Color accent;
+  final Color hotBackground;
+}
 
 /// Fluxidi Driver — Cockpit (compact premium)
 class CockpitWidget extends StatefulWidget {
@@ -39,6 +65,49 @@ class CockpitWidget extends StatefulWidget {
 class _CockpitWidgetState extends State<CockpitWidget>
     with SingleTickerProviderStateMixin {
   late final AnimationController _pulse;
+  _CockpitThemeTokens _activeTheme = _themeForVariant(
+    DriverThemeVariant.nightGold,
+  );
+
+  static _CockpitThemeTokens _themeForVariant(DriverThemeVariant variant) {
+    if (variant == DriverThemeVariant.midnightBlue) {
+      return const _CockpitThemeTokens(
+        panelBackground: Color(0xFF0A162B),
+        panelBorder: Color(0x805AA7E8),
+        panelGlow: Color(0x334DA3FF),
+        tileBackground: Color(0xFF0E1E37),
+        tileBorder: Color(0x665A9DD9),
+        primaryText: Color(0xFFEAF6FF),
+        mutedText: Color(0xFFAFCBEA),
+        accent: Color(0xFF4DA3FF),
+        hotBackground: Color(0xFF112F54),
+      );
+    }
+    if (variant == DriverThemeVariant.highContrast) {
+      return const _CockpitThemeTokens(
+        panelBackground: Color(0xFF20160B),
+        panelBorder: Color(0x99E8C57E),
+        panelGlow: Color(0x33E8C57E),
+        tileBackground: Color(0xFF2A1D0F),
+        tileBorder: Color(0x88D8B56F),
+        primaryText: Color(0xFFFFF0D0),
+        mutedText: Color(0xFFE1CCA0),
+        accent: Color(0xFFE8C57E),
+        hotBackground: Color(0xFF3A2A15),
+      );
+    }
+    return const _CockpitThemeTokens(
+      panelBackground: Color(0xFF08142D),
+      panelBorder: Color(0x80FFD54F),
+      panelGlow: Color(0x33F5C400),
+      tileBackground: Color(0xFF101E3A),
+      tileBorder: Color(0x26FFFFFF),
+      primaryText: Colors.white,
+      mutedText: Color(0xCCFFFFFF),
+      accent: Color(0xFFFFD54F),
+      hotBackground: Color(0xFF2B260D),
+    );
+  }
 
   @override
   void initState() {
@@ -69,73 +138,118 @@ class _CockpitWidgetState extends State<CockpitWidget>
 
   @override
   Widget build(BuildContext context) {
-    final eta = (widget.etaText.trim().isEmpty) ? '—' : widget.etaText;
-    final km = (widget.kmText.trim().isEmpty) ? '—' : widget.kmText;
-    final price = (widget.priceText.trim().isEmpty) ? '—' : widget.priceText;
-    final isLandscape = MediaQuery.of(context).orientation == Orientation.landscape;
-    final panel = AnimatedBuilder(
-      animation: _pulse,
-      builder: (context, _) {
-        final t = widget.tripStarted ? _pulse.value : 0.0;
-        final borderOpacity = widget.tripStarted ? (0.74 + 0.08 * t) : 0.34;
+    return ValueListenableBuilder<DriverThemeVariant>(
+      valueListenable: driverThemeNotifier,
+      builder: (context, variant, _) {
+        _activeTheme = _themeForVariant(variant);
+        final eta = (widget.etaText.trim().isEmpty) ? '—' : widget.etaText;
+        final km = (widget.kmText.trim().isEmpty) ? '—' : widget.kmText;
+        final price = (widget.priceText.trim().isEmpty)
+            ? '—'
+            : widget.priceText;
+        final isLandscape =
+            MediaQuery.of(context).orientation == Orientation.landscape;
+        final panel = AnimatedBuilder(
+          animation: _pulse,
+          builder: (context, _) {
+            final t = widget.tripStarted ? _pulse.value : 0.0;
+            final borderOpacity = widget.tripStarted ? (0.74 + 0.08 * t) : 0.34;
 
-        return ClipRRect(
-          borderRadius: BorderRadius.circular(14),
-          child: BackdropFilter(
-            filter: ImageFilter.blur(sigmaX: 4, sigmaY: 4),
-            child: Container(
-              decoration: BoxDecoration(
-                color: const Color(0xFF08142D).withOpacity(0.92),
-                borderRadius: BorderRadius.circular(14),
-                border: Border.all(
-                  color: const Color(0xFFFFD54F).withOpacity(borderOpacity * 0.72),
-                  width: 1.0,
-                ),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withOpacity(0.28),
-                    blurRadius: 6,
-                    spreadRadius: 0.2,
+            return ClipRRect(
+              borderRadius: BorderRadius.circular(14),
+              child: BackdropFilter(
+                filter: ImageFilter.blur(sigmaX: 4, sigmaY: 4),
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: _activeTheme.panelBackground.withOpacity(0.92),
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(
+                      color: _activeTheme.panelBorder.withOpacity(
+                        borderOpacity * 0.72,
+                      ),
+                      width: 1.0,
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.28),
+                        blurRadius: 6,
+                        spreadRadius: 0.2,
+                      ),
+                      BoxShadow(
+                        color: _activeTheme.panelGlow.withOpacity(0.35),
+                        blurRadius: 12,
+                        spreadRadius: 0.1,
+                      ),
+                    ],
                   ),
-                ],
+                  child: isLandscape
+                      ? _buildLandscapeStrip(eta: eta, km: km, price: price)
+                      : _buildPortraitPanel(eta: eta, km: km, price: price),
+                ),
               ),
-              child: isLandscape ? _buildLandscapeStrip(eta: eta, km: km, price: price) : _buildPortraitPanel(eta: eta, km: km, price: price),
+            );
+          },
+        );
+
+        return SafeArea(
+          bottom: true,
+          child: Align(
+            alignment: Alignment.bottomCenter,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(10, 2, 10, 6),
+              child: panel,
             ),
           ),
         );
       },
     );
-
-    return SafeArea(
-      bottom: true,
-      child: Align(
-        alignment: Alignment.bottomCenter,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(10, 2, 10, 6),
-          child: panel,
-        ),
-      ),
-    );
   }
 
-  Widget _buildPortraitPanel({required String eta, required String km, required String price}) {
+  Widget _buildPortraitPanel({
+    required String eta,
+    required String km,
+    required String price,
+  }) {
     const gap = 4.0;
     const verticalPadding = 3.0;
     return SizedBox(
       height: 108,
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(8, verticalPadding, 8, verticalPadding),
+        padding: const EdgeInsets.fromLTRB(
+          8,
+          verticalPadding,
+          8,
+          verticalPadding,
+        ),
         child: Column(
           children: [
             Expanded(
               flex: 3,
               child: Row(
                 children: [
-                  _metric('ETA', eta, verticalPadding: 4, titleSize: 9, valueSize: 15),
+                  _metric(
+                    'ETA',
+                    eta,
+                    verticalPadding: 4,
+                    titleSize: 9,
+                    valueSize: 15,
+                  ),
                   const SizedBox(width: gap),
-                  _metric('KM', km, verticalPadding: 4, titleSize: 9, valueSize: 15),
+                  _metric(
+                    'KM',
+                    km,
+                    verticalPadding: 4,
+                    titleSize: 9,
+                    valueSize: 15,
+                  ),
                   const SizedBox(width: gap),
-                  _metric('€', price, verticalPadding: 4, titleSize: 9, valueSize: 15),
+                  _metric(
+                    '€',
+                    price,
+                    verticalPadding: 4,
+                    titleSize: 9,
+                    valueSize: 15,
+                  ),
                 ],
               ),
             ),
@@ -147,7 +261,9 @@ class _CockpitWidgetState extends State<CockpitWidget>
                   _btn(
                     keyId: 'nav',
                     label: widget.navActive ? 'NAV ON' : 'NAV',
-                    icon: widget.navActive ? Icons.navigation : Icons.navigation_outlined,
+                    icon: widget.navActive
+                        ? Icons.navigation
+                        : Icons.navigation_outlined,
                     onTap: widget.onNav,
                     hot: widget.navActive,
                     height: 0,
@@ -158,7 +274,9 @@ class _CockpitWidgetState extends State<CockpitWidget>
                   _btn(
                     keyId: 'primary',
                     label: widget.tripStarted ? 'STOP' : 'START',
-                    icon: widget.tripStarted ? Icons.stop_circle_outlined : Icons.play_circle_outline,
+                    icon: widget.tripStarted
+                        ? Icons.stop_circle_outlined
+                        : Icons.play_circle_outline,
                     onTap: widget.tripStarted ? widget.onStop : widget.onStart,
                     hot: widget.tripStarted,
                     height: 0,
@@ -185,7 +303,11 @@ class _CockpitWidgetState extends State<CockpitWidget>
     );
   }
 
-  Widget _buildLandscapeStrip({required String eta, required String km, required String price}) {
+  Widget _buildLandscapeStrip({
+    required String eta,
+    required String km,
+    required String price,
+  }) {
     return SizedBox(
       height: 84,
       child: Padding(
@@ -201,7 +323,9 @@ class _CockpitWidgetState extends State<CockpitWidget>
             _btn(
               keyId: 'nav',
               label: widget.navActive ? 'NAV ON' : 'NAV',
-              icon: widget.navActive ? Icons.navigation : Icons.navigation_outlined,
+              icon: widget.navActive
+                  ? Icons.navigation
+                  : Icons.navigation_outlined,
               onTap: widget.onNav,
               hot: widget.navActive,
               height: 0,
@@ -212,7 +336,9 @@ class _CockpitWidgetState extends State<CockpitWidget>
             _btn(
               keyId: 'primary',
               label: widget.tripStarted ? 'STOP' : 'START',
-              icon: widget.tripStarted ? Icons.stop_circle_outlined : Icons.play_circle_outline,
+              icon: widget.tripStarted
+                  ? Icons.stop_circle_outlined
+                  : Icons.play_circle_outline,
               onTap: widget.tripStarted ? widget.onStop : widget.onStart,
               hot: widget.tripStarted,
               height: 0,
@@ -241,9 +367,9 @@ class _CockpitWidgetState extends State<CockpitWidget>
       child: Container(
         padding: const EdgeInsets.symmetric(vertical: 5),
         decoration: BoxDecoration(
-          color: const Color(0xFF101E3A).withOpacity(0.92),
+          color: _activeTheme.tileBackground.withOpacity(0.92),
           borderRadius: BorderRadius.circular(11),
-          border: Border.all(color: Colors.white.withOpacity(0.055)),
+          border: Border.all(color: _activeTheme.tileBorder.withOpacity(0.85)),
         ),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -251,7 +377,7 @@ class _CockpitWidgetState extends State<CockpitWidget>
             Text(
               label,
               style: TextStyle(
-                color: Colors.white.withOpacity(0.75),
+                color: _activeTheme.mutedText.withOpacity(0.86),
                 fontSize: 8.5,
                 fontWeight: FontWeight.w800,
                 letterSpacing: 0.6,
@@ -262,7 +388,11 @@ class _CockpitWidgetState extends State<CockpitWidget>
               value,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w900),
+              style: TextStyle(
+                color: _activeTheme.primaryText,
+                fontSize: 13,
+                fontWeight: FontWeight.w900,
+              ),
             ),
           ],
         ),
@@ -283,9 +413,11 @@ class _CockpitWidgetState extends State<CockpitWidget>
           return Container(
             padding: const EdgeInsets.symmetric(vertical: 0.5),
             decoration: BoxDecoration(
-              color: const Color(0xFF101E3A).withOpacity(0.94),
+              color: _activeTheme.tileBackground.withOpacity(0.94),
               borderRadius: BorderRadius.circular(11),
-              border: Border.all(color: Colors.white.withOpacity(0.055)),
+              border: Border.all(
+                color: _activeTheme.tileBorder.withOpacity(0.88),
+              ),
             ),
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
@@ -298,7 +430,7 @@ class _CockpitWidgetState extends State<CockpitWidget>
                       label,
                       maxLines: 1,
                       style: TextStyle(
-                        color: Colors.white.withOpacity(0.75),
+                        color: _activeTheme.mutedText.withOpacity(0.86),
                         fontSize: titleSize.clamp(0, 11),
                         fontWeight: FontWeight.w800,
                         letterSpacing: 0.7,
@@ -314,6 +446,7 @@ class _CockpitWidgetState extends State<CockpitWidget>
                       value,
                       maxLines: 1,
                       style: TextStyle(
+                        color: _activeTheme.primaryText,
                         fontSize: valueSize.clamp(0, 16),
                         fontWeight: FontWeight.w900,
                       ),
@@ -341,15 +474,19 @@ class _CockpitWidgetState extends State<CockpitWidget>
     final isStop = keyId == 'primary' && label == 'STOP';
     final isNavActive = keyId == 'nav' && hot;
     final isWait = keyId == 'wait';
-    final accent = isStop ? const Color(0xFFFF6B5F) : const Color(0xFFFFD54F);
+    final accent = isStop ? const Color(0xFFFF6B5F) : _activeTheme.accent;
     final background = isStop
         ? const Color(0xFF3A1821)
-        : (isNavActive ? const Color(0xFF2B260D) : const Color(0xFF101E3A));
+        : (isNavActive
+              ? _activeTheme.hotBackground
+              : _activeTheme.tileBackground);
     final bgOpacity = isStop ? 0.96 : (hot && !isWait ? 0.92 : 0.86);
-    final borderOpacity =
-        isStop ? 0.78 : (isNavActive ? 0.62 : (isWait ? 0.18 : 0.28));
-    final contentColor =
-        hot && !isWait ? accent : Colors.white.withOpacity(isWait ? 0.76 : 0.88);
+    final borderOpacity = isStop
+        ? 0.78
+        : (isNavActive ? 0.62 : (isWait ? 0.18 : 0.28));
+    final contentColor = hot && !isWait
+        ? accent
+        : _activeTheme.primaryText.withOpacity(isWait ? 0.76 : 0.88);
 
     return Expanded(
       child: InkWell(
@@ -388,7 +525,10 @@ class _CockpitWidgetState extends State<CockpitWidget>
                     return FadeTransition(
                       opacity: anim,
                       child: ScaleTransition(
-                        scale: Tween<double>(begin: 0.97, end: 1.0).animate(anim),
+                        scale: Tween<double>(
+                          begin: 0.97,
+                          end: 1.0,
+                        ).animate(anim),
                         child: child,
                       ),
                     );
