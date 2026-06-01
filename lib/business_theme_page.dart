@@ -1,9 +1,6 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:fluxidi_tracking/business_theme_palette.dart';
 import 'package:fluxidi_tracking/business_theme_store.dart';
-import 'package:fluxidi_tracking/customer_theme_palette.dart';
 import 'package:fluxidi_tracking/driver_theme_palette.dart';
 import 'package:fluxidi_tracking/driver_theme_store.dart';
 
@@ -54,7 +51,6 @@ class _BusinessThemePageState extends State<BusinessThemePage> {
     await Future.wait<void>([
       loadBusinessThemePreference(),
       loadDriverThemePreference(),
-      loadBusinessPublishedCustomerThemePreference(),
     ]);
   }
 
@@ -79,33 +75,6 @@ class _BusinessThemePageState extends State<BusinessThemePage> {
         return 'Midnight Blue';
       case DriverThemeVariant.highContrast:
         return 'Midday Gold';
-    }
-  }
-
-  String _labelForCustomer(CustomerThemeVariant variant) {
-    switch (variant) {
-      case CustomerThemeVariant.premiumLight:
-        return 'Premium Light';
-      case CustomerThemeVariant.nightGold:
-        return 'Night Gold';
-      case CustomerThemeVariant.ivoryGold:
-        return 'Ivory Gold';
-      case CustomerThemeVariant.champagneSand:
-        return 'Champagne Sand';
-      case CustomerThemeVariant.urbanSlate:
-        return 'Urban Slate';
-      case CustomerThemeVariant.midnightPlatinum:
-        return 'Midnight Platinum';
-      case CustomerThemeVariant.royalBlueGold:
-        return 'Royal Blue Gold';
-      case CustomerThemeVariant.emeraldGarden:
-        return 'Emerald Garden';
-      case CustomerThemeVariant.roseQuartz:
-        return 'Rose Quartz';
-      case CustomerThemeVariant.lavenderMist:
-        return 'Lavender Mist';
-      case CustomerThemeVariant.emeraldNoir:
-        return 'Emerald Noir';
     }
   }
 
@@ -317,42 +286,6 @@ class _BusinessThemePageState extends State<BusinessThemePage> {
     );
   }
 
-  Widget _publishedCustomerSection() {
-    return ValueListenableBuilder<CustomerThemeVariant>(
-      valueListenable: businessPublishedCustomerThemeNotifier,
-      builder: (context, current, _) {
-        return Column(
-          children: [
-            for (final variant in CustomerThemeVariant.values) ...[
-              _selectableThemeTile(
-                title: _labelForCustomer(variant),
-                subtitle:
-                    'Lokale publiceer-voorkeur (backend nog uitgeschakeld)',
-                selected: variant == current,
-                swatches: [
-                  paletteForCustomerTheme(variant).background,
-                  paletteForCustomerTheme(variant).surface,
-                  paletteForCustomerTheme(variant).gold,
-                ],
-                onTap: () {
-                  unawaited(
-                    saveBusinessPublishedCustomerThemePreference(variant),
-                  );
-                  _showSavedSnack(
-                    'Klantthema-voorkeur opgeslagen: ${_labelForCustomer(variant)}',
-                  );
-                },
-                visuals: _activeVisuals,
-              ),
-              if (variant != CustomerThemeVariant.values.last)
-                const SizedBox(height: 8),
-            ],
-          ],
-        );
-      },
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     return ValueListenableBuilder<BusinessThemeVariant>(
@@ -391,13 +324,6 @@ class _BusinessThemePageState extends State<BusinessThemePage> {
                     title: 'B. Chauffeursweergave',
                     subtitle: 'Kies het thema voor chauffeur/driver schermen.',
                     child: _driverSection(),
-                    visuals: _activeVisuals,
-                  ),
-                  _sectionCard(
-                    title: 'C. Klantweergave publiceren',
-                    subtitle:
-                        'Voorbereiding op publieke klantstijl. In deze fase alleen lokaal opgeslagen.',
-                    child: _publishedCustomerSection(),
                     visuals: _activeVisuals,
                   ),
                 ],
