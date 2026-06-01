@@ -3733,6 +3733,19 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
     BuildContext context,
     DriverProfile driver,
   ) async {
+    final isCleanProfessional = _isCleanProfessional;
+    final helperPanelIconColor = isCleanProfessional
+        ? _textSecondary
+        : _gold.withOpacity(0.98);
+    final helperPanelTextColor = isCleanProfessional
+        ? _textSecondary
+        : _textMuted.withOpacity(0.92);
+    final actionIconColor = isCleanProfessional
+        ? _textPrimary.withOpacity(0.9)
+        : _textSecondary.withOpacity(0.96);
+    final generateCodeIconColor = isCleanProfessional
+        ? _gold.withOpacity(0.92)
+        : _gold.withOpacity(0.98);
     await showModalBottomSheet<void>(
       context: context,
       backgroundColor: _panelBg,
@@ -3769,7 +3782,7 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                   children: [
                     Icon(
                       Icons.screen_rotation_alt_outlined,
-                      color: _gold.withOpacity(0.98),
+                      color: helperPanelIconColor,
                       size: 16,
                     ),
                     const SizedBox(width: 8),
@@ -3782,7 +3795,7 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                           es: 'Para la gestión completa, gira la tablet a horizontal.',
                         ),
                         style: TextStyle(
-                          color: _textMuted.withOpacity(0.92),
+                          color: helperPanelTextColor,
                           fontSize: 11.4,
                         ),
                       ),
@@ -3793,10 +3806,7 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
               const SizedBox(height: 8),
               ListTile(
                 contentPadding: EdgeInsets.zero,
-                leading: Icon(
-                  Icons.edit_outlined,
-                  color: _textSecondary.withOpacity(0.96),
-                ),
+                leading: Icon(Icons.edit_outlined, color: actionIconColor),
                 title: Text(
                   _t(nl: 'Beheren', en: 'Manage', fr: 'Gérer', es: 'Gestionar'),
                   style: TextStyle(color: _textPrimary),
@@ -3810,7 +3820,7 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                 contentPadding: EdgeInsets.zero,
                 leading: Icon(
                   Icons.description_outlined,
-                  color: _textSecondary.withOpacity(0.96),
+                  color: actionIconColor,
                 ),
                 title: Text(
                   _t(
@@ -3828,10 +3838,7 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
               ),
               ListTile(
                 contentPadding: EdgeInsets.zero,
-                leading: Icon(
-                  Icons.key_outlined,
-                  color: _gold.withOpacity(0.98),
-                ),
+                leading: Icon(Icons.key_outlined, color: generateCodeIconColor),
                 title: Text(
                   _t(
                     nl: 'Code genereren',
@@ -3857,6 +3864,15 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
     BuildContext context,
     DriverProfile driver,
   ) async {
+    final isCleanProfessional = _isCleanProfessional;
+    final titleTextColor = isCleanProfessional ? _textPrimary : Colors.white;
+    final helperTextColor = isCleanProfessional
+        ? _textSecondary
+        : Colors.white.withOpacity(0.74);
+    final actionTitleColor = isCleanProfessional ? _textPrimary : Colors.white;
+    final actionIconColor = isCleanProfessional
+        ? _gold.withOpacity(0.9)
+        : _gold.withOpacity(0.98);
     await showModalBottomSheet<void>(
       context: context,
       backgroundColor: _panelBg,
@@ -3877,8 +3893,8 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                   fr: 'Associer le chauffeur',
                   es: 'Vincular conductor',
                 ),
-                style: const TextStyle(
-                  color: Colors.white,
+                style: TextStyle(
+                  color: titleTextColor,
                   fontWeight: FontWeight.w800,
                 ),
               ),
@@ -3891,7 +3907,7 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                   es: 'Usa el QR temporal para una vinculación segura de un solo uso. El código de conductor es solo respaldo manual.',
                 ),
                 style: TextStyle(
-                  color: Colors.white.withOpacity(0.74),
+                  color: helperTextColor,
                   fontSize: 12,
                   height: 1.3,
                 ),
@@ -3899,10 +3915,7 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
               const SizedBox(height: 10),
               ListTile(
                 contentPadding: EdgeInsets.zero,
-                leading: Icon(
-                  Icons.qr_code_2_outlined,
-                  color: _gold.withOpacity(0.98),
-                ),
+                leading: Icon(Icons.qr_code_2_outlined, color: actionIconColor),
                 title: Text(
                   _t(
                     nl: 'Tijdelijke koppel-QR',
@@ -3910,7 +3923,7 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                     fr: 'QR de liaison temporaire',
                     es: 'QR temporal de vinculación',
                   ),
-                  style: const TextStyle(color: Colors.white),
+                  style: TextStyle(color: actionTitleColor),
                 ),
                 onTap: () {
                   Navigator.of(sheetContext).pop();
@@ -3919,10 +3932,7 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
               ),
               ListTile(
                 contentPadding: EdgeInsets.zero,
-                leading: Icon(
-                  Icons.key_outlined,
-                  color: _gold.withOpacity(0.98),
-                ),
+                leading: Icon(Icons.key_outlined, color: actionIconColor),
                 title: Text(
                   _t(
                     nl: 'Nieuwe chauffeurcode genereren',
@@ -3930,7 +3940,7 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                     fr: 'Generer un nouveau code chauffeur',
                     es: 'Generar nuevo codigo de conductor',
                   ),
-                  style: const TextStyle(color: Colors.white),
+                  style: TextStyle(color: actionTitleColor),
                 ),
                 onTap: () {
                   Navigator.of(sheetContext).pop();
@@ -3963,6 +3973,15 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
       );
       return;
     }
+    final isCleanProfessional = _isCleanProfessional;
+    final titleTextColor = isCleanProfessional ? _textPrimary : Colors.white;
+    final itemTextColor = isCleanProfessional ? _textPrimary : Colors.white;
+    final subtitleTextColor = isCleanProfessional
+        ? _textSecondary
+        : Colors.white.withOpacity(0.62);
+    final trailingColor = isCleanProfessional
+        ? _textSecondary.withOpacity(0.92)
+        : _textMuted.withOpacity(0.72);
     await showModalBottomSheet<void>(
       context: context,
       backgroundColor: _panelBg,
@@ -3983,8 +4002,8 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                   fr: 'Sélectionnez le chauffeur',
                   es: 'Selecciona conductor',
                 ),
-                style: const TextStyle(
-                  color: Colors.white,
+                style: TextStyle(
+                  color: titleTextColor,
                   fontWeight: FontWeight.w800,
                 ),
               ),
@@ -3994,16 +4013,13 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                   contentPadding: EdgeInsets.zero,
                   title: Text(
                     _displayDriverName(driver.fullName),
-                    style: const TextStyle(color: Colors.white),
+                    style: TextStyle(color: itemTextColor),
                   ),
                   subtitle: Text(
                     _driverCodeStatusLabel(driver),
-                    style: TextStyle(color: Colors.white.withOpacity(0.62)),
+                    style: TextStyle(color: subtitleTextColor),
                   ),
-                  trailing: Icon(
-                    Icons.chevron_right,
-                    color: _textMuted.withOpacity(0.72),
-                  ),
+                  trailing: Icon(Icons.chevron_right, color: trailingColor),
                   onTap: () {
                     Navigator.of(sheetContext).pop();
                     _openPortraitDriverCodeActions(context, driver);
