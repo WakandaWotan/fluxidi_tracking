@@ -1,15 +1,7 @@
-import 'dart:math' as math;
-
 import 'package:flutter/material.dart';
 import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
-import 'package:fluxidi_tracking/calculator_page.dart';
 import 'package:fluxidi_tracking/customer_profile_store.dart';
-import 'package:fluxidi_tracking/discovery/discovery_geo.dart';
-import 'package:fluxidi_tracking/discovery/discovery_labels.dart';
-import 'package:fluxidi_tracking/discovery/discovery_nearby.dart';
-import 'package:fluxidi_tracking/hotels/hotel_model.dart';
-import 'package:fluxidi_tracking/hotels/hotel_seed_data.dart';
 import 'package:fluxidi_tracking/nearby_partners_page.dart';
 import 'package:fluxidi_tracking/customer_theme_palette.dart';
 import 'package:fluxidi_tracking/customer_theme_store.dart';
@@ -118,206 +110,6 @@ class EventDetailPage extends StatelessWidget {
     return true;
   }
 
-  double _degToRad(double value) => value * (math.pi / 180.0);
-
-  double _distanceKm({
-    required double fromLat,
-    required double fromLng,
-    required double toLat,
-    required double toLng,
-  }) {
-    const earthRadiusKm = 6371.0;
-    final dLat = _degToRad(toLat - fromLat);
-    final dLng = _degToRad(toLng - fromLng);
-    final a =
-        math.sin(dLat / 2) * math.sin(dLat / 2) +
-        math.cos(_degToRad(fromLat)) *
-            math.cos(_degToRad(toLat)) *
-            math.sin(dLng / 2) *
-            math.sin(dLng / 2);
-    final c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a));
-    return earthRadiusKm * c;
-  }
-
-  List<HotelStay> _nearbyStays() {
-    final eventCity = normalizeDiscoveryText(event.city);
-    final eventLat = event.lat;
-    final eventLng = event.lng;
-    final canDistanceRank = _hasValidCoordinates(eventLat, eventLng);
-
-    final sameCity = <HotelStay>[
-      for (final stay in kBelgiumHotelSeedData)
-        if (normalizeDiscoveryText(stay.city) == eventCity) stay,
-    ];
-
-    if (!canDistanceRank) {
-      return topUniqueById(items: sameCity, idOf: (stay) => stay.id, limit: 3);
-    }
-
-    final distanceRanked = <({HotelStay stay, double km})>[
-      for (final stay in kBelgiumHotelSeedData)
-        if (_hasValidCoordinates(
-          stay.latitude ?? stay.lat,
-          stay.longitude ?? stay.lng,
-        ))
-          (
-            stay: stay,
-            km: _distanceKm(
-              fromLat: eventLat,
-              fromLng: eventLng,
-              toLat: stay.latitude ?? stay.lat,
-              toLng: stay.longitude ?? stay.lng,
-            ),
-          ),
-    ]..sort((a, b) => a.km.compareTo(b.km));
-
-    List<HotelStay> withinBand(double minKmExclusive, double maxKmInclusive) {
-      return <HotelStay>[
-        for (final item in distanceRanked)
-          if (item.km > minKmExclusive && item.km <= maxKmInclusive) item.stay,
-      ];
-    }
-
-    final merged = <HotelStay>[
-      ...sameCity,
-      ...withinBand(-1, 15),
-      ...withinBand(15, 30),
-      ...withinBand(30, 50),
-    ];
-    return topUniqueById(items: merged, idOf: (stay) => stay.id, limit: 3);
-  }
-
-  String _stayTypeLabel(String typeKey) {
-    if (typeKey == HotelStayType.aparthotel) {
-      return _t(
-        nl: 'Aparthotel',
-        en: 'Aparthotel',
-        fr: 'Aparthotel',
-        es: 'Aparthotel',
-      );
-    }
-    if (typeKey == HotelStayType.guesthouse) {
-      return _t(
-        nl: 'Guesthouse',
-        en: 'Guesthouse',
-        fr: 'Guesthouse',
-        es: 'Guesthouse',
-      );
-    }
-    if (typeKey == HotelStayType.hotel) return 'Hotel';
-    if (typeKey == HotelStayType.bedAndBreakfast) {
-      return discoveryStayTypeLabel(
-        HotelStayType.bedAndBreakfast,
-        (nl, en, fr, es) => _t(nl: nl, en: en, fr: fr, es: es),
-      );
-    }
-    return typeKey;
-  }
-
-  String _stayPriceLabel(HotelStay stay) {
-    return formatDiscoveryPriceHint(
-      stay.priceHint,
-      fromLabel: _t(nl: 'Vanaf', en: 'From', fr: 'À partir de', es: 'Desde'),
-    );
-  }
-
-  String _formatRoutePrefillAddress({
-    required String rawAddress,
-    required String label,
-    required String city,
-    required String region,
-    required String country,
-  }) {
-    final raw = rawAddress.trim();
-    final safeLabel = label.trim();
-    final safeCity = city.trim();
-    final safeRegion = region.trim();
-    final safeCountry = country.trim();
-    final normalizedRaw = normalizeDiscoveryText(raw);
-    final normalizedCity = normalizeDiscoveryText(safeCity);
-    final normalizedCountry = normalizeDiscoveryText(safeCountry);
-
-    bool containsNormalized(String value) {
-      final normalized = normalizeDiscoveryText(value);
-      return normalized.isNotEmpty && normalizedRaw.contains(normalized);
-    }
-
-    if (raw.isEmpty) {
-      if (safeLabel.isNotEmpty) return safeLabel;
-      final locality = <String>[
-        if (safeCity.isNotEmpty) safeCity,
-        if (safeRegion.isNotEmpty &&
-            normalizeDiscoveryText(safeRegion) !=
-                normalizeDiscoveryText(safeCity))
-          safeRegion,
-        if (safeCountry.isNotEmpty) safeCountry,
-      ];
-      return locality.join(', ');
-    }
-
-    if ((normalizedCity.isNotEmpty && containsNormalized(safeCity)) ||
-        (normalizedCountry.isNotEmpty && containsNormalized(safeCountry))) {
-      return raw;
-    }
-
-    final segments = <String>[raw];
-    void addIfUseful(String segment) {
-      final trimmed = segment.trim();
-      if (trimmed.isEmpty) return;
-      final normalized = normalizeDiscoveryText(trimmed);
-      if (normalized.isEmpty) return;
-      if (segments.any(
-        (item) => normalizeDiscoveryText(item).contains(normalized),
-      )) {
-        return;
-      }
-      segments.add(trimmed);
-    }
-
-    addIfUseful(safeCity);
-    addIfUseful(safeRegion);
-    addIfUseful(safeCountry);
-    return segments.join(', ');
-  }
-
-  Future<void> _openStayUrl(BuildContext context, HotelStay stay) async {
-    final url = (stay.effectiveBookingUrl ?? '').trim();
-    final uri = Uri.tryParse(url);
-    final valid =
-        uri != null &&
-        uri.hasScheme &&
-        (uri.scheme == 'https' || uri.scheme == 'http');
-    if (!valid) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            _t(
-              nl: 'Geen verblijflink beschikbaar.',
-              en: 'No stay link available.',
-              fr: 'Aucun lien d’hébergement disponible.',
-              es: 'No hay enlace de alojamiento disponible.',
-            ),
-          ),
-        ),
-      );
-      return;
-    }
-    final opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
-    if (opened || !context.mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          _t(
-            nl: 'Kon verblijflink niet openen.',
-            en: 'Could not open stay link.',
-            fr: 'Impossible d’ouvrir le lien du séjour.',
-            es: 'No se pudo abrir el enlace del alojamiento.',
-          ),
-        ),
-      ),
-    );
-  }
-
   Future<Map<String, String>?> _selectTaxiPartnerForEventFlow(
     BuildContext context,
   ) async {
@@ -353,78 +145,6 @@ class EventDetailPage extends StatelessWidget {
     return selected;
   }
 
-  Future<void> _onStayTaxiTap(BuildContext context, HotelStay stay) async {
-    final destination = stay.toDiscoveryDestination();
-    final eventAddress = event.address.trim();
-    final eventLocation = event.locationName.trim();
-    final eventTitle = event.title.trim();
-    final originAddress = eventAddress.isNotEmpty
-        ? eventAddress
-        : (eventLocation.isNotEmpty ? eventLocation : eventTitle);
-    final originLabel = event.destinationLabel.trim().isNotEmpty
-        ? event.destinationLabel.trim()
-        : (eventTitle.isNotEmpty ? eventTitle : originAddress);
-    final formattedOriginAddress = _formatRoutePrefillAddress(
-      rawAddress: originAddress,
-      label: originLabel,
-      city: event.city,
-      region: '',
-      country: (event.countryCode ?? '').trim(),
-    );
-    final formattedDestinationAddress = _formatRoutePrefillAddress(
-      rawAddress: destination.prefillDestinationText,
-      label: destination.destinationName,
-      city: destination.city,
-      region: destination.region,
-      country: destination.country,
-    );
-    debugPrint(
-      '[events.nearby_stay_handoff] stayId=${stay.id} '
-      'name="${destination.destinationName}" city="${destination.city}"',
-    );
-    final selectedPartner = await _selectTaxiPartnerForEventFlow(context);
-    if (selectedPartner == null || !context.mounted) return;
-    final publicPartnerId = (selectedPartner['partner_id'] ?? '').trim();
-    final publicPartnerName = (selectedPartner['company_name'] ?? '').trim();
-    Navigator.of(context)
-        .push(
-          MaterialPageRoute(
-            builder: (_) => CalculatorPage(
-              bookingBaseUrl: appConfig.bookingBaseUrl,
-              mapboxToken: kMapboxToken,
-              initialFromAddress: formattedOriginAddress,
-              initialFromLabel: originLabel,
-              initialFromLat: event.lat,
-              initialFromLng: event.lng,
-              initialToAddress: formattedDestinationAddress,
-              initialDestinationLabel: destination.destinationName,
-              initialToLat: destination.latitude,
-              initialToLng: destination.longitude,
-              initialServiceId: 'passenger',
-              publicPartnerId: publicPartnerId.isEmpty ? null : publicPartnerId,
-              publicPartnerName: publicPartnerName.isEmpty
-                  ? null
-                  : publicPartnerName,
-            ),
-          ),
-        )
-        .catchError((_) {
-          if (!context.mounted) return;
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                _t(
-                  nl: 'Kon taxi-navigatie niet openen.',
-                  en: 'Could not open taxi navigation.',
-                  fr: 'Impossible d’ouvrir la navigation taxi.',
-                  es: 'No se pudo abrir la navegación de taxi.',
-                ),
-              ),
-            ),
-          );
-        });
-  }
-
   @override
   Widget build(BuildContext context) {
     return ValueListenableBuilder<CustomerThemeVariant>(
@@ -432,7 +152,6 @@ class EventDetailPage extends StatelessWidget {
       builder: (context, themeVariant, __) {
         final palette = paletteForCustomerTheme(themeVariant);
         final bottomInset = MediaQuery.of(context).padding.bottom;
-        final nearbyStays = _nearbyStays();
         return Scaffold(
           backgroundColor: palette.background,
           body: SafeArea(
@@ -453,10 +172,8 @@ class EventDetailPage extends StatelessWidget {
                       _buildPrimaryContent(palette),
                       const SizedBox(height: 13),
                       _buildInfoPanel(palette),
-                      if (nearbyStays.isNotEmpty) ...[
-                        const SizedBox(height: 13),
-                        _buildNearbyStaysSection(context, nearbyStays, palette),
-                      ],
+                      // TODO(H1-F): Add in-app nearby stay cards only when approved
+                      // provider/API hotel content is available.
                       const SizedBox(height: 15),
                       _buildCtaArea(context, palette),
                     ],
@@ -765,186 +482,6 @@ class EventDetailPage extends StatelessWidget {
     );
   }
 
-  Widget _buildNearbyStaysSection(
-    BuildContext context,
-    List<HotelStay> nearbyStays,
-    CustomerThemePalette palette,
-  ) {
-    return Container(
-      padding: const EdgeInsets.all(15),
-      decoration: BoxDecoration(
-        color: palette.surface,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: palette.border.withOpacity(0.85)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            _t(
-              nl: 'Verblijven in de buurt',
-              en: 'Nearby stays',
-              fr: 'Hebergements a proximite',
-              es: 'Alojamientos cerca',
-            ),
-            style: TextStyle(
-              color: palette.textPrimary,
-              fontSize: 14.2,
-              fontWeight: FontWeight.w800,
-            ),
-          ),
-          const SizedBox(height: 10),
-          for (var i = 0; i < nearbyStays.length; i++) ...[
-            _buildNearbyStayCard(context, nearbyStays[i], palette),
-            if (i != nearbyStays.length - 1) const SizedBox(height: 8),
-          ],
-        ],
-      ),
-    );
-  }
-
-  Widget _buildNearbyStayCard(
-    BuildContext context,
-    HotelStay stay,
-    CustomerThemePalette palette,
-  ) {
-    final price = _stayPriceLabel(stay);
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(10, 9, 10, 9),
-      decoration: BoxDecoration(
-        color: palette.surfaceAlt,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: palette.border.withOpacity(0.75)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            stay.name,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              color: palette.textPrimary,
-              fontSize: 13.5,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            _stayTypeLabel(stay.type),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              color: palette.gold.withOpacity(0.94),
-              fontSize: 11.4,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-          const SizedBox(height: 3),
-          Text(
-            '${stay.city}, ${stay.region}, ${stay.country}',
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              color: palette.textMuted,
-              fontSize: 11.6,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          if (stay.rating != null) ...[
-            const SizedBox(height: 3),
-            Text(
-              '★ ${stay.rating!.toStringAsFixed(1)}',
-              style: TextStyle(
-                color: palette.gold.withOpacity(0.92),
-                fontSize: 11.2,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-          ],
-          if (price.isNotEmpty) ...[
-            const SizedBox(height: 3),
-            Text(
-              price,
-              style: TextStyle(
-                color: palette.textMuted.withOpacity(0.9),
-                fontSize: 11.2,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ],
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: () => _openStayUrl(context, stay),
-                  style: OutlinedButton.styleFrom(
-                    backgroundColor: palette.surface.withOpacity(
-                      palette.isDark ? 0.98 : 0.95,
-                    ),
-                    foregroundColor: palette.textPrimary.withOpacity(0.95),
-                    side: BorderSide(color: palette.border.withOpacity(0.8)),
-                    minimumSize: const Size.fromHeight(40),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                  ),
-                  icon: Icon(
-                    Icons.open_in_new_rounded,
-                    size: 16,
-                    color: palette.gold.withOpacity(0.92),
-                  ),
-                  label: Text(
-                    _t(
-                      nl: 'Bekijk verblijf',
-                      en: 'View stay',
-                      fr: 'Voir le sejour',
-                      es: 'Ver alojamiento',
-                    ),
-                    style: const TextStyle(fontWeight: FontWeight.w700),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: () => _onStayTaxiTap(context, stay),
-                  style: OutlinedButton.styleFrom(
-                    backgroundColor: palette.surface.withOpacity(
-                      palette.isDark ? 0.98 : 0.95,
-                    ),
-                    foregroundColor: palette.textPrimary.withOpacity(0.95),
-                    side: BorderSide(color: palette.border.withOpacity(0.8)),
-                    minimumSize: const Size.fromHeight(40),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                  ),
-                  icon: Icon(
-                    Icons.local_taxi_rounded,
-                    size: 16,
-                    color: palette.gold.withOpacity(0.92),
-                  ),
-                  label: Text(
-                    _t(
-                      nl: 'Taxi naar verblijf',
-                      en: 'Taxi to stay',
-                      fr: 'Taxi vers le sejour',
-                      es: 'Taxi al alojamiento',
-                    ),
-                    style: const TextStyle(fontWeight: FontWeight.w700),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
   Widget _buildCtaArea(BuildContext context, CustomerThemePalette palette) {
     return _EventDetailActionPanel(
       event: event,
@@ -1093,6 +630,7 @@ class _EventDetailActionPanel extends StatefulWidget {
 
 class _EventDetailActionPanelState extends State<_EventDetailActionPanel> {
   final EventLocalSavedStore _savedStore = const EventLocalSavedStore();
+  static const String _stay22Aid = 'fluxidi';
   bool _isSaved = false;
 
   @override
@@ -1187,6 +725,102 @@ class _EventDetailActionPanelState extends State<_EventDetailActionPanel> {
     }
   }
 
+  bool _hasValidCoordinates(double latitude, double longitude) {
+    if (!latitude.isFinite || !longitude.isFinite) return false;
+    if (latitude < -90 || latitude > 90) return false;
+    if (longitude < -180 || longitude > 180) return false;
+    if (latitude == 0.0 && longitude == 0.0) return false;
+    return true;
+  }
+
+  String _eventMapSearchQuery() {
+    final title = widget.event.title.trim();
+    final location = widget.event.locationName.trim();
+    final address = widget.event.address.trim();
+    final city = widget.event.city.trim();
+    final country = (widget.event.countryCode ?? '').trim();
+    final query = <String>[
+      if (title.isNotEmpty) title,
+      if (location.isNotEmpty) location,
+      if (address.isNotEmpty) address,
+      if (city.isNotEmpty) city,
+      if (country.isNotEmpty) country,
+    ].join(', ');
+    return query;
+  }
+
+  Uri _stay22EventMapUri({
+    required String eventTitle,
+    String? address,
+    String? city,
+    String? country,
+    double? lat,
+    double? lng,
+    DateTime? date,
+    String? campaign,
+  }) {
+    final effectiveCampaign = (campaign ?? '').trim().isEmpty
+        ? 'fluxidi_events_event_detail'
+        : campaign!.trim();
+    final query = <String>[
+      eventTitle.trim(),
+      (address ?? '').trim(),
+      (city ?? '').trim(),
+      (country ?? '').trim(),
+    ].where((segment) => segment.isNotEmpty).join(', ');
+    final hasCoords =
+        lat != null && lng != null && _hasValidCoordinates(lat, lng);
+    final params = <String, String>{
+      'aid': _stay22Aid,
+      'campaign': effectiveCampaign,
+      'product_medium': 'apps',
+      if (query.isNotEmpty) 'address': query,
+      if (hasCoords) 'lat': lat.toStringAsFixed(6),
+      if (hasCoords) 'lng': lng.toStringAsFixed(6),
+    };
+    // TODO(H1-F): Verify exact Stay22 Hub AID and final customer-facing map params.
+    // TODO(H1-F): Add date/check-in parameter when the canonical Stay22 key is confirmed.
+    // ignore: unused_local_variable
+    final ignoredDate = date;
+    return Uri.https('www.stay22.com', '/embed/gm', params);
+  }
+
+  Future<void> _openStay22EventMap() async {
+    final hasCoords = _hasValidCoordinates(widget.event.lat, widget.event.lng);
+    final query = _eventMapSearchQuery();
+    if (!hasCoords && query.isEmpty) {
+      _showInfoSnackBar(
+        widget.t(
+          nl: 'Locatie voor verblijven rond dit event is niet beschikbaar.',
+          en: 'Location is unavailable for stays around this event.',
+          fr: 'La localisation pour les séjours autour de cet événement est indisponible.',
+          es: 'La ubicación para alojamientos cerca de este evento no está disponible.',
+        ),
+      );
+      return;
+    }
+    final uri = _stay22EventMapUri(
+      eventTitle: widget.event.title,
+      address: widget.event.address,
+      city: widget.event.city,
+      country: widget.event.countryCode,
+      lat: hasCoords ? widget.event.lat : null,
+      lng: hasCoords ? widget.event.lng : null,
+      date: widget.event.startAtUtc,
+      campaign: 'fluxidi_events_event_detail',
+    );
+    final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    if (!mounted || launched) return;
+    _showInfoSnackBar(
+      widget.t(
+        nl: 'Kon verblijven rond dit event niet openen.',
+        en: 'Could not open stays around this event.',
+        fr: 'Impossible d’ouvrir les séjours autour de cet événement.',
+        es: 'No se pudieron abrir alojamientos cerca de este evento.',
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Container(
@@ -1220,6 +854,56 @@ class _EventDetailActionPanelState extends State<_EventDetailActionPanel> {
                   es: 'Reservar un taxi a este evento',
                 ),
                 style: const TextStyle(fontWeight: FontWeight.w800),
+              ),
+            ),
+          ),
+          const SizedBox(height: 10),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: _openStay22EventMap,
+              style: OutlinedButton.styleFrom(
+                backgroundColor: widget.palette.surfaceAlt.withOpacity(
+                  widget.palette.isDark ? 0.9 : 0.96,
+                ),
+                foregroundColor: widget.palette.gold,
+                side: BorderSide(
+                  color: widget.palette.border.withOpacity(
+                    widget.palette.isDark ? 0.9 : 0.95,
+                  ),
+                ),
+                minimumSize: const Size.fromHeight(48),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+              icon: const Icon(Icons.hotel_rounded, size: 18),
+              label: Text(
+                widget.t(
+                  nl: 'Verblijven rond dit event',
+                  en: 'Stays around this event',
+                  fr: 'Séjours autour de cet événement',
+                  es: 'Alojamientos cerca de este evento',
+                ),
+                style: const TextStyle(fontWeight: FontWeight.w700),
+              ),
+            ),
+          ),
+          const SizedBox(height: 6),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Text(
+              widget.t(
+                nl: 'Bekijk hotels en B&B’s rond de locatie. Beschikbaarheid en prijzen worden extern getoond.',
+                en: 'View hotels and stays around the venue. Availability and prices are shown externally.',
+                fr: 'Voir des hôtels et séjours autour du lieu. Les disponibilités et les prix sont affichés en externe.',
+                es: 'Consulta hoteles y alojamientos cerca del lugar. La disponibilidad y los precios se muestran externamente.',
+              ),
+              style: TextStyle(
+                color: widget.palette.textMuted.withOpacity(0.9),
+                fontSize: 11.6,
+                fontWeight: FontWeight.w600,
+                height: 1.3,
               ),
             ),
           ),
