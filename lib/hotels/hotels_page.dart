@@ -1180,8 +1180,6 @@ class _HotelsPageState extends State<HotelsPage> {
                   const SizedBox(height: 8),
                   _buildCompactFilterChips(),
                   const SizedBox(height: 8),
-                  _buildSavedStaysFilterRow(),
-                  const SizedBox(height: 8),
                   _buildResultSummary(resultCount),
                   const SizedBox(height: 8),
                   _buildReturnFlowPanel(),
@@ -1200,6 +1198,8 @@ class _HotelsPageState extends State<HotelsPage> {
     final logoAsset = _isDarkTheme
         ? 'assets/fluxidi/fluxidi_logo_horizontal_gold.png'
         : 'assets/fluxidi/fluxidi_logo_horizontal_dark.png';
+    final screenWidth = MediaQuery.sizeOf(context).width;
+    final showSavedLabel = screenWidth >= 600;
     return Padding(
       padding: const EdgeInsets.fromLTRB(8, 3, 8, 1),
       child: Row(
@@ -1224,6 +1224,8 @@ class _HotelsPageState extends State<HotelsPage> {
               ),
             ),
           ),
+          _buildSavedStaysHeaderShortcut(showLabel: showSavedLabel),
+          const SizedBox(width: 2),
           IconButton(
             onPressed: _openFiltersSheet,
             icon: Icon(Icons.tune_rounded, size: 18, color: _gold),
@@ -1632,47 +1634,57 @@ class _HotelsPageState extends State<HotelsPage> {
     });
   }
 
-  Widget _buildSavedStaysFilterRow() {
-    return Align(
-      alignment: Alignment.centerLeft,
-      child: _buildSavedStaysFilterChip(),
-    );
-  }
-
-  Widget _buildSavedStaysFilterChip() {
+  Widget _buildSavedStaysHeaderShortcut({required bool showLabel}) {
     final active = _showSavedOnly;
-    return InkWell(
-      onTap: () => setState(() => _showSavedOnly = !active),
-      borderRadius: BorderRadius.circular(999),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-        decoration: BoxDecoration(
-          color: active ? _gold : _panelBlack,
-          borderRadius: BorderRadius.circular(999),
-          border: Border.all(
-            color: active
-                ? _gold
-                : _border.withOpacity(_isDarkTheme ? 0.35 : 0.95),
-          ),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              active ? Icons.favorite_rounded : Icons.favorite_border_rounded,
-              size: 14,
-              color: active ? _actionOnGold : _gold.withOpacity(0.95),
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: () => setState(() => _showSavedOnly = !active),
+        borderRadius: BorderRadius.circular(999),
+        child: Tooltip(
+          message: _savedStayLabel,
+          child: Container(
+            constraints: BoxConstraints(
+              minWidth: showLabel ? 0 : 34,
+              minHeight: 34,
             ),
-            const SizedBox(width: 6),
-            Text(
-              _savedStayLabel,
-              style: TextStyle(
-                color: active ? _actionOnGold : _textPrimary,
-                fontWeight: FontWeight.w800,
-                fontSize: 11.6,
+            padding: EdgeInsets.symmetric(
+              horizontal: showLabel ? 9 : 6,
+              vertical: 6,
+            ),
+            decoration: BoxDecoration(
+              color: active ? _gold : _panelBlack,
+              borderRadius: BorderRadius.circular(999),
+              border: Border.all(
+                color: active
+                    ? _gold
+                    : _border.withOpacity(_isDarkTheme ? 0.35 : 0.95),
               ),
             ),
-          ],
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  active
+                      ? Icons.favorite_rounded
+                      : Icons.favorite_border_rounded,
+                  size: showLabel ? 15 : 17,
+                  color: active ? _actionOnGold : _gold.withOpacity(0.95),
+                ),
+                if (showLabel) ...[
+                  const SizedBox(width: 5),
+                  Text(
+                    _savedStayLabel,
+                    style: TextStyle(
+                      color: active ? _actionOnGold : _textPrimary,
+                      fontWeight: FontWeight.w800,
+                      fontSize: 11.4,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
         ),
       ),
     );
