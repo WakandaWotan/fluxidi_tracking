@@ -20962,6 +20962,8 @@ function _buildPublicEventsSeedPayload({ query, receivedAtUtc, extraWarnings = [
 // TODO(HOTELS-PROVIDER): Booking.com Demand API adapter
 // TODO(HOTELS-PROVIDER): Stay22 provider/list API adapter if supported
 // TODO(HOTELS-PROVIDER): Expedia Rapid adapter
+// TODO(HOTELS-PROVIDER): Hotelbeds/HBX native inventory adapter
+// TODO(HOTELS-PROVIDER): Amadeus Hospitality native inventory adapter
 // TODO(HOTELS-PROVIDER): Approved partner backend catalog
 
 function _normalizePublicHotelsSearchQuery(url) {
@@ -21612,7 +21614,120 @@ function _buildBookingDemandHotelsPayload({ query, env, warnings = [] } = {}) {
   return _buildProviderAdapterPendingHotelsPayload({ source, warnings });
 }
 
-function _buildPublicHotelsSearchPayload({ query, env } = {}) {
+function _hotelbedsBaseUrl(env) {
+  const override = safeStr(env?.HOTELBEDS_BASE_URL);
+  const base = override || "https://api.hotelbeds.com";
+  return base.replace(/\/+$/, "");
+}
+
+function _amadeusBaseUrl(env) {
+  const override = safeStr(env?.AMADEUS_BASE_URL);
+  const base = override || "https://api.amadeus.com";
+  return base.replace(/\/+$/, "");
+}
+
+function _publicHotelsPartnerApprovedCatalogReady() {
+  const seedStays = _publicHotelsPartnerApprovedSeed();
+  return seedStays.some((stay) => _publicPartnerHotelHasApprovedVisual(stay));
+}
+
+function _buildHotelbedsHotelsPayload({ query, env, warnings = [] } = {}) {
+  const source = "hotelbeds";
+  // TODO(HOTELS-PROVIDER-HOTELBEDS): Select Hotelbeds content/search endpoint for property discovery.
+  // TODO(HOTELS-PROVIDER-HOTELBEDS): Add availability/shopping endpoint for price_label/availability_label.
+  // TODO(HOTELS-PROVIDER-HOTELBEDS): Confirm image licensing/CDN trust before exposing image_url in-app.
+  // TODO(HOTELS-PROVIDER-HOTELBEDS): Map Hotelbeds property codes to provider_id via _mapPublicHotelStayToResponse.
+  // TODO(HOTELS-PROVIDER-HOTELBEDS): Handle pagination and rate limiting safely.
+  // Planned base URL helper: _hotelbedsBaseUrl(env) — default https://api.hotelbeds.com
+  if (
+    !_publicHotelsProviderEnvReady(env, [
+      "HOTELBEDS_API_KEY",
+      "HOTELBEDS_API_SECRET",
+    ])
+  ) {
+    return _buildProviderNotConfiguredHotelsPayload({ source, warnings });
+  }
+  return _buildProviderAdapterPendingHotelsPayload({ source, warnings });
+}
+
+function _buildAmadeusHotelsPayload({ query, env, warnings = [] } = {}) {
+  const source = "amadeus-hospitality";
+  // TODO(HOTELS-PROVIDER-AMADEUS): Select Amadeus hotel content/search endpoint for property discovery.
+  // TODO(HOTELS-PROVIDER-AMADEUS): Add availability/shopping endpoint for price_label/availability_label.
+  // TODO(HOTELS-PROVIDER-AMADEUS): Confirm image licensing/media trust before exposing image_url in-app.
+  // TODO(HOTELS-PROVIDER-AMADEUS): Map Amadeus property ids to provider_id via _mapPublicHotelStayToResponse.
+  // TODO(HOTELS-PROVIDER-AMADEUS): Handle pagination and rate limiting safely.
+  // Planned base URL helper: _amadeusBaseUrl(env) — default https://api.amadeus.com
+  if (
+    !_publicHotelsProviderEnvReady(env, [
+      "AMADEUS_API_KEY",
+      "AMADEUS_API_SECRET",
+    ])
+  ) {
+    return _buildProviderNotConfiguredHotelsPayload({ source, warnings });
+  }
+  return _buildProviderAdapterPendingHotelsPayload({ source, warnings });
+}
+
+async function _buildNativeHotelsSearchPayload({ query, env, warnings = [] } = {}) {
+  const nextWarnings = Array.isArray(warnings) ? [...warnings] : [];
+
+  if (
+    _publicHotelsProviderEnvReady(env, [
+      "EXPEDIA_RAPID_API_KEY",
+      "EXPEDIA_RAPID_API_SECRET",
+    ])
+  ) {
+    return await _buildExpediaRapidHotelsPayload({
+      query,
+      env,
+      warnings: nextWarnings,
+    });
+  }
+
+  if (_publicHotelsPartnerApprovedCatalogReady()) {
+    return _buildPartnerApprovedHotelsPayload({
+      query,
+      warnings: nextWarnings,
+    });
+  }
+
+  if (
+    _publicHotelsProviderEnvReady(env, [
+      "HOTELBEDS_API_KEY",
+      "HOTELBEDS_API_SECRET",
+    ])
+  ) {
+    return _buildHotelbedsHotelsPayload({
+      query,
+      env,
+      warnings: nextWarnings,
+    });
+  }
+
+  if (
+    _publicHotelsProviderEnvReady(env, [
+      "AMADEUS_API_KEY",
+      "AMADEUS_API_SECRET",
+    ])
+  ) {
+    return _buildAmadeusHotelsPayload({
+      query,
+      env,
+      warnings: nextWarnings,
+    });
+  }
+
+  if (!nextWarnings.includes("native_provider_unavailable")) {
+    nextWarnings.push("native_provider_unavailable");
+  }
+  return _buildProviderNotConfiguredHotelsPayload({
+    source: "native",
+    warnings: nextWarnings,
+  });
+}
+
+async function _buildPublicHotelsSearchPayload({ query, env } = {}) {
   const source = String(query?.source ?? "approved-local").trim() || "approved-local";
   const warnings = Array.isArray(query?.warnings) ? [...query.warnings] : [];
 
@@ -21624,12 +21739,24 @@ function _buildPublicHotelsSearchPayload({ query, env } = {}) {
     return _buildPartnerApprovedHotelsPayload({ query, warnings });
   }
 
+  if (source === "native") {
+    return await _buildNativeHotelsSearchPayload({ query, env, warnings });
+  }
+
   if (source === "travelpayouts") {
     return _buildTravelpayoutsHotelsPayload({ query, env, warnings });
   }
 
   if (source === "expedia-rapid") {
-    return _buildExpediaRapidHotelsPayload({ query, env, warnings });
+    return await _buildExpediaRapidHotelsPayload({ query, env, warnings });
+  }
+
+  if (source === "hotelbeds") {
+    return _buildHotelbedsHotelsPayload({ query, env, warnings });
+  }
+
+  if (source === "amadeus-hospitality" || source === "amadeus") {
+    return _buildAmadeusHotelsPayload({ query, env, warnings });
   }
 
   if (source === "agoda") {
