@@ -241,10 +241,17 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
     Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => HotelsPage(
-          onTaxiToStay: (stay) {
+          onTaxiToStay: (stay) async {
             final destination = stay.address.trim().isNotEmpty
                 ? stay.address.trim()
                 : stay.name.trim();
+            final selected = await _selectTaxiPartner(context);
+            if (selected == null || !context.mounted) return;
+            final partnerId = _partnerSelectionValue(selected, 'partner_id');
+            final partnerName = _partnerSelectionValue(
+              selected,
+              'company_name',
+            );
             _openCalculator(
               context,
               scheduledIntent: false,
@@ -252,6 +259,8 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
               initialToLat: stay.lat,
               initialToLng: stay.lng,
               initialServiceId: 'hotel',
+              publicPartnerId: partnerId,
+              publicPartnerName: partnerName,
               entryContext: 'hotel_stay',
             );
           },
