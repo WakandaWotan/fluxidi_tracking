@@ -453,12 +453,21 @@ class _HotelsPageState extends State<HotelsPage> {
     );
   }
 
-  String get _viewOptionsLabel {
+  String get _viewRealAccommodationsLabel {
     return _t(
-      nl: 'Bekijk opties',
-      en: 'View options',
-      fr: 'Voir les options',
-      es: 'Ver opciones',
+      nl: 'Bekijk echte accommodaties',
+      en: 'View real accommodations',
+      fr: 'Voir les hébergements réels',
+      es: 'Ver alojamientos reales',
+    );
+  }
+
+  String get _stay22AvailabilitySubtitle {
+    return _t(
+      nl: 'Open actuele verblijven en prijzen via Stay22.',
+      en: 'Open live stays and prices via Stay22.',
+      fr: 'Ouvrez les hébergements et prix actuels via Stay22.',
+      es: 'Abre alojamientos y precios actuales vía Stay22.',
     );
   }
 
@@ -1172,7 +1181,12 @@ class _HotelsPageState extends State<HotelsPage> {
           },
           onTaxiTap: () => _onTaxiCtaTap(stay),
           onProviderSearchTap: () => _openExternalHotelSearch(stay: stay),
-          externalAvailabilityLabel: _externalAvailabilityLabel,
+          externalAvailabilityLabel: stay.source == 'discovery'
+              ? _viewRealAccommodationsLabel
+              : _externalAvailabilityLabel,
+          externalAvailabilityHint: stay.source == 'discovery'
+              ? _stay22AvailabilitySubtitle
+              : null,
         ),
       ),
     );
@@ -1281,6 +1295,8 @@ class _HotelsPageState extends State<HotelsPage> {
                   _buildSearchField(),
                   const SizedBox(height: 8),
                   _buildCompactFilterChips(),
+                  const SizedBox(height: 8),
+                  _buildRealAccommodationsCta(),
                   const SizedBox(height: 8),
                   _buildResultSummary(resultCount),
                   const SizedBox(height: 8),
@@ -2361,6 +2377,46 @@ class _HotelsPageState extends State<HotelsPage> {
     return expand ? SizedBox(width: double.infinity, child: button) : button;
   }
 
+  Widget _buildRealAccommodationsCta() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(
+          width: double.infinity,
+          child: OutlinedButton.icon(
+            onPressed: () => _openExternalHotelSearch(),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: _textPrimary,
+              side: BorderSide(color: _gold.withOpacity(0.42)),
+              minimumSize: const Size.fromHeight(38),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
+            ),
+            icon: Icon(Icons.open_in_new_rounded, size: 16, color: _gold),
+            label: Text(
+              _viewRealAccommodationsLabel,
+              style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
+            ),
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          _stay22AvailabilitySubtitle,
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            color: _softText.withOpacity(0.92),
+            fontSize: 11.1,
+            fontWeight: FontWeight.w600,
+            height: 1.25,
+          ),
+        ),
+      ],
+    );
+  }
+
   Widget _buildSafeDiscoveryPanel() {
     return Container(
       width: double.infinity,
@@ -2429,9 +2485,19 @@ class _HotelsPageState extends State<HotelsPage> {
               ),
               icon: Icon(Icons.open_in_new_rounded, size: 16, color: _gold),
               label: Text(
-                _externalAvailabilityLabel,
+                _viewRealAccommodationsLabel,
                 style: const TextStyle(fontWeight: FontWeight.w700),
               ),
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            _stay22AvailabilitySubtitle,
+            style: TextStyle(
+              color: _softText.withOpacity(0.92),
+              fontSize: 11.2,
+              fontWeight: FontWeight.w600,
+              height: 1.25,
             ),
           ),
         ],
@@ -2751,14 +2817,28 @@ class _HotelsPageState extends State<HotelsPage> {
                           ),
                         ),
                       ],
+                      if (isDiscoveryCard) ...[
+                        const SizedBox(height: 3),
+                        Text(
+                          _stay22AvailabilitySubtitle,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: _softText.withOpacity(0.88),
+                            fontSize: 10.3,
+                            fontWeight: FontWeight.w600,
+                            height: 1.2,
+                          ),
+                        ),
+                      ],
                       const SizedBox(height: 6),
                       Text(
                         isDiscoveryCard
                             ? _t(
-                                nl: 'Ontdek verblijven en plan je rit.',
-                                en: 'Discover stays and plan your ride.',
-                                fr: 'Découvrez des hébergements et planifiez votre trajet.',
-                                es: 'Descubre alojamientos y planifica tu trayecto.',
+                                nl: 'Ontdek regio\'s en plan je rit met Fluxidi.',
+                                en: 'Discover regions and plan your ride with Fluxidi.',
+                                fr: 'Découvrez des régions et planifiez votre trajet avec Fluxidi.',
+                                es: 'Descubre regiones y planifica tu trayecto con Fluxidi.',
                               )
                             : stay.description,
                         maxLines: 2,
@@ -2820,7 +2900,9 @@ class _HotelsPageState extends State<HotelsPage> {
                         SizedBox(
                           width: double.infinity,
                           child: ElevatedButton.icon(
-                            onPressed: () => _openStayDetail(stay),
+                            onPressed: isDiscoveryCard
+                                ? () => _openExternalHotelSearch(stay: stay)
+                                : () => _openStayDetail(stay),
                             style: ElevatedButton.styleFrom(
                               backgroundColor: _gold,
                               foregroundColor: _actionOnGold,
@@ -2829,13 +2911,15 @@ class _HotelsPageState extends State<HotelsPage> {
                                 borderRadius: BorderRadius.circular(11),
                               ),
                             ),
-                            icon: const Icon(
-                              Icons.visibility_rounded,
+                            icon: Icon(
+                              isDiscoveryCard
+                                  ? Icons.open_in_new_rounded
+                                  : Icons.visibility_rounded,
                               size: 16,
                             ),
                             label: Text(
                               isDiscoveryCard
-                                  ? _viewOptionsLabel
+                                  ? _viewRealAccommodationsLabel
                                   : _viewStayLabel,
                               style: const TextStyle(
                                 fontWeight: FontWeight.w800,
@@ -2932,6 +3016,7 @@ class HotelStayDetailPage extends StatelessWidget {
     required this.onTaxiTap,
     required this.onProviderSearchTap,
     required this.externalAvailabilityLabel,
+    this.externalAvailabilityHint,
     super.key,
   });
 
@@ -2946,6 +3031,7 @@ class HotelStayDetailPage extends StatelessWidget {
   final VoidCallback onTaxiTap;
   final VoidCallback onProviderSearchTap;
   final String externalAvailabilityLabel;
+  final String? externalAvailabilityHint;
   CustomerThemePalette get _themePalette =>
       paletteForCustomerTheme(customerThemeNotifier.value);
   bool get _isDarkTheme => _themePalette.isDark;
@@ -3827,7 +3913,7 @@ class HotelStayDetailPage extends StatelessWidget {
                     ),
                     const SizedBox(height: 6),
                     Text(
-                      _externalAvailabilityHint,
+                      externalAvailabilityHint ?? _externalAvailabilityHint,
                       textAlign: TextAlign.center,
                       style: TextStyle(
                         color: _softText.withOpacity(0.9),
