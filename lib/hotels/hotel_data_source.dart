@@ -4,6 +4,8 @@ import 'approved_hotel_data.dart';
 import 'hotel_model.dart';
 
 // TODO(HOTELS-PARTNER): Switch HotelsPage source to partner-approved once catalog has rows.
+// TODO(HOTELS-PROVIDER): Do not add travelpayouts/expedia-rapid/agoda/booking-demand to the
+// Flutter mapper allowlist until worker adapters return visually trusted rows.
 // TODO(HOTELS-REMOTE): Add pull-to-refresh/provider switch once real provider adapters exist.
 // TODO(HOTELS-PROVIDER): Stay22 provider/list API adapter if available.
 // TODO(HOTELS-PROVIDER): Expedia/Agoda/Travelpayouts adapters later.

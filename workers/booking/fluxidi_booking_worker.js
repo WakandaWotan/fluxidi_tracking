@@ -17378,7 +17378,7 @@ GET /oauth/callback
           return json({ ok: false, error: "method_not_allowed" }, 405);
         }
         const query = _normalizePublicHotelsSearchQuery(url);
-        return json(_buildPublicHotelsSearchPayload({ query }));
+        return json(_buildPublicHotelsSearchPayload({ query, env }));
       }
 
       if (url.pathname === "/public/quote" && request.method === "POST") {
@@ -21227,7 +21227,101 @@ function _mapPublicHotelStayToResponse(stay) {
   };
 }
 
-function _buildPublicHotelsSearchPayload({ query } = {}) {
+function _publicHotelsProviderEnvReady(env, requiredKeys) {
+  const keys = Array.isArray(requiredKeys) ? requiredKeys : [];
+  for (const key of keys) {
+    const value = safeStr(env?.[key]);
+    if (!value) return false;
+  }
+  return keys.length > 0;
+}
+
+function _buildProviderNotConfiguredHotelsPayload({ source, warnings = [] } = {}) {
+  const nextWarnings = Array.isArray(warnings) ? [...warnings] : [];
+  if (!nextWarnings.includes("provider_not_configured")) {
+    nextWarnings.push("provider_not_configured");
+  }
+  const normalizedSource = String(source ?? "").trim() || "unknown";
+  return {
+    ok: true,
+    source: normalizedSource,
+    provider: normalizedSource,
+    count: 0,
+    stays: [],
+    warnings: nextWarnings,
+  };
+}
+
+function _buildProviderAdapterPendingHotelsPayload({ source, warnings = [] } = {}) {
+  const nextWarnings = Array.isArray(warnings) ? [...warnings] : [];
+  if (!nextWarnings.includes("provider_adapter_pending")) {
+    nextWarnings.push("provider_adapter_pending");
+  }
+  const normalizedSource = String(source ?? "").trim() || "unknown";
+  return {
+    ok: true,
+    source: normalizedSource,
+    provider: normalizedSource,
+    count: 0,
+    stays: [],
+    warnings: nextWarnings,
+  };
+}
+
+function _buildTravelpayoutsHotelsPayload({ query, env, warnings = [] } = {}) {
+  const source = "travelpayouts";
+  // TODO(HOTELS-PROVIDER-TRAVELPAYOUTS): Worker secret TRAVELPAYOUTS_TOKEN required.
+  // TODO(HOTELS-PROVIDER-TRAVELPAYOUTS): Verify Travelpayouts hotel static/content API docs.
+  // TODO(HOTELS-PROVIDER-TRAVELPAYOUTS): Only map image_url when affiliate terms allow in-app display.
+  // TODO(HOTELS-PROVIDER-TRAVELPAYOUTS): Map provider rows to Fluxidi stay shape via _mapPublicHotelStayToResponse.
+  if (!_publicHotelsProviderEnvReady(env, ["TRAVELPAYOUTS_TOKEN"])) {
+    return _buildProviderNotConfiguredHotelsPayload({ source, warnings });
+  }
+  return _buildProviderAdapterPendingHotelsPayload({ source, warnings });
+}
+
+function _buildExpediaRapidHotelsPayload({ query, env, warnings = [] } = {}) {
+  const source = "expedia-rapid";
+  // TODO(HOTELS-PROVIDER-EXPEDIA): Worker secrets EXPEDIA_RAPID_API_KEY and EXPEDIA_RAPID_API_SECRET required.
+  // TODO(HOTELS-PROVIDER-EXPEDIA): Verify Expedia Rapid Lodging API docs and market coverage (BE/NL/FR/GB/ES).
+  // TODO(HOTELS-PROVIDER-EXPEDIA): Confirm image licensing before exposing image_url to Flutter cards.
+  // TODO(HOTELS-PROVIDER-EXPEDIA): Map Rapid property payloads to Fluxidi stay shape; external_url for booking handoff.
+  if (
+    !_publicHotelsProviderEnvReady(env, [
+      "EXPEDIA_RAPID_API_KEY",
+      "EXPEDIA_RAPID_API_SECRET",
+    ])
+  ) {
+    return _buildProviderNotConfiguredHotelsPayload({ source, warnings });
+  }
+  return _buildProviderAdapterPendingHotelsPayload({ source, warnings });
+}
+
+function _buildAgodaHotelsPayload({ query, env, warnings = [] } = {}) {
+  const source = "agoda";
+  // TODO(HOTELS-PROVIDER-AGODA): Worker secrets AGODA_API_KEY and AGODA_SITE_ID required.
+  // TODO(HOTELS-PROVIDER-AGODA): Verify Agoda affiliate/content API docs for target markets.
+  // TODO(HOTELS-PROVIDER-AGODA): Only expose image_url when partner license explicitly allows in-app use.
+  // TODO(HOTELS-PROVIDER-AGODA): Map Agoda hotel payloads to Fluxidi stay shape with affiliate external_url.
+  if (!_publicHotelsProviderEnvReady(env, ["AGODA_API_KEY", "AGODA_SITE_ID"])) {
+    return _buildProviderNotConfiguredHotelsPayload({ source, warnings });
+  }
+  return _buildProviderAdapterPendingHotelsPayload({ source, warnings });
+}
+
+function _buildBookingDemandHotelsPayload({ query, env, warnings = [] } = {}) {
+  const source = "booking-demand";
+  // TODO(HOTELS-PROVIDER-BOOKING): Worker secret BOOKING_DEMAND_API_KEY required.
+  // TODO(HOTELS-PROVIDER-BOOKING): Verify Booking.com Demand API docs; do not use Booking photos in Fluxidi cards.
+  // TODO(HOTELS-PROVIDER-BOOKING): Prefer external_url/deep-link handoff; availability_label must remain null unless truly sourced.
+  // TODO(HOTELS-PROVIDER-BOOKING): Map Demand API accommodations to Fluxidi stay shape without fake inventory.
+  if (!_publicHotelsProviderEnvReady(env, ["BOOKING_DEMAND_API_KEY"])) {
+    return _buildProviderNotConfiguredHotelsPayload({ source, warnings });
+  }
+  return _buildProviderAdapterPendingHotelsPayload({ source, warnings });
+}
+
+function _buildPublicHotelsSearchPayload({ query, env } = {}) {
   const source = String(query?.source ?? "approved-local").trim() || "approved-local";
   const warnings = Array.isArray(query?.warnings) ? [...query.warnings] : [];
 
@@ -21237,6 +21331,22 @@ function _buildPublicHotelsSearchPayload({ query } = {}) {
 
   if (source === "partner-approved") {
     return _buildPartnerApprovedHotelsPayload({ query, warnings });
+  }
+
+  if (source === "travelpayouts") {
+    return _buildTravelpayoutsHotelsPayload({ query, env, warnings });
+  }
+
+  if (source === "expedia-rapid") {
+    return _buildExpediaRapidHotelsPayload({ query, env, warnings });
+  }
+
+  if (source === "agoda") {
+    return _buildAgodaHotelsPayload({ query, env, warnings });
+  }
+
+  if (source === "booking-demand") {
+    return _buildBookingDemandHotelsPayload({ query, env, warnings });
   }
 
   if (!warnings.includes("unsupported_source")) {
