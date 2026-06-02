@@ -17397,6 +17397,22 @@ GET /oauth/callback
         return json(await _buildAdminPartnerApprovedHotelsCatalogDiagnostics({ env }));
       }
 
+      if (
+        url.pathname === "/admin/hotels/providers/status" &&
+        request.method === "GET"
+      ) {
+        try {
+          _requireAdmin(request, url, env);
+        } catch (err) {
+          const message = String(err?.message || "Unauthorized");
+          return json(
+            { ok: false, error: message === "Unauthorized" ? "unauthorized" : "admin_unavailable" },
+            message === "Unauthorized" ? 401 : 500,
+          );
+        }
+        return json(await _buildAdminHotelsProvidersStatusPayload(env));
+      }
+
       if (url.pathname === "/public/quote" && request.method === "POST") {
         const body = await safeJson(request);
         if (!body || typeof body !== "object" || Array.isArray(body)) {
@@ -21372,6 +21388,114 @@ async function _buildAdminPartnerApprovedHotelsCatalogDiagnostics({ env } = {}) 
     warnings,
     sample_ids: stays.slice(0, 12).map((stay) => stay.id),
     stays,
+  };
+}
+
+function _publicHotelsProviderConfigured(env, requiredNames) {
+  return _publicHotelsProviderEnvReady(env, requiredNames);
+}
+
+function _adminConfiguredNativeProviderStatus(env, requiredKeys) {
+  const configured = _publicHotelsProviderConfigured(env, requiredKeys);
+  return {
+    configured,
+    role: "native_inventory",
+    status: configured ? "provider_adapter_pending" : "provider_not_configured",
+  };
+}
+
+function _adminExpediaRapidProviderStatus(env) {
+  const configured = _publicHotelsProviderConfigured(env, [
+    "EXPEDIA_RAPID_API_KEY",
+    "EXPEDIA_RAPID_API_SECRET",
+  ]);
+  if (!configured) {
+    return {
+      configured: false,
+      role: "native_inventory",
+      status: "provider_not_configured",
+    };
+  }
+  return {
+    configured: true,
+    role: "native_inventory",
+    status: _expediaRapidAuthSigningReady(env) ? "ready" : "provider_adapter_pending",
+  };
+}
+
+function _adminPartnerApprovedProviderStatus(loadResult) {
+  const trustedCount = Array.isArray(loadResult?.stays) ? loadResult.stays.length : 0;
+  const catalogPresent = Number(loadResult?.rawRowCount || 0) > 0;
+  const loadWarnings = Array.isArray(loadResult?.warnings) ? loadResult.warnings : [];
+
+  let status = "partner_catalog_empty";
+  if (loadWarnings.includes("partner_catalog_malformed")) {
+    status = "partner_catalog_malformed";
+  } else if (loadWarnings.includes("partner_catalog_kv_unavailable")) {
+    status = "partner_catalog_kv_unavailable";
+  } else if (loadWarnings.includes("partner_catalog_load_failed")) {
+    status = "partner_catalog_load_failed";
+  } else if (trustedCount > 0) {
+    status = "ready";
+  }
+
+  return {
+    configured: true,
+    role: "native_inventory_catalog",
+    catalog_present: catalogPresent,
+    trusted_count: trustedCount,
+    status,
+  };
+}
+
+async function _buildAdminHotelsProvidersStatusPayload(env) {
+  const loadResult = await _loadPublicHotelsPartnerApprovedCatalogStays(env);
+  const expediaRapid = _adminExpediaRapidProviderStatus(env);
+  const partnerApproved = _adminPartnerApprovedProviderStatus(loadResult);
+  const hotelbeds = _adminConfiguredNativeProviderStatus(env, [
+    "HOTELBEDS_API_KEY",
+    "HOTELBEDS_API_SECRET",
+  ]);
+  const amadeusHospitality = _adminConfiguredNativeProviderStatus(env, [
+    "AMADEUS_API_KEY",
+    "AMADEUS_API_SECRET",
+  ]);
+  const stay22 = {
+    configured: true,
+    role: "affiliate_deeplink_fallback",
+    status: "flutter_fallback",
+  };
+
+  const nativeReady =
+    expediaRapid.configured === true ||
+    partnerApproved.trusted_count > 0 ||
+    hotelbeds.configured === true ||
+    amadeusHospitality.configured === true;
+
+  const warnings = [];
+  for (const warning of loadResult.warnings || []) {
+    if (warning && !warnings.includes(warning)) {
+      warnings.push(warning);
+    }
+  }
+  if (
+    partnerApproved.status === "partner_catalog_empty" &&
+    !warnings.includes("partner_catalog_empty")
+  ) {
+    warnings.push("partner_catalog_empty");
+  }
+
+  return {
+    ok: true,
+    native_ready: nativeReady,
+    providers: {
+      expedia_rapid: expediaRapid,
+      partner_approved: partnerApproved,
+      hotelbeds,
+      amadeus_hospitality: amadeusHospitality,
+      stay22,
+    },
+    warnings,
   };
 }
 
