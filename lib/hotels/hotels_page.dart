@@ -2070,105 +2070,195 @@ class _HotelsPageState extends State<HotelsPage> {
   }
 
   Widget _buildReturnFlowPanel() {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: _panelBlack,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: _border.withOpacity(_isDarkTheme ? 0.35 : 0.95),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final maxWidth = constraints.maxWidth;
+        final isTabletCompact = maxWidth >= 600;
+        final useHorizontalBar = maxWidth >= 680;
+        final panelPadding = isTabletCompact
+            ? const EdgeInsets.symmetric(horizontal: 12, vertical: 9)
+            : const EdgeInsets.all(14);
+        final sectionSpacing = isTabletCompact ? 8.0 : 12.0;
+        final iconSize = isTabletCompact ? 16.0 : 18.0;
+        final titleFontSize = isTabletCompact ? 12.6 : 13.2;
+        final subtitleFontSize = isTabletCompact ? 11.4 : 12.2;
+
+        final titleBlock = Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(
+              Icons.route_rounded,
+              color: _gold.withOpacity(0.95),
+              size: iconSize,
+            ),
+            SizedBox(width: isTabletCompact ? 7 : 8),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    _returnFlowTitle,
+                    style: TextStyle(
+                      color: _textPrimary.withOpacity(0.96),
+                      fontSize: titleFontSize,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  SizedBox(height: isTabletCompact ? 1 : 3),
+                  Text(
+                    _returnFlowSubtitle,
+                    style: TextStyle(
+                      color: _softText.withOpacity(0.96),
+                      fontSize: subtitleFontSize,
+                      fontWeight: FontWeight.w600,
+                      height: 1.2,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        );
+
+        final enterAddressButton = _buildReturnFlowEnterAddressButton(
+          compact: isTabletCompact,
+          expand: !isTabletCompact,
+        );
+        final airportButton = _buildReturnFlowAirportButton(
+          compact: isTabletCompact,
+          expand: !isTabletCompact,
+        );
+
+        final Widget actionBlock;
+        if (useHorizontalBar) {
+          actionBlock = Wrap(
+            spacing: 8,
+            runSpacing: 6,
+            alignment: WrapAlignment.end,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [enterAddressButton, airportButton],
+          );
+        } else if (isTabletCompact) {
+          actionBlock = Row(
+            children: [
+              Expanded(child: enterAddressButton),
+              const SizedBox(width: 8),
+              Expanded(child: airportButton),
+            ],
+          );
+        } else {
+          actionBlock = Column(
+            children: [
+              enterAddressButton,
+              const SizedBox(height: 6),
+              airportButton,
+            ],
+          );
+        }
+
+        final content = useHorizontalBar
+            ? Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  Expanded(child: titleBlock),
+                  const SizedBox(width: 10),
+                  Flexible(fit: FlexFit.loose, child: actionBlock),
+                ],
+              )
+            : Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  titleBlock,
+                  SizedBox(height: sectionSpacing),
+                  actionBlock,
+                ],
+              );
+
+        return Container(
+          width: double.infinity,
+          padding: panelPadding,
+          decoration: BoxDecoration(
+            color: _panelBlack,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: _border.withOpacity(_isDarkTheme ? 0.35 : 0.95),
+            ),
+          ),
+          child: content,
+        );
+      },
+    );
+  }
+
+  Widget _buildReturnFlowEnterAddressButton({
+    required bool compact,
+    required bool expand,
+  }) {
+    final button = ElevatedButton.icon(
+      onPressed: () => unawaited(_onReturnFlowEnterAddressTap()),
+      style: ElevatedButton.styleFrom(
+        backgroundColor: _gold,
+        foregroundColor: _actionOnGold,
+        minimumSize: Size(expand ? double.infinity : 0, compact ? 34 : 39),
+        padding: EdgeInsets.symmetric(
+          horizontal: compact ? 10 : 16,
+          vertical: compact ? 7 : 10,
+        ),
+        tapTargetSize: compact
+            ? MaterialTapTargetSize.shrinkWrap
+            : MaterialTapTargetSize.padded,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      ),
+      icon: Icon(Icons.edit_location_alt_rounded, size: compact ? 14 : 16),
+      label: Text(
+        _returnFlowEnterAddressLabel,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(
+          fontWeight: FontWeight.w800,
+          fontSize: compact ? 11.8 : 14,
         ),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Icon(
-                Icons.route_rounded,
-                color: _gold.withOpacity(0.95),
-                size: 18,
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      _returnFlowTitle,
-                      style: TextStyle(
-                        color: _textPrimary.withOpacity(0.96),
-                        fontSize: 13.2,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                    const SizedBox(height: 3),
-                    Text(
-                      _returnFlowSubtitle,
-                      style: TextStyle(
-                        color: _softText.withOpacity(0.96),
-                        fontSize: 12.2,
-                        fontWeight: FontWeight.w600,
-                        height: 1.25,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          SizedBox(
-            width: double.infinity,
-            child: ElevatedButton.icon(
-              onPressed: () => unawaited(_onReturnFlowEnterAddressTap()),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: _gold,
-                foregroundColor: _actionOnGold,
-                minimumSize: const Size.fromHeight(39),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(10),
-                ),
-              ),
-              icon: const Icon(Icons.edit_location_alt_rounded, size: 16),
-              label: Text(
-                _returnFlowEnterAddressLabel,
-                style: const TextStyle(fontWeight: FontWeight.w800),
-              ),
-            ),
-          ),
-          const SizedBox(height: 6),
-          SizedBox(
-            width: double.infinity,
-            child: OutlinedButton.icon(
-              onPressed: () => unawaited(_onReturnFlowAirportTap()),
-              style: OutlinedButton.styleFrom(
-                backgroundColor: _panelBlack,
-                foregroundColor: _textPrimary.withOpacity(0.92),
-                side: BorderSide(
-                  color: _border.withOpacity(_isDarkTheme ? 0.4 : 1),
-                ),
-                minimumSize: const Size.fromHeight(36),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(10),
-                ),
-              ),
-              icon: Icon(
-                Icons.flight_land_rounded,
-                size: 15,
-                color: _gold.withOpacity(0.92),
-              ),
-              label: Text(
-                _returnFlowAirportToStayLabel,
-                style: const TextStyle(fontWeight: FontWeight.w700),
-              ),
-            ),
-          ),
-        ],
+    );
+    return expand ? SizedBox(width: double.infinity, child: button) : button;
+  }
+
+  Widget _buildReturnFlowAirportButton({
+    required bool compact,
+    required bool expand,
+  }) {
+    final button = OutlinedButton.icon(
+      onPressed: () => unawaited(_onReturnFlowAirportTap()),
+      style: OutlinedButton.styleFrom(
+        backgroundColor: _panelBlack,
+        foregroundColor: _textPrimary.withOpacity(0.92),
+        side: BorderSide(color: _border.withOpacity(_isDarkTheme ? 0.4 : 1)),
+        minimumSize: Size(expand ? double.infinity : 0, compact ? 32 : 36),
+        padding: EdgeInsets.symmetric(
+          horizontal: compact ? 10 : 16,
+          vertical: compact ? 6 : 9,
+        ),
+        tapTargetSize: compact
+            ? MaterialTapTargetSize.shrinkWrap
+            : MaterialTapTargetSize.padded,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      ),
+      icon: Icon(
+        Icons.flight_land_rounded,
+        size: compact ? 14 : 15,
+        color: _gold.withOpacity(0.92),
+      ),
+      label: Text(
+        _returnFlowAirportToStayLabel,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(
+          fontWeight: FontWeight.w700,
+          fontSize: compact ? 11.6 : 14,
+        ),
       ),
     );
+    return expand ? SizedBox(width: double.infinity, child: button) : button;
   }
 
   Widget _buildSafeDiscoveryPanel() {
