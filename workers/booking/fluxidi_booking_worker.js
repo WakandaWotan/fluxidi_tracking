@@ -17381,6 +17381,22 @@ GET /oauth/callback
         return json(await _buildPublicHotelsSearchPayload({ query, env }));
       }
 
+      if (
+        url.pathname === "/admin/hotels/partner-approved/catalog" &&
+        request.method === "GET"
+      ) {
+        try {
+          _requireAdmin(request, url, env);
+        } catch (err) {
+          const message = String(err?.message || "Unauthorized");
+          return json(
+            { ok: false, error: message === "Unauthorized" ? "unauthorized" : "admin_unavailable" },
+            message === "Unauthorized" ? 401 : 500,
+          );
+        }
+        return json(await _buildAdminPartnerApprovedHotelsCatalogDiagnostics({ env }));
+      }
+
       if (url.pathname === "/public/quote" && request.method === "POST") {
         const body = await safeJson(request);
         if (!body || typeof body !== "object" || Array.isArray(body)) {
@@ -21143,33 +21159,239 @@ function _publicPartnerHotelHasApprovedVisual(stay) {
   return imageRef.substring("partner_approved:".length).trim().length > 0;
 }
 
-function _publicHotelsPartnerApprovedSeed() {
-  // TODO(HOTELS-PARTNER): Load partner-approved catalog from R2 JSON or KV read-only.
-  // TODO(HOTELS-PARTNER): Upload approved hotel/B&B photos to PUBLIC_MEDIA.
-  // TODO(HOTELS-PARTNER): Add partner approval/license metadata per row.
-  // TODO(HOTELS-PARTNER): Expand catalog to BE, NL, FR, GB, ES.
-  //
-  // Rows must include real approved visuals only:
-  // - image_url: https://... (PUBLIC_MEDIA or licensed public URL)
-  // - OR image_ref: "partner_approved:<media-key>"
-  // Do not add generic Fluxidi assets or unapproved provider photos here.
+// TODO(HOTELS-PROVIDER): Approved partner backend catalog
+const PUBLIC_HOTELS_PARTNER_APPROVED_CATALOG_KEY =
+  "public:hotels:partner-approved:v1";
+
+function _publicHotelSanitizedExternalUrl(raw) {
+  return _publicHotelResponseImageUrl(raw);
+}
+
+function _publicPartnerApprovedHttpsImageUrl(raw) {
+  const url = _publicHotelResponseImageUrl(raw);
+  if (!url) return null;
+  if (!url.toLowerCase().startsWith("https://")) return null;
+  return url;
+}
+
+function _publicHotelPartnerApprovedImageRef(raw) {
+  const imageRef = String(raw ?? "").trim();
+  if (!imageRef.startsWith("partner_approved:")) return null;
+  const pathSuffix = imageRef.substring("partner_approved:".length).trim();
+  if (!pathSuffix) return null;
+  return imageRef;
+}
+
+function _publicHotelValidCoordinates(lat, lng) {
+  const latitude = Number(lat);
+  const longitude = Number(lng);
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+  if (latitude < -90 || latitude > 90) return null;
+  if (longitude < -180 || longitude > 180) return null;
+  return { lat: latitude, lng: longitude };
+}
+
+function _extractPartnerApprovedCatalogRows(raw) {
+  if (Array.isArray(raw)) return raw;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return [];
+  if (Array.isArray(raw.stays)) return raw.stays;
+  if (Array.isArray(raw.entries)) return raw.entries;
+  if (Array.isArray(raw.items)) return raw.items;
   return [];
 }
 
-function _buildPartnerApprovedHotelsPayload({ query, warnings = [] } = {}) {
-  const nextWarnings = Array.isArray(warnings) ? [...warnings] : [];
-  const seedStays = _publicHotelsPartnerApprovedSeed();
-  const filtered = seedStays
-    .filter((stay) => _publicPartnerHotelHasApprovedVisual(stay))
-    .filter((stay) => _publicHotelMatchesQuery(stay, query));
-  const stays = filtered.map((stay) =>
-    _mapPublicHotelStayToResponse({
-      ...stay,
-      provider: "partner-approved",
-      source: "partner_approved",
-      is_real_approved: true,
-    }),
+function _readPartnerApprovedCatalogString(row, keys) {
+  if (!row || typeof row !== "object" || Array.isArray(row)) return "";
+  for (const key of keys) {
+    const value = row[key];
+    if (value == null) continue;
+    const text = String(value).trim();
+    if (text) return text;
+  }
+  return "";
+}
+
+function _readPartnerApprovedCatalogNumber(row, keys) {
+  if (!row || typeof row !== "object" || Array.isArray(row)) return null;
+  for (const key of keys) {
+    const value = row[key];
+    if (value == null) continue;
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+    const parsed = Number(String(value).trim());
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return null;
+}
+
+function _sanitizePartnerApprovedCatalogEntry(row) {
+  if (!row || typeof row !== "object" || Array.isArray(row)) return null;
+
+  const id = _readPartnerApprovedCatalogString(row, ["id"]);
+  const name = _readPartnerApprovedCatalogString(row, ["name"]);
+  if (!id || !name) return null;
+
+  const coords = _publicHotelValidCoordinates(
+    _readPartnerApprovedCatalogNumber(row, ["lat", "latitude"]),
+    _readPartnerApprovedCatalogNumber(row, ["lng", "longitude"]),
   );
+  if (!coords) return null;
+
+  const imageUrl = _publicPartnerApprovedHttpsImageUrl(
+    _readPartnerApprovedCatalogString(row, ["image_url", "imageUrl"]),
+  );
+  const imageRef = _publicHotelPartnerApprovedImageRef(
+    _readPartnerApprovedCatalogString(row, ["image_ref", "imageRef"]),
+  );
+  if (!imageUrl && !imageRef) return null;
+
+  const externalUrlRaw = _readPartnerApprovedCatalogString(row, [
+    "external_url",
+    "externalUrl",
+    "external_availability_url",
+    "externalAvailabilityUrl",
+  ]);
+  const externalUrl = externalUrlRaw
+    ? _publicHotelSanitizedExternalUrl(externalUrlRaw)
+    : null;
+
+  const providerId =
+    _readPartnerApprovedCatalogString(row, [
+      "provider_id",
+      "providerId",
+      "source_id",
+      "sourceId",
+    ]) || id;
+  const rating =
+    _readPartnerApprovedCatalogString(row, ["rating_label", "ratingLabel", "rating"]) ||
+    null;
+  const priceHint =
+    _readPartnerApprovedCatalogString(row, [
+      "price_label",
+      "priceLabel",
+      "price_hint",
+      "priceHint",
+    ]) || null;
+  const availabilityLabel =
+    _readPartnerApprovedCatalogString(row, [
+      "availability_label",
+      "availabilityLabel",
+    ]) || null;
+
+  return {
+    id,
+    name,
+    type: _readPartnerApprovedCatalogString(row, ["type"]) || "hotel",
+    address: _readPartnerApprovedCatalogString(row, ["address"]),
+    city: _readPartnerApprovedCatalogString(row, ["city"]),
+    region: _readPartnerApprovedCatalogString(row, ["region"]),
+    country: _readPartnerApprovedCatalogString(row, ["country"]),
+    lat: coords.lat,
+    lng: coords.lng,
+    image_url: imageUrl,
+    image_ref: imageRef,
+    source_id: providerId,
+    rating,
+    price_hint: priceHint,
+    availability_label: availabilityLabel,
+    external_url: externalUrl,
+    provider: "partner-approved",
+    source: "partner_approved",
+    is_real_approved: true,
+  };
+}
+
+async function _loadPublicHotelsPartnerApprovedCatalogDocument(env) {
+  if (!env?.BOOKING_KV) {
+    return {
+      document: null,
+      warnings: ["partner_catalog_kv_unavailable"],
+    };
+  }
+  try {
+    const document = await env.BOOKING_KV.get(
+      PUBLIC_HOTELS_PARTNER_APPROVED_CATALOG_KEY,
+      { type: "json" },
+    );
+    if (!document) {
+      return { document: null, warnings: [] };
+    }
+    if (typeof document !== "object" || Array.isArray(document)) {
+      return {
+        document: null,
+        warnings: ["partner_catalog_malformed"],
+      };
+    }
+    return { document, warnings: [] };
+  } catch (_) {
+    return {
+      document: null,
+      warnings: ["partner_catalog_load_failed"],
+    };
+  }
+}
+
+async function _loadPublicHotelsPartnerApprovedCatalogStays(env) {
+  const { document, warnings } =
+    await _loadPublicHotelsPartnerApprovedCatalogDocument(env);
+  const nextWarnings = Array.isArray(warnings) ? [...warnings] : [];
+  const rawRows = _extractPartnerApprovedCatalogRows(document);
+  const stays = [];
+  for (const row of rawRows) {
+    const sanitized = _sanitizePartnerApprovedCatalogEntry(row);
+    if (!sanitized) continue;
+    if (!_publicPartnerHotelHasApprovedVisual(sanitized)) continue;
+    stays.push(sanitized);
+  }
+  return {
+    stays,
+    warnings: nextWarnings,
+    rawRowCount: rawRows.length,
+    catalogVersion:
+      document && document.version != null ? String(document.version) : null,
+    updatedAt:
+      _readPartnerApprovedCatalogString(document, ["updated_at", "updatedAt"]) ||
+      null,
+  };
+}
+
+async function _buildAdminPartnerApprovedHotelsCatalogDiagnostics({ env } = {}) {
+  const loadResult = await _loadPublicHotelsPartnerApprovedCatalogStays(env);
+  const stays = loadResult.stays.map((stay) => _mapPublicHotelStayToResponse(stay));
+  const warnings = Array.isArray(loadResult.warnings) ? [...loadResult.warnings] : [];
+  if (!stays.length && !warnings.includes("partner_catalog_empty")) {
+    warnings.push("partner_catalog_empty");
+  }
+  return {
+    ok: true,
+    kv_key: PUBLIC_HOTELS_PARTNER_APPROVED_CATALOG_KEY,
+    catalog_present: loadResult.rawRowCount > 0,
+    catalog_version: loadResult.catalogVersion,
+    updated_at: loadResult.updatedAt,
+    raw_row_count: loadResult.rawRowCount,
+    trusted_row_count: stays.length,
+    warnings,
+    sample_ids: stays.slice(0, 12).map((stay) => stay.id),
+    stays,
+  };
+}
+
+async function _buildPartnerApprovedHotelsPayloadAsync({
+  query,
+  env,
+  warnings = [],
+} = {}) {
+  const nextWarnings = Array.isArray(warnings) ? [...warnings] : [];
+  const loadResult = await _loadPublicHotelsPartnerApprovedCatalogStays(env);
+  for (const warning of loadResult.warnings || []) {
+    if (warning && !nextWarnings.includes(warning)) {
+      nextWarnings.push(warning);
+    }
+  }
+  const seedStays = loadResult.stays;
+  const filtered = seedStays.filter((stay) =>
+    _publicHotelMatchesQuery(stay, query),
+  );
+  const stays = filtered.map((stay) => _mapPublicHotelStayToResponse(stay));
   if (!stays.length) {
     if (!nextWarnings.includes("partner_catalog_empty")) {
       nextWarnings.push("partner_catalog_empty");
@@ -21222,8 +21444,10 @@ function _mapPublicHotelStayToResponse(stay) {
     image_ref: stay?.image_ref ? String(stay.image_ref).trim() : null,
     rating_label: rating,
     price_label: stay?.price_hint ? String(stay.price_hint).trim() : null,
-    availability_label: null,
-    external_url: stay?.external_url ? String(stay.external_url).trim() : null,
+    availability_label: stay?.availability_label
+      ? String(stay.availability_label).trim()
+      : null,
+    external_url: _publicHotelSanitizedExternalUrl(stay?.external_url),
     source: String(stay?.source ?? "approved_local").trim() || "approved_local",
     is_real_approved: stay?.is_real_approved === true,
   };
@@ -21626,9 +21850,9 @@ function _amadeusBaseUrl(env) {
   return base.replace(/\/+$/, "");
 }
 
-function _publicHotelsPartnerApprovedCatalogReady() {
-  const seedStays = _publicHotelsPartnerApprovedSeed();
-  return seedStays.some((stay) => _publicPartnerHotelHasApprovedVisual(stay));
+async function _publicHotelsPartnerApprovedCatalogReadyAsync(env) {
+  const loadResult = await _loadPublicHotelsPartnerApprovedCatalogStays(env);
+  return loadResult.stays.length > 0;
 }
 
 function _buildHotelbedsHotelsPayload({ query, env, warnings = [] } = {}) {
@@ -21685,9 +21909,10 @@ async function _buildNativeHotelsSearchPayload({ query, env, warnings = [] } = {
     });
   }
 
-  if (_publicHotelsPartnerApprovedCatalogReady()) {
-    return _buildPartnerApprovedHotelsPayload({
+  if (_publicHotelsPartnerApprovedCatalogReadyAsync(env)) {
+    return await _buildPartnerApprovedHotelsPayloadAsync({
       query,
+      env,
       warnings: nextWarnings,
     });
   }
@@ -21736,7 +21961,7 @@ async function _buildPublicHotelsSearchPayload({ query, env } = {}) {
   }
 
   if (source === "partner-approved") {
-    return _buildPartnerApprovedHotelsPayload({ query, warnings });
+    return await _buildPartnerApprovedHotelsPayloadAsync({ query, env, warnings });
   }
 
   if (source === "native") {
