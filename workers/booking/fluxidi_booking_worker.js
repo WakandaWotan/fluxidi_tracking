@@ -21282,10 +21282,6 @@ function _buildTravelpayoutsHotelsPayload({ query, env, warnings = [] } = {}) {
 
 function _buildExpediaRapidHotelsPayload({ query, env, warnings = [] } = {}) {
   const source = "expedia-rapid";
-  // TODO(HOTELS-PROVIDER-EXPEDIA): Worker secrets EXPEDIA_RAPID_API_KEY and EXPEDIA_RAPID_API_SECRET required.
-  // TODO(HOTELS-PROVIDER-EXPEDIA): Verify Expedia Rapid Lodging API docs and market coverage (BE/NL/FR/GB/ES).
-  // TODO(HOTELS-PROVIDER-EXPEDIA): Confirm image licensing before exposing image_url to Flutter cards.
-  // TODO(HOTELS-PROVIDER-EXPEDIA): Map Rapid property payloads to Fluxidi stay shape; external_url for booking handoff.
   if (
     !_publicHotelsProviderEnvReady(env, [
       "EXPEDIA_RAPID_API_KEY",
@@ -21294,7 +21290,150 @@ function _buildExpediaRapidHotelsPayload({ query, env, warnings = [] } = {}) {
   ) {
     return _buildProviderNotConfiguredHotelsPayload({ source, warnings });
   }
-  return _buildProviderAdapterPendingHotelsPayload({ source, warnings });
+  return _fetchExpediaRapidPropertyContent({ query, env, warnings });
+}
+
+function _expediaRapidAuthSigningReady(_env) {
+  // TODO(HOTELS-PROVIDER-EXPEDIA): Implement Expedia Rapid auth/signature (API key + secret).
+  return false;
+}
+
+function _selectExpediaRapidImageUrl(property) {
+  const images = Array.isArray(property?.images) ? property.images : [];
+  if (!images.length) return null;
+
+  const ranked = [...images].sort((a, b) => {
+    if (a?.hero_image === true && b?.hero_image !== true) return -1;
+    if (b?.hero_image === true && a?.hero_image !== true) return 1;
+    return 0;
+  });
+
+  for (const image of ranked) {
+    const links =
+      image?.links && typeof image.links === "object" ? image.links : {};
+    const preferredKeys = ["1000px", "350px", "200px", "70px"];
+    for (const key of preferredKeys) {
+      const href = _publicHotelResponseImageUrl(links?.[key]?.href);
+      if (href) return href;
+    }
+    for (const linkValue of Object.values(links)) {
+      const href = _publicHotelResponseImageUrl(
+        linkValue && typeof linkValue === "object" ? linkValue.href : linkValue,
+      );
+      if (href) return href;
+    }
+  }
+  return null;
+}
+
+function _mapExpediaRapidPropertyToPublicHotelStay(propertyId, property) {
+  const id = safeStr(propertyId) || safeStr(property?.property_id);
+  const name = safeStr(property?.name);
+  if (!id || !name) return null;
+
+  const imageUrl = _selectExpediaRapidImageUrl(property);
+  if (!imageUrl) return null;
+
+  const address =
+    property?.address && typeof property.address === "object"
+      ? property.address
+      : {};
+  const line1 = safeStr(address.line_1);
+  const line2 = safeStr(address.line_2);
+  const city = safeStr(address.city);
+  const region =
+    safeStr(address.state_province_name) || safeStr(address.state_province_code);
+  const country = safeStr(address.country_code) || safeStr(address.country_name);
+  const postal = safeStr(address.postal_code);
+  const addressText = [line1, line2, postal, city, region, country]
+    .filter(Boolean)
+    .join(", ");
+
+  const coords =
+    property?.location?.coordinates && typeof property.location.coordinates === "object"
+      ? property.location.coordinates
+      : property?.location && typeof property.location === "object"
+        ? property.location
+        : {};
+  const lat = Number(coords.latitude ?? coords.lat);
+  const lng = Number(coords.longitude ?? coords.lng);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+
+  const ratingRaw =
+    property?.ratings?.property?.rating ?? property?.ratings?.guest?.average;
+  const ratingLabel =
+    ratingRaw == null || ratingRaw === "" ? null : String(ratingRaw);
+
+  const categoryName =
+    safeStr(property?.category?.name) || safeStr(property?.category?.id) || "hotel";
+  const descriptions =
+    property?.descriptions && typeof property.descriptions === "object"
+      ? property.descriptions
+      : {};
+  const description =
+    safeStr(descriptions.headline) || safeStr(descriptions.location) || "";
+
+  return {
+    id: `expedia-${id}`,
+    provider: "expedia-rapid",
+    source_id: id,
+    name,
+    type: categoryName.toLowerCase(),
+    address: addressText,
+    city,
+    region,
+    country,
+    lat,
+    lng,
+    image_url: imageUrl,
+    price_hint: null,
+    rating: ratingLabel,
+    description,
+    source: "expedia_rapid",
+    is_real_approved: true,
+  };
+}
+
+function _fetchExpediaRapidPropertyContent({ query, env, warnings = [] } = {}) {
+  const source = "expedia-rapid";
+  const nextWarnings = Array.isArray(warnings) ? [...warnings] : [];
+
+  // TODO(HOTELS-PROVIDER-EXPEDIA): Implement Expedia auth/signature request headers.
+  // TODO(HOTELS-PROVIDER-EXPEDIA): Call GET /properties/content with language, supply_source=expedia,
+  //   and country_code/city filters for BE/NL/FR/GB/ES where supported.
+  // TODO(HOTELS-PROVIDER-EXPEDIA): Handle pagination via Link header.
+  // TODO(HOTELS-PROVIDER-EXPEDIA): Later add Shopping availability endpoint for price_label/rates.
+  // TODO(HOTELS-PROVIDER-EXPEDIA): Confirm Rapid image licensing before customer-facing cards.
+
+  if (!_expediaRapidAuthSigningReady(env)) {
+    return _buildProviderAdapterPendingHotelsPayload({
+      source,
+      warnings: nextWarnings,
+    });
+  }
+
+  // Future live path (not enabled until auth/signing is confirmed):
+  // const propertiesById = await _requestExpediaRapidPropertiesContent({ query, env });
+  // const stays = [];
+  // for (const [propertyId, property] of Object.entries(propertiesById || {})) {
+  //   const mappedStay = _mapExpediaRapidPropertyToPublicHotelStay(propertyId, property);
+  //   if (!mappedStay) continue;
+  //   if (!_publicHotelMatchesQuery(mappedStay, query)) continue;
+  //   stays.push(_mapPublicHotelStayToResponse(mappedStay));
+  // }
+  // return {
+  //   ok: true,
+  //   source,
+  //   provider: source,
+  //   count: stays.length,
+  //   stays,
+  //   warnings: nextWarnings,
+  // };
+
+  return _buildProviderAdapterPendingHotelsPayload({
+    source,
+    warnings: nextWarnings,
+  });
 }
 
 function _buildAgodaHotelsPayload({ query, env, warnings = [] } = {}) {
