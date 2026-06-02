@@ -17378,7 +17378,7 @@ GET /oauth/callback
           return json({ ok: false, error: "method_not_allowed" }, 405);
         }
         const query = _normalizePublicHotelsSearchQuery(url);
-        return json(_buildPublicHotelsSearchPayload({ query, env }));
+        return json(await _buildPublicHotelsSearchPayload({ query, env }));
       }
 
       if (url.pathname === "/public/quote" && request.method === "POST") {
@@ -21280,7 +21280,7 @@ function _buildTravelpayoutsHotelsPayload({ query, env, warnings = [] } = {}) {
   return _buildProviderAdapterPendingHotelsPayload({ source, warnings });
 }
 
-function _buildExpediaRapidHotelsPayload({ query, env, warnings = [] } = {}) {
+async function _buildExpediaRapidHotelsPayload({ query, env, warnings = [] } = {}) {
   const source = "expedia-rapid";
   if (
     !_publicHotelsProviderEnvReady(env, [
@@ -21290,12 +21290,103 @@ function _buildExpediaRapidHotelsPayload({ query, env, warnings = [] } = {}) {
   ) {
     return _buildProviderNotConfiguredHotelsPayload({ source, warnings });
   }
-  return _fetchExpediaRapidPropertyContent({ query, env, warnings });
+  return await _fetchExpediaRapidPropertyContent({ query, env, warnings });
 }
 
-function _expediaRapidAuthSigningReady(_env) {
-  // TODO(HOTELS-PROVIDER-EXPEDIA): Implement Expedia Rapid auth/signature (API key + secret).
-  return false;
+function _expediaRapidAuthSigningReady(env) {
+  if (
+    !_publicHotelsProviderEnvReady(env, [
+      "EXPEDIA_RAPID_API_KEY",
+      "EXPEDIA_RAPID_API_SECRET",
+    ])
+  ) {
+    return false;
+  }
+  const subtle = globalThis.crypto?.subtle;
+  return !!subtle && typeof subtle.digest === "function";
+}
+
+function _expediaRapidBaseUrl(env) {
+  const override = safeStr(env?.EXPEDIA_RAPID_BASE_URL);
+  const base = override || "https://api.ean.com/v3";
+  return base.replace(/\/+$/, "");
+}
+
+function _expediaRapidCountryCode(rawCountry) {
+  const trimmed = String(rawCountry ?? "").trim();
+  if (!trimmed) return "";
+  const upper = trimmed.toUpperCase();
+  if (/^[A-Z]{2}$/.test(upper)) {
+    return upper === "UK" ? "GB" : upper;
+  }
+  const normalized = _publicHotelNormalizeText(trimmed);
+  const aliases = {
+    belgium: "BE",
+    belgie: "BE",
+    netherlands: "NL",
+    "the netherlands": "NL",
+    nederland: "NL",
+    france: "FR",
+    frankrijk: "FR",
+    uk: "GB",
+    "united kingdom": "GB",
+    england: "GB",
+    spain: "ES",
+    espana: "ES",
+    spanje: "ES",
+  };
+  return aliases[normalized] || "";
+}
+
+async function _sha512Hex(input) {
+  const text = String(input ?? "");
+  const bytes = new TextEncoder().encode(text);
+  const digest = await crypto.subtle.digest("SHA-512", bytes);
+  return [...new Uint8Array(digest)]
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+async function _expediaRapidAuthorizationHeader(apiKey, sharedSecret, timestampSeconds) {
+  const timestamp = String(timestampSeconds);
+  const signature = await _sha512Hex(`${apiKey}${sharedSecret}${timestamp}`);
+  return `EAN apikey=${apiKey},signature=${signature},timestamp=${timestamp}`;
+}
+
+function _expediaRapidPropertiesContentUrl({ baseUrl, query }) {
+  const params = new URLSearchParams();
+  params.set("language", "en-US");
+  params.set("supply_source", "expedia");
+  for (const field of [
+    "property_id",
+    "name",
+    "address",
+    "ratings",
+    "location",
+    "category",
+    "images",
+    "descriptions",
+  ]) {
+    params.append("include", field);
+  }
+  const countryCode = _expediaRapidCountryCode(query?.country);
+  if (countryCode) {
+    params.set("country_code", countryCode);
+  }
+  // TODO(HOTELS-PROVIDER-EXPEDIA): Add region/typeahead/geography path for city search.
+  return `${baseUrl}/properties/content?${params.toString()}`;
+}
+
+function _buildExpediaRapidSuccessPayload({ stays, warnings = [] } = {}) {
+  const rows = Array.isArray(stays) ? stays : [];
+  return {
+    ok: true,
+    source: "expedia-rapid",
+    provider: "expedia-rapid",
+    count: rows.length,
+    stays: rows,
+    warnings: Array.isArray(warnings) ? warnings : [],
+  };
 }
 
 function _selectExpediaRapidImageUrl(property) {
@@ -21394,16 +21485,18 @@ function _mapExpediaRapidPropertyToPublicHotelStay(propertyId, property) {
   };
 }
 
-function _fetchExpediaRapidPropertyContent({ query, env, warnings = [] } = {}) {
+async function _fetchExpediaRapidPropertyContent({ query, env, warnings = [] } = {}) {
   const source = "expedia-rapid";
   const nextWarnings = Array.isArray(warnings) ? [...warnings] : [];
 
-  // TODO(HOTELS-PROVIDER-EXPEDIA): Implement Expedia auth/signature request headers.
-  // TODO(HOTELS-PROVIDER-EXPEDIA): Call GET /properties/content with language, supply_source=expedia,
-  //   and country_code/city filters for BE/NL/FR/GB/ES where supported.
-  // TODO(HOTELS-PROVIDER-EXPEDIA): Handle pagination via Link header.
-  // TODO(HOTELS-PROVIDER-EXPEDIA): Later add Shopping availability endpoint for price_label/rates.
-  // TODO(HOTELS-PROVIDER-EXPEDIA): Confirm Rapid image licensing before customer-facing cards.
+  if (
+    !_publicHotelsProviderEnvReady(env, [
+      "EXPEDIA_RAPID_API_KEY",
+      "EXPEDIA_RAPID_API_SECRET",
+    ])
+  ) {
+    return _buildProviderNotConfiguredHotelsPayload({ source, warnings: nextWarnings });
+  }
 
   if (!_expediaRapidAuthSigningReady(env)) {
     return _buildProviderAdapterPendingHotelsPayload({
@@ -21412,28 +21505,87 @@ function _fetchExpediaRapidPropertyContent({ query, env, warnings = [] } = {}) {
     });
   }
 
-  // Future live path (not enabled until auth/signing is confirmed):
-  // const propertiesById = await _requestExpediaRapidPropertiesContent({ query, env });
-  // const stays = [];
-  // for (const [propertyId, property] of Object.entries(propertiesById || {})) {
-  //   const mappedStay = _mapExpediaRapidPropertyToPublicHotelStay(propertyId, property);
-  //   if (!mappedStay) continue;
-  //   if (!_publicHotelMatchesQuery(mappedStay, query)) continue;
-  //   stays.push(_mapPublicHotelStayToResponse(mappedStay));
-  // }
-  // return {
-  //   ok: true,
-  //   source,
-  //   provider: source,
-  //   count: stays.length,
-  //   stays,
-  //   warnings: nextWarnings,
-  // };
-
-  return _buildProviderAdapterPendingHotelsPayload({
-    source,
-    warnings: nextWarnings,
+  const apiKey = safeStr(env?.EXPEDIA_RAPID_API_KEY);
+  const sharedSecret = safeStr(env?.EXPEDIA_RAPID_API_SECRET);
+  const requestUrl = _expediaRapidPropertiesContentUrl({
+    baseUrl: _expediaRapidBaseUrl(env),
+    query,
   });
+  const timestampSeconds = Math.floor(Date.now() / 1000);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 12000);
+
+  try {
+    const authorization = await _expediaRapidAuthorizationHeader(
+      apiKey,
+      sharedSecret,
+      timestampSeconds,
+    );
+    const response = await fetch(requestUrl, {
+      method: "GET",
+      headers: {
+        Authorization: authorization,
+        "Customer-Ip": "0.0.0.0",
+        Accept: "application/json",
+        "Accept-Encoding": "gzip",
+        "User-Agent": "Fluxidi/1.0",
+      },
+      signal: controller.signal,
+    });
+
+    const linkHeader = response.headers.get("Link") || response.headers.get("link");
+    if (linkHeader && !nextWarnings.includes("expedia_pagination_not_followed")) {
+      nextWarnings.push("expedia_pagination_not_followed");
+    }
+
+    if (response.status < 200 || response.status >= 300) {
+      if (!nextWarnings.includes("provider_error")) {
+        nextWarnings.push("provider_error");
+      }
+      nextWarnings.push(`expedia_http_${response.status}`);
+      return _buildExpediaRapidSuccessPayload({ stays: [], warnings: nextWarnings });
+    }
+
+    let payload = null;
+    try {
+      payload = await response.json();
+    } catch (_) {
+      if (!nextWarnings.includes("provider_malformed_response")) {
+        nextWarnings.push("provider_malformed_response");
+      }
+      return _buildExpediaRapidSuccessPayload({ stays: [], warnings: nextWarnings });
+    }
+
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+      if (!nextWarnings.includes("provider_malformed_response")) {
+        nextWarnings.push("provider_malformed_response");
+      }
+      return _buildExpediaRapidSuccessPayload({ stays: [], warnings: nextWarnings });
+    }
+
+    const stays = [];
+    for (const [propertyId, property] of Object.entries(payload)) {
+      if (!property || typeof property !== "object" || Array.isArray(property)) continue;
+      const mappedStay = _mapExpediaRapidPropertyToPublicHotelStay(propertyId, property);
+      if (!mappedStay) continue;
+      if (!_publicHotelMatchesQuery(mappedStay, query)) continue;
+      stays.push(_mapPublicHotelStayToResponse(mappedStay));
+    }
+
+    // TODO(HOTELS-PROVIDER-EXPEDIA): Follow Link pagination safely.
+    // TODO(HOTELS-PROVIDER-EXPEDIA): Add Shopping availability/rates later.
+    // TODO(HOTELS-PROVIDER-EXPEDIA): Confirm image usage/licensing before enabling customer-facing source.
+    // TODO(HOTELS-PROVIDER-EXPEDIA): Use request/client IP for Customer-Ip when available.
+
+    return _buildExpediaRapidSuccessPayload({ stays, warnings: nextWarnings });
+  } catch (_) {
+    if (!nextWarnings.includes("provider_fetch_failed")) {
+      nextWarnings.push("provider_fetch_failed");
+    }
+    return _buildExpediaRapidSuccessPayload({ stays: [], warnings: nextWarnings });
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function _buildAgodaHotelsPayload({ query, env, warnings = [] } = {}) {
