@@ -271,6 +271,24 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
             initialPickupLat: destination.latitude,
             initialPickupLng: destination.longitude,
           ),
+          onManualHotelTaxi: () async {
+            final selected = await _selectTaxiPartner(context);
+            if (selected == null || !context.mounted) return;
+            final partnerId = _partnerSelectionValue(selected, 'partner_id');
+            final partnerName = _partnerSelectionValue(
+              selected,
+              'company_name',
+            );
+            _openCalculator(
+              context,
+              scheduledIntent: false,
+              initialServiceId: 'hotel',
+              publicPartnerId: partnerId,
+              publicPartnerName: partnerName,
+              entryContext: 'hotel_return_flow',
+            );
+          },
+          onOpenAirportReturnFlow: () => _openAirportFlow(context),
         ),
       ),
     );

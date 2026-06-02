@@ -32,6 +32,8 @@ class HotelsPage extends StatefulWidget {
     this.onTaxiToStay,
     this.onTaxiToDestination,
     this.onOpenAirportFlow,
+    this.onManualHotelTaxi,
+    this.onOpenAirportReturnFlow,
     this.tenantId,
     this.companyId,
     super.key,
@@ -45,6 +47,8 @@ class HotelsPage extends StatefulWidget {
   final void Function(DiscoveryDestination destination)? onTaxiToDestination;
   final Future<void> Function(DiscoveryDestination destination)?
   onOpenAirportFlow;
+  final Future<void> Function()? onManualHotelTaxi;
+  final Future<void> Function()? onOpenAirportReturnFlow;
   final String? tenantId;
   final String? companyId;
 
@@ -440,6 +444,42 @@ class _HotelsPageState extends State<HotelsPage> {
       en: 'Plan taxi to stay',
       fr: 'Planifier un taxi vers l’hébergement',
       es: 'Planificar taxi al alojamiento',
+    );
+  }
+
+  String get _returnFlowTitle {
+    return _t(
+      nl: 'Heb je al een verblijf gekozen?',
+      en: 'Already picked a stay?',
+      fr: 'Vous avez déjà choisi un hébergement ?',
+      es: '¿Ya elegiste un alojamiento?',
+    );
+  }
+
+  String get _returnFlowSubtitle {
+    return _t(
+      nl: 'Plan je rit naar je hotel/B&B.',
+      en: 'Plan your ride to your hotel/B&B.',
+      fr: 'Planifiez votre trajet vers votre hôtel/B&B.',
+      es: 'Planifica tu viaje a tu hotel/B&B.',
+    );
+  }
+
+  String get _returnFlowEnterAddressLabel {
+    return _t(
+      nl: 'Adres invullen',
+      en: 'Enter address',
+      fr: 'Saisir l’adresse',
+      es: 'Introducir dirección',
+    );
+  }
+
+  String get _returnFlowAirportToStayLabel {
+    return _t(
+      nl: 'Luchthaven → verblijf',
+      en: 'Airport → stay',
+      fr: 'Aéroport → hébergement',
+      es: 'Aeropuerto → alojamiento',
     );
   }
 
@@ -1040,6 +1080,44 @@ class _HotelsPageState extends State<HotelsPage> {
         });
   }
 
+  Future<void> _onReturnFlowEnterAddressTap() async {
+    final callback = widget.onManualHotelTaxi;
+    if (callback != null) {
+      await callback();
+      return;
+    }
+    final selectedPartner = await _selectTaxiPartnerForHotelsEvent();
+    if (selectedPartner == null || !mounted) return;
+    final partnerId = _partnerSelectionValue(selectedPartner, 'partner_id');
+    final partnerName = _partnerSelectionValue(selectedPartner, 'company_name');
+    Navigator.of(context)
+        .push(
+          MaterialPageRoute(
+            builder: (_) => CalculatorPage(
+              bookingBaseUrl: appConfig.bookingBaseUrl,
+              mapboxToken: kMapboxToken,
+              initialServiceId: 'hotel',
+              publicPartnerId: partnerId.isEmpty ? null : partnerId,
+              publicPartnerName: partnerName.isEmpty ? null : partnerName,
+            ),
+          ),
+        )
+        .catchError((_) {
+          if (!mounted) return;
+          _showThemedSnackBar(_taxiNavigationFallbackLabel);
+        });
+  }
+
+  Future<void> _onReturnFlowAirportTap() async {
+    final returnFlowCallback = widget.onOpenAirportReturnFlow;
+    if (returnFlowCallback != null) {
+      await returnFlowCallback();
+      return;
+    }
+    if (!mounted) return;
+    _showThemedSnackBar(_airportFlowFallbackLabel);
+  }
+
   Future<void> _onAirportTransferTap(HotelStay stay) async {
     final callback = widget.onOpenAirportFlow;
     if (callback != null) {
@@ -1080,6 +1158,8 @@ class _HotelsPageState extends State<HotelsPage> {
                   _buildCompactFilterChips(),
                   const SizedBox(height: 8),
                   _buildResultSummary(approvedRealStays.length),
+                  const SizedBox(height: 8),
+                  _buildReturnFlowPanel(),
                   const SizedBox(height: 8),
                   _buildCardsGrid(displayCards),
                 ],
@@ -1869,6 +1949,108 @@ class _HotelsPageState extends State<HotelsPage> {
             ),
           ),
       ],
+    );
+  }
+
+  Widget _buildReturnFlowPanel() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: _panelBlack,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: _border.withOpacity(_isDarkTheme ? 0.35 : 0.95),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(
+                Icons.route_rounded,
+                color: _gold.withOpacity(0.95),
+                size: 18,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      _returnFlowTitle,
+                      style: TextStyle(
+                        color: _textPrimary.withOpacity(0.96),
+                        fontSize: 13.2,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      _returnFlowSubtitle,
+                      style: TextStyle(
+                        color: _softText.withOpacity(0.96),
+                        fontSize: 12.2,
+                        fontWeight: FontWeight.w600,
+                        height: 1.25,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              onPressed: () => unawaited(_onReturnFlowEnterAddressTap()),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: _gold,
+                foregroundColor: _actionOnGold,
+                minimumSize: const Size.fromHeight(39),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
+              ),
+              icon: const Icon(Icons.edit_location_alt_rounded, size: 16),
+              label: Text(
+                _returnFlowEnterAddressLabel,
+                style: const TextStyle(fontWeight: FontWeight.w800),
+              ),
+            ),
+          ),
+          const SizedBox(height: 6),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: () => unawaited(_onReturnFlowAirportTap()),
+              style: OutlinedButton.styleFrom(
+                backgroundColor: _panelBlack,
+                foregroundColor: _textPrimary.withOpacity(0.92),
+                side: BorderSide(
+                  color: _border.withOpacity(_isDarkTheme ? 0.4 : 1),
+                ),
+                minimumSize: const Size.fromHeight(36),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
+              ),
+              icon: Icon(
+                Icons.flight_land_rounded,
+                size: 15,
+                color: _gold.withOpacity(0.92),
+              ),
+              label: Text(
+                _returnFlowAirportToStayLabel,
+                style: const TextStyle(fontWeight: FontWeight.w700),
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
