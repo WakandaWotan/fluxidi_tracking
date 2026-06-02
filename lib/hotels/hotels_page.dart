@@ -21,6 +21,7 @@ import '../discovery/discovery_nearby.dart';
 import '../customer_profile_store.dart';
 import '../nearby_partners_page.dart';
 import 'approved_hotel_data.dart';
+import 'hotel_data_source.dart';
 import 'hotel_geo_taxonomy.dart';
 import 'hotel_model.dart';
 
@@ -77,7 +78,10 @@ class _HotelsPageState extends State<HotelsPage> {
   static const String _allKey = 'all';
   static const String _stay22Aid = 'fluxidi';
 
-  late final List<HotelStay> _allStays;
+  static const _remoteHotelDataSource = RemoteHotelDataSource();
+  static const _localApprovedHotelDataSource = LocalApprovedHotelDataSource();
+
+  late List<HotelStay> _allStays;
   Set<String> _savedStayIds = <String>{};
   String _selectedCountryCode = _allKey;
   String _selectedSettlementKey = _allKey;
@@ -113,6 +117,31 @@ class _HotelsPageState extends State<HotelsPage> {
     _allStays = List<HotelStay>.from(widget.stays ?? kApprovedBelgiumHotelData);
     _searchController.addListener(_onSearchChanged);
     _loadSavedStayIds();
+    if (widget.stays == null) {
+      unawaited(_refreshRemoteStaysIfNeeded());
+    }
+  }
+
+  // TODO(HOTELS-REMOTE): Add pull-to-refresh/provider switch once real provider
+  // adapters exist.
+  Future<void> _refreshRemoteStaysIfNeeded() async {
+    if (widget.stays != null) return;
+    try {
+      final remoteStays = await _remoteHotelDataSource.fetchStays(
+        query: const HotelStayQuery(source: 'approved-local'),
+      );
+      if (!mounted) return;
+      final trustedStays = remoteStays
+          .where(_isApprovedCustomerFacingStay)
+          .toList(growable: false);
+      if (trustedStays.isEmpty) return;
+      setState(() => _allStays = trustedStays);
+    } catch (_) {
+      if (!mounted) return;
+      final localStays = await _localApprovedHotelDataSource.fetchStays();
+      if (!mounted) return;
+      setState(() => _allStays = List<HotelStay>.from(localStays));
+    }
   }
 
   void _onThemeChanged() {

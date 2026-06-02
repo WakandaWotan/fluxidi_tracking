@@ -3,8 +3,7 @@ import 'package:fluxidi_tracking/app_config.dart';
 import 'approved_hotel_data.dart';
 import 'hotel_model.dart';
 
-// TODO(HOTELS-REMOTE): Wire HotelsPage to RemoteHotelDataSource with local fallback
-// after runtime validation.
+// TODO(HOTELS-REMOTE): Add pull-to-refresh/provider switch once real provider adapters exist.
 // TODO(HOTELS-PROVIDER): Stay22 provider/list API adapter if available.
 // TODO(HOTELS-PROVIDER): Expedia/Agoda/Travelpayouts adapters later.
 // TODO(HOTELS-PROVIDER): Partner-approved backend catalog later.
