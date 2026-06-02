@@ -4519,6 +4519,46 @@ Future<Map<String, dynamic>?> fetchPublicCustomerSessionBootstrap({
   }
 }
 
+Future<Map<String, dynamic>?> fetchPublicHotelSearch({
+  String? city,
+  String? country,
+  double? lat,
+  double? lng,
+  double? radiusKm,
+  String source = 'approved-local',
+}) async {
+  final qp = <String, String>{
+    'source': source.trim().isEmpty ? 'approved-local' : source.trim(),
+  };
+  final normalizedCity = (city ?? '').trim();
+  final normalizedCountry = (country ?? '').trim();
+  if (normalizedCity.isNotEmpty) qp['city'] = normalizedCity;
+  if (normalizedCountry.isNotEmpty) qp['country'] = normalizedCountry;
+  if (lat != null && lat.isFinite) qp['lat'] = lat.toStringAsFixed(6);
+  if (lng != null && lng.isFinite) qp['lng'] = lng.toStringAsFixed(6);
+  if (radiusKm != null && radiusKm.isFinite && radiusKm >= 0) {
+    qp['radius_km'] = radiusKm.toStringAsFixed(2);
+  }
+  final endpoint = Uri.parse(
+    '${appConfig.bookingBaseUrl}/public/hotels/search',
+  ).replace(queryParameters: qp);
+  try {
+    final res = await http
+        .get(
+          endpoint,
+          headers: const <String, String>{'Accept': 'application/json'},
+        )
+        .timeout(const Duration(seconds: 12));
+    if (res.statusCode < 200 || res.statusCode >= 300) return null;
+    final decoded = jsonDecode(utf8.decode(res.bodyBytes));
+    if (decoded is! Map) return null;
+    final map = Map<String, dynamic>.from(decoded);
+    return map['ok'] == true ? map : null;
+  } catch (_) {
+    return null;
+  }
+}
+
 Map<String, dynamic> _sanitizePublicCustomerProfilePayload(
   Map<String, dynamic> payload,
 ) {

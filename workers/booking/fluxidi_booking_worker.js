@@ -17373,6 +17373,14 @@ GET /oauth/callback
         });
       }
 
+      if (url.pathname === "/public/hotels/search") {
+        if (request.method !== "GET") {
+          return json({ ok: false, error: "method_not_allowed" }, 405);
+        }
+        const query = _normalizePublicHotelsSearchQuery(url);
+        return json(_buildPublicHotelsSearchPayload({ query }));
+      }
+
       if (url.pathname === "/public/quote" && request.method === "POST") {
         const body = await safeJson(request);
         if (!body || typeof body !== "object" || Array.isArray(body)) {
@@ -20948,6 +20956,235 @@ function _buildPublicEventsSeedPayload({ query, receivedAtUtc, extraWarnings = [
     error_code: null,
     warnings: _mergePublicEventWarnings(query?.warnings, extraWarnings),
     events,
+  };
+}
+
+// TODO(HOTELS-PROVIDER): Booking.com Demand API adapter
+// TODO(HOTELS-PROVIDER): Stay22 provider/list API adapter if supported
+// TODO(HOTELS-PROVIDER): Expedia Rapid adapter
+// TODO(HOTELS-PROVIDER): Approved partner backend catalog
+
+function _normalizePublicHotelsSearchQuery(url) {
+  const cityRaw = String(url?.searchParams?.get("city") ?? "").trim();
+  const countryRaw = String(url?.searchParams?.get("country") ?? "").trim();
+  const latRaw = String(url?.searchParams?.get("lat") ?? "").trim();
+  const lngRaw = String(url?.searchParams?.get("lng") ?? "").trim();
+  const radiusRaw = String(url?.searchParams?.get("radius_km") ?? "").trim();
+  const sourceRaw = String(url?.searchParams?.get("source") ?? "").trim();
+  const warnings = [];
+
+  const latitude = _publicEventsToNumberOrNull(latRaw);
+  const longitude = _publicEventsToNumberOrNull(lngRaw);
+  let radiusKm = _publicEventsToNumberOrNull(radiusRaw);
+  if (radiusRaw && radiusKm == null) {
+    warnings.push("invalid_radius_km");
+  }
+  if (radiusKm != null) {
+    radiusKm = Math.max(0, Math.min(500, radiusKm));
+  }
+  if ((latitude == null) !== (longitude == null)) {
+    warnings.push("lat_lng_pair_required");
+  }
+
+  const sourceNormalized = String(sourceRaw || "approved-local")
+    .trim()
+    .toLowerCase()
+    .replace(/_/g, "-");
+
+  return {
+    city: cityRaw.slice(0, 120),
+    country: countryRaw.slice(0, 80),
+    latitude,
+    longitude,
+    radiusKm,
+    source: sourceNormalized || "approved-local",
+    warnings,
+  };
+}
+
+function _publicHotelsApprovedLocalSeed() {
+  return [
+    {
+      id: "approved-warwick-brussels",
+      provider: "approved-local",
+      source_id: "approved-warwick-brussels",
+      name: "Warwick Brussels",
+      type: "hotel",
+      address: "Rue Duquesnoy 5, 1000 Brussels, Belgium",
+      city: "Brussel",
+      region: "Brussels Hoofdstedelijk Gewest",
+      country: "Belgium",
+      lat: 50.845,
+      lng: 4.3543,
+      image_ref: "approved_asset:assets/fluxidi/customer_home_business_banner.png",
+      price_hint: "Vanaf €145",
+      rating: 4.3,
+      source: "approved_local",
+      is_real_approved: true,
+    },
+    {
+      id: "approved-hoxton-brussels",
+      provider: "approved-local",
+      source_id: "approved-hoxton-brussels",
+      name: "The Hoxton, Brussels",
+      type: "hotel",
+      address: "Square Victoria Regina 1, 1210 Brussels, Belgium",
+      city: "Brussel",
+      region: "Brussels Hoofdstedelijk Gewest",
+      country: "Belgium",
+      lat: 50.856,
+      lng: 4.3655,
+      image_ref: "approved_asset:assets/fluxidi/customer_home_hotel_bb_banner.png",
+      price_hint: "Vanaf €170",
+      rating: 4.5,
+      source: "approved_local",
+      is_real_approved: true,
+    },
+    {
+      id: "approved-begijnhof-hotel",
+      provider: "approved-local",
+      source_id: "approved-begijnhof-hotel",
+      name: "Begijnhof Hotel",
+      type: "hotel",
+      address: "Tervuursevest 70, 3000 Leuven, Belgium",
+      city: "Leuven",
+      region: "Vlaams-Brabant",
+      country: "Belgium",
+      lat: 50.8712,
+      lng: 4.7005,
+      image_ref: "approved_asset:assets/fluxidi/Hotel&B&B_background.png",
+      price_hint: "Vanaf €132",
+      rating: 4.2,
+      source: "approved_local",
+      is_real_approved: true,
+    },
+    {
+      id: "approved-pantone-hotel",
+      provider: "approved-local",
+      source_id: "approved-pantone-hotel",
+      name: "PANTONE Hotel Brussels",
+      type: "hotel",
+      address: "Place Loix 1, 1060 Brussels, Belgium",
+      city: "Brussel",
+      region: "Brussels Hoofdstedelijk Gewest",
+      country: "Belgium",
+      lat: 50.8343,
+      lng: 4.3556,
+      image_ref: "approved_asset:assets/fluxidi/customer_home_airport_banner.png",
+      price_hint: "Vanaf €128",
+      rating: 4.1,
+      source: "approved_local",
+      is_real_approved: true,
+    },
+  ];
+}
+
+function _publicHotelNormalizeText(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+}
+
+function _publicHotelMatchesQuery(stay, query) {
+  const countryQuery = _publicHotelNormalizeText(query?.country);
+  if (countryQuery) {
+    const stayCountry = _publicHotelNormalizeText(stay?.country);
+    if (!stayCountry.includes(countryQuery) && !countryQuery.includes(stayCountry)) {
+      return false;
+    }
+  }
+
+  const cityQuery = _publicHotelNormalizeText(query?.city);
+  if (cityQuery) {
+    const stayCity = _publicHotelNormalizeText(stay?.city);
+    if (!stayCity.includes(cityQuery) && !cityQuery.includes(stayCity)) {
+      return false;
+    }
+  }
+
+  const latitude = query?.latitude;
+  const longitude = query?.longitude;
+  const radiusKm = query?.radiusKm;
+  if (
+    latitude != null &&
+    longitude != null &&
+    radiusKm != null &&
+    Number.isFinite(stay?.lat) &&
+    Number.isFinite(stay?.lng)
+  ) {
+    const distanceKm = _publicEventsHaversineKm(
+      latitude,
+      longitude,
+      stay.lat,
+      stay.lng,
+    );
+    if (distanceKm > radiusKm) return false;
+  }
+
+  return true;
+}
+
+function _mapPublicHotelStayToResponse(stay) {
+  const rating =
+    stay?.rating == null || stay?.rating === ""
+      ? null
+      : String(stay.rating);
+  return {
+    id: String(stay?.id ?? "").trim(),
+    provider: String(stay?.provider ?? "approved-local").trim() || "approved-local",
+    provider_id:
+      String(stay?.source_id ?? stay?.id ?? "").trim() ||
+      String(stay?.id ?? "").trim(),
+    name: String(stay?.name ?? "").trim(),
+    type: String(stay?.type ?? "hotel").trim() || "hotel",
+    address: String(stay?.address ?? "").trim(),
+    city: String(stay?.city ?? "").trim(),
+    region: String(stay?.region ?? "").trim(),
+    country: String(stay?.country ?? "").trim(),
+    lat: Number(stay?.lat),
+    lng: Number(stay?.lng),
+    image_url: null,
+    image_ref: stay?.image_ref ? String(stay.image_ref).trim() : null,
+    rating_label: rating,
+    price_label: stay?.price_hint ? String(stay.price_hint).trim() : null,
+    availability_label: null,
+    external_url: null,
+    source: String(stay?.source ?? "approved_local").trim() || "approved_local",
+    is_real_approved: stay?.is_real_approved === true,
+  };
+}
+
+function _buildPublicHotelsSearchPayload({ query } = {}) {
+  const source = String(query?.source ?? "approved-local").trim() || "approved-local";
+  const warnings = Array.isArray(query?.warnings) ? [...query.warnings] : [];
+
+  if (source !== "approved-local") {
+    if (!warnings.includes("unsupported_source")) {
+      warnings.push("unsupported_source");
+    }
+    return {
+      ok: true,
+      source,
+      provider: source,
+      count: 0,
+      stays: [],
+      warnings,
+    };
+  }
+
+  const seedStays = _publicHotelsApprovedLocalSeed();
+  const filtered = seedStays.filter((stay) => _publicHotelMatchesQuery(stay, query));
+  const stays = filtered.map((stay) => _mapPublicHotelStayToResponse(stay));
+
+  return {
+    ok: true,
+    source: "approved-local",
+    provider: "approved-local",
+    count: stays.length,
+    stays,
+    warnings,
   };
 }
 
