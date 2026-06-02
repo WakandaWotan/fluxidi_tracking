@@ -83,6 +83,7 @@ class _HotelsPageState extends State<HotelsPage> {
   String _selectedSettlementKey = _allKey;
   String _selectedRegionKey = _allKey;
   String _selectedType = _allKey;
+  bool _showSavedOnly = false;
 
   String get _languageCode => appConfig.currentLanguage.name;
 
@@ -215,6 +216,7 @@ class _HotelsPageState extends State<HotelsPage> {
           }
           if (_selectedType != _allKey && stay.type != _selectedType)
             return false;
+          if (_showSavedOnly && !_savedStayIds.contains(stay.id)) return false;
           if (query.isEmpty) return true;
 
           final searchBlob = <String>[
@@ -418,6 +420,24 @@ class _HotelsPageState extends State<HotelsPage> {
 
   String get _savedStayLabel {
     return _t(nl: 'Opgeslagen', en: 'Saved', fr: 'Enregistré', es: 'Guardado');
+  }
+
+  String get _savedStaysEmptyTitle {
+    return _t(
+      nl: 'Nog geen opgeslagen verblijven.',
+      en: 'No saved stays yet.',
+      fr: 'Aucun hébergement enregistré pour le moment.',
+      es: 'Aún no hay alojamientos guardados.',
+    );
+  }
+
+  String get _savedStaysEmptyHint {
+    return _t(
+      nl: 'Tik op het hartje bij een verblijf om het hier terug te vinden.',
+      en: 'Tap the heart on a stay to find it here.',
+      fr: 'Appuyez sur le cœur d’un hébergement pour le retrouver ici.',
+      es: 'Toca el corazón de un alojamiento para encontrarlo aquí.',
+    );
   }
 
   String get _externalAvailabilityLabel {
@@ -1139,9 +1159,12 @@ class _HotelsPageState extends State<HotelsPage> {
     final approvedRealStays = stays
         .where(_isApprovedCustomerFacingStay)
         .toList(growable: false);
-    final displayCards = approvedRealStays.isNotEmpty
+    final displayCards = _showSavedOnly
         ? approvedRealStays
-        : _discoveryRegionStays;
+        : (approvedRealStays.isNotEmpty
+              ? approvedRealStays
+              : _discoveryRegionStays);
+    final resultCount = displayCards.length;
 
     return Scaffold(
       backgroundColor: _bgBlack,
@@ -1157,7 +1180,9 @@ class _HotelsPageState extends State<HotelsPage> {
                   const SizedBox(height: 8),
                   _buildCompactFilterChips(),
                   const SizedBox(height: 8),
-                  _buildResultSummary(approvedRealStays.length),
+                  _buildSavedStaysFilterRow(),
+                  const SizedBox(height: 8),
+                  _buildResultSummary(resultCount),
                   const SizedBox(height: 8),
                   _buildReturnFlowPanel(),
                   const SizedBox(height: 8),
@@ -1268,6 +1293,7 @@ class _HotelsPageState extends State<HotelsPage> {
   }
 
   bool get _hasActiveFilters =>
+      _showSavedOnly ||
       _selectedCountryCode != _allKey ||
       _selectedRegionKey != _allKey ||
       _selectedSettlementKey != _allKey ||
@@ -1598,11 +1624,102 @@ class _HotelsPageState extends State<HotelsPage> {
 
   void _resetAllFilters() {
     setState(() {
+      _showSavedOnly = false;
       _selectedCountryCode = _allKey;
       _selectedRegionKey = _allKey;
       _selectedSettlementKey = _allKey;
       _selectedType = _allKey;
     });
+  }
+
+  Widget _buildSavedStaysFilterRow() {
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: _buildSavedStaysFilterChip(),
+    );
+  }
+
+  Widget _buildSavedStaysFilterChip() {
+    final active = _showSavedOnly;
+    return InkWell(
+      onTap: () => setState(() => _showSavedOnly = !active),
+      borderRadius: BorderRadius.circular(999),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+        decoration: BoxDecoration(
+          color: active ? _gold : _panelBlack,
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(
+            color: active
+                ? _gold
+                : _border.withOpacity(_isDarkTheme ? 0.35 : 0.95),
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              active ? Icons.favorite_rounded : Icons.favorite_border_rounded,
+              size: 14,
+              color: active ? _actionOnGold : _gold.withOpacity(0.95),
+            ),
+            const SizedBox(width: 6),
+            Text(
+              _savedStayLabel,
+              style: TextStyle(
+                color: active ? _actionOnGold : _textPrimary,
+                fontWeight: FontWeight.w800,
+                fontSize: 11.6,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSavedStaysEmptyState() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: _panelBlack,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: _border.withOpacity(_isDarkTheme ? 0.35 : 0.95),
+        ),
+      ),
+      child: Column(
+        children: [
+          Icon(
+            Icons.favorite_border_rounded,
+            color: _gold.withOpacity(0.95),
+            size: 28,
+          ),
+          const SizedBox(height: 10),
+          Text(
+            _savedStaysEmptyTitle,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: _textPrimary.withOpacity(0.96),
+              fontSize: 13.2,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            _savedStaysEmptyHint,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: _softText.withOpacity(0.96),
+              fontSize: 12.2,
+              fontWeight: FontWeight.w600,
+              height: 1.3,
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   Widget _buildCompactFilterChips() {
@@ -2136,6 +2253,7 @@ class _HotelsPageState extends State<HotelsPage> {
 
   Widget _buildCardsGrid(List<HotelStay> stays) {
     if (stays.isEmpty) {
+      if (_showSavedOnly) return _buildSavedStaysEmptyState();
       return _buildSafeDiscoveryPanel();
     }
     return LayoutBuilder(
