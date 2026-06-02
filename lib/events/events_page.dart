@@ -1562,12 +1562,16 @@ class _EventsPageState extends State<EventsPage> {
             const topPadding = 10.0;
             const bottomPadding = 12.0;
             final screenWidth = constraints.maxWidth;
+            final screenHeight = constraints.maxHeight;
             final shortestSide = mediaQuery.size.shortestSide;
             final isTabletLayout = shortestSide >= 600 || screenWidth >= 700;
+            final isTabletPortrait =
+                isTabletLayout && screenHeight > screenWidth;
             final tileSpacing = isTabletLayout ? 14.0 : 14.0;
             // Phone portrait intentionally uses 2 columns and vertical-space-based card height
             // so 6 categories render as 2+2+2 while filling the landing area with premium card size.
-            final columns = constraints.maxWidth < 700 ? 2 : 3;
+            // Tablet portrait uses the same 2-column rhythm (3 rows) with taller tiles.
+            final columns = isTabletPortrait ? 2 : (screenWidth < 700 ? 2 : 3);
             final headingFontSize = isTabletLayout ? 21.0 : 15.6;
             final categoryLabelFontSize = isTabletLayout ? 15.8 : 12.4;
             final categoryTileInset = isTabletLayout ? 11.0 : 8.0;
@@ -1599,7 +1603,9 @@ class _EventsPageState extends State<EventsPage> {
                 (availableGridHeight - (tileSpacing * (categoryRows - 1))) /
                 categoryRows;
             final minCardHeight = cardWidth * 0.82;
-            final maxCardHeight = cardWidth * (isTabletLayout ? 1.12 : 1.08);
+            final maxCardHeight = isTabletPortrait
+                ? cardWidth * 1.42
+                : cardWidth * (isTabletLayout ? 1.12 : 1.08);
             final cardHeight = cardHeightFromHeight.clamp(
               minCardHeight,
               maxCardHeight,
@@ -1675,12 +1681,19 @@ class _EventsPageState extends State<EventsPage> {
                   shrinkWrap: true,
                   physics: const NeverScrollableScrollPhysics(),
                   itemCount: _landingCategoryKeys.length,
-                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: columns,
-                    crossAxisSpacing: tileSpacing,
-                    mainAxisSpacing: tileSpacing,
-                    childAspectRatio: tileAspectRatio,
-                  ),
+                  gridDelegate: isTabletPortrait
+                      ? SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: columns,
+                          crossAxisSpacing: tileSpacing,
+                          mainAxisSpacing: tileSpacing,
+                          mainAxisExtent: cardHeight,
+                        )
+                      : SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: columns,
+                          crossAxisSpacing: tileSpacing,
+                          mainAxisSpacing: tileSpacing,
+                          childAspectRatio: tileAspectRatio,
+                        ),
                   itemBuilder: (context, index) => _buildCategoryTile(
                     _landingCategoryKeys[index],
                     isTabletLayout: isTabletLayout,
