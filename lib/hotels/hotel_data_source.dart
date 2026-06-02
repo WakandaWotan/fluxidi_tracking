@@ -3,6 +3,7 @@ import 'package:fluxidi_tracking/app_config.dart';
 import 'approved_hotel_data.dart';
 import 'hotel_model.dart';
 
+// TODO(HOTELS-PARTNER): Switch HotelsPage source to partner-approved once catalog has rows.
 // TODO(HOTELS-REMOTE): Add pull-to-refresh/provider switch once real provider adapters exist.
 // TODO(HOTELS-PROVIDER): Stay22 provider/list API adapter if available.
 // TODO(HOTELS-PROVIDER): Expedia/Agoda/Travelpayouts adapters later.
@@ -81,7 +82,7 @@ class RemoteHotelDataSource implements HotelDataSource {
 
 bool _isSafeApprovedCatalogValue(String? value) {
   final normalized = (value ?? '').trim().toLowerCase().replaceAll('_', '-');
-  return normalized == 'approved-local';
+  return normalized == 'approved-local' || normalized == 'partner-approved';
 }
 
 bool _readBool(dynamic value) {
@@ -136,8 +137,8 @@ String _normalizeHotelStayType(String? rawType) {
 
 String _resolvePublicHotelImageRef(Map<String, dynamic> json) {
   final imageRef = _readString(json, const <String>['image_ref', 'imageRef']);
-  if (imageRef != null && imageRef.startsWith('approved_asset:')) {
-    final pathSuffix = imageRef.substring('approved_asset:'.length).trim();
+  if (imageRef != null && imageRef.startsWith('partner_approved:')) {
+    final pathSuffix = imageRef.substring('partner_approved:'.length).trim();
     if (pathSuffix.isNotEmpty) return imageRef;
   }
   return '';
@@ -169,7 +170,8 @@ HotelStay? hotelStayFromPublicHotelJson(Map<String, dynamic> json) {
   ]);
   final imageUrl = _isApprovedHttpImageUrl(imageUrlRaw) ? imageUrlRaw : null;
 
-  // Customer-facing cards require approved local assets or approved https URLs.
+  // Specific hotel cards require real approved https photos or partner refs.
+  // Generic approved_asset Fluxidi placeholders are not customer-facing visuals.
   if (imageRef.isEmpty && imageUrl == null) return null;
 
   final providerId = _readString(json, const <String>[

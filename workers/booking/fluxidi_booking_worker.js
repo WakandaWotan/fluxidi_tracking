@@ -21126,6 +21126,77 @@ function _publicHotelMatchesQuery(stay, query) {
   return true;
 }
 
+function _publicHotelResponseImageUrl(raw) {
+  const url = String(raw ?? "").trim();
+  if (!url) return null;
+  const lower = url.toLowerCase();
+  if (!lower.startsWith("http://") && !lower.startsWith("https://")) return null;
+  return url;
+}
+
+function _publicPartnerHotelHasApprovedVisual(stay) {
+  if (_publicHotelResponseImageUrl(stay?.image_url)) return true;
+  const imageRef = String(stay?.image_ref ?? "").trim();
+  if (!imageRef.startsWith("partner_approved:")) return false;
+  return imageRef.substring("partner_approved:".length).trim().length > 0;
+}
+
+function _publicHotelsPartnerApprovedSeed() {
+  // TODO(HOTELS-PARTNER): Load partner-approved catalog from R2 JSON or KV read-only.
+  // TODO(HOTELS-PARTNER): Upload approved hotel/B&B photos to PUBLIC_MEDIA.
+  // TODO(HOTELS-PARTNER): Add partner approval/license metadata per row.
+  // TODO(HOTELS-PARTNER): Expand catalog to BE, NL, FR, GB, ES.
+  //
+  // Rows must include real approved visuals only:
+  // - image_url: https://... (PUBLIC_MEDIA or licensed public URL)
+  // - OR image_ref: "partner_approved:<media-key>"
+  // Do not add generic Fluxidi assets or unapproved provider photos here.
+  return [];
+}
+
+function _buildPartnerApprovedHotelsPayload({ query, warnings = [] } = {}) {
+  const nextWarnings = Array.isArray(warnings) ? [...warnings] : [];
+  const seedStays = _publicHotelsPartnerApprovedSeed();
+  const filtered = seedStays
+    .filter((stay) => _publicPartnerHotelHasApprovedVisual(stay))
+    .filter((stay) => _publicHotelMatchesQuery(stay, query));
+  const stays = filtered.map((stay) =>
+    _mapPublicHotelStayToResponse({
+      ...stay,
+      provider: "partner-approved",
+      source: "partner_approved",
+      is_real_approved: true,
+    }),
+  );
+  if (!stays.length) {
+    if (!nextWarnings.includes("partner_catalog_empty")) {
+      nextWarnings.push("partner_catalog_empty");
+    }
+  }
+  return {
+    ok: true,
+    source: "partner-approved",
+    provider: "partner-approved",
+    count: stays.length,
+    stays,
+    warnings: nextWarnings,
+  };
+}
+
+function _buildApprovedLocalHotelsPayload({ query, warnings = [] } = {}) {
+  const seedStays = _publicHotelsApprovedLocalSeed();
+  const filtered = seedStays.filter((stay) => _publicHotelMatchesQuery(stay, query));
+  const stays = filtered.map((stay) => _mapPublicHotelStayToResponse(stay));
+  return {
+    ok: true,
+    source: "approved-local",
+    provider: "approved-local",
+    count: stays.length,
+    stays,
+    warnings: Array.isArray(warnings) ? warnings : [],
+  };
+}
+
 function _mapPublicHotelStayToResponse(stay) {
   const rating =
     stay?.rating == null || stay?.rating === ""
@@ -21145,12 +21216,12 @@ function _mapPublicHotelStayToResponse(stay) {
     country: String(stay?.country ?? "").trim(),
     lat: Number(stay?.lat),
     lng: Number(stay?.lng),
-    image_url: null,
+    image_url: _publicHotelResponseImageUrl(stay?.image_url),
     image_ref: stay?.image_ref ? String(stay.image_ref).trim() : null,
     rating_label: rating,
     price_label: stay?.price_hint ? String(stay.price_hint).trim() : null,
     availability_label: null,
-    external_url: null,
+    external_url: stay?.external_url ? String(stay.external_url).trim() : null,
     source: String(stay?.source ?? "approved_local").trim() || "approved_local",
     is_real_approved: stay?.is_real_approved === true,
   };
@@ -21160,30 +21231,23 @@ function _buildPublicHotelsSearchPayload({ query } = {}) {
   const source = String(query?.source ?? "approved-local").trim() || "approved-local";
   const warnings = Array.isArray(query?.warnings) ? [...query.warnings] : [];
 
-  if (source !== "approved-local") {
-    if (!warnings.includes("unsupported_source")) {
-      warnings.push("unsupported_source");
-    }
-    return {
-      ok: true,
-      source,
-      provider: source,
-      count: 0,
-      stays: [],
-      warnings,
-    };
+  if (source === "approved-local") {
+    return _buildApprovedLocalHotelsPayload({ query, warnings });
   }
 
-  const seedStays = _publicHotelsApprovedLocalSeed();
-  const filtered = seedStays.filter((stay) => _publicHotelMatchesQuery(stay, query));
-  const stays = filtered.map((stay) => _mapPublicHotelStayToResponse(stay));
+  if (source === "partner-approved") {
+    return _buildPartnerApprovedHotelsPayload({ query, warnings });
+  }
 
+  if (!warnings.includes("unsupported_source")) {
+    warnings.push("unsupported_source");
+  }
   return {
     ok: true,
-    source: "approved-local",
-    provider: "approved-local",
-    count: stays.length,
-    stays,
+    source,
+    provider: source,
+    count: 0,
+    stays: [],
     warnings,
   };
 }

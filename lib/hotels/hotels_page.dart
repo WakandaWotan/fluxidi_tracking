@@ -124,6 +124,7 @@ class _HotelsPageState extends State<HotelsPage> {
 
   // TODO(HOTELS-REMOTE): Add pull-to-refresh/provider switch once real provider
   // adapters exist.
+  // TODO(HOTELS-PARTNER): Switch source to partner-approved once catalog has rows.
   Future<void> _refreshRemoteStaysIfNeeded() async {
     if (widget.stays != null) return;
     try {
@@ -357,17 +358,26 @@ class _HotelsPageState extends State<HotelsPage> {
     return parsed.scheme == 'http' || parsed.scheme == 'https';
   }
 
-  bool _isApprovedCustomerFacingStay(HotelStay stay) {
-    if (!stay.isRealApproved) return false;
-    final imageRef = stay.imageRef.trim();
-    if (imageRef.startsWith('seed:')) return false;
+  /// True when a specific hotel/B&B card has a real approved photo, not a
+  /// generic Fluxidi asset placeholder.
+  bool _hasRealHotelVisual(HotelStay stay) {
     final imageUrl = (stay.imageUrl ?? '').trim();
     if (imageUrl.isNotEmpty && _isApprovedImageUrl(imageUrl)) return true;
-    if (imageRef.startsWith('approved_asset:')) {
-      final pathSuffix = imageRef.substring('approved_asset:'.length).trim();
+    final imageRef = stay.imageRef.trim();
+    // TODO(HOTELS-VISUAL): Partner-supplied approved hotel photos use this ref.
+    if (imageRef.startsWith('partner_approved:')) {
+      final pathSuffix = imageRef.substring('partner_approved:'.length).trim();
       return pathSuffix.isNotEmpty;
     }
     return false;
+  }
+
+  bool _isApprovedCustomerFacingStay(HotelStay stay) {
+    if (!stay.isRealApproved) return false;
+    if (stay.source == 'discovery') return false;
+    final imageRef = stay.imageRef.trim();
+    if (imageRef.startsWith('seed:')) return false;
+    return _hasRealHotelVisual(stay);
   }
 
   String _approvedAssetPath(HotelStay stay) {
@@ -1184,7 +1194,8 @@ class _HotelsPageState extends State<HotelsPage> {
   @override
   Widget build(BuildContext context) {
     final stays = _visibleStays;
-    // TODO(H1-F): Real customer cards require provider API/widget or partner-approved photos.
+    // TODO(HOTELS-VISUAL): Native hotel cards require provider/API hotel photos
+    // or partner-supplied approved images.
     final approvedRealStays = stays
         .where(_isApprovedCustomerFacingStay)
         .toList(growable: false);
