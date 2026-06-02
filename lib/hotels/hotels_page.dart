@@ -1225,20 +1225,6 @@ class _HotelsPageState extends State<HotelsPage> {
             ),
           ),
           _buildSavedStaysHeaderShortcut(showLabel: showSavedLabel),
-          const SizedBox(width: 2),
-          IconButton(
-            onPressed: _openFiltersSheet,
-            icon: Icon(Icons.tune_rounded, size: 18, color: _gold),
-            visualDensity: const VisualDensity(horizontal: -3, vertical: -3),
-            constraints: const BoxConstraints(minWidth: 34, minHeight: 34),
-            splashRadius: 18,
-            tooltip: _t(
-              nl: 'Filters',
-              en: 'Filters',
-              fr: 'Filtres',
-              es: 'Filtros',
-            ),
-          ),
         ],
       ),
     );
