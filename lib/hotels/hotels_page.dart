@@ -77,6 +77,10 @@ class _HotelsPageState extends State<HotelsPage> {
   );
   static const String _allKey = 'all';
   static const String _stay22Aid = 'fluxidi';
+  static const String _stay22CampaignHotelsOverview = 'fluxidi_hotels_overview';
+  static const String _stay22CampaignHotelsStayDetail =
+      'fluxidi_hotels_stay_detail';
+  static const String _stay22CampaignAirportToStay = 'fluxidi_airport_to_stay';
 
   static const _remoteHotelDataSource = RemoteHotelDataSource();
   static const _localApprovedHotelDataSource = LocalApprovedHotelDataSource();
@@ -280,6 +284,7 @@ class _HotelsPageState extends State<HotelsPage> {
       lat: 50.7655,
       lng: 3.6231,
       provider: 'fluxidi-discovery',
+      providerType: HotelStayProviderType.external,
       source: 'discovery',
       sourceId: 'discovery-vlaamse-ardennen',
     ),
@@ -297,6 +302,7 @@ class _HotelsPageState extends State<HotelsPage> {
       lat: 51.0543,
       lng: 3.7174,
       provider: 'fluxidi-discovery',
+      providerType: HotelStayProviderType.external,
       source: 'discovery',
       sourceId: 'discovery-boutique-gent',
     ),
@@ -314,6 +320,7 @@ class _HotelsPageState extends State<HotelsPage> {
       lat: 50.9014,
       lng: 4.4844,
       provider: 'fluxidi-discovery',
+      providerType: HotelStayProviderType.external,
       source: 'discovery',
       sourceId: 'discovery-brussels-airport',
     ),
@@ -331,6 +338,7 @@ class _HotelsPageState extends State<HotelsPage> {
       lat: 51.2093,
       lng: 3.2247,
       provider: 'fluxidi-discovery',
+      providerType: HotelStayProviderType.external,
       source: 'discovery',
       sourceId: 'discovery-city-brugge',
     ),
@@ -347,6 +355,7 @@ class _HotelsPageState extends State<HotelsPage> {
       lat: 51.2301,
       lng: 2.9196,
       provider: 'fluxidi-discovery',
+      providerType: HotelStayProviderType.external,
       source: 'discovery',
       sourceId: 'discovery-coast-stays',
     ),
@@ -737,6 +746,27 @@ class _HotelsPageState extends State<HotelsPage> {
     return _t(nl: 'België', en: 'Belgium', fr: 'Belgique', es: 'Bélgica');
   }
 
+  String _stay22CampaignForHotels({HotelStay? stay, String? campaign}) {
+    final explicit = (campaign ?? '').trim();
+    if (explicit.isNotEmpty) return explicit;
+    if (stay == null) return _stay22CampaignHotelsOverview;
+    if (stay.id == 'discovery-brussels-airport' ||
+        stay.sourceId == 'discovery-brussels-airport') {
+      return _stay22CampaignAirportToStay;
+    }
+    if (stay.source == 'discovery') return _stay22CampaignHotelsOverview;
+    return _stay22CampaignHotelsStayDetail;
+  }
+
+  bool _hasStayCoordinates(HotelStay stay) {
+    final lat = stay.latitude ?? stay.lat;
+    final lng = stay.longitude ?? stay.lng;
+    if (!lat.isFinite || !lng.isFinite) return false;
+    if (lat < -90 || lat > 90) return false;
+    if (lng < -180 || lng > 180) return false;
+    return true;
+  }
+
   Uri _hotelProviderSearchUri({
     required _HotelExternalProvider provider,
     HotelStay? stay,
@@ -744,13 +774,26 @@ class _HotelsPageState extends State<HotelsPage> {
     String? campaign,
   }) {
     final resolvedQuery = _hotelExternalSearchQuery(stay: stay, query: query);
-    final resolvedCampaign = (campaign ?? '').trim().isNotEmpty
-        ? campaign!.trim()
-        : (stay == null ? 'fluxidi_hotels_discovery' : 'fluxidi_hotels_detail');
+    final resolvedCampaign = _stay22CampaignForHotels(
+      stay: stay,
+      campaign: campaign,
+    );
     switch (provider) {
       case _HotelExternalProvider.stay22Allez:
-        // TODO(H1-F): Verify exact Stay22 AID from the Stay22 Hub before production rollout.
-        // TODO(H1-F): Stay22 Map can later power event/venue accommodation map surfaces.
+        // TODO(HOTELS-PROVIDER): Move Stay22 deeplink generation server-side when
+        // worker/provider adapters supply configured externalAvailabilityUrl values.
+        if (stay != null && _hasStayCoordinates(stay)) {
+          final lat = stay.latitude ?? stay.lat;
+          final lng = stay.longitude ?? stay.lng;
+          return Uri.https('www.stay22.com', '/embed/gm', <String, String>{
+            'aid': _stay22Aid,
+            'campaign': resolvedCampaign,
+            'product_medium': 'apps',
+            if (resolvedQuery.isNotEmpty) 'address': resolvedQuery,
+            'lat': lat.toStringAsFixed(6),
+            'lng': lng.toStringAsFixed(6),
+          });
+        }
         return Uri.https('www.stay22.com', '/allez', <String, String>{
           'aid': _stay22Aid,
           'address': resolvedQuery,
@@ -778,10 +821,8 @@ class _HotelsPageState extends State<HotelsPage> {
     String? query,
     String? campaign,
   }) {
-    // TODO(H1-F): Verify exact customer-facing Stay22 deep-link pattern/AID from Hub.
-    // Until verified, do not route customers to /allez generator-style links.
     return _hotelProviderSearchUri(
-      provider: _HotelExternalProvider.bookingComFallback,
+      provider: _HotelExternalProvider.stay22Allez,
       stay: stay,
       query: query,
       campaign: campaign,
@@ -793,6 +834,32 @@ class _HotelsPageState extends State<HotelsPage> {
     String? query,
     String? campaign,
   }) async {
+    // TODO(HOTELS-PROVIDER): Prefer server-supplied externalAvailabilityUrl / affiliate
+    // deeplinks when present; never hardcode Expedia or invent affiliate URLs in Flutter.
+    final configuredUrl = stay?.effectiveBookingUrl;
+    if (configuredUrl != null) {
+      final directUri = Uri.tryParse(configuredUrl);
+      if (directUri != null &&
+          directUri.hasScheme &&
+          (directUri.scheme == 'http' || directUri.scheme == 'https')) {
+        final opened = await launchUrl(
+          directUri,
+          mode: LaunchMode.externalApplication,
+        );
+        if (opened) return;
+        if (!mounted) return;
+        _showThemedSnackBar(
+          _t(
+            nl: 'Kon externe beschikbaarheid niet openen.',
+            en: 'Could not open external availability.',
+            fr: 'Impossible d’ouvrir la disponibilité externe.',
+            es: 'No se pudo abrir la disponibilidad externa.',
+          ),
+        );
+        return;
+      }
+    }
+
     final primaryUri = _hotelExternalAvailabilityUri(
       stay: stay,
       query: query,
@@ -1104,12 +1171,7 @@ class _HotelsPageState extends State<HotelsPage> {
             _onAirportTransferTap(stay);
           },
           onTaxiTap: () => _onTaxiCtaTap(stay),
-          onProviderSearchTap: () => _openExternalHotelSearch(
-            stay: stay,
-            campaign: stay.source == 'discovery'
-                ? 'fluxidi_hotels_discovery_detail'
-                : 'fluxidi_hotels_real_stay_detail',
-          ),
+          onProviderSearchTap: () => _openExternalHotelSearch(stay: stay),
           externalAvailabilityLabel: _externalAvailabilityLabel,
         ),
       ),
@@ -2356,9 +2418,7 @@ class _HotelsPageState extends State<HotelsPage> {
           SizedBox(
             width: double.infinity,
             child: OutlinedButton.icon(
-              onPressed: () => _openExternalHotelSearch(
-                campaign: 'fluxidi_hotels_discovery',
-              ),
+              onPressed: () => _openExternalHotelSearch(),
               style: OutlinedButton.styleFrom(
                 foregroundColor: _textPrimary,
                 side: BorderSide(color: _gold.withOpacity(0.42)),
@@ -2418,6 +2478,17 @@ class _HotelsPageState extends State<HotelsPage> {
     );
   }
 
+  String _stayProviderDisplayLabel(HotelStay stay) {
+    return stay.displayProviderLabel(_languageCode);
+  }
+
+  bool _shouldShowStayProviderLabel(HotelStay stay) {
+    if (stay.source == 'discovery') return false;
+    if (!stay.isRealApproved) return false;
+    return stay.providerType == HotelStayProviderType.localApproved ||
+        (stay.providerLabel?.trim().isNotEmpty ?? false);
+  }
+
   Widget _buildStayCard(HotelStay stay) {
     final premium = _isPremiumStay(stay);
     final displayPrice = _displayPriceHint(stay);
@@ -2427,6 +2498,7 @@ class _HotelsPageState extends State<HotelsPage> {
     final isDiscoveryCard = stay.source == 'discovery';
     final canShowTaxiCta = _canShowStayTaxiCta(stay);
     final isSaved = _isSaved(stay);
+    final showProviderLabel = _shouldShowStayProviderLabel(stay);
     return Material(
       color: Colors.transparent,
       child: InkWell(
@@ -2666,6 +2738,19 @@ class _HotelsPageState extends State<HotelsPage> {
                           fontWeight: FontWeight.w700,
                         ),
                       ),
+                      if (showProviderLabel) ...[
+                        const SizedBox(height: 3),
+                        Text(
+                          _stayProviderDisplayLabel(stay),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: _softText.withOpacity(0.88),
+                            fontSize: 10.4,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
                       const SizedBox(height: 6),
                       Text(
                         isDiscoveryCard
@@ -2960,10 +3045,6 @@ class HotelStayDetailPage extends StatelessWidget {
       fr: 'Points forts',
       es: 'Destacados',
     );
-  }
-
-  String get _providerLabel {
-    return _t(nl: 'Bron', en: 'Source', fr: 'Source', es: 'Fuente');
   }
 
   String get _nearbyEventsLabel {
@@ -3635,7 +3716,7 @@ class HotelStayDetailPage extends StatelessWidget {
                           ],
                           const SizedBox(height: 12),
                           Text(
-                            '$_providerLabel: ${stay.effectiveProvider}',
+                            stay.displayProviderLabel(_languageCode),
                             style: TextStyle(
                               color: _softText.withOpacity(0.95),
                               fontSize: 11.7,

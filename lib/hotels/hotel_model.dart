@@ -1,5 +1,120 @@
 import 'package:fluxidi_tracking/discovery/discovery_models.dart';
 
+// TODO(HOTELS-PROVIDER): Expedia Rapid content/availability will be resolved server-side
+// via Cloudflare Worker — never add API secrets or direct Rapid calls in Flutter.
+// TODO(HOTELS-PROVIDER): Affiliate/deeplink URLs (Booking, Stay22, Travelpayouts) must be
+// supplied server-side or through safe configured links; do not scrape or invent URLs here.
+
+enum HotelStayProviderType {
+  localApproved,
+  expediaRapid,
+  bookingAffiliate,
+  stay22,
+  travelpayouts,
+  external,
+}
+
+class HotelStayProviderLabels {
+  const HotelStayProviderLabels._();
+
+  static String labelFor(HotelStayProviderType type, String languageCode) {
+    switch (type) {
+      case HotelStayProviderType.localApproved:
+        return _t(
+          languageCode,
+          nl: 'Goedgekeurd door Fluxidi',
+          en: 'Fluxidi approved',
+          fr: 'Approuvé par Fluxidi',
+          es: 'Aprobado por Fluxidi',
+        );
+      case HotelStayProviderType.expediaRapid:
+        return _t(
+          languageCode,
+          nl: 'Expedia',
+          en: 'Expedia',
+          fr: 'Expedia',
+          es: 'Expedia',
+        );
+      case HotelStayProviderType.bookingAffiliate:
+        return _t(
+          languageCode,
+          nl: 'Booking.com',
+          en: 'Booking.com',
+          fr: 'Booking.com',
+          es: 'Booking.com',
+        );
+      case HotelStayProviderType.stay22:
+        return _t(
+          languageCode,
+          nl: 'Stay22',
+          en: 'Stay22',
+          fr: 'Stay22',
+          es: 'Stay22',
+        );
+      case HotelStayProviderType.travelpayouts:
+        return _t(
+          languageCode,
+          nl: 'Travelpayouts',
+          en: 'Travelpayouts',
+          fr: 'Travelpayouts',
+          es: 'Travelpayouts',
+        );
+      case HotelStayProviderType.external:
+        return _t(
+          languageCode,
+          nl: 'Extern',
+          en: 'External',
+          fr: 'Externe',
+          es: 'Externo',
+        );
+    }
+  }
+
+  static HotelStayProviderType fromCatalogSource(String? rawSource) {
+    final normalized = (rawSource ?? '').trim().toLowerCase().replaceAll(
+      '_',
+      '-',
+    );
+    switch (normalized) {
+      case 'expedia-rapid':
+        return HotelStayProviderType.expediaRapid;
+      case 'booking-demand':
+      case 'booking-affiliate':
+      case 'booking.com':
+        return HotelStayProviderType.bookingAffiliate;
+      case 'stay22':
+        return HotelStayProviderType.stay22;
+      case 'travelpayouts':
+        return HotelStayProviderType.travelpayouts;
+      case 'partner-approved':
+      case 'approved-local':
+        return HotelStayProviderType.localApproved;
+      default:
+        return HotelStayProviderType.external;
+    }
+  }
+
+  static String _t(
+    String languageCode, {
+    required String nl,
+    required String en,
+    required String fr,
+    required String es,
+  }) {
+    switch (languageCode) {
+      case 'en':
+        return en;
+      case 'fr':
+        return fr;
+      case 'es':
+        return es;
+      case 'nl':
+      default:
+        return nl;
+    }
+  }
+}
+
 class HotelStayType {
   static const String hotel = 'hotel';
   static const String bedAndBreakfast = 'b&b';
@@ -33,6 +148,10 @@ class HotelStay {
     this.websiteUrl,
     this.bookingUrl,
     this.provider,
+    this.providerType = HotelStayProviderType.localApproved,
+    this.providerLabel,
+    this.externalAvailabilityUrl,
+    this.externalProviderReference,
     this.externalProviderId,
     this.affiliateTrackingId,
     this.directBookingUrl,
@@ -68,6 +187,10 @@ class HotelStay {
   final String? websiteUrl;
   final String? bookingUrl;
   final String? provider;
+  final HotelStayProviderType providerType;
+  final String? providerLabel;
+  final String? externalAvailabilityUrl;
+  final String? externalProviderReference;
   final String? externalProviderId;
   final String? affiliateTrackingId;
   final String? directBookingUrl;
@@ -83,6 +206,9 @@ class HotelStay {
   final bool isRealApproved;
 
   String? get effectiveBookingUrl {
+    final directAvailability = _normalizeHttpUrl(externalAvailabilityUrl);
+    if (directAvailability != null) return directAvailability;
+
     // TODO(H1-F): Support provider-built deep links
     // (e.g. Booking.com affiliate and future Demand API).
     final candidates = <String?>[
@@ -92,10 +218,36 @@ class HotelStay {
       websiteUrl,
     ];
     for (final candidate in candidates) {
-      final trimmed = candidate?.trim();
-      if (trimmed != null && trimmed.isNotEmpty) return trimmed;
+      final normalized = _normalizeHttpUrl(candidate);
+      if (normalized != null) return normalized;
     }
     return null;
+  }
+
+  String? get effectiveExternalProviderReference {
+    final explicit = externalProviderReference?.trim();
+    if (explicit != null && explicit.isNotEmpty) return explicit;
+    final legacy = externalProviderId?.trim();
+    if (legacy != null && legacy.isNotEmpty) return legacy;
+    final sourceRef = sourceId?.trim();
+    if (sourceRef != null && sourceRef.isNotEmpty) return sourceRef;
+    return null;
+  }
+
+  String displayProviderLabel(String languageCode) {
+    final custom = providerLabel?.trim();
+    if (custom != null && custom.isNotEmpty) return custom;
+    return HotelStayProviderLabels.labelFor(providerType, languageCode);
+  }
+
+  static String? _normalizeHttpUrl(String? raw) {
+    final trimmed = raw?.trim();
+    if (trimmed == null || trimmed.isEmpty) return null;
+    final uri = Uri.tryParse(trimmed);
+    if (uri == null || !uri.hasScheme) return null;
+    final scheme = uri.scheme.toLowerCase();
+    if (scheme != 'http' && scheme != 'https') return null;
+    return trimmed;
   }
 
   String get effectiveProvider {
@@ -126,9 +278,7 @@ class HotelStay {
       region: region,
       country: country,
       provider: effectiveProvider,
-      providerId: externalProviderId?.trim().isNotEmpty == true
-          ? externalProviderId!.trim()
-          : (sourceId?.trim().isNotEmpty == true ? sourceId!.trim() : id),
+      providerId: effectiveExternalProviderReference ?? id,
       tenantId: tenantId,
       companyId: companyId,
     );

@@ -161,6 +161,9 @@ HotelStay? hotelStayFromPublicHotelJson(Map<String, dynamic> json) {
     return null;
   }
 
+  final catalogSource = provider ?? source ?? 'approved-local';
+  final providerType = HotelStayProviderLabels.fromCatalogSource(catalogSource);
+
   final lat = _readDouble(json, const <String>['lat', 'latitude']);
   final lng = _readDouble(json, const <String>['lng', 'longitude']);
   if (lat == null || lng == null) return null;
@@ -185,6 +188,8 @@ HotelStay? hotelStayFromPublicHotelJson(Map<String, dynamic> json) {
   final externalUrl = _readString(json, const <String>[
     'external_url',
     'externalUrl',
+    'external_availability_url',
+    'externalAvailabilityUrl',
   ]);
   final priceLabel = _readString(json, const <String>[
     'price_label',
@@ -219,12 +224,15 @@ HotelStay? hotelStayFromPublicHotelJson(Map<String, dynamic> json) {
     latitude: lat,
     longitude: lng,
     imageUrl: imageUrl,
-    provider: provider ?? 'approved-local',
+    provider: catalogSource,
+    providerType: providerType,
+    externalProviderReference: providerId,
     externalProviderId: providerId,
     source: (source ?? 'approved_local').replaceAll('-', '_'),
     sourceId: providerId ?? id,
     priceHint: priceLabel,
     rating: rating,
+    externalAvailabilityUrl: externalUrl,
     preferredBookingUrl: externalUrl,
     isRealApproved: true,
   );
