@@ -512,19 +512,19 @@ class _HotelsPageState extends State<HotelsPage> {
 
   String get _viewRealAccommodationsLabel {
     return _t(
-      nl: 'Bekijk echte accommodaties',
-      en: 'View real accommodations',
-      fr: 'Voir les hébergements réels',
-      es: 'Ver alojamientos reales',
+      nl: 'Bekijk prijzen extern',
+      en: 'Check prices externally',
+      fr: 'Voir les prix externes',
+      es: 'Ver precios externos',
     );
   }
 
   String get _stay22AvailabilitySubtitle {
     return _t(
-      nl: 'Open live verblijven en prijzen via Stay22. Booking.com volgt na goedkeuring.',
-      en: 'Open live stays and prices via Stay22. Booking.com follows after approval.',
-      fr: 'Ouvrez les hébergements et prix actuels via Stay22. Booking.com suivra après approbation.',
-      es: 'Abre alojamientos y precios actuales vía Stay22. Booking.com seguirá tras la aprobación.',
+      nl: 'Hotelkaarten worden native getoond. Prijzen en beschikbaarheid openen extern via Stay22.',
+      en: 'Hotel cards are shown natively. Prices and availability open externally via Stay22.',
+      fr: 'Les fiches hôtels sont affichées nativement. Les prix et disponibilités s’ouvrent via Stay22.',
+      es: 'Las fichas de hotel se muestran de forma nativa. Los precios y la disponibilidad se abren vía Stay22.',
     );
   }
 
@@ -557,19 +557,19 @@ class _HotelsPageState extends State<HotelsPage> {
 
   String get _discoveryRegionCardDescription {
     return _t(
-      nl: 'Geen hotelinventaris — open live accommodaties via Stay22 voor deze regio.',
-      en: 'Not hotel inventory — open live accommodations via Stay22 for this region.',
-      fr: 'Pas d’inventaire hôtelier — ouvrez les hébergements live via Stay22 pour cette région.',
-      es: 'No es inventario hotelero — abre alojamientos en vivo vía Stay22 para esta región.',
+      nl: 'Geen prijsinventaris — bekijk prijzen en beschikbaarheid extern via Stay22 voor deze regio.',
+      en: 'No price inventory — check prices and availability externally via Stay22 for this region.',
+      fr: 'Pas d’inventaire de prix — consultez les prix et disponibilités via Stay22 pour cette région.',
+      es: 'Sin inventario de precios — consulta precios y disponibilidad vía Stay22 para esta región.',
     );
   }
 
   String get _nativeProviderPendingNotice {
     return _t(
-      nl: 'Native hotelkaarten wachten op een goedgekeurde provider. Live verblijven zijn beschikbaar via Stay22.',
-      en: 'Native hotel cards are waiting for an approved provider. Live stays are available via Stay22.',
-      fr: 'Les fiches hôtels natives attendent un fournisseur approuvé. Les hébergements live sont disponibles via Stay22.',
-      es: 'Las fichas nativas de hotel esperan un proveedor aprobado. Los alojamientos en vivo están disponibles vía Stay22.',
+      nl: 'Native hotelkaarten zijn beschikbaar waar ondersteund. Prijzen en beschikbaarheid openen extern via Stay22.',
+      en: 'Native hotel cards are available where supported. Prices and availability open externally via Stay22.',
+      fr: 'Les fiches hôtels natives sont disponibles lorsque prises en charge. Les prix et disponibilités s’ouvrent via Stay22.',
+      es: 'Las fichas nativas de hotel están disponibles cuando son compatibles. Los precios y la disponibilidad se abren vía Stay22.',
     );
   }
 
@@ -3391,19 +3391,19 @@ class HotelStayDetailPage extends StatelessWidget {
 
   String get _discoveryRegionCardDescription {
     return _t(
-      nl: 'Geen hotelinventaris — open live accommodaties via Stay22 voor deze regio.',
-      en: 'Not hotel inventory — open live accommodations via Stay22 for this region.',
-      fr: 'Pas d’inventaire hôtelier — ouvrez les hébergements live via Stay22 pour cette région.',
-      es: 'No es inventario hotelero — abre alojamientos en vivo vía Stay22 para esta región.',
+      nl: 'Geen prijsinventaris — bekijk prijzen en beschikbaarheid extern via Stay22 voor deze regio.',
+      en: 'No price inventory — check prices and availability externally via Stay22 for this region.',
+      fr: 'Pas d’inventaire de prix — consultez les prix et disponibilités via Stay22 pour cette région.',
+      es: 'Sin inventario de precios — consulta precios y disponibilidad vía Stay22 para esta región.',
     );
   }
 
   String get _stay22AvailabilitySubtitle {
     return _t(
-      nl: 'Open live verblijven en prijzen via Stay22. Booking.com volgt na goedkeuring.',
-      en: 'Open live stays and prices via Stay22. Booking.com follows after approval.',
-      fr: 'Ouvrez les hébergements et prix actuels via Stay22. Booking.com suivra après approbation.',
-      es: 'Abre alojamientos y precios actuales vía Stay22. Booking.com seguirá tras la aprobación.',
+      nl: 'Hotelkaarten worden native getoond. Prijzen en beschikbaarheid openen extern via Stay22.',
+      en: 'Hotel cards are shown natively. Prices and availability open externally via Stay22.',
+      fr: 'Les fiches hôtels sont affichées nativement. Les prix et disponibilités s’ouvrent via Stay22.',
+      es: 'Las fichas de hotel se muestran de forma nativa. Los precios y la disponibilidad se abren vía Stay22.',
     );
   }
 
