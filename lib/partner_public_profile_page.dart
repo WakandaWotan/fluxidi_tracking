@@ -13,6 +13,8 @@ import 'customer_profile_store.dart';
 import 'customer_session_store.dart';
 import 'customer_theme_palette.dart';
 import 'customer_theme_store.dart';
+import 'payment/payment_method_catalog.dart';
+import 'payment/payment_method_resolver.dart';
 
 class PartnerPublicProfilePage extends StatefulWidget {
   final String partnerId;
@@ -914,6 +916,8 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
         return 'iDEAL';
       case 'cartes_bancaires':
         return 'Carte Bancaire / CB';
+      case 'bizum':
+        return 'Bizum';
       case 'card_payment':
         return _t(
           nl: 'Kaartbetaling',
@@ -946,16 +950,70 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
     }
   }
 
-  String _normalizePublicPaymentMethodId(String id) {
-    final raw = id.trim().toLowerCase();
-    switch (raw) {
-      case 'qr':
-        return 'qr_code';
-      case 'online_payments':
-        return 'online_payment';
-      default:
-        return raw;
+  String _normalizePublicPaymentMethodId(String id) =>
+      normalizePaymentMethodId(id);
+
+  String _partnerCountryCodeForPaymentResolver(Map<String, dynamic> profile) {
+    final explicit = normalizeCountryCode(
+      _profileTextAny(profile, const [
+        'country',
+        'country_code',
+        'countryCode',
+      ]),
+    );
+    if (explicit.isNotEmpty &&
+        PaymentCountryCodes.supported.contains(explicit)) {
+      return explicit == PaymentCountryCodes.unitedKingdom
+          ? PaymentCountryCodes.greatBritain
+          : explicit;
     }
+    final coverage = _profileMap(profile['coverage']);
+    final fromCoverage = normalizeCountryCode(
+      _profileTextAny(coverage, const [
+        'country',
+        'country_code',
+        'countryCode',
+      ]),
+    );
+    if (fromCoverage.isNotEmpty &&
+        PaymentCountryCodes.supported.contains(fromCoverage)) {
+      return fromCoverage == PaymentCountryCodes.unitedKingdom
+          ? PaymentCountryCodes.greatBritain
+          : fromCoverage;
+    }
+    final postcodes = <String>[
+      ..._profileTextListAny(coverage, const ['postcodes']),
+      _profileTextAny(coverage, const ['primary_postcode', 'primaryPostcode']),
+    ];
+    final inferred = _inferCountryCodeFromPostcodeTokens(postcodes);
+    if (inferred.isNotEmpty) return inferred;
+    return PaymentCountryCodes.belgium;
+  }
+
+  String _inferCountryCodeFromPostcodeTokens(Iterable<String> postcodes) {
+    for (final raw in postcodes) {
+      final token = raw.trim().toUpperCase().replaceAll(' ', '');
+      if (token.isEmpty) continue;
+      if (RegExp(r'^\d{4}[A-Z]{2}$').hasMatch(token)) {
+        return PaymentCountryCodes.netherlands;
+      }
+      if (RegExp(r'^[A-Z]{1,2}\d').hasMatch(token)) {
+        return PaymentCountryCodes.greatBritain;
+      }
+    }
+    return '';
+  }
+
+  List<String> _resolvedPublicPaymentMethods(
+    List<String> methods,
+    String countryCode,
+  ) {
+    final known = filterKnownPaymentMethodIds(methods);
+    if (known.isEmpty) return const <String>[];
+    return PaymentMethodResolver.reorderByCountryProfile(
+      countryCode: countryCode,
+      candidateIds: known,
+    );
   }
 
   String? _paymentOptionAssetPath(String id) {
@@ -967,6 +1025,7 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
       case 'ideal':
       case 'tikkie':
       case 'cartes_bancaires':
+      case 'bizum':
       case 'card_payment':
       case 'apple_pay':
       case 'google_pay':
@@ -1032,18 +1091,6 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
     );
   }
 
-  List<String> _normalizedPublicPaymentMethods(List<String> methods) {
-    final seen = <String>{};
-    final out = <String>[];
-    for (final method in methods) {
-      final id = _normalizePublicPaymentMethodId(method);
-      if (id.isEmpty || seen.contains(id)) continue;
-      seen.add(id);
-      out.add(id);
-    }
-    return out;
-  }
-
   @override
   Widget build(BuildContext context) {
     final p = _profileMap(_profile);
@@ -1097,8 +1144,9 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
         : services
               .where((serviceId) => !_isAirportServiceToken(serviceId))
               .toList(growable: false);
-    final paymentMethods = _normalizedPublicPaymentMethods(
+    final paymentMethods = _resolvedPublicPaymentMethods(
       _profileTextListAny(p, const ['payment_methods', 'paymentMethods']),
+      _partnerCountryCodeForPaymentResolver(p),
     );
     final aboutCopy = _resolvedAboutCopy(
       aboutShort: aboutShort,
@@ -1122,6 +1170,7 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
           m == 'google_pay' ||
           m == 'paypal' ||
           m == 'tikkie' ||
+          m == 'bizum' ||
           m == 'bancontact' ||
           m == 'payconiq_wero' ||
           m == 'ideal' ||

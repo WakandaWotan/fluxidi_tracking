@@ -12,6 +12,8 @@ import 'package:fluxidi_tracking/business_theme_palette.dart';
 import 'package:fluxidi_tracking/business_theme_page.dart';
 import 'package:fluxidi_tracking/business_theme_store.dart';
 import 'package:fluxidi_tracking/company_session_store.dart';
+import 'package:fluxidi_tracking/payment/payment_method_catalog.dart';
+import 'package:fluxidi_tracking/payment/payment_method_resolver.dart';
 import 'package:geolocator/geolocator.dart' as geo;
 import 'package:image_picker/image_picker.dart';
 import 'package:http/http.dart' as http;
@@ -60,6 +62,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     'payconiq_wero',
     'ideal',
     'cartes_bancaires',
+    'bizum',
     'card_payment',
     'apple_pay',
     'google_pay',
@@ -1712,9 +1715,9 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
       publicCoverageLat: _publicCoverageLatCtrl.text.trim(),
       publicCoverageLng: _publicCoverageLngCtrl.text.trim(),
       publicServiceRadiusKm: _publicServiceRadiusKmCtrl.text.trim(),
-      publicPaymentOptions: _sanitizePublicPaymentOptionIds(
+      publicPaymentOptions: _orderedPublicPaymentOptionIds(
         _publicPaymentOptionIds,
-      ).toList(growable: false),
+      ),
       publicServiceIds: _publicServicesConfigured
           ? _sanitizePublicServiceIds(_publicServiceIds).toList(growable: false)
           : const <String>[],
@@ -2343,18 +2346,34 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
 
   Set<String> _sanitizePublicPaymentOptionIds(Iterable<String> values) {
     final allowed = _publicPaymentOptionCatalog.toSet();
-    final out = <String>{};
-    for (final value in values) {
-      final raw = value.trim().toLowerCase();
-      final id = switch (raw) {
-        'qr' => 'qr_code',
-        'online_payments' => 'online_payment',
-        _ => raw,
-      };
-      if (id.isEmpty || !allowed.contains(id)) continue;
-      out.add(id);
+    return filterKnownPaymentMethodIds(values).where(allowed.contains).toSet();
+  }
+
+  String _companyCountryCodeForPaymentResolver() {
+    final code = normalizeCountryCode(_backendCountryCtrl.text.trim());
+    if (code.isEmpty) return PaymentCountryCodes.belgium;
+    if (code == PaymentCountryCodes.unitedKingdom) {
+      return PaymentCountryCodes.greatBritain;
     }
-    return out;
+    return PaymentCountryCodes.supported.contains(code)
+        ? code
+        : PaymentCountryCodes.belgium;
+  }
+
+  List<String> _orderedPublicPaymentOptionCatalogForUi() {
+    return PaymentMethodResolver.reorderByCountryProfile(
+      countryCode: _companyCountryCodeForPaymentResolver(),
+      candidateIds: _publicPaymentOptionCatalog,
+    );
+  }
+
+  List<String> _orderedPublicPaymentOptionIds(Iterable<String> values) {
+    final sanitized = _sanitizePublicPaymentOptionIds(values);
+    if (sanitized.isEmpty) return const <String>[];
+    return PaymentMethodResolver.reorderByCountryProfile(
+      countryCode: _companyCountryCodeForPaymentResolver(),
+      candidateIds: sanitized,
+    );
   }
 
   String _publicPaymentOptionLabel(String id) {
@@ -2373,6 +2392,8 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         return 'iDEAL';
       case 'cartes_bancaires':
         return 'Carte Bancaire / CB';
+      case 'bizum':
+        return 'Bizum';
       case 'card_payment':
         return _t(
           nl: 'Kaartbetaling',
@@ -2571,9 +2592,9 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         : (localCompany?.phone.trim() ?? '');
     final onlinePaymentsEnabled = services.contains('online_payments');
     final airportServiceEnabled = services.contains('airport_transfer');
-    final publicPaymentMethods = _sanitizePublicPaymentOptionIds(
+    final publicPaymentMethods = _orderedPublicPaymentOptionIds(
       _publicPaymentOptionIds,
-    ).toList(growable: false);
+    );
     final coverageLat = _tryParsePublicLat(profileForm.publicCoverageLat);
     final coverageLng = _tryParsePublicLng(profileForm.publicCoverageLng);
     final serviceRadiusKm = _tryParsePublicServiceRadiusKm(
@@ -7440,7 +7461,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                     Wrap(
                       spacing: 8,
                       runSpacing: 8,
-                      children: _publicPaymentOptionCatalog
+                      children: _orderedPublicPaymentOptionCatalogForUi()
                           .map((id) {
                             final selected = _publicPaymentOptionIds.contains(
                               id,
