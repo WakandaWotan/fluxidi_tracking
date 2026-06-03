@@ -15,6 +15,8 @@ class HotelStayQuery {
   const HotelStayQuery({
     this.city,
     this.country,
+    this.region,
+    this.searchText,
     this.lat,
     this.lng,
     this.radiusKm,
@@ -23,6 +25,8 @@ class HotelStayQuery {
 
   final String? city;
   final String? country;
+  final String? region;
+  final String? searchText;
   final double? lat;
   final double? lng;
   final double? radiusKm;
@@ -57,6 +61,8 @@ class RemoteHotelDataSource implements HotelDataSource {
       final payload = await fetchPublicHotelSearch(
         city: query.city,
         country: query.country,
+        region: query.region,
+        searchText: query.searchText,
         lat: query.lat,
         lng: query.lng,
         radiusKm: query.radiusKm,
@@ -85,6 +91,11 @@ class RemoteHotelDataSource implements HotelDataSource {
 bool _isSafeApprovedCatalogValue(String? value) {
   final normalized = (value ?? '').trim().toLowerCase().replaceAll('_', '-');
   return normalized == 'approved-local' || normalized == 'partner-approved';
+}
+
+bool _isGooglePlacesCatalogValue(String? value) {
+  final normalized = (value ?? '').trim().toLowerCase().replaceAll('_', '-');
+  return normalized == 'google-places' || normalized == 'places';
 }
 
 bool _readBool(dynamic value) {
@@ -119,6 +130,14 @@ double? _readDouble(Map<String, dynamic> json, List<String> keys) {
   return null;
 }
 
+double? _parseLeadingRating(String? raw) {
+  final text = (raw ?? '').trim();
+  if (text.isEmpty) return null;
+  final match = RegExp(r'(\d+(?:\.\d+)?)').firstMatch(text);
+  if (match == null) return null;
+  return double.tryParse(match.group(1)!);
+}
+
 bool _isApprovedHttpImageUrl(String? value) {
   final trimmed = (value ?? '').trim();
   if (trimmed.isEmpty) return false;
@@ -126,6 +145,16 @@ bool _isApprovedHttpImageUrl(String? value) {
   if (uri == null || !uri.hasScheme) return false;
   final scheme = uri.scheme.toLowerCase();
   return scheme == 'http' || scheme == 'https';
+}
+
+String? _resolvePublicHotelImageUrl(String? raw) {
+  final trimmed = (raw ?? '').trim();
+  if (trimmed.isEmpty) return null;
+  if (trimmed.startsWith('/')) {
+    final base = appConfig.bookingBaseUrl.replaceAll(RegExp(r'/+$'), '');
+    return '$base$trimmed';
+  }
+  return _isApprovedHttpImageUrl(trimmed) ? trimmed : null;
 }
 
 String _normalizeHotelStayType(String? rawType) {
@@ -148,16 +177,23 @@ String _resolvePublicHotelImageRef(Map<String, dynamic> json) {
 
 /// Maps a `/public/hotels/search` stay row to [HotelStay] when customer-safe.
 HotelStay? hotelStayFromPublicHotelJson(Map<String, dynamic> json) {
-  if (!_readBool(json['is_real_approved'])) return null;
-
   final id = _readString(json, const <String>['id']);
   final name = _readString(json, const <String>['name']);
   if (id == null || name == null) return null;
 
   final provider = _readString(json, const <String>['provider']);
   final source = _readString(json, const <String>['source']);
-  if (!_isSafeApprovedCatalogValue(provider) &&
-      !_isSafeApprovedCatalogValue(source)) {
+  final isGooglePlaces =
+      _isGooglePlacesCatalogValue(provider) ||
+      _isGooglePlacesCatalogValue(source);
+
+  if (!isGooglePlaces) {
+    if (!_readBool(json['is_real_approved'])) return null;
+    if (!_isSafeApprovedCatalogValue(provider) &&
+        !_isSafeApprovedCatalogValue(source)) {
+      return null;
+    }
+  } else if (!_readBool(json['is_real_approved'])) {
     return null;
   }
 
@@ -173,11 +209,9 @@ HotelStay? hotelStayFromPublicHotelJson(Map<String, dynamic> json) {
     'image_url',
     'imageUrl',
   ]);
-  final imageUrl = _isApprovedHttpImageUrl(imageUrlRaw) ? imageUrlRaw : null;
+  final imageUrl = _resolvePublicHotelImageUrl(imageUrlRaw);
 
-  // Specific hotel cards require real approved https photos or partner refs.
-  // Generic approved_asset Fluxidi placeholders are not customer-facing visuals.
-  if (imageRef.isEmpty && imageUrl == null) return null;
+  if (!isGooglePlaces && imageRef.isEmpty && imageUrl == null) return null;
 
   final providerId = _readString(json, const <String>[
     'provider_id',
@@ -202,12 +236,29 @@ HotelStay? hotelStayFromPublicHotelJson(Map<String, dynamic> json) {
     'ratingLabel',
     'rating',
   ]);
-  final rating = ratingLabel == null ? null : double.tryParse(ratingLabel);
+  final rating = _parseLeadingRating(ratingLabel);
+  final providerLabel = _readString(json, const <String>[
+    'provider_label',
+    'providerLabel',
+  ]);
+  final availabilityLabel = _readString(json, const <String>[
+    'availability_label',
+    'availabilityLabel',
+  ]);
+  final photoAttribution = _readString(json, const <String>[
+    'photo_attribution',
+    'photoAttribution',
+  ]);
 
   final address = _readString(json, const <String>['address']) ?? '';
   final city = _readString(json, const <String>['city']) ?? '';
   final region = _readString(json, const <String>['region']) ?? '';
   final country = _readString(json, const <String>['country']) ?? '';
+
+  final descriptionParts = <String>[
+    if ((availabilityLabel ?? '').trim().isNotEmpty) availabilityLabel!.trim(),
+    if ((photoAttribution ?? '').trim().isNotEmpty) photoAttribution!.trim(),
+  ];
 
   return HotelStay(
     id: id,
@@ -217,7 +268,7 @@ HotelStay? hotelStayFromPublicHotelJson(Map<String, dynamic> json) {
     region: region,
     country: country,
     address: address,
-    description: '',
+    description: descriptionParts.join(' · '),
     imageRef: imageRef,
     lat: lat,
     lng: lng,
@@ -226,6 +277,7 @@ HotelStay? hotelStayFromPublicHotelJson(Map<String, dynamic> json) {
     imageUrl: imageUrl,
     provider: catalogSource,
     providerType: providerType,
+    providerLabel: providerLabel,
     externalProviderReference: providerId,
     externalProviderId: providerId,
     source: (source ?? 'approved_local').replaceAll('-', '_'),

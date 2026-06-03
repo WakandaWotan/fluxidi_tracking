@@ -11,6 +11,7 @@ enum HotelStayProviderType {
   bookingAffiliate,
   stay22,
   travelpayouts,
+  googlePlaces,
   external,
 }
 
@@ -59,6 +60,14 @@ class HotelStayProviderLabels {
           fr: 'Travelpayouts',
           es: 'Travelpayouts',
         );
+      case HotelStayProviderType.googlePlaces:
+        return _t(
+          languageCode,
+          nl: 'Echte plaatsvermelding',
+          en: 'Real place discovery',
+          fr: 'Découverte de lieu réel',
+          es: 'Descubrimiento de lugar real',
+        );
       case HotelStayProviderType.external:
         return _t(
           languageCode,
@@ -86,6 +95,9 @@ class HotelStayProviderLabels {
         return HotelStayProviderType.stay22;
       case 'travelpayouts':
         return HotelStayProviderType.travelpayouts;
+      case 'google-places':
+      case 'places':
+        return HotelStayProviderType.googlePlaces;
       case 'partner-approved':
       case 'approved-local':
         return HotelStayProviderType.localApproved;

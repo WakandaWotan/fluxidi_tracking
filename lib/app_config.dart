@@ -4537,6 +4537,8 @@ Future<Map<String, dynamic>?> fetchPublicCustomerSessionBootstrap({
 Future<Map<String, dynamic>?> fetchPublicHotelSearch({
   String? city,
   String? country,
+  String? region,
+  String? searchText,
   double? lat,
   double? lng,
   double? radiusKm,
@@ -4547,8 +4549,12 @@ Future<Map<String, dynamic>?> fetchPublicHotelSearch({
   };
   final normalizedCity = (city ?? '').trim();
   final normalizedCountry = (country ?? '').trim();
+  final normalizedRegion = (region ?? '').trim();
+  final normalizedSearchText = (searchText ?? '').trim();
   if (normalizedCity.isNotEmpty) qp['city'] = normalizedCity;
   if (normalizedCountry.isNotEmpty) qp['country'] = normalizedCountry;
+  if (normalizedRegion.isNotEmpty) qp['region'] = normalizedRegion;
+  if (normalizedSearchText.isNotEmpty) qp['q'] = normalizedSearchText;
   if (lat != null && lat.isFinite) qp['lat'] = lat.toStringAsFixed(6);
   if (lng != null && lng.isFinite) qp['lng'] = lng.toStringAsFixed(6);
   if (radiusKm != null && radiusKm.isFinite && radiusKm >= 0) {

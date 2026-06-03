@@ -20,7 +20,6 @@ import '../discovery/discovery_geo.dart';
 import '../discovery/discovery_nearby.dart';
 import '../customer_profile_store.dart';
 import '../nearby_partners_page.dart';
-import 'approved_hotel_data.dart';
 import 'hotel_data_source.dart';
 import 'hotel_geo_taxonomy.dart';
 import 'hotel_model.dart';
@@ -87,7 +86,6 @@ class _HotelsPageState extends State<HotelsPage> {
   static const String _stay22CampaignAirportToStay = 'fluxidi_airport_to_stay';
 
   static const _remoteHotelDataSource = RemoteHotelDataSource();
-  static const _localApprovedHotelDataSource = LocalApprovedHotelDataSource();
 
   late List<HotelStay> _allStays;
   Set<String> _savedStayIds = <String>{};
@@ -96,6 +94,8 @@ class _HotelsPageState extends State<HotelsPage> {
   String _selectedRegionKey = _allKey;
   String _selectedType = _allKey;
   bool _showSavedOnly = false;
+  Timer? _googlePlacesRefreshDebounce;
+  bool _googlePlacesFetchInFlight = false;
 
   String get _languageCode => appConfig.currentLanguage.name;
 
@@ -122,35 +122,75 @@ class _HotelsPageState extends State<HotelsPage> {
   void initState() {
     super.initState();
     customerThemeNotifier.addListener(_onThemeChanged);
-    _allStays = List<HotelStay>.from(widget.stays ?? kApprovedBelgiumHotelData);
+    _allStays = List<HotelStay>.from(widget.stays ?? const <HotelStay>[]);
     _searchController.addListener(_onSearchChanged);
     _loadSavedStayIds();
     if (widget.stays == null) {
-      unawaited(_refreshRemoteStaysIfNeeded());
+      unawaited(_fetchGooglePlacesStays());
     }
   }
 
-  // TODO(HOTELS-REMOTE): Add pull-to-refresh/provider switch once real provider
-  // adapters exist.
-  // TODO(HOTELS-PARTNER): Switch source to partner-approved once catalog has rows.
-  Future<void> _refreshRemoteStaysIfNeeded() async {
-    if (widget.stays != null) return;
+  // Google Places: official place discovery via worker — not booking inventory.
+  HotelStayQuery _buildGooglePlacesQuery() {
+    final searchText = _searchController.text.trim();
+    String? city;
+    String? country;
+    String? region;
+    if (_selectedSettlementKey != _allKey) {
+      for (final option in _settlementOptions) {
+        if (option.value == _selectedSettlementKey) {
+          city = option.label.trim();
+          break;
+        }
+      }
+    }
+    if (_selectedRegionKey != _allKey) {
+      for (final option in _regionOptions) {
+        if (option.value == _selectedRegionKey) {
+          region = option.label.trim();
+          break;
+        }
+      }
+    }
+    if (_selectedCountryCode != _allKey) {
+      for (final option in _countryOptions) {
+        if (option.value == _selectedCountryCode) {
+          country = option.label.trim();
+          break;
+        }
+      }
+    }
+    return HotelStayQuery(
+      source: 'google-places',
+      city: city,
+      country: (country == null || country.isEmpty) ? 'Belgium' : country,
+      region: region,
+      searchText: searchText.isEmpty ? null : searchText,
+    );
+  }
+
+  Future<void> _fetchGooglePlacesStays() async {
+    if (widget.stays != null || _googlePlacesFetchInFlight) return;
+    _googlePlacesFetchInFlight = true;
     try {
-      final remoteStays = await _remoteHotelDataSource.fetchStays(
-        query: const HotelStayQuery(source: 'approved-local'),
+      final stays = await _remoteHotelDataSource.fetchStays(
+        query: _buildGooglePlacesQuery(),
       );
       if (!mounted) return;
-      final trustedStays = remoteStays
-          .where(_isApprovedCustomerFacingStay)
-          .toList(growable: false);
-      if (trustedStays.isEmpty) return;
-      setState(() => _allStays = trustedStays);
+      setState(() => _allStays = stays);
     } catch (_) {
       if (!mounted) return;
-      final localStays = await _localApprovedHotelDataSource.fetchStays();
-      if (!mounted) return;
-      setState(() => _allStays = List<HotelStay>.from(localStays));
+    } finally {
+      _googlePlacesFetchInFlight = false;
     }
+  }
+
+  void _scheduleGooglePlacesRefresh() {
+    if (widget.stays != null) return;
+    _googlePlacesRefreshDebounce?.cancel();
+    _googlePlacesRefreshDebounce = Timer(const Duration(milliseconds: 500), () {
+      unawaited(_fetchGooglePlacesStays());
+    });
   }
 
   void _onThemeChanged() {
@@ -161,6 +201,7 @@ class _HotelsPageState extends State<HotelsPage> {
   @override
   void dispose() {
     customerThemeNotifier.removeListener(_onThemeChanged);
+    _googlePlacesRefreshDebounce?.cancel();
     _searchController
       ..removeListener(_onSearchChanged)
       ..dispose();
@@ -179,6 +220,15 @@ class _HotelsPageState extends State<HotelsPage> {
 
   void _onSearchChanged() {
     setState(() {});
+    _scheduleGooglePlacesRefresh();
+  }
+
+  bool _isGooglePlacesStay(HotelStay stay) {
+    final source = stay.source.replaceAll('_', '-').toLowerCase();
+    final provider = (stay.provider ?? '').replaceAll('_', '-').toLowerCase();
+    return source == 'google-places' ||
+        provider == 'google-places' ||
+        stay.id.startsWith('google_places:');
   }
 
   List<HotelGeoOption> get _settlementOptions {
@@ -388,6 +438,9 @@ class _HotelsPageState extends State<HotelsPage> {
   bool _isApprovedCustomerFacingStay(HotelStay stay) {
     if (!stay.isRealApproved) return false;
     if (stay.source == 'discovery') return false;
+    if (_isGooglePlacesStay(stay)) {
+      return stay.name.trim().isNotEmpty && _hasStayCoordinates(stay);
+    }
     final imageRef = stay.imageRef.trim();
     if (imageRef.startsWith('seed:')) return false;
     return _hasRealHotelVisual(stay);
@@ -1533,6 +1586,7 @@ class _HotelsPageState extends State<HotelsPage> {
       _selectedRegionKey = _allKey;
       _selectedSettlementKey = _allKey;
     });
+    _scheduleGooglePlacesRefresh();
   }
 
   Future<void> _openRegionPicker() async {
@@ -1551,6 +1605,7 @@ class _HotelsPageState extends State<HotelsPage> {
       _selectedRegionKey = selected;
       _selectedSettlementKey = _allKey;
     });
+    _scheduleGooglePlacesRefresh();
   }
 
   Future<void> _openSettlementPicker() async {
@@ -1567,6 +1622,7 @@ class _HotelsPageState extends State<HotelsPage> {
     );
     if (selected == null) return;
     setState(() => _selectedSettlementKey = selected);
+    _scheduleGooglePlacesRefresh();
   }
 
   Future<void> _openTypePicker() async {
@@ -1824,6 +1880,7 @@ class _HotelsPageState extends State<HotelsPage> {
       _selectedSettlementKey = _allKey;
       _selectedType = _allKey;
     });
+    _scheduleGooglePlacesRefresh();
   }
 
   Widget _buildSavedStaysHeaderShortcut({required bool showLabel}) {
@@ -2757,6 +2814,7 @@ class _HotelsPageState extends State<HotelsPage> {
   bool _shouldShowStayProviderLabel(HotelStay stay) {
     if (stay.source == 'discovery') return false;
     if (!stay.isRealApproved) return false;
+    if (_isGooglePlacesStay(stay)) return true;
     return stay.providerType == HotelStayProviderType.localApproved ||
         (stay.providerLabel?.trim().isNotEmpty ?? false);
   }

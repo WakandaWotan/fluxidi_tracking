@@ -17378,7 +17378,20 @@ GET /oauth/callback
           return json({ ok: false, error: "method_not_allowed" }, 405);
         }
         const query = _normalizePublicHotelsSearchQuery(url);
-        return json(await _buildPublicHotelsSearchPayload({ query, env }));
+        return json(
+          await _buildPublicHotelsSearchPayload({
+            query,
+            env,
+            requestUrl: url.toString(),
+          }),
+        );
+      }
+
+      if (url.pathname === "/public/hotels/google-place-photo") {
+        if (request.method !== "GET") {
+          return json({ ok: false, error: "method_not_allowed" }, 405);
+        }
+        return await _handlePublicGooglePlacePhoto(request, url, env);
       }
 
       if (
@@ -21003,6 +21016,10 @@ function _buildPublicEventsSeedPayload({ query, receivedAtUtc, extraWarnings = [
 function _normalizePublicHotelsSearchQuery(url) {
   const cityRaw = String(url?.searchParams?.get("city") ?? "").trim();
   const countryRaw = String(url?.searchParams?.get("country") ?? "").trim();
+  const regionRaw = String(url?.searchParams?.get("region") ?? "").trim();
+  const searchTextRaw = String(
+    url?.searchParams?.get("q") ?? url?.searchParams?.get("query") ?? "",
+  ).trim();
   const latRaw = String(url?.searchParams?.get("lat") ?? "").trim();
   const lngRaw = String(url?.searchParams?.get("lng") ?? "").trim();
   const radiusRaw = String(url?.searchParams?.get("radius_km") ?? "").trim();
@@ -21030,6 +21047,8 @@ function _normalizePublicHotelsSearchQuery(url) {
   return {
     city: cityRaw.slice(0, 120),
     country: countryRaw.slice(0, 80),
+    region: regionRaw.slice(0, 120),
+    searchText: searchTextRaw.slice(0, 200),
     latitude,
     longitude,
     radiusKm,
@@ -21503,6 +21522,331 @@ function _buildBookingComCjHotelsPayload({ query, env, warnings = [] } = {}) {
   return payload;
 }
 
+// Google Places: official place discovery/photos only — not booking inventory, no scraping, no stored photos.
+function _adminGooglePlacesHotelsProviderStatus(env) {
+  const configured = Boolean(safeStr(env?.GOOGLE_PLACES_API_KEY));
+  return {
+    configured,
+    role: "native_place_discovery",
+    status: configured ? "configured" : "provider_not_configured",
+  };
+}
+
+function _googlePlacesApiKeyReady(env) {
+  return Boolean(safeStr(env?.GOOGLE_PLACES_API_KEY));
+}
+
+function _publicHotelsRequestOrigin(requestUrl) {
+  try {
+    return new URL(String(requestUrl || "")).origin;
+  } catch (_) {
+    return "";
+  }
+}
+
+function _sanitizeGooglePlacePhotoName(raw) {
+  const name = String(raw ?? "").trim();
+  if (!/^places\/[\w-]+\/photos\/[\w-]+$/.test(name)) return null;
+  return name;
+}
+
+function _googlePlacesDisplayName(place) {
+  const displayName = place?.displayName;
+  if (typeof displayName === "string") return displayName.trim();
+  if (displayName && typeof displayName.text === "string") {
+    return displayName.text.trim();
+  }
+  return "";
+}
+
+function _googlePlacesRatingLabel(place) {
+  const rating = place?.rating;
+  if (typeof rating !== "number" || !Number.isFinite(rating)) return null;
+  const count = place?.userRatingCount;
+  if (typeof count === "number" && Number.isFinite(count) && count > 0) {
+    return `${rating.toFixed(1)} (${Math.trunc(count)})`;
+  }
+  return rating.toFixed(1);
+}
+
+function _googlePlacesPrimaryPhotoMeta(place) {
+  const photos = Array.isArray(place?.photos) ? place.photos : [];
+  if (!photos.length) return { photoName: null, attribution: null };
+  const photo = photos[0] ?? {};
+  const photoName = String(photo?.name ?? "").trim();
+  const attrs = Array.isArray(photo?.authorAttributions)
+    ? photo.authorAttributions
+    : [];
+  const first = attrs[0] ?? {};
+  const attribution = String(first?.displayName ?? first?.display_name ?? "").trim();
+  return {
+    photoName: photoName || null,
+    attribution: attribution || null,
+  };
+}
+
+function _googlePlacesHotelType(place, query) {
+  const types = Array.isArray(place?.types)
+    ? place.types.map((entry) => String(entry ?? "").toLowerCase())
+    : [];
+  const primary = String(place?.primaryType ?? "").trim().toLowerCase();
+  const all = [...types, primary].filter(Boolean);
+  if (all.some((entry) => entry.includes("bed_and_breakfast") || entry === "bnb")) {
+    return "b&b";
+  }
+  if (all.some((entry) => entry.includes("guest_house") || entry.includes("guesthouse"))) {
+    return "guesthouse";
+  }
+  const searchText = String(query?.searchText ?? "").toLowerCase();
+  if (searchText.includes("bed and breakfast") || searchText.includes("b&b")) {
+    return "b&b";
+  }
+  return "hotel";
+}
+
+function _googlePlacesBuildTextQuery(query) {
+  const explicit = String(query?.searchText ?? "").trim();
+  if (explicit) return explicit.slice(0, 200);
+  const city = String(query?.city ?? "").trim();
+  const region = String(query?.region ?? "").trim();
+  const country = String(query?.country ?? "").trim();
+  if (city && country) return `hotels in ${city}, ${country}`;
+  if (city) return `hotels in ${city}`;
+  if (region && country) return `bed and breakfast in ${region}, ${country}`;
+  if (region) return `hotels in ${region}`;
+  if (country) return `hotels in ${country}`;
+  return "hotels in Belgium";
+}
+
+function _googlePlacesPhotoProxyAbsoluteUrl(origin, photoName) {
+  const safeName = _sanitizeGooglePlacePhotoName(photoName);
+  if (!safeName || !origin) return null;
+  return `${origin}/public/hotels/google-place-photo?photo_name=${encodeURIComponent(safeName)}`;
+}
+
+function _googlePlacesDedupePlaces(places) {
+  const out = [];
+  const seen = new Set();
+  for (const place of Array.isArray(places) ? places : []) {
+    const id = String(place?.id ?? place?.name ?? "").trim();
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    out.push(place);
+  }
+  return out;
+}
+
+async function _googlePlacesSearchNearby({ query, apiKey, fieldMask }) {
+  const latitude = query?.latitude;
+  const longitude = query?.longitude;
+  if (latitude == null || longitude == null) return [];
+  const radiusMeters = Math.max(
+    1000,
+    Math.min(50000, Math.round((query?.radiusKm ?? 25) * 1000)),
+  );
+  const body = {
+    includedTypes: ["hotel", "bed_and_breakfast", "guest_house", "motel", "hostel"],
+    maxResultCount: 20,
+    locationRestriction: {
+      circle: {
+        center: { latitude, longitude },
+        radius: radiusMeters,
+      },
+    },
+  };
+  const res = await fetch("https://places.googleapis.com/v1/places:searchNearby", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Goog-Api-Key": apiKey,
+      "X-Goog-FieldMask": fieldMask,
+    },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) return [];
+  const payload = await res.json().catch(() => null);
+  return Array.isArray(payload?.places) ? payload.places : [];
+}
+
+async function _googlePlacesSearchText({ query, apiKey, fieldMask }) {
+  const textQuery = _googlePlacesBuildTextQuery(query);
+  const body = {
+    textQuery,
+    includedType: "lodging",
+    maxResultCount: 20,
+  };
+  if (query?.latitude != null && query?.longitude != null) {
+    body.locationBias = {
+      circle: {
+        center: { latitude: query.latitude, longitude: query.longitude },
+        radius: Math.max(
+          1000,
+          Math.min(50000, Math.round((query?.radiusKm ?? 25) * 1000)),
+        ),
+      },
+    };
+  }
+  const res = await fetch("https://places.googleapis.com/v1/places:searchText", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Goog-Api-Key": apiKey,
+      "X-Goog-FieldMask": fieldMask,
+    },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) return [];
+  const payload = await res.json().catch(() => null);
+  return Array.isArray(payload?.places) ? payload.places : [];
+}
+
+function _mapGooglePlaceToPublicHotelStay(place, { query, requestUrl } = {}) {
+  const placeResourceId = String(place?.id ?? place?.name ?? "").trim();
+  const providerId = placeResourceId.replace(/^places\//, "");
+  const name = _googlePlacesDisplayName(place);
+  if (!providerId || !name) return null;
+
+  const location = place?.location ?? {};
+  const lat = Number(location?.latitude);
+  const lng = Number(location?.longitude);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+
+  const address = String(place?.formattedAddress ?? "").trim();
+  const city = String(query?.city ?? "").trim();
+  const region = String(query?.region ?? "").trim();
+  const country = String(query?.country ?? "").trim();
+  const { photoName, attribution } = _googlePlacesPrimaryPhotoMeta(place);
+  const origin = _publicHotelsRequestOrigin(requestUrl);
+  const imageUrl = photoName
+    ? _googlePlacesPhotoProxyAbsoluteUrl(origin, photoName)
+    : null;
+
+  return {
+    id: `google_places:${providerId}`,
+    provider: "google-places",
+    provider_id: providerId,
+    provider_label: "Real place discovery",
+    name,
+    type: _googlePlacesHotelType(place, query),
+    address,
+    city,
+    region,
+    country,
+    lat,
+    lng,
+    image_url: imageUrl,
+    image_ref: null,
+    rating_label: _googlePlacesRatingLabel(place),
+    price_label: null,
+    availability_label: "Live place discovery",
+    external_url: null,
+    photo_attribution: attribution,
+    source: "google_places",
+    is_real_approved: true,
+  };
+}
+
+function _buildGooglePlacesNotConfiguredPayload({ warnings = [] } = {}) {
+  const nextWarnings = Array.isArray(warnings) ? [...warnings] : [];
+  if (!nextWarnings.includes("google_places_not_configured")) {
+    nextWarnings.push("google_places_not_configured");
+  }
+  return {
+    ok: true,
+    source: "google-places",
+    provider: "google-places",
+    count: 0,
+    stays: [],
+    warnings: nextWarnings,
+  };
+}
+
+async function _buildGooglePlacesHotelsPayload({
+  query,
+  env,
+  warnings = [],
+  requestUrl = "",
+} = {}) {
+  const nextWarnings = Array.isArray(warnings) ? [...warnings] : [];
+  if (!_googlePlacesApiKeyReady(env)) {
+    return _buildGooglePlacesNotConfiguredPayload({ warnings: nextWarnings });
+  }
+
+  const apiKey = safeStr(env?.GOOGLE_PLACES_API_KEY);
+  const fieldMask =
+    "places.id,places.displayName,places.formattedAddress,places.location,places.rating,places.userRatingCount,places.photos,places.primaryType,places.types";
+
+  try {
+    let places = [];
+    if (query?.latitude != null && query?.longitude != null) {
+      places = await _googlePlacesSearchNearby({ query, apiKey, fieldMask });
+    }
+    if (!places.length) {
+      places = await _googlePlacesSearchText({ query, apiKey, fieldMask });
+    }
+    places = _googlePlacesDedupePlaces(places).slice(0, 20);
+
+    const stays = [];
+    for (const place of places) {
+      const mapped = _mapGooglePlaceToPublicHotelStay(place, { query, requestUrl });
+      if (!mapped) continue;
+      stays.push(_mapPublicHotelStayToResponse(mapped));
+    }
+
+    return {
+      ok: true,
+      source: "google-places",
+      provider: "google-places",
+      count: stays.length,
+      stays,
+      warnings: nextWarnings,
+    };
+  } catch (_) {
+    if (!nextWarnings.includes("google_places_fetch_failed")) {
+      nextWarnings.push("google_places_fetch_failed");
+    }
+    return {
+      ok: true,
+      source: "google-places",
+      provider: "google-places",
+      count: 0,
+      stays: [],
+      warnings: nextWarnings,
+    };
+  }
+}
+
+async function _handlePublicGooglePlacePhoto(_request, url, env) {
+  if (!_googlePlacesApiKeyReady(env)) {
+    return json({ ok: false, error: "google_places_not_configured" }, 503);
+  }
+  const photoName = _sanitizeGooglePlacePhotoName(url.searchParams.get("photo_name"));
+  if (!photoName) {
+    return json({ ok: false, error: "invalid_photo_name" }, 400);
+  }
+  const apiKey = safeStr(env?.GOOGLE_PLACES_API_KEY);
+  const mediaUrl = `https://places.googleapis.com/v1/${photoName}/media?maxHeightPx=600&maxWidthPx=800`;
+  try {
+    const upstream = await fetch(mediaUrl, {
+      headers: { "X-Goog-Api-Key": apiKey },
+      redirect: "follow",
+    });
+    if (!upstream.ok) {
+      return json({ ok: false, error: "photo_unavailable" }, 502);
+    }
+    const contentType = upstream.headers.get("content-type") || "image/jpeg";
+    return new Response(upstream.body, {
+      status: 200,
+      headers: {
+        "Content-Type": contentType,
+        "Cache-Control": "public, max-age=86400",
+      },
+    });
+  } catch (_) {
+    return json({ ok: false, error: "photo_fetch_failed" }, 502);
+  }
+}
+
 function _adminPartnerApprovedProviderStatus(loadResult) {
   const trustedCount = Array.isArray(loadResult?.stays) ? loadResult.stays.length : 0;
   const catalogPresent = Number(loadResult?.rawRowCount || 0) > 0;
@@ -21546,12 +21890,14 @@ async function _buildAdminHotelsProvidersStatusPayload(env) {
     status: "flutter_fallback",
   };
   const bookingComCj = _adminBookingComCjProviderStatus(env);
+  const googlePlacesHotels = _adminGooglePlacesHotelsProviderStatus(env);
 
   const nativeReady =
     expediaRapid.configured === true ||
     partnerApproved.trusted_count > 0 ||
     hotelbeds.configured === true ||
-    amadeusHospitality.configured === true;
+    amadeusHospitality.configured === true ||
+    googlePlacesHotels.configured === true;
 
   const warnings = [];
   for (const warning of loadResult.warnings || []) {
@@ -21576,6 +21922,7 @@ async function _buildAdminHotelsProvidersStatusPayload(env) {
       amadeus_hospitality: amadeusHospitality,
       stay22,
       booking_com_cj: bookingComCj,
+      google_places_hotels: googlePlacesHotels,
     },
     warnings,
   };
@@ -21654,6 +22001,10 @@ function _mapPublicHotelStayToResponse(stay) {
       ? String(stay.availability_label).trim()
       : null,
     external_url: _publicHotelSanitizedExternalUrl(stay?.external_url),
+    provider_label: stay?.provider_label ? String(stay.provider_label).trim() : null,
+    photo_attribution: stay?.photo_attribution
+      ? String(stay.photo_attribution).trim()
+      : null,
     source: String(stay?.source ?? "approved_local").trim() || "approved_local",
     is_real_approved: stay?.is_real_approved === true,
   };
@@ -22158,7 +22509,7 @@ async function _buildNativeHotelsSearchPayload({ query, env, warnings = [] } = {
   });
 }
 
-async function _buildPublicHotelsSearchPayload({ query, env } = {}) {
+async function _buildPublicHotelsSearchPayload({ query, env, requestUrl = "" } = {}) {
   const source = String(query?.source ?? "approved-local").trim() || "approved-local";
   const warnings = Array.isArray(query?.warnings) ? [...query.warnings] : [];
 
@@ -22172,6 +22523,15 @@ async function _buildPublicHotelsSearchPayload({ query, env } = {}) {
 
   if (source === "native") {
     return await _buildNativeHotelsSearchPayload({ query, env, warnings });
+  }
+
+  if (source === "google-places" || source === "places") {
+    return await _buildGooglePlacesHotelsPayload({
+      query,
+      env,
+      warnings,
+      requestUrl,
+    });
   }
 
   if (source === "travelpayouts") {
