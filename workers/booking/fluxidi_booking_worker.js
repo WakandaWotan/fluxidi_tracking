@@ -21636,70 +21636,105 @@ function _googlePlacesDedupePlaces(places) {
   return out;
 }
 
-async function _googlePlacesSearchNearby({ query, apiKey, fieldMask }) {
+function _legacyGooglePlacesNumberOrNull(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function _legacyGooglePlacesMapResultToV1Like(place) {
+  const placeId = safeStr(place?.place_id);
+  const name = safeStr(place?.name);
+  if (!placeId || !name) return null;
+
+  const lat = _legacyGooglePlacesNumberOrNull(place?.geometry?.location?.lat);
+  const lng = _legacyGooglePlacesNumberOrNull(place?.geometry?.location?.lng);
+  const types = Array.isArray(place?.types)
+    ? place.types.map((entry) => safeStr(entry)).filter(Boolean)
+    : ["lodging"];
+
+  return {
+    id: placeId,
+    displayName: { text: name },
+    formattedAddress: safeStr(place?.formatted_address || place?.vicinity),
+    location: lat != null && lng != null ? { latitude: lat, longitude: lng } : undefined,
+    rating: _legacyGooglePlacesNumberOrNull(place?.rating),
+    userRatingCount: _legacyGooglePlacesNumberOrNull(place?.user_ratings_total),
+    primaryType: types[0] || "lodging",
+    types: types.length ? types : ["lodging"],
+    photos: [],
+  };
+}
+
+function _legacyGooglePlacesResultsToV1Like(payload, source) {
+  const status = safeStr(payload?.status);
+  if (status && status !== "OK" && status !== "ZERO_RESULTS") {
+    console.warn("[PUBLIC_HOTELS][GOOGLE_PLACES_LEGACY][STATUS]", JSON.stringify({
+      source,
+      status,
+      error_message: safeStr(payload?.error_message).slice(0, 240),
+    }));
+  }
+
+  if (!Array.isArray(payload?.results)) return [];
+  return payload.results
+    .map((place) => _legacyGooglePlacesMapResultToV1Like(place))
+    .filter(Boolean);
+}
+
+async function _googlePlacesLegacyTextSearch({ query, apiKey }) {
+  const textQuery = _googlePlacesBuildTextQuery(query);
+  const url = new URL("https://maps.googleapis.com/maps/api/place/textsearch/json");
+  url.searchParams.set("query", textQuery);
+  url.searchParams.set("type", "lodging");
+  url.searchParams.set("key", apiKey);
+
+  const res = await fetch(url.toString());
+  if (!res.ok) {
+    console.warn("[PUBLIC_HOTELS][GOOGLE_PLACES_LEGACY][TEXT_HTTP_NOT_OK]", JSON.stringify({
+      status: res.status,
+      statusText: res.statusText,
+    }));
+    return [];
+  }
+
+  const payload = await res.json().catch(() => null);
+  return _legacyGooglePlacesResultsToV1Like(payload, "textsearch");
+}
+
+async function _googlePlacesLegacyNearbySearch({ query, apiKey }) {
   const latitude = query?.latitude;
   const longitude = query?.longitude;
   if (latitude == null || longitude == null) return [];
+
   const radiusMeters = Math.max(
     1000,
     Math.min(50000, Math.round((query?.radiusKm ?? 25) * 1000)),
   );
-  const body = {
-    includedTypes: ["hotel", "bed_and_breakfast", "guest_house", "motel", "hostel"],
-    maxResultCount: 20,
-    locationRestriction: {
-      circle: {
-        center: { latitude, longitude },
-        radius: radiusMeters,
-      },
-    },
-  };
-  const res = await fetch("https://places.googleapis.com/v1/places:searchNearby", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Goog-Api-Key": apiKey,
-      "X-Goog-FieldMask": fieldMask,
-    },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) return [];
-  const payload = await res.json().catch(() => null);
-  return Array.isArray(payload?.places) ? payload.places : [];
-}
 
-async function _googlePlacesSearchText({ query, apiKey, fieldMask }) {
-  const textQuery = _googlePlacesBuildTextQuery(query);
-  const body = {
-    textQuery,
-    includedType: "lodging",
-    maxResultCount: 20,
-  };
-  if (query?.latitude != null && query?.longitude != null) {
-    body.locationBias = {
-      circle: {
-        center: { latitude: query.latitude, longitude: query.longitude },
-        radius: Math.max(
-          1000,
-          Math.min(50000, Math.round((query?.radiusKm ?? 25) * 1000)),
-        ),
-      },
-    };
+  const url = new URL("https://maps.googleapis.com/maps/api/place/nearbysearch/json");
+  url.searchParams.set("location", `${latitude},${longitude}`);
+  url.searchParams.set("radius", String(radiusMeters));
+  url.searchParams.set("type", "lodging");
+  url.searchParams.set("key", apiKey);
+
+  const res = await fetch(url.toString());
+  if (!res.ok) {
+    console.warn("[PUBLIC_HOTELS][GOOGLE_PLACES_LEGACY][NEARBY_HTTP_NOT_OK]", JSON.stringify({
+      status: res.status,
+      statusText: res.statusText,
+    }));
+    return [];
   }
-  const res = await fetch("https://places.googleapis.com/v1/places:searchText", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Goog-Api-Key": apiKey,
-      "X-Goog-FieldMask": fieldMask,
-    },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) return [];
-  const payload = await res.json().catch(() => null);
-  return Array.isArray(payload?.places) ? payload.places : [];
-}
 
+  const payload = await res.json().catch(() => null);
+  return _legacyGooglePlacesResultsToV1Like(payload, "nearbysearch");
+}
+async function _googlePlacesSearchNearby({ query, apiKey, fieldMask }) {
+  return await _googlePlacesLegacyNearbySearch({ query, apiKey });
+}
+async function _googlePlacesSearchText({ query, apiKey, fieldMask }) {
+  return await _googlePlacesLegacyTextSearch({ query, apiKey });
+}
 function _mapGooglePlaceToPublicHotelStay(place, { query, requestUrl } = {}) {
   const placeResourceId = String(place?.id ?? place?.name ?? "").trim();
   const providerId = placeResourceId.replace(/^places\//, "");
