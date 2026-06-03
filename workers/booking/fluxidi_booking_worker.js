@@ -1337,6 +1337,7 @@ const PUBLIC_PAYMENT_OPTION_IDS = new Set([
   "payconiq_wero",
   "ideal",
   "cartes_bancaires",
+  "bizum", // Phase P1C: public partner display/config only (not a Mollie checkout method yet)
   "card_payment",
   "apple_pay",
   "google_pay",
