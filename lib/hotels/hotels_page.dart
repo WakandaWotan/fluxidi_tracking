@@ -25,7 +25,11 @@ import 'hotel_data_source.dart';
 import 'hotel_geo_taxonomy.dart';
 import 'hotel_model.dart';
 
-enum _HotelExternalProvider { stay22Allez, bookingComFallback }
+enum _HotelExternalProvider {
+  stay22Allez,
+  bookingComCjAffiliate,
+  bookingComFallback,
+}
 
 class HotelsPage extends StatefulWidget {
   const HotelsPage({
@@ -809,8 +813,15 @@ class _HotelsPageState extends State<HotelsPage> {
           'campaign': resolvedCampaign,
           'product_medium': 'apps',
         });
+      case _HotelExternalProvider.bookingComCjAffiliate:
+        // Booking.com CJ affiliate/deeplink only — not Demand API, not native inventory, no iframe.
+        final baseUri = Uri.parse(kBookingComCjBaseUrl.trim());
+        final params = Map<String, String>.from(baseUri.queryParameters);
+        if (resolvedQuery.isNotEmpty) params['ss'] = resolvedQuery;
+        params['lang'] = _bookingLanguageCode();
+        return baseUri.replace(queryParameters: params);
       case _HotelExternalProvider.bookingComFallback:
-        // TODO(H1-F): Keep as fallback only; Stay22 is the primary external availability layer.
+        // Legacy launch fallback when Stay22 fails and CJ affiliate URL is not configured.
         return Uri.https(
           'www.booking.com',
           '/searchresults.html',
@@ -830,6 +841,14 @@ class _HotelsPageState extends State<HotelsPage> {
     String? query,
     String? campaign,
   }) {
+    if (kBookingComCjConfigured) {
+      return _hotelProviderSearchUri(
+        provider: _HotelExternalProvider.bookingComCjAffiliate,
+        stay: stay,
+        query: query,
+        campaign: campaign,
+      );
+    }
     return _hotelProviderSearchUri(
       provider: _HotelExternalProvider.stay22Allez,
       stay: stay,
@@ -845,6 +864,7 @@ class _HotelsPageState extends State<HotelsPage> {
   }) async {
     // TODO(HOTELS-PROVIDER): Prefer server-supplied externalAvailabilityUrl / affiliate
     // deeplinks when present; never hardcode Expedia or invent affiliate URLs in Flutter.
+    // Booking.com CJ is affiliate/deeplink only — pending until worker/compile-time URL is set.
     final configuredUrl = stay?.effectiveBookingUrl;
     if (configuredUrl != null) {
       final directUri = Uri.tryParse(configuredUrl);
@@ -879,8 +899,11 @@ class _HotelsPageState extends State<HotelsPage> {
       mode: LaunchMode.externalApplication,
     );
     if (!opened) {
+      final fallbackProvider = kBookingComCjConfigured
+          ? _HotelExternalProvider.stay22Allez
+          : _HotelExternalProvider.bookingComFallback;
       final fallbackUri = _hotelProviderSearchUri(
-        provider: _HotelExternalProvider.bookingComFallback,
+        provider: fallbackProvider,
         stay: stay,
         query: query,
         campaign: campaign,

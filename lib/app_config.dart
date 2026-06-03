@@ -1345,6 +1345,21 @@ const String kMapboxToken = String.fromEnvironment(
   'MAPBOX_TOKEN',
   defaultValue: '',
 );
+// Booking.com CJ affiliate/deeplink only — not Demand API, not native inventory, no iframe.
+// Pending until CJ approves the BENELUX program and BOOKING_COM_CJ_BASE_URL is configured.
+const String kBookingComCjBaseUrl = String.fromEnvironment(
+  'BOOKING_COM_CJ_BASE_URL',
+  defaultValue: '',
+);
+
+bool get kBookingComCjConfigured {
+  final base = kBookingComCjBaseUrl.trim();
+  if (base.isEmpty) return false;
+  final uri = Uri.tryParse(base);
+  if (uri == null || !uri.hasScheme) return false;
+  final scheme = uri.scheme.toLowerCase();
+  return scheme == 'http' || scheme == 'https';
+}
 
 String get kBookingBaseUrl {
   final v = kBookingBaseUrlOverride.trim();

@@ -20991,7 +20991,9 @@ function _buildPublicEventsSeedPayload({ query, receivedAtUtc, extraWarnings = [
   };
 }
 
-// TODO(HOTELS-PROVIDER): Booking.com Demand API adapter
+// Booking.com CJ affiliate/deeplink only — not Demand API, not native inventory, no iframe, no scraping.
+// TODO(HOTELS-PROVIDER-BOOKING-CJ): Set BOOKING_COM_CJ_BASE_URL + BOOKING_COM_CJ_STATUS once CJ approves BENELUX.
+// TODO(HOTELS-PROVIDER): Booking.com Demand API adapter (separate from CJ affiliate/deeplink)
 // TODO(HOTELS-PROVIDER): Stay22 provider/list API adapter if supported
 // TODO(HOTELS-PROVIDER): Expedia Rapid adapter
 // TODO(HOTELS-PROVIDER): Hotelbeds/HBX native inventory adapter
@@ -21423,6 +21425,84 @@ function _adminExpediaRapidProviderStatus(env) {
   };
 }
 
+// Booking.com CJ: affiliate/deeplink handoff only — never Demand API, iframe, scraping, or fake inventory.
+function _adminBookingComCjProviderStatus(env) {
+  const baseUrl = safeStr(env?.BOOKING_COM_CJ_BASE_URL);
+  const enabledRaw = safeStr(env?.BOOKING_COM_CJ_ENABLED, 24).toLowerCase();
+  const statusRaw = safeStr(env?.BOOKING_COM_CJ_STATUS, 64).toLowerCase();
+  const role = "affiliate_deeplink_pending_or_fallback";
+  const explicitlyDisabled = enabledRaw === "false" || enabledRaw === "0";
+  const hasBaseUrl = Boolean(baseUrl);
+
+  if (hasBaseUrl && !explicitlyDisabled) {
+    return {
+      configured: true,
+      role,
+      status: statusRaw === "configured" ? "configured" : "pending_review",
+    };
+  }
+  if (statusRaw === "pending_review") {
+    return { configured: false, role, status: "pending_review" };
+  }
+  return { configured: false, role, status: "provider_not_configured" };
+}
+
+function _bookingComCjAffiliateSearchUrl(query, env) {
+  const baseUrl = safeStr(env?.BOOKING_COM_CJ_BASE_URL);
+  if (!baseUrl) return null;
+  try {
+    const url = new URL(baseUrl);
+    const city = String(query?.city ?? "").trim();
+    const country = String(query?.country ?? "").trim();
+    const searchQuery = [city, country].filter(Boolean).join(", ");
+    if (searchQuery) url.searchParams.set("ss", searchQuery.slice(0, 200));
+    return url.toString();
+  } catch (_) {
+    return null;
+  }
+}
+
+function _buildBookingComCjHotelsPayload({ query, env, warnings = [] } = {}) {
+  const nextWarnings = Array.isArray(warnings) ? [...warnings] : [];
+  const source = "booking-com-cj";
+  const provider = "booking-com-cj";
+  const providerStatus = _adminBookingComCjProviderStatus(env);
+
+  if (!providerStatus.configured || providerStatus.status !== "configured") {
+    if (providerStatus.status === "pending_review") {
+      if (!nextWarnings.includes("booking_com_cj_pending_review")) {
+        nextWarnings.push("booking_com_cj_pending_review");
+      }
+    } else if (!nextWarnings.includes("provider_not_configured")) {
+      nextWarnings.push("provider_not_configured");
+    }
+    return {
+      ok: true,
+      source,
+      provider,
+      count: 0,
+      stays: [],
+      warnings: nextWarnings,
+    };
+  }
+
+  const availabilityExternalUrl = _publicHotelSanitizedExternalUrl(
+    _bookingComCjAffiliateSearchUrl(query, env),
+  );
+  const payload = {
+    ok: true,
+    source,
+    provider,
+    count: 0,
+    stays: [],
+    warnings: nextWarnings,
+  };
+  if (availabilityExternalUrl) {
+    payload.availability_external_url = availabilityExternalUrl;
+  }
+  return payload;
+}
+
 function _adminPartnerApprovedProviderStatus(loadResult) {
   const trustedCount = Array.isArray(loadResult?.stays) ? loadResult.stays.length : 0;
   const catalogPresent = Number(loadResult?.rawRowCount || 0) > 0;
@@ -21465,6 +21545,7 @@ async function _buildAdminHotelsProvidersStatusPayload(env) {
     role: "affiliate_deeplink_fallback",
     status: "flutter_fallback",
   };
+  const bookingComCj = _adminBookingComCjProviderStatus(env);
 
   const nativeReady =
     expediaRapid.configured === true ||
@@ -21494,6 +21575,7 @@ async function _buildAdminHotelsProvidersStatusPayload(env) {
       hotelbeds,
       amadeus_hospitality: amadeusHospitality,
       stay22,
+      booking_com_cj: bookingComCj,
     },
     warnings,
   };
@@ -22114,6 +22196,14 @@ async function _buildPublicHotelsSearchPayload({ query, env } = {}) {
 
   if (source === "booking-demand") {
     return _buildBookingDemandHotelsPayload({ query, env, warnings });
+  }
+
+  if (
+    source === "booking-com" ||
+    source === "booking-cj" ||
+    source === "booking-com-cj"
+  ) {
+    return _buildBookingComCjHotelsPayload({ query, env, warnings });
   }
 
   if (!warnings.includes("unsupported_source")) {
