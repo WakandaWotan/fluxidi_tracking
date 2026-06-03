@@ -21641,6 +21641,17 @@ function _legacyGooglePlacesNumberOrNull(value) {
   return Number.isFinite(n) ? n : null;
 }
 
+function _googlePlacesLegacyRatingText(ratingRaw, countRaw) {
+  const rating = Number(ratingRaw);
+  if (!Number.isFinite(rating) || rating <= 0) return null;
+
+  const count = Number(countRaw);
+  if (Number.isFinite(count) && count > 0) {
+    return `${rating.toFixed(1)} (${Math.trunc(count)})`;
+  }
+
+  return rating.toFixed(1);
+}
 function _legacyGooglePlacesMapResultToV1Like(place) {
   const placeId = safeStr(place?.place_id);
   const name = safeStr(place?.name);
@@ -21659,6 +21670,7 @@ function _legacyGooglePlacesMapResultToV1Like(place) {
     location: lat != null && lng != null ? { latitude: lat, longitude: lng } : undefined,
     rating: _legacyGooglePlacesNumberOrNull(place?.rating),
     userRatingCount: _legacyGooglePlacesNumberOrNull(place?.user_ratings_total),
+    ratingLabel: _googlePlacesLegacyRatingText(place?.rating, place?.user_ratings_total),
     primaryType: types[0] || "lodging",
     types: types.length ? types : ["lodging"],
     photos: [],
@@ -21735,6 +21747,72 @@ async function _googlePlacesSearchNearby({ query, apiKey, fieldMask }) {
 async function _googlePlacesSearchText({ query, apiKey, fieldMask }) {
   return await _googlePlacesLegacyTextSearch({ query, apiKey });
 }
+function _googlePlacesAddressParts(address) {
+  const text = safeStr(address, 400).trim();
+  if (!text) return { city: "", country: "" };
+
+  const parts = text
+    .split(",")
+    .map((part) => safeStr(part, 120).trim())
+    .filter(Boolean);
+
+  const last = parts.length ? parts[parts.length - 1] : "";
+  const country = /belgium|belgië|belgique/i.test(last) ? "BE" : "";
+
+  let city = "";
+  if (parts.length >= 2) {
+    const beforeCountry = country ? parts[parts.length - 2] : parts[parts.length - 1];
+    city = beforeCountry
+      .replace(/^\d{4,5}\s+/, "")
+      .replace(/\s*\d{4,5}$/, "")
+      .trim();
+  }
+
+  return { city, country };
+}
+
+function _googlePlacesCountryCodeFromCoordinates(query) {
+  const lat = Number(query?.latitude ?? query?.lat);
+  const lng = Number(query?.longitude ?? query?.lng);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return "";
+
+  // Market-safe coarse bounding boxes for discovery metadata only.
+  if (lat >= 49.45 && lat <= 51.55 && lng >= 2.45 && lng <= 6.45) return "BE";
+  if (lat >= 50.65 && lat <= 53.75 && lng >= 3.20 && lng <= 7.30) return "NL";
+  if (lat >= 41.20 && lat <= 51.25 && lng >= -5.50 && lng <= 9.65) return "FR";
+  if (lat >= 47.20 && lat <= 55.10 && lng >= 5.85 && lng <= 15.05) return "DE";
+  if (lat >= 35.80 && lat <= 43.90 && lng >= -9.50 && lng <= 4.40) return "ES";
+  if (lat >= 49.80 && lat <= 59.00 && lng >= -8.70 && lng <= 1.90) return "GB";
+
+  return "";
+}
+function _googlePlacesQueryCountryCode(query) {
+  const raw = safeStr(query?.country, 32).trim();
+  if (!raw) return "";
+  const upper = raw.toUpperCase();
+  if (upper === "BE" || upper === "BELGIUM" || upper === "BELGIË" || upper === "BELGIQUE") {
+    return "BE";
+  }
+  return upper.replace(/[^A-Z]/g, "").slice(0, 2);
+}
+
+function _googlePlacesLegacyRatingLabel(place) {
+  const explicit = safeStr(place?.ratingLabel ?? place?.rating_label, 80).trim();
+  if (explicit) return explicit;
+
+  const rating = Number(place?.rating ?? place?.ratingAvg ?? place?.rating_avg);
+  const count = Number(
+    place?.userRatingCount ??
+      place?.user_rating_count ??
+      place?.user_ratings_total ??
+      place?.ratingCount ??
+      place?.rating_count ??
+      place?.reviewsCount ??
+      place?.reviews_count,
+  );
+
+  return _googlePlacesLegacyRatingText(rating, count);
+}
 function _mapGooglePlaceToPublicHotelStay(place, { query, requestUrl } = {}) {
   const placeResourceId = String(place?.id ?? place?.name ?? "").trim();
   const providerId = placeResourceId.replace(/^places\//, "");
@@ -21747,9 +21825,10 @@ function _mapGooglePlaceToPublicHotelStay(place, { query, requestUrl } = {}) {
   if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
 
   const address = String(place?.formattedAddress ?? "").trim();
-  const city = String(query?.city ?? "").trim();
+  const addressParts = _googlePlacesAddressParts(address);
+  const city = String(query?.city ?? "").trim() || addressParts.city;
   const region = String(query?.region ?? "").trim();
-  const country = String(query?.country ?? "").trim();
+  const country = _googlePlacesQueryCountryCode(query) || addressParts.country || _googlePlacesCountryCodeFromCoordinates(query);
   const { photoName, attribution } = _googlePlacesPrimaryPhotoMeta(place);
   const origin = _publicHotelsRequestOrigin(requestUrl);
   const imageUrl = photoName
@@ -21771,7 +21850,7 @@ function _mapGooglePlaceToPublicHotelStay(place, { query, requestUrl } = {}) {
     lng,
     image_url: imageUrl,
     image_ref: null,
-    rating_label: _googlePlacesRatingLabel(place),
+    rating_label: _googlePlacesLegacyRatingLabel(place) || _googlePlacesRatingLabel(place),
     price_label: null,
     availability_label: "Live place discovery",
     external_url: null,
@@ -22010,10 +22089,15 @@ function _buildApprovedLocalHotelsPayload({ query, warnings = [] } = {}) {
 }
 
 function _mapPublicHotelStayToResponse(stay) {
+  const ratingSource =
+    stay?.rating_label ??
+    stay?.ratingLabel ??
+    stay?.rating;
+
   const rating =
-    stay?.rating == null || stay?.rating === ""
+    ratingSource == null || ratingSource === ""
       ? null
-      : String(stay.rating);
+      : String(ratingSource).trim();
   return {
     id: String(stay?.id ?? "").trim(),
     provider: String(stay?.provider ?? "approved-local").trim() || "approved-local",
