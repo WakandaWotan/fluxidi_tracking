@@ -21546,6 +21546,7 @@ function _publicHotelsRequestOrigin(requestUrl) {
 
 function _sanitizeGooglePlacePhotoName(raw) {
   const name = String(raw ?? "").trim();
+  if (/^legacy:[A-Za-z0-9_-]{8,600}$/.test(name)) return name;
   if (!/^places\/[\w-]+\/photos\/[\w-]+$/.test(name)) return null;
   return name;
 }
@@ -21652,6 +21653,36 @@ function _googlePlacesLegacyRatingText(ratingRaw, countRaw) {
 
   return rating.toFixed(1);
 }
+function _legacyGooglePlacesPhotoReference(raw) {
+  const text = safeStr(raw, 600).trim();
+  if (!text) return "";
+  if (!/^[A-Za-z0-9_-]{8,600}$/.test(text)) return "";
+  return text;
+}
+
+function _legacyGooglePlacesPhotoList(place) {
+  const photos = Array.isArray(place?.photos) ? place.photos : [];
+  const out = [];
+  for (const photo of photos) {
+    const ref = _legacyGooglePlacesPhotoReference(photo?.photo_reference);
+    if (!ref) continue;
+    const attributionItems = Array.isArray(photo?.html_attributions)
+      ? photo.html_attributions
+      : [];
+    const attributionText = attributionItems
+      .map((entry) => safeStr(entry, 240).replace(/<[^>]*>/g, "").trim())
+      .filter(Boolean)
+      .join(", ");
+    out.push({
+      name: `legacy:${ref}`,
+      authorAttributions: attributionText
+        ? [{ displayName: attributionText }]
+        : [],
+    });
+    if (out.length >= 1) break;
+  }
+  return out;
+}
 function _legacyGooglePlacesMapResultToV1Like(place) {
   const placeId = safeStr(place?.place_id);
   const name = safeStr(place?.name);
@@ -21673,7 +21704,7 @@ function _legacyGooglePlacesMapResultToV1Like(place) {
     ratingLabel: _googlePlacesLegacyRatingText(place?.rating, place?.user_ratings_total),
     primaryType: types[0] || "lodging",
     types: types.length ? types : ["lodging"],
-    photos: [],
+    photos: _legacyGooglePlacesPhotoList(place),
   };
 }
 
@@ -21939,12 +21970,24 @@ async function _handlePublicGooglePlacePhoto(_request, url, env) {
     return json({ ok: false, error: "invalid_photo_name" }, 400);
   }
   const apiKey = safeStr(env?.GOOGLE_PLACES_API_KEY);
-  const mediaUrl = `https://places.googleapis.com/v1/${photoName}/media?maxHeightPx=600&maxWidthPx=800`;
+  const legacyPhotoReference = photoName.startsWith("legacy:")
+    ? photoName.slice("legacy:".length)
+    : "";
+
+  const mediaUrl = legacyPhotoReference
+    ? `https://maps.googleapis.com/maps/api/place/photo?maxwidth=800&photo_reference=${encodeURIComponent(legacyPhotoReference)}&key=${encodeURIComponent(apiKey)}`
+    : `https://places.googleapis.com/v1/${photoName}/media?maxHeightPx=600&maxWidthPx=800`;
+
   try {
-    const upstream = await fetch(mediaUrl, {
-      headers: { "X-Goog-Api-Key": apiKey },
-      redirect: "follow",
-    });
+    const upstream = await fetch(
+      mediaUrl,
+      legacyPhotoReference
+        ? { redirect: "follow" }
+        : {
+            headers: { "X-Goog-Api-Key": apiKey },
+            redirect: "follow",
+          },
+    );
     if (!upstream.ok) {
       return json({ ok: false, error: "photo_unavailable" }, 502);
     }
