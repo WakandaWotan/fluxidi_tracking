@@ -200,6 +200,22 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
     return selected;
   }
 
+  Future<void> _openBusinessTaxiFlow(BuildContext context) async {
+    final selected = await _selectTaxiPartner(context);
+    if (selected == null || !context.mounted) return;
+
+    final partnerId = _partnerSelectionValue(selected, 'partner_id');
+    final partnerName = _partnerSelectionValue(selected, 'company_name');
+
+    _openCalculator(
+      context,
+      scheduledIntent: false,
+      publicPartnerId: partnerId,
+      publicPartnerName: partnerName,
+      entryContext: 'business_flow',
+    );
+  }
+
   void _openEventsPage(BuildContext context) {
     Navigator.of(context).push(
       MaterialPageRoute(
@@ -1261,7 +1277,8 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
                                 visualAsset: businessAsset,
                                 visualHeight: customerWideCardHeight,
                                 visualAlignment: const Alignment(0.65, 0.0),
-                                onTap: () => _comingSoon(context),
+                                onTap: () =>
+                                    unawaited(_openBusinessTaxiFlow(context)),
                               ),
                             ];
                             return Wrap(
@@ -1342,7 +1359,8 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
                           visualAsset: businessAsset,
                           visualHeight: customerWideCardHeight,
                           visualAlignment: const Alignment(-0.20, 0.0),
-                          onTap: () => _comingSoon(context),
+                          onTap: () =>
+                              unawaited(_openBusinessTaxiFlow(context)),
                         ),
                       ],
                       const SizedBox(height: 16),
