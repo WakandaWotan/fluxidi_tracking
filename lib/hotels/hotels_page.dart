@@ -512,19 +512,28 @@ class _HotelsPageState extends State<HotelsPage> {
 
   String get _viewRealAccommodationsLabel {
     return _t(
-      nl: 'Bekijk prijzen extern',
-      en: 'Check prices externally',
-      fr: 'Voir les prix externes',
-      es: 'Ver precios externos',
+      nl: 'Bekijk via Stay22',
+      en: 'View via Stay22',
+      fr: 'Voir via Stay22',
+      es: 'Ver vía Stay22',
+    );
+  }
+
+  String get _externalHotelDestinationRequiredLabel {
+    return _t(
+      nl: 'Kies eerst een land, stad of regio.',
+      en: 'Choose a country, city or region first.',
+      fr: 'Choisissez d’abord un pays, une ville ou une région.',
+      es: 'Elige primero un país, una ciudad o una región.',
     );
   }
 
   String get _stay22AvailabilitySubtitle {
     return _t(
-      nl: 'Hotelkaarten worden native getoond. Prijzen en beschikbaarheid openen extern via Stay22.',
-      en: 'Hotel cards are shown natively. Prices and availability open externally via Stay22.',
-      fr: 'Les fiches hôtels sont affichées nativement. Les prix et disponibilités s’ouvrent via Stay22.',
-      es: 'Las fichas de hotel se muestran de forma nativa. Los precios y la disponibilidad se abren vía Stay22.',
+      nl: 'Hotelkaarten worden native getoond. De externe Stay22-kaart opent met partnerbeschikbaarheid.',
+      en: 'Hotel cards are shown natively. The external Stay22 map opens with partner availability.',
+      fr: 'Les fiches hôtels sont affichées nativement. La carte Stay22 externe s’ouvre avec les disponibilités partenaires.',
+      es: 'Las fichas de hotel se muestran de forma nativa. El mapa externo de Stay22 se abre con disponibilidad de socios.',
     );
   }
 
@@ -610,10 +619,10 @@ class _HotelsPageState extends State<HotelsPage> {
 
   String get _externalAvailabilityLabel {
     return _t(
-      nl: 'Bekijk beschikbaarheid extern',
-      en: 'Check availability externally',
-      fr: 'Voir les disponibilités externes',
-      es: 'Ver disponibilidad externa',
+      nl: 'Bekijk beschikbaarheid via Stay22',
+      en: 'Check availability via Stay22',
+      fr: 'Voir les disponibilités via Stay22',
+      es: 'Ver disponibilidad vía Stay22',
     );
   }
 
@@ -835,6 +844,37 @@ class _HotelsPageState extends State<HotelsPage> {
     }
   }
 
+  bool _isExternalHotelOverviewContextDefault({String? query}) {
+    if ((query ?? '').trim().isNotEmpty) return false;
+    return _searchController.text.trim().isEmpty &&
+        _selectedCountryCode == _allKey &&
+        _selectedRegionKey == _allKey &&
+        _selectedSettlementKey == _allKey;
+  }
+
+  static const Map<String, String> _stay22CountryOnlyAddressAnchors =
+      <String, String>{
+        'BE': 'Brussels, Belgium',
+        'NL': 'Amsterdam, Netherlands',
+        'LU': 'Luxembourg City, Luxembourg',
+        'DE': 'Berlin, Germany',
+        'FR': 'Paris, France',
+        'ES': 'Madrid, Spain',
+        'GB': 'London, United Kingdom',
+      };
+
+  String? _stay22CountryOnlyAddressAnchor(String countryCode) {
+    return _stay22CountryOnlyAddressAnchors[countryCode.trim().toUpperCase()];
+  }
+
+  String? _stay22CountryEnglishSuffix(String countryCode) {
+    final anchor = _stay22CountryOnlyAddressAnchor(countryCode);
+    if (anchor == null) return null;
+    final commaIndex = anchor.lastIndexOf(', ');
+    if (commaIndex < 0) return anchor;
+    return anchor.substring(commaIndex + 2);
+  }
+
   String _hotelExternalSearchQuery({HotelStay? stay, String? query}) {
     final preferredQuery = (query ?? '').trim();
     if (preferredQuery.isNotEmpty) return preferredQuery;
@@ -848,22 +888,56 @@ class _HotelsPageState extends State<HotelsPage> {
     }
     final typedQuery = _searchController.text.trim();
     if (typedQuery.isNotEmpty) return typedQuery;
-    final settlementLabel = _settlementOptions
-        .where((option) => option.value == _selectedSettlementKey)
-        .map((option) => option.label.trim())
-        .firstWhere((label) => label.isNotEmpty, orElse: () => '');
-    if (settlementLabel.isNotEmpty) return settlementLabel;
-    final regionLabel = _regionOptions
-        .where((option) => option.value == _selectedRegionKey)
-        .map((option) => option.label.trim())
-        .firstWhere((label) => label.isNotEmpty, orElse: () => '');
-    if (regionLabel.isNotEmpty) return regionLabel;
-    final countryLabel = _countryOptions
-        .where((option) => option.value == _selectedCountryCode)
-        .map((option) => option.label.trim())
-        .firstWhere((label) => label.isNotEmpty, orElse: () => '');
-    if (countryLabel.isNotEmpty) return countryLabel;
-    return _t(nl: 'België', en: 'Belgium', fr: 'Belgique', es: 'Bélgica');
+    if (_selectedSettlementKey != _allKey) {
+      final settlementLabel = _settlementOptions
+          .where((option) => option.value == _selectedSettlementKey)
+          .map((option) => option.label.trim())
+          .firstWhere((label) => label.isNotEmpty, orElse: () => '');
+      if (settlementLabel.isNotEmpty) {
+        if (_selectedCountryCode != _allKey) {
+          final countryLabel = _countryOptions
+              .where((option) => option.value == _selectedCountryCode)
+              .map((option) => option.label.trim())
+              .firstWhere((label) => label.isNotEmpty, orElse: () => '');
+          if (countryLabel.isNotEmpty) {
+            return '$settlementLabel, $countryLabel';
+          }
+        }
+        return settlementLabel;
+      }
+    }
+    if (_selectedRegionKey != _allKey) {
+      final regionLabel = _regionOptions
+          .where((option) => option.value == _selectedRegionKey)
+          .map((option) => option.label.trim())
+          .firstWhere((label) => label.isNotEmpty, orElse: () => '');
+      if (regionLabel.isNotEmpty) {
+        if (_selectedSettlementKey == _allKey &&
+            _selectedCountryCode != _allKey) {
+          final countrySuffix = _stay22CountryEnglishSuffix(
+            _selectedCountryCode,
+          );
+          if (countrySuffix != null) {
+            return '$regionLabel, $countrySuffix';
+          }
+        }
+        return regionLabel;
+      }
+    }
+    if (_selectedCountryCode != _allKey) {
+      if (stay == null &&
+          _selectedSettlementKey == _allKey &&
+          _selectedRegionKey == _allKey) {
+        final anchor = _stay22CountryOnlyAddressAnchor(_selectedCountryCode);
+        if (anchor != null) return anchor;
+      }
+      final countryLabel = _countryOptions
+          .where((option) => option.value == _selectedCountryCode)
+          .map((option) => option.label.trim())
+          .firstWhere((label) => label.isNotEmpty, orElse: () => '');
+      if (countryLabel.isNotEmpty) return countryLabel;
+    }
+    return '';
   }
 
   String _stay22CampaignForHotels({HotelStay? stay, String? campaign}) {
@@ -900,8 +974,7 @@ class _HotelsPageState extends State<HotelsPage> {
     );
     switch (provider) {
       case _HotelExternalProvider.stay22Allez:
-        // TODO(HOTELS-PROVIDER): Move Stay22 deeplink generation server-side when
-        // worker/provider adapters supply configured externalAvailabilityUrl values.
+        // Stay22 map flow — same style as Events (/embed/gm), not /allez deeplink.
         if (stay != null && _hasStayCoordinates(stay)) {
           final lat = stay.latitude ?? stay.lat;
           final lng = stay.longitude ?? stay.lng;
@@ -914,21 +987,29 @@ class _HotelsPageState extends State<HotelsPage> {
             'lng': lng.toStringAsFixed(6),
           });
         }
-        return Uri.https('www.stay22.com', '/allez', <String, String>{
+        if (stay != null && resolvedQuery.isNotEmpty) {
+          return Uri.https('www.stay22.com', '/embed/gm', <String, String>{
+            'aid': _stay22Aid,
+            'campaign': resolvedCampaign,
+            'product_medium': 'apps',
+            'address': resolvedQuery,
+          });
+        }
+        return Uri.https('www.stay22.com', '/embed/gm', <String, String>{
           'aid': _stay22Aid,
-          'address': resolvedQuery,
           'campaign': resolvedCampaign,
           'product_medium': 'apps',
+          if (resolvedQuery.isNotEmpty) 'address': resolvedQuery,
         });
       case _HotelExternalProvider.bookingComCjAffiliate:
-        // Booking.com CJ affiliate/deeplink only — not Demand API, not native inventory, no iframe.
+        // TODO(HOTELS-AFFILIATE): Reserved for a future separate explicit Booking.com CTA.
         final baseUri = Uri.parse(kBookingComCjBaseUrl.trim());
         final params = Map<String, String>.from(baseUri.queryParameters);
         if (resolvedQuery.isNotEmpty) params['ss'] = resolvedQuery;
         params['lang'] = _bookingLanguageCode();
         return baseUri.replace(queryParameters: params);
       case _HotelExternalProvider.bookingComFallback:
-        // Legacy launch fallback when Stay22 fails and CJ affiliate URL is not configured.
+        // TODO(HOTELS-AFFILIATE): Do not use as Hotels CTA fallback; separate explicit button later.
         return Uri.https(
           'www.booking.com',
           '/searchresults.html',
@@ -948,14 +1029,8 @@ class _HotelsPageState extends State<HotelsPage> {
     String? query,
     String? campaign,
   }) {
-    if (kBookingComCjConfigured) {
-      return _hotelProviderSearchUri(
-        provider: _HotelExternalProvider.bookingComCjAffiliate,
-        stay: stay,
-        query: query,
-        campaign: campaign,
-      );
-    }
+    // TODO(HOTELS-AFFILIATE): Add Booking.com later as a separate explicit CTA once
+    // CJ/affiliate approval is configured; do not mix it into the Stay22 CTA.
     return _hotelProviderSearchUri(
       provider: _HotelExternalProvider.stay22Allez,
       stay: stay,
@@ -964,24 +1039,42 @@ class _HotelsPageState extends State<HotelsPage> {
     );
   }
 
+  bool _isStay22MapExternalUrl(String? raw) {
+    final uri = Uri.tryParse((raw ?? '').trim());
+    if (uri == null || !uri.hasScheme) return false;
+    final scheme = uri.scheme.toLowerCase();
+    if (scheme != 'http' && scheme != 'https') return false;
+    final host = uri.host.toLowerCase();
+    if (host != 'stay22.com' && !host.endsWith('.stay22.com')) return false;
+    final path = uri.path;
+    return path == '/embed/gm' || path.startsWith('/embed/gm/');
+  }
+
   Future<void> _openExternalHotelSearch({
     HotelStay? stay,
     String? query,
     String? campaign,
   }) async {
-    // TODO(HOTELS-PROVIDER): Prefer server-supplied externalAvailabilityUrl / affiliate
-    // deeplinks when present; never hardcode Expedia or invent affiliate URLs in Flutter.
-    // Booking.com CJ is affiliate/deeplink only — pending until worker/compile-time URL is set.
+    if (stay == null && _isExternalHotelOverviewContextDefault(query: query)) {
+      if (!mounted) return;
+      _showThemedSnackBar(_externalHotelDestinationRequiredLabel);
+      return;
+    }
+
+    // Only allow server-supplied Stay22 map URLs (/embed/gm) to bypass the local builder.
     final configuredUrl = stay?.effectiveBookingUrl;
-    if (configuredUrl != null) {
+    if (configuredUrl != null && _isStay22MapExternalUrl(configuredUrl)) {
       final directUri = Uri.tryParse(configuredUrl);
       if (directUri != null &&
           directUri.hasScheme &&
           (directUri.scheme == 'http' || directUri.scheme == 'https')) {
-        final opened = await launchUrl(
+        var opened = await launchUrl(
           directUri,
           mode: LaunchMode.externalApplication,
         );
+        if (!opened) {
+          opened = await launchUrl(directUri, mode: LaunchMode.platformDefault);
+        }
         if (opened) return;
         if (!mounted) return;
         _showThemedSnackBar(
@@ -1006,21 +1099,7 @@ class _HotelsPageState extends State<HotelsPage> {
       mode: LaunchMode.externalApplication,
     );
     if (!opened) {
-      final fallbackProvider = kBookingComCjConfigured
-          ? _HotelExternalProvider.stay22Allez
-          : _HotelExternalProvider.bookingComFallback;
-      final fallbackUri = _hotelProviderSearchUri(
-        provider: fallbackProvider,
-        stay: stay,
-        query: query,
-        campaign: campaign,
-      );
-      if (fallbackUri.toString() != primaryUri.toString()) {
-        opened = await launchUrl(
-          fallbackUri,
-          mode: LaunchMode.externalApplication,
-        );
-      }
+      opened = await launchUrl(primaryUri, mode: LaunchMode.platformDefault);
     }
     if (opened) return;
     if (!mounted) return;
@@ -2584,18 +2663,6 @@ class _HotelsPageState extends State<HotelsPage> {
                         height: 1.3,
                       ),
                     ),
-                    if (!kBookingComCjConfigured) ...[
-                      const SizedBox(height: 4),
-                      Text(
-                        _bookingComPendingNotice,
-                        style: TextStyle(
-                          color: _softText.withOpacity(0.82),
-                          fontSize: 11.1,
-                          fontWeight: FontWeight.w600,
-                          height: 1.25,
-                        ),
-                      ),
-                    ],
                   ],
                 ),
               ),
