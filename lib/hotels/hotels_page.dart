@@ -277,13 +277,13 @@ class _HotelsPageState extends State<HotelsPage> {
   List<HotelStay> get _discoveryRegionStays => _filterStays(const <HotelStay>[
     HotelStay(
       id: 'discovery-vlaamse-ardennen',
-      name: "Hotels & B&B's in de Vlaamse Ardennen",
+      name: 'Vlaamse Ardennen',
       type: HotelStayType.guesthouse,
       city: 'Vlaamse Ardennen',
       region: 'Oost-Vlaanderen',
       country: 'Belgium',
       address: 'Vlaamse Ardennen, Belgium',
-      description: 'Ontdek verblijven en plan je rit.',
+      description: 'Ritplanning regio — geen hotelinventaris.',
       imageRef: 'approved_asset:assets/fluxidi/Hotel&B&B_background.png',
       lat: 50.7655,
       lng: 3.6231,
@@ -294,13 +294,13 @@ class _HotelsPageState extends State<HotelsPage> {
     ),
     HotelStay(
       id: 'discovery-boutique-gent',
-      name: 'Boutique stays rond Gent',
+      name: 'Gent & regio',
       type: HotelStayType.hotel,
       city: 'Gent',
       region: 'Oost-Vlaanderen',
       country: 'Belgium',
       address: 'Gent, Belgium',
-      description: 'Ontdek verblijven en plan je rit.',
+      description: 'Ritplanning regio — geen hotelinventaris.',
       imageRef:
           'approved_asset:assets/fluxidi/customer_home_hotel_bb_banner.png',
       lat: 51.0543,
@@ -312,13 +312,13 @@ class _HotelsPageState extends State<HotelsPage> {
     ),
     HotelStay(
       id: 'discovery-brussels-airport',
-      name: 'Hotels bij Brussels Airport',
+      name: 'Brussels Airport & regio',
       type: HotelStayType.hotel,
       city: 'Brussel',
       region: 'Brussels Hoofdstedelijk Gewest',
       country: 'Belgium',
       address: 'Brussels Airport, Belgium',
-      description: 'Ontdek verblijven en plan je rit.',
+      description: 'Ritplanning regio — geen hotelinventaris.',
       imageRef:
           'approved_asset:assets/fluxidi/customer_home_airport_banner.png',
       lat: 50.9014,
@@ -330,13 +330,13 @@ class _HotelsPageState extends State<HotelsPage> {
     ),
     HotelStay(
       id: 'discovery-city-brugge',
-      name: 'City hotels in Brugge',
+      name: 'Brugge & regio',
       type: HotelStayType.hotel,
       city: 'Brugge',
       region: 'West-Vlaanderen',
       country: 'Belgium',
       address: 'Brugge, Belgium',
-      description: 'Ontdek verblijven en plan je rit.',
+      description: 'Ritplanning regio — geen hotelinventaris.',
       imageRef:
           'approved_asset:assets/fluxidi/customer_home_business_banner.png',
       lat: 51.2093,
@@ -348,13 +348,13 @@ class _HotelsPageState extends State<HotelsPage> {
     ),
     HotelStay(
       id: 'discovery-coast-stays',
-      name: 'Verblijven aan de kust',
+      name: 'Belgische kust',
       type: HotelStayType.bedAndBreakfast,
       city: 'Kust',
       region: 'West-Vlaanderen',
       country: 'Belgium',
       address: 'Belgische kust, Belgium',
-      description: 'Ontdek verblijven en plan je rit.',
+      description: 'Ritplanning regio — geen hotelinventaris.',
       imageRef: 'approved_asset:assets/fluxidi/customer_home_events_banner.png',
       lat: 51.2301,
       lng: 2.9196,
@@ -468,10 +468,64 @@ class _HotelsPageState extends State<HotelsPage> {
 
   String get _stay22AvailabilitySubtitle {
     return _t(
-      nl: 'Open actuele verblijven en prijzen via Stay22.',
-      en: 'Open live stays and prices via Stay22.',
-      fr: 'Ouvrez les hébergements et prix actuels via Stay22.',
-      es: 'Abre alojamientos y precios actuales vía Stay22.',
+      nl: 'Open live verblijven en prijzen via Stay22. Booking.com volgt na goedkeuring.',
+      en: 'Open live stays and prices via Stay22. Booking.com follows after approval.',
+      fr: 'Ouvrez les hébergements et prix actuels via Stay22. Booking.com suivra après approbation.',
+      es: 'Abre alojamientos y precios actuales vía Stay22. Booking.com seguirá tras la aprobación.',
+    );
+  }
+
+  String get _bookingComPendingNotice {
+    return _t(
+      nl: 'Booking.com wordt geactiveerd zodra de partneraanvraag is goedgekeurd.',
+      en: 'Booking.com will activate once the partner application is approved.',
+      fr: 'Booking.com sera activé une fois la demande partenaire approuvée.',
+      es: 'Booking.com se activará cuando se apruebe la solicitud de socio.',
+    );
+  }
+
+  String get _discoveryRegionBadgeLabel {
+    return _t(
+      nl: 'Ritplanning regio',
+      en: 'Ride planning region',
+      fr: 'Région de planification',
+      es: 'Región de planificación',
+    );
+  }
+
+  String get _planRideInRegionLabel {
+    return _t(
+      nl: 'Ritten plannen in deze regio',
+      en: 'Plan rides in this region',
+      fr: 'Planifier des trajets dans cette région',
+      es: 'Planificar trayectos en esta región',
+    );
+  }
+
+  String get _discoveryRegionCardDescription {
+    return _t(
+      nl: 'Geen hotelinventaris — open live accommodaties via Stay22 voor deze regio.',
+      en: 'Not hotel inventory — open live accommodations via Stay22 for this region.',
+      fr: 'Pas d’inventaire hôtelier — ouvrez les hébergements live via Stay22 pour cette région.',
+      es: 'No es inventario hotelero — abre alojamientos en vivo vía Stay22 para esta región.',
+    );
+  }
+
+  String get _nativeProviderPendingNotice {
+    return _t(
+      nl: 'Native hotelkaarten wachten op een goedgekeurde provider. Live verblijven zijn beschikbaar via Stay22.',
+      en: 'Native hotel cards are waiting for an approved provider. Live stays are available via Stay22.',
+      fr: 'Les fiches hôtels natives attendent un fournisseur approuvé. Les hébergements live sont disponibles via Stay22.',
+      es: 'Las fichas nativas de hotel esperan un proveedor aprobado. Los alojamientos en vivo están disponibles vía Stay22.',
+    );
+  }
+
+  String get _discoveryRegionsSectionTitle {
+    return _t(
+      nl: 'Regio\'s voor ritplanning',
+      en: 'Ride-planning regions',
+      fr: 'Régions pour planifier vos trajets',
+      es: 'Regiones para planificar trayectos',
     );
   }
 
@@ -1298,11 +1352,11 @@ class _HotelsPageState extends State<HotelsPage> {
     final approvedRealStays = stays
         .where(_isApprovedCustomerFacingStay)
         .toList(growable: false);
+    final hasTrustedNativeStays = approvedRealStays.isNotEmpty;
+    final showingDiscoveryRegions = !hasTrustedNativeStays && !_showSavedOnly;
     final displayCards = _showSavedOnly
         ? approvedRealStays
-        : (approvedRealStays.isNotEmpty
-              ? approvedRealStays
-              : _discoveryRegionStays);
+        : (hasTrustedNativeStays ? approvedRealStays : _discoveryRegionStays);
     final resultCount = displayCards.length;
 
     return Scaffold(
@@ -1319,9 +1373,20 @@ class _HotelsPageState extends State<HotelsPage> {
                   const SizedBox(height: 8),
                   _buildCompactFilterChips(),
                   const SizedBox(height: 8),
-                  _buildRealAccommodationsCta(),
+                  _buildLiveAccommodationsPanel(),
+                  if (showingDiscoveryRegions) ...[
+                    const SizedBox(height: 8),
+                    _buildNativeProviderPendingNotice(),
+                  ],
                   const SizedBox(height: 8),
-                  _buildResultSummary(resultCount),
+                  _buildResultSummary(
+                    resultCount,
+                    showingDiscoveryRegions: showingDiscoveryRegions,
+                  ),
+                  if (showingDiscoveryRegions && displayCards.isNotEmpty) ...[
+                    const SizedBox(height: 6),
+                    _buildDiscoveryRegionsSectionHeader(),
+                  ],
                   const SizedBox(height: 8),
                   _buildReturnFlowPanel(),
                   const SizedBox(height: 8),
@@ -2166,16 +2231,30 @@ class _HotelsPageState extends State<HotelsPage> {
     );
   }
 
-  Widget _buildResultSummary(int count) {
-    final text = _t(
-      nl: '$count verblijven gevonden',
-      en: '$count stays found',
-      fr: '$count séjours trouvés',
-      es: '$count alojamientos encontrados',
-    );
+  Widget _buildResultSummary(
+    int count, {
+    required bool showingDiscoveryRegions,
+  }) {
+    final text = showingDiscoveryRegions
+        ? _t(
+            nl: '$count regio\'s voor ritplanning',
+            en: '$count ride-planning regions',
+            fr: '$count régions pour planifier vos trajets',
+            es: '$count regiones para planificar trayectos',
+          )
+        : _t(
+            nl: '$count verblijven gevonden',
+            en: '$count stays found',
+            fr: '$count séjours trouvés',
+            es: '$count alojamientos encontrados',
+          );
     return Row(
       children: [
-        Icon(Icons.hotel_rounded, size: 14, color: _gold.withOpacity(0.95)),
+        Icon(
+          showingDiscoveryRegions ? Icons.map_rounded : Icons.hotel_rounded,
+          size: 14,
+          color: _gold.withOpacity(0.95),
+        ),
         const SizedBox(width: 6),
         Expanded(
           child: Text(
@@ -2400,40 +2479,132 @@ class _HotelsPageState extends State<HotelsPage> {
     return expand ? SizedBox(width: double.infinity, child: button) : button;
   }
 
-  Widget _buildRealAccommodationsCta() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        SizedBox(
-          width: double.infinity,
-          child: OutlinedButton.icon(
-            onPressed: () => _openExternalHotelSearch(),
-            style: OutlinedButton.styleFrom(
-              foregroundColor: _textPrimary,
-              side: BorderSide(color: _gold.withOpacity(0.42)),
-              minimumSize: const Size.fromHeight(38),
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(10),
+  Widget _buildLiveAccommodationsPanel() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: _panelBlack,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: _gold.withOpacity(_isDarkTheme ? 0.34 : 0.52),
+        ),
+        boxShadow: <BoxShadow>[
+          BoxShadow(
+            color: _shadow.withOpacity(_isDarkTheme ? 0.18 : 0.08),
+            blurRadius: 12,
+            offset: const Offset(0, 3),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(Icons.open_in_new_rounded, color: _gold, size: 20),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      _viewRealAccommodationsLabel,
+                      style: TextStyle(
+                        color: _textPrimary.withOpacity(0.98),
+                        fontSize: 14.2,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 5),
+                    Text(
+                      _stay22AvailabilitySubtitle,
+                      style: TextStyle(
+                        color: _softText.withOpacity(0.94),
+                        fontSize: 11.6,
+                        fontWeight: FontWeight.w600,
+                        height: 1.3,
+                      ),
+                    ),
+                    if (!kBookingComCjConfigured) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        _bookingComPendingNotice,
+                        style: TextStyle(
+                          color: _softText.withOpacity(0.82),
+                          fontSize: 11.1,
+                          fontWeight: FontWeight.w600,
+                          height: 1.25,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton.icon(
+              onPressed: () => _openExternalHotelSearch(),
+              style: FilledButton.styleFrom(
+                backgroundColor: _gold,
+                foregroundColor: _actionOnGold,
+                minimumSize: const Size.fromHeight(42),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
+              ),
+              icon: const Icon(Icons.open_in_new_rounded, size: 18),
+              label: Text(
+                _viewRealAccommodationsLabel,
+                style: const TextStyle(fontWeight: FontWeight.w800),
               ),
             ),
-            icon: Icon(Icons.open_in_new_rounded, size: 16, color: _gold),
-            label: Text(
-              _viewRealAccommodationsLabel,
-              style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
-            ),
           ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildNativeProviderPendingNotice() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: _panelBlack.withOpacity(_isDarkTheme ? 0.72 : 0.96),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(
+          color: _border.withOpacity(_isDarkTheme ? 0.32 : 0.88),
         ),
-        const SizedBox(height: 4),
-        Text(
-          _stay22AvailabilitySubtitle,
-          maxLines: 2,
-          overflow: TextOverflow.ellipsis,
-          style: TextStyle(
-            color: _softText.withOpacity(0.92),
-            fontSize: 11.1,
-            fontWeight: FontWeight.w600,
-            height: 1.25,
+      ),
+      child: Text(
+        _nativeProviderPendingNotice,
+        style: TextStyle(
+          color: _softText.withOpacity(0.92),
+          fontSize: 11.3,
+          fontWeight: FontWeight.w600,
+          height: 1.28,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDiscoveryRegionsSectionHeader() {
+    return Row(
+      children: [
+        Icon(Icons.route_rounded, size: 14, color: _gold.withOpacity(0.9)),
+        const SizedBox(width: 6),
+        Expanded(
+          child: Text(
+            _discoveryRegionsSectionTitle,
+            style: TextStyle(
+              color: _textPrimary.withOpacity(0.9),
+              fontWeight: FontWeight.w700,
+              fontSize: 12.2,
+            ),
           ),
         ),
       ],
@@ -2523,6 +2694,18 @@ class _HotelsPageState extends State<HotelsPage> {
               height: 1.25,
             ),
           ),
+          if (!kBookingComCjConfigured) ...[
+            const SizedBox(height: 4),
+            Text(
+              _bookingComPendingNotice,
+              style: TextStyle(
+                color: _softText.withOpacity(0.82),
+                fontSize: 11.1,
+                fontWeight: FontWeight.w600,
+                height: 1.25,
+              ),
+            ),
+          ],
         ],
       ),
     );
@@ -2670,7 +2853,9 @@ class _HotelsPageState extends State<HotelsPage> {
                                     )
                                   : Center(
                                       child: Icon(
-                                        Icons.hotel_rounded,
+                                        isDiscoveryCard
+                                            ? Icons.map_rounded
+                                            : Icons.hotel_rounded,
                                         size: 50,
                                         color: _gold.withOpacity(0.92),
                                       ),
@@ -2683,7 +2868,9 @@ class _HotelsPageState extends State<HotelsPage> {
                                   )
                                 : Center(
                                     child: Icon(
-                                      Icons.hotel_rounded,
+                                      isDiscoveryCard
+                                          ? Icons.map_rounded
+                                          : Icons.hotel_rounded,
                                       size: 50,
                                       color: _gold.withOpacity(0.92),
                                     ),
@@ -2718,7 +2905,9 @@ class _HotelsPageState extends State<HotelsPage> {
                           border: Border.all(color: _gold.withOpacity(0.45)),
                         ),
                         child: Text(
-                          _typeLabel(stay.type),
+                          isDiscoveryCard
+                              ? _discoveryRegionBadgeLabel
+                              : _typeLabel(stay.type),
                           style: TextStyle(
                             color: _gold,
                             fontSize: 10.5,
@@ -2843,13 +3032,13 @@ class _HotelsPageState extends State<HotelsPage> {
                       if (isDiscoveryCard) ...[
                         const SizedBox(height: 3),
                         Text(
-                          _stay22AvailabilitySubtitle,
+                          _planRideInRegionLabel,
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
-                            color: _softText.withOpacity(0.88),
-                            fontSize: 10.3,
-                            fontWeight: FontWeight.w600,
+                            color: _gold.withOpacity(0.88),
+                            fontSize: 10.5,
+                            fontWeight: FontWeight.w700,
                             height: 1.2,
                           ),
                         ),
@@ -2857,12 +3046,7 @@ class _HotelsPageState extends State<HotelsPage> {
                       const SizedBox(height: 6),
                       Text(
                         isDiscoveryCard
-                            ? _t(
-                                nl: 'Ontdek regio\'s en plan je rit met Fluxidi.',
-                                en: 'Discover regions and plan your ride with Fluxidi.',
-                                fr: 'Découvrez des régions et planifiez votre trajet avec Fluxidi.',
-                                es: 'Descubre regiones y planifica tu trayecto con Fluxidi.',
-                              )
+                            ? _discoveryRegionCardDescription
                             : stay.description,
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
@@ -3126,6 +3310,51 @@ class HotelStayDetailPage extends StatelessWidget {
       en: 'Availability and prices are shown externally.',
       fr: 'Les disponibilités et les prix sont affichés en externe.',
       es: 'La disponibilidad y los precios se muestran externamente.',
+    );
+  }
+
+  String get _discoveryRegionBadgeLabel {
+    return _t(
+      nl: 'Ritplanning regio',
+      en: 'Ride planning region',
+      fr: 'Région de planification',
+      es: 'Región de planificación',
+    );
+  }
+
+  String get _planRideInRegionLabel {
+    return _t(
+      nl: 'Ritten plannen in deze regio',
+      en: 'Plan rides in this region',
+      fr: 'Planifier des trajets dans cette région',
+      es: 'Planificar trayectos en esta región',
+    );
+  }
+
+  String get _discoveryRegionCardDescription {
+    return _t(
+      nl: 'Geen hotelinventaris — open live accommodaties via Stay22 voor deze regio.',
+      en: 'Not hotel inventory — open live accommodations via Stay22 for this region.',
+      fr: 'Pas d’inventaire hôtelier — ouvrez les hébergements live via Stay22 pour cette région.',
+      es: 'No es inventario hotelero — abre alojamientos en vivo vía Stay22 para esta región.',
+    );
+  }
+
+  String get _stay22AvailabilitySubtitle {
+    return _t(
+      nl: 'Open live verblijven en prijzen via Stay22. Booking.com volgt na goedkeuring.',
+      en: 'Open live stays and prices via Stay22. Booking.com follows after approval.',
+      fr: 'Ouvrez les hébergements et prix actuels via Stay22. Booking.com suivra après approbation.',
+      es: 'Abre alojamientos y precios actuales vía Stay22. Booking.com seguirá tras la aprobación.',
+    );
+  }
+
+  String get _bookingComPendingNotice {
+    return _t(
+      nl: 'Booking.com wordt geactiveerd zodra de partneraanvraag is goedgekeurd.',
+      en: 'Booking.com will activate once the partner application is approved.',
+      fr: 'Booking.com sera activé une fois la demande partenaire approuvée.',
+      es: 'Booking.com se activará cuando se apruebe la solicitud de socio.',
     );
   }
 
@@ -3610,7 +3839,9 @@ class HotelStayDetailPage extends StatelessWidget {
                                           )
                                         : Center(
                                             child: Icon(
-                                              Icons.hotel_rounded,
+                                              isDiscoveryCard
+                                                  ? Icons.map_rounded
+                                                  : Icons.hotel_rounded,
                                               color: _gold.withOpacity(0.95),
                                               size: 64,
                                             ),
@@ -3623,7 +3854,9 @@ class HotelStayDetailPage extends StatelessWidget {
                                         )
                                       : Center(
                                           child: Icon(
-                                            Icons.hotel_rounded,
+                                            isDiscoveryCard
+                                                ? Icons.map_rounded
+                                                : Icons.hotel_rounded,
                                             color: _gold.withOpacity(0.95),
                                             size: 64,
                                           ),
@@ -3660,7 +3893,9 @@ class HotelStayDetailPage extends StatelessWidget {
                                 ),
                               ),
                               child: Text(
-                                _typeLabel(stay.type),
+                                isDiscoveryCard
+                                    ? _discoveryRegionBadgeLabel
+                                    : _typeLabel(stay.type),
                                 style: TextStyle(
                                   color: _gold,
                                   fontSize: 11,
@@ -3726,27 +3961,29 @@ class HotelStayDetailPage extends StatelessWidget {
                                   ),
                                 ),
                               ),
-                              const SizedBox(width: 8),
-                              IconButton(
-                                onPressed: onToggleSaved,
-                                tooltip: isSaved ? savedLabel : saveLabel,
-                                icon: Icon(
-                                  isSaved
-                                      ? Icons.favorite_rounded
-                                      : Icons.favorite_border_rounded,
-                                  color: isSaved
-                                      ? _gold
-                                      : _textPrimary.withOpacity(0.92),
-                                ),
-                                style: IconButton.styleFrom(
-                                  backgroundColor: _panelBlack,
-                                  side: BorderSide(
-                                    color: _border.withOpacity(
-                                      _isDarkTheme ? 0.4 : 1,
+                              if (!isDiscoveryCard) ...[
+                                const SizedBox(width: 8),
+                                IconButton(
+                                  onPressed: onToggleSaved,
+                                  tooltip: isSaved ? savedLabel : saveLabel,
+                                  icon: Icon(
+                                    isSaved
+                                        ? Icons.favorite_rounded
+                                        : Icons.favorite_border_rounded,
+                                    color: isSaved
+                                        ? _gold
+                                        : _textPrimary.withOpacity(0.92),
+                                  ),
+                                  style: IconButton.styleFrom(
+                                    backgroundColor: _panelBlack,
+                                    side: BorderSide(
+                                      color: _border.withOpacity(
+                                        _isDarkTheme ? 0.4 : 1,
+                                      ),
                                     ),
                                   ),
                                 ),
-                              ),
+                              ],
                             ],
                           ),
                           const SizedBox(height: 6),
@@ -3758,7 +3995,18 @@ class HotelStayDetailPage extends StatelessWidget {
                               fontWeight: FontWeight.w700,
                             ),
                           ),
-                          if (displayPrice.isNotEmpty) ...[
+                          if (isDiscoveryCard) ...[
+                            const SizedBox(height: 6),
+                            Text(
+                              _planRideInRegionLabel,
+                              style: TextStyle(
+                                color: _gold.withOpacity(0.88),
+                                fontSize: 12.4,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ],
+                          if (displayPrice.isNotEmpty && !isDiscoveryCard) ...[
                             const SizedBox(height: 8),
                             Text(
                               displayPrice,
@@ -3771,7 +4019,9 @@ class HotelStayDetailPage extends StatelessWidget {
                           ],
                           const SizedBox(height: 10),
                           Text(
-                            stay.description,
+                            isDiscoveryCard
+                                ? _discoveryRegionCardDescription
+                                : stay.description,
                             style: TextStyle(
                               color: _softText,
                               fontSize: 13.2,
@@ -3936,7 +4186,10 @@ class HotelStayDetailPage extends StatelessWidget {
                     ),
                     const SizedBox(height: 6),
                     Text(
-                      externalAvailabilityHint ?? _externalAvailabilityHint,
+                      externalAvailabilityHint ??
+                          (isDiscoveryCard
+                              ? _stay22AvailabilitySubtitle
+                              : _externalAvailabilityHint),
                       textAlign: TextAlign.center,
                       style: TextStyle(
                         color: _softText.withOpacity(0.9),
@@ -3944,6 +4197,18 @@ class HotelStayDetailPage extends StatelessWidget {
                         fontWeight: FontWeight.w600,
                       ),
                     ),
+                    if (isDiscoveryCard && !kBookingComCjConfigured) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        _bookingComPendingNotice,
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: _softText.withOpacity(0.82),
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
                     if (canShowAirportTransferCta) ...[
                       const SizedBox(height: 8),
                       SizedBox(
