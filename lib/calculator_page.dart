@@ -34,6 +34,9 @@ import 'package:fluxidi_tracking/effective_tenant_company_scope.dart';
 import 'package:geolocator/geolocator.dart' as geo;
 import 'package:http/http.dart' as http;
 import 'package:url_launcher/url_launcher.dart';
+import 'package:fluxidi_tracking/payment/payment_booking_selection.dart';
+import 'package:fluxidi_tracking/payment/payment_method_catalog.dart';
+import 'package:fluxidi_tracking/payment/payment_method_resolver.dart';
 import 'package:fluxidi_tracking/payment_return.dart';
 
 const bool showPricingDebug = false;
@@ -3034,8 +3037,6 @@ class _BookingConfirmationPage extends StatefulWidget {
       _BookingConfirmationPageState();
 }
 
-enum _BookingPaymentChoice { manual, online }
-
 class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
   final TextEditingController _nameCtrl = TextEditingController();
   final TextEditingController _phoneCtrl = TextEditingController();
@@ -3052,7 +3053,7 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
   String? _ownPaymentBookingId;
   bool _paymentConfirmed = false;
   bool _postPaymentNavigated = false;
-  _BookingPaymentChoice _selectedPaymentChoice = _BookingPaymentChoice.manual;
+  String _selectedPaymentMethodId = PaymentMethodIds.inVehicleCard;
   _CalculatorVisualTheme get _visualTheme => _calculatorVisualThemeForContext(
     widget.entryContext,
     widget.driverThemeListenable,
@@ -3244,21 +3245,20 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
     return '${widget.currencySymbol} ${n.toStringAsFixed(2)}';
   }
 
-  bool get _isOnlinePaymentChoice =>
-      _selectedPaymentChoice == _BookingPaymentChoice.online;
+  BookingPaymentSelection get _bookingPaymentSelection =>
+      BookingPaymentSelection.fromMethodId(_selectedPaymentMethodId);
 
-  void _showThemedSnackBar(String message) {
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        backgroundColor: _panelAlt,
-        content: Text(message, style: TextStyle(color: _textPrimary)),
-      ),
-    );
+  List<String> get _visiblePaymentMethodIds {
+    const manualInCar = PaymentMethodIds.inVehicleCard;
+    final onlineIds = PaymentMethodResolver.resolveIds(countryCode: 'BE');
+    final seen = <String>{manualInCar};
+    final out = <String>[manualInCar];
+    for (final id in onlineIds) {
+      if (id == manualInCar || !seen.add(id)) continue;
+      out.add(id);
+    }
+    return out;
   }
-
-  String get _selectedPaymentMode =>
-      _isOnlinePaymentChoice ? 'mollie' : 'manual';
 
   String _paymentChoiceTitle() {
     return _localizedText(
@@ -3278,48 +3278,101 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
     );
   }
 
-  String _paymentChoiceLabel(_BookingPaymentChoice choice) {
-    if (choice == _BookingPaymentChoice.online) {
-      return _localizedText(
-        nl: 'Nu online betalen',
-        en: 'Pay online now',
-        fr: 'Payer en ligne maintenant',
-        es: 'Pagar en línea ahora',
-      );
-    }
-    return _localizedText(
-      nl: 'Betalen in de auto',
-      en: 'Pay in the car',
-      fr: 'Payer dans la voiture',
-      es: 'Pagar en el coche',
+  void _showThemedSnackBar(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        backgroundColor: _panelAlt,
+        content: Text(message, style: TextStyle(color: _textPrimary)),
+      ),
     );
   }
 
-  String _paymentChoiceDescription(_BookingPaymentChoice choice) {
-    if (choice == _BookingPaymentChoice.online) {
+  String _paymentMethodLabel(String methodId) {
+    switch (normalizePaymentMethodId(methodId)) {
+      case PaymentMethodIds.inVehicleCard:
+        return _localizedText(
+          nl: 'Betalen in de auto',
+          en: 'Pay in the car',
+          fr: 'Payer dans la voiture',
+          es: 'Pagar en el coche',
+        );
+      case PaymentMethodIds.bancontact:
+        return 'Bancontact';
+      case PaymentMethodIds.ideal:
+        return 'iDEAL';
+      case PaymentMethodIds.cardPayment:
+        return _localizedText(
+          nl: 'Kaartbetaling',
+          en: 'Card payment',
+          fr: 'Paiement par carte',
+          es: 'Pago con tarjeta',
+        );
+      case PaymentMethodIds.applePay:
+        return 'Apple Pay';
+      case PaymentMethodIds.googlePay:
+        return 'Google Pay';
+      case PaymentMethodIds.paypal:
+        return 'PayPal';
+      case PaymentMethodIds.bizum:
+        return 'Bizum';
+      case PaymentMethodIds.cartesBancaires:
+        return 'Carte Bancaire / CB';
+      case PaymentMethodIds.payconiqWero:
+        return 'Payconiq / Wero';
+      case PaymentMethodIds.tikkie:
+        return 'Tikkie';
+      default:
+        return methodId;
+    }
+  }
+
+  String _paymentMethodDescription(String methodId) {
+    final id = normalizePaymentMethodId(methodId);
+    if (id == PaymentMethodIds.inVehicleCard ||
+        PaymentMethodCatalog.providerFor(id) == PaymentProvider.manual) {
       return _localizedText(
-        nl: 'Open de beveiligde betaalpagina na het bevestigen.',
-        en: 'Open the secure checkout page after confirming.',
-        fr: 'Ouvrez la page de paiement sécurisée après confirmation.',
-        es: 'Abre la página de pago segura tras confirmar.',
+        nl: 'Boeking wordt meteen aangemaakt, betaling volgt tijdens de rit.',
+        en: 'Booking is created immediately, payment follows during the ride.',
+        fr: 'La réservation est créée immédiatement, paiement pendant le trajet.',
+        es: 'La reserva se crea al instante, el pago se realiza durante el trayecto.',
+      );
+    }
+    if (PaymentMethodCatalog.isTikkieMethod(id)) {
+      return _localizedText(
+        nl: 'Betaalverzoek volgt na het bevestigen.',
+        en: 'A payment request follows after confirming.',
+        fr: 'Une demande de paiement suit après confirmation.',
+        es: 'Una solicitud de pago sigue tras confirmar.',
       );
     }
     return _localizedText(
-      nl: 'Boeking wordt meteen aangemaakt, betaling volgt tijdens de rit.',
-      en: 'Booking is created immediately, payment follows during the ride.',
-      fr: 'La réservation est créée immédiatement, paiement pendant le trajet.',
-      es: 'La reserva se crea al instante, el pago se realiza durante el trayecto.',
+      nl: 'Open de beveiligde betaalpagina na het bevestigen.',
+      en: 'Open the secure checkout page after confirming.',
+      fr: 'Ouvrez la page de paiement sécurisée après confirmation.',
+      es: 'Abre la página de pago segura tras confirmar.',
     );
   }
 
-  Widget _paymentChoiceOption(_BookingPaymentChoice choice) {
-    final selected = _selectedPaymentChoice == choice;
+  IconData _paymentMethodIcon(String methodId) {
+    final id = normalizePaymentMethodId(methodId);
+    if (id == PaymentMethodIds.inVehicleCard) {
+      return Icons.local_taxi_rounded;
+    }
+    if (PaymentMethodCatalog.isTikkieMethod(id)) {
+      return Icons.send_rounded;
+    }
+    return Icons.language_rounded;
+  }
+
+  Widget _paymentMethodChoiceOption(String methodId) {
+    final selected = _selectedPaymentMethodId == methodId;
     return InkWell(
       borderRadius: BorderRadius.circular(12),
       onTap: _submitting
           ? null
           : () => setState(() {
-              _selectedPaymentChoice = choice;
+              _selectedPaymentMethodId = methodId;
             }),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 160),
@@ -3340,9 +3393,7 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
         child: Row(
           children: [
             Icon(
-              choice == _BookingPaymentChoice.online
-                  ? Icons.language_rounded
-                  : Icons.local_taxi_rounded,
+              _paymentMethodIcon(methodId),
               color: selected ? _gold : _textPrimary.withOpacity(0.8),
               size: 18,
             ),
@@ -3352,7 +3403,7 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    _paymentChoiceLabel(choice),
+                    _paymentMethodLabel(methodId),
                     style: TextStyle(
                       color: _textPrimary,
                       fontSize: 12.8,
@@ -3361,7 +3412,7 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
                   ),
                   const SizedBox(height: 2),
                   Text(
-                    _paymentChoiceDescription(choice),
+                    _paymentMethodDescription(methodId),
                     style: TextStyle(
                       color: _textMuted.withOpacity(0.92),
                       fontSize: 11.2,
@@ -4273,6 +4324,8 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
       '[CUSTOMER_BOOKING_CREATE][IDENTITY] hasCustomerId=${sessionCustomerId.isNotEmpty} hasToken=${customerSessionToken.isNotEmpty}',
     );
 
+    final paymentSelection = _bookingPaymentSelection;
+
     final payload = <String, dynamic>{
       ...widget.payload, // keep quote payload keys unchanged
       'tenant_id': selectedScope.tenantId,
@@ -4305,10 +4358,7 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
       // Mollie return-to-app deep link. The Worker uses this to redirect the
       // browser back into the Fluxidi app after a successful payment.
       'return_url': kFluxidiPaymentReturnUrl,
-      'payment_mode': _selectedPaymentMode,
-      'paymentMode': _selectedPaymentMode,
-      'payment_provider': _selectedPaymentMode,
-      'paymentProvider': _selectedPaymentMode,
+      ...paymentSelection.toPayloadFields(),
       'customer': <String, dynamic>{
         'name': name,
         'full_name': name,
@@ -4886,9 +4936,10 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
                   ),
                 ),
                 const SizedBox(height: 8),
-                _paymentChoiceOption(_BookingPaymentChoice.manual),
-                const SizedBox(height: 7),
-                _paymentChoiceOption(_BookingPaymentChoice.online),
+                for (var i = 0; i < _visiblePaymentMethodIds.length; i++) ...[
+                  if (i > 0) const SizedBox(height: 7),
+                  _paymentMethodChoiceOption(_visiblePaymentMethodIds[i]),
+                ],
               ],
             ),
           ),
