@@ -38,6 +38,13 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
   bool _hasValidRatingSession = false;
   String? _refreshError;
   late bool _usingLocalCache = widget.startsFromLocalCache;
+  // G3-N: when fluxidiPendingPaymentNotifier transitions to paid/confirmed for
+  // this booking, we set _optimisticPaidApplied so the build path treats the
+  // booking as paid even before the next /bookings/:id refresh has hydrated
+  // the new payment_status. This prevents the brief "pay in car" / unpaid
+  // label flicker after a successful resumed Mollie payment.
+  bool _optimisticPaidApplied = false;
+  String? _optimisticPaidPaymentBookingId;
 
   String _t({
     required String nl,
@@ -55,6 +62,66 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
     unawaited(_refreshRatingSessionState());
     unawaited(_refreshDerivedPaymentClassification(view: _view));
     unawaited(_refresh());
+    fluxidiPendingPaymentNotifier.addListener(
+      _onPendingPaymentNotifierChangedForCustomerDetail,
+    );
+  }
+
+  @override
+  void dispose() {
+    fluxidiPendingPaymentNotifier.removeListener(
+      _onPendingPaymentNotifierChangedForCustomerDetail,
+    );
+    super.dispose();
+  }
+
+  // G3-N: when payment_return.dart's pending-payment notifier transitions to
+  // paid/confirmed AND it matches this booking, immediately re-fetch the
+  // authoritative state and remember the optimistic-paid flag so the build
+  // method does NOT keep painting "pay in car" / pending labels until the
+  // refresh round-trips. This is the customer-facing display fix; the
+  // backend canonical record is already paid by this point because
+  // /pay/status drives finalizeResumePaidPaymentToCanonical synchronously.
+  void _onPendingPaymentNotifierChangedForCustomerDetail() {
+    if (!mounted) return;
+    final pending = fluxidiPendingPaymentNotifier.value;
+    if (pending == null) return;
+    if (pending.status != FluxidiPaymentStatus.paid &&
+        pending.status != FluxidiPaymentStatus.confirmed) {
+      return;
+    }
+    final paymentBookingIdHit = pending.paymentBookingId.trim();
+    final canonicalHit = (pending.publicBookingId ?? '').trim();
+    final aliases = _paymentAliasesForView(_view);
+    final viewMatches =
+        (paymentBookingIdHit.isNotEmpty &&
+            aliases.contains(paymentBookingIdHit.toLowerCase())) ||
+        (canonicalHit.isNotEmpty &&
+            aliases.contains(canonicalHit.toLowerCase())) ||
+        (canonicalHit.isNotEmpty && canonicalHit == widget.bookingId.trim()) ||
+        (canonicalHit.isNotEmpty &&
+            canonicalHit == _view.internalBookingId.trim()) ||
+        (paymentBookingIdHit.isNotEmpty &&
+            paymentBookingIdHit == widget.bookingId.trim());
+    if (!viewMatches) return;
+    if (_optimisticPaidApplied &&
+        _optimisticPaidPaymentBookingId == paymentBookingIdHit) {
+      return;
+    }
+    _optimisticPaidApplied = true;
+    _optimisticPaidPaymentBookingId = paymentBookingIdHit.isNotEmpty
+        ? paymentBookingIdHit
+        : null;
+    debugPrint(
+      '[CUSTOMER_BOOKINGS][PAYMENT_STATUS_PATCHED] booking=${_safeRefPreview(_view.internalBookingId.isNotEmpty ? _view.internalBookingId : widget.bookingId)} paymentBooking=${_safeRefPreview(paymentBookingIdHit)} from=${_view.rawPaymentStatus.isEmpty ? "-" : _view.rawPaymentStatus} to=paid source=detail_notifier',
+    );
+    debugPrint(
+      '[PAYMENT_RETURN][CUSTOMER_REFRESH] surface=detail booking=${_safeRefPreview(_view.internalBookingId.isNotEmpty ? _view.internalBookingId : widget.bookingId)} paymentBooking=${_safeRefPreview(paymentBookingIdHit)} status=${pending.status.name}',
+    );
+    setState(() {});
+    if (!_refreshing) {
+      unawaited(_refresh());
+    }
   }
 
   Future<void> _refreshRatingSessionState() async {
@@ -2390,7 +2457,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
           valueListenable: appLanguageNotifier,
           builder: (context, _, __) {
             final v = _view;
-            final paymentToken = _classifyCustomerPaymentDisplayToken(
+            String paymentToken = _classifyCustomerPaymentDisplayToken(
               aliases: _paymentAliasesForView(v),
               fallbackToken: _derivedPaymentDisplayToken.isNotEmpty
                   ? _derivedPaymentDisplayToken
@@ -2399,6 +2466,17 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
               paymentMode: v.paymentMode,
               paymentMethod: v.paymentMethod,
             );
+            // G3-N: apply optimistic paid override only when classifier did
+            // not already classify the booking as paid. Avoids regressing a
+            // backend-confirmed paid booking into "online_pending" because of
+            // a transient stale field.
+            if (_optimisticPaidApplied &&
+                !_isPaidCustomerPaymentDisplayToken(paymentToken)) {
+              debugPrint(
+                '[CUSTOMER_BOOKINGS][STALE_PAYMENT_LABEL_GUARD] booking=${_safeRefPreview(v.internalBookingId.isNotEmpty ? v.internalBookingId : widget.bookingId)} backendToken=$paymentToken overrideTo=paid surface=detail',
+              );
+              paymentToken = 'paid';
+            }
             final paid = _isPaidCustomerPaymentDisplayToken(paymentToken);
             final partiallyPaid = _isPartialCustomerPaymentDisplayToken(
               paymentToken,

@@ -13,6 +13,8 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
   String? _error;
   List<CustomerSavedBooking> _bookings = const <CustomerSavedBooking>[];
   Map<String, String> _paymentOverlayByBookingId = const <String, String>{};
+  // G3-N: see customer_bookings_page.dart for rationale.
+  final Set<String> _optimisticallyPaidBookingIds = <String>{};
   CustomerThemePalette get _palette =>
       paletteForCustomerTheme(customerThemeNotifier.value);
   bool get _isDarkTheme => _palette.isDark;
@@ -28,6 +30,69 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
   void initState() {
     super.initState();
     unawaited(_loadLocal());
+    fluxidiPendingPaymentNotifier.addListener(
+      _onPendingPaymentNotifierChangedForCustomerSavedList,
+    );
+  }
+
+  @override
+  void dispose() {
+    fluxidiPendingPaymentNotifier.removeListener(
+      _onPendingPaymentNotifierChangedForCustomerSavedList,
+    );
+    super.dispose();
+  }
+
+  // G3-N: pending-payment notifier hook. Same semantics as the active-list
+  // page; we optimistically mark the matching saved booking as paid so the
+  // UI does not flash "Pay in car" after a successful resumed Mollie
+  // payment. We do not write to the saved-bookings store from here; the
+  // background re-load via _loadLocal() picks up the canonical state.
+  void _onPendingPaymentNotifierChangedForCustomerSavedList() {
+    if (!mounted) return;
+    final pending = fluxidiPendingPaymentNotifier.value;
+    if (pending == null) return;
+    if (pending.status != FluxidiPaymentStatus.paid &&
+        pending.status != FluxidiPaymentStatus.confirmed) {
+      return;
+    }
+    final paymentBookingIdHit = pending.paymentBookingId.trim();
+    final canonicalHit = (pending.publicBookingId ?? '').trim();
+    if (paymentBookingIdHit.isEmpty && canonicalHit.isEmpty) return;
+    CustomerSavedBooking? matched;
+    for (final booking in _bookings) {
+      final aliases = _overlayAliasesForSavedBooking(booking);
+      if (paymentBookingIdHit.isNotEmpty &&
+          aliases.contains(paymentBookingIdHit.toLowerCase())) {
+        matched = booking;
+        break;
+      }
+      if (canonicalHit.isNotEmpty &&
+          aliases.contains(canonicalHit.toLowerCase())) {
+        matched = booking;
+        break;
+      }
+      if (canonicalHit.isNotEmpty && booking.bookingId.trim() == canonicalHit) {
+        matched = booking;
+        break;
+      }
+    }
+    if (matched == null) return;
+    final bookingId = matched.bookingId.trim();
+    if (bookingId.isEmpty) return;
+    if (_optimisticallyPaidBookingIds.contains(bookingId)) return;
+    debugPrint(
+      '[CUSTOMER_BOOKINGS][PAYMENT_STATUS_PATCHED] booking=${_safeRefPreview(bookingId)} paymentBooking=${_safeRefPreview(paymentBookingIdHit)} from=${matched.paymentStatus.isEmpty ? "-" : matched.paymentStatus} to=paid source=saved_list_notifier',
+    );
+    debugPrint(
+      '[PAYMENT_RETURN][CUSTOMER_REFRESH] surface=saved_list booking=${_safeRefPreview(bookingId)} paymentBooking=${_safeRefPreview(paymentBookingIdHit)} status=${pending.status.name}',
+    );
+    setState(() {
+      _optimisticallyPaidBookingIds.add(bookingId);
+    });
+    if (!_loading) {
+      unawaited(_loadLocal());
+    }
   }
 
   Future<void> _loadLocal() async {
@@ -133,23 +198,34 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
   String _displayPaymentStatusToken(CustomerSavedBooking booking) {
     final channel = _customerPaymentChannelFieldsFromSavedBooking(booking);
     final bookingId = booking.bookingId.trim();
+    String token;
     if (bookingId.isNotEmpty &&
         _paymentOverlayByBookingId.containsKey(bookingId)) {
-      return _classifyCustomerPaymentDisplayToken(
+      token = _classifyCustomerPaymentDisplayToken(
         aliases: _overlayAliasesForSavedBooking(booking),
         fallbackToken: _paymentOverlayByBookingId[bookingId]!,
         paymentProvider: channel.provider,
         paymentMode: channel.mode,
         paymentMethod: channel.method,
       );
+    } else {
+      token = _classifyCustomerPaymentDisplayToken(
+        aliases: _overlayAliasesForSavedBooking(booking),
+        fallbackToken: booking.paymentStatus,
+        paymentProvider: channel.provider,
+        paymentMode: channel.mode,
+        paymentMethod: channel.method,
+      );
     }
-    return _classifyCustomerPaymentDisplayToken(
-      aliases: _overlayAliasesForSavedBooking(booking),
-      fallbackToken: booking.paymentStatus,
-      paymentProvider: channel.provider,
-      paymentMode: channel.mode,
-      paymentMethod: channel.method,
-    );
+    if (bookingId.isNotEmpty &&
+        _optimisticallyPaidBookingIds.contains(bookingId) &&
+        !_isPaidCustomerPaymentDisplayToken(token)) {
+      debugPrint(
+        '[CUSTOMER_BOOKINGS][STALE_PAYMENT_LABEL_GUARD] booking=${_safeRefPreview(bookingId)} backendToken=$token overrideTo=paid surface=saved_list',
+      );
+      return 'paid';
+    }
+    return token;
   }
 
   bool _displayPaymentKnownPaid(CustomerSavedBooking booking) {
