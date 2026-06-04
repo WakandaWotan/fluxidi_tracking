@@ -50039,37 +50039,23 @@ async function finalizeResumePaidPaymentToCanonical(stored, env, request, opts =
     invoiceState: invoiceContext.businessInvoiceIntent ? "ready_to_send" : "none",
   });
 
-  // G3: hand the now-paid canonical record to the existing FleetAllocator so
-  // resumed Mollie payments do not stay paid-but-unassigned. The helper is
-  // idempotent and respects the allocator's "not allowed" decisions; on a
-  // skip/deny the canonical record stays unchanged and remains visible in
-  // Driver > Available exactly as before. We pass persist:false because the
-  // canonical record is persisted (and indexes are re-emitted) by the block
-  // immediately below.
-  let dispatchOutcome = null;
-  try {
-    dispatchOutcome = await ensurePaidOpenBookingAutoDispatched(
-      env,
-      canonicalBookingId,
-      canonicalRec,
-      request,
-      {
-        tenantScope,
-        persist: false,
-        source: "mollie_resume_pay_status_paid",
-      },
-    );
-  } catch (dispatchErr) {
-    const reason = safeStr(dispatchErr?.message || dispatchErr, 140) || "exception";
-    console.log(
-      `[DISPATCH_AUTO_ASSIGN][ERROR] booking=${_bookingIntentMask(canonicalBookingId)} stage=resume_finalize reason=${reason}`,
-    );
-    dispatchOutcome = null;
-  }
-  console.log(
-    `[DISPATCH_POST_PAYMENT][RESUME_FINALIZE] paymentBooking=${_bookingIntentMask(paymentBookingId)} canonical=${_bookingIntentMask(canonicalBookingId)} assigned=${dispatchOutcome?.assigned === true} reason=${safeStr(dispatchOutcome?.reason, 80) || "-"} skipped=${dispatchOutcome?.skipped === true}`,
-  );
-
+  // G3-M: Persist the canonical paid state and refresh demand/driver/vehicle/
+  // company/dashboard indexes BEFORE invoking the auto-dispatch helper.
+  //
+  // Previous order ran ensurePaidOpenBookingAutoDispatched against the
+  // in-memory record while the demand index and KV record still reflected
+  // the old "pending" state. The allocator's _evaluateFleetAvailability +
+  // _loadScopedActiveDemandWithRepair re-read those indexes, so the just-
+  // marked-paid booking would either still appear as competing unassigned
+  // demand or fail the canonical-record consistency checks, returning
+  // not_allowed / vehicle_capacity_exceeded. A manual /admin/dispatch/ensure
+  // seconds later succeeded because by then the indexes had settled.
+  //
+  // This block is what was already running below the dispatch call; we just
+  // moved it ABOVE so the allocator sees a fully consistent view, and we
+  // pass persist:true to the dispatch helper so it owns the post-assignment
+  // KV.put + index re-emission. No new payment, invoice, or email side-
+  // effects are introduced here.
   await env.BOOKING_KV.put(canonicalKey, JSON.stringify(canonicalRec));
   const fleetScope = normalizeFleetTenantScope(tenantScope);
   await upsertBookingDemandIndexBestEffort(env, canonicalBookingId, canonicalRec, fleetScope);
@@ -50098,6 +50084,118 @@ async function finalizeResumePaidPaymentToCanonical(stored, env, request, opts =
     tenantScope,
     source: "mollie_resume_pay_status_paid",
   });
+
+  // G3: hand the now-paid canonical record to the existing FleetAllocator so
+  // resumed Mollie payments do not stay paid-but-unassigned. The helper is
+  // idempotent and respects the allocator's "not allowed" decisions; on a
+  // skip/deny the canonical record stays unchanged and remains visible in
+  // Driver > Available exactly as before. persist:true so the helper itself
+  // owns the post-assignment KV.put + index updates (the canonical paid
+  // state is already on disk above; helper either no-ops or replaces with
+  // assigned state).
+  let dispatchOutcome = null;
+  try {
+    dispatchOutcome = await ensurePaidOpenBookingAutoDispatched(
+      env,
+      canonicalBookingId,
+      canonicalRec,
+      request,
+      {
+        tenantScope,
+        persist: true,
+        source: "mollie_resume_pay_status_paid",
+      },
+    );
+  } catch (dispatchErr) {
+    const reason = safeStr(dispatchErr?.message || dispatchErr, 140) || "exception";
+    console.log(
+      `[DISPATCH_AUTO_ASSIGN][ERROR] booking=${_bookingIntentMask(canonicalBookingId)} stage=resume_finalize reason=${reason}`,
+    );
+    dispatchOutcome = null;
+  }
+  console.log(
+    `[DISPATCH_POST_PAYMENT][RESUME_FINALIZE] paymentBooking=${_bookingIntentMask(paymentBookingId)} canonical=${_bookingIntentMask(canonicalBookingId)} assigned=${dispatchOutcome?.assigned === true} reason=${safeStr(dispatchOutcome?.reason, 80) || "-"} allocator_reason=${safeStr(dispatchOutcome?.allocator_reason, 80) || "-"} skipped=${dispatchOutcome?.skipped === true}`,
+  );
+
+  // G3-M: One safe retry when the first attempt was rejected with
+  // vehicle_capacity_exceeded. We reload the canonical record from KV (in
+  // case any other path mutated it concurrently), re-upsert the demand
+  // index defensively, then re-call the same idempotent dispatch helper.
+  //
+  // This is NOT a manual assignment; the retry is gated to the specific
+  // false-negative we observed in the resume-finalize race, and the
+  // allocator's existing rules (suitability, ETA, tenant scope, tier,
+  // driver/vehicle availability, demand conflicts) still decide. If the
+  // retry also legitimately rejects, we leave the booking visible in
+  // Driver > Available exactly as the no-retry path would.
+  const firstAllocatorReason = safeStr(dispatchOutcome?.allocator_reason, 80).toLowerCase();
+  const firstReason = safeStr(dispatchOutcome?.reason, 80).toLowerCase();
+  const shouldRetry =
+    dispatchOutcome &&
+    dispatchOutcome.assigned !== true &&
+    firstReason === "not_allowed" &&
+    firstAllocatorReason === "vehicle_capacity_exceeded";
+  if (shouldRetry) {
+    console.log(
+      `[DISPATCH_POST_PAYMENT][RESUME_RETRY] paymentBooking=${_bookingIntentMask(paymentBookingId)} canonical=${_bookingIntentMask(canonicalBookingId)} reason=${firstReason} allocator_reason=${firstAllocatorReason}`,
+    );
+    let retryRec = canonicalRec;
+    try {
+      const reloaded = await loadBookingRecord(env, canonicalBookingId);
+      if (
+        reloaded?.rec &&
+        bookingMatchesRequiredTenantCompanyScope(reloaded.rec, tenantScope)
+      ) {
+        retryRec = reloaded.rec;
+        canonicalRec = reloaded.rec;
+        console.log(
+          `[PAYMENT_FINALIZE][CANONICAL_RELOADED] paymentBooking=${_bookingIntentMask(paymentBookingId)} canonical=${_bookingIntentMask(canonicalBookingId)} payment_status=${safeStr(retryRec?.payment_status || retryRec?.paymentStatus, 24) || "-"} assigned=${retryRec?.assigned_vehicle_id || retryRec?.assignedVehicleId ? "true" : "false"}`,
+        );
+      } else {
+        console.log(
+          `[PAYMENT_FINALIZE][CANONICAL_RELOADED] paymentBooking=${_bookingIntentMask(paymentBookingId)} canonical=${_bookingIntentMask(canonicalBookingId)} reason=${reloaded?.rec ? "scope_mismatch" : "not_found"} fallback=in_memory`,
+        );
+      }
+    } catch (reloadErr) {
+      console.log(
+        `[PAYMENT_FINALIZE][CANONICAL_RELOADED] paymentBooking=${_bookingIntentMask(paymentBookingId)} canonical=${_bookingIntentMask(canonicalBookingId)} reason=reload_error fallback=in_memory error=${safeStr(reloadErr?.message || reloadErr, 80) || "exception"}`,
+      );
+    }
+    try {
+      await upsertBookingDemandIndexBestEffort(
+        env,
+        canonicalBookingId,
+        retryRec,
+        fleetScope,
+      );
+    } catch (_) {
+      // Best-effort defensive demand-index refresh.
+    }
+    let retryOutcome = null;
+    try {
+      retryOutcome = await ensurePaidOpenBookingAutoDispatched(
+        env,
+        canonicalBookingId,
+        retryRec,
+        request,
+        {
+          tenantScope,
+          persist: true,
+          source: "mollie_resume_pay_status_paid_retry",
+        },
+      );
+    } catch (retryErr) {
+      const reason = safeStr(retryErr?.message || retryErr, 140) || "exception";
+      console.log(
+        `[DISPATCH_AUTO_ASSIGN][ERROR] booking=${_bookingIntentMask(canonicalBookingId)} stage=resume_finalize_retry reason=${reason}`,
+      );
+      retryOutcome = null;
+    }
+    console.log(
+      `[DISPATCH_POST_PAYMENT][RESUME_RETRY_RESULT] paymentBooking=${_bookingIntentMask(paymentBookingId)} canonical=${_bookingIntentMask(canonicalBookingId)} assigned=${retryOutcome?.assigned === true} reason=${safeStr(retryOutcome?.reason, 80) || "-"} allocator_reason=${safeStr(retryOutcome?.allocator_reason, 80) || "-"} skipped=${retryOutcome?.skipped === true}`,
+    );
+    if (retryOutcome) dispatchOutcome = retryOutcome;
+  }
 
   stored.confirmed_at = stored.confirmed_at || nowIso;
   stored.confirming_at = null;
