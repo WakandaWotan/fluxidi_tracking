@@ -1272,6 +1272,56 @@ class CustomerBookingView {
     ]).toLowerCase();
   }
 
+  /// Returns a validated Mollie checkout URL from the authoritative record, or
+  /// null when missing or failing HTTPS/Mollie-host checks.
+  String? get checkoutUrl {
+    final raw = _firstNonEmpty([
+      _firstPathValue(const <String>[
+        'checkout_url',
+        'checkoutUrl',
+        'payment_url',
+        'paymentUrl',
+        'record.checkout_url',
+        'record.checkoutUrl',
+        'record.payment_url',
+        'record.paymentUrl',
+        'booking.checkout_url',
+        'booking.checkoutUrl',
+        'booking.payment_url',
+        'booking.paymentUrl',
+        'record.booking.checkout_url',
+        'record.booking.checkoutUrl',
+        'record.booking.payment_url',
+        'record.booking.paymentUrl',
+        'payload.checkout_url',
+        'payload.checkoutUrl',
+        'payload.payment_url',
+        'payload.paymentUrl',
+        'record.mollie.checkout_url',
+        'record.mollie.checkoutUrl',
+        'record.mollie._links.checkout.href',
+        'record.booking.mollie.checkout_url',
+        'record.booking.mollie.checkoutUrl',
+        'record.booking.mollie._links.checkout.href',
+        'mollie.checkout_url',
+        'mollie.checkoutUrl',
+        'mollie._links.checkout.href',
+      ]),
+    ]);
+    return _sanitizeMollieCheckoutUrl(raw);
+  }
+
+  String? _sanitizeMollieCheckoutUrl(String raw) {
+    final trimmed = raw.trim();
+    if (trimmed.isEmpty) return null;
+    final uri = Uri.tryParse(trimmed);
+    if (uri == null) return null;
+    if (uri.scheme.toLowerCase() != 'https') return null;
+    final host = uri.host.toLowerCase();
+    if (host.isEmpty || !host.contains('mollie')) return null;
+    return uri.toString();
+  }
+
   String get receiptReference => _firstPathValue(const <String>[
     'receipt_reference',
     'receiptReference',

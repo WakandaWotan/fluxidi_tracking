@@ -2160,6 +2160,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
             final onlinePending = _isOnlinePendingCustomerPaymentDisplayToken(
               paymentToken,
             );
+            final resumeCheckoutUrl = onlinePending ? v.checkoutUrl : null;
             final paymentStatusLabel = paid
                 ? _t(nl: 'Betaald', en: 'Paid', fr: 'Paye', es: 'Pagado')
                 : (partiallyPaid
@@ -2371,6 +2372,33 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                             style: TextStyle(color: palette.textPrimary),
                           ),
                         ),
+                      if (resumeCheckoutUrl != null) ...[
+                        Container(
+                          margin: const EdgeInsets.only(bottom: 12),
+                          width: double.infinity,
+                          child: FilledButton.icon(
+                            onPressed: () =>
+                                _openExternalUrl(context, resumeCheckoutUrl),
+                            style: FilledButton.styleFrom(
+                              backgroundColor: palette.gold.withOpacity(0.92),
+                              foregroundColor: palette.background,
+                              padding: const EdgeInsets.symmetric(vertical: 11),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                            ),
+                            icon: const Icon(Icons.open_in_new),
+                            label: Text(
+                              _t(
+                                nl: 'Online betaling hervatten',
+                                en: 'Resume online payment',
+                                fr: 'Reprendre le paiement en ligne',
+                                es: 'Reanudar pago online',
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
                       if (_canCancelBooking) ...[
                         Container(
                           margin: const EdgeInsets.only(bottom: 12),
