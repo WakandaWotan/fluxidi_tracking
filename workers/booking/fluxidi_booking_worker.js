@@ -1002,7 +1002,62 @@ export class FleetAllocatorDO {
     } catch (_) {
       // Diagnostics only; never affect allocation.
     }
-    const etaEvaluation = await _evaluateFleetAvailability(this.env, req);
+    // G3-I: visibility around the inner _evaluateFleetAvailability call.
+    // Helps locate the source of "vehicle_capacity_exceeded" when the
+    // outer slot math is healthy (G3-H showed available_slots=2 yet the
+    // dispatch result still came back as vehicle_capacity_exceeded). The
+    // diagnostic context is read-only inside _evaluateFleetAvailability;
+    // existing callers without diagContext keep working unchanged.
+    const _diagFreeVehicleIds = freeVehicles
+      .map((v) => safeStr(v?.vehicle_id, 120))
+      .filter(Boolean);
+    const _diagSuitableVehicleIds = suitableVehicles
+      .map((v) => safeStr(v?.vehicle_id, 120))
+      .filter(Boolean);
+    const _diagFreeVehicleIdsPreview = _diagFreeVehicleIds
+      .slice(0, 5)
+      .map((id) => _bookingIntentMask(id))
+      .join(",") || "-";
+    const _diagSuitableVehicleIdsPreview = _diagSuitableVehicleIds
+      .slice(0, 5)
+      .map((id) => _bookingIntentMask(id))
+      .join(",") || "-";
+    try {
+      console.log(
+        `[FLEET_ALLOCATOR][ETA_EVAL_INPUT] booking=${_selfDemandMaskedBookingId} req_tier=${_diagReqTier} free_vehicle_count=${freeVehicles.length} suitable_count=${suitableVehicles.length} available_slots=${availableSlots} free_vehicle_ids=${_diagFreeVehicleIdsPreview} suitable_vehicle_ids=${_diagSuitableVehicleIdsPreview} reason=before_evaluate_fleet_availability`,
+      );
+    } catch (_) {
+      // Diagnostics only.
+    }
+    const etaEvaluation = await _evaluateFleetAvailability(this.env, req, {
+      bookingId,
+      reqTier: _diagReqTier,
+      freeVehicleIds: _diagFreeVehicleIds,
+      suitableVehicleIds: _diagSuitableVehicleIds,
+      availableSlots,
+    });
+    try {
+      const _diagEtaAllowed = etaEvaluation?.would_allow_booking === true;
+      const _diagEtaReason = safeStr(etaEvaluation?.reason, 80) || "-";
+      const _diagEtaSource = safeStr(etaEvaluation?.source, 40) || "-";
+      const _diagEtaVehicleId = safeStr(
+        etaEvaluation?.next_vehicle_candidate?.vehicle_id,
+        120,
+      );
+      const _diagEtaDriverId = safeStr(
+        etaEvaluation?.next_vehicle_candidate?.assigned_driver?.driver_id ??
+          etaEvaluation?.next_vehicle_candidate?.assigned_driver?.driverId ??
+          etaEvaluation?.next_vehicle_candidate?.assigned_driver?.id ??
+          etaEvaluation?.next_vehicle_candidate?.driver_id ??
+          etaEvaluation?.next_vehicle_candidate?.driverId,
+        96,
+      );
+      console.log(
+        `[FLEET_ALLOCATOR][ETA_EVAL_RESULT] booking=${_selfDemandMaskedBookingId} allowed=${_diagEtaAllowed ? "true" : "false"} reason=${_diagEtaReason} source=${_diagEtaSource} vehicle=${_bookingIntentMask(_diagEtaVehicleId)} driver=${_bookingIntentMask(_diagEtaDriverId)} free_vehicle_count=${freeVehicles.length} available_slots=${availableSlots} reason_stage=after_evaluate_fleet_availability`,
+      );
+    } catch (_) {
+      // Diagnostics only.
+    }
     if (availableSlots <= 0 || freeVehicles.length === 0) {
       try {
         console.log(
@@ -40437,7 +40492,22 @@ async function _pickVehicleAssignmentForRequest(env, req) {
   };
 }
 
-async function _evaluateFleetAvailability(env, req) {
+async function _evaluateFleetAvailability(env, req, diagContext = {}) {
+  // G3-I: optional diagnostic context from FleetAllocatorDO._allocate.
+  // Used to mask the booking id and surface outer free-vehicle/slot
+  // counters in logs. Has zero behavior impact: every existing caller
+  // omits this parameter and gets the same default {}.
+  const _diagBookingMask = diagContext && diagContext.bookingId
+    ? _bookingIntentMask(diagContext.bookingId)
+    : "-";
+  const _diagOuterReqTier = safeStr(diagContext?.reqTier, 24) || safeStr(req?.tier, 24) || "*";
+  const _diagOuterFreeVehicleIds = Array.isArray(diagContext?.freeVehicleIds)
+    ? diagContext.freeVehicleIds
+    : null;
+  const _diagOuterSuitableVehicleIds = Array.isArray(diagContext?.suitableVehicleIds)
+    ? diagContext.suitableVehicleIds
+    : null;
+  const _diagOuterAvailableSlots = Number(diagContext?.availableSlots);
   const fleetScope = normalizeFleetTenantScope(req?.tenantScope ?? req?.tenant_scope ?? req);
   const vehicles = await _loadVehicleInventory(env, { scope: fleetScope });
   const suitableVehicles = vehicles.filter((v) => _vehicleSupportsRequest(v, req));
@@ -40755,10 +40825,57 @@ async function _evaluateFleetAvailability(env, req) {
   let nextVehicle = null;
   const nearFuture = (pickupMs - nowMs) <= _allocatorOriginRequiredHorizonSeconds(env) * 1000;
   const requiredBufferSeconds = Math.max(0, getTravelGapMin(env || {}) * 60);
+  // G3-I: per-evaluator slot-math snapshot. Surfaces the inner counters of
+  // _evaluateFleetAvailability so we can see whether they diverge from the
+  // outer FleetAllocatorDO._allocate counters (which already exclude self
+  // via G3-E and skip anonymous demand via G3-G). This function does NOT
+  // currently apply self-exclusion / anonymous-skip in its own demand
+  // walk, so its availableSlots can drop to 0 even when the outer slot
+  // math reports availableSlots > 0. No behavior change here; this is the
+  // diagnostic that proves whether the candidate loop will run at all.
+  try {
+    console.log(
+      `[FLEET_AVAILABILITY][SLOT_MATH] booking=${_diagBookingMask} suitable_count=${suitableVehicles.length} free_vehicle_count=${freeVehicles.length} occupied_assigned_count=${occupiedAssignedIds.size} overlapping_unassigned_demand=${overlappingUnassignedDemand} available_slots=${availableSlots} candidate_loop_will_run=${availableSlots > 0 && freeVehicles.length > 0 ? "true" : "false"} req_tier=${safeStr(req?.tier, 24) || "*"}`,
+    );
+  } catch (_) {
+    // Diagnostics only.
+  }
   if (availableSlots > 0 && freeVehicles.length > 0) {
     for (const vehicle of freeVehicles) {
       const vehicleId = String(vehicle?.vehicle_id || "").trim();
       if (!vehicleId) continue;
+      // G3-I: per-candidate identity snapshot at start of iteration.
+      // route_duration_sec / eta_ok / included / exclude_reason are not
+      // known yet at this point; the structured `etaFailures.push({...})`
+      // entries already capture the per-vehicle outcome and surface in
+      // the function return body. This log is wrapped so a logging
+      // failure can never break candidate evaluation.
+      try {
+        const _candDriverIdRaw = safeStr(
+          vehicle?.assigned_driver?.driver_id ??
+            vehicle?.assigned_driver?.driverId ??
+            vehicle?.assigned_driver?.id ??
+            vehicle?.assignedDriver?.driver_id ??
+            vehicle?.assignedDriver?.driverId ??
+            vehicle?.driver_id ??
+            vehicle?.driverId,
+          96,
+        );
+        const _candDriverPresent = !!_candDriverIdRaw;
+        const _candVehicleTier = safeStr(vehicle?.tier, 24) || "*";
+        const _candReqTier = safeStr(req?.tier, 24) || "*";
+        const _candTierExact = _candVehicleTier === _candReqTier;
+        const _candTierAllows =
+          _candVehicleTier === "*" || _candVehicleTier === _candReqTier;
+        const _candInOuterFree = _diagOuterFreeVehicleIds
+          ? _diagOuterFreeVehicleIds.includes(vehicleId)
+          : null;
+        console.log(
+          `[FLEET_AVAILABILITY][CANDIDATE] booking=${_diagBookingMask} vehicle=${_bookingIntentMask(vehicleId)} driver_present=${_candDriverPresent ? "true" : "false"} req_tier=${_candReqTier} vehicle_tier=${_candVehicleTier} tier_exact=${_candTierExact ? "true" : "false"} tier_allows=${_candTierAllows ? "true" : "false"}${_candInOuterFree === null ? "" : ` candidate_in_free_vehicles=${_candInOuterFree ? "true" : "false"}`} route_duration_sec=- eta_ok=- included=- exclude_reason=-`,
+        );
+      } catch (_) {
+        // Diagnostics only.
+      }
       const demands = [...(vehicleDemands.get(vehicleId) || [])]
         .filter((d) => Number.isFinite(Number(d?.pickupAtMs ?? d?.pickupMs)))
         .sort((a, b) => Number(a.pickupAtMs ?? a.pickupMs) - Number(b.pickupAtMs ?? b.pickupMs));
@@ -41384,6 +41501,21 @@ async function _evaluateFleetAvailability(env, req) {
     }
   }
   const topEtaFailure = etaFailures[0] || null;
+
+  // G3-I: surface the resolved rejection reason inline, only when the
+  // function is about to return reason="vehicle_capacity_exceeded". This
+  // mirrors the existing branch logic at the `reason:` field below and
+  // never alters it. Wrapped so a logging failure cannot affect the
+  // returned decision.
+  try {
+    if (!nextVehicle && !topEtaFailure?.block_reason && availableSlots <= 0) {
+      console.log(
+        `[FLEET_AVAILABILITY][REJECT_CONTEXT] booking=${_diagBookingMask} reason=vehicle_capacity_exceeded reject_path=available_slots_zero req_tier=${_diagOuterReqTier} candidate_count=${suitableVehicles.length} free_vehicle_count=${freeVehicles.length} route_candidate_count=${etaFailures.length} overlapping_unassigned_demand=${overlappingUnassignedDemand} occupied_assigned_count=${occupiedAssignedIds.size} available_slots=${availableSlots} outer_available_slots=${Number.isFinite(_diagOuterAvailableSlots) ? _diagOuterAvailableSlots : "-"} notes=inner_evaluator_did_not_apply_self_or_anonymous_demand_skip`,
+      );
+    }
+  } catch (_) {
+    // Diagnostics only.
+  }
 
   return {
     request: {
