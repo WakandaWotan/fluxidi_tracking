@@ -673,8 +673,63 @@ export class FleetAllocatorDO {
     }
 
     const vehicles = await _loadVehicleInventory(this.env, { scope: tenantScope });
+    // G3-D: diagnostics-only. No behavior change. These logs explain why
+    // FleetAllocatorDO rejects a booking with no_suitable_vehicle or
+    // vehicle_capacity_exceeded. Ids are masked via _bookingIntentMask;
+    // customer/payment data is never logged here.
+    const _diagReqPax = _toPositiveInt(req?.pax ?? 0, 0);
+    const _diagReqBags = _toPositiveInt(req?.bags ?? 0, 0);
+    const _diagReqTier = safeStr(req?.tier, 24) || "*";
+    const _diagReqService = safeStr(req?.service ?? req?.service_type, 32) || "-";
+    const _diagServiceMin = Math.max(1, Number(req?.serviceMin) || 1);
+    const _diagTenantMask = _bookingIntentMask(tenantScope?.tenant_id);
+    const _diagCompanyMask = _bookingIntentMask(tenantScope?.company_id);
+    console.log(
+      `[FLEET_ALLOCATOR][INVENTORY] tenant=${_diagTenantMask} company=${_diagCompanyMask} vehicle_count=${vehicles.length} req_pax=${_diagReqPax} req_bags=${_diagReqBags} req_tier=${_diagReqTier} req_service=${_diagReqService} service_min=${_diagServiceMin}`,
+    );
+    try {
+      for (const _diagVehicle of vehicles) {
+        const _diagVehicleIdMasked = _bookingIntentMask(_diagVehicle?.vehicle_id);
+        const _diagVehiclePax = _toPositiveInt(_diagVehicle?.passenger_capacity ?? 0, 0);
+        const _diagVehicleBags = _toPositiveInt(_diagVehicle?.luggage_capacity ?? 0, 0);
+        const _diagVehicleTier = safeStr(_diagVehicle?.tier, 24) || "*";
+        let _diagSkipReason = null;
+        if (!_diagVehicle || _diagVehicle.is_active === false) {
+          _diagSkipReason = "inactive";
+        } else if (_diagVehiclePax < _diagReqPax) {
+          _diagSkipReason = "pax_capacity";
+        } else if (_diagVehicleBags < _diagReqBags) {
+          _diagSkipReason = "bag_capacity";
+        }
+        if (_diagSkipReason) {
+          console.log(
+            `[FLEET_ALLOCATOR][VEHICLE_SKIP] vehicle=${_diagVehicleIdMasked} reason=${_diagSkipReason} req_pax=${_diagReqPax} vehicle_pax=${_diagVehiclePax} req_bags=${_diagReqBags} vehicle_bags=${_diagVehicleBags} req_tier=${_diagReqTier} vehicle_tier=${_diagVehicleTier}`,
+          );
+        } else {
+          const _diagDriverIdRaw = safeStr(
+            _diagVehicle?.assigned_driver?.driver_id ??
+              _diagVehicle?.assigned_driver?.driverId ??
+              _diagVehicle?.assigned_driver?.id ??
+              _diagVehicle?.assignedDriver?.driver_id ??
+              _diagVehicle?.assignedDriver?.driverId ??
+              _diagVehicle?.driver_id ??
+              _diagVehicle?.driverId,
+            96,
+          );
+          const _diagDriverPresent = !!_diagDriverIdRaw;
+          console.log(
+            `[FLEET_ALLOCATOR][VEHICLE_CANDIDATE] vehicle=${_diagVehicleIdMasked} driver_present=${_diagDriverPresent ? "true" : "false"} vehicle_pax=${_diagVehiclePax} vehicle_bags=${_diagVehicleBags} vehicle_tier=${_diagVehicleTier}`,
+          );
+        }
+      }
+    } catch (_) {
+      // Diagnostics only; never fail allocation because of a log error.
+    }
     const suitableVehicles = vehicles.filter((v) => _vehicleSupportsRequest(v, req));
     if (suitableVehicles.length === 0) {
+      console.log(
+        `[FLEET_ALLOCATOR][NO_SUITABLE_VEHICLE] tenant=${_diagTenantMask} company=${_diagCompanyMask} reason=no_suitable_vehicle vehicle_count=${vehicles.length} suitable_count=0 req_pax=${_diagReqPax} req_bags=${_diagReqBags} req_tier=${_diagReqTier}`,
+      );
       return this._json({
         ok: true,
         allowed: false,
@@ -761,6 +816,9 @@ export class FleetAllocatorDO {
     const availableSlots = freeVehicles.length - overlappingUnassignedDemand;
     const etaEvaluation = await _evaluateFleetAvailability(this.env, req);
     if (availableSlots <= 0 || freeVehicles.length === 0) {
+      console.log(
+        `[FLEET_ALLOCATOR][NO_SUITABLE_VEHICLE] tenant=${_diagTenantMask} company=${_diagCompanyMask} reason=vehicle_capacity_exceeded vehicle_count=${vehicles.length} suitable_count=${suitableVehicles.length} occupied_assigned_count=${occupiedAssignedIds.size} overlapping_unassigned_demand=${overlappingUnassignedDemand} available_slots=${Math.max(0, availableSlots)} req_pax=${_diagReqPax} req_bags=${_diagReqBags} req_tier=${_diagReqTier}`,
+      );
       return this._json({
         ok: true,
         allowed: false,
@@ -934,6 +992,9 @@ export class FleetAllocatorDO {
     const etaChosenVehicleId = safeStr(etaEvaluation?.next_vehicle_candidate?.vehicle_id, 120);
     const chosen = freeVehicles.find((v) => v.vehicle_id === etaChosenVehicleId);
     if (!chosen) {
+      console.log(
+        `[FLEET_ALLOCATOR][NO_SUITABLE_VEHICLE] tenant=${_diagTenantMask} company=${_diagCompanyMask} reason=vehicle_capacity_exceeded stage=eta_candidate_missing vehicle_count=${vehicles.length} suitable_count=${suitableVehicles.length} free_count=${freeVehicles.length} eta_candidate=${_bookingIntentMask(etaChosenVehicleId)} req_pax=${_diagReqPax} req_bags=${_diagReqBags} req_tier=${_diagReqTier}`,
+      );
       return this._json({
         ok: true,
         allowed: false,
@@ -49068,6 +49129,39 @@ async function ensurePaidOpenBookingAutoDispatched(
       pickup_lng: pickupLng,
       tenantScope: fleetScope,
     };
+
+    // G3-D: diagnostics-only request summary. Coordinates are reduced to a
+    // boolean (has/has-not) so we never log exact lat/lng. from/to text
+    // existence is logged as a boolean to avoid leaking customer addresses.
+    const _diagServiceTypeForLog = safeStr(
+      bookingObj?.service ?? payloadObj?.service ?? rec?.service,
+      32,
+    ) || "-";
+    const _diagDropoffPoint =
+      _locationPointFromAny({
+        lat: bookingObj?.dropoff_lat ?? bookingObj?.dropoffLat,
+        lng: bookingObj?.dropoff_lng ?? bookingObj?.dropoffLng,
+      }) ||
+      _locationPointFromAny({
+        lat: payloadObj?.dropoff_lat ?? payloadObj?.dropoffLat ?? payloadObj?.to_lat ?? payloadObj?.toLat,
+        lng: payloadObj?.dropoff_lng ?? payloadObj?.dropoffLng ?? payloadObj?.to_lng ?? payloadObj?.toLng,
+      }) ||
+      _locationPointFromAny({
+        lat: rec?.dropoff_lat ?? rec?.dropoffLat,
+        lng: rec?.dropoff_lng ?? rec?.dropoffLng,
+      });
+    const _diagPickupHasCoords =
+      Number.isFinite(pickupLat) && Number.isFinite(pickupLng);
+    const _diagDropoffHasCoords = !!(
+      _diagDropoffPoint &&
+      Number.isFinite(_diagDropoffPoint.lat) &&
+      Number.isFinite(_diagDropoffPoint.lng)
+    );
+    const _diagStopHandlingMin = Math.max(0, getStopHandlingMin(stopCount, env));
+    const _diagPostBufferMin = Math.max(0, getPostBufferMin(env));
+    console.log(
+      `[DISPATCH_AUTO_ASSIGN][REQUEST] booking=${maskedBookingId} source=${sourceLabel} pax=${pax} bags=${bags} tier=${tier} service=${_diagServiceTypeForLog} pickup_iso=${pickupIso || "-"} service_min=${serviceMin} stop_handling_min=${_diagStopHandlingMin} post_buffer_min=${_diagPostBufferMin} pickup_has_coords=${_diagPickupHasCoords ? "true" : "false"} dropoff_has_coords=${_diagDropoffHasCoords ? "true" : "false"} from_present=${fromText ? "true" : "false"} to_present=${toText ? "true" : "false"}`,
+    );
 
     console.log(
       `[DISPATCH_AUTO_ASSIGN][START] booking=${maskedBookingId} source=${sourceLabel} tenant=${_bookingIntentMask(fleetScope.tenant_id)} company=${_bookingIntentMask(fleetScope.company_id)} pickup_iso=${pickupIso || "-"} service_min=${serviceMin}`,
