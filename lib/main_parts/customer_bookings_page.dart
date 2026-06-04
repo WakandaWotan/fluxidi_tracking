@@ -148,17 +148,24 @@ class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
   }
 
   String _displayPaymentStatusToken(StoredCustomerBooking booking) {
+    final channel = _customerPaymentChannelFieldsFromStoredBooking(booking);
     final bookingId = booking.canonicalBookingId.trim();
     if (bookingId.isNotEmpty &&
         _paymentOverlayByBookingId.containsKey(bookingId)) {
       return _classifyCustomerPaymentDisplayToken(
         aliases: _overlayAliasesForBooking(booking),
         fallbackToken: _paymentOverlayByBookingId[bookingId]!,
+        paymentProvider: channel.provider,
+        paymentMode: channel.mode,
+        paymentMethod: channel.method,
       );
     }
     return _classifyCustomerPaymentDisplayToken(
       aliases: _overlayAliasesForBooking(booking),
       fallbackToken: booking.paymentStatus,
+      paymentProvider: channel.provider,
+      paymentMode: channel.mode,
+      paymentMethod: channel.method,
     );
   }
 
@@ -262,10 +269,14 @@ class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
       final aggregate = matcher.aggregateOperationalLegsForParentAliases(
         aliases,
       );
+      final channel = _customerPaymentChannelFieldsFromStoredBooking(booking);
       final token = _classifyCustomerPaymentDisplayToken(
         aliases: aliases,
         fallbackToken: booking.paymentStatus,
         matcher: matcher,
+        paymentProvider: channel.provider,
+        paymentMode: channel.mode,
+        paymentMethod: channel.method,
       );
       final shouldLogKeys =
           aggregate.totalLegs >= 2 || aggregate.totalLegs == 0;
@@ -362,7 +373,18 @@ class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
         es: 'Parcialmente pagado',
       );
     }
-    if (p == 'unpaid' || p == 'pending' || p == 'pay_in_car') {
+    if (_isOnlinePendingCustomerPaymentDisplayToken(p)) {
+      return _t(
+        nl: 'Online betaling openstaand',
+        en: 'Online payment pending',
+        fr: 'Paiement en ligne en attente',
+        es: 'Pago online pendiente',
+      );
+    }
+    if (_isPayInCarCustomerPaymentDisplayToken(p) ||
+        p == 'unpaid' ||
+        p == 'pending' ||
+        p == 'pay_in_car') {
       return _t(
         nl: 'Te betalen in de wagen',
         en: 'Pay in the car',

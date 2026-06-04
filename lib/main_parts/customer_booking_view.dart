@@ -1238,6 +1238,40 @@ class CustomerBookingView {
     ]).toLowerCase();
   }
 
+  String get paymentProvider {
+    return _firstNonEmpty([
+      _firstPathValue(const <String>[
+        'payment_provider',
+        'paymentProvider',
+        'booking.payment_provider',
+        'booking.paymentProvider',
+        'record.payment_provider',
+        'record.paymentProvider',
+        'record.booking.payment_provider',
+        'record.booking.paymentProvider',
+        'record.booking_details.payment_provider',
+        'record.booking_details.paymentProvider',
+      ]),
+    ]).toLowerCase();
+  }
+
+  String get paymentMode {
+    return _firstNonEmpty([
+      _firstPathValue(const <String>[
+        'payment_mode',
+        'paymentMode',
+        'booking.payment_mode',
+        'booking.paymentMode',
+        'record.payment_mode',
+        'record.paymentMode',
+        'record.booking.payment_mode',
+        'record.booking.paymentMode',
+        'record.booking_details.payment_mode',
+        'record.booking_details.paymentMode',
+      ]),
+    ]).toLowerCase();
+  }
+
   String get receiptReference => _firstPathValue(const <String>[
     'receipt_reference',
     'receiptReference',

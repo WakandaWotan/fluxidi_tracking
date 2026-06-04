@@ -26,6 +26,9 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
       _classifyCustomerPaymentDisplayToken(
         aliases: _paymentAliasesForView(widget.initialView),
         fallbackToken: widget.initialView.rawPaymentStatus,
+        paymentProvider: widget.initialView.paymentProvider,
+        paymentMode: widget.initialView.paymentMode,
+        paymentMethod: widget.initialView.paymentMethod,
       );
   bool _refreshing = false;
   bool _cancelling = false;
@@ -358,11 +361,19 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
   }) async {
     final aliases = _paymentAliasesForView(view);
     final fallbackToken = view.rawPaymentStatus;
+    final channel = (
+      provider: view.paymentProvider,
+      mode: view.paymentMode,
+      method: view.paymentMethod,
+    );
     final scopeQuery = preferredScopeQuery ?? _selectedCancelScopeQuery();
     if (scopeQuery == null || scopeQuery.isEmpty) {
       return _classifyCustomerPaymentDisplayToken(
         aliases: aliases,
         fallbackToken: fallbackToken,
+        paymentProvider: channel.provider,
+        paymentMode: channel.mode,
+        paymentMethod: channel.method,
       );
     }
     try {
@@ -376,6 +387,9 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
         aliases: aliases,
         fallbackToken: fallbackToken,
         matcher: matcher,
+        paymentProvider: channel.provider,
+        paymentMode: channel.mode,
+        paymentMethod: channel.method,
       );
       debugPrint(
         '[CUSTOMER_PAYMENT][DETAIL_CLASSIFY] booking=${_safeRefPreview(view.internalBookingId)} token=$token aliases=${aliases.length}',
@@ -386,6 +400,9 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
       return _classifyCustomerPaymentDisplayToken(
         aliases: aliases,
         fallbackToken: fallbackToken,
+        paymentProvider: channel.provider,
+        paymentMode: channel.mode,
+        paymentMethod: channel.method,
       );
     }
   }
@@ -2132,9 +2149,15 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
               fallbackToken: _derivedPaymentDisplayToken.isNotEmpty
                   ? _derivedPaymentDisplayToken
                   : v.rawPaymentStatus,
+              paymentProvider: v.paymentProvider,
+              paymentMode: v.paymentMode,
+              paymentMethod: v.paymentMethod,
             );
             final paid = _isPaidCustomerPaymentDisplayToken(paymentToken);
             final partiallyPaid = _isPartialCustomerPaymentDisplayToken(
+              paymentToken,
+            );
+            final onlinePending = _isOnlinePendingCustomerPaymentDisplayToken(
               paymentToken,
             );
             final paymentStatusLabel = paid
@@ -2146,12 +2169,19 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                           fr: 'Partiellement paye',
                           es: 'Parcialmente pagado',
                         )
-                      : _t(
-                          nl: 'Te betalen in de wagen',
-                          en: 'To pay in the vehicle',
-                          fr: 'A payer dans le vehicule',
-                          es: 'A pagar en el vehiculo',
-                        ));
+                      : (onlinePending
+                            ? _t(
+                                nl: 'Online betaling openstaand',
+                                en: 'Online payment pending',
+                                fr: 'Paiement en ligne en attente',
+                                es: 'Pago online pendiente',
+                              )
+                            : _t(
+                                nl: 'Te betalen in de wagen',
+                                en: 'To pay in the vehicle',
+                                fr: 'A payer dans le vehicule',
+                                es: 'A pagar en el vehiculo',
+                              )));
             final paymentStatusDescription = paid
                 ? _t(
                     nl: 'Je betaling is bevestigd.',
@@ -2166,12 +2196,19 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                           fr: 'Une partie est payee, le montant restant est encore ouvert.',
                           es: 'Una parte esta pagada, el monto restante sigue abierto.',
                         )
-                      : _t(
-                          nl: 'Voldoe het bedrag bij de chauffeur.',
-                          en: 'Pay the driver during your ride.',
-                          fr: 'Reglez le chauffeur pendant la course.',
-                          es: 'Paga al conductor durante el viaje.',
-                        ));
+                      : (onlinePending
+                            ? _t(
+                                nl: 'Rond de online betaling af of annuleer de aanvraag indien toegestaan.',
+                                en: 'Complete the online payment or cancel the request if allowed.',
+                                fr: 'Finalisez le paiement en ligne ou annulez la demande si autorise.',
+                                es: 'Completa el pago online o cancela la solicitud si esta permitido.',
+                              )
+                            : _t(
+                                nl: 'Voldoe het bedrag bij de chauffeur.',
+                                en: 'Pay the driver during your ride.',
+                                fr: 'Reglez le chauffeur pendant la course.',
+                                es: 'Paga al conductor durante el viaje.',
+                              )));
             final business = v.businessCustomer;
             final isRoundtrip = v.isRoundtrip;
             final showRoundtripPricing =
