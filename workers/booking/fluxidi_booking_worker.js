@@ -43073,6 +43073,8 @@ function _buildMollieCheckoutResumePayload(rec, canonicalBookingId, tenantScope,
     bookingId: canonicalBookingId,
     __booking_id: canonicalBookingId,
     return_url: safeStr(resumeBody?.return_url ?? resumeBody?.returnUrl ?? payload?.return_url ?? payload?.returnUrl),
+    __checkout_resume: true,
+    checkout_resume: true,
   };
   if (publicBookingReference) {
     merged.__public_booking_reference = publicBookingReference;
@@ -47273,6 +47275,343 @@ function _payStatusResolveCanonicalInvoiceBookingId(data) {
   return { bookingId: "", source: "none" };
 }
 
+function resolveCanonicalBookingIdForPaidPayment(stored, paymentBookingId) {
+  const paymentId = safeStr(paymentBookingId, 160);
+  if (!paymentId) return "";
+  const canonicalId = safeStr(
+    stored?.public_booking_id ??
+      stored?.publicBookingId ??
+      stored?.payload?.__booking_id ??
+      stored?.payload?.booking_id ??
+      stored?.payload?.bookingId,
+    160,
+  );
+  if (!canonicalId || canonicalId === paymentId) return "";
+  if (!_dashboardUuidLikeId(paymentId)) return "";
+  return canonicalId;
+}
+
+function isResumedMolliePaymentRecord(stored, paymentBookingId) {
+  const paymentId = safeStr(paymentBookingId, 160);
+  const canonicalId = resolveCanonicalBookingIdForPaidPayment(stored, paymentBookingId);
+  if (!paymentId || !canonicalId || canonicalId === paymentId) return false;
+  if (!_dashboardUuidLikeId(paymentId)) return false;
+  return (
+    stored?.checkout_resume === true ||
+    stored?.checkoutResume === true ||
+    stored?.payload?.__checkout_resume === true ||
+    stored?.payload?.checkout_resume === true ||
+    safeStr(stored?.finalize_debug?.stage, 80) === "handleBooking_failed"
+  );
+}
+
+function _tenantScopeFromStoredPaymentRecord(stored) {
+  const tenant_id = safeStr(
+    stored?.tenant_id ??
+      stored?.tenantId ??
+      stored?.payload?.tenant_id ??
+      stored?.payload?.tenantId,
+    80,
+  );
+  const company_id = safeStr(
+    stored?.company_id ??
+      stored?.companyId ??
+      stored?.payload?.company_id ??
+      stored?.payload?.companyId,
+    80,
+  );
+  if (!tenant_id || !company_id) return null;
+  return { tenant_id, company_id, hasScope: true };
+}
+
+function _canonicalAcceptsResumePaymentBookingId(canonicalRec, paymentBookingId, canonicalBookingId) {
+  const linkedPaymentBookingId = safeStr(
+    canonicalRec?.payment_booking_id ?? canonicalRec?.paymentBookingId,
+    160,
+  );
+  if (linkedPaymentBookingId && linkedPaymentBookingId === paymentBookingId) return true;
+  const payloadPaymentBookingId = safeStr(
+    canonicalRec?.payload?.payment_booking_id ?? canonicalRec?.payload?.paymentBookingId,
+    160,
+  );
+  if (payloadPaymentBookingId && payloadPaymentBookingId === paymentBookingId) return true;
+  if (!linkedPaymentBookingId && !payloadPaymentBookingId) {
+    const canonicalSelf = safeStr(
+      canonicalRec?.booking_id ??
+        canonicalRec?.bookingId ??
+        canonicalRec?.public_booking_id ??
+        canonicalRec?.publicBookingId ??
+        canonicalBookingId,
+      160,
+    );
+    return canonicalSelf === canonicalBookingId;
+  }
+  return false;
+}
+
+function _applyResumePaidPaymentToCanonicalRecord(
+  canonicalRec,
+  stored,
+  { paymentBookingId, molliePaymentId, paidAt } = {},
+) {
+  const nowIso = new Date().toISOString();
+  const paidAtIso =
+    safeStr(paidAt || stored?.paid_at || stored?.paidAt, 80) || nowIso;
+  const preservedMethod = normalizeBookingPaymentMethodId(
+    canonicalRec?.payment_method ??
+      canonicalRec?.paymentMethod ??
+      canonicalRec?.booking?.payment_method ??
+      canonicalRec?.booking?.paymentMethod ??
+      canonicalRec?.payload?.payment_method ??
+      canonicalRec?.payload?.paymentMethod ??
+      stored?.payment_method ??
+      stored?.paymentMethod ??
+      stored?.payload?.payment_method ??
+      stored?.payload?.paymentMethod,
+  );
+  const safePaymentBookingId = safeStr(paymentBookingId, 160) || null;
+  const safeMolliePaymentId = safeStr(molliePaymentId, 120) || null;
+
+  canonicalRec.payment_status = "paid";
+  canonicalRec.paymentStatus = "paid";
+  canonicalRec.payment_provider = "mollie";
+  canonicalRec.paymentProvider = "mollie";
+  canonicalRec.payment_mode = "mollie";
+  canonicalRec.paymentMode = "mollie";
+  canonicalRec.payment_booking_id = safePaymentBookingId;
+  canonicalRec.paymentBookingId = safePaymentBookingId;
+  canonicalRec.paid_at = paidAtIso;
+  canonicalRec.paidAt = paidAtIso;
+  if (safeMolliePaymentId) {
+    canonicalRec.payment_id = safeMolliePaymentId;
+    canonicalRec.paymentId = safeMolliePaymentId;
+    canonicalRec.mollie =
+      canonicalRec.mollie && typeof canonicalRec.mollie === "object"
+        ? { ...canonicalRec.mollie }
+        : {};
+    canonicalRec.mollie.id = safeMolliePaymentId;
+    canonicalRec.mollie.payment_id = safeMolliePaymentId;
+    canonicalRec.mollie.status = "paid";
+  }
+  if (preservedMethod) {
+    canonicalRec.payment_method = preservedMethod;
+    canonicalRec.paymentMethod = preservedMethod;
+  }
+  canonicalRec.updatedAt = nowIso;
+  canonicalRec.updated_at = nowIso;
+
+  if (canonicalRec.booking && typeof canonicalRec.booking === "object") {
+    canonicalRec.booking.payment_status = "paid";
+    canonicalRec.booking.paymentStatus = "paid";
+    canonicalRec.booking.payment_provider = "mollie";
+    canonicalRec.booking.paymentProvider = "mollie";
+    canonicalRec.booking.payment_mode = "mollie";
+    canonicalRec.booking.paymentMode = "mollie";
+    canonicalRec.booking.payment_booking_id = safePaymentBookingId;
+    canonicalRec.booking.paymentBookingId = safePaymentBookingId;
+    canonicalRec.booking.paid_at = paidAtIso;
+    canonicalRec.booking.paidAt = paidAtIso;
+    if (safeMolliePaymentId) {
+      canonicalRec.booking.payment_id = safeMolliePaymentId;
+      canonicalRec.booking.paymentId = safeMolliePaymentId;
+      canonicalRec.booking.mollie = canonicalRec.mollie;
+    }
+    if (preservedMethod) {
+      canonicalRec.booking.payment_method = preservedMethod;
+      canonicalRec.booking.paymentMethod = preservedMethod;
+    }
+    canonicalRec.booking.updatedAt = nowIso;
+    canonicalRec.booking.updated_at = nowIso;
+  }
+  if (canonicalRec.payload && typeof canonicalRec.payload === "object") {
+    canonicalRec.payload.payment_status = "paid";
+    canonicalRec.payload.paymentStatus = "paid";
+    canonicalRec.payload.payment_booking_id = safePaymentBookingId;
+    canonicalRec.payload.paymentBookingId = safePaymentBookingId;
+    if (safeMolliePaymentId) {
+      canonicalRec.payload.payment_id = safeMolliePaymentId;
+      canonicalRec.payload.paymentId = safeMolliePaymentId;
+    }
+    if (preservedMethod) {
+      canonicalRec.payload.payment_method = preservedMethod;
+      canonicalRec.payload.paymentMethod = preservedMethod;
+    }
+  }
+}
+
+async function finalizeResumePaidPaymentToCanonical(stored, env, request, opts = {}) {
+  const paymentBookingId = safeStr(
+    opts?.paymentBookingId || stored?.bookingId || stored?.booking_id,
+    160,
+  );
+  const canonicalBookingId = resolveCanonicalBookingIdForPaidPayment(stored, paymentBookingId);
+  const nowIso = new Date().toISOString();
+  stored.finalize_debug = stored.finalize_debug || {};
+  stored.finalize_debug.attempted_at = nowIso;
+  stored.finalize_debug.payment_booking_id = paymentBookingId || null;
+  stored.finalize_debug.canonical_booking_id = canonicalBookingId || null;
+
+  if (!paymentBookingId || !canonicalBookingId) {
+    stored.confirm_error = "resume_finalize_missing_canonical_booking_id";
+    stored.finalize_debug.stage = "resume_paid_canonical_rejected";
+    stored.finalize_debug.error = stored.confirm_error;
+    stored.confirming_at = null;
+    return { ok: false, updatedStored: stored, error: stored.confirm_error };
+  }
+
+  const tenantScope =
+    opts?.tenantScope && opts.tenantScope.hasScope
+      ? opts.tenantScope
+      : _tenantScopeFromStoredPaymentRecord(stored);
+  if (!tenantScope?.hasScope) {
+    stored.confirm_error = "missing_tenant_scope_for_resume_finalize";
+    stored.finalize_debug.stage = "resume_paid_canonical_rejected";
+    stored.finalize_debug.error = stored.confirm_error;
+    stored.confirming_at = null;
+    return { ok: false, updatedStored: stored, error: stored.confirm_error };
+  }
+
+  let canonicalKey = "";
+  let canonicalRec = null;
+  try {
+    const loaded = await loadBookingRecord(env, canonicalBookingId);
+    canonicalKey = loaded.key;
+    canonicalRec = loaded.rec;
+  } catch (loadErr) {
+    if (String(loadErr?.message || "") === "Booking not found") {
+      stored.confirm_error = "canonical_booking_not_found";
+      stored.finalize_debug.stage = "resume_paid_canonical_rejected";
+      stored.finalize_debug.error = stored.confirm_error;
+      stored.confirming_at = null;
+      return { ok: false, updatedStored: stored, error: stored.confirm_error };
+    }
+    throw loadErr;
+  }
+
+  if (!bookingMatchesRequiredTenantCompanyScope(canonicalRec, tenantScope)) {
+    stored.confirm_error = "forbidden";
+    stored.finalize_debug.stage = "resume_paid_canonical_rejected";
+    stored.finalize_debug.error = stored.confirm_error;
+    stored.confirming_at = null;
+    return { ok: false, updatedStored: stored, error: stored.confirm_error };
+  }
+
+  if (!_canonicalAcceptsResumePaymentBookingId(canonicalRec, paymentBookingId, canonicalBookingId)) {
+    stored.confirm_error = "resume_payment_booking_id_mismatch";
+    stored.finalize_debug.stage = "resume_paid_canonical_rejected";
+    stored.finalize_debug.error = stored.confirm_error;
+    stored.confirming_at = null;
+    return { ok: false, updatedStored: stored, error: stored.confirm_error };
+  }
+
+  const incomingMolliePaymentId = safeStr(
+    stored?.payment_id ??
+      stored?.paymentId ??
+      stored?.mollie?.payment_id ??
+      stored?.mollie?.id,
+    120,
+  );
+  const existingPaymentStatus = safeStr(
+    canonicalRec?.payment_status ?? canonicalRec?.paymentStatus,
+    40,
+  ).toLowerCase();
+  const existingMolliePaymentId = safeStr(
+    canonicalRec?.payment_id ??
+      canonicalRec?.paymentId ??
+      canonicalRec?.mollie?.payment_id ??
+      canonicalRec?.mollie?.id,
+    120,
+  );
+  if (
+    existingPaymentStatus === "paid" &&
+    (!incomingMolliePaymentId ||
+      !existingMolliePaymentId ||
+      existingMolliePaymentId === incomingMolliePaymentId)
+  ) {
+    stored.confirmed_at = stored.confirmed_at || nowIso;
+    stored.confirming_at = null;
+    stored.finalize_debug.stage = "resume_paid_canonical_already_paid";
+    stored.finalize_debug.error = null;
+    return {
+      ok: true,
+      updatedStored: stored,
+      already: true,
+      canonicalBookingId,
+    };
+  }
+
+  _applyResumePaidPaymentToCanonicalRecord(canonicalRec, stored, {
+    paymentBookingId,
+    molliePaymentId: incomingMolliePaymentId,
+    paidAt: stored?.paid_at || stored?.paidAt,
+  });
+
+  const invoiceContext = _invoiceLifecycleContextFromRecord(canonicalRec);
+  _applyPaymentInvoiceLifecycleToRecord(canonicalRec, {
+    paymentMode: "mollie",
+    paymentProvider: "mollie",
+    paymentStatus: "paid",
+    invoiceRequested:
+      invoiceContext.businessInvoiceIntent ? true : invoiceContext.invoiceRequested,
+    invoiceIntent: invoiceContext.businessInvoiceIntent
+      ? "business_invoice"
+      : invoiceContext.invoiceIntent,
+    invoiceState: invoiceContext.businessInvoiceIntent ? "ready_to_send" : "none",
+  });
+
+  await env.BOOKING_KV.put(canonicalKey, JSON.stringify(canonicalRec));
+  const fleetScope = normalizeFleetTenantScope(tenantScope);
+  await upsertBookingDemandIndexBestEffort(env, canonicalBookingId, canonicalRec, fleetScope);
+  await upsertDriverVehicleBookingIndexesBestEffort(
+    env,
+    canonicalBookingId,
+    canonicalRec,
+    fleetScope,
+  );
+  await upsertCompanyBookingsListIndexBestEffort(
+    env,
+    canonicalBookingId,
+    canonicalRec,
+    fleetScope,
+  );
+  await upsertDashboardBookingsKpiProjectionBestEffort(
+    env,
+    canonicalBookingId,
+    canonicalRec,
+    fleetScope,
+  );
+  await syncScopedTrackingTripKpiBestEffort({
+    env,
+    bookingId: canonicalBookingId,
+    rec: canonicalRec,
+    tenantScope,
+    source: "mollie_resume_pay_status_paid",
+  });
+
+  stored.confirmed_at = stored.confirmed_at || nowIso;
+  stored.confirming_at = null;
+  stored.public_booking_id = stored.public_booking_id || canonicalBookingId;
+  stored.finalize_debug = {
+    at: nowIso,
+    stage: "resume_paid_canonical_updated",
+    payment_booking_id: paymentBookingId,
+    canonical_booking_id: canonicalBookingId,
+    payment_id: incomingMolliePaymentId || null,
+    error: null,
+  };
+
+  console.log(
+    `[BOOKING][CHECKOUT_RESUME][PAID_FINALIZE] paymentBooking=${_bookingIntentMask(paymentBookingId)} canonical=${_bookingIntentMask(canonicalBookingId)} molliePayment=${_bookingIntentMask(incomingMolliePaymentId)}`,
+  );
+
+  return {
+    ok: true,
+    updatedStored: stored,
+    canonicalBookingId,
+    canonicalRec,
+  };
+}
+
 function _payStatusFirstScope(scopes = []) {
   for (const scope of scopes) {
     if (scope?.hasScope) return scope;
@@ -47517,8 +47856,35 @@ async function payStatus(request, env, requestedScopeOverride = null) {
 
         // Run finalize (never throws; returns {ok, updatedStored})
         finalizeAttempted = true;
-        const result = await finalizeBookingFromStored(data, env, request, { bypassLock: true });
+        const result = await finalizeBookingFromStored(data, env, request, {
+          bypassLock: true,
+          paymentBookingId: id,
+          tenantScope: effectiveScope,
+        });
         data = result?.updatedStored || data;
+        if (result?.canonicalBookingId && result?.canonicalRec) {
+          linkedBooking = {
+            booking_id: result.canonicalBookingId,
+            key: `booking:${result.canonicalBookingId}`,
+            rec: result.canonicalRec,
+          };
+        } else if (result?.canonicalBookingId) {
+          try {
+            const loadedCanonical = await loadBookingRecord(env, result.canonicalBookingId);
+            if (
+              loadedCanonical?.rec &&
+              bookingMatchesRequestedTenantScope(loadedCanonical.rec, effectiveScope)
+            ) {
+              linkedBooking = {
+                booking_id: result.canonicalBookingId,
+                key: loadedCanonical.key,
+                rec: loadedCanonical.rec,
+              };
+            }
+          } catch (_) {
+            // Keep existing linkedBooking fallback.
+          }
+        }
       }
     }
 
@@ -47867,6 +48233,18 @@ async function finalizeBookingFromStored(stored, env, request, opts = {}) {
     stored.confirm_error = "Cannot finalize: missing stored.payload";
     stored.confirming_at = null;
     return { ok: false, updatedStored: stored, error: stored.confirm_error };
+  }
+
+  const paymentBookingId = safeStr(
+    opts?.paymentBookingId || stored?.bookingId || stored?.booking_id,
+    160,
+  );
+  if (isResumedMolliePaymentRecord(stored, paymentBookingId)) {
+    return finalizeResumePaidPaymentToCanonical(stored, env, request, {
+      paymentBookingId,
+      tenantScope: opts?.tenantScope || _tenantScopeFromStoredPaymentRecord(stored),
+      bypassLock: opts?.bypassLock,
+    });
   }
 
   const nowIso = new Date().toISOString();
