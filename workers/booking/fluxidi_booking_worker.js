@@ -26596,11 +26596,26 @@ function normalizePaymentStatus(value) {
   return "unpaid";
 }
 
-function normalizedPaymentFields({ status, provider = "mollie", paymentId = null, paidAt = null } = {}) {
+function normalizeBookingPaymentMethodId(raw, maxLen = 40) {
+  let token = safeStr(raw).toLowerCase().replace(/-/g, "_");
+  if (!token) return null;
+  token = token.replace(/[^a-z0-9_]/g, "");
+  if (!token) return null;
+  return token.length > maxLen ? token.slice(0, maxLen) : token;
+}
+
+function normalizedPaymentFields({
+  status,
+  provider = "mollie",
+  paymentId = null,
+  paidAt = null,
+  paymentMethod = null,
+} = {}) {
   const paymentStatus = normalizePaymentStatus(status);
   const resolvedPaidAt = paymentStatus === "paid"
     ? (safeStr(paidAt) || new Date().toISOString())
     : null;
+  const resolvedMethod = normalizeBookingPaymentMethodId(paymentMethod);
   return {
     payment_status: paymentStatus,
     paymentStatus,
@@ -26608,6 +26623,12 @@ function normalizedPaymentFields({ status, provider = "mollie", paymentId = null
     paymentProvider: provider,
     payment_id: safeStr(paymentId) || null,
     paymentId: safeStr(paymentId) || null,
+    ...(resolvedMethod
+      ? {
+          payment_method: resolvedMethod,
+          paymentMethod: resolvedMethod,
+        }
+      : {}),
     ...(resolvedPaidAt ? { paid_at: resolvedPaidAt, paidAt: resolvedPaidAt } : {}),
   };
 }
@@ -26618,6 +26639,7 @@ function paymentFieldsFromPayload(payload) {
     provider: payload?.payment_provider || payload?.paymentProvider || "mollie",
     paymentId: payload?.payment_id || payload?.paymentId || payload?.mollie_payment_id || payload?.molliePaymentId,
     paidAt: payload?.paid_at || payload?.paidAt,
+    paymentMethod: payload?.payment_method ?? payload?.paymentMethod,
   });
 }
 
