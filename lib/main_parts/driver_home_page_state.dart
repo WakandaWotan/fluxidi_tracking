@@ -1,5 +1,7 @@
 part of '../main.dart';
 
+enum _DriverRidesHubSegment { available, myRides, history }
+
 class _DriverHomePageState extends State<DriverHomePage>
     with TickerProviderStateMixin {
   ValueListenable<DriverThemeVariant> get _activeDriverThemeListenable =>
@@ -61,7 +63,28 @@ class _DriverHomePageState extends State<DriverHomePage>
   DateTime? _lastBookingsRefreshAt;
   DateTime? _lastStatusTriggeredRefreshAt;
   DateTime? _lastManualRefreshAt;
+  // F3-D: monotonically increasing sequence used to discard stale driver
+  // bookings refresh responses (defense-in-depth on top of the in-flight
+  // guard) and to scope PRESERVE_AVAILABLE_ON_EMPTY decisions.
+  int _driverBookingsRefreshSeq = 0;
+  // G3-L: when a forced refresh arrives while another refresh is in flight,
+  // queue exactly one follow-up trigger and run it after the current refresh
+  // completes. Without this, the business-preview entry path was racing
+  // init_boot vs business_preview_restore: init_boot started before the
+  // business preview driver/session had been hydrated, business_preview_restore
+  // was dropped as "in_flight", and the user only saw the assigned ride after
+  // the next periodic poll fired. We deliberately keep just one slot so we
+  // do not create duplicate timers or unbounded queues.
+  String? _pendingFollowUpRefreshTrigger;
+  // G3-L: cooldown so My-rides chip-tap force refreshes from business preview
+  // do not cascade into spam; rides reflect server-side dispatch within
+  // seconds of the chip tap, but we should not re-fire on every rebuild.
+  DateTime? _lastBusinessPreviewMyRidesRefreshAt;
+  static const Duration _businessPreviewMyRidesRefreshCooldown = Duration(
+    seconds: 6,
+  );
   bool _bookingsHubVisible = false;
+  _DriverRidesHubSegment _ridesHubSegment = _DriverRidesHubSegment.available;
   int? _activeBookingPollIntervalMs;
   static const Duration _bookingsPollIntervalFastList = Duration(seconds: 9);
   static const Duration _bookingsPollIntervalSafeLive = Duration(seconds: 25);
@@ -443,36 +466,76 @@ class _DriverHomePageState extends State<DriverHomePage>
     return true;
   }
 
-  List<BookingItem> get _visibleBookings => _bookings
-      .where((b) => !_deletedBookingIds.contains(b.bookingId))
-      .where((b) => !_isClosedRideStatus(_effectiveStatusFor(b)))
-      .where((b) {
-        final role = appRoleNotifier.value;
-        if (role != AppRole.driver) return true;
-        if (kDriverAllowAllCompanyRidesDebug) return true;
-        final booking = _bookingScopeViewFor(b);
-        final allowed =
-            _bookingBelongsToActiveDriver(booking) ||
-            (kDriverCanSeeUnassignedRides && _bookingIsUnassigned(booking));
-        final bookingId = b.bookingId;
-        final assignedVehicleId =
-            _bookingScopeFirstText(booking, const [
-              ['assigned_vehicle_id'],
-              ['assignedVehicleId'],
-              ['vehicle_id'],
-              ['vehicleId'],
-              ['booking', 'assigned_vehicle_id'],
-              ['booking', 'assignedVehicleId'],
-              ['booking', 'vehicle_id'],
-              ['booking', 'vehicleId'],
-            ]) ??
-            '';
-        debugPrint(
-          '[DRIVER_SCOPE][FILTER] booking_id=$bookingId assigned_vehicle_id=$assignedVehicleId active_driver_id=${_resolvedActiveDriverIdForScope()} active_vehicle_id=${_activeDriverSessionVehicleIdForScope()} allowed=$allowed',
-        );
-        return allowed;
-      })
-      .toList();
+  List<BookingItem> _scopeFilteredOpenBookings({
+    String segment = 'scope_open',
+  }) {
+    final enforceScope = _shouldEnforceDriverRideScopeFilter();
+    return _bookings
+        .where((b) => !_deletedBookingIds.contains(b.bookingId))
+        .where((b) => !_isClosedRideStatus(_effectiveStatusFor(b)))
+        .where((b) {
+          if (!enforceScope) return true;
+          if (kDriverAllowAllCompanyRidesDebug) return true;
+          final booking = _bookingScopeViewFor(b);
+          final decision = _driverRideScopeVisibilityDecision(
+            booking,
+            segment: segment,
+          );
+          final bookingId = b.bookingId;
+          final assignedDriverId = _bookingScopeAssignedDriverId(booking) ?? '';
+          final assignedVehicleId =
+              _bookingScopeAssignedVehicleId(booking) ?? '';
+          debugPrint(
+            '[DRIVER_SCOPE][FILTER] booking_id=${_safeRefPreview(bookingId)} assigned_driver_id=${_safeRefPreview(assignedDriverId)} assigned_vehicle_id=${_safeRefPreview(assignedVehicleId)} active_driver_id=${_safeRefPreview(_resolvedActiveDriverIdForScope())} active_vehicle_id=${_safeRefPreview(_activeDriverSessionVehicleIdForScope())} segment=$segment allowed=${decision.allowed} reason=${decision.reason}',
+          );
+          return decision.allowed;
+        })
+        .toList(growable: false);
+  }
+
+  List<BookingItem> get _myAssignedVisibleBookings {
+    final open = _scopeFilteredOpenBookings(segment: 'my_rides');
+    if (!_shouldEnforceDriverRideScopeFilter()) {
+      return _dedupeDriverVisibleBookingItems(open);
+    }
+    final assigned = open
+        .where((b) => _bookingIsMyAssignedDriverRide(_bookingScopeViewFor(b)))
+        .toList(growable: false);
+    return _dedupeDriverVisibleBookingItems(assigned);
+  }
+
+  List<BookingItem> get _availableUnassignedVisibleBookings {
+    if (!_shouldEnforceDriverRideScopeFilter()) return const [];
+    return buildDriverAvailableUnassignedVisibleBookings(
+      _scopeFilteredOpenBookings(segment: 'available'),
+    );
+  }
+
+  List<BookingItem> get _historyAssignedVisibleBookings {
+    final closed = _bookings
+        .where((b) => !_deletedBookingIds.contains(b.bookingId))
+        .where((b) => _isClosedRideStatus(_effectiveStatusFor(b)))
+        .where((b) {
+          if (!_shouldEnforceDriverRideScopeFilter()) return true;
+          return _bookingIsMyAssignedDriverRide(_bookingScopeViewFor(b));
+        })
+        .toList(growable: false);
+    return _dedupeDriverVisibleBookingItems(closed);
+  }
+
+  List<BookingItem> _ridesHubSegmentBookings() {
+    switch (_ridesHubSegment) {
+      case _DriverRidesHubSegment.available:
+        return _availableUnassignedVisibleBookings;
+      case _DriverRidesHubSegment.myRides:
+        return _myAssignedVisibleBookings;
+      case _DriverRidesHubSegment.history:
+        return _historyAssignedVisibleBookings;
+    }
+  }
+
+  /// Assigned/planned rides for the active driver (excludes available-unassigned pool).
+  List<BookingItem> get _visibleBookings => _myAssignedVisibleBookings;
 
   void _markBookingsUiDirty() {
     _bookingsUiVersion.value = _bookingsUiVersion.value + 1;
@@ -912,6 +975,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       _maybeHideBootSplash();
     });
     unawaited(_restoreBusinessPreviewDriverSelectionOnOpen());
+    _syncDriverRideScopeContext(reason: 'init_state');
     _refreshBookings(trigger: 'init_boot');
     unawaited(_refreshCompletedTodayCount(reason: 'init_boot'));
     _syncDriverPauseFromProfile(reason: 'init_boot');
@@ -1005,6 +1069,8 @@ class _DriverHomePageState extends State<DriverHomePage>
     _toDebounce?.cancel();
     _fromFocus.dispose();
     _toFocus.dispose();
+    driverRideScopeActiveDriverIdOverride.value = '';
+    driverRideScopeActiveVehicleIdOverride.value = '';
     super.dispose();
   }
 
@@ -1057,13 +1123,45 @@ class _DriverHomePageState extends State<DriverHomePage>
     );
   }
 
+  // F3-E: any of these signals means the user is currently looking at a
+  // driver UI surface (real driver login, business_home preview, or the
+  // driver-only bookings hub). When true, ride refreshes must prefer
+  // /driver/bookings and never fall back to /bookings, otherwise
+  // available_unassigned semantics are silently dropped.
+  bool get _isInDriverUiContext {
+    if (appRoleNotifier.value == AppRole.driver) return true;
+    if (widget.openedFromBusinessHome) return true;
+    if (_bookingsHubVisible) return true;
+    if ((_businessPreviewDriverId ?? '').trim().isNotEmpty) return true;
+    return false;
+  }
+
   Future<void> _refreshBookings({
     bool force = false,
     String trigger = 'unknown',
   }) async {
     if (!mounted) return;
     if (_bookingsRefreshInFlight != null) {
-      debugPrint('[RIDES][REFRESH][SKIP] reason=in_flight trigger=$trigger');
+      if (force) {
+        // G3-L: a forced refresh arrived while one is already running. Do not
+        // drop it — record exactly one pending follow-up trigger so the
+        // _refreshBookings finally-block can drain it once the current run
+        // settles. This is the fix for the business-preview entry race
+        // where business_preview_restore (force=true) was being silently
+        // skipped behind init_boot.
+        if (_pendingFollowUpRefreshTrigger == null ||
+            // Prefer the more specific business_preview/my_rides triggers if
+            // they arrive after a generic queued trigger.
+            trigger == 'business_preview_restore' ||
+            trigger == 'my_rides_segment') {
+          _pendingFollowUpRefreshTrigger = trigger;
+        }
+        debugPrint(
+          '[DRIVER_RIDES][REFRESH_QUEUED] trigger=$trigger reason=in_flight queued=${_pendingFollowUpRefreshTrigger ?? trigger}',
+        );
+      } else {
+        debugPrint('[RIDES][REFRESH][SKIP] reason=in_flight trigger=$trigger');
+      }
       return _bookingsRefreshInFlight!;
     }
     final now = DateTime.now();
@@ -1113,17 +1211,33 @@ class _DriverHomePageState extends State<DriverHomePage>
       _lastStatusTriggeredRefreshAt = now;
     }
     _lastBookingsRefreshAt = now;
+    if (force) {
+      debugPrint('[DRIVER_RIDES][FORCE_REFRESH] trigger=$trigger');
+    }
     final task = _performRefreshBookings(trigger: trigger);
     _bookingsRefreshInFlight = task;
     try {
       await task;
     } finally {
       _bookingsRefreshInFlight = null;
+      // G3-L: drain queued follow-up trigger (e.g. business_preview_restore
+      // queued behind init_boot). We unawait this on purpose: the awaiter of
+      // the current call has already received its completion, and the
+      // follow-up should be visible-but-not-blocking. _refreshBookings is
+      // re-entrant safe via the in-flight guard above and the
+      // _driverBookingsRefreshSeq stale-response guard inside
+      // _performRefreshBookings.
+      final pending = _pendingFollowUpRefreshTrigger;
+      if (pending != null && mounted) {
+        _pendingFollowUpRefreshTrigger = null;
+        unawaited(_refreshBookings(force: true, trigger: pending));
+      }
     }
   }
 
   Future<void> _performRefreshBookings({required String trigger}) async {
     if (!mounted) return;
+    final mySeq = ++_driverBookingsRefreshSeq;
     setState(() {
       _loadingBookings = true;
       _bookingsError = null;
@@ -1133,24 +1247,125 @@ class _DriverHomePageState extends State<DriverHomePage>
     try {
       final ts = DateTime.now().millisecondsSinceEpoch;
       final activeDriverSession = activeDriverSessionNotifier.value;
-      final driverTokenMode =
-          appRoleNotifier.value == AppRole.driver &&
-          (activeDriverSession?.linkMethod ?? '').trim().toLowerCase() ==
-              'public_driver_login';
       final driverSessionToken = (activeDriverSession?.driverSessionToken ?? '')
           .trim();
+      // F3-E: thread driver UI context signals through the helpers so that
+      // business_home preview and driver-only flows always pick the
+      // /driver/bookings endpoint (or block /bookings) instead of silently
+      // refreshing from the company list.
+      final inDriverUiContext = _isInDriverUiContext;
+      final previewDriverId = (_businessPreviewDriverId ?? '').trim();
+      final effectiveDriverId = widget.openedFromBusinessHome
+          ? _effectiveCurrentDriverIdForBusinessPreview()
+          : (activeDriverSession?.driverId.trim() ?? '');
       Uri primaryUri;
       Map<String, String> requestHeaders;
-      final useDriverToken = driverTokenMode && driverSessionToken.isNotEmpty;
-      if (useDriverToken) {
-        primaryUri = Uri.parse(
-          '$kBookingBaseUrl$kDriverBookingsPath',
-        ).replace(queryParameters: <String, String>{'limit': '50', 't': '$ts'});
+      final useDriverEndpoint = _shouldUseDriverBookingsRefreshEndpoint(
+        driverUiContext: inDriverUiContext,
+        hubVisible: _bookingsHubVisible,
+        previewDriverId: previewDriverId,
+        effectiveDriverId: effectiveDriverId,
+      );
+      if (useDriverEndpoint) {
+        if (driverSessionToken.isEmpty) {
+          // F3-E: /driver/bookings requires a driver session token. If we are
+          // in driver UI context but the token is missing (e.g. business_home
+          // preview without a pairing session), do NOT fall back to
+          // /bookings (which would lose available_unassigned semantics);
+          // skip this refresh cycle so the previously observed state is
+          // preserved by the F3-D PRESERVE_AVAILABLE_ON_EMPTY guard.
+          debugPrint(
+            '[RIDES][REFRESH][BLOCK_COMPANY_IN_DRIVER_CONTEXT] trigger=$trigger reason=no_driver_token',
+          );
+          if (!mounted) return;
+          setState(() {
+            _loadingBookings = false;
+          });
+          _markBookingsUiDirty();
+          return;
+        }
+        if (appRoleNotifier.value != AppRole.driver) {
+          final forceReason = previewDriverId.isNotEmpty
+              ? 'business_preview'
+              : (_bookingsHubVisible
+                    ? 'hub_visible'
+                    : (effectiveDriverId.isNotEmpty
+                          ? 'effective_driver_id'
+                          : 'driver_ui_context'));
+          debugPrint(
+            '[RIDES][REFRESH][FORCE_DRIVER_ENDPOINT] trigger=$trigger reason=$forceReason',
+          );
+        }
+        // G2-B: thread explicit tenant/company/driver/employee scope onto the
+        // /driver/bookings request when the active driver session carries
+        // those identifiers. Backend auth still happens via the bearer token
+        // and these params do not weaken /driver/bookings auth — they exist
+        // so worker-side logs and any scope-aware backend code can attribute
+        // the request to the right tenant/company/driver. Only values present
+        // on the live ActiveDriverSession are sent; we never invent values.
+        final scopeTenantId = (activeDriverSession?.tenantId ?? '').trim();
+        final scopeCompanyId = (activeDriverSession?.companyId ?? '').trim();
+        final scopeDriverId = effectiveDriverId.isNotEmpty
+            ? effectiveDriverId
+            : (activeDriverSession?.driverId ?? '').trim();
+        final scopeVehicleId = _effectiveActiveVehicleIdForRideScope();
+        final scopeEmployeeNumber = (activeDriverSession?.employeeNumber ?? '')
+            .trim();
+        final scopeQuery = <String, String>{};
+        if (scopeTenantId.isNotEmpty) {
+          scopeQuery['tenant_id'] = scopeTenantId;
+          scopeQuery['tenantId'] = scopeTenantId;
+        }
+        if (scopeCompanyId.isNotEmpty) {
+          scopeQuery['company_id'] = scopeCompanyId;
+          scopeQuery['companyId'] = scopeCompanyId;
+        }
+        if (scopeDriverId.isNotEmpty) {
+          scopeQuery['driver_id'] = scopeDriverId;
+          scopeQuery['driverId'] = scopeDriverId;
+        }
+        if (scopeVehicleId.isNotEmpty) {
+          scopeQuery['vehicle_id'] = scopeVehicleId;
+          scopeQuery['vehicleId'] = scopeVehicleId;
+        }
+        if (scopeEmployeeNumber.isNotEmpty) {
+          scopeQuery['employee_number'] = scopeEmployeeNumber;
+          scopeQuery['employeeNumber'] = scopeEmployeeNumber;
+        }
+        debugPrint(
+          '[DRIVER_RIDES][REQ_SCOPE] tenant=${_safeRefPreview(scopeTenantId)} company=${_safeRefPreview(scopeCompanyId)} driver=${_safeRefPreview(scopeDriverId)} vehicle=${_safeRefPreview(scopeVehicleId)} employee=${_safeRefPreview(scopeEmployeeNumber)}',
+        );
+        primaryUri = Uri.parse('$kBookingBaseUrl$kDriverBookingsPath').replace(
+          queryParameters: <String, String>{
+            ...scopeQuery,
+            'limit': '50',
+            't': '$ts',
+          },
+        );
         requestHeaders = <String, String>{
           'Accept': 'application/json',
           'Authorization': 'Bearer $driverSessionToken',
         };
-        debugPrint('[RIDES][REFRESH][MODE] source=driver_token');
+        debugPrint('[RIDES][REFRESH][MODE] source=driver_bookings');
+        debugPrint('[DRIVER_RIDES][REQ_URL] $primaryUri');
+      } else if (_shouldBlockCompanyBookingsListRefreshInDriverContext(
+        bookingsHubVisible: _bookingsHubVisible,
+        driverUiContext: inDriverUiContext,
+        previewDriverId: previewDriverId,
+        effectiveDriverId: effectiveDriverId,
+      )) {
+        debugPrint(
+          '[RIDES][REFRESH][BLOCK_COMPANY_IN_DRIVER_CONTEXT] trigger=$trigger',
+        );
+        debugPrint(
+          '[RIDES][REFRESH][SOURCE_GUARD] blocked company_bookings_refresh trigger=$trigger hub=$_bookingsHubVisible',
+        );
+        if (!mounted) return;
+        setState(() {
+          _loadingBookings = false;
+        });
+        _markBookingsUiDirty();
+        return;
       } else {
         primaryUri = _withActiveBookingScope(
           kBookingBaseUrl,
@@ -1158,11 +1373,7 @@ class _DriverHomePageState extends State<DriverHomePage>
           extraQuery: <String, String>{'limit': '50', 't': '$ts'},
         );
         requestHeaders = _headers(admin: true);
-        if (driverTokenMode) {
-          debugPrint(
-            '[RIDES][REFRESH][MODE] source=admin_fallback reason=no_driver_token',
-          );
-        }
+        debugPrint('[RIDES][REFRESH][MODE] source=company_bookings');
       }
       debugPrint('[RIDES][REFRESH][REQ] trigger=$trigger GET $primaryUri');
       final res = await http.get(primaryUri, headers: requestHeaders);
@@ -1170,7 +1381,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         '[RIDES][REFRESH][RES] code=${res.statusCode} body=${res.body}',
       );
 
-      if (useDriverToken && res.statusCode == 401) {
+      if (useDriverEndpoint && res.statusCode == 401) {
         debugPrint('[RIDES][REFRESH][AUTH_EXPIRED]');
         _stopBookingPolling(reason: 'driver_token_auth_expired');
         if (!mounted) return;
@@ -1209,6 +1420,12 @@ class _DriverHomePageState extends State<DriverHomePage>
       final prevStatusByBookingId = <String, String?>{
         for (final b in _bookings) b.bookingId: _effectiveStatusFor(b),
       };
+      final prevItemsByRowKey = <String, BookingItem>{
+        for (final b in _bookings) b.rowKey: b,
+      };
+      final prevItemsByBookingId = <String, BookingItem>{
+        for (final b in _bookings) b.bookingId: b,
+      };
       final items = raw.whereType<Map<String, dynamic>>().map((j) {
         final parsed = BookingItem.fromJson(j);
         final apiStatus = parsed.status?.trim();
@@ -1218,10 +1435,69 @@ class _DriverHomePageState extends State<DriverHomePage>
                   prevStatusByBookingId[parsed.bookingId] ??
                   _bookingStatusOverrides[parsed.rowKey] ??
                   _bookingStatusOverrides[parsed.bookingId]);
-        return mergedStatus == null
+        final withStatus = mergedStatus == null
             ? parsed
             : parsed.copyWith(status: mergedStatus);
+        final previous =
+            prevItemsByRowKey[withStatus.rowKey] ??
+            prevItemsByBookingId[withStatus.bookingId];
+        return _mergeDriverBookingRefreshItem(withStatus, previous);
       }).toList();
+
+      // G2-B: surface available_unassigned arrivals in the parsed response so
+      // it is obvious from logs whether the backend is returning them at all.
+      // We log per booking (with masked id) so the count is visible without
+      // dumping the full payload.
+      for (final b in items) {
+        if (_bookingItemIsBackendAvailableUnassigned(b)) {
+          debugPrint(
+            '[DRIVER_RIDES][AVAILABLE_UNASSIGNED_SEEN] booking=${_safeRefPreview(b.bookingId)}',
+          );
+        }
+      }
+
+      // F3-D: stale-response guard. If a newer refresh has begun while this
+      // request was awaiting the network response, discard our stale result
+      // before mutating any list/override state.
+      if (mySeq != _driverBookingsRefreshSeq) {
+        debugPrint(
+          '[RIDES][REFRESH][STALE_IGNORED] seq=$mySeq latest=$_driverBookingsRefreshSeq',
+        );
+        return;
+      }
+
+      // F3-D: PRESERVE_AVAILABLE_ON_EMPTY. The /driver/bookings endpoint can
+      // briefly return an empty list during backend reindex / availability
+      // recomputation. Without this guard, available_unassigned rows visibly
+      // disappear and reappear across refresh cycles. Only honored on the
+      // driver endpoint, only when the response is empty, and only for rows
+      // that are not contradicted by an explicit terminal update in the same
+      // response (vacuous here because items is empty).
+      if (useDriverEndpoint && items.isEmpty) {
+        final preservedAvailable = _bookings
+            .where(_bookingItemIsBackendAvailableUnassigned)
+            .toList(growable: false);
+        if (preservedAvailable.isNotEmpty) {
+          final terminalIdsInResponse = <String>{
+            for (final b in items)
+              if (_isClosedRideStatus(_effectiveStatusFor(b))) b.bookingId,
+          };
+          final preserved = preservedAvailable
+              .where((b) => !terminalIdsInResponse.contains(b.bookingId))
+              .toList(growable: false);
+          if (preserved.isNotEmpty) {
+            debugPrint(
+              '[RIDES][REFRESH][PRESERVE_AVAILABLE_ON_EMPTY] preserved=${preserved.length}',
+            );
+            if (!mounted) return;
+            setState(() {
+              _loadingBookings = false;
+            });
+            _markBookingsUiDirty();
+            return;
+          }
+        }
+      }
 
       final apiReturnedIds = items.map((e) => e.bookingId).toSet();
       _deletedBookingIds.removeWhere((id) => !apiReturnedIds.contains(id));
@@ -1263,8 +1539,17 @@ class _DriverHomePageState extends State<DriverHomePage>
         _loadingBookings = false;
       });
       _markBookingsUiDirty();
+      _syncDriverRideScopeContext(reason: 'refresh_complete');
+      _logRidesHubVisibleCounts(source: 'refresh_$trigger');
     } catch (e) {
       if (!mounted) return;
+      // F3-D: do not overwrite a fresher response's state with a stale error.
+      if (mySeq != _driverBookingsRefreshSeq) {
+        debugPrint(
+          '[RIDES][REFRESH][STALE_IGNORED] seq=$mySeq latest=$_driverBookingsRefreshSeq',
+        );
+        return;
+      }
       setState(() {
         _bookingsError = e.toString();
         _loadingBookings = false;
@@ -7917,7 +8202,7 @@ class _DriverHomePageState extends State<DriverHomePage>
   }
 
   BookingItem? _nextVisibleBookingForDashboard() {
-    final visible = _visibleBookings;
+    final visible = _myAssignedVisibleBookings;
     if (visible.isEmpty) return null;
     final now = DateTime.now();
     final upcoming = visible
@@ -7980,6 +8265,89 @@ class _DriverHomePageState extends State<DriverHomePage>
     return null;
   }
 
+  String? _resolveFleetVehicleIdForDriver(String driverId) {
+    final normalizedDriverId = driverId.trim();
+    if (normalizedDriverId.isEmpty) return null;
+    final activeCompany = resolvedCompanyId.trim().isNotEmpty
+        ? resolvedCompanyId.trim()
+        : kOutboundTenantId.trim();
+    for (final vehicle in vehiclesNotifier.value) {
+      if (!vehicle.isActive) continue;
+      final vehicleId = vehicle.id.trim();
+      if (vehicleId.isEmpty) continue;
+      if ((vehicle.driverId?.trim() ?? '') != normalizedDriverId) continue;
+      final vehicleCompany = vehicle.companyId?.trim() ?? '';
+      if (vehicleCompany.isNotEmpty &&
+          activeCompany.isNotEmpty &&
+          vehicleCompany != activeCompany) {
+        continue;
+      }
+      return vehicleId;
+    }
+    return null;
+  }
+
+  String _effectiveActiveDriverIdForRideScope() {
+    if (widget.openedFromBusinessHome) {
+      final preview = (_businessPreviewDriverId ?? '').trim();
+      if (preview.isNotEmpty) return preview;
+    }
+    final sessionDriverId =
+        activeDriverSessionNotifier.value?.driverId.trim() ?? '';
+    if (sessionDriverId.isNotEmpty) return sessionDriverId;
+    return resolvedDriverTrackingId.trim();
+  }
+
+  String _effectiveActiveVehicleIdForRideScope() {
+    final driverId = _effectiveActiveDriverIdForRideScope();
+    final fleetVehicle = driverId.isNotEmpty
+        ? _resolveFleetVehicleIdForDriver(driverId)
+        : null;
+    if ((fleetVehicle ?? '').trim().isNotEmpty) return fleetVehicle!.trim();
+    return activeDriverSessionNotifier.value?.assignedVehicleId?.trim() ?? '';
+  }
+
+  void _syncDriverRideScopeContext({required String reason}) {
+    if (!_isInDriverUiContext) {
+      driverRideScopeActiveDriverIdOverride.value = '';
+      driverRideScopeActiveVehicleIdOverride.value = '';
+      return;
+    }
+    final effectiveDriverId = _effectiveActiveDriverIdForRideScope();
+    final effectiveVehicleId = _effectiveActiveVehicleIdForRideScope();
+    driverRideScopeActiveDriverIdOverride.value = effectiveDriverId;
+    driverRideScopeActiveVehicleIdOverride.value = effectiveVehicleId;
+    final previewDriverId = (_businessPreviewDriverId ?? '').trim();
+    final sessionDriverId =
+        activeDriverSessionNotifier.value?.driverId.trim() ?? '';
+    final source = widget.openedFromBusinessHome
+        ? 'business_preview'
+        : (previewDriverId.isNotEmpty ? 'business_home' : 'standalone_driver');
+    debugPrint(
+      '[DRIVER_VIEW_ORIGIN][CURRENT] source=$source reason=$reason preview=${_maskBridgeDriverIdGlobal(previewDriverId)} session=${_maskBridgeDriverIdGlobal(sessionDriverId)} effective=${_maskBridgeDriverIdGlobal(effectiveDriverId)} vehicle=${_safeRefPreview(effectiveVehicleId)}',
+    );
+    debugPrint(
+      '[DRIVER_RIDES][EFFECTIVE_DRIVER] source=$source reason=$reason driver=${_maskBridgeDriverIdGlobal(effectiveDriverId)} vehicle=${_safeRefPreview(effectiveVehicleId)} session=${_maskBridgeDriverIdGlobal(sessionDriverId)} preview=${_maskBridgeDriverIdGlobal(previewDriverId)}',
+    );
+  }
+
+  void _logRidesHubVisibleCounts({required String source}) {
+    final myRides = _myAssignedVisibleBookings;
+    final available = _availableUnassignedVisibleBookings;
+    final myFirst = myRides.isNotEmpty
+        ? _safeRefPreview(myRides.first.bookingId)
+        : '-';
+    final availableFirst = available.isNotEmpty
+        ? _safeRefPreview(available.first.bookingId)
+        : '-';
+    debugPrint(
+      '[DRIVER_RIDES][MY_RIDES_VISIBLE_COUNT] count=${myRides.length} source=$source first=$myFirst',
+    );
+    debugPrint(
+      '[DRIVER_RIDES][AVAILABLE_VISIBLE_COUNT] count=${available.length} source=$source first=$availableFirst',
+    );
+  }
+
   String _effectiveCurrentDriverIdForBusinessPreview() {
     final previewDriverId = (_businessPreviewDriverId ?? '').trim();
     if (widget.openedFromBusinessHome && previewDriverId.isNotEmpty) {
@@ -7989,14 +8357,37 @@ class _DriverHomePageState extends State<DriverHomePage>
   }
 
   void _logCurrentDriverOrigin({required String reason}) {
-    if (!widget.openedFromBusinessHome) return;
-    final previewDriverId = (_businessPreviewDriverId ?? '').trim();
-    final sessionDriverId =
-        activeDriverSessionNotifier.value?.driverId.trim() ?? '';
-    final effectiveDriverId = _effectiveCurrentDriverIdForBusinessPreview();
-    debugPrint(
-      '[DRIVER_VIEW_ORIGIN][CURRENT] source=business_home reason=$reason preview=${_maskBridgeDriverIdGlobal(previewDriverId)} session=${_maskBridgeDriverIdGlobal(sessionDriverId)} effective=${_maskBridgeDriverIdGlobal(effectiveDriverId)}',
-    );
+    _syncDriverRideScopeContext(reason: reason);
+  }
+
+  // G3-L: when the user opens the My-rides segment, log the visible count and
+  // — only when we are in the business-preview entry path or the cached list
+  // is stale — force one fresh /driver/bookings fetch. The standalone driver
+  // app already gets a fresh fetch from its own polling/login flow, so it
+  // does not need this extra force; we cooldown-gate so chip-tap-bouncing
+  // cannot spam the backend.
+  void _maybeForceRefreshOnMyRidesOpen({required String source}) {
+    if (!mounted) return;
+    _logRidesHubVisibleCounts(source: source);
+    final now = DateTime.now();
+    final fromBusinessPreview = widget.openedFromBusinessHome;
+    final lastRefresh = _lastBookingsRefreshAt;
+    final stale =
+        lastRefresh == null ||
+        now.difference(lastRefresh) >= _bookingsMinRefreshIntervalSafeLive;
+    if (!fromBusinessPreview && !stale) return;
+    if (_lastBusinessPreviewMyRidesRefreshAt != null &&
+        now.difference(_lastBusinessPreviewMyRidesRefreshAt!) <
+            _businessPreviewMyRidesRefreshCooldown) {
+      return;
+    }
+    _lastBusinessPreviewMyRidesRefreshAt = now;
+    if (fromBusinessPreview) {
+      debugPrint(
+        '[DRIVER_VIEW_ORIGIN][BUSINESS_PREVIEW_REFRESH] reason=my_rides_segment driver=${_maskBridgeDriverIdGlobal(_effectiveCurrentDriverIdForBusinessPreview())}',
+      );
+    }
+    unawaited(_refreshBookings(force: true, trigger: 'my_rides_segment'));
   }
 
   String? _dashboardAvatarPhotoPath() {
@@ -8327,10 +8718,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     final resolvedTenantId = resolvedCompanyId;
     final resolvedCompanyCode =
         (activeCompanySessionNotifier.value?.companyCode ?? '').trim();
-    final previousAssignedVehicleId =
-        (previous?.assignedVehicleId ?? '').trim().isEmpty
-        ? null
-        : previous!.assignedVehicleId!.trim();
+    final fleetVehicleId = _resolveFleetVehicleIdForDriver(driver.id.trim());
     return ActiveDriverSession(
       driverId: driver.id.trim(),
       employeeNumber: driver.employeeNumber.trim(),
@@ -8341,7 +8729,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       tenantId: resolvedTenantId.isEmpty ? null : resolvedTenantId,
       companyId: resolvedCompanyId.isEmpty ? null : resolvedCompanyId,
       companyCode: resolvedCompanyCode.isEmpty ? null : resolvedCompanyCode,
-      assignedVehicleId: previousAssignedVehicleId,
+      assignedVehicleId: fleetVehicleId,
       linkMethod: kCompanyAdminDriverViewLinkMethod,
     );
   }
@@ -8396,11 +8784,15 @@ class _DriverHomePageState extends State<DriverHomePage>
       driver: selectedDriver,
       previous: previous,
     );
+    _syncDriverRideScopeContext(reason: 'preview_load_applied');
     debugPrint(
       '[DRIVER_VIEW_ORIGIN][PREVIEW_LOAD] source=business_home driver=${_maskBridgeDriverIdGlobal(selectedDriver.id)}',
     );
     _logCurrentDriverOrigin(reason: 'preview_load_applied');
     if (mounted) setState(() {});
+    debugPrint(
+      '[DRIVER_VIEW_ORIGIN][BUSINESS_PREVIEW_REFRESH] reason=preview_restore driver=${_maskBridgeDriverIdGlobal(selectedDriver.id)}',
+    );
     unawaited(
       _refreshBookings(force: true, trigger: 'business_preview_restore'),
     );
@@ -8716,6 +9108,10 @@ class _DriverHomePageState extends State<DriverHomePage>
       }
       _logCurrentDriverOrigin(reason: 'preview_save_applied');
       if (mounted) setState(() {});
+      _logRidesHubVisibleCounts(source: 'preview_picker_selected');
+      unawaited(
+        _refreshBookings(force: true, trigger: 'business_preview_switch'),
+      );
     } else {
       await DriverSessionStore.instance.saveFromDriverProfile(
         selectedDriver,
@@ -10576,7 +10972,9 @@ class _DriverHomePageState extends State<DriverHomePage>
                   fr: 'Mes courses',
                   es: 'Mis viajes',
                 ),
-                onTap: _openBookingsHubFromDashboard,
+                onTap: () => _openBookingsHubFromDashboard(
+                  initialSegment: _DriverRidesHubSegment.myRides,
+                ),
                 backgroundAsset: _driverAssetByTheme(
                   defaultAsset: 'assets/fluxidi/driver_action_my_rides.png',
                   midnightBlueAsset:
@@ -10882,7 +11280,9 @@ class _DriverHomePageState extends State<DriverHomePage>
           navItem(
             icon: Icons.list_alt_rounded,
             label: _tr(nl: 'Ritten', en: 'Rides', fr: 'Courses', es: 'Viajes'),
-            onTap: _openBookingsHubFromDashboard,
+            onTap: () => _openBookingsHubFromDashboard(
+              initialSegment: _DriverRidesHubSegment.available,
+            ),
           ),
           navItem(
             icon: Icons.local_taxi_outlined,
@@ -11978,19 +12378,47 @@ class _DriverHomePageState extends State<DriverHomePage>
     final spinnerColor = isMidnightBlue
         ? _midnightBlueAccent()
         : (isMiddayGold ? const Color(0xFFE8C57E) : kFluxidiYellow);
-    final visibleBookings = _visibleBookings;
-    final emptyTitle = _tr(
-      nl: 'Geen ritten klaar',
-      en: 'No rides ready',
-      fr: 'Aucune course prête',
-      es: 'No hay viajes listos',
-    );
-    final emptyBody = _tr(
-      nl: 'Nieuwe boekingen verschijnen hier zodra ze aan jou of je bedrijf zijn gekoppeld.',
-      en: 'New bookings appear here once they are assigned to you or your company.',
-      fr: 'Les nouvelles réservations apparaissent ici dès qu’elles sont liées à vous ou à votre entreprise.',
-      es: 'Las nuevas reservas aparecerán aquí cuando estén vinculadas a ti o a tu empresa.',
-    );
+    final visibleBookings = _ridesHubSegmentBookings();
+    final emptyTitle = switch (_ridesHubSegment) {
+      _DriverRidesHubSegment.available => _tr(
+        nl: 'Geen beschikbare ritten',
+        en: 'No available rides',
+        fr: 'Aucune course disponible',
+        es: 'No hay viajes disponibles',
+      ),
+      _DriverRidesHubSegment.myRides => _tr(
+        nl: 'Geen ritten klaar',
+        en: 'No rides ready',
+        fr: 'Aucune course prête',
+        es: 'No hay viajes listos',
+      ),
+      _DriverRidesHubSegment.history => _tr(
+        nl: 'Geen historiek',
+        en: 'No history',
+        fr: 'Aucun historique',
+        es: 'Sin historial',
+      ),
+    };
+    final emptyBody = switch (_ridesHubSegment) {
+      _DriverRidesHubSegment.available => _tr(
+        nl: 'Nieuwe beschikbare ritten verschijnen hier zodra ze door het systeem zijn vrijgegeven.',
+        en: 'New available rides appear here once released by the system.',
+        fr: 'Les nouvelles courses disponibles apparaissent ici une fois libérées par le système.',
+        es: 'Los nuevos viajes disponibles aparecerán aquí cuando el sistema los publique.',
+      ),
+      _DriverRidesHubSegment.myRides => _tr(
+        nl: 'Nieuwe boekingen verschijnen hier zodra ze aan jou of je bedrijf zijn gekoppeld.',
+        en: 'New bookings appear here once they are assigned to you or your company.',
+        fr: 'Les nouvelles réservations apparaissent ici dès qu’elles sont liées à vous ou à votre entreprise.',
+        es: 'Las nuevas reservas aparecerán aquí cuando estén vinculadas a ti o a tu empresa.',
+      ),
+      _DriverRidesHubSegment.history => _tr(
+        nl: 'Afgeronde ritten verschijnen hier zodra ze zijn voltooid of geannuleerd.',
+        en: 'Completed rides appear here once they are finished or cancelled.',
+        fr: 'Les courses terminées apparaissent ici une fois achevées ou annulées.',
+        es: 'Los viajes completados aparecerán aquí cuando finalicen o se cancelen.',
+      ),
+    };
     final emptyInfoTitle = _tr(
       nl: 'Geen rit gevonden?',
       en: 'No ride found?',
@@ -12026,7 +12454,19 @@ class _DriverHomePageState extends State<DriverHomePage>
                     fr: 'Disponibles',
                     es: 'Disponibles',
                   ),
-                  active: true,
+                  active: _ridesHubSegment == _DriverRidesHubSegment.available,
+                  onTap: () {
+                    if (_ridesHubSegment == _DriverRidesHubSegment.available) {
+                      return;
+                    }
+                    debugPrint(
+                      '[DRIVER_RIDES][SEGMENT] segment=${_DriverRidesHubSegment.available} source=hub_chip',
+                    );
+                    setState(
+                      () => _ridesHubSegment = _DriverRidesHubSegment.available,
+                    );
+                    _markBookingsUiDirty();
+                  },
                 ),
                 const SizedBox(width: 6),
                 _ridesSegmentChip(
@@ -12036,6 +12476,20 @@ class _DriverHomePageState extends State<DriverHomePage>
                     fr: 'Mes courses',
                     es: 'Mis viajes',
                   ),
+                  active: _ridesHubSegment == _DriverRidesHubSegment.myRides,
+                  onTap: () {
+                    if (_ridesHubSegment == _DriverRidesHubSegment.myRides) {
+                      return;
+                    }
+                    debugPrint(
+                      '[DRIVER_RIDES][SEGMENT] segment=${_DriverRidesHubSegment.myRides} source=hub_chip',
+                    );
+                    setState(
+                      () => _ridesHubSegment = _DriverRidesHubSegment.myRides,
+                    );
+                    _markBookingsUiDirty();
+                    _maybeForceRefreshOnMyRidesOpen(source: 'hub_chip');
+                  },
                 ),
                 const SizedBox(width: 6),
                 _ridesSegmentChip(
@@ -12045,6 +12499,19 @@ class _DriverHomePageState extends State<DriverHomePage>
                     fr: 'Historique',
                     es: 'Historial',
                   ),
+                  active: _ridesHubSegment == _DriverRidesHubSegment.history,
+                  onTap: () {
+                    if (_ridesHubSegment == _DriverRidesHubSegment.history) {
+                      return;
+                    }
+                    debugPrint(
+                      '[DRIVER_RIDES][SEGMENT] segment=${_DriverRidesHubSegment.history} source=hub_chip',
+                    );
+                    setState(
+                      () => _ridesHubSegment = _DriverRidesHubSegment.history,
+                    );
+                    _markBookingsUiDirty();
+                  },
                 ),
               ],
             ),
@@ -12197,7 +12664,13 @@ class _DriverHomePageState extends State<DriverHomePage>
             child: ListView.separated(
               itemCount: visibleBookings.length,
               separatorBuilder: (_, __) => const SizedBox(height: 10),
-              itemBuilder: (context, i) => _bookingCard(visibleBookings[i]),
+              itemBuilder: (context, i) {
+                final booking = visibleBookings[i];
+                if (_ridesHubSegment == _DriverRidesHubSegment.available) {
+                  return _buildAvailableUnassignedBookingCard(booking);
+                }
+                return _bookingCard(booking);
+              },
             ),
           ),
       ],
@@ -12295,6 +12768,184 @@ class _DriverHomePageState extends State<DriverHomePage>
       en: 'Planned ride',
       fr: 'Course planifiée',
       es: 'Viaje planificado',
+    );
+  }
+
+  Widget _buildAvailableUnassignedBookingCard(BookingItem b) {
+    debugPrint('[DRIVER_RIDES][AVAILABLE_CARD] booking_id=${b.bookingId}');
+    final isMidnightBlue =
+        driverThemeNotifier.value == DriverThemeVariant.midnightBlue;
+    final isMiddayGold =
+        driverThemeNotifier.value == DriverThemeVariant.highContrast;
+    final cardPrimary = isMiddayGold
+        ? _middayGoldTextPrimary()
+        : (isMidnightBlue ? _midnightBlueTextPrimary() : Colors.white);
+    final cardMuted = isMiddayGold
+        ? _middayGoldTextMuted()
+        : (isMidnightBlue
+              ? _midnightBlueTextMuted()
+              : Colors.white.withOpacity(0.66));
+    final cardAccent = isMidnightBlue
+        ? _midnightBlueAccent()
+        : (isMiddayGold ? const Color(0xFFE8C57E) : const Color(0xFFFFD36A));
+    final dt = _formatPickup(b.pickupIso);
+    final cardReference = _driverCardReferenceDisplay(b);
+    final customerName =
+        _bookingScopeFirstText(_bookingScopeViewFor(b), const [
+          ['customer_name'],
+          ['customerName'],
+          ['customer', 'name'],
+          ['booking', 'customer_name'],
+          ['booking', 'customerName'],
+          ['booking', 'customer', 'name'],
+        ]) ??
+        '';
+    final awaitingDispatchLabel = _tr(
+      nl: 'Wacht op toewijzing',
+      en: 'Awaiting dispatch',
+      fr: 'En attente d\'assignation',
+      es: 'En espera de asignacion',
+    );
+    final readOnlyHint = _tr(
+      nl: 'Deze rit is zichtbaar maar nog niet aan jou toegewezen.',
+      en: 'This ride is visible but not assigned to you yet.',
+      fr: 'Cette course est visible mais pas encore assignee.',
+      es: 'Este viaje es visible pero aun no esta asignado.',
+    );
+
+    return Container(
+      padding: const EdgeInsets.fromLTRB(14, 14, 14, 12),
+      decoration: BoxDecoration(
+        gradient: isMiddayGold
+            ? _middayGoldSurfaceGradient()
+            : (isMidnightBlue
+                  ? _midnightBlueSurfaceGradient()
+                  : const LinearGradient(
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                      colors: [Color(0xFF151515), Color(0xFF0B0B0B)],
+                    )),
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(
+          color: isMiddayGold
+              ? _middayGoldBorderColor(0.36)
+              : (isMidnightBlue
+                    ? _midnightBlueBorderColor(0.42)
+                    : kFluxidiYellow.withOpacity(0.24)),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _pill(
+            icon: Icons.schedule,
+            text: dt,
+            borderColor: isMidnightBlue
+                ? _midnightBlueBorderColor(0.50)
+                : const Color(0x55FFD36A),
+            textColor: isMidnightBlue
+                ? _midnightBlueTextPrimary()
+                : const Color(0xFFFFD98A),
+            compact: true,
+          ),
+          const SizedBox(height: 10),
+          Text(
+            b.from ?? '—',
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: cardPrimary,
+              fontSize: 15.1,
+              fontWeight: FontWeight.w700,
+              height: 1.2,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            b.to ?? '—',
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: cardPrimary.withOpacity(0.92),
+              fontSize: 15.0,
+              fontWeight: FontWeight.w600,
+              height: 1.2,
+            ),
+          ),
+          if (customerName.trim().isNotEmpty) ...[
+            const SizedBox(height: 7),
+            Text(
+              '${_tr(nl: 'Klant', en: 'Customer', fr: 'Client', es: 'Cliente')}: $customerName',
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: cardMuted.withOpacity(0.92),
+                fontSize: 11.8,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ],
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: [
+              _pill(
+                text: awaitingDispatchLabel,
+                borderColor: const Color(0xFF52B6FF),
+                textColor: const Color(0xFF9DD8FF),
+                compact: true,
+              ),
+              if (b.price != null)
+                _pill(
+                  text: _fmtMoney(b.price!, b.currency ?? 'EUR'),
+                  borderColor: isMidnightBlue
+                      ? _midnightBlueBorderColor(0.50)
+                      : const Color(0x55FFD36A),
+                  textColor: cardAccent,
+                  compact: true,
+                ),
+            ],
+          ),
+          if (cardReference.value.trim().isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text(
+              '${cardReference.label}: ${cardReference.value}',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: cardMuted.withOpacity(0.82),
+                fontSize: 10.8,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ],
+          const SizedBox(height: 10),
+          Text(
+            readOnlyHint,
+            style: TextStyle(
+              color: cardMuted,
+              fontSize: 12.2,
+              height: 1.35,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+          const SizedBox(height: 10),
+          SizedBox(
+            width: double.infinity,
+            height: 40,
+            child: OutlinedButton.icon(
+              onPressed: null,
+              icon: const Icon(Icons.hourglass_empty_rounded, size: 16),
+              label: Text(
+                awaitingDispatchLabel,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontWeight: FontWeight.w700),
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -13846,7 +14497,11 @@ class _DriverHomePageState extends State<DriverHomePage>
     );
   }
 
-  Widget _ridesSegmentChip({required String label, bool active = false}) {
+  Widget _ridesSegmentChip({
+    required String label,
+    bool active = false,
+    VoidCallback? onTap,
+  }) {
     final isMidnightBlue =
         driverThemeNotifier.value == DriverThemeVariant.midnightBlue;
     final isMiddayGold =
@@ -13875,7 +14530,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         : (isMidnightBlue
               ? _midnightBlueTextMuted()
               : Colors.white.withOpacity(0.78));
-    return Container(
+    final chip = Container(
       constraints: const BoxConstraints(minHeight: 34, minWidth: 108),
       padding: const EdgeInsets.symmetric(horizontal: 12),
       alignment: Alignment.center,
@@ -13895,6 +14550,12 @@ class _DriverHomePageState extends State<DriverHomePage>
           fontSize: 11.9,
         ),
       ),
+    );
+    if (onTap == null) return chip;
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(999),
+      child: chip,
     );
   }
 
@@ -13976,10 +14637,17 @@ class _DriverHomePageState extends State<DriverHomePage>
     }
     // Close drawer first for a clean transition.
     Navigator.pop(context);
+    debugPrint(
+      '[DRIVER_RIDES][OPEN_SEGMENT] segment=${_DriverRidesHubSegment.available} source=drawer',
+    );
     if (mounted) {
-      setState(() => _bookingsHubVisible = true);
+      setState(() {
+        _bookingsHubVisible = true;
+        _ridesHubSegment = _DriverRidesHubSegment.available;
+      });
     } else {
       _bookingsHubVisible = true;
+      _ridesHubSegment = _DriverRidesHubSegment.available;
     }
     _startBookingPolling(reason: 'bookings_hub_open');
     await Navigator.of(context).push(
@@ -13999,15 +14667,27 @@ class _DriverHomePageState extends State<DriverHomePage>
     _startBookingPolling(reason: 'bookings_hub_closed');
   }
 
-  void _openBookingsHubFromDashboard() async {
+  void _openBookingsHubFromDashboard({
+    _DriverRidesHubSegment initialSegment = _DriverRidesHubSegment.available,
+  }) async {
     if (!_canAccessDriverOpsScreens()) {
       _denyRoleAccess();
       return;
     }
+    debugPrint(
+      '[DRIVER_RIDES][OPEN_SEGMENT] segment=$initialSegment source=dashboard',
+    );
     if (mounted) {
-      setState(() => _bookingsHubVisible = true);
+      setState(() {
+        _bookingsHubVisible = true;
+        _ridesHubSegment = initialSegment;
+      });
     } else {
       _bookingsHubVisible = true;
+      _ridesHubSegment = initialSegment;
+    }
+    if (initialSegment == _DriverRidesHubSegment.myRides) {
+      _maybeForceRefreshOnMyRidesOpen(source: 'dashboard_tile');
     }
     _startBookingPolling(reason: 'bookings_hub_open');
     await Navigator.of(context).push(
