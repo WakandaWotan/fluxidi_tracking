@@ -40561,6 +40561,16 @@ async function _evaluateFleetAvailability(env, req, diagContext = {}) {
   const _diagBookingMask = diagContext && diagContext.bookingId
     ? _bookingIntentMask(diagContext.bookingId)
     : "-";
+  // G3-O: raw booking id + canonical, used by self-exclusion below. Falls
+  // back to safe req fields when the caller did not pass diagContext (e.g.
+  // public availability endpoints), so self-skip works for every caller.
+  const _innerSelfBookingIdRaw = safeStr(
+    diagContext?.bookingId ?? req?.booking_id ?? req?.bookingId,
+    160,
+  );
+  const _innerSelfCanonicalId = _innerSelfBookingIdRaw
+    ? _dashboardCanonicalBookingNumber(_innerSelfBookingIdRaw)
+    : "";
   const _diagOuterReqTier = safeStr(diagContext?.reqTier, 24) || safeStr(req?.tier, 24) || "*";
   const _diagOuterFreeVehicleIds = Array.isArray(diagContext?.freeVehicleIds)
     ? diagContext.freeVehicleIds
@@ -40826,6 +40836,9 @@ async function _evaluateFleetAvailability(env, req, diagContext = {}) {
   const demandIndexUpdatedAt = safeStr(indexedDemand?.index_updated_at, 80) || null;
   const demandIndexStale = indexedDemand?.stale === true;
 
+  let _innerSelfDemandTotalOverlapping = 0;
+  let _innerSelfDemandExcluded = 0;
+  let _innerSelfDemandSkippedAnonymous = 0;
   for (const d of indexedDemand?.items || []) {
     if (!Number.isFinite(d?.pickupMs)) continue;
     const assignedVehicleId = safeStr(d?.assigned_vehicle_id, 120);
@@ -40851,6 +40864,53 @@ async function _evaluateFleetAvailability(env, req, diagContext = {}) {
         pickup_window_end_ms: demandEndMs,
         counted_as: "assigned_occupied",
       });
+      continue;
+    }
+
+    // G3-O: mirror the outer FleetAllocatorDO._allocate demand protections.
+    // Without these, the inner evaluator can return false
+    // vehicle_capacity_exceeded for the very booking under decision (it
+    // exists in the demand index for this slot) or for stale/anonymous
+    // demand rows that carry no recognizable booking identity. Outer
+    // already excludes both via G3-E and G3-G; the inner evaluator must
+    // do the same so its availableSlots agrees with outer math. Assigned
+    // vehicle occupancy is still enforced above and ETA / route
+    // feasibility remain unchanged.
+    _innerSelfDemandTotalOverlapping += 1;
+    if (_innerSelfBookingIdRaw) {
+      const _innerSelfMatch = _demandItemMatchesCurrentBooking(
+        d,
+        _innerSelfBookingIdRaw,
+        _innerSelfCanonicalId,
+      );
+      if (_innerSelfMatch) {
+        _innerSelfDemandExcluded += 1;
+        try {
+          console.log(
+            `[FLEET_AVAILABILITY][UNASSIGNED_DEMAND_EXCLUDE_SELF] booking=${_diagBookingMask} demand=${_bookingIntentMask(d?.booking_id ?? d?.bookingId ?? d?.id)} reason=${_innerSelfMatch.reason}`,
+          );
+        } catch (_) {
+          // Diagnostics only.
+        }
+        continue;
+      }
+    }
+    if (!_demandItemHasRecognizableBookingIdentity(d)) {
+      _innerSelfDemandSkippedAnonymous += 1;
+      try {
+        const _anonDemandIdRaw =
+          d?.booking_id ?? d?.bookingId ?? d?.id ?? "";
+        const _anonPickupMs = Number(d?.pickupMs);
+        const _anonPickupIso = Number.isFinite(_anonPickupMs)
+          ? new Date(_anonPickupMs).toISOString()
+          : "-";
+        const _anonServiceMin = Math.max(1, Number(d?.serviceMin) || 1);
+        console.log(
+          `[FLEET_AVAILABILITY][UNASSIGNED_DEMAND_SKIP_ANONYMOUS] booking=${_diagBookingMask} demand=${_bookingIntentMask(_anonDemandIdRaw)} pickup_iso=${_anonPickupIso} service_min=${_anonServiceMin} reason=missing_booking_identity`,
+        );
+      } catch (_) {
+        // Diagnostics only.
+      }
       continue;
     }
 
@@ -40896,7 +40956,7 @@ async function _evaluateFleetAvailability(env, req, diagContext = {}) {
   // diagnostic that proves whether the candidate loop will run at all.
   try {
     console.log(
-      `[FLEET_AVAILABILITY][SLOT_MATH] booking=${_diagBookingMask} suitable_count=${suitableVehicles.length} free_vehicle_count=${freeVehicles.length} occupied_assigned_count=${occupiedAssignedIds.size} overlapping_unassigned_demand=${overlappingUnassignedDemand} available_slots=${availableSlots} candidate_loop_will_run=${availableSlots > 0 && freeVehicles.length > 0 ? "true" : "false"} req_tier=${safeStr(req?.tier, 24) || "*"}`,
+      `[FLEET_AVAILABILITY][SLOT_MATH] booking=${_diagBookingMask} suitable_count=${suitableVehicles.length} free_vehicle_count=${freeVehicles.length} occupied_assigned_count=${occupiedAssignedIds.size} overlapping_unassigned_demand=${overlappingUnassignedDemand} total_overlapping_demand=${_innerSelfDemandTotalOverlapping} excluded_self=${_innerSelfDemandExcluded} skipped_anonymous=${_innerSelfDemandSkippedAnonymous} counted_unassigned=${overlappingUnassignedDemand} available_slots=${availableSlots} candidate_loop_will_run=${availableSlots > 0 && freeVehicles.length > 0 ? "true" : "false"} req_tier=${safeStr(req?.tier, 24) || "*"}`,
     );
   } catch (_) {
     // Diagnostics only.
@@ -41571,7 +41631,7 @@ async function _evaluateFleetAvailability(env, req, diagContext = {}) {
   try {
     if (!nextVehicle && !topEtaFailure?.block_reason && availableSlots <= 0) {
       console.log(
-        `[FLEET_AVAILABILITY][REJECT_CONTEXT] booking=${_diagBookingMask} reason=vehicle_capacity_exceeded reject_path=available_slots_zero req_tier=${_diagOuterReqTier} candidate_count=${suitableVehicles.length} free_vehicle_count=${freeVehicles.length} route_candidate_count=${etaFailures.length} overlapping_unassigned_demand=${overlappingUnassignedDemand} occupied_assigned_count=${occupiedAssignedIds.size} available_slots=${availableSlots} outer_available_slots=${Number.isFinite(_diagOuterAvailableSlots) ? _diagOuterAvailableSlots : "-"} notes=inner_evaluator_did_not_apply_self_or_anonymous_demand_skip`,
+        `[FLEET_AVAILABILITY][REJECT_CONTEXT] booking=${_diagBookingMask} reason=vehicle_capacity_exceeded reject_path=available_slots_zero req_tier=${_diagOuterReqTier} candidate_count=${suitableVehicles.length} free_vehicle_count=${freeVehicles.length} route_candidate_count=${etaFailures.length} overlapping_unassigned_demand=${overlappingUnassignedDemand} total_overlapping_demand=${_innerSelfDemandTotalOverlapping} excluded_self=${_innerSelfDemandExcluded} skipped_anonymous=${_innerSelfDemandSkippedAnonymous} counted_unassigned=${overlappingUnassignedDemand} occupied_assigned_count=${occupiedAssignedIds.size} available_slots=${availableSlots} outer_available_slots=${Number.isFinite(_diagOuterAvailableSlots) ? _diagOuterAvailableSlots : "-"} notes=inner_evaluator_applied_self_and_anonymous_demand_skip`,
       );
     }
   } catch (_) {
