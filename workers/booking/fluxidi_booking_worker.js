@@ -800,6 +800,33 @@ export class FleetAllocatorDO {
         );
         continue;
       }
+      // G3-G: skip anonymous/stale unassigned demand rows that carry no
+      // recognizable Fluxidi booking identity (no canonical 2026-MM-NNN+,
+      // no public booking reference, no PLN- planning reference, no
+      // leg/parent/shadow correlation). Such rows can persist in the
+      // demand index after partial writes, legacy entries, or an opaque
+      // internal id ever leaked into the index; counting them blocks
+      // every legitimate allocation forever even though no real ride is
+      // competing. Rows that DO carry a recognizable identity still
+      // count exactly as before unless the existing self-exclusion
+      // already filtered them.
+      if (!_demandItemHasRecognizableBookingIdentity(d)) {
+        try {
+          const _anonDemandIdRaw =
+            d?.booking_id ?? d?.bookingId ?? d?.id ?? "";
+          const _anonPickupMs = Number(d?.pickupMs);
+          const _anonPickupIso = Number.isFinite(_anonPickupMs)
+            ? new Date(_anonPickupMs).toISOString()
+            : "-";
+          const _anonServiceMin = Math.max(1, Number(d?.serviceMin) || 1);
+          console.log(
+            `[FLEET_ALLOCATOR][UNASSIGNED_DEMAND_SKIP_ANONYMOUS] booking=${_selfDemandMaskedBookingId} demand=${_bookingIntentMask(_anonDemandIdRaw)} pickup_iso=${_anonPickupIso} service_min=${_anonServiceMin} reason=missing_booking_identity`,
+          );
+        } catch (_) {
+          // Diagnostics only; never affect allocation.
+        }
+        continue;
+      }
       if (suitableVehicles.some((v) => _vehicleSupportsRequest(v, d))) {
         overlappingUnassignedDemand += 1;
         // G3-F: diagnostics-only. Explain WHY this demand row is counted
@@ -40002,6 +40029,87 @@ function _demandItemMatchesCurrentBooking(item, currentBookingId, currentCanonic
     }
   }
   return null;
+}
+
+// G3-G: lightweight identity classifier for an opaque token. Returns true
+// only when the token matches a known Fluxidi booking-shaped reference:
+//   - canonical dashboard number (2026-MM-NNN+) via _dashboardCanonicalBookingNumber
+//   - public booking reference (YYYY-MM-NNNNNN, 3+ digit suffix; same shape
+//     family used by both the canonical record and public references)
+//   - PLN-... planning reference
+// Returns false for opaque internal ids (UUID-like primary keys, hex,
+// random short tokens) that carry no recognizable booking identity.
+function _looksLikeFluxidiBookingIdentity(value) {
+  const token = safeStr(value, 200);
+  if (!token) return false;
+  if (_dashboardCanonicalBookingNumber(token)) return true;
+  if (/^[0-9]{4}-[0-9]{2}-[0-9]{3,}$/.test(token)) return true;
+  if (/^PLN-[A-Za-z0-9-]{2,}$/i.test(token)) return true;
+  return false;
+}
+
+// G3-G: returns true when a demand-index row carries any field that looks
+// like a real Fluxidi booking identifier we can correlate to a canonical
+// record. Opaque internal ids (UUID-like primary keys without booking
+// shape) are NOT enough on their own; rows that fail this check are
+// treated as anonymous/stale and skipped from overlapping-demand counting
+// inside FleetAllocatorDO._allocate. The protection against legitimate
+// other unassigned bookings is preserved unchanged.
+function _demandItemHasRecognizableBookingIdentity(item) {
+  if (!item || typeof item !== "object") return false;
+  const directIdentityFields = [
+    item?.booking_id,
+    item?.bookingId,
+    item?.parent_booking_id,
+    item?.parentBookingId,
+    item?.canonical_booking_id,
+    item?.canonicalBookingId,
+    item?.original_booking_id,
+    item?.originalBookingId,
+    item?.payment_booking_id,
+    item?.paymentBookingId,
+    item?.shadow_booking_id,
+    item?.shadowBookingId,
+    item?.public_booking_id,
+    item?.publicBookingId,
+    item?.public_booking_reference,
+    item?.publicBookingReference,
+    item?.booking_reference,
+    item?.bookingReference,
+    item?.planning_reference,
+    item?.planningReference,
+    item?.leg_id,
+    item?.legId,
+  ];
+  for (const candidate of directIdentityFields) {
+    if (_looksLikeFluxidiBookingIdentity(candidate)) return true;
+  }
+  // `id` only counts when it ALSO matches a Fluxidi booking shape; otherwise
+  // a random opaque internal id (e.g. UUID-shaped primary key) would
+  // satisfy this check and defeat the skip rule.
+  if (_looksLikeFluxidiBookingIdentity(item?.id)) return true;
+  // Some legacy demand-index rows nested the booking under `booking`.
+  const nestedBooking = item?.booking;
+  if (nestedBooking && typeof nestedBooking === "string") {
+    if (_looksLikeFluxidiBookingIdentity(nestedBooking)) return true;
+  }
+  if (nestedBooking && typeof nestedBooking === "object") {
+    const nestedFields = [
+      nestedBooking.booking_id,
+      nestedBooking.bookingId,
+      nestedBooking.id,
+      nestedBooking.public_booking_reference,
+      nestedBooking.publicBookingReference,
+      nestedBooking.booking_reference,
+      nestedBooking.bookingReference,
+      nestedBooking.planning_reference,
+      nestedBooking.planningReference,
+    ];
+    for (const candidate of nestedFields) {
+      if (_looksLikeFluxidiBookingIdentity(candidate)) return true;
+    }
+  }
+  return false;
 }
 
 function _fleetDemandIndexStaleAfterMs(env, options = {}) {
