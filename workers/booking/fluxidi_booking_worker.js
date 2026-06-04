@@ -41586,6 +41586,297 @@ async function listBookingsAuthoritative(
   return { ok: true, items: out.slice(0, lim) };
 }
 
+const DRIVER_AVAILABLE_OPEN_LIKE_STATUSES = new Set([
+  "pending",
+  "planned",
+  "open",
+  "scheduled",
+  "confirmed",
+  "assigned",
+  "in_progress",
+  "booked",
+  "accepted",
+  "awaiting_pickup",
+  "active",
+]);
+
+const DRIVER_AVAILABLE_TERMINAL_STATUSES = new Set([
+  "completed",
+  "cancelled",
+  "canceled",
+  "deleted",
+  "archived",
+  "closed",
+  "failed",
+  "expired",
+  "declined",
+]);
+
+const DRIVER_AVAILABLE_ONLINE_PAID_STATUSES = new Set([
+  "paid",
+  "settled",
+  "captured",
+  "completed",
+  "confirmed",
+  "success",
+]);
+
+function _normalizeDriverAvailableLifecycleToken(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replaceAll("-", "_")
+    .replaceAll(" ", "_");
+}
+
+function _driverBookingsRowDedupeKey(row) {
+  const bookingId = safeStr(row?.booking_id ?? row?.bookingId, 160);
+  const legId = safeStr(row?.leg_id ?? row?.legId, 200);
+  return `${bookingId}::${legId}`;
+}
+
+function _driverAvailableUnassignedRowLifecycleTokens(row, rec) {
+  const tokens = [];
+  for (const value of [
+    row?.status,
+    row?.lifecycle_status,
+    row?.lifecycleStatus,
+    row?.lifecycle,
+    rec?.status,
+    rec?.stage,
+    rec?.lifecycle_status,
+    rec?.lifecycleStatus,
+    rec?.booking_status,
+    rec?.bookingStatus,
+    _pick(rec, ["booking", "status"], null),
+    _pick(rec, ["booking", "stage"], null),
+    _pick(rec, ["booking", "lifecycle_status"], null),
+    _pick(rec, ["booking", "lifecycleStatus"], null),
+    _pick(rec, ["booking", "booking_status"], null),
+    _pick(rec, ["booking", "bookingStatus"], null),
+  ]) {
+    const normalized = _normalizeDriverAvailableLifecycleToken(value);
+    if (normalized) tokens.push(normalized);
+  }
+  return tokens;
+}
+
+function _driverAvailableUnassignedRowIsOpenLike(row, rec) {
+  const tokens = _driverAvailableUnassignedRowLifecycleTokens(row, rec);
+  if (!tokens.length) return false;
+  if (tokens.some((token) => DRIVER_AVAILABLE_TERMINAL_STATUSES.has(token))) return false;
+  if (tokens.some((token) => isTerminalLifecycleStatus(token))) return false;
+  return tokens.some((token) => DRIVER_AVAILABLE_OPEN_LIKE_STATUSES.has(token));
+}
+
+function _driverAvailableUnassignedPaymentEligible(rec, row) {
+  const paymentStatus = _normalizeDriverAvailableLifecycleToken(
+    row?.payment_status ??
+      row?.paymentStatus ??
+      rec?.payment_status ??
+      rec?.paymentStatus ??
+      _pick(rec, ["booking", "payment_status"], null) ??
+      _pick(rec, ["booking", "paymentStatus"], null),
+  );
+  const paymentMode = _normalizeDriverAvailableLifecycleToken(
+    rec?.payment_mode ??
+      rec?.paymentMode ??
+      _pick(rec, ["booking", "payment_mode"], null) ??
+      _pick(rec, ["booking", "paymentMode"], null),
+  );
+  const paymentProvider = _normalizeDriverAvailableLifecycleToken(
+    row?.payment_provider ??
+      row?.paymentProvider ??
+      rec?.payment_provider ??
+      rec?.paymentProvider ??
+      _pick(rec, ["booking", "payment_provider"], null) ??
+      _pick(rec, ["booking", "paymentProvider"], null),
+  );
+  const paidAt = safeStr(
+    rec?.paid_at ??
+      rec?.paidAt ??
+      _pick(rec, ["booking", "paid_at"], null) ??
+      _pick(rec, ["booking", "paidAt"], null),
+    80,
+  );
+  const isMollieLike =
+    paymentMode === "mollie" ||
+    paymentProvider === "mollie" ||
+    _dashboardBoolLike(rec?.mollie) ||
+    _dashboardBoolLike(_pick(rec, ["booking", "mollie"], null));
+  const isOnlineLike =
+    isMollieLike ||
+    paymentMode === "online" ||
+    paymentMode === "online_payment" ||
+    paymentMode === "online_payments" ||
+    paymentProvider === "online" ||
+    paymentProvider === "online_payment" ||
+    paymentProvider === "prepaid" ||
+    paymentMode === "prepaid";
+  const isManualLike =
+    paymentMode === "manual" ||
+    paymentMode === "cash" ||
+    paymentMode === "invoice" ||
+    paymentMode === "in_vehicle" ||
+    paymentMode === "in_vehicle_card" ||
+    paymentProvider === "manual" ||
+    paymentProvider === "cash" ||
+    paymentProvider === "invoice" ||
+    paymentProvider === "in_vehicle_card" ||
+    paymentProvider === "qr";
+  const paidLike =
+    DRIVER_AVAILABLE_ONLINE_PAID_STATUSES.has(paymentStatus) || !!paidAt;
+  const failedLike = new Set([
+    "failed",
+    "expired",
+    "cancelled",
+    "canceled",
+    "payment_failed",
+    "payment_checkout_failed",
+    "checkout_failed",
+    "checkout_expired",
+  ]).has(paymentStatus);
+
+  if (failedLike) return false;
+  if (isOnlineLike && !isManualLike) {
+    return paidLike;
+  }
+  return true;
+}
+
+function _driverAvailableUnassignedCanonicalRecord(bookingId, rec) {
+  const identityMeta = _dashboardIdentityMeta(rec, bookingId);
+  if (identityMeta?.has_canonical_booking_number === true) return true;
+  if (identityMeta?.has_public_booking_reference === true) return true;
+  if (_dashboardCanonicalBookingNumber(bookingId)) return true;
+  if (identityMeta?.record_shape_hint === "provisional_payment_record") return false;
+  if (identityMeta?.internal_id_like === true && identityMeta?.has_canonical_booking_number !== true) {
+    return false;
+  }
+  return !!_dashboardCanonicalBookingNumber(bookingId);
+}
+
+function _driverAvailableUnassignedRowHidden(rec) {
+  const hiddenFlags = [
+    rec?.company_bookings_hidden,
+    rec?.hidden_from_company_bookings,
+    _pick(rec, ["booking", "company_bookings_hidden"], null),
+    _pick(rec, ["booking", "hidden_from_company_bookings"], null),
+    rec?.hidden,
+    rec?.is_hidden,
+    rec?.customer_hidden,
+    rec?.archived,
+    rec?.deleted,
+    _pick(rec, ["booking", "hidden"], null),
+    _pick(rec, ["booking", "is_hidden"], null),
+    _pick(rec, ["booking", "customer_hidden"], null),
+    _pick(rec, ["booking", "archived"], null),
+    _pick(rec, ["booking", "deleted"], null),
+  ];
+  return hiddenFlags.some((value) => _dashboardBoolLike(value));
+}
+
+async function _appendDriverAvailableUnassignedBookings(
+  env,
+  { tenantScope, out, cutoffMs, sessionDriverId } = {},
+) {
+  if (!tenantScope?.hasScope || !env?.BOOKING_KV || !Array.isArray(out)) {
+    return { added: 0, scanned: 0, skipped: 0 };
+  }
+
+  const seenKeys = new Set(out.map((row) => _driverBookingsRowDedupeKey(row)));
+  const indexRead = await readCompanyBookingsListIndex(env, tenantScope);
+  const sourceItems = Array.isArray(indexRead?.index?.items) ? indexRead.index.items : [];
+  if (!indexRead?.ok || sourceItems.length === 0) {
+    return { added: 0, scanned: 0, skipped: 0, index_unavailable: indexRead?.ok !== true };
+  }
+
+  const candidateIds = new Set();
+  for (const entry of sourceItems) {
+    const bookingId = safeStr(entry?.booking_id ?? entry?.bookingId, 160);
+    if (bookingId) candidateIds.add(bookingId);
+  }
+
+  let added = 0;
+  let scanned = 0;
+  let skipped = 0;
+  for (const bookingId of candidateIds) {
+    scanned += 1;
+    const rec = await env.BOOKING_KV.get(`booking:${bookingId}`, { type: "json" });
+    if (!rec || typeof rec !== "object") {
+      skipped += 1;
+      continue;
+    }
+    if (!bookingMatchesRequestedTenantScope(rec, tenantScope)) {
+      skipped += 1;
+      continue;
+    }
+    if (_driverAvailableUnassignedRowHidden(rec)) {
+      skipped += 1;
+      continue;
+    }
+    if (!_driverAvailableUnassignedCanonicalRecord(bookingId, rec)) {
+      skipped += 1;
+      continue;
+    }
+
+    const rows = _flattenBookingForRidesListWithOperationalLegs(bookingId, rec);
+    for (const row of rows) {
+      const dedupeKey = _driverBookingsRowDedupeKey(row);
+      if (seenKeys.has(dedupeKey)) {
+        skipped += 1;
+        continue;
+      }
+      const rowDriverId = safeStr(row?.assigned_driver_id ?? row?.assignedDriverId, 96);
+      if (rowDriverId) {
+        skipped += 1;
+        continue;
+      }
+      if (
+        row.status === "COMPLETED" ||
+        row.status === "CANCELLED" ||
+        isTerminalLifecycleStatus(row?.status)
+      ) {
+        skipped += 1;
+        continue;
+      }
+      if (!_driverAvailableUnassignedRowIsOpenLike(row, rec)) {
+        skipped += 1;
+        continue;
+      }
+      const pickupTs = row.pickup_iso ? Date.parse(row.pickup_iso) : Number.NaN;
+      if (!Number.isFinite(pickupTs)) {
+        skipped += 1;
+        continue;
+      }
+      if (Number.isFinite(pickupTs) && pickupTs < cutoffMs) {
+        skipped += 1;
+        continue;
+      }
+      if (!_driverAvailableUnassignedPaymentEligible(rec, row)) {
+        skipped += 1;
+        continue;
+      }
+
+      out.push({
+        ...row,
+        available_unassigned: true,
+        availableUnassigned: true,
+      });
+      seenKeys.add(dedupeKey);
+      added += 1;
+    }
+  }
+
+  if (added > 0 || scanned > 0) {
+    console.log(
+      `[DRIVER_BOOKINGS][AVAILABLE_INCLUDE_UNASSIGNED] tenant=${_maskPublicDriverLoginValue(tenantScope?.tenant_id)} company=${_maskPublicDriverLoginValue(tenantScope?.company_id)} driver=${_maskPublicDriverLoginValue(sessionDriverId)} added=${added} scanned=${scanned} skipped=${skipped}`,
+    );
+  }
+
+  return { added, scanned, skipped };
+}
+
 async function listDriverBookingsAuthoritative(
   env,
   { limit = 50, includeHistory = false, tenantScope = null, driverSession = null } = {},
@@ -41739,6 +42030,15 @@ async function listDriverBookingsAuthoritative(
     } catch (_) {
       // Best-effort stale pruning; never fail the driver bookings response.
     }
+  }
+
+  if (!includeHistory) {
+    await _appendDriverAvailableUnassignedBookings(env, {
+      tenantScope,
+      out,
+      cutoffMs,
+      sessionDriverId,
+    });
   }
 
   out.sort((a, b) => {
