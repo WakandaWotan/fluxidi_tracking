@@ -18260,6 +18260,44 @@ GET /oauth/callback
         });
         if (!out?.ok) {
           const errorCode = safeStr(out?.error, 80);
+          const openFallback = await computeDashboardOpenBookingsKpiFallback(
+            env,
+            scopedRoute.scope,
+            {
+              listIndexItems: listItems,
+              listIndexRead,
+            },
+          );
+          const openFallbackKpiFields =
+            openFallback?.ok === true
+              ? _dashboardOpenBookingsKpiFieldsFromFallbackScan(
+                  {
+                    considered_open: openFallback.considered_open,
+                    excluded_terminal: openFallback.excluded_terminal,
+                    excluded_payment_failed: openFallback.excluded_payment_failed,
+                    excluded_stale_payment_pending: openFallback.excluded_stale_payment_pending,
+                    excluded_hidden: openFallback.excluded_hidden,
+                    excluded_missing_pickup_time: openFallback.excluded_missing_pickup_time,
+                    excluded_stale_past_pickup: openFallback.excluded_stale_past_pickup,
+                    excluded_non_canonical_provisional_record:
+                      openFallback.excluded_non_canonical_provisional_record,
+                    excluded_reference_only_provisional_record:
+                      openFallback.excluded_reference_only_provisional_record,
+                    excluded_duplicate_identity: openFallback.excluded_duplicate_identity,
+                    excluded_terminal_identity: openFallback.excluded_terminal_identity,
+                    excluded_out_of_scope: openFallback.excluded_out_of_scope,
+                    excluded_invalid_record: openFallback.excluded_invalid_record,
+                  },
+                  {
+                    totalScanned: openFallback.total_scanned,
+                    matchedScope: openFallback.scan_stats?.matched_scope,
+                    scanComplete: openFallback.scan_complete,
+                  },
+                )
+              : null;
+          const resolvedOpenBookingsCount = openFallbackKpiFields
+            ? Math.max(0, Math.round(Number(openFallbackKpiFields.open_bookings_count) || 0))
+            : 0;
           if (errorCode === "dashboard_bookings_kpi_index_unavailable") {
             if (isResetEmptyState) {
               return json(
@@ -18437,9 +18475,46 @@ GET /oauth/callback
                     }
                   : {}),
                 income_merge_strategy: "max_projection_vs_booking_finance",
-                open_bookings_count: 0,
-                considered_open: 0,
-                scan_complete: false,
+                ...(openFallbackKpiFields || {
+                  open_bookings_count: 0,
+                  considered_open: 0,
+                  excluded_terminal: 0,
+                  excluded_payment_failed: 0,
+                  excluded_stale_payment_pending: 0,
+                  excluded_hidden: 0,
+                  excluded_missing_pickup_time: 0,
+                  excluded_stale_past_pickup: 0,
+                  excluded_non_canonical_provisional_record: 0,
+                  excluded_reference_only_provisional_record: 0,
+                  excluded_duplicate_identity: 0,
+                  excluded_terminal_identity: 0,
+                  excluded_out_of_scope: 0,
+                  excluded_invalid_record: 0,
+                  total_scanned: 0,
+                  scan_complete: true,
+                  scan_stats: {
+                    scanned_keys: 0,
+                    matched_scope: 0,
+                    considered_open: 0,
+                    excluded_terminal: 0,
+                    excluded_payment_failed: 0,
+                    excluded_stale_payment_pending: 0,
+                    excluded_hidden: 0,
+                    excluded_missing_pickup_time: 0,
+                    excluded_stale_past_pickup: 0,
+                    excluded_non_canonical_provisional_record: 0,
+                    excluded_reference_only_provisional_record: 0,
+                    excluded_duplicate_identity: 0,
+                    excluded_terminal_identity: 0,
+                    excluded_out_of_scope: 0,
+                    excluded_invalid_record: 0,
+                  },
+                }),
+                ...(openFallback?.ok === true
+                  ? { open_count_source: openFallback.open_fallback_source }
+                  : {}),
+                excluded_terminal_statuses:
+                  DASHBOARD_BOOKINGS_KPI_EXCLUDED_TERMINAL_STATUSES,
                 source: "projection_degraded",
                 projection_health: "stale",
                 projection_rebuilt: rebuilt?.ok === true,
@@ -18450,11 +18525,8 @@ GET /oauth/callback
             );
           }
           if (errorCode === "dashboard_bookings_kpi_index_dirty") {
-            const degradedOpenCount = Number.isFinite(Number(out?.open_bookings_count))
-              ? Math.max(0, Math.round(Number(out.open_bookings_count)))
-              : 0;
             console.log(
-              `[DASHBOARD_BOOKINGS_KPI][DIRTY_DEGRADED] tenant=${_maskPublicDriverLoginValue(scopedRoute.scope?.tenant_id)} company=${_maskPublicDriverLoginValue(scopedRoute.scope?.company_id)} month=${selectedMonth} reason=${errorCode} open=${degradedOpenCount} income_cents=${bookingFinanceMonthIncomeCents}`,
+              `[DASHBOARD_BOOKINGS_KPI][DIRTY_DEGRADED] tenant=${_maskPublicDriverLoginValue(scopedRoute.scope?.tenant_id)} company=${_maskPublicDriverLoginValue(scopedRoute.scope?.company_id)} month=${selectedMonth} reason=${errorCode} open=${resolvedOpenBookingsCount} income_cents=${bookingFinanceMonthIncomeCents} fallback=${openFallback?.ok === true ? openFallback.open_fallback_source : "none"}`,
             );
             return json(
               {
@@ -18514,23 +18586,45 @@ GET /oauth/callback
                     }
                   : {}),
                 income_merge_strategy: "max_projection_vs_booking_finance",
-                open_bookings_count: degradedOpenCount,
-                considered_open: degradedOpenCount,
-                excluded_terminal: 0,
-                excluded_payment_failed: 0,
-                excluded_stale_payment_pending: 0,
-                excluded_hidden: 0,
-                excluded_missing_pickup_time: 0,
-                excluded_stale_past_pickup: 0,
-                excluded_non_canonical_provisional_record: 0,
-                excluded_reference_only_provisional_record: 0,
-                excluded_duplicate_identity: 0,
-                excluded_terminal_identity: 0,
-                excluded_out_of_scope: 0,
-                excluded_invalid_record: 0,
-                total_scanned: 0,
+                ...(openFallbackKpiFields || {
+                  open_bookings_count: 0,
+                  considered_open: 0,
+                  excluded_terminal: 0,
+                  excluded_payment_failed: 0,
+                  excluded_stale_payment_pending: 0,
+                  excluded_hidden: 0,
+                  excluded_missing_pickup_time: 0,
+                  excluded_stale_past_pickup: 0,
+                  excluded_non_canonical_provisional_record: 0,
+                  excluded_reference_only_provisional_record: 0,
+                  excluded_duplicate_identity: 0,
+                  excluded_terminal_identity: 0,
+                  excluded_out_of_scope: 0,
+                  excluded_invalid_record: 0,
+                  total_scanned: 0,
+                  scan_complete: false,
+                  scan_stats: {
+                    scanned_keys: 0,
+                    matched_scope: 0,
+                    considered_open: 0,
+                    excluded_terminal: 0,
+                    excluded_payment_failed: 0,
+                    excluded_stale_payment_pending: 0,
+                    excluded_hidden: 0,
+                    excluded_missing_pickup_time: 0,
+                    excluded_stale_past_pickup: 0,
+                    excluded_non_canonical_provisional_record: 0,
+                    excluded_reference_only_provisional_record: 0,
+                    excluded_duplicate_identity: 0,
+                    excluded_terminal_identity: 0,
+                    excluded_out_of_scope: 0,
+                    excluded_invalid_record: 0,
+                  },
+                }),
+                ...(openFallback?.ok === true
+                  ? { open_count_source: openFallback.open_fallback_source }
+                  : {}),
                 excluded_terminal_statuses: DASHBOARD_BOOKINGS_KPI_EXCLUDED_TERMINAL_STATUSES,
-                scan_complete: false,
                 source: "projection_degraded",
                 projection_health: "dirty",
                 projection_rebuild_attempted: false,
@@ -41804,6 +41898,17 @@ function _dashboardPickupTimestampMs(rec) {
     quoteObj?.pickupIso,
     bookingQuoteObj?.pickup_iso,
     bookingQuoteObj?.pickupIso,
+    ..._dashboardOperationalLegFieldValues(rec, [
+      "pickup_iso",
+      "pickupIso",
+      "pickup_at",
+      "pickupAt",
+      "pickup_time",
+      "pickupTime",
+      "scheduled_pickup_at",
+      "scheduledPickupAt",
+      "pickupStartIso",
+    ]),
   );
 }
 
@@ -41952,7 +42057,33 @@ function _dashboardBookingIdentityKey(rec, recordKeyId = "") {
   return fallback ? `key:${fallback.toLowerCase()}` : "";
 }
 
+function _dashboardOperationalLegFieldValues(rec, fieldNames = []) {
+  const values = [];
+  const legArrays = [
+    rec?.operational_legs,
+    rec?.operationalLegs,
+    _pick(rec, ["booking", "operational_legs"], null),
+    _pick(rec, ["booking", "operationalLegs"], null),
+  ].filter((arr) => Array.isArray(arr));
+  for (const legs of legArrays) {
+    for (const leg of legs) {
+      if (!leg || typeof leg !== "object") continue;
+      for (const field of fieldNames) {
+        const value = leg?.[field];
+        if (value != null && safeStr(value, 64)) values.push(value);
+      }
+    }
+  }
+  return values;
+}
+
 function _dashboardRecordHasTerminalLifecycle(rec) {
+  const operationalLegStatuses = _dashboardOperationalLegFieldValues(rec, [
+    "lifecycle_status",
+    "lifecycleStatus",
+    "status",
+    "stage",
+  ]);
   return [
     rec?.status,
     rec?.stage,
@@ -41966,12 +42097,19 @@ function _dashboardRecordHasTerminalLifecycle(rec) {
     _pick(rec, ["booking", "lifecycleStatus"], null),
     _pick(rec, ["booking", "booking_status"], null),
     _pick(rec, ["booking", "bookingStatus"], null),
+    ...operationalLegStatuses,
   ].some((value) => _isDashboardTerminalBookingLifecycle(value));
 }
 
 function _isDashboardActionableOpenBooking(rec, nowMs = Date.now(), opts = {}) {
   const recordKeyId = safeStr(opts?.recordKeyId, 160) || "";
   const identityMeta = _dashboardIdentityMeta(rec, recordKeyId);
+  const operationalLegLifecycleValues = _dashboardOperationalLegFieldValues(rec, [
+    "lifecycle_status",
+    "lifecycleStatus",
+    "status",
+    "stage",
+  ]);
   const lifecycleCandidates = [
     rec?.status,
     rec?.stage,
@@ -41985,6 +42123,7 @@ function _isDashboardActionableOpenBooking(rec, nowMs = Date.now(), opts = {}) {
     _pick(rec, ["booking", "lifecycleStatus"], null),
     _pick(rec, ["booking", "booking_status"], null),
     _pick(rec, ["booking", "bookingStatus"], null),
+    ...operationalLegLifecycleValues,
   ];
   if (lifecycleCandidates.some((value) => _isDashboardTerminalBookingLifecycle(value))) {
     return { open: false, reason: "excluded_terminal" };
@@ -42043,6 +42182,7 @@ function _isDashboardActionableOpenBooking(rec, nowMs = Date.now(), opts = {}) {
     _pick(rec, ["booking", "lifecycleStatus"], null),
     _pick(rec, ["booking", "booking_status"], null),
     _pick(rec, ["booking", "bookingStatus"], null),
+    ...operationalLegLifecycleValues,
   ]
     .map((value) => _normalizeDashboardBookingLifecycle(value))
     .filter((value) => !!value);
@@ -42078,15 +42218,25 @@ function _isDashboardActionableOpenBooking(rec, nowMs = Date.now(), opts = {}) {
   }
 
   const rawStatus = _normalizeDashboardBookingLifecycle(rec?.status) ||
-    _normalizeDashboardBookingLifecycle(_pick(rec, ["booking", "status"], null));
-  const stageMissing = !safeStr(rec?.stage ?? _pick(rec, ["booking", "stage"], null), 40);
-  const lifecycleMissing = !safeStr(
-    rec?.lifecycle_status ??
-      rec?.lifecycleStatus ??
-      _pick(rec, ["booking", "lifecycle_status"], null) ??
-      _pick(rec, ["booking", "lifecycleStatus"], null),
-    40,
-  );
+    _normalizeDashboardBookingLifecycle(_pick(rec, ["booking", "status"], null)) ||
+    operationalLegLifecycleValues
+      .map((value) => _normalizeDashboardBookingLifecycle(value))
+      .find((value) => !!value) ||
+    "";
+  const stageMissing =
+    !safeStr(rec?.stage ?? _pick(rec, ["booking", "stage"], null), 40) &&
+    !operationalLegLifecycleValues.some((value) => safeStr(value, 40));
+  const lifecycleMissing =
+    !safeStr(
+      rec?.lifecycle_status ??
+        rec?.lifecycleStatus ??
+        _pick(rec, ["booking", "lifecycle_status"], null) ??
+        _pick(rec, ["booking", "lifecycleStatus"], null),
+      40,
+    ) &&
+    !operationalLegLifecycleValues.some((value) =>
+      !!_normalizeDashboardBookingLifecycle(value),
+    );
   const bookingStatusMissing = !safeStr(
     rec?.booking_status ??
       rec?.bookingStatus ??
@@ -42096,6 +42246,9 @@ function _isDashboardActionableOpenBooking(rec, nowMs = Date.now(), opts = {}) {
   );
   const statusOnlyPending = statusCandidates.length > 0 && statusCandidates.every((value) => value === "pending");
   const paymentStatusPaidOnly = paymentStatusCandidates.some((value) => value === "paid" || value === "settled");
+  const canonicalRecordPresent =
+    identityMeta.has_canonical_booking_number === true ||
+    !!_dashboardCanonicalBookingNumber(recordKeyId);
   const looksNonCanonicalProvisional =
     identityMeta.has_canonical_booking_number !== true &&
     identityMeta.has_public_booking_reference !== true &&
@@ -42103,6 +42256,7 @@ function _isDashboardActionableOpenBooking(rec, nowMs = Date.now(), opts = {}) {
       identityMeta.record_shape_hint === "tracking_shadow_record" ||
       identityMeta.internal_id_like === true);
   if (
+    !canonicalRecordPresent &&
     looksNonCanonicalProvisional &&
     paymentStatusPaidOnly &&
     statusOnlyPending &&
@@ -42278,6 +42432,12 @@ function computeDashboardBookingKpiContribution(bookingId, rec, scope, options =
     _pick(rec, ["booking", "createdAt"], null),
   );
   const bookingObj = rec?.booking && typeof rec.booking === "object" ? rec.booking : {};
+  const operationalLegLifecycleValues = _dashboardOperationalLegFieldValues(rec, [
+    "lifecycle_status",
+    "lifecycleStatus",
+    "status",
+    "stage",
+  ]);
   const rawStatus = _normalizeDashboardBookingLifecycle(
     rec?.status ?? bookingObj?.status,
   );
@@ -42294,17 +42454,24 @@ function computeDashboardBookingKpiContribution(bookingId, rec, scope, options =
     bookingObj?.lifecycleStatus,
     bookingObj?.booking_status,
     bookingObj?.bookingStatus,
+    ...operationalLegLifecycleValues,
   ]
     .map((value) => _normalizeDashboardBookingLifecycle(value))
     .filter((value) => !!value);
-  const stageMissing = !safeStr(rec?.stage ?? bookingObj?.stage, 40);
-  const lifecycleMissing = !safeStr(
-    rec?.lifecycle_status ??
-      rec?.lifecycleStatus ??
-      bookingObj?.lifecycle_status ??
-      bookingObj?.lifecycleStatus,
-    40,
-  );
+  const stageMissing =
+    !safeStr(rec?.stage ?? bookingObj?.stage, 40) &&
+    !operationalLegLifecycleValues.some((value) => safeStr(value, 40));
+  const lifecycleMissing =
+    !safeStr(
+      rec?.lifecycle_status ??
+        rec?.lifecycleStatus ??
+        bookingObj?.lifecycle_status ??
+        bookingObj?.lifecycleStatus,
+      40,
+    ) &&
+    !operationalLegLifecycleValues.some((value) =>
+      !!_normalizeDashboardBookingLifecycle(value),
+    );
   const bookingStatusMissing = !safeStr(
     rec?.booking_status ??
       rec?.bookingStatus ??
@@ -42681,6 +42848,180 @@ function _dashboardBookingsKpiNormalizeMonth(monthRaw) {
   const probe = Date.parse(`${normalized}-01T00:00:00.000Z`);
   if (!Number.isFinite(probe)) return null;
   return normalized;
+}
+
+function _dashboardOpenBookingsKpiFieldsFromFallbackScan(
+  counters,
+  { totalScanned = 0, matchedScope = 0, scanComplete = true } = {},
+) {
+  const safeCounters =
+    counters && typeof counters === "object" ? counters : _dashboardProjectionBaseCounters();
+  const consideredOpen = Math.max(0, Math.trunc(Number(safeCounters?.considered_open) || 0));
+  return {
+    open_bookings_count: consideredOpen,
+    considered_open: consideredOpen,
+    excluded_terminal: Math.max(0, Math.trunc(Number(safeCounters?.excluded_terminal) || 0)),
+    excluded_payment_failed: Math.max(0, Math.trunc(Number(safeCounters?.excluded_payment_failed) || 0)),
+    excluded_stale_payment_pending: Math.max(
+      0,
+      Math.trunc(Number(safeCounters?.excluded_stale_payment_pending) || 0),
+    ),
+    excluded_hidden: Math.max(0, Math.trunc(Number(safeCounters?.excluded_hidden) || 0)),
+    excluded_missing_pickup_time: Math.max(
+      0,
+      Math.trunc(Number(safeCounters?.excluded_missing_pickup_time) || 0),
+    ),
+    excluded_stale_past_pickup: Math.max(
+      0,
+      Math.trunc(Number(safeCounters?.excluded_stale_past_pickup) || 0),
+    ),
+    excluded_non_canonical_provisional_record: Math.max(
+      0,
+      Math.trunc(Number(safeCounters?.excluded_non_canonical_provisional_record) || 0),
+    ),
+    excluded_reference_only_provisional_record: Math.max(
+      0,
+      Math.trunc(Number(safeCounters?.excluded_reference_only_provisional_record) || 0),
+    ),
+    excluded_duplicate_identity: Math.max(
+      0,
+      Math.trunc(Number(safeCounters?.excluded_duplicate_identity) || 0),
+    ),
+    excluded_terminal_identity: Math.max(
+      0,
+      Math.trunc(Number(safeCounters?.excluded_terminal_identity) || 0),
+    ),
+    excluded_out_of_scope: Math.max(0, Math.trunc(Number(safeCounters?.excluded_out_of_scope) || 0)),
+    excluded_invalid_record: Math.max(0, Math.trunc(Number(safeCounters?.excluded_invalid_record) || 0)),
+    total_scanned: Math.max(0, Math.trunc(Number(totalScanned) || 0)),
+    scan_complete: scanComplete === true,
+    scan_stats: {
+      scanned_keys: Math.max(0, Math.trunc(Number(totalScanned) || 0)),
+      matched_scope: Math.max(0, Math.trunc(Number(matchedScope) || 0)),
+      considered_open: consideredOpen,
+      excluded_terminal: Math.max(0, Math.trunc(Number(safeCounters?.excluded_terminal) || 0)),
+      excluded_payment_failed: Math.max(
+        0,
+        Math.trunc(Number(safeCounters?.excluded_payment_failed) || 0),
+      ),
+      excluded_stale_payment_pending: Math.max(
+        0,
+        Math.trunc(Number(safeCounters?.excluded_stale_payment_pending) || 0),
+      ),
+      excluded_hidden: Math.max(0, Math.trunc(Number(safeCounters?.excluded_hidden) || 0)),
+      excluded_missing_pickup_time: Math.max(
+        0,
+        Math.trunc(Number(safeCounters?.excluded_missing_pickup_time) || 0),
+      ),
+      excluded_stale_past_pickup: Math.max(
+        0,
+        Math.trunc(Number(safeCounters?.excluded_stale_past_pickup) || 0),
+      ),
+      excluded_non_canonical_provisional_record: Math.max(
+        0,
+        Math.trunc(Number(safeCounters?.excluded_non_canonical_provisional_record) || 0),
+      ),
+      excluded_reference_only_provisional_record: Math.max(
+        0,
+        Math.trunc(Number(safeCounters?.excluded_reference_only_provisional_record) || 0),
+      ),
+      excluded_duplicate_identity: Math.max(
+        0,
+        Math.trunc(Number(safeCounters?.excluded_duplicate_identity) || 0),
+      ),
+      excluded_terminal_identity: Math.max(
+        0,
+        Math.trunc(Number(safeCounters?.excluded_terminal_identity) || 0),
+      ),
+      excluded_out_of_scope: Math.max(0, Math.trunc(Number(safeCounters?.excluded_out_of_scope) || 0)),
+      excluded_invalid_record: Math.max(
+        0,
+        Math.trunc(Number(safeCounters?.excluded_invalid_record) || 0),
+      ),
+    },
+  };
+}
+
+async function computeDashboardOpenBookingsKpiFallback(
+  env,
+  tenantScope,
+  { listIndexItems = null, listIndexRead = null, preferListIndex = true } = {},
+) {
+  const scope = normalizeFleetTenantScope(tenantScope || {});
+  if (!scope?.hasScope) return { ok: false, error: "missing_tenant_scope" };
+  if (!env?.BOOKING_KV) return { ok: false, error: "Missing BOOKING_KV binding" };
+
+  const contributions = [];
+  const candidateIds = new Set();
+  let fallbackSource = "authoritative_kv_scan_fallback";
+  const listUsable =
+    preferListIndex === true &&
+    Array.isArray(listIndexItems) &&
+    listIndexItems.length > 0 &&
+    listIndexRead?.ok === true;
+
+  if (listUsable) {
+    fallbackSource = "company_bookings_list_fallback";
+    for (const entry of listIndexItems) {
+      const bookingId = safeStr(entry?.booking_id ?? entry?.bookingId, 160);
+      if (bookingId) candidateIds.add(bookingId);
+    }
+  }
+
+  if (candidateIds.size === 0) {
+    let cursor = undefined;
+    do {
+      const page = await env.BOOKING_KV.list({
+        prefix: "booking:",
+        limit: 1000,
+        cursor,
+      });
+      for (const item of page?.keys || []) {
+        const key = safeStr(item?.name, 240);
+        if (!key || !key.startsWith("booking:")) continue;
+        const bookingId = key.slice("booking:".length);
+        if (!bookingId) continue;
+        const rec = await env.BOOKING_KV.get(key, { type: "json" });
+        if (!rec || typeof rec !== "object") continue;
+        if (!bookingMatchesRequestedTenantScope(rec, scope)) continue;
+        candidateIds.add(bookingId);
+      }
+      cursor = page?.cursor;
+      if (page?.list_complete !== false) break;
+      if (!cursor) break;
+    } while (cursor);
+  }
+
+  let totalScanned = 0;
+  let matchedScope = 0;
+  for (const bookingId of candidateIds) {
+    totalScanned += 1;
+    const rec = await env.BOOKING_KV.get(`booking:${bookingId}`, { type: "json" });
+    if (!rec || typeof rec !== "object") continue;
+    if (!bookingMatchesRequestedTenantScope(rec, scope)) continue;
+    matchedScope += 1;
+    const contribution = computeDashboardBookingKpiContribution(bookingId, rec, scope);
+    if (contribution) contributions.push(contribution);
+  }
+
+  const aggregate = _buildDashboardBookingsKpiAggregateFromContributions(contributions, {
+    projection_health: "fallback",
+    projection_complete: false,
+  });
+  const counters =
+    aggregate?.counters && typeof aggregate.counters === "object"
+      ? aggregate.counters
+      : _dashboardProjectionBaseCounters();
+
+  return {
+    ok: true,
+    open_fallback_source: fallbackSource,
+    ..._dashboardOpenBookingsKpiFieldsFromFallbackScan(counters, {
+      totalScanned,
+      matchedScope,
+      scanComplete: true,
+    }),
+  };
 }
 
 async function computeDashboardBookingsKpis(
