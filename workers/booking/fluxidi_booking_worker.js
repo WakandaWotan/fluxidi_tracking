@@ -20001,6 +20001,72 @@ GET /oauth/callback
         );
       }
 
+      // G3: admin-only repair endpoint to run the existing FleetAllocator on a
+      // paid/open/unassigned canonical booking. This intentionally does NOT
+      // accept driver_id/vehicle_id from the body and never assigns blindly:
+      // it only invokes ensurePaidOpenBookingAutoDispatched, which forwards the
+      // existing allocator's decision and skips silently when ineligible.
+      const adminBookingDispatchEnsureMatch = url.pathname.match(
+        /^\/admin\/bookings\/([^/]+)\/dispatch\/ensure$/,
+      );
+      if (adminBookingDispatchEnsureMatch && request.method === "POST") {
+        _requireAdmin(request, url, env);
+        const body = await safeJson(request);
+        const scopedRoute = requireExplicitBookingRouteScope({
+          request,
+          url,
+          body,
+        });
+        if (!scopedRoute.ok) return scopedRoute.response;
+        const tenantScope = scopedRoute.scope;
+        const bookingId = decodeURIComponent(
+          adminBookingDispatchEnsureMatch[1] || "",
+        ).trim();
+        if (!bookingId) {
+          return json({ ok: false, error: "booking_id is required" }, 400);
+        }
+        let rec = null;
+        try {
+          const loaded = await loadBookingRecord(env, bookingId);
+          rec = loaded?.rec || null;
+        } catch (loadErr) {
+          if (String(loadErr?.message || "") === "Booking not found") {
+            return json({ ok: false, error: "booking_not_found" }, 404);
+          }
+          throw loadErr;
+        }
+        if (!bookingMatchesRequiredTenantCompanyScope(rec, tenantScope)) {
+          return json({ ok: false, error: "forbidden" }, 403);
+        }
+        const result = await ensurePaidOpenBookingAutoDispatched(
+          env,
+          bookingId,
+          rec,
+          request,
+          {
+            tenantScope,
+            persist: true,
+            source: "admin_dispatch_ensure",
+          },
+        );
+        const statusCode = result?.ok === false ? 500 : 200;
+        return json(
+          {
+            ok: result?.ok !== false,
+            booking_id: bookingId,
+            assigned: result?.assigned === true,
+            skipped: result?.skipped === true,
+            mutated: result?.mutated === true,
+            reason: safeStr(result?.reason, 80) || null,
+            allocator_reason: safeStr(result?.allocator_reason, 80) || null,
+            assigned_driver_id: safeStr(result?.assigned_driver_id, 96) || null,
+            assigned_vehicle_id: safeStr(result?.assigned_vehicle_id, 128) || null,
+            error: result?.ok === false ? safeStr(result?.error, 180) || result?.reason || null : null,
+          },
+          statusCode,
+        );
+      }
+
       // Dynamic booking routes:
       // GET  /bookings/:id
       // POST /bookings/:id/checkout-resume
@@ -48735,6 +48801,500 @@ function _applyResumePaidPaymentToCanonicalRecord(
   }
 }
 
+// G3: idempotent post-finalize hook that asks the existing FleetAllocatorDO to
+// allocate a vehicle/driver for a paid, open, unassigned canonical booking.
+//
+// Constraints (do not change without G3 review):
+// - Only runs when FLEET_AVAILABILITY_MODE === "multi_vehicle".
+// - Only runs for paid + open-like + unassigned canonical records.
+// - Never assigns blindly: it strictly forwards the existing allocator's
+//   `allowed === true` decision. On `allowed === false` it leaves the record
+//   untouched so the booking remains visible in Driver > Available.
+// - Re-uses _allocatorRequest, _driverSummaryForVehicleId, the same index
+//   upserters used by the BOOKED branch, and the same operational-leg shape.
+// - Logs are masked via _bookingIntentMask. No PII in logs.
+async function ensurePaidOpenBookingAutoDispatched(
+  env,
+  bookingId,
+  rec,
+  request,
+  opts = {},
+) {
+  const safeBookingId = safeStr(bookingId, 160);
+  const maskedBookingId = _bookingIntentMask(safeBookingId);
+  const persist = opts?.persist !== false;
+  const sourceLabel = safeStr(opts?.source, 64) || "auto_dispatch";
+
+  const skip = (reason, extra = {}) => {
+    console.log(
+      `[DISPATCH_AUTO_ASSIGN][SKIP] booking=${maskedBookingId} reason=${reason} source=${sourceLabel}`,
+    );
+    return {
+      ok: true,
+      skipped: true,
+      mutated: false,
+      reason,
+      assigned: false,
+      assigned_driver_id: null,
+      assigned_vehicle_id: null,
+      ...extra,
+    };
+  };
+
+  try {
+    if (!env?.BOOKING_KV) return skip("missing_kv");
+    if (!env?.FLEET_ALLOCATOR) return skip("missing_allocator_binding");
+    if (!safeBookingId) return skip("missing_booking_id");
+    if (!rec || typeof rec !== "object") return skip("missing_record");
+
+    if (_availabilityMode(env) !== "multi_vehicle") {
+      return skip("mode_not_multi_vehicle");
+    }
+
+    if (isTerminalLifecycleStatus(_bookingLifecycleValue(rec))) {
+      return skip("terminal_status");
+    }
+
+    const existingVehicleId = safeStr(bookingAssignedVehicleId(rec), 128);
+    const existingDriverId = safeStr(bookingAssignedDriverId(rec), 96);
+    if (existingVehicleId || existingDriverId) {
+      console.log(
+        `[DISPATCH_AUTO_ASSIGN][SKIP] booking=${maskedBookingId} reason=already_assigned source=${sourceLabel} vehicle=${_bookingIntentMask(existingVehicleId)} driver=${_bookingIntentMask(existingDriverId)}`,
+      );
+      return {
+        ok: true,
+        skipped: true,
+        mutated: false,
+        reason: "already_assigned",
+        assigned: true,
+        assigned_driver_id: existingDriverId || null,
+        assigned_vehicle_id: existingVehicleId || null,
+      };
+    }
+
+    const recordScope = resolveBookingTenantScopeFromRecord(rec);
+    const scopeHint = opts?.tenantScope?.hasScope ? opts.tenantScope : recordScope;
+    const fleetScope = normalizeFleetTenantScope(scopeHint);
+    if (!fleetScope?.hasScope) {
+      return skip("missing_scope");
+    }
+
+    const bookingObj = rec?.booking && typeof rec.booking === "object" ? rec.booking : {};
+    const payloadObj = rec?.payload && typeof rec.payload === "object" ? rec.payload : {};
+    const quoteObj = rec?.quote && typeof rec.quote === "object" ? rec.quote : {};
+
+    const paymentStatusToken = _normalizeDriverAvailableLifecycleToken(
+      rec?.payment_status ??
+        rec?.paymentStatus ??
+        bookingObj?.payment_status ??
+        bookingObj?.paymentStatus ??
+        payloadObj?.payment_status ??
+        payloadObj?.paymentStatus,
+    );
+    const paidAt = safeStr(
+      rec?.paid_at ??
+        rec?.paidAt ??
+        bookingObj?.paid_at ??
+        bookingObj?.paidAt,
+      80,
+    );
+    const paymentMode = _normalizeDriverAvailableLifecycleToken(
+      rec?.payment_mode ??
+        rec?.paymentMode ??
+        bookingObj?.payment_mode ??
+        bookingObj?.paymentMode ??
+        payloadObj?.payment_mode ??
+        payloadObj?.paymentMode,
+    );
+    const paymentProvider = _normalizeDriverAvailableLifecycleToken(
+      rec?.payment_provider ??
+        rec?.paymentProvider ??
+        bookingObj?.payment_provider ??
+        bookingObj?.paymentProvider ??
+        payloadObj?.payment_provider ??
+        payloadObj?.paymentProvider,
+    );
+    const isOnlineLike =
+      paymentMode === "mollie" ||
+      paymentMode === "online" ||
+      paymentMode === "online_payment" ||
+      paymentMode === "online_payments" ||
+      paymentMode === "prepaid" ||
+      paymentProvider === "mollie" ||
+      paymentProvider === "online" ||
+      paymentProvider === "online_payment" ||
+      paymentProvider === "prepaid";
+    const isManualLike =
+      paymentMode === "manual" ||
+      paymentMode === "cash" ||
+      paymentMode === "invoice" ||
+      paymentMode === "in_vehicle" ||
+      paymentMode === "in_vehicle_card" ||
+      paymentProvider === "manual" ||
+      paymentProvider === "cash" ||
+      paymentProvider === "invoice" ||
+      paymentProvider === "in_vehicle_card" ||
+      paymentProvider === "qr";
+    const paidLike =
+      DRIVER_AVAILABLE_ONLINE_PAID_STATUSES.has(paymentStatusToken) || !!paidAt;
+    if (isOnlineLike && !isManualLike && !paidLike) {
+      return skip("payment_not_paid");
+    }
+
+    const pickupIso = bookingPickupIsoFromRecord(rec);
+    const pickupMs = Date.parse(pickupIso);
+    if (!pickupIso || !Number.isFinite(pickupMs)) {
+      return skip("pickup_invalid");
+    }
+
+    const tier = normalizeTier(
+      bookingObj?.tier ?? payloadObj?.tier ?? rec?.tier ?? "comfort",
+    );
+    const pax = clampInt(
+      bookingObj?.pax ?? payloadObj?.pax ?? rec?.pax,
+      1,
+      99,
+    );
+    const bags = Math.max(
+      0,
+      clampInt(bookingObj?.bags ?? payloadObj?.bags ?? rec?.bags, 0, 99),
+    );
+    const fromText = safeStr(
+      bookingObj?.from ??
+        payloadObj?.from ??
+        rec?.from ??
+        quoteObj?.from ??
+        bookingObj?.pickup_address ??
+        bookingObj?.pickupAddress,
+      320,
+    );
+    const toText = safeStr(
+      bookingObj?.to ??
+        payloadObj?.to ??
+        rec?.to ??
+        quoteObj?.to ??
+        bookingObj?.dropoff_address ??
+        bookingObj?.dropoffAddress,
+      320,
+    );
+
+    const durationRouteMin = Number(
+      bookingObj?.duration_route_min ??
+        bookingObj?.durationRouteMin ??
+        rec?.duration_route_min ??
+        rec?.durationRouteMin ??
+        quoteObj?.duration_min ??
+        quoteObj?.durationMin ??
+        0,
+    );
+    const returnDurationMin = Number(
+      _pick(bookingObj, ["return", "duration_min"], null) ??
+        _pick(rec, ["return", "duration_min"], null) ??
+        _pick(quoteObj, ["return", "duration_min"], null) ??
+        0,
+    );
+    const waitMin = Number(
+      bookingObj?.wait_min ??
+        bookingObj?.waitMin ??
+        rec?.wait_min ??
+        rec?.waitMin ??
+        payloadObj?.wait_min ??
+        payloadObj?.waitMin ??
+        0,
+    );
+    const stopsArr = Array.isArray(bookingObj?.stops)
+      ? bookingObj.stops
+      : Array.isArray(payloadObj?.stops)
+        ? payloadObj.stops
+        : Array.isArray(quoteObj?.stops)
+          ? quoteObj.stops
+          : [];
+    const stopCount = stopsArr.length;
+    const hasReturnSchedule = !!safeStr(
+      bookingObj?.returnPickupIso ??
+        bookingObj?.return_pickup_iso ??
+        rec?.returnPickupIso ??
+        rec?.return_pickup_iso,
+    );
+
+    const serviceMin = Math.max(
+      30,
+      Math.round(
+        Math.max(0, Number.isFinite(durationRouteMin) ? durationRouteMin : 0) +
+          (hasReturnSchedule
+            ? 0
+            : Math.max(0, Number.isFinite(returnDurationMin) ? returnDurationMin : 0)) +
+          Math.max(0, Number.isFinite(waitMin) ? waitMin : 0) +
+          Math.max(0, getStopHandlingMin(stopCount, env)) +
+          Math.max(0, getPostBufferMin(env)),
+      ),
+    );
+
+    const recordPickupPoint = _locationPointFromAny({
+      lat: bookingObj?.pickup_lat ?? bookingObj?.pickupLat,
+      lng: bookingObj?.pickup_lng ?? bookingObj?.pickupLng,
+    }) ||
+      _locationPointFromAny({
+        lat: payloadObj?.pickup_lat ?? payloadObj?.pickupLat ?? payloadObj?.from_lat ?? payloadObj?.fromLat,
+        lng: payloadObj?.pickup_lng ?? payloadObj?.pickupLng ?? payloadObj?.from_lng ?? payloadObj?.fromLng,
+      }) ||
+      _locationPointFromAny({
+        lat: rec?.pickup_lat ?? rec?.pickupLat,
+        lng: rec?.pickup_lng ?? rec?.pickupLng,
+      });
+    const pickupLat = recordPickupPoint && Number.isFinite(recordPickupPoint.lat)
+      ? recordPickupPoint.lat
+      : null;
+    const pickupLng = recordPickupPoint && Number.isFinite(recordPickupPoint.lng)
+      ? recordPickupPoint.lng
+      : null;
+
+    const allocatorPayload = {
+      action: "allocate",
+      booking_id: safeBookingId,
+      pickup_ms: pickupMs,
+      service_min: serviceMin,
+      tier,
+      pax,
+      bags,
+      from: fromText,
+      pickup_from: fromText,
+      pickup_address: fromText,
+      to: toText,
+      dropoff_to: toText,
+      dropoff_address: toText,
+      pickup_iso: pickupIso,
+      pickup_lat: pickupLat,
+      pickup_lng: pickupLng,
+      tenantScope: fleetScope,
+    };
+
+    console.log(
+      `[DISPATCH_AUTO_ASSIGN][START] booking=${maskedBookingId} source=${sourceLabel} tenant=${_bookingIntentMask(fleetScope.tenant_id)} company=${_bookingIntentMask(fleetScope.company_id)} pickup_iso=${pickupIso || "-"} service_min=${serviceMin}`,
+    );
+
+    let alloc;
+    try {
+      alloc = await _allocatorRequest(env, pickupIso, allocatorPayload);
+    } catch (allocErr) {
+      const reason = safeStr(allocErr?.message || allocErr, 140) || "exception";
+      console.log(
+        `[DISPATCH_AUTO_ASSIGN][ERROR] booking=${maskedBookingId} stage=allocator_request reason=${reason}`,
+      );
+      return {
+        ok: true,
+        skipped: true,
+        mutated: false,
+        reason: "allocator_error",
+        allocator_reason: reason,
+        assigned: false,
+        assigned_driver_id: null,
+        assigned_vehicle_id: null,
+      };
+    }
+
+    const allocatorReason = safeStr(alloc?.reason, 80) || null;
+    console.log(
+      `[DISPATCH_AUTO_ASSIGN][ALLOCATOR_RESULT] booking=${maskedBookingId} allowed=${alloc?.allowed === true ? "true" : "false"} source=${safeStr(alloc?.source, 40) || "-"} reason=${allocatorReason || "-"}`,
+    );
+
+    if (!alloc?.allowed) {
+      return {
+        ok: true,
+        skipped: true,
+        mutated: false,
+        reason: "not_allowed",
+        allocator_reason: allocatorReason || "vehicle_capacity_exceeded",
+        assigned: false,
+        assigned_driver_id: null,
+        assigned_vehicle_id: null,
+      };
+    }
+
+    const allocVehicleId = safeStr(alloc?.assigned_vehicle_id, 128);
+    if (!allocVehicleId) {
+      console.log(
+        `[DISPATCH_AUTO_ASSIGN][SKIP] booking=${maskedBookingId} reason=allocator_returned_no_vehicle source=${sourceLabel}`,
+      );
+      return {
+        ok: true,
+        skipped: true,
+        mutated: false,
+        reason: "allocator_returned_no_vehicle",
+        allocator_reason: allocatorReason,
+        assigned: false,
+        assigned_driver_id: null,
+        assigned_vehicle_id: null,
+      };
+    }
+
+    let assignedDriver =
+      alloc?.assigned_driver && typeof alloc.assigned_driver === "object"
+        ? alloc.assigned_driver
+        : null;
+    if (!assignedDriver) {
+      try {
+        assignedDriver = await _driverSummaryForVehicleId(
+          env,
+          allocVehicleId,
+          fleetScope,
+        );
+      } catch (_) {
+        assignedDriver = null;
+      }
+    }
+    const assignedDriverId = safeStr(
+      assignedDriver?.driver_id ?? assignedDriver?.driverId ?? assignedDriver?.id,
+      96,
+    ) || null;
+
+    const nowIso = new Date().toISOString();
+    rec.assigned_vehicle_id = allocVehicleId;
+    rec.assignedVehicleId = allocVehicleId;
+    if (assignedDriver && typeof assignedDriver === "object") {
+      rec.assigned_driver = assignedDriver;
+      rec.assignedDriver = assignedDriver;
+    }
+    if (assignedDriverId) {
+      rec.assigned_driver_id = assignedDriverId;
+      rec.assignedDriverId = assignedDriverId;
+    }
+    rec.updated_at = nowIso;
+    rec.updatedAt = nowIso;
+
+    if (rec.booking && typeof rec.booking === "object") {
+      rec.booking.assigned_vehicle_id = allocVehicleId;
+      rec.booking.assignedVehicleId = allocVehicleId;
+      if (assignedDriver && typeof assignedDriver === "object") {
+        rec.booking.assigned_driver = assignedDriver;
+        rec.booking.assignedDriver = assignedDriver;
+      }
+      if (assignedDriverId) {
+        rec.booking.assigned_driver_id = assignedDriverId;
+        rec.booking.assignedDriverId = assignedDriverId;
+      }
+      rec.booking.updated_at = nowIso;
+      rec.booking.updatedAt = nowIso;
+    }
+
+    const stampLegs = (legs) => {
+      if (!Array.isArray(legs)) return legs;
+      for (const leg of legs) {
+        if (!leg || typeof leg !== "object") continue;
+        leg.assigned_vehicle_id = allocVehicleId;
+        leg.assignedVehicleId = allocVehicleId;
+        if (assignedDriverId) {
+          leg.assigned_driver_id = assignedDriverId;
+          leg.assignedDriverId = assignedDriverId;
+        }
+        leg.updated_at = nowIso;
+        leg.updatedAt = nowIso;
+      }
+      return legs;
+    };
+    if (Array.isArray(rec.operational_legs)) stampLegs(rec.operational_legs);
+    if (Array.isArray(rec.operationalLegs)) stampLegs(rec.operationalLegs);
+    if (rec.booking && typeof rec.booking === "object") {
+      if (Array.isArray(rec.booking.operational_legs)) {
+        stampLegs(rec.booking.operational_legs);
+      }
+      if (Array.isArray(rec.booking.operationalLegs)) {
+        stampLegs(rec.booking.operationalLegs);
+      }
+    }
+
+    console.log(
+      `[DISPATCH_AUTO_ASSIGN][WRITE_BACK] booking=${maskedBookingId} vehicle=${_bookingIntentMask(allocVehicleId)} driver=${_bookingIntentMask(assignedDriverId)} persist=${persist ? "true" : "false"}`,
+    );
+
+    if (persist) {
+      try {
+        await env.BOOKING_KV.put(`booking:${safeBookingId}`, JSON.stringify(rec));
+      } catch (putErr) {
+        const reason = safeStr(putErr?.message || putErr, 140) || "exception";
+        console.log(
+          `[DISPATCH_AUTO_ASSIGN][ERROR] booking=${maskedBookingId} stage=kv_put reason=${reason}`,
+        );
+        return {
+          ok: false,
+          skipped: false,
+          mutated: false,
+          reason: "kv_put_failed",
+          assigned: false,
+          assigned_driver_id: null,
+          assigned_vehicle_id: null,
+          error: reason,
+        };
+      }
+      try {
+        await upsertBookingDemandIndexBestEffort(env, safeBookingId, rec, fleetScope);
+      } catch (_) {
+        // Best-effort index emission only.
+      }
+      try {
+        await upsertDriverVehicleBookingIndexesBestEffort(
+          env,
+          safeBookingId,
+          rec,
+          fleetScope,
+        );
+      } catch (_) {
+        // Best-effort index emission only.
+      }
+      try {
+        await upsertCompanyBookingsListIndexBestEffort(
+          env,
+          safeBookingId,
+          rec,
+          fleetScope,
+        );
+      } catch (_) {
+        // Best-effort index emission only.
+      }
+      try {
+        await upsertDashboardBookingsKpiProjectionBestEffort(
+          env,
+          safeBookingId,
+          rec,
+          fleetScope,
+        );
+      } catch (_) {
+        // Best-effort projection update only.
+      }
+    }
+
+    console.log(
+      `[DISPATCH_AUTO_ASSIGN][DONE] booking=${maskedBookingId} source=${sourceLabel} vehicle=${_bookingIntentMask(allocVehicleId)} driver=${_bookingIntentMask(assignedDriverId)} persisted=${persist ? "true" : "false"}`,
+    );
+
+    return {
+      ok: true,
+      skipped: false,
+      mutated: true,
+      reason: "assigned",
+      allocator_reason: allocatorReason,
+      assigned: true,
+      assigned_driver_id: assignedDriverId,
+      assigned_vehicle_id: allocVehicleId,
+    };
+  } catch (err) {
+    const reason = safeStr(err?.message || err, 140) || "exception";
+    console.log(
+      `[DISPATCH_AUTO_ASSIGN][ERROR] booking=${maskedBookingId} stage=helper reason=${reason}`,
+    );
+    return {
+      ok: false,
+      skipped: false,
+      mutated: false,
+      reason: "exception",
+      assigned: false,
+      assigned_driver_id: null,
+      assigned_vehicle_id: null,
+      error: reason,
+    };
+  }
+}
+
 async function finalizeResumePaidPaymentToCanonical(stored, env, request, opts = {}) {
   const paymentBookingId = safeStr(
     opts?.paymentBookingId || stored?.bookingId || stored?.booking_id,
@@ -48855,6 +49415,34 @@ async function finalizeResumePaidPaymentToCanonical(stored, env, request, opts =
     invoiceState: invoiceContext.businessInvoiceIntent ? "ready_to_send" : "none",
   });
 
+  // G3: hand the now-paid canonical record to the existing FleetAllocator so
+  // resumed Mollie payments do not stay paid-but-unassigned. The helper is
+  // idempotent and respects the allocator's "not allowed" decisions; on a
+  // skip/deny the canonical record stays unchanged and remains visible in
+  // Driver > Available exactly as before. We pass persist:false because the
+  // canonical record is persisted (and indexes are re-emitted) by the block
+  // immediately below.
+  let dispatchOutcome = null;
+  try {
+    dispatchOutcome = await ensurePaidOpenBookingAutoDispatched(
+      env,
+      canonicalBookingId,
+      canonicalRec,
+      request,
+      {
+        tenantScope,
+        persist: false,
+        source: "mollie_resume_pay_status_paid",
+      },
+    );
+  } catch (dispatchErr) {
+    const reason = safeStr(dispatchErr?.message || dispatchErr, 140) || "exception";
+    console.log(
+      `[DISPATCH_AUTO_ASSIGN][ERROR] booking=${_bookingIntentMask(canonicalBookingId)} stage=resume_finalize reason=${reason}`,
+    );
+    dispatchOutcome = null;
+  }
+
   await env.BOOKING_KV.put(canonicalKey, JSON.stringify(canonicalRec));
   const fleetScope = normalizeFleetTenantScope(tenantScope);
   await upsertBookingDemandIndexBestEffort(env, canonicalBookingId, canonicalRec, fleetScope);
@@ -48893,11 +49481,13 @@ async function finalizeResumePaidPaymentToCanonical(stored, env, request, opts =
     payment_booking_id: paymentBookingId,
     canonical_booking_id: canonicalBookingId,
     payment_id: incomingMolliePaymentId || null,
+    dispatch_reason: dispatchOutcome?.reason || null,
+    dispatch_assigned: dispatchOutcome?.assigned === true,
     error: null,
   };
 
   console.log(
-    `[BOOKING][CHECKOUT_RESUME][PAID_FINALIZE] paymentBooking=${_bookingIntentMask(paymentBookingId)} canonical=${_bookingIntentMask(canonicalBookingId)} molliePayment=${_bookingIntentMask(incomingMolliePaymentId)}`,
+    `[BOOKING][CHECKOUT_RESUME][PAID_FINALIZE] paymentBooking=${_bookingIntentMask(paymentBookingId)} canonical=${_bookingIntentMask(canonicalBookingId)} molliePayment=${_bookingIntentMask(incomingMolliePaymentId)} dispatch=${dispatchOutcome?.reason || "skipped"}`,
   );
 
   return {
@@ -48905,6 +49495,7 @@ async function finalizeResumePaidPaymentToCanonical(stored, env, request, opts =
     updatedStored: stored,
     canonicalBookingId,
     canonicalRec,
+    dispatchOutcome,
   };
 }
 
