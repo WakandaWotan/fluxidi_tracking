@@ -25784,6 +25784,11 @@ function _classifyCustomerCancellationBucket(rec) {
     paymentProvider === "mollie" ||
     boolish(rec?.mollie) ||
     boolish(booking?.mollie);
+  const isOpenMollieCheckout =
+    !paymentStatus ||
+    paymentStatus === "unpaid" ||
+    paymentStatus === "failed" ||
+    pendingLike.has(paymentStatus);
   const isOnlineLike =
     paymentMode === "online" ||
     paymentMode === "online_payment" ||
@@ -25797,7 +25802,8 @@ function _classifyCustomerCancellationBucket(rec) {
   if (paidLike.has(paymentStatus)) {
     paymentClass = "paid";
   } else if (isMollieLike) {
-    paymentClass = "mollie";
+    // Abandoned or in-flight Mollie checkout stays cancellable under cutoff rules.
+    paymentClass = isOpenMollieCheckout ? "unpaid" : "mollie";
   } else if (isOnlineLike || (requiresPayment && pendingLike.has(paymentStatus))) {
     paymentClass = "prepaid";
   } else if (
