@@ -18047,6 +18047,64 @@ GET /oauth/callback
         return json({ ok: true, items, count: items.length }, 200);
       }
 
+      // G2-A: admin/company-scoped read-only mirror of /driver/bookings used
+      // by the Business Home → Chauffeurweergave preview surface. Auth and
+      // scope are validated identically to the company /bookings list. The
+      // optional driver_id / vehicle_id narrow the result; both are accepted
+      // because the preview can be opened with only a vehicle selected.
+      if (
+        url.pathname === "/admin/driver/bookings-preview" &&
+        request.method === "GET"
+      ) {
+        _requireAdmin(request, url, env);
+        const scopedRoute = requireExplicitBookingRouteScope({ request, url });
+        if (!scopedRoute.ok) return scopedRoute.response;
+        const tenantScope = scopedRoute.scope;
+        const limit = Number(url.searchParams.get("limit") || "50");
+        const driverId = safeStr(
+          url.searchParams.get("driver_id") || url.searchParams.get("driverId") || "",
+          96,
+        );
+        const vehicleId = safeStr(
+          url.searchParams.get("vehicle_id") || url.searchParams.get("vehicleId") || "",
+          128,
+        );
+        console.log(
+          `[ADMIN_DRIVER_PREVIEW][REQ] tenant=${_maskPublicDriverLoginValue(tenantScope?.tenant_id)} company=${_maskPublicDriverLoginValue(tenantScope?.company_id)} driver=${_maskPublicDriverLoginValue(driverId)} vehicle=${_maskPublicDriverLoginValue(vehicleId)}`,
+        );
+        const listOut = await listAdminDriverBookingsPreviewAuthoritative(env, {
+          limit,
+          tenantScope,
+          driverId,
+          vehicleId,
+        });
+        if (!listOut?.ok) {
+          const reason = safeStr(listOut?.error, 80) || "company_bookings_list_index_unavailable";
+          if (
+            reason === "company_bookings_list_index_unavailable" ||
+            reason === "company_bookings_list_index_stale"
+          ) {
+            return json({ ok: false, error: reason }, 503);
+          }
+          return json({ ok: false, error: reason }, 400);
+        }
+        const items = Array.isArray(listOut?.items) ? listOut.items : [];
+        const assignedCount = Number.isFinite(listOut?.assigned) ? listOut.assigned : 0;
+        const availableCount = Number.isFinite(listOut?.available) ? listOut.available : 0;
+        console.log(
+          `[ADMIN_DRIVER_PREVIEW][RES] count=${items.length} available=${availableCount} assigned=${assignedCount}`,
+        );
+        return json(
+          {
+            ok: true,
+            items,
+            count: items.length,
+            source: "admin_driver_bookings_preview",
+          },
+          200,
+        );
+      }
+
       if (
         url.pathname === "/admin/dashboard/bookings-kpis" &&
         request.method === "GET"
@@ -42312,6 +42370,176 @@ async function listDriverBookingsAuthoritative(
   });
 
   return { ok: true, items: out.slice(0, lim) };
+}
+
+// G2-A: admin/company-scoped read-only mirror of /driver/bookings for the
+// Business Home → Chauffeurweergave preview surface. The caller is an admin
+// (validated by `_requireAdmin` at the route layer) with an explicit tenant /
+// company scope (validated by `requireExplicitBookingRouteScope`). Optional
+// `driverId` and/or `vehicleId` narrow the result to rows assigned to that
+// driver / vehicle, plus the available-unassigned dispatch pool. This
+// endpoint MUST NOT mutate, MUST NOT use customer auth, and MUST NOT pretend
+// to be a real driver session — it reads the company bookings list index
+// directly and applies the same G1 canonical-only hygiene as the other lists.
+async function listAdminDriverBookingsPreviewAuthoritative(
+  env,
+  {
+    limit = 50,
+    tenantScope = null,
+    driverId = "",
+    vehicleId = "",
+  } = {},
+) {
+  if (!tenantScope?.hasScope) return { ok: true, items: [] };
+  if (!env?.BOOKING_KV) throw new Error("BOOKING_KV binding is missing");
+  const lim = Math.min(200, Math.max(1, Number(limit) || 50));
+  const targetDriverId = _scopeText(driverId, 96);
+  const targetVehicleId = _scopeText(vehicleId, 128);
+
+  const indexRead = await readCompanyBookingsListIndex(env, tenantScope);
+  if (indexRead?.ok && indexRead?.exists === false) {
+    return { ok: true, items: [], assigned: 0, available: 0 };
+  }
+  if (!indexRead?.ok || !indexRead?.valid || !indexRead?.index) {
+    return { ok: false, error: "company_bookings_list_index_unavailable" };
+  }
+  const staleAfterMs = _companyBookingsListIndexStaleAfterMs(env);
+  const indexUpdatedAtMs = Date.parse(safeStr(indexRead?.index?.updated_at ?? indexRead?.index?.updatedAt, 80));
+  const indexStale = staleAfterMs > 0 && (!Number.isFinite(indexUpdatedAtMs) || (Date.now() - indexUpdatedAtMs) > staleAfterMs);
+  if (indexStale) {
+    return { ok: false, error: "company_bookings_list_index_stale" };
+  }
+
+  const sourceItems = Array.isArray(indexRead?.index?.items) ? indexRead.index.items : [];
+  const candidateIds = new Set();
+  for (const entry of sourceItems) {
+    const bookingId = safeStr(entry?.booking_id ?? entry?.bookingId, 160);
+    if (bookingId) candidateIds.add(bookingId);
+  }
+
+  // G1 reuse: canonicalize payment-shadow ids before producing rows. We use
+  // the [ADMIN_DRIVER_PREVIEW] log tag here so admin-preview traces are
+  // attributable to this surface in production logs.
+  const recordCache = new Map();
+  const canonicalCandidateIds = new Set();
+  for (const bookingId of candidateIds) {
+    const rec = await env.BOOKING_KV.get(`booking:${bookingId}`, { type: "json" });
+    if (!rec || typeof rec !== "object") continue;
+    recordCache.set(bookingId, rec);
+    if (_bookingListIsPaymentShadowRecord(rec, bookingId)) {
+      const canonical = _resolveCanonicalBookingIdFromShadow(rec, bookingId);
+      if (canonical) {
+        console.log(
+          `[ADMIN_DRIVER_PREVIEW][SHADOW_CANONICALIZED] shadow=${_bookingIntentMask(bookingId)} canonical=${_bookingIntentMask(canonical)}`,
+        );
+        canonicalCandidateIds.add(canonical);
+      } else {
+        console.log(
+          `[ADMIN_DRIVER_PREVIEW][SHADOW_SKIPPED] shadow=${_bookingIntentMask(bookingId)} reason=no_canonical_reference`,
+        );
+      }
+      continue;
+    }
+    canonicalCandidateIds.add(bookingId);
+  }
+
+  const nowMs = Date.now();
+  const actionableGraceMs = 6 * 60 * 60 * 1000;
+  const cutoffMs = nowMs - actionableGraceMs;
+  const out = [];
+  let assignedCount = 0;
+  let availableCount = 0;
+  const seenAssignedKeys = new Set();
+
+  for (const bookingId of canonicalCandidateIds) {
+    let rec = recordCache.get(bookingId);
+    if (!rec) {
+      rec = await env.BOOKING_KV.get(`booking:${bookingId}`, { type: "json" });
+    }
+    if (!rec || typeof rec !== "object") continue;
+    if (!bookingMatchesRequestedTenantScope(rec, tenantScope)) continue;
+    if (_driverAvailableUnassignedRowHidden(rec)) continue;
+
+    const rows = _flattenBookingForRidesListWithOperationalLegs(bookingId, rec);
+
+    // Pass 1: include rows assigned to the requested driver / vehicle. Past
+    // pickups still surface for operational visibility (admin context).
+    if (targetDriverId || targetVehicleId) {
+      for (const row of rows) {
+        const rowDriverId = safeStr(row?.assigned_driver_id ?? row?.assignedDriverId, 96);
+        const rowVehicleId = safeStr(row?.assigned_vehicle_id ?? row?.assignedVehicleId, 128);
+        const driverMatch = !!(targetDriverId && rowDriverId && targetDriverId === rowDriverId);
+        const vehicleMatch = !!(targetVehicleId && rowVehicleId && targetVehicleId === rowVehicleId);
+        if (!driverMatch && !vehicleMatch) continue;
+        if (
+          row.status === "COMPLETED" ||
+          row.status === "CANCELLED" ||
+          isTerminalLifecycleStatus(row?.status)
+        ) {
+          continue;
+        }
+        const pickupTs = row.pickup_iso ? Date.parse(row.pickup_iso) : Number.NaN;
+        if (!Number.isFinite(pickupTs)) continue;
+        if (pickupTs < cutoffMs) continue;
+        const dedupeKey = _driverBookingsRowDedupeKey(row);
+        if (seenAssignedKeys.has(dedupeKey)) continue;
+        seenAssignedKeys.add(dedupeKey);
+        out.push(row);
+        assignedCount += 1;
+      }
+    }
+
+    // Pass 2: include available-unassigned rows from the dispatch pool. Reuse
+    // the exact same eligibility checks as `_appendDriverAvailableUnassignedBookings`.
+    if (!_driverAvailableUnassignedCanonicalRecord(bookingId, rec)) continue;
+    for (const row of rows) {
+      const dedupeKey = _driverBookingsRowDedupeKey(row);
+      if (seenAssignedKeys.has(dedupeKey)) continue;
+      const rowDriverId = safeStr(row?.assigned_driver_id ?? row?.assignedDriverId, 96);
+      if (rowDriverId) continue;
+      const rowVehicleId = safeStr(row?.assigned_vehicle_id ?? row?.assignedVehicleId, 128);
+      if (rowVehicleId) continue;
+      if (
+        row.status === "COMPLETED" ||
+        row.status === "CANCELLED" ||
+        isTerminalLifecycleStatus(row?.status)
+      ) {
+        continue;
+      }
+      if (!_driverAvailableUnassignedRowIsOpenLike(row, rec)) continue;
+      const pickupTs = row.pickup_iso ? Date.parse(row.pickup_iso) : Number.NaN;
+      if (!Number.isFinite(pickupTs)) continue;
+      if (pickupTs < cutoffMs) continue;
+      if (!_driverAvailableUnassignedPaymentEligible(rec, row)) continue;
+
+      out.push({
+        ...row,
+        available_unassigned: true,
+        availableUnassigned: true,
+      });
+      seenAssignedKeys.add(dedupeKey);
+      availableCount += 1;
+    }
+  }
+
+  // G1 reuse: belt-and-braces canonical-trip dedupe to collapse residual
+  // duplicates. Reuses the same helper but with [ADMIN_DRIVER_PREVIEW] tag.
+  const dedupedOut = _dedupeBookingListRowsByCanonicalTripSignature(out, {
+    logTag: "ADMIN_DRIVER_PREVIEW",
+  });
+
+  dedupedOut.sort((a, b) => {
+    const ta = a.pickup_iso ? Date.parse(a.pickup_iso) : Number.POSITIVE_INFINITY;
+    const tb = b.pickup_iso ? Date.parse(b.pickup_iso) : Number.POSITIVE_INFINITY;
+    return ta - tb;
+  });
+
+  return {
+    ok: true,
+    items: dedupedOut.slice(0, lim),
+    assigned: assignedCount,
+    available: availableCount,
+  };
 }
 
 const DASHBOARD_BOOKINGS_KPI_EXCLUDED_TERMINAL_STATUSES = [
