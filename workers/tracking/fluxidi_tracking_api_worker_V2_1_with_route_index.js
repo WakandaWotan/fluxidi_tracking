@@ -566,6 +566,54 @@ function scopedDashboardBookingFinanceMonthKey(scope, month) {
   return `tenant:${normalizedScope.tenant_id}:company:${normalizedScope.company_id}:dashboard:booking_finance:month:${monthPart}:v1`;
 }
 
+function scopedDashboardTripKpisMonthPrefix(scope) {
+  const normalizedScope = normalizeScopedKeyScope(scope);
+  return `tenant:${normalizedScope.tenant_id}:company:${normalizedScope.company_id}:dashboard:trip_kpis:month:`;
+}
+
+function scopedDashboardTripKpiContribPrefix(scope) {
+  const normalizedScope = normalizeScopedKeyScope(scope);
+  return `tenant:${normalizedScope.tenant_id}:company:${normalizedScope.company_id}:dashboard:trip_kpi_contrib:`;
+}
+
+function scopedDashboardBookingFinanceMonthPrefix(scope) {
+  const normalizedScope = normalizeScopedKeyScope(scope);
+  return `tenant:${normalizedScope.tenant_id}:company:${normalizedScope.company_id}:dashboard:booking_finance:month:`;
+}
+
+function scopedDashboardBookingFinanceContribPrefix(scope) {
+  const normalizedScope = normalizeScopedKeyScope(scope);
+  return `tenant:${normalizedScope.tenant_id}:company:${normalizedScope.company_id}:dashboard:booking_finance_contrib:`;
+}
+
+function scopedTripRecordsPrefix(scope) {
+  const normalizedScope = normalizeScopedKeyScope(scope);
+  return `tenant:${normalizedScope.tenant_id}:company:${normalizedScope.company_id}:trip:`;
+}
+
+function allowDevResetEndpoints(env) {
+  return String(env?.ALLOW_DEV_RESET_ENDPOINTS || "").trim().toLowerCase() === "true";
+}
+
+function allowDevResetExecute(env) {
+  return String(env?.ALLOW_DEV_RESET || "").trim().toLowerCase() === "true";
+}
+
+function _coerceBoolean(value, fallback = false) {
+  if (value == null) return fallback;
+  const token = (safeStr(value, 16) ?? "").toLowerCase();
+  if (!token) return fallback;
+  if (token === "0" || token === "false" || token === "no") return false;
+  if (token === "1" || token === "true" || token === "yes") return true;
+  return fallback;
+}
+
+function _isUnsafeDevResetScope(tenantId, companyId) {
+  const tenant = String(tenantId || "").trim().toLowerCase();
+  const company = String(companyId || "").trim().toLowerCase();
+  return tenant === "fluxidi" || company === "fluxidi";
+}
+
 function normalizeDashboardTripLifecycleStatus(value) {
   const raw = safeStr(value, 64);
   if (!raw) return "unknown";
@@ -3218,6 +3266,291 @@ async function handleDashboardTripKpis(req, url, env, origin) {
   );
 }
 
+async function _listAllKvKeysByPrefix(kv, prefix) {
+  if (!kv || !prefix) return [];
+  const out = [];
+  let cursor = undefined;
+  do {
+    const page = await kv.list({ prefix, limit: 1000, cursor });
+    for (const item of page?.keys || []) {
+      const name = safeStr(item?.name, 320);
+      if (name) out.push(name);
+    }
+    cursor = page?.cursor;
+    if (page?.list_complete !== false) break;
+    if (!cursor) break;
+  } while (cursor);
+  return out;
+}
+
+function _buildDashboardKpiResetCategories(scope, { includeTripHistory = false } = {}) {
+  const categories = [
+    {
+      id: "trip_kpis_global",
+      kind: "exact",
+      keys: [scopedDashboardTripKpisKey(scope)],
+    },
+    {
+      id: "trip_kpi_debug",
+      kind: "exact",
+      keys: [scopedDashboardTripDebugKey(scope)],
+    },
+    {
+      id: "trip_kpis_month",
+      kind: "prefix",
+      prefix: scopedDashboardTripKpisMonthPrefix(scope),
+    },
+    {
+      id: "trip_kpi_contrib",
+      kind: "prefix",
+      prefix: scopedDashboardTripKpiContribPrefix(scope),
+    },
+    {
+      id: "trip_kpi_pending_booking",
+      kind: "prefix",
+      prefix: scopedDashboardTripPendingBookingPrefix(scope),
+    },
+    {
+      id: "booking_finance_month",
+      kind: "prefix",
+      prefix: scopedDashboardBookingFinanceMonthPrefix(scope),
+    },
+    {
+      id: "booking_finance_contrib",
+      kind: "prefix",
+      prefix: scopedDashboardBookingFinanceContribPrefix(scope),
+    },
+  ];
+  if (includeTripHistory) {
+    categories.push(
+      {
+        id: "trip_records",
+        kind: "prefix",
+        prefix: scopedTripRecordsPrefix(scope),
+      },
+      {
+        id: "trips_index",
+        kind: "exact",
+        keys: [scopedTripsIndexKey(scope)],
+      },
+      {
+        id: "trips_index_driver",
+        kind: "prefix",
+        prefix: `${scopedTripsIndexKey(scope)}:`,
+      },
+    );
+  }
+  return categories;
+}
+
+async function _collectExistingDashboardKpiResetCategoryKeys(env, category) {
+  if (!env?.FLUXIDI_TRACKING) return [];
+  if (category.kind === "exact") {
+    const out = [];
+    for (const key of category.keys || []) {
+      if (!key) continue;
+      try {
+        const raw = await env.FLUXIDI_TRACKING.get(key);
+        if (raw != null) out.push(key);
+      } catch (_) {
+        // skip unreadable keys
+      }
+    }
+    return out;
+  }
+  if (category.kind === "prefix" && category.prefix) {
+    return await _listAllKvKeysByPrefix(env.FLUXIDI_TRACKING, category.prefix);
+  }
+  return [];
+}
+
+async function _readCurrentDashboardKpiValues(env, scope, month) {
+  const normalizedScope = normalizeScopedKeyScope(scope);
+  const global =
+    (await kvGetJson(env.FLUXIDI_TRACKING, scopedDashboardTripKpisKey(normalizedScope))) ?? {};
+  const monthData = month
+    ? ((await kvGetJson(
+      env.FLUXIDI_TRACKING,
+      scopedDashboardTripMonthKpisKey(normalizedScope, month),
+    )) ?? {})
+    : {};
+  const financeMonth = month
+    ? ((await kvGetJson(
+      env.FLUXIDI_TRACKING,
+      scopedDashboardBookingFinanceMonthKey(normalizedScope, month),
+    )) ?? {})
+    : {};
+  const completed = Number.isFinite(Number(global.completed_rides_count))
+    ? Math.max(0, Math.round(Number(global.completed_rides_count)))
+    : 0;
+  const unpaid = Number.isFinite(Number(global.unpaid_completed_rides_count))
+    ? Math.max(0, Math.round(Number(global.unpaid_completed_rides_count)))
+    : 0;
+  const monthIncomeCents = Number.isFinite(Number(monthData.monthly_income_cents))
+    ? Math.max(0, Math.round(Number(monthData.monthly_income_cents)))
+    : 0;
+  const bookingFinanceIncomeCents = Number.isFinite(
+    Number(financeMonth.monthly_paid_bookings_income_cents),
+  )
+    ? Math.max(0, Math.round(Number(financeMonth.monthly_paid_bookings_income_cents)))
+    : 0;
+  return {
+    completed_rides_count: completed,
+    unpaid_completed_rides_count: unpaid,
+    monthly_income_cents: Math.max(monthIncomeCents, bookingFinanceIncomeCents),
+    monthly_paid_bookings_income_cents: bookingFinanceIncomeCents,
+    trip_monthly_income_cents: monthIncomeCents,
+  };
+}
+
+async function handleDevDashboardKpisReset(req, url, env, origin, { forceDryRun = false } = {}) {
+  requireAdmin(req, url, env);
+  if (!allowDevResetEndpoints(env)) {
+    return withCors(
+      json({ ok: false, error: "dev reset endpoints are disabled" }, { status: 403 }),
+      origin,
+    );
+  }
+
+  let body = {};
+  if (req.method === "POST") {
+    try {
+      body = await readJson(req);
+    } catch (_) {
+      body = {};
+    }
+  }
+
+  const requiredScope = parseRequiredTenantCompanyScope(req, url, body, {
+    returnResponse: true,
+    origin,
+  });
+  if (requiredScope instanceof Response) return requiredScope;
+
+  const tenantId = requiredScope.tenant_id;
+  const companyId = requiredScope.company_id;
+  if (_isUnsafeDevResetScope(tenantId, companyId)) {
+    return withCors(
+      json({ ok: false, error: "unsafe_legacy_scope_not_allowed" }, { status: 400 }),
+      origin,
+    );
+  }
+
+  const dryRun =
+    forceDryRun ||
+    (_coerceReconcileDryRun(url.searchParams.get("dry_run"), true) &&
+      _coerceReconcileDryRun(body?.dry_run ?? body?.dryRun, true));
+
+  if (!dryRun && !allowDevResetExecute(env)) {
+    return withCors(json({ ok: false, error: "dev_reset_disabled" }, { status: 403 }), origin);
+  }
+
+  const includeTripHistory = _coerceBoolean(
+    body?.include_trip_history ??
+      body?.includeTripHistory ??
+      url.searchParams.get("include_trip_history"),
+    false,
+  );
+
+  const monthRaw = safeStr(url.searchParams.get("month") ?? body?.month, 16);
+  const month = monthRaw ? _normalizeDashboardMonth(monthRaw) : new Date().toISOString().slice(0, 7);
+
+  if (!env?.FLUXIDI_TRACKING) {
+    return withCors(
+      json({ ok: false, error: "FLUXIDI_TRACKING binding missing" }, { status: 500 }),
+      origin,
+    );
+  }
+
+  const normalizedScope = normalizeScopedKeyScope(requiredScope);
+  const categoryDefs = _buildDashboardKpiResetCategories(normalizedScope, { includeTripHistory });
+
+  const categories = [];
+  const keysByCategory = {};
+  let wouldDeleteTotal = 0;
+
+  for (const def of categoryDefs) {
+    const keys = await _collectExistingDashboardKpiResetCategoryKeys(env, def);
+    keysByCategory[def.id] = keys;
+    wouldDeleteTotal += keys.length;
+    categories.push({
+      id: def.id,
+      kind: def.kind,
+      count: keys.length,
+      sample_key_previews: keys.slice(0, 5).map((key) => _tripKpiMask(key)),
+    });
+  }
+
+  const currentDashboardValues = await _readCurrentDashboardKpiValues(env, normalizedScope, month);
+  const postResetExpected = {
+    completed_rides_count: 0,
+    unpaid_completed_rides_count: 0,
+    monthly_income_cents: 0,
+    monthly_paid_bookings_income_cents: 0,
+  };
+
+  const errors = [];
+  let deletedTotal = 0;
+  const deletedByCategory = {};
+
+  if (!dryRun) {
+    for (const def of categoryDefs) {
+      const keys = keysByCategory[def.id] || [];
+      let deleted = 0;
+      for (const key of keys) {
+        try {
+          await env.FLUXIDI_TRACKING.delete(key);
+          deleted += 1;
+          deletedTotal += 1;
+        } catch (err) {
+          errors.push({
+            category: def.id,
+            key_preview: _tripKpiMask(key),
+            error: safeStr(String(err?.message || err), 120),
+          });
+        }
+      }
+      deletedByCategory[def.id] = deleted;
+    }
+    console.log(
+      `[DEV_DASHBOARD_KPI_RESET][EXECUTE] tenant=${_tripKpiMask(tenantId)} company=${_tripKpiMask(companyId)} deleted=${deletedTotal} include_trip_history=${includeTripHistory ? "true" : "false"} errors=${errors.length}`,
+    );
+  } else {
+    console.log(
+      `[DEV_DASHBOARD_KPI_RESET][DRY_RUN] tenant=${_tripKpiMask(tenantId)} company=${_tripKpiMask(companyId)} would_delete=${wouldDeleteTotal} include_trip_history=${includeTripHistory ? "true" : "false"}`,
+    );
+  }
+
+  return withCors(
+    json(
+      {
+        ok: true,
+        dry_run: dryRun,
+        tenant_id: tenantId,
+        company_id: companyId,
+        month,
+        include_trip_history: includeTripHistory,
+        categories,
+        would_delete_total: wouldDeleteTotal,
+        current_dashboard_values: currentDashboardValues,
+        post_reset_expected: postResetExpected,
+        ...(dryRun
+          ? {}
+          : {
+              deleted_total: deletedTotal,
+              deleted_by_category: deletedByCategory,
+              errors,
+            }),
+        message: dryRun
+          ? "Dry-run only. Scoped dashboard KPI reset candidates collected."
+          : "Scoped dashboard KPI reset completed.",
+      },
+      { status: 200 },
+    ),
+    origin,
+  );
+}
+
 async function handleTripsHistory(req, url, env, origin) {
   requireAdmin(req, url, env);
 
@@ -4901,6 +5234,13 @@ export default {
       if (req.method === "GET" && url.pathname === "/admin/dashboard/trip-kpis") return await handleDashboardTripKpis(req, url, env, origin);
       if ((req.method === "POST" || req.method === "GET") && url.pathname === "/admin/dashboard/trip-kpis/reconcile") {
         return await handleDashboardTripKpisReconcile(req, url, env, origin);
+      }
+      // DEV/TEST ONLY. Must be disabled or protected before production.
+      if (req.method === "GET" && url.pathname === "/admin/dev/dashboard-kpis/reset/dry-run") {
+        return await handleDevDashboardKpisReset(req, url, env, origin, { forceDryRun: true });
+      }
+      if (req.method === "POST" && url.pathname === "/admin/dev/dashboard-kpis/reset") {
+        return await handleDevDashboardKpisReset(req, url, env, origin);
       }
       if (req.method === "GET" && url.pathname === "/trips/history") return await handleTripsHistory(req, url, env, origin);
       if (req.method === "POST" && url.pathname === "/trips/archive") return await handleArchiveTrip(req, url, env, origin);
