@@ -768,6 +768,18 @@ export class FleetAllocatorDO {
           safeStr(indexedDemand?.demand_index_reason_before_rebuild, 80) || null,
       });
     }
+    // G3-E: never count the booking currently under decision as competing
+    // unassigned demand. The demand index legitimately contains this
+    // booking (and may also reference a payment-shadow / leg / parent),
+    // and double-counting it makes vehicle_capacity_exceeded fire even
+    // when no other ride is competing for the same slot. The protection
+    // against OTHER overlapping unassigned demand is preserved unchanged.
+    const _selfDemandCanonicalId = _dashboardCanonicalBookingNumber(
+      safeStr(bookingId, 160),
+    );
+    const _selfDemandMaskedBookingId = _bookingIntentMask(bookingId);
+    let _selfDemandTotalOverlapping = 0;
+    let _selfDemandExcluded = 0;
     for (const d of indexedDemand?.items || []) {
       if (!_windowsOverlap(req.pickupMs, req.serviceMin, d.pickupMs, d.serviceMin)) continue;
       const assignedVehicleId = safeStr(d?.assigned_vehicle_id, 120);
@@ -775,10 +787,26 @@ export class FleetAllocatorDO {
         occupiedAssignedIds.add(assignedVehicleId);
         continue;
       }
+      _selfDemandTotalOverlapping += 1;
+      const selfMatch = _demandItemMatchesCurrentBooking(
+        d,
+        bookingId,
+        _selfDemandCanonicalId,
+      );
+      if (selfMatch) {
+        _selfDemandExcluded += 1;
+        console.log(
+          `[FLEET_ALLOCATOR][UNASSIGNED_DEMAND_EXCLUDE_SELF] booking=${_selfDemandMaskedBookingId} demand=${_bookingIntentMask(d?.booking_id ?? d?.bookingId ?? d?.id)} reason=${selfMatch.reason}`,
+        );
+        continue;
+      }
       if (suitableVehicles.some((v) => _vehicleSupportsRequest(v, d))) {
         overlappingUnassignedDemand += 1;
       }
     }
+    console.log(
+      `[FLEET_ALLOCATOR][UNASSIGNED_DEMAND_COUNT] booking=${_selfDemandMaskedBookingId} total=${_selfDemandTotalOverlapping} excluded_self=${_selfDemandExcluded} counted=${overlappingUnassignedDemand}`,
+    );
 
     // Serialized in-flight reservations inside DO
     for (const [id, r] of Object.entries(reservations)) {
@@ -39834,6 +39862,56 @@ async function removeBookingDemandIndexBestEffort(env, bookingId, scopeHint = nu
     );
     return { ok: false, reason: "exception" };
   }
+}
+
+// G3-E: identify demand-index items that refer to the booking currently
+// being allocated. Without this, the allocator counts the booking itself
+// as overlapping unassigned demand, which makes a single-row index already
+// double-count (canonical row plus any payment-shadow / leg / parent
+// reference) and refuses to allocate any vehicle even though no other
+// real ride competes for the slot. We do NOT remove the protection against
+// other unassigned bookings; we only filter the booking under decision.
+//
+// Returned shape: { reason: "exact" | "canonical" } when the demand item
+// represents the same booking as `currentBookingId` (or its canonical id);
+// null otherwise. The reason is used for diagnostic-only logging.
+function _demandItemMatchesCurrentBooking(item, currentBookingId, currentCanonicalBookingId = "") {
+  if (!item || typeof item !== "object") return null;
+  const targets = new Set();
+  const safeCurrent = safeStr(currentBookingId, 160);
+  if (safeCurrent) targets.add(safeCurrent);
+  const safeCanonical = safeStr(currentCanonicalBookingId, 160);
+  if (safeCanonical) targets.add(safeCanonical);
+  if (targets.size === 0) return null;
+  const candidates = [
+    item?.booking_id,
+    item?.bookingId,
+    item?.id,
+    item?.parent_booking_id,
+    item?.parentBookingId,
+    item?.original_booking_id,
+    item?.originalBookingId,
+    item?.canonical_booking_id,
+    item?.canonicalBookingId,
+    item?.payment_booking_id,
+    item?.paymentBookingId,
+    item?.shadow_booking_id,
+    item?.shadowBookingId,
+    item?.public_booking_id,
+    item?.publicBookingId,
+    item?.leg_id,
+    item?.legId,
+  ];
+  for (const candidate of candidates) {
+    const safeCandidate = safeStr(candidate, 160);
+    if (!safeCandidate) continue;
+    if (targets.has(safeCandidate)) return { reason: "exact" };
+    const candidateCanonical = _dashboardCanonicalBookingNumber(safeCandidate);
+    if (candidateCanonical && safeCanonical && candidateCanonical === safeCanonical) {
+      return { reason: "canonical" };
+    }
+  }
+  return null;
 }
 
 function _fleetDemandIndexStaleAfterMs(env, options = {}) {
