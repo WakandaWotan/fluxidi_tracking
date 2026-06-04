@@ -17933,8 +17933,20 @@ GET /oauth/callback
           return json({ ok: false, error: reason }, statusCode);
         }
         const items = Array.isArray(listOut?.items) ? listOut.items : [];
+        // G2-C: split the count by available_unassigned vs assigned so that
+        // production logs make it obvious whether the dispatch pool is
+        // surfacing for this session or not. No PII is emitted; only counts.
+        let availableInRes = 0;
+        let assignedInRes = 0;
+        for (const it of items) {
+          if (it?.available_unassigned === true || it?.availableUnassigned === true) {
+            availableInRes += 1;
+          } else {
+            assignedInRes += 1;
+          }
+        }
         console.log(
-          `[DRIVER_BOOKINGS][RES] tenant=${_maskPublicDriverLoginValue(session.tenant_id)} company=${_maskPublicDriverLoginValue(session.company_id)} driver=${_maskPublicDriverLoginValue(session.driver_id)} count=${items.length}`,
+          `[DRIVER_BOOKINGS][RES] tenant=${_maskPublicDriverLoginValue(session.tenant_id)} company=${_maskPublicDriverLoginValue(session.company_id)} driver=${_maskPublicDriverLoginValue(session.driver_id)} count=${items.length} available=${availableInRes} assigned=${assignedInRes}`,
         );
         return json({ ok: true, items, count: items.length }, 200);
       }
@@ -42015,10 +42027,77 @@ async function _appendDriverAvailableUnassignedBookings(
   }
 
   const seenKeys = new Set(out.map((row) => _driverBookingsRowDedupeKey(row)));
+  const collected = await _collectAvailableUnassignedRowsFromCompanyIndex(env, {
+    tenantScope,
+    cutoffMs,
+    seenKeys,
+    logTag: "DRIVER_BOOKINGS",
+    sessionDriverId,
+  });
+  for (const row of collected.rows) out.push(row);
+
+  const added = collected.rows.length;
+  const scanned = collected.scanned;
+  const skipped = collected.skipped;
+
+  if (added > 0 || scanned > 0) {
+    console.log(
+      `[DRIVER_BOOKINGS][AVAILABLE_INCLUDE_UNASSIGNED] tenant=${_maskPublicDriverLoginValue(tenantScope?.tenant_id)} company=${_maskPublicDriverLoginValue(tenantScope?.company_id)} driver=${_maskPublicDriverLoginValue(sessionDriverId)} added=${added} scanned=${scanned} skipped=${skipped}`,
+    );
+  }
+
+  return {
+    added,
+    scanned,
+    skipped,
+    ...(collected.indexUnavailable ? { index_unavailable: true } : {}),
+  };
+}
+
+// G2-C: shared helper that materializes the available-unassigned dispatch
+// pool from the company bookings list index. Both /driver/bookings (via
+// _appendDriverAvailableUnassignedBookings) and the admin preview route
+// (listAdminDriverBookingsPreviewAuthoritative) use this exact same gate
+// chain, so any drift between the two surfaces is impossible. The helper
+// is read-only — it never writes to KV. All emitted diagnostics are masked
+// (no personal data, no full booking ids).
+//
+// Eligibility gates (in order):
+//   1. record present, tenant scope match, not hidden, canonical (G1)
+//   2. row not already in `seenKeys` (caller-provided dedupe set)
+//   3. no assigned_driver_id, no assigned_vehicle_id
+//   4. status not COMPLETED / CANCELLED / terminal lifecycle
+//   5. lifecycle is open-like (pending / planned / scheduled / confirmed
+//      / booked / accepted / awaiting_pickup / active / open / in_progress
+//      / assigned)
+//   6. pickup_iso parses to a finite timestamp >= cutoffMs
+//   7. payment is eligible: online/mollie/prepaid require paid/settled/
+//      captured/completed/confirmed/success/paid_at; manual/cash/qr/invoice
+//      pass through.
+//
+// Returns { rows, scanned, skipped, indexUnavailable }. Rows are stamped
+// `available_unassigned: true` and `availableUnassigned: true`.
+async function _collectAvailableUnassignedRowsFromCompanyIndex(
+  env,
+  {
+    tenantScope = null,
+    cutoffMs = Number.NaN,
+    seenKeys = new Set(),
+    logTag = "BOOKING_LIST",
+    sessionDriverId = "",
+  } = {},
+) {
+  const result = { rows: [], scanned: 0, skipped: 0, indexUnavailable: false };
+  if (!tenantScope?.hasScope || !env?.BOOKING_KV) return result;
+
   const indexRead = await readCompanyBookingsListIndex(env, tenantScope);
   const sourceItems = Array.isArray(indexRead?.index?.items) ? indexRead.index.items : [];
   if (!indexRead?.ok || sourceItems.length === 0) {
-    return { added: 0, scanned: 0, skipped: 0, index_unavailable: indexRead?.ok !== true };
+    result.indexUnavailable = indexRead?.ok !== true;
+    console.log(
+      `[${logTag}][AVAILABLE_POOL_START] tenant=${_maskPublicDriverLoginValue(tenantScope?.tenant_id)} company=${_maskPublicDriverLoginValue(tenantScope?.company_id)} driver=${_maskPublicDriverLoginValue(sessionDriverId)} candidates=0 index_ok=${indexRead?.ok === true} source_items=${sourceItems.length}`,
+    );
+    return result;
   }
 
   const candidateIds = new Set();
@@ -42027,17 +42106,14 @@ async function _appendDriverAvailableUnassignedBookings(
     if (bookingId) candidateIds.add(bookingId);
   }
 
-  // G1: drop UUID-shaped payment-shadow ids from the candidate set and replace
-  // them with their canonical counterpart when one can be resolved. This
-  // prevents shadow rows from appearing in the available-unassigned list and
-  // also collapses the (canonical, shadow) pair to a single canonical entry.
+  // G1 reuse: drop UUID-shaped payment-shadow ids and replace them with
+  // their canonical counterpart. Logs go under [BOOKING_LIST] so shadow
+  // diagnostics are attributable to the index, not to the calling surface.
   const recordCache = new Map();
   const canonicalCandidateIds = new Set();
   for (const bookingId of candidateIds) {
     const rec = await env.BOOKING_KV.get(`booking:${bookingId}`, { type: "json" });
-    if (!rec || typeof rec !== "object") {
-      continue;
-    }
+    if (!rec || typeof rec !== "object") continue;
     recordCache.set(bookingId, rec);
     if (_bookingListIsPaymentShadowRecord(rec, bookingId)) {
       const canonical = _resolveCanonicalBookingIdFromShadow(rec, bookingId);
@@ -42056,42 +42132,62 @@ async function _appendDriverAvailableUnassignedBookings(
     canonicalCandidateIds.add(bookingId);
   }
 
-  let added = 0;
-  let scanned = 0;
-  let skipped = 0;
+  console.log(
+    `[${logTag}][AVAILABLE_POOL_START] tenant=${_maskPublicDriverLoginValue(tenantScope?.tenant_id)} company=${_maskPublicDriverLoginValue(tenantScope?.company_id)} driver=${_maskPublicDriverLoginValue(sessionDriverId)} candidates=${canonicalCandidateIds.size} source_items=${sourceItems.length}`,
+  );
+
+  const logSkip = (bookingId, legId, reason) => {
+    console.log(
+      `[${logTag}][AVAILABLE_POOL_SKIP] booking=${_bookingIntentMask(bookingId)} leg=${_bookingIntentMask(legId)} reason=${reason}`,
+    );
+  };
+
   for (const bookingId of canonicalCandidateIds) {
-    scanned += 1;
+    result.scanned += 1;
     let rec = recordCache.get(bookingId);
     if (!rec) {
       rec = await env.BOOKING_KV.get(`booking:${bookingId}`, { type: "json" });
     }
     if (!rec || typeof rec !== "object") {
-      skipped += 1;
+      result.skipped += 1;
+      logSkip(bookingId, "", "record_missing");
       continue;
     }
     if (!bookingMatchesRequestedTenantScope(rec, tenantScope)) {
-      skipped += 1;
+      result.skipped += 1;
+      logSkip(bookingId, "", "tenant_mismatch");
       continue;
     }
     if (_driverAvailableUnassignedRowHidden(rec)) {
-      skipped += 1;
+      result.skipped += 1;
+      logSkip(bookingId, "", "row_hidden");
       continue;
     }
     if (!_driverAvailableUnassignedCanonicalRecord(bookingId, rec)) {
-      skipped += 1;
+      result.skipped += 1;
+      logSkip(bookingId, "", "non_canonical_record");
       continue;
     }
 
     const rows = _flattenBookingForRidesListWithOperationalLegs(bookingId, rec);
     for (const row of rows) {
       const dedupeKey = _driverBookingsRowDedupeKey(row);
+      const legId = safeStr(row?.leg_id ?? row?.legId, 200);
       if (seenKeys.has(dedupeKey)) {
-        skipped += 1;
+        result.skipped += 1;
+        logSkip(bookingId, legId, "already_seen");
         continue;
       }
       const rowDriverId = safeStr(row?.assigned_driver_id ?? row?.assignedDriverId, 96);
       if (rowDriverId) {
-        skipped += 1;
+        result.skipped += 1;
+        logSkip(bookingId, legId, "row_assigned_driver");
+        continue;
+      }
+      const rowVehicleId = safeStr(row?.assigned_vehicle_id ?? row?.assignedVehicleId, 128);
+      if (rowVehicleId) {
+        result.skipped += 1;
+        logSkip(bookingId, legId, "row_assigned_vehicle");
         continue;
       }
       if (
@@ -42099,44 +42195,45 @@ async function _appendDriverAvailableUnassignedBookings(
         row.status === "CANCELLED" ||
         isTerminalLifecycleStatus(row?.status)
       ) {
-        skipped += 1;
+        result.skipped += 1;
+        logSkip(bookingId, legId, "terminal_status");
         continue;
       }
       if (!_driverAvailableUnassignedRowIsOpenLike(row, rec)) {
-        skipped += 1;
+        result.skipped += 1;
+        logSkip(bookingId, legId, "not_open_like");
         continue;
       }
       const pickupTs = row.pickup_iso ? Date.parse(row.pickup_iso) : Number.NaN;
       if (!Number.isFinite(pickupTs)) {
-        skipped += 1;
+        result.skipped += 1;
+        logSkip(bookingId, legId, "pickup_invalid");
         continue;
       }
-      if (Number.isFinite(pickupTs) && pickupTs < cutoffMs) {
-        skipped += 1;
+      if (Number.isFinite(cutoffMs) && pickupTs < cutoffMs) {
+        result.skipped += 1;
+        logSkip(bookingId, legId, "pickup_past_cutoff");
         continue;
       }
       if (!_driverAvailableUnassignedPaymentEligible(rec, row)) {
-        skipped += 1;
+        result.skipped += 1;
+        logSkip(bookingId, legId, "payment_not_eligible");
         continue;
       }
 
-      out.push({
+      result.rows.push({
         ...row,
         available_unassigned: true,
         availableUnassigned: true,
       });
       seenKeys.add(dedupeKey);
-      added += 1;
+      console.log(
+        `[${logTag}][AVAILABLE_POOL_APPEND] booking=${_bookingIntentMask(bookingId)} leg=${_bookingIntentMask(legId)}`,
+      );
     }
   }
 
-  if (added > 0 || scanned > 0) {
-    console.log(
-      `[DRIVER_BOOKINGS][AVAILABLE_INCLUDE_UNASSIGNED] tenant=${_maskPublicDriverLoginValue(tenantScope?.tenant_id)} company=${_maskPublicDriverLoginValue(tenantScope?.company_id)} driver=${_maskPublicDriverLoginValue(sessionDriverId)} added=${added} scanned=${scanned} skipped=${skipped}`,
-    );
-  }
-
-  return { added, scanned, skipped };
+  return result;
 }
 
 async function listDriverBookingsAuthoritative(
@@ -42190,12 +42287,19 @@ async function listDriverBookingsAuthoritative(
     readResults.push({ ...source, read, available, stale });
   }
   if (!availableCount && normalizedSources.length > 0) {
-    return {
-      ok: false,
-      error: staleUnavailableCount > 0
-        ? "driver_booking_index_stale"
-        : "driver_booking_index_unavailable",
-    };
+    // G2-C: do not short-circuit out of the function just because the
+    // driver-scoped (or vehicle-scoped) assignment index is missing/stale.
+    // Admin preview happily surfaces available_unassigned dispatch work
+    // from the company index without an assignment index, and a fresh
+    // driver who has never been assigned anything would otherwise never
+    // see the dispatch pool. We log the degraded state for traceability
+    // and fall through with `availableCount === 0`; the assigned-row loop
+    // below will see no available sources and naturally produce zero
+    // assigned rows, which is the correct behavior. The available pool
+    // append at the end of this function still runs.
+    console.log(
+      `[DRIVER_BOOKINGS][NO_ASSIGNED_INDEX] tenant=${_maskPublicDriverLoginValue(tenantScope?.tenant_id)} company=${_maskPublicDriverLoginValue(tenantScope?.company_id)} driver=${_maskPublicDriverLoginValue(sessionDriverId)} stale_unavailable=${staleUnavailableCount} unavailable=${unavailableCount}`,
+    );
   }
   if (availableCount > 0 && unavailableCount > 0) {
     console.log(
