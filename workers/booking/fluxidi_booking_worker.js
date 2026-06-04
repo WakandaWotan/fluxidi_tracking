@@ -41831,7 +41831,17 @@ function _driverBookingTripSignatureKey(row) {
 // signature. Emits a single compact diagnostic per drop. `logTag` lets the
 // caller distinguish driver vs company list traces in production logs.
 function _dedupeBookingListRowsByCanonicalTripSignature(rows, options = {}) {
-  if (!Array.isArray(rows) || rows.length < 2) return rows || [];
+  // G2-D: defensive copy. Callers that follow the pattern
+  //   const dedupedOut = _dedupeBookingListRowsByCanonicalTripSignature(out, ...);
+  //   out.length = 0;
+  //   for (const row of dedupedOut) out.push(row);
+  // would otherwise destroy the very rows they intended to dedupe whenever
+  // the early-return path triggered (rows.length < 2 returned the same
+  // array reference, so `out.length = 0` cleared `dedupedOut` too).
+  // Returning a fresh array is correct in both branches and removes the
+  // foot-gun for every existing and future caller.
+  if (!Array.isArray(rows)) return [];
+  if (rows.length < 2) return rows.slice();
   const logTag = safeStr(options?.logTag, 64) || "BOOKING_LIST";
   const bestBy = new Map();
   const order = [];
@@ -42455,6 +42465,25 @@ async function listDriverBookingsAuthoritative(
     });
   }
 
+  // G2-D: snapshot row counts immediately after the available pool was
+  // appended. Combined with [DRIVER_BOOKINGS][FINAL_RESPONSE] this makes it
+  // trivial to spot any row that goes missing between collection and the
+  // final response — a regression that previously surfaced when the dedupe
+  // helper returned `out` itself for length-1 inputs and the caller cleared
+  // `out` immediately after.
+  let postAppendAvailable = 0;
+  let postAppendAssigned = 0;
+  for (const row of out) {
+    if (row?.available_unassigned === true || row?.availableUnassigned === true) {
+      postAppendAvailable += 1;
+    } else {
+      postAppendAssigned += 1;
+    }
+  }
+  console.log(
+    `[DRIVER_BOOKINGS][POST_APPEND] tenant=${_maskPublicDriverLoginValue(tenantScope?.tenant_id)} company=${_maskPublicDriverLoginValue(tenantScope?.company_id)} driver=${_maskPublicDriverLoginValue(sessionDriverId)} count=${out.length} available=${postAppendAvailable} assigned=${postAppendAssigned}`,
+  );
+
   // G1: belt-and-braces dedup. After canonicalization the same trip should
   // only have one row, but if any pre-existing index pollution survived (e.g.
   // a UUID shadow row with no resolvable canonical id but the canonical row
@@ -42464,16 +42493,46 @@ async function listDriverBookingsAuthoritative(
   const dedupedOut = _dedupeBookingListRowsByCanonicalTripSignature(out, {
     logTag: "DRIVER_BOOKINGS",
   });
-  out.length = 0;
-  for (const row of dedupedOut) out.push(row);
 
-  out.sort((a, b) => {
+  dedupedOut.sort((a, b) => {
     const ta = a.pickup_iso ? Date.parse(a.pickup_iso) : Number.POSITIVE_INFINITY;
     const tb = b.pickup_iso ? Date.parse(b.pickup_iso) : Number.POSITIVE_INFINITY;
     return ta - tb;
   });
 
-  return { ok: true, items: out.slice(0, lim) };
+  // G2-D: log every row dropped by the final `slice(0, lim)` truncation so
+  // any future limit-related row loss is immediately visible. Dedupe drops
+  // are already covered by the helper's [DRIVER_BOOKINGS][DEDUP_CANONICAL]
+  // log line and are intentionally not duplicated here.
+  if (dedupedOut.length > lim) {
+    for (let i = lim; i < dedupedOut.length; i++) {
+      const truncated = dedupedOut[i];
+      const truncatedId = safeStr(
+        truncated?.booking_id ?? truncated?.bookingId,
+        160,
+      );
+      console.log(
+        `[DRIVER_BOOKINGS][FINAL_FILTER_SKIP] booking=${_bookingIntentMask(truncatedId)} reason=limit_truncated`,
+      );
+    }
+  }
+
+  const finalItems = dedupedOut.slice(0, lim);
+
+  let finalAvailable = 0;
+  let finalAssigned = 0;
+  for (const row of finalItems) {
+    if (row?.available_unassigned === true || row?.availableUnassigned === true) {
+      finalAvailable += 1;
+    } else {
+      finalAssigned += 1;
+    }
+  }
+  console.log(
+    `[DRIVER_BOOKINGS][FINAL_RESPONSE] tenant=${_maskPublicDriverLoginValue(tenantScope?.tenant_id)} company=${_maskPublicDriverLoginValue(tenantScope?.company_id)} driver=${_maskPublicDriverLoginValue(sessionDriverId)} count=${finalItems.length} available=${finalAvailable} assigned=${finalAssigned}`,
+  );
+
+  return { ok: true, items: finalItems };
 }
 
 // G2-A: admin/company-scoped read-only mirror of /driver/bookings for the
