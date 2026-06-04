@@ -19839,6 +19839,7 @@ GET /oauth/callback
 
       // Dynamic booking routes:
       // GET  /bookings/:id
+      // POST /bookings/:id/checkout-resume
       // POST /bookings/:id/status
       // POST /bookings/:id/payment
       // POST /bookings/:id/receipt/email
@@ -19869,6 +19870,53 @@ GET /oauth/callback
               ? 400
               : (out?.error === "forbidden" ? 403 : 200),
           );
+        }
+
+        if (
+          pathParts.length === 3 &&
+          pathParts[2] === "checkout-resume" &&
+          request.method === "POST"
+        ) {
+          const body = await safeJson(request);
+          const scopedRoute = requireExplicitBookingRouteScope({ request, url, body });
+          if (!scopedRoute.ok) return scopedRoute.response;
+          const tenantScope = scopedRoute.scope;
+          const adminAuthorized = hasValidAdminToken(request, url, env);
+          if (!adminAuthorized) {
+            let preloadedRec = null;
+            try {
+              const loaded = await loadBookingRecord(env, bookingId);
+              preloadedRec = loaded?.rec || null;
+            } catch (loadErr) {
+              if (String(loadErr?.message || "") === "Booking not found") {
+                return json({ ok: false, error: "booking_not_found" }, 404);
+              }
+              throw loadErr;
+            }
+            const proof = _requestCustomerContactProof({ url, body });
+            if (!customerProofMatchesBooking(preloadedRec, proof)) {
+              return json({ ok: false, error: "customer ownership verification failed" }, 403);
+            }
+          }
+          const out = await resumeBookingCheckoutAuthoritative(
+            bookingId,
+            env,
+            request,
+            tenantScope,
+            { resumeBody: body },
+          );
+          let statusCode = out?.ok ? 200 : 400;
+          if (out?.error === "missing_tenant_scope") statusCode = 400;
+          else if (out?.error === "forbidden") statusCode = 403;
+          else if (out?.error === "booking_not_found") statusCode = 404;
+          else if (out?.error === "payment_checkout_unavailable") statusCode = 502;
+          else if (
+            out?.error === "checkout_resume_not_eligible" ||
+            out?.error === "payment_already_paid"
+          ) {
+            statusCode = 409;
+          }
+          return json(out, statusCode);
         }
 
         if (
@@ -42872,6 +42920,470 @@ async function computeDashboardBookingsKpis(
     `[DASHBOARD_KPI][PROJECTION_USED] tenant=${_maskPublicDriverLoginValue(tenantScope.tenant_id)} company=${_maskPublicDriverLoginValue(tenantScope.company_id)} open=${consideredOpen}`,
   );
   return response;
+}
+
+function _readCheckoutUrlFromBookingRecord(rec) {
+  const booking = rec?.booking && typeof rec.booking === "object" ? rec.booking : {};
+  const payload = rec?.payload && typeof rec.payload === "object" ? rec.payload : {};
+  return normalizeMollieCheckoutUrl(
+    rec?.checkoutUrl ??
+      rec?.checkout_url ??
+      rec?.paymentUrl ??
+      rec?.payment_url ??
+      rec?.mollie?.checkout_url ??
+      rec?.mollie?.checkoutUrl ??
+      rec?.mollie?._links?.checkout?.href ??
+      booking?.checkoutUrl ??
+      booking?.checkout_url ??
+      booking?.paymentUrl ??
+      booking?.payment_url ??
+      booking?.mollie?.checkout_url ??
+      booking?.mollie?.checkoutUrl ??
+      booking?.mollie?._links?.checkout?.href ??
+      payload?.checkoutUrl ??
+      payload?.checkout_url,
+  );
+}
+
+function _isCheckoutResumePaidLikePaymentStatus(paymentStatus) {
+  const token = safeStr(paymentStatus, 40).toLowerCase();
+  return new Set([
+    "paid",
+    "settled",
+    "captured",
+    "completed",
+    "confirmed",
+    "success",
+  ]).has(token);
+}
+
+function _isBookingRecordMollieOnline(rec) {
+  const booking = rec?.booking && typeof rec.booking === "object" ? rec.booking : {};
+  const payload = rec?.payload && typeof rec.payload === "object" ? rec.payload : {};
+  const mode = safeStr(
+    rec?.payment_mode ??
+      rec?.paymentMode ??
+      booking?.payment_mode ??
+      booking?.paymentMode ??
+      payload?.payment_mode ??
+      payload?.paymentMode,
+    40,
+  ).toLowerCase();
+  const provider = safeStr(
+    rec?.payment_provider ??
+      rec?.paymentProvider ??
+      booking?.payment_provider ??
+      booking?.paymentProvider ??
+      payload?.payment_provider ??
+      payload?.paymentProvider,
+    40,
+  ).toLowerCase();
+  return mode === "mollie" || provider === "mollie";
+}
+
+function _extractMolliePaymentIdFromBookingRecord(rec) {
+  const booking = rec?.booking && typeof rec.booking === "object" ? rec.booking : {};
+  return safeStr(
+    rec?.mollie?.payment_id ??
+      rec?.mollie?.id ??
+      rec?.payment_id ??
+      rec?.paymentId ??
+      rec?.mollie_payment_id ??
+      rec?.molliePaymentId ??
+      booking?.mollie?.payment_id ??
+      booking?.mollie?.id ??
+      booking?.payment_id ??
+      booking?.paymentId,
+    120,
+  );
+}
+
+function _isMollieCheckoutReusableApiStatus(status) {
+  const token = safeStr(status, 40).toLowerCase();
+  return token === "open" || token === "pending" || token === "authorized";
+}
+
+function _ensureQuoteForMollieCheckoutResume(rec) {
+  const payload = rec?.payload && typeof rec.payload === "object" ? rec.payload : {};
+  const booking = rec?.booking && typeof rec.booking === "object" ? rec.booking : {};
+  let quote =
+    rec?.quote && typeof rec.quote === "object"
+      ? { ...rec.quote }
+      : (payload?.quote && typeof payload.quote === "object" ? { ...payload.quote } : null);
+  const priceInclRaw = Number(
+    quote?.price_incl_vat ??
+      rec?.price_incl_vat ??
+      booking?.price_incl_vat ??
+      rec?.amount ??
+      booking?.amount ??
+      null,
+  );
+  if (!Number.isFinite(priceInclRaw) || priceInclRaw <= 0) return null;
+  const returnInclRaw = Number(
+    quote?.return?.price_incl_vat ??
+      rec?.price_incl_vat_return ??
+      booking?.price_incl_vat_return ??
+      0,
+  );
+  const base = quote && typeof quote === "object" ? { ...quote } : {};
+  base.ok = true;
+  base.price_incl_vat = priceInclRaw;
+  if (Number.isFinite(returnInclRaw) && returnInclRaw > 0) {
+    base.return = {
+      ...(base.return && typeof base.return === "object" ? base.return : {}),
+      price_incl_vat: returnInclRaw,
+    };
+  }
+  return base;
+}
+
+function _buildMollieCheckoutResumePayload(rec, canonicalBookingId, tenantScope, resumeBody = null) {
+  const booking = rec?.booking && typeof rec.booking === "object" ? rec.booking : {};
+  const payload = rec?.payload && typeof rec.payload === "object" ? { ...rec.payload } : {};
+  const publicBookingReference = safeStr(
+    rec?.public_booking_reference ??
+      rec?.publicBookingReference ??
+      rec?.booking_reference ??
+      rec?.bookingReference ??
+      booking?.public_booking_reference ??
+      booking?.publicBookingReference ??
+      booking?.booking_reference ??
+      booking?.bookingReference,
+  );
+  const quote = _ensureQuoteForMollieCheckoutResume(rec);
+  const merged = {
+    ...payload,
+    from: safeStr(rec?.from ?? booking?.from ?? payload?.from),
+    to: safeStr(rec?.to ?? booking?.to ?? payload?.to),
+    pickup_iso: safeStr(
+      rec?.pickup_iso ??
+        rec?.pickupStartIso ??
+        booking?.pickup_iso ??
+        booking?.pickupStartIso ??
+        payload?.pickup_iso ??
+        payload?.pickupIso,
+    ),
+    date: safeStr(rec?.date ?? booking?.date ?? payload?.date),
+    time: safeStr(rec?.time ?? booking?.time ?? payload?.time),
+    tenant_id: safeStr(tenantScope?.tenant_id ?? rec?.tenant_id ?? rec?.tenantId ?? payload?.tenant_id),
+    tenantId: safeStr(tenantScope?.tenant_id ?? rec?.tenantId ?? rec?.tenant_id ?? payload?.tenantId),
+    company_id: safeStr(tenantScope?.company_id ?? rec?.company_id ?? rec?.companyId ?? payload?.company_id),
+    companyId: safeStr(tenantScope?.company_id ?? rec?.companyId ?? rec?.company_id ?? payload?.companyId),
+    booking_id: canonicalBookingId,
+    bookingId: canonicalBookingId,
+    __booking_id: canonicalBookingId,
+    return_url: safeStr(resumeBody?.return_url ?? resumeBody?.returnUrl ?? payload?.return_url ?? payload?.returnUrl),
+  };
+  if (publicBookingReference) {
+    merged.__public_booking_reference = publicBookingReference;
+    merged.public_booking_reference = publicBookingReference;
+    merged.publicBookingReference = publicBookingReference;
+    merged.booking_reference = publicBookingReference;
+    merged.bookingReference = publicBookingReference;
+  }
+  if (quote) merged.quote = quote;
+  return merged;
+}
+
+function _applyCheckoutResumeFieldsToCanonicalRecord(rec, {
+  checkoutUrl,
+  paymentBookingId,
+  molliePaymentId = null,
+  mollieStatus = null,
+  statusUrl = null,
+  amount = null,
+  preservedPaymentMethod = null,
+} = {}) {
+  const nowIso = new Date().toISOString();
+  const safeCheckout = normalizeMollieCheckoutUrl(checkoutUrl);
+  rec.payment_status = "pending";
+  rec.paymentStatus = "pending";
+  rec.payment_provider = "mollie";
+  rec.paymentProvider = "mollie";
+  rec.payment_mode = "mollie";
+  rec.paymentMode = "mollie";
+  rec.payment_booking_id = safeStr(paymentBookingId, 160) || null;
+  rec.paymentBookingId = rec.payment_booking_id;
+  if (safeCheckout) {
+    rec.checkout_url = safeCheckout;
+    rec.checkoutUrl = safeCheckout;
+    rec.payment_url = safeCheckout;
+    rec.paymentUrl = safeCheckout;
+  }
+  if (statusUrl) {
+    rec.status_url = safeStr(statusUrl, 2000) || null;
+    rec.statusUrl = rec.status_url;
+  }
+  if (amount != null) rec.amount = amount;
+  if (molliePaymentId) {
+    rec.payment_id = safeStr(molliePaymentId, 120);
+    rec.paymentId = rec.payment_id;
+    rec.mollie = rec.mollie && typeof rec.mollie === "object" ? { ...rec.mollie } : {};
+    rec.mollie.id = rec.payment_id;
+    rec.mollie.payment_id = rec.payment_id;
+    rec.mollie.status = safeStr(mollieStatus, 40) || "open";
+  }
+  const preservedMethod = normalizeBookingPaymentMethodId(preservedPaymentMethod);
+  if (preservedMethod) {
+    rec.payment_method = preservedMethod;
+    rec.paymentMethod = preservedMethod;
+  }
+  rec.updatedAt = nowIso;
+  rec.updated_at = nowIso;
+  if (rec.booking && typeof rec.booking === "object") {
+    rec.booking.payment_status = "pending";
+    rec.booking.paymentStatus = "pending";
+    rec.booking.payment_provider = "mollie";
+    rec.booking.paymentProvider = "mollie";
+    rec.booking.payment_mode = "mollie";
+    rec.booking.paymentMode = "mollie";
+    rec.booking.payment_booking_id = rec.payment_booking_id;
+    rec.booking.paymentBookingId = rec.paymentBookingId;
+    if (safeCheckout) {
+      rec.booking.checkout_url = safeCheckout;
+      rec.booking.checkoutUrl = safeCheckout;
+      rec.booking.payment_url = safeCheckout;
+      rec.booking.paymentUrl = safeCheckout;
+    }
+    if (statusUrl) {
+      rec.booking.status_url = rec.status_url;
+      rec.booking.statusUrl = rec.statusUrl;
+    }
+    if (molliePaymentId) {
+      rec.booking.payment_id = rec.payment_id;
+      rec.booking.paymentId = rec.paymentId;
+      rec.booking.mollie = rec.mollie;
+    }
+    if (preservedMethod) {
+      rec.booking.payment_method = preservedMethod;
+      rec.booking.paymentMethod = preservedMethod;
+    }
+    rec.booking.updatedAt = nowIso;
+    rec.booking.updated_at = nowIso;
+  }
+  if (rec.payload && typeof rec.payload === "object") {
+    rec.payload.payment_status = "pending";
+    rec.payload.paymentStatus = "pending";
+    rec.payload.payment_booking_id = rec.payment_booking_id;
+    rec.payload.paymentBookingId = rec.paymentBookingId;
+    if (safeCheckout) {
+      rec.payload.checkout_url = safeCheckout;
+      rec.payload.checkoutUrl = safeCheckout;
+    }
+  }
+}
+
+async function resumeBookingCheckoutAuthoritative(
+  bookingId,
+  env,
+  request,
+  tenantScope = null,
+  options = {},
+) {
+  if (!tenantScope?.hasScope) {
+    return missingTenantScopeError();
+  }
+  let key = "";
+  let rec = null;
+  try {
+    const loaded = await loadBookingRecord(env, bookingId);
+    key = loaded.key;
+    rec = loaded.rec;
+  } catch (loadErr) {
+    if (String(loadErr?.message || "") === "Booking not found") {
+      return { ok: false, error: "booking_not_found" };
+    }
+    throw loadErr;
+  }
+  if (!bookingMatchesRequiredTenantCompanyScope(rec, tenantScope)) {
+    return { ok: false, error: "forbidden" };
+  }
+  if (isTerminalLifecycleStatus(_bookingLifecycleValue(rec))) {
+    return {
+      ok: false,
+      error: "checkout_resume_not_eligible",
+      message: "Booking is no longer eligible for online payment resume",
+    };
+  }
+  if (!_isBookingRecordMollieOnline(rec)) {
+    return {
+      ok: false,
+      error: "checkout_resume_not_eligible",
+      message: "Booking is not an online Mollie checkout booking",
+    };
+  }
+  const booking = rec?.booking && typeof rec.booking === "object" ? rec.booking : {};
+  const payload = rec?.payload && typeof rec.payload === "object" ? rec.payload : {};
+  const paymentStatus = safeStr(
+    rec?.payment_status ??
+      rec?.paymentStatus ??
+      booking?.payment_status ??
+      booking?.paymentStatus ??
+      payload?.payment_status ??
+      payload?.paymentStatus,
+    40,
+  ).toLowerCase();
+  if (_isCheckoutResumePaidLikePaymentStatus(paymentStatus)) {
+    return {
+      ok: false,
+      error: "payment_already_paid",
+      message: "Booking payment is already completed",
+    };
+  }
+  const preservedPaymentMethod =
+    rec?.payment_method ??
+    rec?.paymentMethod ??
+    booking?.payment_method ??
+    booking?.paymentMethod ??
+    payload?.payment_method ??
+    payload?.paymentMethod ??
+    null;
+
+  const existingPaymentId = _extractMolliePaymentIdFromBookingRecord(rec);
+  let molliePaymentSnapshot = null;
+  if (existingPaymentId) {
+    try {
+      molliePaymentSnapshot = await mollieFetchPaymentJson(existingPaymentId, env);
+    } catch (fetchErr) {
+      console.log(
+        `[BOOKING][CHECKOUT_RESUME][MOLLIE_FETCH] booking=${_bookingIntentMask(bookingId)} payment=${_bookingIntentMask(existingPaymentId)} ok=false reason=${safeStr(fetchErr?.message || fetchErr, 120) || "fetch_failed"}`,
+      );
+      molliePaymentSnapshot = null;
+    }
+  }
+
+  if (molliePaymentSnapshot) {
+    const apiStatus = safeStr(molliePaymentSnapshot?.status, 40).toLowerCase();
+    if (_isCheckoutResumePaidLikePaymentStatus(apiStatus) || apiStatus === "paid") {
+      return {
+        ok: false,
+        error: "payment_already_paid",
+        message: "Mollie payment is already completed",
+      };
+    }
+    if (_isMollieCheckoutReusableApiStatus(apiStatus)) {
+      const checkoutUrl =
+        normalizeMollieCheckoutUrl(molliePaymentSnapshot?._links?.checkout?.href) ||
+        _readCheckoutUrlFromBookingRecord(rec);
+      if (checkoutUrl) {
+        const paymentBookingId = safeStr(
+          rec?.payment_booking_id ?? rec?.paymentBookingId,
+          160,
+        ) || null;
+        console.log(
+          `[BOOKING][CHECKOUT_RESUME][REUSED] booking=${_bookingIntentMask(bookingId)} payment=${_bookingIntentMask(existingPaymentId)} status=${apiStatus || "-"} hasCheckout=true`,
+        );
+        const freshCheckout = normalizeMollieCheckoutUrl(
+          molliePaymentSnapshot?._links?.checkout?.href,
+        );
+        const storedCheckout = _readCheckoutUrlFromBookingRecord(rec);
+        if (freshCheckout && freshCheckout !== storedCheckout) {
+          _applyCheckoutResumeFieldsToCanonicalRecord(rec, {
+            checkoutUrl: freshCheckout,
+            paymentBookingId,
+            molliePaymentId: existingPaymentId,
+            mollieStatus: apiStatus,
+            preservedPaymentMethod,
+          });
+          await env.BOOKING_KV.put(key, JSON.stringify(rec));
+        }
+        return {
+          ok: true,
+          booking_id: bookingId,
+          bookingId,
+          checkout_url: checkoutUrl,
+          checkoutUrl,
+          payment_booking_id: paymentBookingId,
+          paymentBookingId,
+          payment_status: "pending",
+          paymentStatus: "pending",
+          reused: true,
+        };
+      }
+    }
+  }
+
+  const resumePayload = _buildMollieCheckoutResumePayload(
+    rec,
+    bookingId,
+    tenantScope,
+    options?.resumeBody,
+  );
+  if (
+    !resumePayload?.from ||
+    !resumePayload?.to ||
+    (!(resumePayload?.date && resumePayload?.time) && !resumePayload?.pickup_iso) ||
+    !resumePayload?.quote?.price_incl_vat
+  ) {
+    return {
+      ok: false,
+      error: "checkout_resume_insufficient_data",
+      message: "Booking is missing route, schedule, or pricing data required to recreate checkout",
+    };
+  }
+
+  const pay = await mollieCreatePayment(resumePayload, env, request);
+  const checkoutUrl = readMollieCheckoutUrlFromPaymentResult(pay);
+  if (pay?.ok !== true || !checkoutUrl) {
+    console.log(
+      `[BOOKING][CHECKOUT_RESUME][RECREATE_FAILED] booking=${_bookingIntentMask(bookingId)} payOk=${pay?.ok === true} payError=${safeStr(pay?.error || pay?.message, 80) || "-"} hasCheckout=${!!checkoutUrl}`,
+    );
+    return {
+      ok: false,
+      error: "payment_checkout_unavailable",
+      message: safeStr(pay?.message || pay?.error, 180) || "Online payment checkout could not be created",
+    };
+  }
+
+  const paymentBookingId = safeStr(pay?.bookingId, 160) || null;
+  let molliePaymentId = existingPaymentId || null;
+  let mollieStatus = "open";
+  if (paymentBookingId) {
+    try {
+      const paymentKv = await env.BOOKING_KV.get(`booking:${paymentBookingId}`, { type: "json" });
+      const kvPaymentId = safeStr(
+        paymentKv?.mollie?.payment_id ??
+          paymentKv?.mollie?.id ??
+          paymentKv?.payment_id ??
+          paymentKv?.paymentId,
+        120,
+      );
+      if (kvPaymentId) {
+        molliePaymentId = kvPaymentId;
+        mollieStatus = safeStr(paymentKv?.mollie?.status ?? paymentKv?.payment_status, 40) || "open";
+      }
+    } catch (_) {
+      // Best-effort only; canonical record still gets checkout URL.
+    }
+  }
+
+  _applyCheckoutResumeFieldsToCanonicalRecord(rec, {
+    checkoutUrl,
+    paymentBookingId,
+    molliePaymentId,
+    mollieStatus,
+    statusUrl: pay?.statusUrl || pay?.status_url || null,
+    amount: pay?.amount || null,
+    preservedPaymentMethod,
+  });
+  await env.BOOKING_KV.put(key, JSON.stringify(rec));
+
+  console.log(
+    `[BOOKING][CHECKOUT_RESUME][RECREATED] booking=${_bookingIntentMask(bookingId)} paymentBooking=${_bookingIntentMask(paymentBookingId)} molliePayment=${_bookingIntentMask(molliePaymentId)} hasCheckout=true`,
+  );
+
+  return {
+    ok: true,
+    booking_id: bookingId,
+    bookingId,
+    checkout_url: checkoutUrl,
+    checkoutUrl,
+    payment_booking_id: paymentBookingId,
+    paymentBookingId,
+    payment_status: "pending",
+    paymentStatus: "pending",
+    reused: false,
+  };
 }
 
 async function getBookingAuthoritative(bookingId, env, tenantScope = null, preloadedRec = null) {
