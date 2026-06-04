@@ -959,8 +959,58 @@ export class FleetAllocatorDO {
       .filter((v) => !occupiedAssignedIds.has(v.vehicle_id))
       .sort((a, b) => String(a.vehicle_id).localeCompare(String(b.vehicle_id)));
     const availableSlots = freeVehicles.length - overlappingUnassignedDemand;
+    // G3-H: per-vehicle diagnostics over the suitable pool, showing why
+    // each candidate is or is not in `freeVehicles`. The freeVehicles
+    // filter currently only excludes vehicles whose vehicle_id is in
+    // `occupiedAssignedIds` (assigned conflicts). Capacity/driver
+    // availability/tier/service are already enforced upstream:
+    //   - capacity by _vehicleSupportsRequest (suitableVehicles)
+    //   - driver availability by _loadVehicleInventory
+    //   - tier/service are not currently enforced as gates inside
+    //     _vehicleSupportsRequest, so we surface them as "-"/true with
+    //     vehicle_tier present so an operator can sanity-check.
+    // No behavior change. Wrapped in try/catch so logging failures can
+    // never affect allocation.
+    try {
+      for (const _evalV of suitableVehicles) {
+        const _evalVehicleIdMasked = _bookingIntentMask(_evalV?.vehicle_id);
+        const _evalDriverIdRaw = safeStr(
+          _evalV?.assigned_driver?.driver_id ??
+            _evalV?.assigned_driver?.driverId ??
+            _evalV?.assigned_driver?.id ??
+            _evalV?.assignedDriver?.driver_id ??
+            _evalV?.assignedDriver?.driverId ??
+            _evalV?.driver_id ??
+            _evalV?.driverId,
+          96,
+        );
+        const _evalDriverPresent = !!_evalDriverIdRaw;
+        const _evalAssignedOverlap = occupiedAssignedIds.has(_evalV?.vehicle_id);
+        const _evalVehicleTier = safeStr(_evalV?.tier, 24) || "*";
+        const _evalTierOk =
+          _evalVehicleTier === "*" || _evalVehicleTier === _diagReqTier;
+        const _evalIncludedFree = !_evalAssignedOverlap;
+        let _evalExcludeReason = "-";
+        if (!_evalIncludedFree) _evalExcludeReason = "assigned_overlap";
+        console.log(
+          `[FLEET_ALLOCATOR][FREE_VEHICLE_EVAL] booking=${_selfDemandMaskedBookingId} vehicle=${_evalVehicleIdMasked} driver_present=${_evalDriverPresent ? "true" : "false"} capacity_ok=true tier_ok=${_evalTierOk ? "true" : "false"} service_ok=true assigned_overlap=${_evalAssignedOverlap ? "true" : "false"} driver_available=true included_free=${_evalIncludedFree ? "true" : "false"} exclude_reason=${_evalExcludeReason}`,
+        );
+      }
+      console.log(
+        `[FLEET_ALLOCATOR][SLOT_MATH] booking=${_selfDemandMaskedBookingId} vehicle_count=${vehicles.length} suitable_count=${suitableVehicles.length} free_vehicle_count=${freeVehicles.length} occupied_assigned_count=${occupiedAssignedIds.size} overlapping_unassigned_demand=${overlappingUnassignedDemand} total_overlapping_demand=${_selfDemandTotalOverlapping} excluded_self=${_selfDemandExcluded} available_slots=${availableSlots} reason=pre_capacity_decision`,
+      );
+    } catch (_) {
+      // Diagnostics only; never affect allocation.
+    }
     const etaEvaluation = await _evaluateFleetAvailability(this.env, req);
     if (availableSlots <= 0 || freeVehicles.length === 0) {
+      try {
+        console.log(
+          `[FLEET_ALLOCATOR][CAPACITY_REJECT_CONTEXT] booking=${_selfDemandMaskedBookingId} reject_path=available_slots_or_free_vehicles_zero source=- vehicle_count=${vehicles.length} suitable_count=${suitableVehicles.length} free_vehicle_count=${freeVehicles.length} occupied_assigned_count=${occupiedAssignedIds.size} overlapping_unassigned_demand=${overlappingUnassignedDemand} total_overlapping_demand=${_selfDemandTotalOverlapping} excluded_self=${_selfDemandExcluded} available_slots=${availableSlots}`,
+        );
+      } catch (_) {
+        // Diagnostics only.
+      }
       console.log(
         `[FLEET_ALLOCATOR][NO_SUITABLE_VEHICLE] tenant=${_diagTenantMask} company=${_diagCompanyMask} reason=vehicle_capacity_exceeded vehicle_count=${vehicles.length} suitable_count=${suitableVehicles.length} occupied_assigned_count=${occupiedAssignedIds.size} overlapping_unassigned_demand=${overlappingUnassignedDemand} available_slots=${Math.max(0, availableSlots)} req_pax=${_diagReqPax} req_bags=${_diagReqBags} req_tier=${_diagReqTier}`,
       );
@@ -1137,6 +1187,13 @@ export class FleetAllocatorDO {
     const etaChosenVehicleId = safeStr(etaEvaluation?.next_vehicle_candidate?.vehicle_id, 120);
     const chosen = freeVehicles.find((v) => v.vehicle_id === etaChosenVehicleId);
     if (!chosen) {
+      try {
+        console.log(
+          `[FLEET_ALLOCATOR][CAPACITY_REJECT_CONTEXT] booking=${_selfDemandMaskedBookingId} reject_path=eta_candidate_missing source=${safeStr(etaEvaluation?.source, 40) || "-"} vehicle_count=${vehicles.length} suitable_count=${suitableVehicles.length} free_vehicle_count=${freeVehicles.length} occupied_assigned_count=${occupiedAssignedIds.size} overlapping_unassigned_demand=${overlappingUnassignedDemand} total_overlapping_demand=${_selfDemandTotalOverlapping} excluded_self=${_selfDemandExcluded} available_slots=${availableSlots} eta_candidate=${_bookingIntentMask(etaChosenVehicleId)}`,
+        );
+      } catch (_) {
+        // Diagnostics only.
+      }
       console.log(
         `[FLEET_ALLOCATOR][NO_SUITABLE_VEHICLE] tenant=${_diagTenantMask} company=${_diagCompanyMask} reason=vehicle_capacity_exceeded stage=eta_candidate_missing vehicle_count=${vehicles.length} suitable_count=${suitableVehicles.length} free_count=${freeVehicles.length} eta_candidate=${_bookingIntentMask(etaChosenVehicleId)} req_pax=${_diagReqPax} req_bags=${_diagReqBags} req_tier=${_diagReqTier}`,
       );
