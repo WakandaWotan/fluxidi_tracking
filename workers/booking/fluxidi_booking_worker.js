@@ -802,6 +802,96 @@ export class FleetAllocatorDO {
       }
       if (suitableVehicles.some((v) => _vehicleSupportsRequest(v, d))) {
         overlappingUnassignedDemand += 1;
+        // G3-F: diagnostics-only. Explain WHY this demand row is counted
+        // as competing overlapping unassigned demand. The previous
+        // [UNASSIGNED_DEMAND_COUNT] only gives totals; this log surfaces
+        // the specific demand row(s) so we can see whether the remaining
+        // counted row is a sibling/leg/shadow of the booking under
+        // decision (then G3-G expands self-exclusion) or a genuine other
+        // ride competing for the same slot. Coordinates / addresses are
+        // never logged here. Ids are masked via _bookingIntentMask.
+        try {
+          const _diagDemandIdRaw =
+            d?.booking_id ?? d?.bookingId ?? d?.id ?? "";
+          const _diagDemandParentRaw =
+            d?.parent_booking_id ?? d?.parentBookingId ?? "";
+          const _diagDemandCanonicalRaw =
+            d?.canonical_booking_id ??
+            d?.canonicalBookingId ??
+            d?.original_booking_id ??
+            d?.originalBookingId ??
+            "";
+          const _diagDemandLegRaw = d?.leg_id ?? d?.legId ?? "";
+          const _diagDemandPaymentRaw =
+            d?.payment_booking_id ??
+            d?.paymentBookingId ??
+            d?.shadow_booking_id ??
+            d?.shadowBookingId ??
+            "";
+          const _diagDemandPublicRaw =
+            d?.public_booking_id ?? d?.publicBookingId ?? "";
+          const _diagDemandPickupMs = Number(d?.pickupMs);
+          const _diagDemandPickupIso = Number.isFinite(_diagDemandPickupMs)
+            ? new Date(_diagDemandPickupMs).toISOString()
+            : "-";
+          const _diagDemandServiceMin = Math.max(
+            1,
+            Number(d?.serviceMin) || 1,
+          );
+          const _diagDemandHasAssignedVehicle = !!safeStr(
+            d?.assigned_vehicle_id ?? d?.assignedVehicleId,
+            120,
+          );
+          const _diagDemandHasAssignedDriver = !!safeStr(
+            d?.assigned_driver_id ?? d?.assignedDriverId,
+            120,
+          );
+          console.log(
+            `[FLEET_ALLOCATOR][UNASSIGNED_DEMAND_COUNTED] current=${_selfDemandMaskedBookingId} demand=${_bookingIntentMask(_diagDemandIdRaw)} parent=${_bookingIntentMask(_diagDemandParentRaw)} canonical=${_bookingIntentMask(_diagDemandCanonicalRaw)} leg=${_bookingIntentMask(_diagDemandLegRaw)} payment=${_bookingIntentMask(_diagDemandPaymentRaw)} public=${_bookingIntentMask(_diagDemandPublicRaw)} pickup_iso=${_diagDemandPickupIso} service_min=${_diagDemandServiceMin} assigned_vehicle_present=${_diagDemandHasAssignedVehicle ? "true" : "false"} assigned_driver_present=${_diagDemandHasAssignedDriver ? "true" : "false"} reason=counted_other`,
+          );
+          // Compact relation diagnostic between the booking under
+          // decision and this counted demand row. Surfaces id-shape
+          // overlaps that _demandItemMatchesCurrentBooking did NOT
+          // already match (e.g. shared shadow / parent-of-leg).
+          const _diagCurrentSafe = safeStr(bookingId, 160);
+          const _diagDemandIdSafe = safeStr(_diagDemandIdRaw, 160);
+          const _diagDemandParentSafe = safeStr(_diagDemandParentRaw, 160);
+          const _diagDemandCanonicalSafe = safeStr(
+            _diagDemandCanonicalRaw,
+            160,
+          );
+          const _diagDemandLegSafe = safeStr(_diagDemandLegRaw, 160);
+          const _diagDemandPaymentSafe = safeStr(_diagDemandPaymentRaw, 160);
+          const _diagDemandCanonicalDerived =
+            _dashboardCanonicalBookingNumber(_diagDemandIdSafe) ||
+            _dashboardCanonicalBookingNumber(_diagDemandParentSafe) ||
+            _dashboardCanonicalBookingNumber(_diagDemandCanonicalSafe) ||
+            _dashboardCanonicalBookingNumber(_diagDemandLegSafe) ||
+            "";
+          const _diagSameDashboardCanonical =
+            !!_selfDemandCanonicalId &&
+            !!_diagDemandCanonicalDerived &&
+            _diagDemandCanonicalDerived === _selfDemandCanonicalId;
+          const _diagSameParent =
+            !!_diagDemandParentSafe &&
+            !!_diagCurrentSafe &&
+            _diagDemandParentSafe === _diagCurrentSafe;
+          const _diagSameLegParent =
+            !!_diagDemandLegSafe &&
+            !!_diagCurrentSafe &&
+            (_diagDemandLegSafe === _diagCurrentSafe ||
+              _diagDemandLegSafe.startsWith(`${_diagCurrentSafe}:`) ||
+              _diagDemandLegSafe.startsWith(`${_diagCurrentSafe}-`));
+          const _diagSamePaymentShadow =
+            !!_diagDemandPaymentSafe &&
+            !!_diagCurrentSafe &&
+            _diagDemandPaymentSafe === _diagCurrentSafe;
+          console.log(
+            `[FLEET_ALLOCATOR][UNASSIGNED_DEMAND_RELATION] current=${_selfDemandMaskedBookingId} demand=${_bookingIntentMask(_diagDemandIdRaw)} same_dashboard_canonical=${_diagSameDashboardCanonical ? "true" : "false"} same_parent=${_diagSameParent ? "true" : "false"} same_leg_parent=${_diagSameLegParent ? "true" : "false"} same_payment_shadow=${_diagSamePaymentShadow ? "true" : "false"}`,
+          );
+        } catch (_) {
+          // Diagnostics only; never affect allocation.
+        }
       }
     }
     console.log(
