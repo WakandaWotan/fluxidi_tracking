@@ -32,6 +32,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
       );
   bool _refreshing = false;
   bool _cancelling = false;
+  bool _resumingOnlinePayment = false;
   bool _ratingSubmitting = false;
   bool _ratingSessionChecked = false;
   bool _hasValidRatingSession = false;
@@ -518,6 +519,209 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
           ),
         ),
       );
+    }
+  }
+
+  String? _safeMollieCheckoutUrl(String? raw) {
+    final trimmed = raw?.trim() ?? '';
+    if (trimmed.isEmpty) return null;
+    final uri = Uri.tryParse(trimmed);
+    if (uri == null) return null;
+    if (uri.scheme.toLowerCase() != 'https') return null;
+    final host = uri.host.toLowerCase();
+    if (host.isEmpty || !host.contains('mollie')) return null;
+    return uri.toString();
+  }
+
+  String? _readCheckoutUrlFromResumeResponse(Map<String, dynamic> decoded) {
+    for (final key in const [
+      'checkout_url',
+      'checkoutUrl',
+      'payment_url',
+      'paymentUrl',
+    ]) {
+      final safe = _safeMollieCheckoutUrl(decoded[key]?.toString());
+      if (safe != null) return safe;
+    }
+    return null;
+  }
+
+  Map<String, String>? _customerBookingDetailScopeQuery(
+    CustomerBookingView view,
+  ) {
+    final scopeSource = <String, dynamic>{
+      ...view.source,
+      'record': view.record,
+      'booking': view.booking,
+    };
+    final tenantFromStored = _cancelScopeFirstNonEmpty(scopeSource, const [
+      'tenant_id',
+      'tenantId',
+      'record.tenant_id',
+      'record.tenantId',
+      'record.booking.tenant_id',
+      'record.booking.tenantId',
+      'record.payload.tenant_id',
+      'record.payload.tenantId',
+      'booking.tenant_id',
+      'booking.tenantId',
+      'payload.tenant_id',
+      'payload.tenantId',
+      'data.tenant_id',
+      'data.tenantId',
+      'data.record.tenant_id',
+      'data.record.tenantId',
+    ]);
+    final companyFromStored = _cancelScopeFirstNonEmpty(scopeSource, const [
+      'company_id',
+      'companyId',
+      'record.company_id',
+      'record.companyId',
+      'record.booking.company_id',
+      'record.booking.companyId',
+      'record.payload.company_id',
+      'record.payload.companyId',
+      'booking.company_id',
+      'booking.companyId',
+      'payload.company_id',
+      'payload.companyId',
+      'data.company_id',
+      'data.companyId',
+      'data.record.company_id',
+      'data.record.companyId',
+    ]);
+    if (tenantFromStored.isNotEmpty && companyFromStored.isNotEmpty) {
+      return <String, String>{
+        'tenant_id': tenantFromStored,
+        'company_id': companyFromStored,
+        'tenantId': tenantFromStored,
+        'companyId': companyFromStored,
+      };
+    }
+    return _activeBookingScopeQuery();
+  }
+
+  bool _canShowResumeOnlinePayment({
+    required bool paid,
+    required bool partiallyPaid,
+    required bool onlinePending,
+    required CustomerBookingView view,
+  }) {
+    if (paid || partiallyPaid) return false;
+    final isMollie =
+        view.paymentProvider == 'mollie' || view.paymentMode == 'mollie';
+    if (onlinePending) return true;
+    if (isMollie) return true;
+    return false;
+  }
+
+  void _showResumeOnlinePaymentErrorSnackbar(BuildContext context) {
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          _t(
+            nl: 'Online betaling hervatten lukt niet. Probeer opnieuw of neem contact op met het taxibedrijf.',
+            en: 'Could not resume the online payment. Try again or contact the taxi company.',
+            fr: 'Impossible de reprendre le paiement en ligne. Reessayez ou contactez la societe de taxi.',
+            es: 'No se pudo reanudar el pago online. Intentalo de nuevo o contacta con la empresa de taxi.',
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _resumeOnlinePayment(
+    BuildContext context,
+    CustomerBookingView view,
+  ) async {
+    if (_resumingOnlinePayment) return;
+    setState(() => _resumingOnlinePayment = true);
+    try {
+      final scope = _customerBookingDetailScopeQuery(view);
+      if (scope == null) {
+        _showResumeOnlinePaymentErrorSnackbar(context);
+        return;
+      }
+      final aliases = _customerBookingDeleteAliases(
+        bookingId: widget.bookingId,
+        publicBookingReference: view.publicBookingReference,
+        bookingReference: view.publicBookingReference,
+        publicReference: view.publicBookingReference,
+        planningReference: view.planningReference,
+        receiptReference: view.receiptReference,
+        source: view.source,
+      );
+      final proof = await _customerOwnershipProof(
+        bookingId: widget.bookingId,
+        aliases: aliases,
+        fallbackEmail: view.customerEmail,
+        fallbackPhone: view.customerPhone,
+        source: view.source,
+      );
+      final candidates = _cancelBookingIdCandidates(widget.bookingId);
+      String? checkoutUrl;
+      for (final candidateId in candidates) {
+        final payload = <String, dynamic>{
+          'booking_id': candidateId,
+          'tenant_id': scope['tenant_id'],
+          'company_id': scope['company_id'],
+          'tenantId': scope['tenantId'],
+          'companyId': scope['companyId'],
+          if (proof['customer_email'] != null)
+            'customer_email': proof['customer_email'],
+          if (proof['customer_phone'] != null)
+            'customer_phone': proof['customer_phone'],
+        };
+        final scopedQuery = <String, String>{...scope, ...proof};
+        final uri = Uri.parse(
+          '$kBookingBaseUrl/bookings/${Uri.encodeComponent(candidateId)}/checkout-resume',
+        ).replace(queryParameters: scopedQuery);
+        final res = await http
+            .post(uri, headers: _cancelHeaders(), body: jsonEncode(payload))
+            .timeout(const Duration(seconds: 20));
+        dynamic decoded;
+        try {
+          decoded = jsonDecode(utf8.decode(res.bodyBytes));
+        } catch (_) {
+          decoded = null;
+        }
+        final decodedMap = decoded is Map
+            ? Map<String, dynamic>.from(decoded)
+            : const <String, dynamic>{};
+        final ok = decodedMap['ok'] == true;
+        final candidateCheckoutUrl = ok
+            ? _readCheckoutUrlFromResumeResponse(decodedMap)
+            : null;
+        debugPrint(
+          '[CUSTOMER_BOOKING][CHECKOUT_RESUME] candidate=${_safeRefPreview(candidateId)} code=${res.statusCode} ok=$ok hasCheckout=${candidateCheckoutUrl != null}',
+        );
+        if (res.statusCode >= 200 &&
+            res.statusCode < 300 &&
+            ok &&
+            candidateCheckoutUrl != null) {
+          checkoutUrl = candidateCheckoutUrl;
+          break;
+        }
+      }
+      if (checkoutUrl == null) {
+        if (context.mounted) {
+          _showResumeOnlinePaymentErrorSnackbar(context);
+        }
+        return;
+      }
+      if (!context.mounted) return;
+      await _openExternalUrl(context, checkoutUrl);
+      unawaited(_refresh());
+    } catch (err) {
+      debugPrint('[CUSTOMER_BOOKING][CHECKOUT_RESUME][ERR] $err');
+      if (context.mounted) {
+        _showResumeOnlinePaymentErrorSnackbar(context);
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _resumingOnlinePayment = false);
+      }
     }
   }
 
@@ -2160,7 +2364,12 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
             final onlinePending = _isOnlinePendingCustomerPaymentDisplayToken(
               paymentToken,
             );
-            final resumeCheckoutUrl = onlinePending ? v.checkoutUrl : null;
+            final showResumeOnlinePayment = _canShowResumeOnlinePayment(
+              paid: paid,
+              partiallyPaid: partiallyPaid,
+              onlinePending: onlinePending,
+              view: v,
+            );
             final paymentStatusLabel = paid
                 ? _t(nl: 'Betaald', en: 'Paid', fr: 'Paye', es: 'Pagado')
                 : (partiallyPaid
@@ -2372,13 +2581,14 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                             style: TextStyle(color: palette.textPrimary),
                           ),
                         ),
-                      if (resumeCheckoutUrl != null) ...[
+                      if (showResumeOnlinePayment) ...[
                         Container(
                           margin: const EdgeInsets.only(bottom: 12),
                           width: double.infinity,
                           child: FilledButton.icon(
-                            onPressed: () =>
-                                _openExternalUrl(context, resumeCheckoutUrl),
+                            onPressed: _resumingOnlinePayment
+                                ? null
+                                : () => _resumeOnlinePayment(context, v),
                             style: FilledButton.styleFrom(
                               backgroundColor: palette.gold.withOpacity(0.92),
                               foregroundColor: palette.background,
@@ -2387,14 +2597,32 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                                 borderRadius: BorderRadius.circular(12),
                               ),
                             ),
-                            icon: const Icon(Icons.open_in_new),
+                            icon: _resumingOnlinePayment
+                                ? SizedBox(
+                                    width: 16,
+                                    height: 16,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      color: palette.background.withOpacity(
+                                        0.92,
+                                      ),
+                                    ),
+                                  )
+                                : const Icon(Icons.open_in_new),
                             label: Text(
-                              _t(
-                                nl: 'Online betaling hervatten',
-                                en: 'Resume online payment',
-                                fr: 'Reprendre le paiement en ligne',
-                                es: 'Reanudar pago online',
-                              ),
+                              _resumingOnlinePayment
+                                  ? _t(
+                                      nl: 'Betaling voorbereiden...',
+                                      en: 'Preparing payment...',
+                                      fr: 'Preparation du paiement...',
+                                      es: 'Preparando pago...',
+                                    )
+                                  : _t(
+                                      nl: 'Online betaling hervatten',
+                                      en: 'Resume online payment',
+                                      fr: 'Reprendre le paiement en ligne',
+                                      es: 'Reanudar pago online',
+                                    ),
                             ),
                           ),
                         ),
