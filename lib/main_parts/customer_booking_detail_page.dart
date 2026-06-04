@@ -661,6 +661,8 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
       );
       final candidates = _cancelBookingIdCandidates(widget.bookingId);
       String? checkoutUrl;
+      String? resumePaymentBookingId;
+      String? resumeCanonicalBookingId;
       for (final candidateId in candidates) {
         final payload = <String, dynamic>{
           'booking_id': candidateId,
@@ -701,6 +703,22 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
             ok &&
             candidateCheckoutUrl != null) {
           checkoutUrl = candidateCheckoutUrl;
+          resumePaymentBookingId =
+              (decodedMap['payment_booking_id'] ??
+                      decodedMap['paymentBookingId'] ??
+                      '')
+                  .toString()
+                  .trim();
+          if (resumePaymentBookingId.isEmpty) resumePaymentBookingId = null;
+          resumeCanonicalBookingId =
+              (decodedMap['booking_id'] ??
+                      decodedMap['bookingId'] ??
+                      candidateId)
+                  .toString()
+                  .trim();
+          if (resumeCanonicalBookingId.isEmpty) {
+            resumeCanonicalBookingId = candidateId;
+          }
           break;
         }
       }
@@ -711,6 +729,30 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
         return;
       }
       if (!context.mounted) return;
+      // G3-K: Arm the global pending-payment notifier so payment_return.dart's
+      // lifecycle reconciler will poll /pay/status with the NEW resume
+      // paymentBookingId once the customer returns from the Mollie checkout.
+      // This is the customer-facing resume retry path: if Mollie's in-app
+      // browser closes via "Done" without firing the deep-link redirect, the
+      // worker /pay/return page never runs; only the lifecycle reconciler can
+      // then trigger /pay/status, which in turn drives
+      // finalizeResumePaidPaymentToCanonical (idempotent) and the
+      // ensurePaidOpenBookingAutoDispatched helper. Without this primer the
+      // canonical booking stayed payment_status=pending and the driver
+      // never saw the ride.
+      if (resumePaymentBookingId != null && resumePaymentBookingId.isNotEmpty) {
+        setFluxidiPendingPayment(
+          paymentBookingId: resumePaymentBookingId,
+          publicBookingId: resumeCanonicalBookingId,
+        );
+        debugPrint(
+          '[PAYMENT_RESUME][PRIMED] paymentBooking=${_safeRefPreview(resumePaymentBookingId)} canonical=${_safeRefPreview(resumeCanonicalBookingId ?? "")}',
+        );
+      } else {
+        debugPrint(
+          '[PAYMENT_RESUME][NO_PAYMENT_ID] canonical=${_safeRefPreview(resumeCanonicalBookingId ?? "")} reason=missing_payment_booking_id_in_response',
+        );
+      }
       await _openExternalUrl(context, checkoutUrl);
       unawaited(_refresh());
     } catch (err) {

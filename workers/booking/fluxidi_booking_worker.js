@@ -28422,6 +28422,67 @@ async function mollieWebhook(request, env) {
       bookingScope,
     );
 
+    // G3-K: defensive resume-finalize safety net.
+    //
+    // Webhook design (line above): "/pay/status is the single 'finalizer'".
+    // That holds for the happy path because the Mollie redirect lands on the
+    // worker /pay/return page, which polls /pay/status which runs finalize.
+    //
+    // The retry/resume case can break that contract: when the customer
+    // resumes payment via /bookings/:id/checkout-resume, a new payment-shadow
+    // is created with payload.__checkout_resume=true, and the canonical
+    // record's payment_booking_id is updated to point at it. If the in-app
+    // browser closes after "Done" without honoring Mollie's redirect, neither
+    // the worker /pay/return page nor the Flutter client polls /pay/status
+    // for that paymentBookingId, so the canonical record stays
+    // payment_status=pending forever and the driver never sees the ride.
+    //
+    // We restrict this fallback STRICTLY to resumed payment-shadow records
+    // (isResumedMolliePaymentRecord). The full handleBooking pipeline is NOT
+    // re-run here; finalizeBookingFromStored short-circuits to
+    // finalizeResumePaidPaymentToCanonical, which:
+    //   - holds the confirming_at lock (no double finalize),
+    //   - short-circuits when canonical already paid (no double charge,
+    //     no duplicate canonical record),
+    //   - reuses the existing paid-resume index/dispatch helpers,
+    //   - never creates new Mollie payments.
+    // Logging is masked via _bookingIntentMask. No PII in this branch.
+    let paymentResumeFinalize = "skipped";
+    let paymentResumeCanonical = null;
+    if (mollieStatus === "paid" && isResumedMolliePaymentRecord(stored, bookingId)) {
+      try {
+        const finalizeResult = await finalizeBookingFromStored(stored, env, request, {
+          bypassLock: false,
+          paymentBookingId: bookingId,
+          tenantScope: bookingScope,
+        });
+        if (finalizeResult?.updatedStored) {
+          await env.BOOKING_KV.put(
+            key,
+            JSON.stringify(finalizeResult.updatedStored),
+            { expirationTtl: 60 * 60 * 24 * 30 },
+          );
+        }
+        paymentResumeFinalize = finalizeResult?.already
+          ? "already_paid"
+          : finalizeResult?.alreadyRunning
+            ? "already_running"
+            : finalizeResult?.ok
+              ? "applied"
+              : "failed";
+        paymentResumeCanonical = safeStr(finalizeResult?.canonicalBookingId, 160) || null;
+      } catch (resumeFinalizeErr) {
+        const reason = safeStr(resumeFinalizeErr?.message || resumeFinalizeErr, 140) || "exception";
+        paymentResumeFinalize = "error";
+        console.log(
+          `[PAYMENT_RESUME][WEBHOOK_FINALIZE_ERROR] paymentBooking=${_bookingIntentMask(bookingId)} reason=${reason}`,
+        );
+      }
+      console.log(
+        `[PAYMENT_RESUME][WEBHOOK_FINALIZE] paymentBooking=${_bookingIntentMask(bookingId)} canonical=${_bookingIntentMask(paymentResumeCanonical)} outcome=${paymentResumeFinalize}`,
+      );
+    }
+
     return { ok: true, received: true, processed: true, bookingId, mollieStatus, action: "status-updated" };
   } catch (e) {
     // Mollie expects 200. We still return ok-ish to avoid retries storms.
@@ -49866,6 +49927,10 @@ async function finalizeResumePaidPaymentToCanonical(stored, env, request, opts =
   stored.finalize_debug.payment_booking_id = paymentBookingId || null;
   stored.finalize_debug.canonical_booking_id = canonicalBookingId || null;
 
+  console.log(
+    `[PAYMENT_FINALIZE][RESUME_INVOKE] paymentBooking=${_bookingIntentMask(paymentBookingId)} canonical=${_bookingIntentMask(canonicalBookingId)} hasTenantScope=${opts?.tenantScope?.hasScope === true}`,
+  );
+
   if (!paymentBookingId || !canonicalBookingId) {
     stored.confirm_error = "resume_finalize_missing_canonical_booking_id";
     stored.finalize_debug.stage = "resume_paid_canonical_rejected";
@@ -50001,6 +50066,9 @@ async function finalizeResumePaidPaymentToCanonical(stored, env, request, opts =
     );
     dispatchOutcome = null;
   }
+  console.log(
+    `[DISPATCH_POST_PAYMENT][RESUME_FINALIZE] paymentBooking=${_bookingIntentMask(paymentBookingId)} canonical=${_bookingIntentMask(canonicalBookingId)} assigned=${dispatchOutcome?.assigned === true} reason=${safeStr(dispatchOutcome?.reason, 80) || "-"} skipped=${dispatchOutcome?.skipped === true}`,
+  );
 
   await env.BOOKING_KV.put(canonicalKey, JSON.stringify(canonicalRec));
   const fleetScope = normalizeFleetTenantScope(tenantScope);
@@ -50302,12 +50370,19 @@ async function payStatus(request, env, requestedScopeOverride = null) {
 
         // Run finalize (never throws; returns {ok, updatedStored})
         finalizeAttempted = true;
+        const isResumeFinalize = isResumedMolliePaymentRecord(data, id);
+        console.log(
+          `[PAYMENT_FINALIZE][PAY_STATUS_INVOKE] paymentBooking=${_bookingIntentMask(id)} resume=${isResumeFinalize} mollieStatus=paid hasPayload=${!!data?.payload}`,
+        );
         const result = await finalizeBookingFromStored(data, env, request, {
           bypassLock: true,
           paymentBookingId: id,
           tenantScope: effectiveScope,
         });
         data = result?.updatedStored || data;
+        console.log(
+          `[PAYMENT_FINALIZE][PAY_STATUS_RESULT] paymentBooking=${_bookingIntentMask(id)} resume=${isResumeFinalize} ok=${result?.ok === true} already=${result?.already === true} canonical=${_bookingIntentMask(result?.canonicalBookingId)} dispatch=${result?.dispatchOutcome?.reason || "-"} dispatchAssigned=${result?.dispatchOutcome?.assigned === true}`,
+        );
         if (result?.canonicalBookingId && result?.canonicalRec) {
           linkedBooking = {
             booking_id: result.canonicalBookingId,
