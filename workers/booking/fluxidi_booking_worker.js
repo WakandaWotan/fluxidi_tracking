@@ -41515,11 +41515,47 @@ async function listBookingsAuthoritative(
     candidateIds.add(bookingId);
   }
 
+  // G1: canonicalize payment-shadow ids before we materialize rows. Shadow ids
+  // never appear as operational rows; if a shadow points to a canonical
+  // booking we process the canonical instead. The shadow is dropped from the
+  // working set and queued for index pruning via `staleIds`. This pre-pass
+  // also caches the loaded record so the main loop avoids a second KV read.
+  const recordCache = new Map();
+  const canonicalIds = new Set();
   for (const bookingId of candidateIds) {
     const rec = await env.BOOKING_KV.get(`booking:${bookingId}`, { type: "json" });
     if (!rec || typeof rec !== "object") {
       staleIds.add(bookingId);
       continue;
+    }
+    recordCache.set(bookingId, rec);
+    if (_bookingListIsPaymentShadowRecord(rec, bookingId)) {
+      const canonical = _resolveCanonicalBookingIdFromShadow(rec, bookingId);
+      if (canonical) {
+        console.log(
+          `[BOOKING_LIST][SHADOW_CANONICALIZED] shadow=${_bookingIntentMask(bookingId)} canonical=${_bookingIntentMask(canonical)}`,
+        );
+        canonicalIds.add(canonical);
+      } else {
+        console.log(
+          `[BOOKING_LIST][SHADOW_SKIPPED] shadow=${_bookingIntentMask(bookingId)} reason=no_canonical_reference`,
+        );
+      }
+      staleIds.add(bookingId);
+      continue;
+    }
+    canonicalIds.add(bookingId);
+  }
+
+  for (const bookingId of canonicalIds) {
+    let rec = recordCache.get(bookingId);
+    if (!rec) {
+      rec = await env.BOOKING_KV.get(`booking:${bookingId}`, { type: "json" });
+      if (!rec || typeof rec !== "object") {
+        staleIds.add(bookingId);
+        continue;
+      }
+      recordCache.set(bookingId, rec);
     }
     if (!bookingMatchesRequestedTenantScope(rec, tenantScope)) {
       staleIds.add(bookingId);
@@ -41577,6 +41613,17 @@ async function listBookingsAuthoritative(
     }
   }
 
+  // G1: final canonical-trip dedupe for the company list. Belt-and-braces in
+  // case any UUID shadow row reached this point (e.g. a record where the
+  // resolver could not find a canonical id but the canonical row was also
+  // present). Emits [BOOKING_LIST][DEDUP_CANONICAL] only when a row is
+  // actually dropped.
+  const dedupedOut = _dedupeBookingListRowsByCanonicalTripSignature(out, {
+    logTag: "BOOKING_LIST",
+  });
+  out.length = 0;
+  for (const row of dedupedOut) out.push(row);
+
   out.sort((a, b) => {
     const ta = a.pickup_iso ? Date.parse(a.pickup_iso) : Number.POSITIVE_INFINITY;
     const tb = b.pickup_iso ? Date.parse(b.pickup_iso) : Number.POSITIVE_INFINITY;
@@ -41633,6 +41680,123 @@ function _driverBookingsRowDedupeKey(row) {
   const bookingId = safeStr(row?.booking_id ?? row?.bookingId, 160);
   const legId = safeStr(row?.leg_id ?? row?.legId, 200);
   return `${bookingId}::${legId}`;
+}
+
+// G1: a record is a payment-shadow if it is keyed/identified by a UUID-shaped
+// id and carries no canonical booking number. The Mollie create/webhook flow
+// writes a `booking:${pay.bookingId}` mirror record whose recordKeyId is a
+// UUID; that record is meant to drive the payment finalize loop, never to be
+// shown as an operational ride in the company / driver lists. Records keyed
+// by a canonical 2026-... number always return false here so legitimate
+// canonical bookings cannot accidentally be classified as shadows.
+function _bookingListIsPaymentShadowRecord(rec, recordKeyId) {
+  if (!rec || typeof rec !== "object") return false;
+  const meta = _dashboardIdentityMeta(rec, recordKeyId);
+  if (meta?.has_canonical_booking_number === true) return false;
+  if (meta?.internal_id_like !== true) return false;
+  return true;
+}
+
+// G1: resolve the canonical booking number for a payment-shadow record. The
+// canonical id can be referenced by several fields depending on which leg of
+// the Mollie/checkout-resume flow wrote the shadow. We accept any field whose
+// value matches the canonical 2026-MM-NNNN pattern. PLN-/public references are
+// not returned here because they are not direct KV record keys.
+function _resolveCanonicalBookingIdFromShadow(rec, recordKeyId = "") {
+  if (!rec || typeof rec !== "object") return "";
+  const direct = _dashboardCanonicalBookingNumber(safeStr(recordKeyId, 160));
+  if (direct) return direct;
+  const candidates = [
+    rec?.canonical_booking_id,
+    rec?.canonicalBookingId,
+    rec?.parent_booking_id,
+    rec?.parentBookingId,
+    rec?.public_booking_id,
+    rec?.publicBookingId,
+    rec?.booking_id,
+    rec?.bookingId,
+    rec?.id,
+    _pick(rec, ["booking", "canonical_booking_id"], null),
+    _pick(rec, ["booking", "canonicalBookingId"], null),
+    _pick(rec, ["booking", "parent_booking_id"], null),
+    _pick(rec, ["booking", "parentBookingId"], null),
+    _pick(rec, ["booking", "public_booking_id"], null),
+    _pick(rec, ["booking", "publicBookingId"], null),
+    _pick(rec, ["booking", "booking_id"], null),
+    _pick(rec, ["booking", "bookingId"], null),
+    _pick(rec, ["booking", "id"], null),
+    _pick(rec, ["payload", "__booking_id"], null),
+    _pick(rec, ["payload", "booking_id"], null),
+    _pick(rec, ["payload", "bookingId"], null),
+    _pick(rec, ["payload", "canonical_booking_id"], null),
+    _pick(rec, ["payload", "canonicalBookingId"], null),
+  ];
+  for (const candidate of candidates) {
+    const canonical = _dashboardCanonicalBookingNumber(safeStr(candidate, 160));
+    if (canonical) return canonical;
+  }
+  return "";
+}
+
+// G1: cross-booking-id trip signature for last-resort dedupe. Two rows that
+// describe the exact same pickup time + route + price are treated as the same
+// operational ride even if their booking_id differs (canonical vs UUID
+// shadow). Empty string means "not enough information to dedupe".
+function _driverBookingTripSignatureKey(row) {
+  const pickup = safeStr(row?.pickup_iso ?? row?.pickupIso, 80);
+  const from = safeStr(row?.from, 240).toLowerCase().trim();
+  const to = safeStr(row?.to, 240).toLowerCase().trim();
+  if (!pickup || !from || !to) return "";
+  const priceRaw =
+    row?.price ?? row?.price_incl_vat ?? row?.priceIncl ?? null;
+  let priceText = "";
+  if (priceRaw != null) {
+    const num = Number(priceRaw);
+    priceText = Number.isFinite(num) ? num.toFixed(2) : safeStr(priceRaw, 32);
+  }
+  return `${pickup}|${from}|${to}|${priceText}`;
+}
+
+// G1: prefer canonical-id rows over UUID-shadow rows when both share a trip
+// signature. Emits a single compact diagnostic per drop. `logTag` lets the
+// caller distinguish driver vs company list traces in production logs.
+function _dedupeBookingListRowsByCanonicalTripSignature(rows, options = {}) {
+  if (!Array.isArray(rows) || rows.length < 2) return rows || [];
+  const logTag = safeStr(options?.logTag, 64) || "BOOKING_LIST";
+  const bestBy = new Map();
+  const order = [];
+  const drops = [];
+  for (const row of rows) {
+    const sigKey = _driverBookingTripSignatureKey(row);
+    if (!sigKey) {
+      order.push({ row });
+      continue;
+    }
+    const bookingId = safeStr(row?.booking_id ?? row?.bookingId, 160);
+    const isCanonical = !!_dashboardCanonicalBookingNumber(bookingId);
+    const previous = bestBy.get(sigKey);
+    if (!previous) {
+      const slot = { row, isCanonical };
+      bestBy.set(sigKey, slot);
+      order.push(slot);
+      continue;
+    }
+    if (isCanonical && !previous.isCanonical) {
+      drops.push({ kept: row, dropped: previous.row });
+      previous.row = row;
+      previous.isCanonical = true;
+      continue;
+    }
+    drops.push({ kept: previous.row, dropped: row });
+  }
+  for (const { kept, dropped } of drops) {
+    const keptId = safeStr(kept?.booking_id ?? kept?.bookingId, 160);
+    const droppedId = safeStr(dropped?.booking_id ?? dropped?.bookingId, 160);
+    console.log(
+      `[${logTag}][DEDUP_CANONICAL] kept=${_bookingIntentMask(keptId)} dropped=${_bookingIntentMask(droppedId)}`,
+    );
+  }
+  return order.map((entry) => entry.row);
 }
 
 function _driverAvailableUnassignedRowLifecycleTokens(row, rec) {
@@ -41747,12 +41911,20 @@ function _driverAvailableUnassignedPaymentEligible(rec, row) {
 function _driverAvailableUnassignedCanonicalRecord(bookingId, rec) {
   const identityMeta = _dashboardIdentityMeta(rec, bookingId);
   if (identityMeta?.has_canonical_booking_number === true) return true;
+  // G1: a UUID-shaped record key is the sentinel for the Mollie payment-shadow
+  // KV mirror. Do not allow `has_public_booking_reference` to short-circuit
+  // such a record into the available-unassigned list — those rows must be
+  // canonicalized via `_resolveCanonicalBookingIdFromShadow` before they can
+  // be considered for dispatch.
+  if (
+    identityMeta?.internal_id_like === true &&
+    identityMeta?.has_canonical_booking_number !== true
+  ) {
+    return false;
+  }
   if (identityMeta?.has_public_booking_reference === true) return true;
   if (_dashboardCanonicalBookingNumber(bookingId)) return true;
   if (identityMeta?.record_shape_hint === "provisional_payment_record") return false;
-  if (identityMeta?.internal_id_like === true && identityMeta?.has_canonical_booking_number !== true) {
-    return false;
-  }
   return !!_dashboardCanonicalBookingNumber(bookingId);
 }
 
@@ -41797,12 +41969,44 @@ async function _appendDriverAvailableUnassignedBookings(
     if (bookingId) candidateIds.add(bookingId);
   }
 
+  // G1: drop UUID-shaped payment-shadow ids from the candidate set and replace
+  // them with their canonical counterpart when one can be resolved. This
+  // prevents shadow rows from appearing in the available-unassigned list and
+  // also collapses the (canonical, shadow) pair to a single canonical entry.
+  const recordCache = new Map();
+  const canonicalCandidateIds = new Set();
+  for (const bookingId of candidateIds) {
+    const rec = await env.BOOKING_KV.get(`booking:${bookingId}`, { type: "json" });
+    if (!rec || typeof rec !== "object") {
+      continue;
+    }
+    recordCache.set(bookingId, rec);
+    if (_bookingListIsPaymentShadowRecord(rec, bookingId)) {
+      const canonical = _resolveCanonicalBookingIdFromShadow(rec, bookingId);
+      if (canonical) {
+        console.log(
+          `[BOOKING_LIST][SHADOW_CANONICALIZED] shadow=${_bookingIntentMask(bookingId)} canonical=${_bookingIntentMask(canonical)}`,
+        );
+        canonicalCandidateIds.add(canonical);
+      } else {
+        console.log(
+          `[BOOKING_LIST][SHADOW_SKIPPED] shadow=${_bookingIntentMask(bookingId)} reason=no_canonical_reference`,
+        );
+      }
+      continue;
+    }
+    canonicalCandidateIds.add(bookingId);
+  }
+
   let added = 0;
   let scanned = 0;
   let skipped = 0;
-  for (const bookingId of candidateIds) {
+  for (const bookingId of canonicalCandidateIds) {
     scanned += 1;
-    const rec = await env.BOOKING_KV.get(`booking:${bookingId}`, { type: "json" });
+    let rec = recordCache.get(bookingId);
+    if (!rec) {
+      rec = await env.BOOKING_KV.get(`booking:${bookingId}`, { type: "json" });
+    }
     if (!rec || typeof rec !== "object") {
       skipped += 1;
       continue;
@@ -41961,8 +42165,56 @@ async function listDriverBookingsAuthoritative(
   const cutoffMs = nowMs - actionableGraceMs;
   const out = [];
   const staleIdsByKey = new Map();
+
+  // G1: canonicalize payment-shadow ids in the driver-scoped index. The
+  // shadow ids must never produce ride rows; if a shadow points to a canonical
+  // booking, inherit its source-key set so the canonical row appears in the
+  // same driver/vehicle scopes the shadow lived in. The shadow id itself is
+  // queued for index pruning.
+  const recordCache = new Map();
+  const canonicalCandidateIds = new Set();
   for (const bookingId of candidateIds) {
     const rec = await env.BOOKING_KV.get(`booking:${bookingId}`, { type: "json" });
+    if (!rec || typeof rec !== "object") {
+      for (const indexKey of bookingToSourceKeys.get(bookingId) || []) {
+        const stale = staleIdsByKey.get(indexKey) || new Set();
+        stale.add(bookingId);
+        staleIdsByKey.set(indexKey, stale);
+      }
+      continue;
+    }
+    recordCache.set(bookingId, rec);
+    if (_bookingListIsPaymentShadowRecord(rec, bookingId)) {
+      const canonical = _resolveCanonicalBookingIdFromShadow(rec, bookingId);
+      if (canonical) {
+        console.log(
+          `[BOOKING_LIST][SHADOW_CANONICALIZED] shadow=${_bookingIntentMask(bookingId)} canonical=${_bookingIntentMask(canonical)}`,
+        );
+        canonicalCandidateIds.add(canonical);
+        const shadowKeys = bookingToSourceKeys.get(bookingId) || new Set();
+        const inherited = bookingToSourceKeys.get(canonical) || new Set();
+        for (const k of shadowKeys) inherited.add(k);
+        bookingToSourceKeys.set(canonical, inherited);
+      } else {
+        console.log(
+          `[BOOKING_LIST][SHADOW_SKIPPED] shadow=${_bookingIntentMask(bookingId)} reason=no_canonical_reference`,
+        );
+      }
+      for (const indexKey of bookingToSourceKeys.get(bookingId) || []) {
+        const stale = staleIdsByKey.get(indexKey) || new Set();
+        stale.add(bookingId);
+        staleIdsByKey.set(indexKey, stale);
+      }
+      continue;
+    }
+    canonicalCandidateIds.add(bookingId);
+  }
+
+  for (const bookingId of canonicalCandidateIds) {
+    let rec = recordCache.get(bookingId);
+    if (!rec) {
+      rec = await env.BOOKING_KV.get(`booking:${bookingId}`, { type: "json" });
+    }
     if (!rec || typeof rec !== "object") {
       for (const indexKey of bookingToSourceKeys.get(bookingId) || []) {
         const stale = staleIdsByKey.get(indexKey) || new Set();
@@ -42040,6 +42292,18 @@ async function listDriverBookingsAuthoritative(
       sessionDriverId,
     });
   }
+
+  // G1: belt-and-braces dedup. After canonicalization the same trip should
+  // only have one row, but if any pre-existing index pollution survived (e.g.
+  // a UUID shadow row with no resolvable canonical id but the canonical row
+  // also present), drop the non-canonical duplicate and prefer the canonical
+  // booking-number row. Emits [DRIVER_BOOKINGS][DEDUP_CANONICAL] only when a
+  // duplicate is actually dropped.
+  const dedupedOut = _dedupeBookingListRowsByCanonicalTripSignature(out, {
+    logTag: "DRIVER_BOOKINGS",
+  });
+  out.length = 0;
+  for (const row of dedupedOut) out.push(row);
 
   out.sort((a, b) => {
     const ta = a.pickup_iso ? Date.parse(a.pickup_iso) : Number.POSITIVE_INFINITY;
