@@ -18,6 +18,7 @@ class _CompanyBookingsOverviewPageState
   final Set<String> _archivingBookingIds = <String>{};
   final Set<String> _cancellingBookingIds = <String>{};
   final Set<String> _decidingCreditBookingIds = <String>{};
+  final Set<String> _refundingBookingIds = <String>{};
   bool _bulkArchiving = false;
   bool _creditAuthAdminToken = false;
   bool _creditAuthCompanySession = false;
@@ -129,6 +130,510 @@ class _CompanyBookingsOverviewPageState
 
   bool _isDecidingCredit(String bookingId) {
     return _decidingCreditBookingIds.contains(bookingId);
+  }
+
+  bool _isRefundingBooking(String bookingId) {
+    return _refundingBookingIds.contains(bookingId);
+  }
+
+  bool _canShowMollieRefundAction(_CompanyBookingOverviewItem item) {
+    return _canApplyCreditDecisions() &&
+        _CompanyBookingOverviewItem.canShowMollieRefundAction(item);
+  }
+
+  bool _canShowMollieRefundAuditResyncAction(_CompanyBookingOverviewItem item) {
+    return _canApplyCreditDecisions() &&
+        _CompanyBookingOverviewItem.canShowMollieRefundAuditResyncAction(item);
+  }
+
+  bool _canShowMollieRefundStatusRefreshAction(
+    _CompanyBookingOverviewItem item,
+  ) {
+    return _canApplyCreditDecisions() &&
+        _CompanyBookingOverviewItem.canShowMollieRefundStatusRefreshAction(
+          item,
+        );
+  }
+
+  bool _shouldShowMollieRefundStatus(_CompanyBookingOverviewItem item) {
+    return _CompanyBookingOverviewItem.shouldShowMollieRefundStatus(item);
+  }
+
+  String _localizedMollieRefundStatus(_CompanyBookingOverviewItem item) {
+    if (_CompanyBookingOverviewItem.isMollieRefundDisplayPending(item)) {
+      return _t(
+        nl: 'Terugbetaling in behandeling',
+        en: 'Refund pending',
+        fr: 'Remboursement en attente',
+        es: 'Reembolso pendiente',
+      );
+    }
+    if (_CompanyBookingOverviewItem.isMollieRefundDisplayRefunded(item)) {
+      return _t(
+        nl: 'Terugbetaald',
+        en: 'Refunded',
+        fr: 'Remboursé',
+        es: 'Reembolsado',
+      );
+    }
+    if (_CompanyBookingOverviewItem.isMollieRefundStatusFailed(
+      item.mollieRefundStatus,
+    )) {
+      return _t(
+        nl: 'Terugbetaling mislukt',
+        en: 'Refund failed',
+        fr: 'Remboursement échoué',
+        es: 'Reembolso fallido',
+      );
+    }
+    return _t(
+      nl: 'Niet terugbetaald',
+      en: 'Not refunded',
+      fr: 'Non remboursé',
+      es: 'No reembolsado',
+    );
+  }
+
+  Color _mollieRefundStatusColor(
+    _CompanyBookingOverviewItem item,
+    _CompanyBookingsThemeTokens tokens,
+  ) {
+    if (_CompanyBookingOverviewItem.isMollieRefundDisplayRefunded(item)) {
+      return tokens.paidText;
+    }
+    if (_CompanyBookingOverviewItem.isMollieRefundDisplayPending(item)) {
+      return tokens.warningText;
+    }
+    if (_CompanyBookingOverviewItem.isMollieRefundStatusFailed(
+      item.mollieRefundStatus,
+    )) {
+      return tokens.danger;
+    }
+    return tokens.textSecondary;
+  }
+
+  String _mollieRefundCreditedAmountLabel(_CompanyBookingOverviewItem item) {
+    if (item.creditedAmountCents != null && item.creditedAmountCents! > 0) {
+      return _moneyLabelFromAmount(
+        item.creditedAmountCents! / 100,
+        item.currency,
+      );
+    }
+    return _moneyLabel(item);
+  }
+
+  Future<({bool ok, String error, bool auditResync})> _applyMollieRefundById({
+    required String bookingId,
+  }) async {
+    final id = bookingId.trim();
+    if (id.isEmpty) {
+      return (ok: false, error: 'missing_booking_id', auditResync: false);
+    }
+    final scopeQuery = _activeBookingScopeQuery();
+    final uri = _withActiveBookingScope(
+      kBookingBaseUrl,
+      '$kBookingMollieRefundPath/${Uri.encodeComponent(id)}/mollie-refund',
+    );
+    final useAdminToken = kAdminToken.trim().isNotEmpty;
+    final actorRole = useAdminToken ? 'admin' : 'company';
+    final payload = <String, dynamic>{
+      'booking_id': id,
+      'actor_role': actorRole,
+      'actorRole': actorRole,
+      if (scopeQuery['tenant_id'] != null) 'tenant_id': scopeQuery['tenant_id'],
+      if (scopeQuery['company_id'] != null)
+        'company_id': scopeQuery['company_id'],
+      if (scopeQuery['tenantId'] != null) 'tenantId': scopeQuery['tenantId'],
+      if (scopeQuery['companyId'] != null) 'companyId': scopeQuery['companyId'],
+    };
+    try {
+      debugPrint('[COMPANY_BOOKINGS][MOLLIE_REFUND][REQ] booking=$id');
+      final res = await http
+          .post(
+            uri,
+            headers: await _creditDecisionHeaders(),
+            body: jsonEncode(payload),
+          )
+          .timeout(const Duration(seconds: 20));
+      dynamic decoded;
+      try {
+        decoded = jsonDecode(utf8.decode(res.bodyBytes));
+      } catch (_) {
+        decoded = null;
+      }
+      final auditResync =
+          decoded is Map<String, dynamic> &&
+          decoded['compliance_backfill_ok'] == true;
+      final ok =
+          decoded is Map<String, dynamic> &&
+          (res.statusCode == 200 && decoded['ok'] == true || auditResync);
+      final err = decoded is Map<String, dynamic>
+          ? (decoded['error'] ?? '').toString().trim()
+          : 'invalid_payload';
+      final refundStatus = decoded is Map<String, dynamic>
+          ? (decoded['refund_status'] ?? decoded['refundStatus'] ?? '')
+                .toString()
+                .trim()
+          : '';
+      debugPrint(
+        '[COMPANY_BOOKINGS][MOLLIE_REFUND][RES] booking=$id status=${res.statusCode} ok=$ok error=${err.isEmpty ? "-" : err} refund_status=${refundStatus.isEmpty ? "-" : refundStatus} audit_resync=$auditResync',
+      );
+      if (decoded is! Map<String, dynamic>) {
+        return (ok: false, error: 'invalid_payload', auditResync: false);
+      }
+      if (auditResync) {
+        return (ok: true, error: '', auditResync: true);
+      }
+      if (res.statusCode != 200 || decoded['ok'] != true) {
+        final err = (decoded['error'] ?? '').toString().trim();
+        final mollieErr = (decoded['mollie_error'] ?? '').toString().trim();
+        if (err.isEmpty) {
+          return (
+            ok: false,
+            error: 'http_${res.statusCode}',
+            auditResync: false,
+          );
+        }
+        if (mollieErr.isNotEmpty) {
+          return (ok: false, error: '$err ($mollieErr)', auditResync: false);
+        }
+        return (ok: false, error: err, auditResync: false);
+      }
+      return (ok: true, error: '', auditResync: false);
+    } catch (_) {
+      debugPrint(
+        '[COMPANY_BOOKINGS][MOLLIE_REFUND][RES] booking=$id status=- ok=false error=request_failed refund_status=- audit_resync=false',
+      );
+      return (ok: false, error: 'request_failed', auditResync: false);
+    }
+  }
+
+  Future<
+    ({
+      bool ok,
+      String error,
+      String refundStatus,
+      String mollieRefundStatus,
+      bool complianceEmitOk,
+    })
+  >
+  _applyMollieRefundStatusRefreshById({required String bookingId}) async {
+    final id = bookingId.trim();
+    if (id.isEmpty) {
+      return (
+        ok: false,
+        error: 'missing_booking_id',
+        refundStatus: '',
+        mollieRefundStatus: '',
+        complianceEmitOk: false,
+      );
+    }
+    final scopeQuery = _activeBookingScopeQuery();
+    final uri = _withActiveBookingScope(
+      kBookingBaseUrl,
+      '$kBookingMollieRefundStatusRefreshPath/${Uri.encodeComponent(id)}/mollie-refund/status-refresh',
+    );
+    final useAdminToken = kAdminToken.trim().isNotEmpty;
+    final actorRole = useAdminToken ? 'admin' : 'company';
+    final payload = <String, dynamic>{
+      'booking_id': id,
+      'actor_role': actorRole,
+      'actorRole': actorRole,
+      if (scopeQuery['tenant_id'] != null) 'tenant_id': scopeQuery['tenant_id'],
+      if (scopeQuery['company_id'] != null)
+        'company_id': scopeQuery['company_id'],
+      if (scopeQuery['tenantId'] != null) 'tenantId': scopeQuery['tenantId'],
+      if (scopeQuery['companyId'] != null) 'companyId': scopeQuery['companyId'],
+    };
+    try {
+      debugPrint('[COMPANY_BOOKINGS][MOLLIE_REFUND_STATUS][REQ] booking=$id');
+      final res = await http
+          .post(
+            uri,
+            headers: await _creditDecisionHeaders(),
+            body: jsonEncode(payload),
+          )
+          .timeout(const Duration(seconds: 20));
+      dynamic decoded;
+      try {
+        decoded = jsonDecode(utf8.decode(res.bodyBytes));
+      } catch (_) {
+        decoded = null;
+      }
+      final ok =
+          decoded is Map<String, dynamic> &&
+          res.statusCode == 200 &&
+          decoded['ok'] == true;
+      final err = decoded is Map<String, dynamic>
+          ? (decoded['error'] ?? '').toString().trim()
+          : 'invalid_payload';
+      final refundStatus = decoded is Map<String, dynamic>
+          ? (decoded['refund_status'] ?? decoded['refundStatus'] ?? '')
+                .toString()
+                .trim()
+          : '';
+      final mollieRefundStatus = decoded is Map<String, dynamic>
+          ? (decoded['mollie_refund_status'] ??
+                    decoded['mollieRefundStatus'] ??
+                    '')
+                .toString()
+                .trim()
+          : '';
+      final complianceEmitOk =
+          decoded is Map<String, dynamic> &&
+          (decoded['compliance_emit_ok'] == true ||
+              decoded['complianceEmitOk'] == true);
+      debugPrint(
+        '[COMPANY_BOOKINGS][MOLLIE_REFUND_STATUS][RES] booking=$id status=${res.statusCode} ok=$ok error=${err.isEmpty ? "-" : err} refund_status=${refundStatus.isEmpty ? "-" : refundStatus} mollie_refund_status=${mollieRefundStatus.isEmpty ? "-" : mollieRefundStatus} compliance_emit_ok=$complianceEmitOk',
+      );
+      if (decoded is! Map<String, dynamic>) {
+        return (
+          ok: false,
+          error: 'invalid_payload',
+          refundStatus: '',
+          mollieRefundStatus: '',
+          complianceEmitOk: false,
+        );
+      }
+      if (!ok) {
+        if (err.isEmpty) {
+          return (
+            ok: false,
+            error: 'http_${res.statusCode}',
+            refundStatus: refundStatus,
+            mollieRefundStatus: mollieRefundStatus,
+            complianceEmitOk: false,
+          );
+        }
+        return (
+          ok: false,
+          error: err,
+          refundStatus: refundStatus,
+          mollieRefundStatus: mollieRefundStatus,
+          complianceEmitOk: false,
+        );
+      }
+      return (
+        ok: true,
+        error: '',
+        refundStatus: refundStatus,
+        mollieRefundStatus: mollieRefundStatus,
+        complianceEmitOk: complianceEmitOk,
+      );
+    } catch (_) {
+      debugPrint(
+        '[COMPANY_BOOKINGS][MOLLIE_REFUND_STATUS][RES] booking=$id status=- ok=false error=request_failed refund_status=- mollie_refund_status=- compliance_emit_ok=false',
+      );
+      return (
+        ok: false,
+        error: 'request_failed',
+        refundStatus: '',
+        mollieRefundStatus: '',
+        complianceEmitOk: false,
+      );
+    }
+  }
+
+  Future<void> _runMollieRefundStatusRefresh(
+    _CompanyBookingOverviewItem item,
+  ) async {
+    if (!_canShowMollieRefundStatusRefreshAction(item)) return;
+    final bookingId = _creditDecisionTargetBookingId(item);
+    if (bookingId.isEmpty || _isRefundingBooking(bookingId)) return;
+    setState(() {
+      _refundingBookingIds.add(bookingId);
+    });
+    final out = await _applyMollieRefundStatusRefreshById(bookingId: bookingId);
+    if (!mounted) return;
+    setState(() {
+      _refundingBookingIds.remove(bookingId);
+    });
+    if (out.ok) {
+      await _loadBookings();
+      if (!mounted) return;
+      final isRefunded =
+          _CompanyBookingOverviewItem.isRefundStatusRefundedOrComplete(
+            out.refundStatus,
+          ) ||
+          _CompanyBookingOverviewItem.isMollieRefundStatusRefunded(
+            out.mollieRefundStatus,
+          );
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            isRefunded
+                ? _t(
+                    nl: 'Terugbetaling bevestigd door Mollie.',
+                    en: 'Refund confirmed by Mollie.',
+                    fr: 'Remboursement confirmé par Mollie.',
+                    es: 'Reembolso confirmado por Mollie.',
+                  )
+                : _t(
+                    nl: 'Terugbetalingsstatus bijgewerkt.',
+                    en: 'Refund status updated.',
+                    fr: 'Statut de remboursement mis à jour.',
+                    es: 'Estado de reembolso actualizado.',
+                  ),
+          ),
+        ),
+      );
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          _t(
+            nl: 'Statuscontrole mislukt (${out.error}).',
+            en: 'Status check failed (${out.error}).',
+            fr: 'Vérification du statut échouée (${out.error}).',
+            es: 'Comprobación de estado fallida (${out.error}).',
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _runMollieRefund(
+    _CompanyBookingOverviewItem item, {
+    required String successMessage,
+  }) async {
+    if (!_canShowMollieRefundAction(item)) return;
+    final bookingId = _creditDecisionTargetBookingId(item);
+    if (bookingId.isEmpty || _isRefundingBooking(bookingId)) return;
+    setState(() {
+      _refundingBookingIds.add(bookingId);
+    });
+    final out = await _applyMollieRefundById(bookingId: bookingId);
+    if (!mounted) return;
+    setState(() {
+      _refundingBookingIds.remove(bookingId);
+    });
+    if (out.ok) {
+      await _loadBookings();
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(successMessage)));
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          _t(
+            nl: 'Mollie-terugbetaling mislukt (${out.error}).',
+            en: 'Mollie refund failed (${out.error}).',
+            fr: 'Remboursement Mollie échoué (${out.error}).',
+            es: 'Reembolso Mollie fallido (${out.error}).',
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _runMollieRefundAuditResync(
+    _CompanyBookingOverviewItem item,
+  ) async {
+    if (!_canShowMollieRefundAuditResyncAction(item)) return;
+    final bookingId = _creditDecisionTargetBookingId(item);
+    if (bookingId.isEmpty || _isRefundingBooking(bookingId)) return;
+    setState(() {
+      _refundingBookingIds.add(bookingId);
+    });
+    final out = await _applyMollieRefundById(bookingId: bookingId);
+    if (!mounted) return;
+    setState(() {
+      _refundingBookingIds.remove(bookingId);
+    });
+    if (out.ok && out.auditResync) {
+      await _loadBookings();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Chiron-audit voor Mollie-terugbetaling gesynchroniseerd.',
+              en: 'Chiron audit for Mollie refund synchronized.',
+              fr: 'Audit Chiron pour remboursement Mollie synchronisé.',
+              es: 'Auditoría Chiron para reembolso Mollie sincronizada.',
+            ),
+          ),
+        ),
+      );
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          _t(
+            nl: 'Chiron-auditsync mislukt (${out.error}).',
+            en: 'Chiron audit sync failed (${out.error}).',
+            fr: 'Synchronisation audit Chiron échouée (${out.error}).',
+            es: 'Sincronización de auditoría Chiron fallida (${out.error}).',
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _confirmMollieRefund(_CompanyBookingOverviewItem item) async {
+    if (!_canShowMollieRefundAction(item)) return;
+    final tokens = _themeTokensFor(businessThemeNotifier.value);
+    final creditedAmountLabel = _mollieRefundCreditedAmountLabel(item);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: tokens.palette.surface,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        title: Text(
+          _t(
+            nl: 'Mollie-terugbetaling uitvoeren',
+            en: 'Execute Mollie refund',
+            fr: 'Exécuter le remboursement Mollie',
+            es: 'Ejecutar reembolso Mollie',
+          ),
+          style: TextStyle(color: tokens.textPrimary),
+        ),
+        content: Text(
+          _t(
+            nl: 'Dit voert een ECHTE terugbetaling uit via Mollie.\n\nBoeking: ${_shortBookingReference(item)}\n\nBedrag: $creditedAmountLabel\n\nDeze actie kan geld terugstorten naar de klant en mag alleen worden gebruikt na controle van de creditbeslissing.',
+            en: 'This will execute a REAL refund through Mollie.\n\nBooking: ${_shortBookingReference(item)}\n\nAmount: $creditedAmountLabel\n\nThis action may transfer money back to the customer and should only be used after reviewing the credit decision.',
+            fr: 'Ceci exécutera un VRAI remboursement via Mollie.\n\nRéservation : ${_shortBookingReference(item)}\n\nMontant : $creditedAmountLabel\n\nCette action peut renvoyer de l\'argent au client et ne doit être utilisée qu\'après examen de la décision de crédit.',
+            es: 'Esto ejecutará un reembolso REAL a través de Mollie.\n\nReserva: ${_shortBookingReference(item)}\n\nImporte: $creditedAmountLabel\n\nEsta acción puede devolver dinero al cliente y solo debe usarse tras revisar la decisión de crédito.',
+          ),
+          style: TextStyle(color: tokens.textSecondary, height: 1.35),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: Text(
+              _t(nl: 'Annuleren', en: 'Cancel', fr: 'Annuler', es: 'Cancelar'),
+              style: TextStyle(color: tokens.textSecondary),
+            ),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: Text(
+              _t(
+                nl: 'Terugbetaling uitvoeren',
+                en: 'Execute refund',
+                fr: 'Exécuter le remboursement',
+                es: 'Ejecutar reembolso',
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    await _runMollieRefund(
+      item,
+      successMessage: _t(
+        nl: 'Mollie-terugbetaling uitgevoerd.',
+        en: 'Mollie refund executed.',
+        fr: 'Remboursement Mollie exécuté.',
+        es: 'Reembolso Mollie ejecutado.',
+      ),
+    );
   }
 
   String _creditDecisionTargetBookingId(_CompanyBookingOverviewItem item) {
@@ -988,6 +1493,9 @@ class _CompanyBookingsOverviewPageState
           .toList(growable: false);
       for (final item in parsed) {
         if (item.bucket != _CompanyBookingsFilter.cancelled) continue;
+        if (_CompanyBookingOverviewItem.shouldShowMollieRefundStatus(item)) {
+          _CompanyBookingOverviewItem.logRefundStateDiagnostic(item);
+        }
         if (!item.isPendingCredit &&
             _CompanyBookingOverviewItem.isPaidPaymentStatus(
               item.paymentStatus,
@@ -1312,6 +1820,19 @@ class _CompanyBookingsOverviewPageState
     final creditTargetId = _creditDecisionTargetBookingId(item);
     final creditBusy = _isDecidingCredit(creditTargetId);
     final creditActionsEnabled = _canApplyCreditDecisions() && !creditBusy;
+    final showMollieRefundStatus = _shouldShowMollieRefundStatus(item);
+    final showMollieRefundAction = _canShowMollieRefundAction(item);
+    final showMollieRefundStatusRefresh =
+        !showMollieRefundAction &&
+        _canShowMollieRefundStatusRefreshAction(item);
+    final showMollieRefundAuditResync =
+        !showMollieRefundAction &&
+        !showMollieRefundStatusRefresh &&
+        _canShowMollieRefundAuditResyncAction(item);
+    final mollieRefundTargetId = creditTargetId;
+    final mollieRefundBusy = _isRefundingBooking(mollieRefundTargetId);
+    final localizedMollieRefund = _localizedMollieRefundStatus(item);
+    final mollieRefundStatusColor = _mollieRefundStatusColor(item, tokens);
     final statusColor = _statusColor(item, tokens);
     final localizedStatus = _localizedBookingStatus(item.statusText);
     final localizedPayment = _localizedPaymentStatus(item.paymentStatus);
@@ -1599,6 +2120,28 @@ class _CompanyBookingsOverviewPageState
                       ),
                     ),
                   ),
+                if (showMollieRefundStatus)
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 9,
+                      vertical: 5,
+                    ),
+                    decoration: BoxDecoration(
+                      color: mollieRefundStatusColor.withOpacity(0.12),
+                      borderRadius: BorderRadius.circular(999),
+                      border: Border.all(
+                        color: mollieRefundStatusColor.withOpacity(0.42),
+                      ),
+                    ),
+                    child: Text(
+                      '${_t(nl: 'Terugbetalingsstatus', en: 'Refund status', fr: 'Statut remboursement', es: 'Estado reembolso')}: $localizedMollieRefund',
+                      style: TextStyle(
+                        color: mollieRefundStatusColor.withOpacity(0.98),
+                        fontSize: 11.1,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
                 Text(
                   '${_t(nl: 'Ref', en: 'Ref', fr: 'Ref', es: 'Ref')}: ${_shortBookingReference(item)}',
                   maxLines: 1,
@@ -1825,6 +2368,181 @@ class _CompanyBookingsOverviewPageState
                     ),
                   ),
                 ],
+              ),
+            ],
+            if (showMollieRefundAction) ...[
+              const SizedBox(height: 10),
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  onPressed: (mollieRefundBusy || creditBusy)
+                      ? null
+                      : () => _confirmMollieRefund(item),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: tokens.accent.withOpacity(0.96),
+                    side: BorderSide(color: tokens.accent.withOpacity(0.45)),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 10,
+                    ),
+                  ),
+                  icon: mollieRefundBusy
+                      ? SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            valueColor: AlwaysStoppedAnimation<Color>(
+                              tokens.accent.withOpacity(0.9),
+                            ),
+                          ),
+                        )
+                      : Icon(
+                          Icons.replay_rounded,
+                          size: 18,
+                          color: tokens.accent.withOpacity(0.96),
+                        ),
+                  label: Text(
+                    mollieRefundBusy
+                        ? _t(
+                            nl: 'Bezig...',
+                            en: 'Working...',
+                            fr: 'En cours...',
+                            es: 'Procesando...',
+                          )
+                        : _t(
+                            nl: 'Terugbetalen via Mollie',
+                            en: 'Refund via Mollie',
+                            fr: 'Rembourser via Mollie',
+                            es: 'Reembolsar vía Mollie',
+                          ),
+                    style: const TextStyle(
+                      fontSize: 12.1,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+            if (showMollieRefundStatusRefresh) ...[
+              const SizedBox(height: 10),
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  onPressed: (mollieRefundBusy || creditBusy)
+                      ? null
+                      : () => _runMollieRefundStatusRefresh(item),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: tokens.warningText.withOpacity(0.96),
+                    side: BorderSide(
+                      color: tokens.warningText.withOpacity(0.45),
+                    ),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 10,
+                    ),
+                  ),
+                  icon: mollieRefundBusy
+                      ? SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            valueColor: AlwaysStoppedAnimation<Color>(
+                              tokens.warningText.withOpacity(0.9),
+                            ),
+                          ),
+                        )
+                      : Icon(
+                          Icons.refresh_rounded,
+                          size: 18,
+                          color: tokens.warningText.withOpacity(0.96),
+                        ),
+                  label: Text(
+                    mollieRefundBusy
+                        ? _t(
+                            nl: 'Bezig...',
+                            en: 'Working...',
+                            fr: 'En cours...',
+                            es: 'Procesando...',
+                          )
+                        : _t(
+                            nl: 'Controleer terugbetalingsstatus',
+                            en: 'Check refund status',
+                            fr: 'Vérifier le statut du remboursement',
+                            es: 'Comprobar estado del reembolso',
+                          ),
+                    style: const TextStyle(
+                      fontSize: 12.1,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+            if (showMollieRefundAuditResync) ...[
+              const SizedBox(height: 10),
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  onPressed: (mollieRefundBusy || creditBusy)
+                      ? null
+                      : () => _runMollieRefundAuditResync(item),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: tokens.textSecondary.withOpacity(0.96),
+                    side: BorderSide(
+                      color: tokens.textSecondary.withOpacity(0.35),
+                    ),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 10,
+                    ),
+                  ),
+                  icon: mollieRefundBusy
+                      ? SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            valueColor: AlwaysStoppedAnimation<Color>(
+                              tokens.textSecondary.withOpacity(0.9),
+                            ),
+                          ),
+                        )
+                      : Icon(
+                          Icons.sync_rounded,
+                          size: 18,
+                          color: tokens.textSecondary.withOpacity(0.96),
+                        ),
+                  label: Text(
+                    mollieRefundBusy
+                        ? _t(
+                            nl: 'Bezig...',
+                            en: 'Working...',
+                            fr: 'En cours...',
+                            es: 'Procesando...',
+                          )
+                        : _t(
+                            nl: 'Chiron-audit synchroniseren',
+                            en: 'Sync Chiron audit',
+                            fr: 'Synchroniser l\'audit Chiron',
+                            es: 'Sincronizar auditoría Chiron',
+                          ),
+                    style: const TextStyle(
+                      fontSize: 12.1,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
               ),
             ],
           ],

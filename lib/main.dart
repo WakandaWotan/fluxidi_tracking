@@ -1345,6 +1345,10 @@ const String kUpdateBookingStatusPath =
     '/bookings'; // POST /bookings/:id/status
 const String kBookingCreditDecisionPath =
     '/bookings'; // POST /bookings/:id/credit-decision
+const String kBookingMollieRefundPath =
+    '/bookings'; // POST /bookings/:id/mollie-refund
+const String kBookingMollieRefundStatusRefreshPath =
+    '/bookings'; // POST /bookings/:id/mollie-refund/status-refresh
 const String kDeleteBookingPath = '/bookings'; // POST /bookings/:id/delete
 
 const String kStartTripPath = '/track/session/start';

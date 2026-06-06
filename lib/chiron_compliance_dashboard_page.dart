@@ -1525,6 +1525,15 @@ class RemoteComplianceEvent {
     required this.payment,
     required this.fare,
     required this.provenance,
+    required this.refundStatus,
+    required this.refundProvider,
+    required this.refundAmountCents,
+    required this.refundId,
+    required this.creditDecision,
+    required this.refundedAt,
+    required this.creditStatus,
+    required this.creditedAmountCents,
+    required this.creditedAt,
   });
 
   final String key;
@@ -1549,6 +1558,15 @@ class RemoteComplianceEvent {
   final Map<String, dynamic> payment;
   final Map<String, dynamic> fare;
   final Map<String, dynamic> provenance;
+  final String refundStatus;
+  final String refundProvider;
+  final int? refundAmountCents;
+  final String refundId;
+  final String creditDecision;
+  final String refundedAt;
+  final String creditStatus;
+  final int? creditedAmountCents;
+  final String creditedAt;
 
   factory RemoteComplianceEvent.fromJson(Map<String, dynamic> json) {
     Map<String, dynamic> asMap(Object? value) {
@@ -1557,7 +1575,132 @@ class RemoteComplianceEvent {
     }
 
     String text(String key) => (json[key] ?? '').toString().trim();
+    int? parseCents(dynamic value) {
+      if (value is num) return value.round();
+      if (value is String) return int.tryParse(value.trim());
+      return null;
+    }
+
+    String firstText(List<String> keys, {Map<String, dynamic>? source}) {
+      final root = source ?? json;
+      for (final key in keys) {
+        final value = (root[key] ?? '').toString().trim();
+        if (value.isNotEmpty) return value;
+      }
+      return '';
+    }
+
+    int? firstCents(List<String> keys, {Map<String, dynamic>? source}) {
+      final root = source ?? json;
+      for (final key in keys) {
+        final parsed = parseCents(root[key]);
+        if (parsed != null) return parsed;
+      }
+      return null;
+    }
+
     final provenance = asMap(json['provenance']);
+    final payment = asMap(json['payment']);
+    final timestamps = asMap(json['timestamps']);
+    final refundStatus =
+        firstText(const <String>[
+          'refund_status',
+          'refundStatus',
+        ], source: json).isNotEmpty
+        ? firstText(const <String>['refund_status', 'refundStatus'])
+        : firstText(const <String>[
+            'refund_status',
+            'refundStatus',
+          ], source: payment);
+    final refundProvider =
+        firstText(const <String>[
+          'refund_provider',
+          'refundProvider',
+        ], source: json).isNotEmpty
+        ? firstText(const <String>['refund_provider', 'refundProvider'])
+        : firstText(const <String>[
+            'refund_provider',
+            'refundProvider',
+          ], source: payment);
+    final refundId =
+        firstText(const <String>[
+          'refund_id',
+          'refundId',
+          'mollie_refund_id',
+          'mollieRefundId',
+        ], source: json).isNotEmpty
+        ? firstText(const <String>[
+            'refund_id',
+            'refundId',
+            'mollie_refund_id',
+            'mollieRefundId',
+          ])
+        : firstText(const <String>[
+            'refund_id',
+            'refundId',
+            'mollie_refund_id',
+            'mollieRefundId',
+          ], source: payment);
+    final creditDecision =
+        firstText(const <String>[
+          'credit_decision',
+          'creditDecision',
+        ], source: json).isNotEmpty
+        ? firstText(const <String>['credit_decision', 'creditDecision'])
+        : firstText(const <String>[
+            'credit_decision',
+            'creditDecision',
+          ], source: payment);
+    final refundedAt =
+        firstText(const <String>[
+          'refunded_at',
+          'refundedAt',
+        ], source: json).isNotEmpty
+        ? firstText(const <String>['refunded_at', 'refundedAt'])
+        : (firstText(const <String>[
+                'refunded_at_utc',
+              ], source: timestamps).isNotEmpty
+              ? firstText(const <String>['refunded_at_utc'], source: timestamps)
+              : firstText(const <String>['event_at_utc'], source: timestamps));
+    final refundAmountCents =
+        firstCents(const <String>[
+          'refund_amount_cents',
+          'refundAmountCents',
+        ]) ??
+        firstCents(const <String>[
+          'refund_amount_cents',
+          'refundAmountCents',
+        ], source: payment);
+    final creditStatus =
+        firstText(const <String>[
+          'credit_status',
+          'creditStatus',
+        ], source: json).isNotEmpty
+        ? firstText(const <String>['credit_status', 'creditStatus'])
+        : firstText(const <String>[
+            'credit_status',
+            'creditStatus',
+          ], source: payment);
+    final creditedAmountCents =
+        firstCents(const <String>[
+          'credited_amount_cents',
+          'creditedAmountCents',
+        ]) ??
+        firstCents(const <String>[
+          'credited_amount_cents',
+          'creditedAmountCents',
+        ], source: payment);
+    final creditedAt =
+        firstText(const <String>[
+          'credited_at',
+          'creditedAt',
+        ], source: json).isNotEmpty
+        ? firstText(const <String>['credited_at', 'creditedAt'])
+        : (firstText(const <String>[
+                'credited_at_utc',
+              ], source: timestamps).isNotEmpty
+              ? firstText(const <String>['credited_at_utc'], source: timestamps)
+              : firstText(const <String>['event_at_utc'], source: timestamps));
 
     return RemoteComplianceEvent(
       key: text('key'),
@@ -1595,9 +1738,18 @@ class RemoteComplianceEvent {
       syncState: text('sync_state'),
       createdAtUtc: text('created_at_utc'),
       timestamps: asMap(json['timestamps']),
-      payment: asMap(json['payment']),
+      payment: payment,
       fare: asMap(json['fare']),
       provenance: provenance,
+      refundStatus: refundStatus,
+      refundProvider: refundProvider,
+      refundAmountCents: refundAmountCents,
+      refundId: refundId,
+      creditDecision: creditDecision,
+      refundedAt: refundedAt,
+      creditStatus: creditStatus,
+      creditedAmountCents: creditedAmountCents,
+      creditedAt: creditedAt,
     );
   }
 }
@@ -1786,6 +1938,20 @@ class _RemoteComplianceEventsSectionState
           en: 'Payment update',
           fr: 'Mise à jour du paiement',
           es: 'Actualización del pago',
+        );
+      case 'booking_mollie_refund':
+        return _t(
+          nl: 'Mollie-terugbetaling',
+          en: 'Mollie refund',
+          fr: 'Remboursement Mollie',
+          es: 'Reembolso Mollie',
+        );
+      case 'booking_credit_decision':
+        return _t(
+          nl: 'Creditbeslissing',
+          en: 'Credit decision',
+          fr: 'Décision de crédit',
+          es: 'Decisión de crédito',
         );
       case 'ride_stop':
         return _t(
@@ -2085,6 +2251,17 @@ class _RemoteComplianceEventsSectionState
                 )
                 .toList(growable: false)
           : const <RemoteComplianceEvent>[];
+
+      final typeCounts = <String, int>{};
+      for (final event in events) {
+        final token = event.eventType.trim().isEmpty
+            ? 'unknown'
+            : event.eventType.trim().toLowerCase();
+        typeCounts[token] = (typeCounts[token] ?? 0) + 1;
+      }
+      debugPrint(
+        '[CHIRON][EVENT_TYPES] types=${typeCounts.entries.map((entry) => '${entry.key}:${entry.value}').join(',')}',
+      );
 
       return RemoteComplianceEventsResponse(
         ok: payload['ok'] == true,
@@ -2831,6 +3008,13 @@ class _RemoteComplianceEventsSectionState
         );
       case 'system':
         return _t(nl: 'systeem', en: 'system', fr: 'système', es: 'sistema');
+      case 'company':
+        return _t(
+          nl: 'bedrijf',
+          en: 'company',
+          fr: 'entreprise',
+          es: 'empresa',
+        );
       default:
         return _localizedUnknown();
     }
@@ -2844,6 +3028,22 @@ class _RemoteComplianceEventsSectionState
         en: 'status update',
         fr: 'mise à jour du statut',
         es: 'actualización de estado',
+      );
+    }
+    if (token == 'booking_mollie_refund') {
+      return _t(
+        nl: 'Mollie-terugbetaling',
+        en: 'Mollie refund',
+        fr: 'Remboursement Mollie',
+        es: 'Reembolso Mollie',
+      );
+    }
+    if (token == 'booking_credit_decision') {
+      return _t(
+        nl: 'Creditbeslissing',
+        en: 'Credit decision',
+        fr: 'Décision de crédit',
+        es: 'Decisión de crédito',
       );
     }
     if (token.contains('bookings') && token.contains('status')) {
@@ -2867,28 +3067,389 @@ class _RemoteComplianceEventsSectionState
     return _localizedUnknown();
   }
 
-  Widget _auditHistoryRow(
-    RemoteComplianceEvent e,
-    Map<String, RemoteComplianceEvent> latestPaymentUpdates,
-  ) {
-    final payment = _effectivePaymentForEvent(e, latestPaymentUpdates);
-    final producer = _text(e.provenance['producer']);
-    final actorRole = _text(e.actorRole);
+  String _localizedRefundStatusLabel(String raw) {
+    switch (_normalizeToken(raw)) {
+      case 'refunded':
+      case 'completed':
+      case 'success':
+        return _t(
+          nl: 'terugbetaald',
+          en: 'refunded',
+          fr: 'remboursé',
+          es: 'reembolsado',
+        );
+      case 'mollie_refund_pending':
+      case 'queued':
+      case 'pending':
+      case 'processing':
+        return _t(
+          nl: 'in behandeling',
+          en: 'pending',
+          fr: 'en attente',
+          es: 'pendiente',
+        );
+      case 'failed':
+        return _t(nl: 'mislukt', en: 'failed', fr: 'échoué', es: 'fallido');
+      default:
+        return raw.trim().isEmpty ? _localizedUnknown() : raw.trim();
+    }
+  }
+
+  String _localizedRefundProviderLabel(String raw) {
+    switch (_normalizeToken(raw)) {
+      case 'mollie':
+        return 'Mollie';
+      case 'manual':
+        return _t(nl: 'manueel', en: 'manual', fr: 'manuel', es: 'manual');
+      default:
+        return raw.trim().isEmpty ? _localizedUnknown() : raw.trim();
+    }
+  }
+
+  String _localizedCreditDecisionLabel(String raw) {
+    switch (_normalizeToken(raw)) {
+      case 'full_credit':
+        return _t(
+          nl: 'volledige credit',
+          en: 'full credit',
+          fr: 'crédit complet',
+          es: 'crédito total',
+        );
+      case 'partial_credit':
+        return _t(
+          nl: 'gedeeltelijke credit',
+          en: 'partial credit',
+          fr: 'crédit partiel',
+          es: 'crédito parcial',
+        );
+      case 'no_refund':
+        return _t(
+          nl: 'geen terugbetaling',
+          en: 'no refund',
+          fr: 'pas de remboursement',
+          es: 'sin reembolso',
+        );
+      case 'handled_manually':
+        return _t(
+          nl: 'handmatig afgehandeld',
+          en: 'handled manually',
+          fr: 'traité manuellement',
+          es: 'gestionado manualmente',
+        );
+      default:
+        return raw.trim().isEmpty ? _localizedUnknown() : raw.trim();
+    }
+  }
+
+  String _formatRefundAmountCents(int? cents) {
+    if (cents == null) return '';
+    final value = (cents / 100).toStringAsFixed(2).replaceAll('.', ',');
+    return '€$value';
+  }
+
+  String _localizedCreditStatusLabel(String raw) {
+    switch (_normalizeToken(raw)) {
+      case 'credited':
+        return _t(
+          nl: 'gecrediteerd',
+          en: 'credited',
+          fr: 'crédité',
+          es: 'acreditado',
+        );
+      case 'partial_credit':
+        return _t(
+          nl: 'gedeeltelijke credit',
+          en: 'partial credit',
+          fr: 'crédit partiel',
+          es: 'crédito parcial',
+        );
+      case 'pending_credit':
+        return _t(
+          nl: 'credit in behandeling',
+          en: 'pending credit',
+          fr: 'crédit en attente',
+          es: 'crédito pendiente',
+        );
+      case 'no_refund':
+        return _t(
+          nl: 'geen terugbetaling',
+          en: 'no refund',
+          fr: 'pas de remboursement',
+          es: 'sin reembolso',
+        );
+      case 'handled_manually':
+        return _t(
+          nl: 'handmatig afgehandeld',
+          en: 'handled manually',
+          fr: 'traité manuellement',
+          es: 'gestionado manualmente',
+        );
+      default:
+        return raw.trim().isEmpty ? _localizedUnknown() : raw.trim();
+    }
+  }
+
+  bool _eventIsCancelledStatusUpdate(RemoteComplianceEvent e) {
+    if (_normalizeToken(e.eventType) != 'booking_status_update') return false;
     final statusToken = _normalizeToken(
       e.lifecycleStatus.isNotEmpty
           ? e.lifecycleStatus
           : (e.status.isNotEmpty ? e.status : e.bookingStatus),
     );
-    final eventTitle =
-        _normalizeToken(e.eventType) == 'booking_status_update' &&
-            (statusToken == 'cancelled' || statusToken == 'canceled')
-        ? _t(
-            nl: 'Annulatie',
-            en: 'Cancellation',
-            fr: 'Annulation',
-            es: 'Cancelación',
-          )
-        : _localizedEventTypeLabel(e.eventType);
+    return statusToken == 'cancelled' || statusToken == 'canceled';
+  }
+
+  String _localizedAuditEventTitle(RemoteComplianceEvent e) {
+    final token = _normalizeToken(e.eventType);
+    if (token == 'booking_status_update' && _eventIsCancelledStatusUpdate(e)) {
+      return _t(
+        nl: 'Annulatie',
+        en: 'Cancellation',
+        fr: 'Annulation',
+        es: 'Cancelación',
+      );
+    }
+    return _localizedEventTypeLabel(e.eventType);
+  }
+
+  String _eventAuditTimestamp(RemoteComplianceEvent e) {
+    final token = _normalizeToken(e.eventType);
+    if (token == 'booking_mollie_refund' && e.refundedAt.isNotEmpty) {
+      return _fmtDateTime(e.refundedAt);
+    }
+    if (token == 'booking_credit_decision' && e.creditedAt.isNotEmpty) {
+      return _fmtDateTime(e.creditedAt);
+    }
+    return _fmtDateTime(e.createdAtUtc);
+  }
+
+  RemoteComplianceEvent? _latestEventOfType(
+    List<RemoteComplianceEvent> events,
+    String eventType,
+  ) {
+    RemoteComplianceEvent? latest;
+    final wanted = _normalizeToken(eventType);
+    for (final event in events) {
+      if (_normalizeToken(event.eventType) != wanted) continue;
+      if (latest == null || _isNewerRemoteEvent(event, latest)) {
+        latest = event;
+      }
+    }
+    return latest;
+  }
+
+  RemoteComplianceEvent? _latestMollieRefundEvent(
+    List<RemoteComplianceEvent> events,
+  ) => _latestEventOfType(events, 'booking_mollie_refund');
+
+  RemoteComplianceEvent? _latestCreditDecisionEvent(
+    List<RemoteComplianceEvent> events,
+  ) => _latestEventOfType(events, 'booking_credit_decision');
+
+  RemoteComplianceEvent? _latestPaymentUpdateEvent(
+    List<RemoteComplianceEvent> events,
+  ) => _latestEventOfType(events, 'payment_update');
+
+  List<Widget> _actorAuditChip(RemoteComplianceEvent e) {
+    final actorRole = _text(e.actorRole);
+    if (actorRole.isEmpty || actorRole.toLowerCase() == 'unknown') {
+      return const <Widget>[];
+    }
+    return [
+      _chip(
+        '${_t(nl: 'Actor', en: 'Actor', fr: 'Acteur', es: 'Actor')}: ${_localizedActorRoleLabel(actorRole)}',
+      ),
+    ];
+  }
+
+  List<Widget> _creditAuditChips(RemoteComplianceEvent e) {
+    final chips = <Widget>[];
+    if (e.creditDecision.isNotEmpty) {
+      chips.add(
+        _chip(
+          '${_t(nl: 'Creditbeslissing', en: 'Credit decision', fr: 'Décision crédit', es: 'Decisión crédito')}: ${_localizedCreditDecisionLabel(e.creditDecision)}',
+        ),
+      );
+    }
+    if (e.creditStatus.isNotEmpty) {
+      chips.add(
+        _chip(
+          '${_t(nl: 'Creditstatus', en: 'Credit status', fr: 'Statut crédit', es: 'Estado crédito')}: ${_localizedCreditStatusLabel(e.creditStatus)}',
+        ),
+      );
+    }
+    if (e.creditedAmountCents != null && e.creditedAmountCents! > 0) {
+      chips.add(
+        _chip(
+          '${_t(nl: 'Creditbedrag', en: 'Credited amount', fr: 'Montant crédité', es: 'Importe acreditado')}: ${_formatRefundAmountCents(e.creditedAmountCents)}',
+        ),
+      );
+    }
+    if (e.creditedAt.isNotEmpty) {
+      chips.add(
+        _chip(
+          '${_t(nl: 'Gecrediteerd op', en: 'Credited at', fr: 'Crédité le', es: 'Acreditado el')}: ${_fmtDateTime(e.creditedAt)}',
+        ),
+      );
+    }
+    chips.addAll(_actorAuditChip(e));
+    return chips;
+  }
+
+  List<Widget> _mollieRefundAuditChips(RemoteComplianceEvent e) {
+    final chips = <Widget>[];
+    if (e.refundStatus.isNotEmpty) {
+      chips.add(
+        _chip(
+          '${_t(nl: 'Terugbetalingsstatus', en: 'Refund status', fr: 'Statut remboursement', es: 'Estado reembolso')}: ${_localizedRefundStatusLabel(e.refundStatus)}',
+        ),
+      );
+    }
+    if (e.refundProvider.isNotEmpty) {
+      chips.add(
+        _chip(
+          '${_t(nl: 'Terugbetalingsprovider', en: 'Refund provider', fr: 'Fournisseur remboursement', es: 'Proveedor reembolso')}: ${_localizedRefundProviderLabel(e.refundProvider)}',
+        ),
+      );
+    }
+    if (e.refundAmountCents != null && e.refundAmountCents! > 0) {
+      chips.add(
+        _chip(
+          '${_t(nl: 'Terugbetaald bedrag', en: 'Refund amount', fr: 'Montant remboursé', es: 'Importe reembolsado')}: ${_formatRefundAmountCents(e.refundAmountCents)}',
+        ),
+      );
+    }
+    if (e.refundId.isNotEmpty) {
+      chips.add(
+        _chip(
+          '${_t(nl: 'Mollie-terugbetalings-ID', en: 'Mollie refund ID', fr: 'ID remboursement Mollie', es: 'ID reembolso Mollie')}: ${e.refundId}',
+        ),
+      );
+    }
+    if (e.creditedAmountCents != null && e.creditedAmountCents! > 0) {
+      chips.add(
+        _chip(
+          '${_t(nl: 'Creditbedrag', en: 'Credited amount', fr: 'Montant crédité', es: 'Importe acreditado')}: ${_formatRefundAmountCents(e.creditedAmountCents)}',
+        ),
+      );
+    }
+    if (e.creditDecision.isNotEmpty) {
+      chips.add(
+        _chip(
+          '${_t(nl: 'Creditbeslissing', en: 'Credit decision', fr: 'Décision crédit', es: 'Decisión crédito')}: ${_localizedCreditDecisionLabel(e.creditDecision)}',
+        ),
+      );
+    }
+    chips.addAll(_actorAuditChip(e));
+    if (e.refundedAt.isNotEmpty) {
+      chips.add(
+        _chip(
+          '${_t(nl: 'Terugbetaald op', en: 'Refunded at', fr: 'Remboursé le', es: 'Reembolsado el')}: ${_fmtDateTime(e.refundedAt)}',
+        ),
+      );
+    }
+    return chips;
+  }
+
+  List<Widget> _paymentUpdateAuditChips(
+    RemoteComplianceEvent e,
+    Map<String, RemoteComplianceEvent> latestPaymentUpdates,
+  ) {
+    final payment = _effectivePaymentForEvent(e, latestPaymentUpdates);
+    final chips = <Widget>[
+      _chip(
+        '${_t(nl: 'Synchronisatie', en: 'Sync', fr: 'Synchronisation', es: 'Sincronización')}: ${_localizedSyncStateLabel(e.syncState)}',
+      ),
+    ];
+    if (payment.status.isNotEmpty) {
+      chips.add(
+        _chip(
+          '${_t(nl: 'Betaling', en: 'Payment', fr: 'Paiement', es: 'Pago')}: ${_localizedPaymentStatusLabel(payment.status)}',
+        ),
+      );
+    }
+    if (payment.method.isNotEmpty &&
+        payment.method.toLowerCase() != 'unknown') {
+      chips.add(
+        _chip(
+          '${_t(nl: 'Methode', en: 'Method', fr: 'Méthode', es: 'Método')}: ${_localizedPaymentMethodLabel(payment.method)}',
+        ),
+      );
+    }
+    if (payment.source.isNotEmpty &&
+        payment.source.toLowerCase() != 'unknown') {
+      chips.add(
+        _chip(
+          '${_t(nl: 'Bron', en: 'Source', fr: 'Source', es: 'Fuente')}: ${_localizedSourceLabel(payment.source)}',
+        ),
+      );
+    }
+    if (payment.provider.isNotEmpty &&
+        payment.provider.toLowerCase() != 'unknown') {
+      chips.add(
+        _chip(
+          '${_t(nl: 'Provider', en: 'Provider', fr: 'Fournisseur', es: 'Proveedor')}: ${_localizedProviderLabel(payment.provider)}',
+        ),
+      );
+    }
+    chips.addAll(_actorAuditChip(e));
+    return chips;
+  }
+
+  List<Widget> _cancellationAuditChips(RemoteComplianceEvent e) {
+    final chips = <Widget>[
+      _chip(
+        '${_t(nl: 'Synchronisatie', en: 'Sync', fr: 'Synchronisation', es: 'Sincronización')}: ${_localizedSyncStateLabel(e.syncState)}',
+      ),
+      _chip(
+        '${_t(nl: 'Status', en: 'Status', fr: 'Statut', es: 'Estado')}: ${_t(nl: 'geannuleerd', en: 'cancelled', fr: 'annulée', es: 'cancelado')}',
+      ),
+    ];
+    chips.addAll(_actorAuditChip(e));
+    return chips;
+  }
+
+  List<Widget> _auditHistoryChips(
+    RemoteComplianceEvent e,
+    Map<String, RemoteComplianceEvent> latestPaymentUpdates,
+  ) {
+    final token = _normalizeToken(e.eventType);
+    switch (token) {
+      case 'payment_update':
+        return _paymentUpdateAuditChips(e, latestPaymentUpdates);
+      case 'booking_status_update':
+        if (_eventIsCancelledStatusUpdate(e)) {
+          return _cancellationAuditChips(e);
+        }
+        break;
+      case 'booking_credit_decision':
+        return _creditAuditChips(e);
+      case 'booking_mollie_refund':
+        return _mollieRefundAuditChips(e);
+    }
+    final payment = _effectivePaymentForEvent(e, latestPaymentUpdates);
+    final producer = _text(e.provenance['producer']);
+    return [
+      _chip(
+        '${_t(nl: 'Synchronisatie', en: 'Sync', fr: 'Synchronisation', es: 'Sincronización')}: ${_localizedSyncStateLabel(e.syncState)}',
+      ),
+      if (payment.status.isNotEmpty)
+        _chip(
+          '${_t(nl: 'Betaling', en: 'Payment', fr: 'Paiement', es: 'Pago')}: ${_localizedPaymentStatusLabel(payment.status)}',
+        ),
+      if (producer.isNotEmpty)
+        _chip(
+          '${_t(nl: 'Aangemaakt door', en: 'Created by', fr: 'Créé par', es: 'Creado por')}: ${_localizedProducerLabel(producer)}',
+        ),
+      ..._actorAuditChip(e),
+    ];
+  }
+
+  Widget _auditHistoryRow(
+    RemoteComplianceEvent e,
+    Map<String, RemoteComplianceEvent> latestPaymentUpdates,
+  ) {
+    final eventTitle = _localizedAuditEventTitle(e);
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
       padding: const EdgeInsets.all(10),
@@ -2910,50 +3471,14 @@ class _RemoteComplianceEventsSectionState
           ),
           const SizedBox(height: 4),
           Text(
-            _fmtDateTime(e.createdAtUtc),
+            _eventAuditTimestamp(e),
             style: TextStyle(color: _chironTextMuted, fontSize: 11),
           ),
           const SizedBox(height: 6),
           Wrap(
             spacing: 6,
             runSpacing: 6,
-            children: [
-              _chip(
-                '${_t(nl: 'Synchronisatie', en: 'Sync', fr: 'Synchronisation', es: 'Sincronización')}: ${_localizedSyncStateLabel(e.syncState)}',
-              ),
-              if (payment.status.isNotEmpty)
-                _chip(
-                  '${_t(nl: 'Betaling', en: 'Payment', fr: 'Paiement', es: 'Pago')}: ${_localizedPaymentStatusLabel(payment.status)}',
-                ),
-              if (payment.method.isNotEmpty &&
-                  payment.method.toLowerCase() != 'unknown')
-                _chip(
-                  '${_t(nl: 'Methode', en: 'Method', fr: 'Méthode', es: 'Método')}: ${_localizedPaymentMethodLabel(payment.method)}',
-                ),
-              if (payment.source.isNotEmpty &&
-                  payment.source.toLowerCase() != 'unknown')
-                _chip(
-                  '${_t(nl: 'Bron', en: 'Source', fr: 'Source', es: 'Fuente')}: ${_localizedSourceLabel(payment.source)}',
-                ),
-              if (payment.provider.isNotEmpty &&
-                  payment.provider.toLowerCase() != 'unknown')
-                _chip(
-                  '${_t(nl: 'Provider', en: 'Provider', fr: 'Fournisseur', es: 'Proveedor')}: ${_localizedProviderLabel(payment.provider)}',
-                ),
-              if (producer.isNotEmpty)
-                _chip(
-                  '${_t(nl: 'Aangemaakt door', en: 'Created by', fr: 'Créé par', es: 'Creado por')}: ${_localizedProducerLabel(producer)}',
-                ),
-              if (actorRole.isNotEmpty && actorRole.toLowerCase() != 'unknown')
-                _chip(
-                  '${_t(nl: 'Actor', en: 'Actor', fr: 'Acteur', es: 'Actor')}: ${_localizedActorRoleLabel(actorRole)}',
-                ),
-              if (_text(e.source).isNotEmpty &&
-                  _text(e.source).toLowerCase() != 'unknown')
-                _chip(
-                  '${_t(nl: 'Bron', en: 'Source', fr: 'Source', es: 'Fuente')}: ${_localizedAuditSourceLabel(e.source)}',
-                ),
-            ],
+            children: _auditHistoryChips(e, latestPaymentUpdates),
           ),
         ],
       ),
@@ -2981,7 +3506,17 @@ class _RemoteComplianceEventsSectionState
     final tripId = sorted
         .map((event) => event.tripId.trim())
         .firstWhere((id) => _isMeaningfulIdentity(id), orElse: () => '');
-    final payment = _effectivePaymentForEvent(latest, latestPaymentUpdates);
+    final latestPaymentUpdate = _latestPaymentUpdateEvent(sorted);
+    final latestCreditDecision = _latestCreditDecisionEvent(sorted);
+    final latestRefund = _latestMollieRefundEvent(sorted);
+    final payment = latestPaymentUpdate == null
+        ? _effectivePaymentForEvent(latest, latestPaymentUpdates)
+        : (
+            status: _text(latestPaymentUpdate.payment['status']),
+            method: _text(latestPaymentUpdate.payment['method']),
+            source: _text(latestPaymentUpdate.payment['source']),
+            provider: _text(latestPaymentUpdate.payment['provider']),
+          );
     final reference = _businessReferenceForRemoteCard(
       rideType: latest.rideType,
       publicBookingReference: publicBookingReference,
@@ -3065,6 +3600,10 @@ class _RemoteComplianceEventsSectionState
                 _chip(
                   '${_t(nl: 'Provider', en: 'Provider', fr: 'Fournisseur', es: 'Proveedor')}: ${_localizedProviderLabel(payment.provider)}',
                 ),
+              if (latestCreditDecision != null)
+                ..._creditAuditChips(latestCreditDecision),
+              if (latestRefund != null)
+                ..._mollieRefundAuditChips(latestRefund),
             ],
           ),
           const SizedBox(height: 10),
@@ -3269,10 +3808,7 @@ class _RemoteComplianceEventsSectionState
                         fr: '${result.malformedCount} événement(s) invalide(s) ignoré(s).',
                         es: '${result.malformedCount} evento(s) no válido(s) omitido(s).',
                       ),
-                      style: TextStyle(
-                        color: _chironWarning,
-                        fontSize: 11,
-                      ),
+                      style: TextStyle(color: _chironWarning, fontSize: 11),
                     ),
                   ),
                 Text(

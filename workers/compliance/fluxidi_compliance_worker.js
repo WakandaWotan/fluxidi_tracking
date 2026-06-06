@@ -3,6 +3,8 @@ const ALLOWED_EVENT_TYPES = new Set([
   "ride_stop",
   "payment_update",
   "booking_status_update",
+  "booking_credit_decision",
+  "booking_mollie_refund",
   "correction_event",
   "sync_success",
   "sync_failed",
@@ -217,6 +219,9 @@ async function handleAppend(request, env, origin) {
   const event = normalized.value;
   const key = buildEventStorageKey(event);
   await env.COMPLIANCE_KV.put(key, JSON.stringify(event));
+  console.log(
+    `[COMPLIANCE_STORE][${cleanText(event.event_type, 64) || "unknown"}] ok=true`,
+  );
 
   return jsonResponse(
     {
@@ -251,10 +256,77 @@ function parseRequiredQuerySegment(url, key) {
   return { value: segment };
 }
 
+function parseRefundAmountCents(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return null;
+  return Math.max(0, Math.round(parsed));
+}
+
+function projectRefundAuditFields(event) {
+  const payment =
+    event?.payment && typeof event.payment === "object" && !Array.isArray(event.payment)
+      ? event.payment
+      : {};
+  const timestamps =
+    event?.timestamps && typeof event.timestamps === "object" && !Array.isArray(event.timestamps)
+      ? event.timestamps
+      : {};
+  const refundId =
+    cleanText(event?.refund_id, 120) ||
+    cleanText(event?.refundId, 120) ||
+    cleanText(payment?.refund_id, 120) ||
+    cleanText(payment?.refundId, 120) ||
+    cleanText(payment?.mollie_refund_id, 120) ||
+    cleanText(payment?.mollieRefundId, 120) ||
+    null;
+  const refundStatus =
+    cleanText(event?.refund_status, 64) ||
+    cleanText(event?.refundStatus, 64) ||
+    cleanText(payment?.refund_status, 64) ||
+    cleanText(payment?.refundStatus, 64) ||
+    null;
+  const refundProvider =
+    cleanText(event?.refund_provider, 64) ||
+    cleanText(event?.refundProvider, 64) ||
+    cleanText(payment?.refund_provider, 64) ||
+    cleanText(payment?.refundProvider, 64) ||
+    null;
+  const refundAmountCents =
+    parseRefundAmountCents(event?.refund_amount_cents ?? event?.refundAmountCents) ??
+    parseRefundAmountCents(payment?.refund_amount_cents ?? payment?.refundAmountCents);
+  const creditDecision =
+    cleanText(event?.credit_decision, 64) ||
+    cleanText(event?.creditDecision, 64) ||
+    cleanText(payment?.credit_decision, 64) ||
+    cleanText(payment?.creditDecision, 64) ||
+    null;
+  const refundedAt =
+    cleanText(event?.refunded_at, 64) ||
+    cleanText(event?.refundedAt, 64) ||
+    cleanText(timestamps?.refunded_at_utc, 64) ||
+    cleanText(timestamps?.event_at_utc, 64) ||
+    null;
+  return {
+    refund_status: refundStatus,
+    refundStatus,
+    refund_provider: refundProvider,
+    refundProvider,
+    refund_amount_cents: refundAmountCents,
+    refundAmountCents: refundAmountCents,
+    refund_id: refundId,
+    refundId,
+    credit_decision: creditDecision,
+    creditDecision,
+    refunded_at: refundedAt,
+    refundedAt,
+  };
+}
+
 function projectRecentEvent(key, parsedEvent) {
   const event = parsedEvent && typeof parsedEvent === "object" && !Array.isArray(parsedEvent)
     ? parsedEvent
     : {};
+  const refundAudit = projectRefundAuditFields(event);
   return {
     key,
     event_id: cleanText(event.event_id, 200) || null,
@@ -295,6 +367,7 @@ function projectRecentEvent(key, parsedEvent) {
       event.provenance && typeof event.provenance === "object" && !Array.isArray(event.provenance)
         ? event.provenance
         : {},
+    ...refundAudit,
   };
 }
 

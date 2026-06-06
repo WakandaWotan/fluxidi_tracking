@@ -24,12 +24,19 @@ class _CompanyBookingOverviewItem {
   final String assignedVehicleText;
   final String statusText;
   final String paymentStatus;
+  final String paymentProvider;
   final String creditStatus;
   final String refundStatus;
   final bool refundRequired;
   final String creditDecision;
   final int? creditedAmountCents;
   final String creditedAt;
+  final String mollieRefundId;
+  final String mollieRefundStatus;
+  final int? refundedAmountCents;
+  final String refundedAt;
+  final String refundProvider;
+  final String complianceMollieRefundEmittedAt;
   final bool isPendingCredit;
   final num? amount;
   final num? parentAmount;
@@ -53,12 +60,19 @@ class _CompanyBookingOverviewItem {
     required this.assignedVehicleText,
     required this.statusText,
     required this.paymentStatus,
+    required this.paymentProvider,
     required this.creditStatus,
     required this.refundStatus,
     required this.refundRequired,
     required this.creditDecision,
     required this.creditedAmountCents,
     required this.creditedAt,
+    required this.mollieRefundId,
+    required this.mollieRefundStatus,
+    required this.refundedAmountCents,
+    required this.refundedAt,
+    required this.refundProvider,
+    required this.complianceMollieRefundEmittedAt,
     required this.isPendingCredit,
     required this.amount,
     required this.parentAmount,
@@ -216,6 +230,165 @@ class _CompanyBookingOverviewItem {
 
   static bool _isPaidPaymentStatus(String paymentStatus) =>
       isPaidPaymentStatus(paymentStatus);
+
+  static bool isManualPaymentProvider(String paymentProvider) {
+    final normalized = _normStatus(paymentProvider);
+    return normalized == 'MANUAL' ||
+        normalized == 'CASH' ||
+        normalized == 'OFFLINE' ||
+        normalized == 'INVOICE';
+  }
+
+  static bool isMolliePaymentProvider(String paymentProvider) {
+    final normalized = _normStatus(paymentProvider);
+    return normalized == 'MOLLIE' ||
+        normalized == 'ONLINE' ||
+        normalized == 'ONLINE_PAYMENT' ||
+        normalized == 'ONLINE_PAYMENTS' ||
+        normalized == 'PREPAID';
+  }
+
+  static bool isMollieRefundStatusRefunded(String mollieRefundStatus) {
+    final normalized = _normStatus(mollieRefundStatus);
+    return normalized == 'REFUNDED' ||
+        normalized == 'COMPLETED' ||
+        normalized == 'SUCCESS';
+  }
+
+  static bool isMollieRefundStatusPending(String mollieRefundStatus) {
+    final normalized = _normStatus(mollieRefundStatus);
+    return normalized == 'QUEUED' ||
+        normalized == 'PENDING' ||
+        normalized == 'PROCESSING' ||
+        normalized == 'MOLLIE_REFUND_PENDING';
+  }
+
+  static bool isMollieRefundStatusFailed(String mollieRefundStatus) {
+    return _normStatus(mollieRefundStatus) == 'FAILED';
+  }
+
+  static bool isRefundStatusRefundedOrComplete(String refundStatus) {
+    final normalized = _normStatus(refundStatus);
+    return normalized == 'REFUNDED' ||
+        normalized == 'COMPLETED' ||
+        normalized == 'SUCCESS';
+  }
+
+  static bool isRefundStatusPending(String refundStatus) {
+    final normalized = _normStatus(refundStatus);
+    return normalized == 'MOLLIE_REFUND_PENDING' ||
+        normalized == 'REFUNDED_PENDING' ||
+        normalized == 'QUEUED' ||
+        normalized == 'PENDING' ||
+        normalized == 'PROCESSING';
+  }
+
+  static bool hasMollieRefundAlreadyApplied(_CompanyBookingOverviewItem item) {
+    if (item.mollieRefundId.trim().isNotEmpty) return true;
+    if (isMollieRefundStatusRefunded(item.mollieRefundStatus)) return true;
+    if (isMollieRefundStatusPending(item.mollieRefundStatus)) return true;
+    if (isRefundStatusRefundedOrComplete(item.refundStatus)) return true;
+    if (isRefundStatusPending(item.refundStatus)) return true;
+    if ((item.refundedAmountCents ?? 0) > 0) return true;
+    if (item.complianceMollieRefundEmittedAt.trim().isNotEmpty) return true;
+    return false;
+  }
+
+  static bool hasMollieRefundAuditResyncSignal(
+    _CompanyBookingOverviewItem item,
+  ) {
+    if (item.mollieRefundId.trim().isNotEmpty) return true;
+    if (isMollieRefundStatusRefunded(item.mollieRefundStatus)) return true;
+    if (isMollieRefundStatusPending(item.mollieRefundStatus)) return true;
+    if (isRefundStatusRefundedOrComplete(item.refundStatus)) return true;
+    if (isRefundStatusPending(item.refundStatus)) return true;
+    if ((item.refundedAmountCents ?? 0) > 0) return true;
+    return false;
+  }
+
+  static bool isMollieRefundDisplayRefunded(_CompanyBookingOverviewItem item) {
+    if (isMollieRefundStatusRefunded(item.mollieRefundStatus)) return true;
+    if (isRefundStatusRefundedOrComplete(item.refundStatus)) return true;
+    if ((item.refundedAmountCents ?? 0) > 0 &&
+        !isRefundStatusPending(item.refundStatus) &&
+        !isMollieRefundStatusPending(item.mollieRefundStatus)) {
+      return true;
+    }
+    return false;
+  }
+
+  static bool isMollieRefundDisplayPending(_CompanyBookingOverviewItem item) {
+    if (isMollieRefundStatusPending(item.mollieRefundStatus)) return true;
+    if (isRefundStatusPending(item.refundStatus)) return true;
+    return false;
+  }
+
+  static void logRefundStateDiagnostic(_CompanyBookingOverviewItem item) {
+    final bookingLabel = item.referenceText.trim().isNotEmpty
+        ? item.referenceText.trim()
+        : item.bookingId.trim();
+    if (bookingLabel.isEmpty) return;
+    final canRefund = canShowMollieRefundAction(item);
+    final canSyncAudit = canShowMollieRefundAuditResyncAction(item);
+    final canRefreshStatus = canShowMollieRefundStatusRefreshAction(item);
+    debugPrint(
+      '[COMPANY_BOOKINGS][REFUND_STATE] booking=$bookingLabel '
+      'mollie_refund_id_present=${item.mollieRefundId.trim().isNotEmpty} '
+      'refund_status=${item.refundStatus.isEmpty ? "-" : item.refundStatus} '
+      'mollie_refund_status=${item.mollieRefundStatus.isEmpty ? "-" : item.mollieRefundStatus} '
+      'refunded_amount_cents=${item.refundedAmountCents ?? "-"} '
+      'can_refund=$canRefund can_sync_audit=$canSyncAudit can_refresh_status=$canRefreshStatus',
+    );
+  }
+
+  static bool hasMollieRefundEligibleCreditStatus(String creditStatus) {
+    final normalized = _normStatus(creditStatus);
+    return normalized == 'CREDITED' || normalized == 'PARTIAL_CREDIT';
+  }
+
+  static bool shouldShowMollieRefundStatus(_CompanyBookingOverviewItem item) {
+    if (item.isPendingCredit) return false;
+    if (!_isCancelledStatus(item.statusText)) return false;
+    if (!isPaidPaymentStatus(item.paymentStatus)) return false;
+    if (isManualPaymentProvider(item.paymentProvider)) return false;
+    if (!isMolliePaymentProvider(item.paymentProvider)) return false;
+    return hasMollieRefundEligibleCreditStatus(item.creditStatus);
+  }
+
+  static bool canShowMollieRefundAction(_CompanyBookingOverviewItem item) {
+    if (!shouldShowMollieRefundStatus(item)) return false;
+    if (item.refundRequired) return false;
+    if (item.creditDecision == 'NO_REFUND' ||
+        item.creditDecision == 'HANDLED_MANUALLY') {
+      return false;
+    }
+    if (hasMollieRefundAlreadyApplied(item)) return false;
+    return true;
+  }
+
+  static bool canShowMollieRefundAuditResyncAction(
+    _CompanyBookingOverviewItem item,
+  ) {
+    if (!shouldShowMollieRefundStatus(item)) return false;
+    if (item.creditDecision == 'NO_REFUND' ||
+        item.creditDecision == 'HANDLED_MANUALLY') {
+      return false;
+    }
+    if (item.complianceMollieRefundEmittedAt.trim().isNotEmpty) return false;
+    if (canShowMollieRefundStatusRefreshAction(item)) return false;
+    return hasMollieRefundAuditResyncSignal(item);
+  }
+
+  static bool canShowMollieRefundStatusRefreshAction(
+    _CompanyBookingOverviewItem item,
+  ) {
+    if (!shouldShowMollieRefundStatus(item)) return false;
+    if (item.mollieRefundId.trim().isEmpty) return false;
+    if (isMollieRefundDisplayRefunded(item)) return false;
+    if (isMollieRefundStatusFailed(item.mollieRefundStatus)) return false;
+    return isMollieRefundDisplayPending(item) ||
+        isRefundStatusPending(item.refundStatus);
+  }
 
   static bool _isPendingCreditToken(String raw) {
     return _normStatus(raw) == 'PENDING_CREDIT';
@@ -489,6 +662,24 @@ class _CompanyBookingOverviewItem {
       'record.mollie.status',
       'booking.mollie.status',
     ]);
+    final paymentProvider = _firstText(raw, const <String>[
+      'payment_provider',
+      'paymentProvider',
+      'payment_mode',
+      'paymentMode',
+      'record.payment_provider',
+      'record.paymentProvider',
+      'record.payment_mode',
+      'record.paymentMode',
+      'booking.payment_provider',
+      'booking.paymentProvider',
+      'booking.payment_mode',
+      'booking.paymentMode',
+      'record.booking.payment_provider',
+      'record.booking.paymentProvider',
+      'payload.payment_provider',
+      'payload.paymentProvider',
+    ]);
     final creditStatus = _firstText(raw, const <String>[
       'credit_status',
       'creditStatus',
@@ -572,6 +763,90 @@ class _CompanyBookingOverviewItem {
       'payload.creditedAt',
       'record.payload.credited_at',
       'record.payload.creditedAt',
+    ]);
+    final mollieRefundId = _firstText(raw, const <String>[
+      'mollie_refund_id',
+      'mollieRefundId',
+      'record.mollie_refund_id',
+      'record.mollieRefundId',
+      'booking.mollie_refund_id',
+      'booking.mollieRefundId',
+      'record.booking.mollie_refund_id',
+      'record.booking.mollieRefundId',
+      'payload.mollie_refund_id',
+      'payload.mollieRefundId',
+      'record.payload.mollie_refund_id',
+      'record.payload.mollieRefundId',
+    ]);
+    final mollieRefundStatus = _firstText(raw, const <String>[
+      'mollie_refund_status',
+      'mollieRefundStatus',
+      'record.mollie_refund_status',
+      'record.mollieRefundStatus',
+      'booking.mollie_refund_status',
+      'booking.mollieRefundStatus',
+      'record.booking.mollie_refund_status',
+      'record.booking.mollieRefundStatus',
+      'payload.mollie_refund_status',
+      'payload.mollieRefundStatus',
+      'record.payload.mollie_refund_status',
+      'record.payload.mollieRefundStatus',
+    ]);
+    final refundedAmountRaw = _firstNum(raw, const <String>[
+      'refunded_amount_cents',
+      'refundedAmountCents',
+      'record.refunded_amount_cents',
+      'record.refundedAmountCents',
+      'booking.refunded_amount_cents',
+      'booking.refundedAmountCents',
+      'record.booking.refunded_amount_cents',
+      'record.booking.refundedAmountCents',
+      'payload.refunded_amount_cents',
+      'payload.refundedAmountCents',
+      'record.payload.refunded_amount_cents',
+      'record.payload.refundedAmountCents',
+    ]);
+    final refundedAt = _firstText(raw, const <String>[
+      'refunded_at',
+      'refundedAt',
+      'record.refunded_at',
+      'record.refundedAt',
+      'booking.refunded_at',
+      'booking.refundedAt',
+      'record.booking.refunded_at',
+      'record.booking.refundedAt',
+      'payload.refunded_at',
+      'payload.refundedAt',
+      'record.payload.refunded_at',
+      'record.payload.refundedAt',
+    ]);
+    final refundProvider = _firstText(raw, const <String>[
+      'refund_provider',
+      'refundProvider',
+      'record.refund_provider',
+      'record.refundProvider',
+      'booking.refund_provider',
+      'booking.refundProvider',
+      'record.booking.refund_provider',
+      'record.booking.refundProvider',
+      'payload.refund_provider',
+      'payload.refundProvider',
+      'record.payload.refund_provider',
+      'record.payload.refundProvider',
+    ]);
+    final complianceMollieRefundEmittedAt = _firstText(raw, const <String>[
+      'compliance_mollie_refund_emitted_at',
+      'complianceMollieRefundEmittedAt',
+      'record.compliance_mollie_refund_emitted_at',
+      'record.complianceMollieRefundEmittedAt',
+      'booking.compliance_mollie_refund_emitted_at',
+      'booking.complianceMollieRefundEmittedAt',
+      'record.booking.compliance_mollie_refund_emitted_at',
+      'record.booking.complianceMollieRefundEmittedAt',
+      'payload.compliance_mollie_refund_emitted_at',
+      'payload.complianceMollieRefundEmittedAt',
+      'record.payload.compliance_mollie_refund_emitted_at',
+      'record.payload.complianceMollieRefundEmittedAt',
     ]);
     final amount = _firstNum(raw, const <String>[
       'leg_price_incl_vat',
@@ -667,12 +942,19 @@ class _CompanyBookingOverviewItem {
       assignedVehicleText: assignedVehicle.isEmpty ? '—' : assignedVehicle,
       statusText: _normStatus(statusRaw),
       paymentStatus: normalizedPaymentStatus,
+      paymentProvider: _normStatus(paymentProvider),
       creditStatus: _normStatus(creditStatus),
       refundStatus: _normStatus(refundStatus),
       refundRequired: refundRequired,
       creditDecision: _normStatus(creditDecision),
       creditedAmountCents: creditedAmountRaw?.round(),
       creditedAt: creditedAt,
+      mollieRefundId: mollieRefundId,
+      mollieRefundStatus: _normStatus(mollieRefundStatus),
+      refundedAmountCents: refundedAmountRaw?.round(),
+      refundedAt: refundedAt,
+      refundProvider: _normStatus(refundProvider),
+      complianceMollieRefundEmittedAt: complianceMollieRefundEmittedAt,
       isPendingCredit: isPendingCredit,
       amount: amount,
       parentAmount: parentAmount,
