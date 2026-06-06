@@ -37,6 +37,7 @@ class _CompanyBookingOverviewItem {
   final String refundedAt;
   final String refundProvider;
   final String complianceMollieRefundEmittedAt;
+  final String complianceMollieRefundFinalEmittedAt;
   final bool isPendingCredit;
   final num? amount;
   final num? parentAmount;
@@ -73,6 +74,7 @@ class _CompanyBookingOverviewItem {
     required this.refundedAt,
     required this.refundProvider,
     required this.complianceMollieRefundEmittedAt,
+    required this.complianceMollieRefundFinalEmittedAt,
     required this.isPendingCredit,
     required this.amount,
     required this.parentAmount,
@@ -374,6 +376,11 @@ class _CompanyBookingOverviewItem {
         item.creditDecision == 'HANDLED_MANUALLY') {
       return false;
     }
+    if (item.complianceMollieRefundFinalEmittedAt.trim().isEmpty &&
+        isMollieRefundDisplayRefunded(item) &&
+        hasMollieRefundAuditResyncSignal(item)) {
+      return true;
+    }
     if (item.complianceMollieRefundEmittedAt.trim().isNotEmpty) return false;
     if (canShowMollieRefundStatusRefreshAction(item)) return false;
     return hasMollieRefundAuditResyncSignal(item);
@@ -384,7 +391,9 @@ class _CompanyBookingOverviewItem {
   ) {
     if (!shouldShowMollieRefundStatus(item)) return false;
     if (item.mollieRefundId.trim().isEmpty) return false;
-    if (isMollieRefundDisplayRefunded(item)) return false;
+    if (isMollieRefundDisplayRefunded(item)) {
+      return item.complianceMollieRefundFinalEmittedAt.trim().isEmpty;
+    }
     if (isMollieRefundStatusFailed(item.mollieRefundStatus)) return false;
     return isMollieRefundDisplayPending(item) ||
         isRefundStatusPending(item.refundStatus);
@@ -834,6 +843,20 @@ class _CompanyBookingOverviewItem {
       'record.payload.refund_provider',
       'record.payload.refundProvider',
     ]);
+    final complianceMollieRefundFinalEmittedAt = _firstText(raw, const <String>[
+      'compliance_mollie_refund_final_emitted_at',
+      'complianceMollieRefundFinalEmittedAt',
+      'record.compliance_mollie_refund_final_emitted_at',
+      'record.complianceMollieRefundFinalEmittedAt',
+      'booking.compliance_mollie_refund_final_emitted_at',
+      'booking.complianceMollieRefundFinalEmittedAt',
+      'record.booking.compliance_mollie_refund_final_emitted_at',
+      'record.booking.complianceMollieRefundFinalEmittedAt',
+      'payload.compliance_mollie_refund_final_emitted_at',
+      'payload.complianceMollieRefundFinalEmittedAt',
+      'record.payload.compliance_mollie_refund_final_emitted_at',
+      'record.payload.complianceMollieRefundFinalEmittedAt',
+    ]);
     final complianceMollieRefundEmittedAt = _firstText(raw, const <String>[
       'compliance_mollie_refund_emitted_at',
       'complianceMollieRefundEmittedAt',
@@ -955,6 +978,8 @@ class _CompanyBookingOverviewItem {
       refundedAt: refundedAt,
       refundProvider: _normStatus(refundProvider),
       complianceMollieRefundEmittedAt: complianceMollieRefundEmittedAt,
+      complianceMollieRefundFinalEmittedAt:
+          complianceMollieRefundFinalEmittedAt,
       isPendingCredit: isPendingCredit,
       amount: amount,
       parentAmount: parentAmount,

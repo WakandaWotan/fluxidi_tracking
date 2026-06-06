@@ -263,7 +263,8 @@ class _CompanyBookingsOverviewPageState
       }
       final auditResync =
           decoded is Map<String, dynamic> &&
-          decoded['compliance_backfill_ok'] == true;
+          (decoded['compliance_backfill_ok'] == true ||
+              decoded['compliance_final_backfill_ok'] == true);
       final ok =
           decoded is Map<String, dynamic> &&
           (res.statusCode == 200 && decoded['ok'] == true || auditResync);
