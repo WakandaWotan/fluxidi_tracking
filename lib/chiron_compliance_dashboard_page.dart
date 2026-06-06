@@ -1706,7 +1706,21 @@ class RemoteComplianceEvent {
       key: text('key'),
       eventId: text('event_id'),
       eventType: text('event_type'),
-      rideType: text('ride_type'),
+      rideType: () {
+        final direct = firstText(const <String>['ride_type', 'rideType']);
+        if (direct.isNotEmpty) return direct;
+        final fromProvenance = firstText(const <String>[
+          'ride_type',
+          'rideType',
+        ], source: provenance);
+        if (fromProvenance.isNotEmpty) return fromProvenance;
+        final fromPayment = firstText(const <String>[
+          'ride_type',
+          'rideType',
+        ], source: payment);
+        if (fromPayment.isNotEmpty) return fromPayment;
+        return '';
+      }(),
       lifecycleStatus: text('lifecycle_status'),
       status: text('status'),
       bookingStatus: text('booking_status'),
@@ -1983,11 +1997,96 @@ class _RemoteComplianceEventsSectionState
           fr: 'Course directe',
           es: 'Viaje directo',
         );
+      case 'booking':
+        return _t(
+          nl: 'Boeking',
+          en: 'Booking',
+          fr: 'Réservation',
+          es: 'Reserva',
+        );
       case 'unknown':
         return _localizedUnknown();
       default:
         return raw.trim().isEmpty ? '—' : _localizedUnknown();
     }
+  }
+
+  String _resolveAuditRideTypeToken(RemoteComplianceEvent e) {
+    final candidates = <String>[
+      e.rideType,
+      _text(e.provenance['ride_type']),
+      _text(e.provenance['rideType']),
+      _text(e.payment['ride_type']),
+      _text(e.payment['rideType']),
+      _text(e.fare['ride_type']),
+      _text(e.fare['rideType']),
+    ];
+    for (final candidate in candidates) {
+      final token = _normalizeToken(candidate);
+      if (token.isNotEmpty && token != 'unknown') return token;
+    }
+    return '';
+  }
+
+  String _localizedAuditRideTypeLabel(RemoteComplianceEvent e) {
+    final resolved = _normalizeToken(_resolveAuditRideTypeToken(e));
+    switch (resolved) {
+      case 'planned':
+      case 'plan':
+      case 'scheduled':
+        return _t(
+          nl: 'Geplande rit',
+          en: 'Planned ride',
+          fr: 'Trajet planifié',
+          es: 'Viaje planificado',
+        );
+      case 'direct':
+      case 'direct_trip':
+      case 'street_hail':
+        return _t(
+          nl: 'Directe rit',
+          en: 'Direct ride',
+          fr: 'Course directe',
+          es: 'Viaje directo',
+        );
+      case 'booking':
+        return _t(
+          nl: 'Boeking',
+          en: 'Booking',
+          fr: 'Réservation',
+          es: 'Reserva',
+        );
+      default:
+        break;
+    }
+
+    final eventToken = _normalizeToken(e.eventType);
+    if (eventToken == 'booking_mollie_refund' &&
+        e.publicBookingReference.trim().isNotEmpty) {
+      return _t(
+        nl: 'Geplande rit',
+        en: 'Planned ride',
+        fr: 'Trajet planifié',
+        es: 'Viaje planificado',
+      );
+    }
+    if (eventToken == 'booking_credit_decision' ||
+        eventToken == 'booking_status_update') {
+      if (e.publicBookingReference.trim().isNotEmpty ||
+          e.bookingId.trim().isNotEmpty) {
+        return _t(
+          nl: 'Geplande rit',
+          en: 'Planned ride',
+          fr: 'Trajet planifié',
+          es: 'Viaje planificado',
+        );
+      }
+      return _t(nl: 'Boeking', en: 'Booking', fr: 'Réservation', es: 'Reserva');
+    }
+    if (eventToken == 'booking_mollie_refund') {
+      return _t(nl: 'Boeking', en: 'Booking', fr: 'Réservation', es: 'Reserva');
+    }
+    return _t(nl: 'Boeking', en: 'Booking', fr: 'Réservation', es: 'Reserva');
   }
 
   String _localizedPaymentStatusLabel(String raw) {
@@ -2018,17 +2117,43 @@ class _RemoteComplianceEventsSectionState
     }
   }
 
-  String _localizedPaymentMethodLabel(String raw) {
+  String _localizedPaymentMethodLabel(
+    String raw, {
+    String provider = '',
+    String source = '',
+  }) {
     switch (raw.trim().toLowerCase()) {
       case 'cash':
         return _t(nl: 'contant', en: 'cash', fr: 'espèces', es: 'efectivo');
       case 'bancontact':
         return 'Bancontact';
+      case 'ideal':
+        return 'iDEAL';
       case 'card':
+      case 'creditcard':
+      case 'card_payment':
       case 'pin':
-        return _t(nl: 'kaart', en: 'card', fr: 'carte', es: 'tarjeta');
+        return _t(nl: 'kaart', en: 'Card', fr: 'Carte', es: 'Tarjeta');
+      case 'apple_pay':
+      case 'applepay':
+        return 'Apple Pay';
+      case 'google_pay':
+      case 'googlepay':
+        return 'Google Pay';
+      case 'paypal':
+        return 'PayPal';
+      case 'manual':
+        return _t(nl: 'manueel', en: 'Manual', fr: 'Manuel', es: 'Manual');
       case 'qr':
+      case 'qr_code':
         return 'QR';
+      case 'online_via_mollie':
+        return _t(
+          nl: 'online via Mollie',
+          en: 'online via Mollie',
+          fr: 'en ligne via Mollie',
+          es: 'en línea vía Mollie',
+        );
       case 'mollie':
       case 'online_payment':
       case 'online-payment':
@@ -2037,10 +2162,45 @@ class _RemoteComplianceEventsSectionState
         return _t(nl: 'online', en: 'online', fr: 'en ligne', es: 'en línea');
       case 'unknown':
       case '':
-        return _localizedUnknown();
+        break;
       default:
-        return _localizedUnknown();
+        break;
     }
+    if (_isMollieOnlinePaymentContext(provider: provider, source: source)) {
+      return _t(
+        nl: 'online via Mollie',
+        en: 'online via Mollie',
+        fr: 'en ligne via Mollie',
+        es: 'en línea vía Mollie',
+      );
+    }
+    return _localizedUnknown();
+  }
+
+  bool _isMollieOnlinePaymentContext({
+    required String provider,
+    required String source,
+  }) {
+    final providerToken = provider.trim().toLowerCase();
+    final sourceToken = source.trim().toLowerCase();
+    return providerToken == 'mollie' ||
+        sourceToken == 'mollie' ||
+        sourceToken == 'online' ||
+        sourceToken == 'online_payment' ||
+        sourceToken == 'online-payment';
+  }
+
+  bool _hasDisplayablePaymentMethod({
+    required String method,
+    required String provider,
+    required String source,
+  }) {
+    return _localizedPaymentMethodLabel(
+          method,
+          provider: provider,
+          source: source,
+        ) !=
+        _localizedUnknown();
   }
 
   String _localizedSourceLabel(String raw) {
@@ -2085,10 +2245,10 @@ class _RemoteComplianceEventsSectionState
     switch (raw.trim().toLowerCase()) {
       case 'not_configured':
         return _t(
-          nl: 'niet ingesteld',
-          en: 'not configured',
-          fr: 'non configuré',
-          es: 'no configurado',
+          nl: 'Chiron-koppeling niet geconfigureerd',
+          en: 'Chiron sync not configured',
+          fr: 'Liaison Chiron non configurée',
+          es: 'Sincronización Chiron no configurada',
         );
       case 'synced':
         return _t(
@@ -3095,6 +3255,42 @@ class _RemoteComplianceEventsSectionState
     }
   }
 
+  bool _isTerminalMollieRefundAuditStatus(String raw) {
+    switch (_normalizeToken(raw)) {
+      case 'refunded':
+      case 'completed':
+      case 'success':
+      case 'paid':
+      case 'succeeded':
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  bool _isPendingMollieRefundAuditStatus(String raw) {
+    switch (_normalizeToken(raw)) {
+      case 'mollie_refund_pending':
+      case 'queued':
+      case 'pending':
+      case 'processing':
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  bool _isMollieRefundConfirmedAuditEvent(RemoteComplianceEvent e) {
+    if (_normalizeToken(e.source) == 'refund_status_refresh') return true;
+    if (_isTerminalMollieRefundAuditStatus(e.refundStatus)) return true;
+    if (_isTerminalMollieRefundAuditStatus(e.status)) return true;
+    if (_normalizeToken(e.lifecycleStatus) == 'refunded') {
+      return !_isPendingMollieRefundAuditStatus(e.refundStatus) &&
+          !_isPendingMollieRefundAuditStatus(e.status);
+    }
+    return false;
+  }
+
   String _localizedRefundProviderLabel(String raw) {
     switch (_normalizeToken(raw)) {
       case 'mollie':
@@ -3209,18 +3405,136 @@ class _RemoteComplianceEventsSectionState
         es: 'Cancelación',
       );
     }
+    if (token == 'booking_mollie_refund') {
+      if (_isMollieRefundConfirmedAuditEvent(e)) {
+        return _t(
+          nl: 'Mollie-terugbetaling bevestigd',
+          en: 'Mollie refund confirmed',
+          fr: 'Remboursement Mollie confirmé',
+          es: 'Reembolso Mollie confirmado',
+        );
+      }
+      return _t(
+        nl: 'Mollie-terugbetaling aangevraagd',
+        en: 'Mollie refund requested',
+        fr: 'Remboursement Mollie demandé',
+        es: 'Reembolso Mollie solicitado',
+      );
+    }
+    if (token == 'booking_credit_decision') {
+      return _t(
+        nl: 'Creditbeslissing',
+        en: 'Credit decision',
+        fr: 'Décision de crédit',
+        es: 'Decisión de crédito',
+      );
+    }
     return _localizedEventTypeLabel(e.eventType);
   }
 
   String _eventAuditTimestamp(RemoteComplianceEvent e) {
+    return _fmtDateTime(_eventAuditTimestampRaw(e));
+  }
+
+  String _eventAuditTimestampRaw(RemoteComplianceEvent e) {
     final token = _normalizeToken(e.eventType);
     if (token == 'booking_mollie_refund' && e.refundedAt.isNotEmpty) {
-      return _fmtDateTime(e.refundedAt);
+      return e.refundedAt;
     }
     if (token == 'booking_credit_decision' && e.creditedAt.isNotEmpty) {
-      return _fmtDateTime(e.creditedAt);
+      return e.creditedAt;
     }
-    return _fmtDateTime(e.createdAtUtc);
+    return e.createdAtUtc;
+  }
+
+  DateTime? _parseAuditTimestampUtc(String raw) {
+    final text = raw.trim();
+    if (text.isEmpty) return null;
+    return DateTime.tryParse(text);
+  }
+
+  String _dossierLatestMessageTimestamp(List<RemoteComplianceEvent> events) {
+    DateTime? bestTime;
+    String bestRaw = '';
+    for (final event in events) {
+      final raw = _eventAuditTimestampRaw(event);
+      final parsed = _parseAuditTimestampUtc(raw);
+      if (parsed == null) continue;
+      if (bestTime == null || parsed.isAfter(bestTime)) {
+        bestTime = parsed;
+        bestRaw = raw;
+      }
+    }
+    if (bestRaw.isEmpty) {
+      for (final event in events) {
+        final raw = event.createdAtUtc.trim();
+        if (raw.isEmpty) continue;
+        final parsed = _parseAuditTimestampUtc(raw);
+        if (parsed == null) continue;
+        if (bestTime == null || parsed.isAfter(bestTime)) {
+          bestTime = parsed;
+          bestRaw = raw;
+        }
+      }
+    }
+    return bestRaw.isEmpty ? '—' : _fmtDateTime(bestRaw);
+  }
+
+  void _logChironLatestEventDiagnostic(
+    List<RemoteComplianceEvent> events,
+    RemoteComplianceEvent latestByStorage,
+  ) {
+    final bookingLabel = () {
+      for (final event in events) {
+        final bookingId = event.bookingId.trim();
+        if (_isMeaningfulIdentity(bookingId)) return bookingId;
+      }
+      return '-';
+    }();
+    RemoteComplianceEvent? latestByDisplay;
+    DateTime? bestDisplayTime;
+    for (final event in events) {
+      final parsed = _parseAuditTimestampUtc(_eventAuditTimestampRaw(event));
+      if (parsed == null) continue;
+      if (bestDisplayTime == null || parsed.isAfter(bestDisplayTime)) {
+        bestDisplayTime = parsed;
+        latestByDisplay = event;
+      }
+    }
+    final storageDisplayed =
+        latestByDisplay?.eventId.isNotEmpty == true &&
+        latestByDisplay?.eventId == latestByStorage.eventId;
+    debugPrint(
+      '[CHIRON][LATEST_EVENT] booking=$bookingLabel event_type=${latestByStorage.eventType} timestamp=${latestByStorage.createdAtUtc} displayed=$storageDisplayed',
+    );
+    if (latestByDisplay != null &&
+        latestByDisplay.eventId != latestByStorage.eventId) {
+      debugPrint(
+        '[CHIRON][LATEST_EVENT] booking=$bookingLabel event_type=${latestByDisplay.eventType} timestamp=${_eventAuditTimestampRaw(latestByDisplay)} displayed=true',
+      );
+    }
+  }
+
+  void _logChironPaymentMethodDiagnostic({
+    required String bookingId,
+    required String methodRaw,
+    required String methodDisplay,
+    required String provider,
+    required String source,
+  }) {
+    debugPrint(
+      '[CHIRON][PAYMENT_METHOD] booking=${bookingId.isEmpty ? "-" : bookingId} method_raw=${methodRaw.isEmpty ? "-" : methodRaw} method_display=${methodDisplay.isEmpty ? "-" : methodDisplay} provider=${provider.isEmpty ? "-" : provider} source=${source.isEmpty ? "-" : source}',
+    );
+  }
+
+  void _logChironSyncStatusDiagnostic({
+    required String bookingId,
+    required String raw,
+    required String display,
+  }) {
+    debugPrint(
+      '[CHIRON][SYNC_STATUS] booking=${bookingId.isEmpty ? "-" : bookingId} raw=${raw.isEmpty ? "-" : raw} display=${display.isEmpty ? "-" : display}',
+    );
   }
 
   RemoteComplianceEvent? _latestEventOfType(
@@ -3241,6 +3555,67 @@ class _RemoteComplianceEventsSectionState
   RemoteComplianceEvent? _latestMollieRefundEvent(
     List<RemoteComplianceEvent> events,
   ) => _latestEventOfType(events, 'booking_mollie_refund');
+
+  RemoteComplianceEvent? _bestMollieRefundEventForSummary(
+    List<RemoteComplianceEvent> events,
+  ) {
+    RemoteComplianceEvent? latestTerminal;
+    RemoteComplianceEvent? latestAny;
+    for (final event in events) {
+      if (_normalizeToken(event.eventType) != 'booking_mollie_refund') continue;
+      if (latestAny == null || _isNewerRemoteEvent(event, latestAny)) {
+        latestAny = event;
+      }
+      if (_isMollieRefundConfirmedAuditEvent(event)) {
+        if (latestTerminal == null ||
+            _isNewerRemoteEvent(event, latestTerminal)) {
+          latestTerminal = event;
+        }
+      }
+    }
+    return latestTerminal ?? latestAny;
+  }
+
+  int _mollieRefundEventCount(List<RemoteComplianceEvent> events) {
+    var count = 0;
+    for (final event in events) {
+      if (_normalizeToken(event.eventType) == 'booking_mollie_refund') {
+        count += 1;
+      }
+    }
+    return count;
+  }
+
+  void _logRefundAuditDiagnostic(
+    List<RemoteComplianceEvent> events,
+    RemoteComplianceEvent? summaryRefund,
+  ) {
+    final bookingLabel = () {
+      final fromSummary = summaryRefund?.bookingId.trim() ?? '';
+      if (fromSummary.isNotEmpty) return fromSummary;
+      for (final event in events) {
+        if (_normalizeToken(event.eventType) != 'booking_mollie_refund') {
+          continue;
+        }
+        final bookingId = event.bookingId.trim();
+        if (bookingId.isNotEmpty) return bookingId;
+      }
+      return '-';
+    }();
+    final latestStatus = () {
+      if (summaryRefund == null) return '-';
+      if (summaryRefund.refundStatus.trim().isNotEmpty) {
+        return summaryRefund.refundStatus.trim();
+      }
+      if (summaryRefund.status.trim().isNotEmpty) {
+        return summaryRefund.status.trim();
+      }
+      return '-';
+    }();
+    debugPrint(
+      '[CHIRON][REFUND_AUDIT] booking=$bookingLabel latest_refund_status=$latestStatus refund_event_count=${_mollieRefundEventCount(events)}',
+    );
+  }
 
   RemoteComplianceEvent? _latestCreditDecisionEvent(
     List<RemoteComplianceEvent> events,
@@ -3351,6 +3726,54 @@ class _RemoteComplianceEventsSectionState
     return chips;
   }
 
+  List<Widget> _mollieRefundSummaryChips(RemoteComplianceEvent e) {
+    final chips = <Widget>[];
+    if (e.refundStatus.isNotEmpty) {
+      chips.add(
+        _chip(
+          '${_t(nl: 'Terugbetalingsstatus', en: 'Refund status', fr: 'Statut remboursement', es: 'Estado reembolso')}: ${_localizedRefundStatusLabel(e.refundStatus)}',
+        ),
+      );
+    }
+    if (e.refundProvider.isNotEmpty) {
+      chips.add(
+        _chip(
+          '${_t(nl: 'Terugbetalingsprovider', en: 'Refund provider', fr: 'Fournisseur remboursement', es: 'Proveedor reembolso')}: ${_localizedRefundProviderLabel(e.refundProvider)}',
+        ),
+      );
+    }
+    if (e.refundAmountCents != null && e.refundAmountCents! > 0) {
+      chips.add(
+        _chip(
+          '${_t(nl: 'Terugbetaald bedrag', en: 'Refund amount', fr: 'Montant remboursé', es: 'Importe reembolsado')}: ${_formatRefundAmountCents(e.refundAmountCents)}',
+        ),
+      );
+    }
+    if (e.refundId.isNotEmpty) {
+      chips.add(
+        _chip(
+          '${_t(nl: 'Mollie-terugbetalings-ID', en: 'Mollie refund ID', fr: 'ID remboursement Mollie', es: 'ID reembolso Mollie')}: ${e.refundId}',
+        ),
+      );
+    }
+    if (e.creditedAmountCents != null && e.creditedAmountCents! > 0) {
+      chips.add(
+        _chip(
+          '${_t(nl: 'Creditbedrag', en: 'Credited amount', fr: 'Montant crédité', es: 'Importe acreditado')}: ${_formatRefundAmountCents(e.creditedAmountCents)}',
+        ),
+      );
+    }
+    chips.addAll(_actorAuditChip(e));
+    if (e.refundedAt.isNotEmpty) {
+      chips.add(
+        _chip(
+          '${_t(nl: 'Terugbetaald op', en: 'Refunded at', fr: 'Remboursé le', es: 'Reembolsado el')}: ${_fmtDateTime(e.refundedAt)}',
+        ),
+      );
+    }
+    return chips;
+  }
+
   List<Widget> _paymentUpdateAuditChips(
     RemoteComplianceEvent e,
     Map<String, RemoteComplianceEvent> latestPaymentUpdates,
@@ -3368,11 +3791,14 @@ class _RemoteComplianceEventsSectionState
         ),
       );
     }
-    if (payment.method.isNotEmpty &&
-        payment.method.toLowerCase() != 'unknown') {
+    if (_hasDisplayablePaymentMethod(
+      method: payment.method,
+      provider: payment.provider,
+      source: payment.source,
+    )) {
       chips.add(
         _chip(
-          '${_t(nl: 'Methode', en: 'Method', fr: 'Méthode', es: 'Método')}: ${_localizedPaymentMethodLabel(payment.method)}',
+          '${_t(nl: 'Methode', en: 'Method', fr: 'Méthode', es: 'Método')}: ${_localizedPaymentMethodLabel(payment.method, provider: payment.provider, source: payment.source)}',
         ),
       );
     }
@@ -3462,7 +3888,7 @@ class _RemoteComplianceEventsSectionState
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            '$eventTitle • ${_localizedRideTypeLabel(e.rideType)}',
+            '$eventTitle • ${_localizedAuditRideTypeLabel(e)}',
             style: TextStyle(
               color: _chironTextPrimary,
               fontWeight: FontWeight.w700,
@@ -3508,7 +3934,9 @@ class _RemoteComplianceEventsSectionState
         .firstWhere((id) => _isMeaningfulIdentity(id), orElse: () => '');
     final latestPaymentUpdate = _latestPaymentUpdateEvent(sorted);
     final latestCreditDecision = _latestCreditDecisionEvent(sorted);
-    final latestRefund = _latestMollieRefundEvent(sorted);
+    final latestRefund = _bestMollieRefundEventForSummary(sorted);
+    _logRefundAuditDiagnostic(sorted, latestRefund);
+    _logChironLatestEventDiagnostic(sorted, latest);
     final payment = latestPaymentUpdate == null
         ? _effectivePaymentForEvent(latest, latestPaymentUpdates)
         : (
@@ -3517,6 +3945,22 @@ class _RemoteComplianceEventsSectionState
             source: _text(latestPaymentUpdate.payment['source']),
             provider: _text(latestPaymentUpdate.payment['provider']),
           );
+    _logChironPaymentMethodDiagnostic(
+      bookingId: bookingId,
+      methodRaw: payment.method,
+      methodDisplay: _localizedPaymentMethodLabel(
+        payment.method,
+        provider: payment.provider,
+        source: payment.source,
+      ),
+      provider: payment.provider,
+      source: payment.source,
+    );
+    _logChironSyncStatusDiagnostic(
+      bookingId: bookingId,
+      raw: latest.syncState,
+      display: _localizedSyncStateLabel(latest.syncState),
+    );
     final reference = _businessReferenceForRemoteCard(
       rideType: latest.rideType,
       publicBookingReference: publicBookingReference,
@@ -3567,7 +4011,7 @@ class _RemoteComplianceEventsSectionState
           ],
           const SizedBox(height: 4),
           Text(
-            '${_t(nl: 'Laatste melding', en: 'Latest message', fr: 'Dernier message', es: 'Último mensaje')}: ${_fmtDateTime(latest.createdAtUtc)}',
+            '${_t(nl: 'Laatste melding', en: 'Latest message', fr: 'Dernier message', es: 'Último mensaje')}: ${_dossierLatestMessageTimestamp(sorted)}',
             style: TextStyle(color: _chironTextMuted, fontSize: 11),
           ),
           const SizedBox(height: 6),
@@ -3585,10 +4029,13 @@ class _RemoteComplianceEventsSectionState
                 _chip(
                   '${_t(nl: 'Betaling', en: 'Payment', fr: 'Paiement', es: 'Pago')}: ${_localizedPaymentStatusLabel(payment.status)}',
                 ),
-              if (payment.method.isNotEmpty &&
-                  payment.method.toLowerCase() != 'unknown')
+              if (_hasDisplayablePaymentMethod(
+                method: payment.method,
+                provider: payment.provider,
+                source: payment.source,
+              ))
                 _chip(
-                  '${_t(nl: 'Methode', en: 'Method', fr: 'Méthode', es: 'Método')}: ${_localizedPaymentMethodLabel(payment.method)}',
+                  '${_t(nl: 'Methode', en: 'Method', fr: 'Méthode', es: 'Método')}: ${_localizedPaymentMethodLabel(payment.method, provider: payment.provider, source: payment.source)}',
                 ),
               if (payment.source.isNotEmpty &&
                   payment.source.toLowerCase() != 'unknown')
@@ -3603,7 +4050,7 @@ class _RemoteComplianceEventsSectionState
               if (latestCreditDecision != null)
                 ..._creditAuditChips(latestCreditDecision),
               if (latestRefund != null)
-                ..._mollieRefundAuditChips(latestRefund),
+                ..._mollieRefundSummaryChips(latestRefund),
             ],
           ),
           const SizedBox(height: 10),

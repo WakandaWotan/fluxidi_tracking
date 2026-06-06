@@ -21032,7 +21032,7 @@ GET /oauth/callback
             },
           );
           console.log(
-            `[BOOKING][MOLLIE_REFUND_STATUS][RES] booking=${_bookingIntentMask(bookingId)} ok=${out?.ok === true} error=${safeStr(out?.error, 64) || "-"} refund_status=${safeStr(out?.refund_status ?? out?.refundStatus, 64) || "-"} mollie_refund_status=${safeStr(out?.mollie_refund_status ?? out?.mollieRefundStatus, 64) || "-"} compliance_emit_ok=${out?.compliance_emit_ok === true || out?.complianceEmitOk === true}`,
+            `[BOOKING][MOLLIE_REFUND_STATUS][RES] booking=${_bookingIntentMask(bookingId)} ok=${out?.ok === true} error=${safeStr(out?.error, 64) || "-"} refund_status=${safeStr(out?.refund_status ?? out?.refundStatus, 64) || "-"} mollie_refund_status=${safeStr(out?.mollie_refund_status ?? out?.mollieRefundStatus, 64) || "-"} mollie_status_raw=${safeStr(out?.mollie_status_raw ?? out?.mollieStatusRaw, 64) || "-"} lookup_source=${safeStr(out?.mollie_lookup_source ?? out?.mollieLookupSource, 32) || "-"} compliance_emit_ok=${out?.compliance_emit_ok === true || out?.complianceEmitOk === true}`,
           );
           const statusCode =
             out?.error === "missing_tenant_scope"
@@ -28180,6 +28180,63 @@ function _bookingCreditDecisionFinanceBuckets(rec) {
   return { credited_cents, no_refund_cents, partial_credit_cents };
 }
 
+function _resolveComplianceRideTypeFromRecord(rec) {
+  if (!rec || typeof rec !== "object") return "booking";
+  const booking = rec?.booking && typeof rec.booking === "object" ? rec.booking : {};
+  const payload = rec?.payload && typeof rec.payload === "object" ? rec.payload : {};
+  const readToken = (...values) => {
+    for (const value of values) {
+      const token = safeStr(value, 64).toLowerCase().replaceAll("-", "_");
+      if (!token || token === "unknown") continue;
+      return token;
+    }
+    return "";
+  };
+  const explicit = readToken(
+    rec?.ride_type,
+    rec?.rideType,
+    booking?.ride_type,
+    booking?.rideType,
+    payload?.ride_type,
+    payload?.rideType,
+    rec?.trip_type,
+    rec?.tripType,
+    booking?.trip_type,
+    booking?.tripType,
+    rec?.kind,
+    booking?.kind,
+    payload?.kind,
+    rec?.service,
+    booking?.service,
+    payload?.service,
+    rec?.booking_kind,
+    rec?.bookingKind,
+    booking?.booking_kind,
+    booking?.bookingKind,
+    rec?.booking_type,
+    rec?.bookingType,
+    booking?.booking_type,
+    booking?.bookingType,
+  );
+  if (explicit === "direct" || explicit === "direct_trip" || explicit === "street_hail") {
+    return "direct";
+  }
+  if (
+    explicit === "planned" ||
+    explicit === "plan" ||
+    explicit === "booking" ||
+    explicit === "scheduled"
+  ) {
+    return "planned";
+  }
+  if (_trackingSyncIsPlannedBookingRecord(rec)) return "planned";
+  const hasBookingId = !!safeStr(
+    rec?.booking_id ?? rec?.bookingId ?? booking?.booking_id ?? booking?.bookingId,
+  );
+  if (hasBookingId) return "planned";
+  return "booking";
+}
+
 function buildBookingCreditDecisionComplianceEvent(
   recordOrBooking,
   bookingId,
@@ -28189,6 +28246,7 @@ function buildBookingCreditDecisionComplianceEvent(
     newRefundStatus = "",
     creditedAmountCents = 0,
     actorRole = "admin",
+    sourceEndpoint = "/bookings/:id/credit-decision",
   } = {},
 ) {
   const rec = recordOrBooking && typeof recordOrBooking === "object" ? recordOrBooking : {};
@@ -28241,6 +28299,7 @@ function buildBookingCreditDecisionComplianceEvent(
     rec?.credit_status ?? rec?.creditStatus ?? booking?.credit_status ?? booking?.creditStatus,
     64,
   );
+  const rideType = _resolveComplianceRideTypeFromRecord(rec);
   return {
     event_type: "booking_credit_decision",
     tenant_id: tenantId,
@@ -28248,6 +28307,9 @@ function buildBookingCreditDecisionComplianceEvent(
     booking_id: safeStr(bookingId) || undefined,
     public_booking_reference: publicBookingReference || undefined,
     publicBookingReference: publicBookingReference || undefined,
+    ride_type: rideType,
+    lifecycle_status: "cancelled",
+    booking_status: "cancelled",
     credit_decision: safeStr(creditDecision, 64) || undefined,
     creditDecision: safeStr(creditDecision, 64) || undefined,
     actor_role: eventActorRole,
@@ -28264,6 +28326,13 @@ function buildBookingCreditDecisionComplianceEvent(
       credited_amount_cents: Number.isFinite(Number(creditedAmountCents))
         ? Math.max(0, Math.round(Number(creditedAmountCents)))
         : 0,
+    },
+    provenance: {
+      producer: "booking_worker",
+      source_endpoint: safeStr(sourceEndpoint, 80) || "/bookings/:id/credit-decision",
+      backend_confirmed: true,
+      validation_state: "credit_decision",
+      ride_type: rideType,
     },
   };
 }
@@ -28404,6 +28473,7 @@ async function applyBookingCreditDecisionAuthoritative(
     newRefundStatus: refundStatus,
     creditedAmountCents,
     actorRole: creditedBy,
+    sourceEndpoint: source_endpoint,
   });
   if (complianceEvent) {
     await emitComplianceEventBestEffort(env, complianceEvent, {
@@ -28556,6 +28626,31 @@ function _mollieRefundApiStatusIsFailed(statusToken) {
   return token === "failed" || token === "canceled" || token === "cancelled" || token === "expired";
 }
 
+function _looksLikeMollieRefundId(value) {
+  return /^re_[a-z0-9]+$/i.test(String(value || "").trim());
+}
+
+function _logMollieRefundStatusMollieRaw(
+  bookingId,
+  {
+    paymentIdPresent = false,
+    refundIdPresent = false,
+    mollieStatus = "",
+    amountValue = "",
+    createdAt = "",
+    description = "",
+    isRefundedMapped = false,
+    lookupSource = "get",
+    paymentAmountRefunded = "",
+    paymentStatus = "",
+    paymentContextSource = "",
+  } = {},
+) {
+  console.log(
+    `[BOOKING][MOLLIE_REFUND_STATUS][MOLLIE_RAW] booking=${_bookingIntentMask(bookingId)} payment_id_present=${paymentIdPresent ? "true" : "false"} refund_id_present=${refundIdPresent ? "true" : "false"} mollie_status=${safeStr(mollieStatus, 40) || "-"} amount_value=${safeStr(amountValue, 24) || "-"} created_at=${safeStr(createdAt, 40) || "-"} description=${safeStr(description, 80) || "-"} is_refunded_mapped=${isRefundedMapped ? "true" : "false"} lookup_source=${safeStr(lookupSource, 32) || "get"} payment_amount_refunded=${safeStr(paymentAmountRefunded, 24) || "-"} payment_status=${safeStr(paymentStatus, 32) || "-"} payment_context_source=${safeStr(paymentContextSource, 32) || "-"}`,
+  );
+}
+
 function _mapMollieRefundSnapshotToBookingFields(mollieRefund, rec) {
   const rawStatus = safeStr(mollieRefund?.status, 40).toLowerCase();
   let refundStatus = "mollie_refund_pending";
@@ -28625,6 +28720,67 @@ async function mollieFetchRefundJson(molliePaymentId, mollieRefundId, env) {
   return parsed;
 }
 
+async function mollieFetchRefundsListPageJson(molliePaymentId, env, { fromUrl = null } = {}) {
+  const mollieConfig = getMollieConfig(env);
+  if (!mollieConfig.ok) throw new Error(mollieConfig.error || "mollie_config_unavailable");
+  const url =
+    fromUrl ||
+    `https://api.mollie.com/v2/payments/${encodeURIComponent(molliePaymentId)}/refunds?limit=250`;
+  const res = await fetch(url, {
+    headers: {
+      Authorization: `Bearer ${mollieConfig.apiKey}`,
+      "Content-Type": "application/json",
+    },
+  });
+  const txt = await res.text();
+  let parsed = null;
+  try {
+    parsed = JSON.parse(txt);
+  } catch (_) {}
+  if (!res.ok) {
+    throw new Error(`Mollie list refunds failed (${res.status}): ${txt?.slice(0, 300)}`);
+  }
+  return parsed;
+}
+
+async function mollieFindRefundInListJson(molliePaymentId, mollieRefundId, env) {
+  const targetId = safeStr(mollieRefundId, 120);
+  if (!targetId) return null;
+  let nextUrl = null;
+  let guard = 0;
+  do {
+    guard += 1;
+    if (guard > 8) break;
+    const page = await mollieFetchRefundsListPageJson(molliePaymentId, env, {
+      fromUrl: nextUrl,
+    });
+    const refunds = page?._embedded?.refunds;
+    if (Array.isArray(refunds)) {
+      for (const refund of refunds) {
+        if (safeStr(refund?.id, 120) === targetId) {
+          return refund;
+        }
+      }
+    }
+    nextUrl = safeStr(page?._links?.next?.href, 512) || null;
+  } while (nextUrl);
+  return null;
+}
+
+async function mollieResolveRefundSnapshot(molliePaymentId, mollieRefundId, env) {
+  let lookupSource = "get";
+  try {
+    const snapshot = await mollieFetchRefundJson(molliePaymentId, mollieRefundId, env);
+    return { snapshot, lookupSource };
+  } catch (getErr) {
+    const listMatch = await mollieFindRefundInListJson(molliePaymentId, mollieRefundId, env);
+    if (listMatch) {
+      return { snapshot: listMatch, lookupSource: "list_fallback" };
+    }
+    throw getErr;
+  }
+}
+
 async function refreshMollieRefundStatusForBooking(
   bookingId,
   env,
@@ -28660,21 +28816,51 @@ async function refreshMollieRefundStatusForBooking(
   }
 
   let mollieRefundSnapshot = null;
+  let mollieLookupSource = "get";
   try {
-    mollieRefundSnapshot = await mollieFetchRefundJson(
+    const resolved = await mollieResolveRefundSnapshot(
       paymentContext.mollie_payment_id,
       mollieRefundId,
       env,
     );
+    mollieRefundSnapshot = resolved?.snapshot || null;
+    mollieLookupSource = safeStr(resolved?.lookupSource, 32) || "get";
   } catch (fetchErr) {
     const safeErr = safeStr(fetchErr?.message || fetchErr, 160) || "mollie_refund_lookup_failed";
     console.log(
-      `[BOOKING][MOLLIE_REFUND_STATUS][LOOKUP_FAIL] booking=${_bookingIntentMask(bookingId)} refund=${_bookingIntentMask(mollieRefundId)} reason=${safeErr}`,
+      `[BOOKING][MOLLIE_REFUND_STATUS][LOOKUP_FAIL] booking=${_bookingIntentMask(bookingId)} refund=${_bookingIntentMask(mollieRefundId)} payment=${_bookingIntentMask(paymentContext.mollie_payment_id)} payment_context_source=${safeStr(paymentContext.source, 32) || "-"} reason=${safeErr}`,
     );
     return { ok: false, error: "mollie_refund_lookup_failed" };
   }
 
+  let paymentAmountRefunded = "";
+  let paymentStatus = "";
+  try {
+    const paymentSnapshot = await mollieFetchPaymentJson(paymentContext.mollie_payment_id, env);
+    paymentAmountRefunded = safeStr(
+      paymentSnapshot?.amountRefunded?.value ?? paymentSnapshot?.amount_refunded?.value,
+      24,
+    );
+    paymentStatus = safeStr(paymentSnapshot?.status, 32);
+  } catch (_) {
+    // Diagnostic-only; never used for terminal mapping.
+  }
+
   const mapped = _mapMollieRefundSnapshotToBookingFields(mollieRefundSnapshot, rec);
+  const rawMollieStatus = safeStr(mollieRefundSnapshot?.status, 40).toLowerCase();
+  _logMollieRefundStatusMollieRaw(bookingId, {
+    paymentIdPresent: _looksLikeMolliePaymentId(paymentContext.mollie_payment_id),
+    refundIdPresent: _looksLikeMollieRefundId(mollieRefundId),
+    mollieStatus: rawMollieStatus,
+    amountValue: safeStr(mollieRefundSnapshot?.amount?.value, 24),
+    createdAt: safeStr(mollieRefundSnapshot?.createdAt ?? mollieRefundSnapshot?.created_at, 40),
+    description: safeStr(mollieRefundSnapshot?.description, 80),
+    isRefundedMapped: mapped.refundStatus === "refunded",
+    lookupSource: mollieLookupSource,
+    paymentAmountRefunded,
+    paymentStatus,
+    paymentContextSource: paymentContext.source,
+  });
   _applyMollieRefundFieldsToRecord(rec, {
     mollieRefundId: mapped.mollieRefundId || mollieRefundId,
     mollieRefundStatus: mapped.mollieRefundStatus,
@@ -28699,19 +28885,25 @@ async function refreshMollieRefundStatusForBooking(
   const actorRole =
     safeStr(actorRoleRaw, 32).toLowerCase() === "company" ? "company" : "admin";
   let complianceEmitOk = false;
+  let complianceFinalEmitReason = "not_terminal";
   const isFinalRefunded =
     mapped.refundStatus === "refunded" ||
     _mollieRefundApiStatusIsTerminalRefunded(mapped.mollieRefundStatus);
-  if (isFinalRefunded && !_mollieRefundComplianceAlreadyEmitted(rec)) {
-    const emitOut = await _emitMollieRefundComplianceFromRecordBestEffort(env, rec, bookingId, {
+  if (isFinalRefunded) {
+    const finalEmitOut = await _emitMollieRefundFinalComplianceIfNeeded(env, key, rec, bookingId, {
       actorRole,
       sourceEndpoint: source_endpoint,
       refundAmountCentsOverride: mapped.refundedAmountCents,
+      refundStatusOverride: "refunded",
+      mollieRefundStatusOverride: mapped.mollieRefundStatus || "refunded",
+      sourceOverride: "refund_status_refresh",
     });
-    if (emitOut?.ok === true) {
-      await _persistMollieRefundComplianceEmitMarker(env, key, rec);
-      complianceEmitOk = true;
-    }
+    complianceEmitOk = finalEmitOut?.emitted === true;
+    complianceFinalEmitReason = safeStr(finalEmitOut?.reason, 64) || "unknown";
+  } else {
+    console.log(
+      `[BOOKING][MOLLIE_REFUND_FINAL_EMIT] booking=${_bookingIntentMask(bookingId)} emitted=false reason=not_terminal`,
+    );
   }
 
   return {
@@ -28721,12 +28913,24 @@ async function refreshMollieRefundStatusForBooking(
     refundStatus: mapped.refundStatus,
     mollie_refund_status: mapped.mollieRefundStatus,
     mollieRefundStatus: mapped.mollieRefundStatus,
+    mollie_status_raw: rawMollieStatus || null,
+    mollieStatusRaw: rawMollieStatus || null,
+    mollie_lookup_source: mollieLookupSource,
+    mollieLookupSource: mollieLookupSource,
+    payment_context_source: safeStr(paymentContext.source, 32) || null,
+    paymentContextSource: safeStr(paymentContext.source, 32) || null,
+    payment_amount_refunded: paymentAmountRefunded || null,
+    paymentAmountRefunded: paymentAmountRefunded || null,
+    payment_status: paymentStatus || null,
+    paymentStatus: paymentStatus || null,
     refunded_amount_cents: mapped.refundedAmountCents,
     refundedAmountCents: mapped.refundedAmountCents,
     refunded_at: mapped.refundedAt,
     refundedAt: mapped.refundedAt,
     compliance_emit_ok: complianceEmitOk,
     complianceEmitOk: complianceEmitOk,
+    compliance_final_emit_reason: complianceFinalEmitReason,
+    complianceFinalEmitReason: complianceFinalEmitReason,
   };
 }
 
@@ -28856,12 +29060,14 @@ function buildBookingMollieRefundComplianceEvent(
   bookingId,
   {
     refundStatus = "",
+    mollieRefundStatus = "",
     refundAmountCents = 0,
     creditDecision = "",
     mollieRefundId = "",
     actorRole = "admin",
     refundedAt = "",
     sourceEndpoint = "/bookings/:id/mollie-refund",
+    sourceOverride = "",
   } = {},
 ) {
   const rec = recordOrBooking && typeof recordOrBooking === "object" ? recordOrBooking : {};
@@ -28907,11 +29113,21 @@ function buildBookingMollieRefundComplianceEvent(
     : "admin";
   const refundId = safeStr(mollieRefundId, 120);
   const normalizedRefundStatus = safeStr(refundStatus, 64);
+  const normalizedMollieRefundStatus =
+    safeStr(mollieRefundStatus, 64) || normalizedRefundStatus;
   const normalizedCreditDecision = safeStr(creditDecision, 64);
   const normalizedRefundProvider = "mollie";
+  const normalizedSource =
+    safeStr(sourceOverride, 80) || "booking_mollie_refund";
   const normalizedRefundAmountCents = Number.isFinite(Number(refundAmountCents))
     ? Math.max(0, Math.round(Number(refundAmountCents)))
     : 0;
+  const lifecycleStatus =
+    _mollieRefundApiStatusIsTerminalRefunded(normalizedRefundStatus) ||
+    _mollieRefundApiStatusIsTerminalRefunded(normalizedMollieRefundStatus) ||
+    normalizedRefundStatus === "refunded"
+      ? "refunded"
+      : "cancelled";
   return {
     event_type: "booking_mollie_refund",
     tenant_id: tenantId,
@@ -28920,15 +29136,17 @@ function buildBookingMollieRefundComplianceEvent(
     public_booking_reference: publicBookingReference || undefined,
     publicBookingReference: publicBookingReference || undefined,
     ride_type: "planned",
-    lifecycle_status: "refunded",
-    status: normalizedRefundStatus || "refunded",
+    lifecycle_status: lifecycleStatus,
+    status: normalizedRefundStatus || "mollie_refund_pending",
     booking_status: "cancelled",
     actor_role: eventActorRole,
-    source: "booking_mollie_refund",
+    source: normalizedSource,
     credit_decision: normalizedCreditDecision || undefined,
     creditDecision: normalizedCreditDecision || undefined,
     refund_status: normalizedRefundStatus || undefined,
     refundStatus: normalizedRefundStatus || undefined,
+    mollie_refund_status: normalizedMollieRefundStatus || undefined,
+    mollieRefundStatus: normalizedMollieRefundStatus || undefined,
     refund_provider: normalizedRefundProvider,
     refundProvider: normalizedRefundProvider,
     refund_amount_cents: normalizedRefundAmountCents,
@@ -28945,6 +29163,8 @@ function buildBookingMollieRefundComplianceEvent(
       status: "paid",
       refund_status: normalizedRefundStatus || undefined,
       refundStatus: normalizedRefundStatus || undefined,
+      mollie_refund_status: normalizedMollieRefundStatus || undefined,
+      mollieRefundStatus: normalizedMollieRefundStatus || undefined,
       refund_provider: normalizedRefundProvider,
       refundProvider: normalizedRefundProvider,
       refund_amount_cents: normalizedRefundAmountCents,
@@ -28988,6 +29208,93 @@ function _mollieRefundComplianceAlreadyEmitted(rec) {
   );
 }
 
+function _mollieRefundComplianceFinalAlreadyEmitted(rec) {
+  if (!rec || typeof rec !== "object") return false;
+  const booking = rec?.booking && typeof rec.booking === "object" ? rec.booking : {};
+  const payload = rec?.payload && typeof rec.payload === "object" ? rec.payload : {};
+  return !!(
+    safeStr(
+      rec?.compliance_mollie_refund_final_emitted_at ??
+        rec?.complianceMollieRefundFinalEmittedAt,
+      64,
+    ) ||
+    safeStr(
+      booking?.compliance_mollie_refund_final_emitted_at ??
+        booking?.complianceMollieRefundFinalEmittedAt,
+      64,
+    ) ||
+    safeStr(
+      payload?.compliance_mollie_refund_final_emitted_at ??
+        payload?.complianceMollieRefundFinalEmittedAt,
+      64,
+    )
+  );
+}
+
+function _markMollieRefundComplianceFinalEmitted(rec) {
+  if (!rec || typeof rec !== "object") return;
+  const nowIso = new Date().toISOString();
+  const writeLayer = (target) => {
+    if (!target || typeof target !== "object") return;
+    target.compliance_mollie_refund_final_emitted_at = nowIso;
+    target.complianceMollieRefundFinalEmittedAt = nowIso;
+  };
+  writeLayer(rec);
+  writeLayer(rec.booking);
+  writeLayer(rec.payload);
+}
+
+async function _persistMollieRefundComplianceFinalEmitMarker(env, key, rec) {
+  if (!env?.BOOKING_KV || !key || !rec) return;
+  _markMollieRefundComplianceFinalEmitted(rec);
+  const nowIso = new Date().toISOString();
+  rec.updatedAt = nowIso;
+  rec.updated_at = nowIso;
+  if (rec.booking && typeof rec.booking === "object") {
+    rec.booking.updatedAt = nowIso;
+    rec.booking.updated_at = nowIso;
+  }
+  try {
+    await env.BOOKING_KV.put(key, JSON.stringify(rec));
+  } catch (_) {
+    // Best-effort audit marker only.
+  }
+}
+
+function _bookingRecordRefundStatusToken(rec) {
+  return safeStr(
+    rec?.refund_status ??
+      rec?.refundStatus ??
+      rec?.booking?.refund_status ??
+      rec?.booking?.refundStatus ??
+      rec?.payload?.refund_status ??
+      rec?.payload?.refundStatus,
+    64,
+  ).toLowerCase();
+}
+
+function _bookingRecordMollieRefundStatusToken(rec) {
+  return safeStr(
+    rec?.mollie_refund_status ??
+      rec?.mollieRefundStatus ??
+      rec?.booking?.mollie_refund_status ??
+      rec?.booking?.mollieRefundStatus ??
+      rec?.payload?.mollie_refund_status ??
+      rec?.payload?.mollieRefundStatus,
+    64,
+  ).toLowerCase();
+}
+
+function _bookingRecordIsTerminalMollieRefunded(rec) {
+  const refundStatus = _bookingRecordRefundStatusToken(rec);
+  const mollieRefundStatus = _bookingRecordMollieRefundStatusToken(rec);
+  return (
+    refundStatus === "refunded" ||
+    _mollieRefundApiStatusIsTerminalRefunded(refundStatus) ||
+    _mollieRefundApiStatusIsTerminalRefunded(mollieRefundStatus)
+  );
+}
+
 function _markMollieRefundComplianceEmitted(rec) {
   if (!rec || typeof rec !== "object") return;
   const nowIso = new Date().toISOString();
@@ -29026,6 +29333,9 @@ async function _emitMollieRefundComplianceFromRecordBestEffort(
     actorRole = "admin",
     sourceEndpoint = "/bookings/:id/mollie-refund",
     refundAmountCentsOverride = null,
+    refundStatusOverride = null,
+    mollieRefundStatusOverride = null,
+    sourceOverride = null,
   } = {},
 ) {
   const mollieRefundId = _readMollieRefundIdFromRecord(rec);
@@ -29035,6 +29345,7 @@ async function _emitMollieRefundComplianceFromRecordBestEffort(
   }
   const creditDecision = _bookingCreditDecisionRaw(rec);
   const refundStatus =
+    safeStr(refundStatusOverride, 64) ||
     safeStr(
       rec?.refund_status ??
         rec?.refundStatus ??
@@ -29043,7 +29354,12 @@ async function _emitMollieRefundComplianceFromRecordBestEffort(
         rec?.payload?.refund_status ??
         rec?.payload?.refundStatus,
       64,
-    ) || "refunded";
+    ) ||
+    "mollie_refund_pending";
+  const mollieRefundStatus =
+    safeStr(mollieRefundStatusOverride, 64) ||
+    _bookingRecordMollieRefundStatusToken(rec) ||
+    refundStatus;
   const refundedAmountCents = _readNumericCentsFromRecordLayers(
     rec,
     "refunded_amount_cents",
@@ -29070,12 +29386,14 @@ async function _emitMollieRefundComplianceFromRecordBestEffort(
   );
   const complianceEvent = buildBookingMollieRefundComplianceEvent(rec, bookingId, {
     refundStatus,
+    mollieRefundStatus,
     refundAmountCents,
     creditDecision,
     mollieRefundId,
     actorRole,
     refundedAt,
     sourceEndpoint,
+    sourceOverride: safeStr(sourceOverride, 80) || undefined,
   });
   if (!complianceEvent) {
     console.log("[COMPLIANCE_EMIT][mollie_refund] skipped reason=event_builder_null");
@@ -29092,6 +29410,59 @@ async function _emitMollieRefundComplianceFromRecordBestEffort(
     );
   }
   return emitOut;
+}
+
+async function _emitMollieRefundFinalComplianceIfNeeded(
+  env,
+  key,
+  rec,
+  bookingId,
+  {
+    actorRole = "admin",
+    sourceEndpoint = "/bookings/:id/mollie-refund/status-refresh",
+    refundAmountCentsOverride = null,
+    refundStatusOverride = "refunded",
+    mollieRefundStatusOverride = null,
+    sourceOverride = "refund_status_refresh",
+  } = {},
+) {
+  if (!_bookingRecordIsTerminalMollieRefunded(rec)) {
+    console.log(
+      `[BOOKING][MOLLIE_REFUND_FINAL_EMIT] booking=${_bookingIntentMask(bookingId)} emitted=false reason=not_terminal`,
+    );
+    return { ok: false, skipped: "not_terminal", emitted: false, reason: "not_terminal" };
+  }
+  if (_mollieRefundComplianceFinalAlreadyEmitted(rec)) {
+    console.log(
+      `[BOOKING][MOLLIE_REFUND_FINAL_EMIT] booking=${_bookingIntentMask(bookingId)} emitted=false reason=already_emitted`,
+    );
+    return { ok: true, skipped: "already_emitted", emitted: false, reason: "already_emitted" };
+  }
+  const resolvedMollieRefundStatus =
+    safeStr(mollieRefundStatusOverride, 64) ||
+    _bookingRecordMollieRefundStatusToken(rec) ||
+    "refunded";
+  const emitOut = await _emitMollieRefundComplianceFromRecordBestEffort(env, rec, bookingId, {
+    actorRole,
+    sourceEndpoint,
+    refundAmountCentsOverride,
+    refundStatusOverride: safeStr(refundStatusOverride, 64) || "refunded",
+    mollieRefundStatusOverride: resolvedMollieRefundStatus,
+    sourceOverride: safeStr(sourceOverride, 80) || "refund_status_refresh",
+  });
+  if (emitOut?.ok === true) {
+    await _persistMollieRefundComplianceFinalEmitMarker(env, key, rec);
+    console.log(
+      `[BOOKING][MOLLIE_REFUND_FINAL_EMIT] booking=${_bookingIntentMask(bookingId)} emitted=true reason=ok`,
+    );
+    return { ok: true, emitted: true, reason: "ok" };
+  }
+  const failReason =
+    safeStr(emitOut?.skipped ?? emitOut?.error, 64) || "emit_failed";
+  console.log(
+    `[BOOKING][MOLLIE_REFUND_FINAL_EMIT] booking=${_bookingIntentMask(bookingId)} emitted=false reason=${failReason}`,
+  );
+  return { ok: false, emitted: false, reason: failReason, error: failReason };
 }
 
 async function applyMollieRefundAuthoritative(
@@ -29155,6 +29526,7 @@ async function applyMollieRefundAuthoritative(
     _logMollieRefundGate(bookingId, false, "already_refunded_or_refund_pending");
     let complianceBackfillOk = false;
     let complianceBackfillSkipped = false;
+    let complianceFinalBackfillOk = false;
     if (!_mollieRefundComplianceAlreadyEmitted(rec)) {
       console.log(
         `[BOOKING][MOLLIE_REFUND][AUDIT_BACKFILL] booking=${_bookingIntentMask(bookingId)} reason=compliance_emit_repair`,
@@ -29172,12 +29544,21 @@ async function applyMollieRefundAuthoritative(
       console.log(
         `[BOOKING][MOLLIE_REFUND][AUDIT_BACKFILL] booking=${_bookingIntentMask(bookingId)} skipped reason=already_emitted`,
       );
+      if (_bookingRecordIsTerminalMollieRefunded(rec)) {
+        const finalEmitOut = await _emitMollieRefundFinalComplianceIfNeeded(env, key, rec, bookingId, {
+          actorRole,
+          sourceEndpoint: source_endpoint,
+          sourceOverride: "refund_status_refresh",
+        });
+        complianceFinalBackfillOk = finalEmitOut?.emitted === true;
+      }
     }
     return {
       ok: false,
       error: "already_refunded_or_refund_pending",
       compliance_backfill_ok: complianceBackfillOk,
       compliance_backfill_skipped: complianceBackfillSkipped,
+      compliance_final_backfill_ok: complianceFinalBackfillOk,
       refund_id: existingRefundId,
     };
   }
@@ -29372,30 +29753,126 @@ function normalizeComplianceText(value, fallback = "unknown") {
   return text || fallback;
 }
 
+function isUnknownLikeCompliancePaymentValue(value) {
+  const raw = String(value ?? "").trim().toLowerCase();
+  return (
+    raw === "" ||
+    raw === "unknown" ||
+    raw === "onbekend" ||
+    raw === "—" ||
+    raw === "-" ||
+    raw === "null" ||
+    raw === "undefined"
+  );
+}
+
+function pickMeaningfulCompliancePaymentValue(...candidates) {
+  for (const candidate of candidates) {
+    const text = safeStr(candidate);
+    if (!text) continue;
+    if (isUnknownLikeCompliancePaymentValue(text)) continue;
+    return text;
+  }
+  return null;
+}
+
+function normalizeMolliePaymentMethodForCompliance(raw) {
+  const token = normalizeBookingPaymentMethodId(raw);
+  if (!token) return null;
+  const aliases = {
+    creditcard: "card",
+    debitcard: "card",
+    card_payment: "card",
+    applepay: "apple_pay",
+    googlepay: "google_pay",
+    payconiq: "payconiq_wero",
+    wero: "payconiq_wero",
+  };
+  return aliases[token] || token;
+}
+
+function compliancePaymentLooksMollieOnline({ provider, source } = {}) {
+  const prov = String(provider ?? "").trim().toLowerCase();
+  const src = String(source ?? "").trim().toLowerCase();
+  return (
+    prov === "mollie" ||
+    src === "mollie" ||
+    src === "online" ||
+    src === "online_payment" ||
+    src === "online-payment"
+  );
+}
+
+function peekCompliancePaymentMethodRaw(recordOrBooking, payment) {
+  const rec = recordOrBooking && typeof recordOrBooking === "object" ? recordOrBooking : {};
+  const booking = rec?.booking && typeof rec.booking === "object" ? rec.booking : {};
+  const pay = payment && typeof payment === "object" ? payment : {};
+  const mollieBlock = (obj) =>
+    obj?.mollie && typeof obj.mollie === "object" ? obj.mollie : null;
+  const rawMethod = pickMeaningfulCompliancePaymentValue(
+    pay?.payment_method,
+    pay?.paymentMethod,
+    pay?.method,
+    pay?.mollie_method,
+    pay?.mollieMethod,
+    pay?.checkout_method,
+    pay?.selected_payment_method,
+    pay?.payment_method_id,
+    pay?.paymentMethodId,
+    mollieBlock(pay)?.method,
+    mollieBlock(pay)?.payment_method,
+    rec?.payment_method,
+    rec?.paymentMethod,
+    rec?.method,
+    rec?.mollie_method,
+    rec?.mollieMethod,
+    mollieBlock(rec)?.method,
+    mollieBlock(rec)?.payment_method,
+    booking?.payment_method,
+    booking?.paymentMethod,
+    booking?.method,
+    mollieBlock(booking)?.method,
+    rec?.payload?.payment_method,
+    rec?.payload?.paymentMethod,
+    rec?.payload?.method,
+    mollieBlock(rec?.payload)?.method,
+  );
+  return normalizeMolliePaymentMethodForCompliance(rawMethod);
+}
+
+function resolveCompliancePaymentMethodToken(recordOrBooking, payment, { provider, source } = {}) {
+  const normalizedMethod = peekCompliancePaymentMethodRaw(recordOrBooking, payment);
+  if (normalizedMethod) return normalizedMethod;
+  const rec = recordOrBooking && typeof recordOrBooking === "object" ? recordOrBooking : {};
+  const booking = rec?.booking && typeof rec.booking === "object" ? rec.booking : {};
+  const pay = payment && typeof payment === "object" ? payment : {};
+  const resolvedProvider = pickMeaningfulCompliancePaymentValue(
+    provider,
+    pay?.payment_provider,
+    pay?.paymentProvider,
+    rec?.payment_provider,
+    rec?.paymentProvider,
+    booking?.payment_provider,
+    booking?.paymentProvider,
+  );
+  const resolvedSource = pickMeaningfulCompliancePaymentValue(
+    source,
+    pay?.payment_source,
+    pay?.paymentSource,
+    rec?.payment_source,
+    rec?.paymentSource,
+    booking?.payment_source,
+    booking?.paymentSource,
+  );
+  if (compliancePaymentLooksMollieOnline({ provider: resolvedProvider, source: resolvedSource })) {
+    return "online_via_mollie";
+  }
+  return "unknown";
+}
+
 function buildBookingPaymentUpdateComplianceEvent(recordOrBooking, bookingId, payment) {
   const rec = recordOrBooking && typeof recordOrBooking === "object" ? recordOrBooking : {};
   const booking = rec?.booking && typeof rec.booking === "object" ? rec.booking : {};
-  const isUnknownLikePaymentValue = (value) => {
-    const raw = String(value ?? "").trim().toLowerCase();
-    return (
-      raw === "" ||
-      raw === "unknown" ||
-      raw === "onbekend" ||
-      raw === "—" ||
-      raw === "-" ||
-      raw === "null" ||
-      raw === "undefined"
-    );
-  };
-  const pickMeaningfulPaymentValue = (...candidates) => {
-    for (const candidate of candidates) {
-      const text = safeStr(candidate);
-      if (!text) continue;
-      if (isUnknownLikePaymentValue(text)) continue;
-      return text;
-    }
-    return null;
-  };
   const explicitTenantId = safeStr(
     payment?.tenant_id ||
       payment?.tenantId ||
@@ -29457,18 +29934,8 @@ function buildBookingPaymentUpdateComplianceEvent(recordOrBooking, bookingId, pa
     amountRaw;
   const totalNum = Number(totalRaw);
   const totalAmount = Number.isFinite(totalNum) ? totalNum : null;
-  const paymentMethod = normalizeComplianceText(
-    pickMeaningfulPaymentValue(
-      rec?.payment_method,
-      rec?.paymentMethod,
-      booking?.payment_method,
-      booking?.paymentMethod,
-      payment?.payment_method,
-      payment?.paymentMethod,
-    ),
-  );
   const paymentSource = normalizeComplianceText(
-    pickMeaningfulPaymentValue(
+    pickMeaningfulCompliancePaymentValue(
       rec?.payment_source,
       rec?.paymentSource,
       booking?.payment_source,
@@ -29477,7 +29944,7 @@ function buildBookingPaymentUpdateComplianceEvent(recordOrBooking, bookingId, pa
       payment?.paymentSource,
     ),
   );
-  const rawProvider = pickMeaningfulPaymentValue(
+  const rawProvider = pickMeaningfulCompliancePaymentValue(
     rec?.payment_provider,
     rec?.paymentProvider,
     booking?.payment_provider,
@@ -29532,12 +29999,23 @@ function buildBookingPaymentUpdateComplianceEvent(recordOrBooking, bookingId, pa
       "driver",
       "chauffeur",
     ].includes(String(value || "").trim().toLowerCase());
+  const paymentMethodCandidate =
+    peekCompliancePaymentMethodRaw(rec, payment) || "unknown";
   const shouldSanitizeManualProvider =
     isManualLikeSource(paymentSource) &&
-    isManualLikeMethod(paymentMethod) &&
+    isManualLikeMethod(paymentMethodCandidate) &&
     !hasReliableExternalPaymentId &&
     normalizedProvider === "mollie";
   const compliancePaymentProvider = shouldSanitizeManualProvider ? "manual" : normalizedProvider;
+  const paymentMethod = normalizeComplianceText(
+    resolveCompliancePaymentMethodToken(rec, payment, {
+      provider: compliancePaymentProvider,
+      source: paymentSource,
+    }),
+  );
+  console.log(
+    `[CHIRON][PAYMENT_METHOD] booking=${_bookingIntentMask(bookingId)} method_raw=${safeStr(peekCompliancePaymentMethodRaw(rec, payment), 40) || "-"} method_display=${safeStr(paymentMethod, 40) || "-"} provider=${safeStr(compliancePaymentProvider, 24) || "-"} source=${safeStr(paymentSource, 24) || "-"}`,
+  );
   const publicBookingReference = safeStr(
     payment?.public_booking_reference ||
       payment?.publicBookingReference ||
@@ -29729,7 +30207,12 @@ function buildBookingStatusUpdateComplianceEvent(
     },
     payment: {
       status: paymentStatus,
-      method: normalizeComplianceText(rec?.payment_method ?? rec?.paymentMethod ?? booking?.payment_method ?? booking?.paymentMethod),
+      method: normalizeComplianceText(
+        resolveCompliancePaymentMethodToken(rec, null, {
+          provider: rec?.payment_provider ?? rec?.paymentProvider ?? booking?.payment_provider ?? booking?.paymentProvider,
+          source: rec?.payment_source ?? rec?.paymentSource ?? booking?.payment_source ?? booking?.paymentSource,
+        }),
+      ),
       source: normalizeComplianceText(rec?.payment_source ?? rec?.paymentSource ?? booking?.payment_source ?? booking?.paymentSource),
       provider: normalizeComplianceText(rec?.payment_provider ?? rec?.paymentProvider ?? booking?.payment_provider ?? booking?.paymentProvider),
       payment_id: safeStr(rec?.payment_id ?? rec?.paymentId ?? booking?.payment_id ?? booking?.paymentId) || undefined,
@@ -38002,6 +38485,13 @@ function _flattenBookingForRidesList(bookingId, rec) {
     _pick(rec, ["booking", "complianceMollieRefundEmittedAt"], null) ??
     _pick(rec, ["payload", "compliance_mollie_refund_emitted_at"], null) ??
     _pick(rec, ["payload", "complianceMollieRefundEmittedAt"], null);
+  const complianceMollieRefundFinalEmittedAt =
+    rec?.compliance_mollie_refund_final_emitted_at ??
+    rec?.complianceMollieRefundFinalEmittedAt ??
+    _pick(rec, ["booking", "compliance_mollie_refund_final_emitted_at"], null) ??
+    _pick(rec, ["booking", "complianceMollieRefundFinalEmittedAt"], null) ??
+    _pick(rec, ["payload", "compliance_mollie_refund_final_emitted_at"], null) ??
+    _pick(rec, ["payload", "complianceMollieRefundFinalEmittedAt"], null);
   const assignedDriverId = bookingAssignedDriverId(rec);
   const assignedVehicleId = bookingAssignedVehicleId(rec);
 
@@ -38073,6 +38563,8 @@ function _flattenBookingForRidesList(bookingId, rec) {
     refundProvider,
     compliance_mollie_refund_emitted_at: complianceMollieRefundEmittedAt,
     complianceMollieRefundEmittedAt,
+    compliance_mollie_refund_final_emitted_at: complianceMollieRefundFinalEmittedAt,
+    complianceMollieRefundFinalEmittedAt,
   };
 }
 
@@ -52608,16 +53100,21 @@ async function payStatus(request, env, requestedScopeOverride = null) {
     if (paymentId) {
       const pay = await mollieFetchPaymentJson(paymentId, env);
       const status = pay?.status || null;
+      const mollieMethod = safeStr(pay?.method, 64) || null;
       const normalized = normalizedPaymentFields({
         status,
         paymentId,
         paidAt: data?.paid_at,
+        paymentMethod: mollieMethod,
       });
 
       Object.assign(data, normalized);
       data.mollie = data.mollie || {};
       data.mollie.status = status;
       data.mollie.last_checked_at = new Date().toISOString();
+      if (mollieMethod) {
+        data.mollie.method = mollieMethod;
+      }
 
       // Keep webhook timestamp if present
       if (data?.mollie?.last_webhook_at) {
@@ -52839,27 +53336,6 @@ async function payStatus(request, env, requestedScopeOverride = null) {
 
     if (shouldEmitCompliancePaymentUpdate) {
       compliancePaymentUpdateEmitAttempted = true;
-      const isUnknownLikePaymentValue = (value) => {
-        const raw = String(value ?? "").trim().toLowerCase();
-        return (
-          raw === "" ||
-          raw === "unknown" ||
-          raw === "onbekend" ||
-          raw === "—" ||
-          raw === "-" ||
-          raw === "null" ||
-          raw === "undefined"
-        );
-      };
-      const pickMeaningfulPaymentValue = (...candidates) => {
-        for (const candidate of candidates) {
-          const text = safeStr(candidate);
-          if (!text) continue;
-          if (isUnknownLikePaymentValue(text)) continue;
-          return text;
-        }
-        return null;
-      };
       const complianceBookingId =
         safeStr(
           data?.booking_id ||
@@ -52869,32 +53345,24 @@ async function payStatus(request, env, requestedScopeOverride = null) {
             data?.payload?.bookingId ||
             id,
         ) || id;
+      const compliancePaymentSource =
+        pickMeaningfulCompliancePaymentValue(
+          data?.payment_source,
+          data?.paymentSource,
+          data?.payload?.payment_source,
+          data?.payload?.paymentSource,
+        ) || "mollie";
+      const compliancePaymentProvider =
+        pickMeaningfulCompliancePaymentValue(
+          data?.payment_provider,
+          data?.paymentProvider,
+          data?.payload?.payment_provider,
+          data?.payload?.paymentProvider,
+        ) || "mollie";
       const compliancePaymentPayload = {
         payment_status: data?.payment_status || data?.paymentStatus || "paid",
-        payment_method:
-          pickMeaningfulPaymentValue(
-            data?.payment_method,
-            data?.paymentMethod,
-            data?.payload?.payment_method,
-            data?.payload?.paymentMethod,
-          ) ||
-          "online_payment",
-        payment_source:
-          pickMeaningfulPaymentValue(
-            data?.payment_source,
-            data?.paymentSource,
-            data?.payload?.payment_source,
-            data?.payload?.paymentSource,
-          ) ||
-          "mollie",
-        payment_provider:
-          pickMeaningfulPaymentValue(
-            data?.payment_provider,
-            data?.paymentProvider,
-            data?.payload?.payment_provider,
-            data?.payload?.paymentProvider,
-          ) ||
-          "mollie",
+        payment_source: compliancePaymentSource,
+        payment_provider: compliancePaymentProvider,
         payment_id:
           safeStr(data?.payment_id || data?.paymentId || data?.mollie?.payment_id || data?.mollie?.id) || null,
         paid_at: safeStr(data?.paid_at || data?.paidAt) || null,
@@ -52902,6 +53370,14 @@ async function payStatus(request, env, requestedScopeOverride = null) {
         tenant_id: effectiveScope?.tenant_id || null,
         company_id: effectiveScope?.company_id || null,
       };
+      compliancePaymentPayload.payment_method = resolveCompliancePaymentMethodToken(
+        data,
+        compliancePaymentPayload,
+        {
+          provider: compliancePaymentProvider,
+          source: compliancePaymentSource,
+        },
+      );
       if (effectiveScope?.hasScope) {
         const complianceEvent = buildBookingPaymentUpdateComplianceEvent(
           data,
