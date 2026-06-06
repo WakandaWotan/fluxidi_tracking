@@ -976,7 +976,11 @@ class _DriverHomePageState extends State<DriverHomePage>
     });
     unawaited(_restoreBusinessPreviewDriverSelectionOnOpen());
     _syncDriverRideScopeContext(reason: 'init_state');
-    _refreshBookings(trigger: 'init_boot');
+    // Business preview restore hydrates the preview driver/token and triggers its
+    // own forced refresh; init_boot in parallel raced ahead without a token.
+    if (!widget.openedFromBusinessHome) {
+      _refreshBookings(trigger: 'init_boot');
+    }
     unawaited(_refreshCompletedTodayCount(reason: 'init_boot'));
     _syncDriverPauseFromProfile(reason: 'init_boot');
     _startBookingPolling(reason: 'init');
@@ -8702,9 +8706,88 @@ class _DriverHomePageState extends State<DriverHomePage>
     return (tenantId: resolvedCompanyId, companyId: resolvedCompanyId);
   }
 
+  bool _businessPreviewSessionIdentityMatches({
+    required ActiveDriverSession session,
+    required String driverId,
+    required String tenantId,
+    required String companyId,
+  }) {
+    if (driverId.trim().isEmpty ||
+        tenantId.trim().isEmpty ||
+        companyId.trim().isEmpty) {
+      return false;
+    }
+    return session.driverId.trim() == driverId.trim() &&
+        (session.tenantId ?? '').trim() == tenantId.trim() &&
+        (session.companyId ?? '').trim() == companyId.trim();
+  }
+
+  bool _isBusinessPreviewDriverSessionTokenUsable(ActiveDriverSession session) {
+    final token = (session.driverSessionToken ?? '').trim();
+    if (token.isEmpty) return false;
+    final expiresRaw = (session.driverSessionExpiresAtUtc ?? '').trim();
+    if (expiresRaw.isEmpty) return true;
+    final expiresAt = DateTime.tryParse(expiresRaw)?.toUtc();
+    if (expiresAt == null) return true;
+    return expiresAt.isAfter(DateTime.now().toUtc());
+  }
+
+  ({String? token, String? tokenExpiryUtc, String source})
+  _resolveBusinessPreviewSessionToken({
+    required DriverProfile driver,
+    required String resolvedTenantId,
+    required String resolvedCompanyId,
+    ActiveDriverSession? previous,
+    ActiveDriverSession? persisted,
+  }) {
+    final driverId = driver.id.trim();
+    final tenantId = resolvedTenantId.trim();
+    final companyId = resolvedCompanyId.trim();
+    for (final candidate in <({String source, ActiveDriverSession? session})>[
+      (source: 'notifier', session: previous),
+      (source: 'persisted', session: persisted),
+    ]) {
+      final session = candidate.session;
+      if (session == null) continue;
+      if (!_businessPreviewSessionIdentityMatches(
+        session: session,
+        driverId: driverId,
+        tenantId: tenantId,
+        companyId: companyId,
+      )) {
+        continue;
+      }
+      if (!_isBusinessPreviewDriverSessionTokenUsable(session)) continue;
+      final token = (session.driverSessionToken ?? '').trim();
+      if (token.isEmpty) continue;
+      final expiry = (session.driverSessionExpiresAtUtc ?? '').trim();
+      return (
+        token: token,
+        tokenExpiryUtc: expiry.isEmpty ? null : expiry,
+        source: candidate.source,
+      );
+    }
+    return (token: null, tokenExpiryUtc: null, source: 'none');
+  }
+
+  Future<ActiveDriverSession?> _loadPersistedDriverSessionForPreview({
+    required String reason,
+  }) async {
+    try {
+      return await DriverSessionStore.instance.load();
+    } catch (_) {
+      debugPrint(
+        '[DRIVER_PREVIEW][TOKEN] reason=$reason token_present=false source=persisted_load error=load_failed',
+      );
+      return null;
+    }
+  }
+
   ActiveDriverSession _buildBusinessPreviewDriverSession({
     required DriverProfile driver,
     required ActiveDriverSession? previous,
+    ActiveDriverSession? persisted,
+    required String reason,
   }) {
     final now = DateTime.now().toUtc().toIso8601String();
     final profileCompanyId =
@@ -8719,6 +8802,17 @@ class _DriverHomePageState extends State<DriverHomePage>
     final resolvedCompanyCode =
         (activeCompanySessionNotifier.value?.companyCode ?? '').trim();
     final fleetVehicleId = _resolveFleetVehicleIdForDriver(driver.id.trim());
+    final resolvedToken = _resolveBusinessPreviewSessionToken(
+      driver: driver,
+      resolvedTenantId: resolvedTenantId,
+      resolvedCompanyId: resolvedCompanyId,
+      previous: previous,
+      persisted: persisted,
+    );
+    final tokenPresent = (resolvedToken.token ?? '').trim().isNotEmpty;
+    debugPrint(
+      '[DRIVER_PREVIEW][TOKEN] reason=$reason token_present=$tokenPresent source=${resolvedToken.source}',
+    );
     return ActiveDriverSession(
       driverId: driver.id.trim(),
       employeeNumber: driver.employeeNumber.trim(),
@@ -8730,7 +8824,41 @@ class _DriverHomePageState extends State<DriverHomePage>
       companyId: resolvedCompanyId.isEmpty ? null : resolvedCompanyId,
       companyCode: resolvedCompanyCode.isEmpty ? null : resolvedCompanyCode,
       assignedVehicleId: fleetVehicleId,
+      driverSessionToken: resolvedToken.token,
+      driverSessionExpiresAtUtc: resolvedToken.tokenExpiryUtc,
       linkMethod: kCompanyAdminDriverViewLinkMethod,
+    );
+  }
+
+  Future<ActiveDriverSession> _hydrateBusinessPreviewDriverSession({
+    required DriverProfile driver,
+    required String reason,
+  }) async {
+    final previous = activeDriverSessionNotifier.value;
+    final notifierTokenPresent = (previous?.driverSessionToken ?? '')
+        .trim()
+        .isNotEmpty;
+    debugPrint(
+      '[DRIVER_PREVIEW][TOKEN] reason=$reason token_present=$notifierTokenPresent source=notifier',
+    );
+    ActiveDriverSession? persisted;
+    if (!notifierTokenPresent) {
+      debugPrint(
+        '[DRIVER_PREVIEW][TOKEN] reason=$reason token_present=false source=notifier attempting=persisted_load',
+      );
+      persisted = await _loadPersistedDriverSessionForPreview(reason: reason);
+      final persistedTokenPresent = (persisted?.driverSessionToken ?? '')
+          .trim()
+          .isNotEmpty;
+      debugPrint(
+        '[DRIVER_PREVIEW][TOKEN] reason=$reason token_present=$persistedTokenPresent source=persisted_load',
+      );
+    }
+    return _buildBusinessPreviewDriverSession(
+      driver: driver,
+      previous: previous,
+      persisted: persisted,
+      reason: reason,
     );
   }
 
@@ -8754,6 +8882,29 @@ class _DriverHomePageState extends State<DriverHomePage>
         '[DRIVER_VIEW_ORIGIN][PREVIEW_LOAD] source=business_home driver=missing reason=no_saved_preview',
       );
       _logCurrentDriverOrigin(reason: 'preview_load_empty');
+      DriverProfile? activeDriver = _dashboardActiveDriverProfile();
+      if (activeDriver == null) {
+        final sessionDriverId =
+            activeDriverSessionNotifier.value?.driverId.trim() ?? '';
+        if (sessionDriverId.isNotEmpty) {
+          for (final driver in driversNotifier.value) {
+            if (driver.id.trim() == sessionDriverId) {
+              activeDriver = driver;
+              break;
+            }
+          }
+        }
+      }
+      if (activeDriver != null) {
+        activeDriverSessionNotifier.value =
+            await _hydrateBusinessPreviewDriverSession(
+              driver: activeDriver,
+              reason: 'preview_load_no_saved',
+            );
+        _syncDriverRideScopeContext(reason: 'preview_load_no_saved');
+      }
+      if (!mounted) return;
+      unawaited(_refreshBookings(force: true, trigger: 'init_boot'));
       return;
     }
     final selectableDrivers = _resolveSelectableDriverBridgeCandidatesGlobal(
@@ -8779,11 +8930,11 @@ class _DriverHomePageState extends State<DriverHomePage>
       return;
     }
     _businessPreviewDriverId = selectedDriver.id.trim();
-    final previous = activeDriverSessionNotifier.value;
-    activeDriverSessionNotifier.value = _buildBusinessPreviewDriverSession(
-      driver: selectedDriver,
-      previous: previous,
-    );
+    activeDriverSessionNotifier.value =
+        await _hydrateBusinessPreviewDriverSession(
+          driver: selectedDriver,
+          reason: 'preview_load_applied',
+        );
     _syncDriverRideScopeContext(reason: 'preview_load_applied');
     debugPrint(
       '[DRIVER_VIEW_ORIGIN][PREVIEW_LOAD] source=business_home driver=${_maskBridgeDriverIdGlobal(selectedDriver.id)}',
@@ -9089,12 +9240,11 @@ class _DriverHomePageState extends State<DriverHomePage>
     );
     if (widget.openedFromBusinessHome) {
       _businessPreviewDriverId = selectedDriver.id.trim();
-      final previous = activeDriverSessionNotifier.value;
-      final previewSession = _buildBusinessPreviewDriverSession(
-        driver: selectedDriver,
-        previous: previous,
-      );
-      activeDriverSessionNotifier.value = previewSession;
+      activeDriverSessionNotifier.value =
+          await _hydrateBusinessPreviewDriverSession(
+            driver: selectedDriver,
+            reason: 'preview_switch',
+          );
       final scope = _activeBusinessPreviewScope();
       if (scope != null) {
         await DriverSessionStore.instance.saveBusinessPreviewDriverSelection(
@@ -9109,9 +9259,6 @@ class _DriverHomePageState extends State<DriverHomePage>
       _logCurrentDriverOrigin(reason: 'preview_save_applied');
       if (mounted) setState(() {});
       _logRidesHubVisibleCounts(source: 'preview_picker_selected');
-      unawaited(
-        _refreshBookings(force: true, trigger: 'business_preview_switch'),
-      );
     } else {
       await DriverSessionStore.instance.saveFromDriverProfile(
         selectedDriver,

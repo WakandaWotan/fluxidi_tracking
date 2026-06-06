@@ -1679,6 +1679,10 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
   String _normalizeCancellationFailureReason(String raw) {
     final token = raw.trim().toLowerCase().replaceAll('-', '_');
     if (token.isEmpty) return 'unknown_failure';
+    if (token == 'cancellation_requires_review' ||
+        token == 'cancellation_refund_required') {
+      return 'paid_cancellation_requires_contact';
+    }
     if (token == 'cancellation_window_closed') return token;
     if (token == 'booking_not_found') return token;
     if (token == 'network_error' || token == 'http_0') return 'network_error';
@@ -1687,6 +1691,8 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
 
   int _cancellationFailurePriority(String reason) {
     switch (_normalizeCancellationFailureReason(reason)) {
+      case 'paid_cancellation_requires_contact':
+        return 5;
       case 'cancellation_window_closed':
         return 4;
       case 'booking_not_found':
@@ -1707,13 +1713,36 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
         : currentReason;
   }
 
+  bool _looksLikePaidCancellationRequiresContact({
+    required String errorCode,
+    required String reasonCode,
+    required String message,
+    Map<String, dynamic>? decoded,
+  }) {
+    final paymentClass = (decoded?['payment_class'] ?? '')
+        .toString()
+        .trim()
+        .toLowerCase();
+    if (paymentClass == 'paid' ||
+        paymentClass == 'prepaid' ||
+        paymentClass == 'mollie') {
+      return true;
+    }
+    final merged = [
+      errorCode,
+      reasonCode,
+      message,
+    ].join(' ').toLowerCase().replaceAll('-', '_');
+    return merged.contains('cancellation_requires_review') ||
+        merged.contains('cancellation_refund_required');
+  }
+
   bool _looksLikeCancellationWindowClosed({
     required int statusCode,
     required String errorCode,
     required String reasonCode,
     required String message,
   }) {
-    if (statusCode == 409) return true;
     final merged = [
       errorCode,
       reasonCode,
@@ -1736,6 +1765,24 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
   })
   _customerCancellationFailureUi(String reason) {
     switch (reason) {
+      case 'paid_cancellation_requires_contact':
+        return (
+          title: _t(
+            nl: 'Annuleren niet online mogelijk',
+            en: 'Online cancellation not available',
+            fr: 'Annulation en ligne impossible',
+            es: 'Cancelacion online no disponible',
+          ),
+          message: _t(
+            nl: 'Deze boeking werd al betaald. Neem contact op met het taxibedrijf voor beoordeling van de annulatie en eventuele terugbetaling.',
+            en: 'This booking has already been paid. Please contact the taxi company to review the cancellation and any possible refund.',
+            fr: 'Cette réservation a déjà été payée. Contactez la société de taxi pour examiner l’annulation et un éventuel remboursement.',
+            es: 'Esta reserva ya ha sido pagada. Contacta con la empresa de taxi para revisar la cancelación y un posible reembolso.',
+          ),
+          allowRefresh: false,
+          accent: _themePalette.gold,
+          icon: Icons.support_agent_rounded,
+        );
       case 'cancellation_window_closed':
         return (
           title: _t(
@@ -2104,6 +2151,17 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
         if (res.statusCode >= 200 && res.statusCode < 300 && ok) {
           successfulBookingId = candidateId;
           break;
+        }
+        if (_looksLikePaidCancellationRequiresContact(
+          errorCode: errorCode,
+          reasonCode: reasonCode,
+          message: errorMessage,
+          decoded: decodedMap,
+        )) {
+          await _showCustomerCancellationFailureDialog(
+            reason: 'paid_cancellation_requires_contact',
+          );
+          return;
         }
         if (_looksLikeCancellationWindowClosed(
           statusCode: res.statusCode,

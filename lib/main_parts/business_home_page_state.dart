@@ -282,14 +282,20 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                   (decoded['currency']?.toString().trim().isNotEmpty ?? false)
                   ? decoded['currency'].toString().trim().toUpperCase()
                   : 'EUR';
-              final cents = _asInt(decoded['monthly_income_cents']);
+              final netCents = _asInt(decoded['net_monthly_income_cents']);
+              final cents = netCents ?? _asInt(decoded['monthly_income_cents']);
               if (cents != null) {
                 nextMonthlyIncomeCents = cents;
               } else {
-                final eur = _asDouble(decoded['monthly_income_eur']);
-                nextMonthlyIncomeCents = eur == null
-                    ? null
-                    : (eur * 100).round();
+                final netEur = _asDouble(decoded['net_monthly_income_eur']);
+                if (netEur != null) {
+                  nextMonthlyIncomeCents = (netEur * 100).round();
+                } else {
+                  final eur = _asDouble(decoded['monthly_income_eur']);
+                  nextMonthlyIncomeCents = eur == null
+                      ? null
+                      : (eur * 100).round();
+                }
               }
             } else {
               debugPrint(
@@ -540,6 +546,8 @@ class _BusinessHomePageState extends State<BusinessHomePage>
         builder: (_) => const CompanyBookingsOverviewPage(),
       ),
     );
+    if (!mounted) return;
+    unawaited(_refreshDashboardKpis(reason: 'return_from_company_bookings'));
   }
 
   ({Color bg, Color border, Color text}) _statusColors(CompanyProfile profile) {

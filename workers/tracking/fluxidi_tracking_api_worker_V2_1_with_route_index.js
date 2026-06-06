@@ -3168,6 +3168,19 @@ async function handleDashboardTripKpis(req, url, env, origin) {
   const monthCancelledPaidCents = Number.isFinite(Number(financeMonth.monthly_cancelled_paid_bookings_cents))
     ? Math.max(0, Math.round(Number(financeMonth.monthly_cancelled_paid_bookings_cents)))
     : 0;
+  const monthPendingCreditCents = Number.isFinite(Number(financeMonth.monthly_pending_credit_cents))
+    ? Math.max(0, Math.round(Number(financeMonth.monthly_pending_credit_cents)))
+    : 0;
+  const monthCreditedCents = Number.isFinite(Number(financeMonth.monthly_credited_cents))
+    ? Math.max(0, Math.round(Number(financeMonth.monthly_credited_cents)))
+    : 0;
+  const grossMonthlyIncomeCents = blendedMonthlyIncomeCents;
+  const pendingCreditCents = monthPendingCreditCents;
+  const creditedCents = monthCreditedCents;
+  const netMonthlyIncomeCents = Math.max(
+    0,
+    grossMonthlyIncomeCents - pendingCreditCents - creditedCents,
+  );
   const scopeMismatchCount = Number.isFinite(Number(debugCounters.scope_mismatch))
     ? Math.max(0, Math.round(Number(debugCounters.scope_mismatch)))
     : 0;
@@ -3187,6 +3200,16 @@ async function handleDashboardTripKpis(req, url, env, origin) {
     monthly_paid_rides_count: monthPaid,
     monthly_income_eur: blendedMonthlyIncomeCents / 100,
     monthly_income_cents: blendedMonthlyIncomeCents,
+    gross_monthly_income_cents: grossMonthlyIncomeCents,
+    gross_monthly_income_eur: grossMonthlyIncomeCents / 100,
+    pending_credit_cents: pendingCreditCents,
+    pending_credit_eur: pendingCreditCents / 100,
+    monthly_credited_cents: creditedCents,
+    monthly_credited_eur: creditedCents / 100,
+    credited_cents: creditedCents,
+    credited_eur: creditedCents / 100,
+    net_monthly_income_cents: netMonthlyIncomeCents,
+    net_monthly_income_eur: netMonthlyIncomeCents / 100,
     monthly_paid_bookings_count: monthBookingPaidCount,
     monthly_paid_bookings_income_cents: monthBookingPaidIncomeCents,
     monthly_paid_bookings_income_eur: monthBookingPaidIncomeCents / 100,

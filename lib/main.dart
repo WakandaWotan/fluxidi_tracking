@@ -1343,6 +1343,8 @@ const String kTrackingBookingPath =
 // Admin endpoints (require x-admin-token if enabled in Worker)
 const String kUpdateBookingStatusPath =
     '/bookings'; // POST /bookings/:id/status
+const String kBookingCreditDecisionPath =
+    '/bookings'; // POST /bookings/:id/credit-decision
 const String kDeleteBookingPath = '/bookings'; // POST /bookings/:id/delete
 
 const String kStartTripPath = '/track/session/start';

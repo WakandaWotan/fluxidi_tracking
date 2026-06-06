@@ -16,7 +16,12 @@ class _CompanyBookingsOverviewPageState
       const <_CompanyBookingOverviewItem>[];
   _CompanyBookingsFilter _filter = _CompanyBookingsFilter.open;
   final Set<String> _archivingBookingIds = <String>{};
+  final Set<String> _cancellingBookingIds = <String>{};
+  final Set<String> _decidingCreditBookingIds = <String>{};
   bool _bulkArchiving = false;
+  bool _creditAuthAdminToken = false;
+  bool _creditAuthCompanySession = false;
+  bool _creditAuthEnabled = false;
 
   String _t({
     required String nl,
@@ -77,6 +82,557 @@ class _CompanyBookingsOverviewPageState
   bool _isMissingValue(String value) {
     final text = value.trim();
     return text.isEmpty || text == '—' || text == '-';
+  }
+
+  bool _isCancellingBooking(String bookingId) {
+    return _cancellingBookingIds.contains(bookingId);
+  }
+
+  bool _canApplyCreditDecisions() => _creditAuthEnabled;
+
+  Future<void> _refreshCreditAuthState() async {
+    final adminToken = kAdminToken.trim().isNotEmpty;
+    final resolved = await CompanySessionStore.instance
+        .resolveBackendUsableCompanyContext();
+    final companySession = resolved.ok;
+    final enabled = adminToken || companySession;
+    if (!mounted) return;
+    setState(() {
+      _creditAuthAdminToken = adminToken;
+      _creditAuthCompanySession = companySession;
+      _creditAuthEnabled = enabled;
+    });
+    debugPrint(
+      '[COMPANY_BOOKINGS][CREDIT_AUTH] admin_token=$adminToken company_session=$companySession enabled=$enabled',
+    );
+  }
+
+  Future<Map<String, String>> _creditDecisionHeaders() async {
+    final headers = <String, String>{'Content-Type': 'application/json'};
+    final adminToken = kAdminToken.trim();
+    if (adminToken.isNotEmpty) {
+      headers['x-admin-token'] = adminToken;
+      return headers;
+    }
+    final resolved = await CompanySessionStore.instance
+        .resolveBackendUsableCompanyContext();
+    if (resolved.ok) {
+      final tokenResolved = await CompanySessionStore.instance
+          .resolveCompanyBootstrapToken();
+      final token = (tokenResolved.token ?? '').trim();
+      if (token.isNotEmpty) {
+        headers['Authorization'] = 'Bearer $token';
+      }
+    }
+    return headers;
+  }
+
+  bool _isDecidingCredit(String bookingId) {
+    return _decidingCreditBookingIds.contains(bookingId);
+  }
+
+  String _creditDecisionTargetBookingId(_CompanyBookingOverviewItem item) {
+    final parent = item.parentBookingId.trim();
+    if (parent.isNotEmpty) return parent;
+    return item.bookingId.trim();
+  }
+
+  num? _creditDecisionFullAmount(_CompanyBookingOverviewItem item) {
+    return item.parentAmount ?? item.amount;
+  }
+
+  Future<({bool ok, String error})> _applyCreditDecisionById({
+    required String bookingId,
+    required String creditDecision,
+    int? partialAmountCents,
+  }) async {
+    final id = bookingId.trim();
+    if (id.isEmpty) return (ok: false, error: 'missing_booking_id');
+    final scopeQuery = _activeBookingScopeQuery();
+    final uri = _withActiveBookingScope(
+      kBookingBaseUrl,
+      '$kBookingCreditDecisionPath/${Uri.encodeComponent(id)}/credit-decision',
+    );
+    final useAdminToken = kAdminToken.trim().isNotEmpty;
+    final actorRole = useAdminToken ? 'admin' : 'company';
+    final payload = <String, dynamic>{
+      'booking_id': id,
+      'credit_decision': creditDecision,
+      'creditDecision': creditDecision,
+      'actor_role': actorRole,
+      'actorRole': actorRole,
+      if (partialAmountCents != null)
+        'partial_amount_cents': partialAmountCents,
+      if (partialAmountCents != null) 'partialAmountCents': partialAmountCents,
+      if (scopeQuery['tenant_id'] != null) 'tenant_id': scopeQuery['tenant_id'],
+      if (scopeQuery['company_id'] != null)
+        'company_id': scopeQuery['company_id'],
+      if (scopeQuery['tenantId'] != null) 'tenantId': scopeQuery['tenantId'],
+      if (scopeQuery['companyId'] != null) 'companyId': scopeQuery['companyId'],
+    };
+    try {
+      final res = await http
+          .post(
+            uri,
+            headers: await _creditDecisionHeaders(),
+            body: jsonEncode(payload),
+          )
+          .timeout(const Duration(seconds: 15));
+      dynamic decoded;
+      try {
+        decoded = jsonDecode(utf8.decode(res.bodyBytes));
+      } catch (_) {
+        decoded = null;
+      }
+      if (decoded is! Map<String, dynamic>) {
+        return (ok: false, error: 'invalid_payload');
+      }
+      if (res.statusCode != 200 || decoded['ok'] != true) {
+        final err = (decoded['error'] ?? '').toString().trim();
+        return (ok: false, error: err.isEmpty ? 'http_${res.statusCode}' : err);
+      }
+      return (ok: true, error: '');
+    } catch (_) {
+      return (ok: false, error: 'request_failed');
+    }
+  }
+
+  Future<void> _runCreditDecision(
+    _CompanyBookingOverviewItem item,
+    String creditDecision, {
+    int? partialAmountCents,
+    required String successMessage,
+  }) async {
+    if (!_canApplyCreditDecisions()) return;
+    final bookingId = _creditDecisionTargetBookingId(item);
+    if (bookingId.isEmpty || _isDecidingCredit(bookingId)) return;
+    setState(() {
+      _decidingCreditBookingIds.add(bookingId);
+    });
+    final out = await _applyCreditDecisionById(
+      bookingId: bookingId,
+      creditDecision: creditDecision,
+      partialAmountCents: partialAmountCents,
+    );
+    if (!mounted) return;
+    setState(() {
+      _decidingCreditBookingIds.remove(bookingId);
+    });
+    if (out.ok) {
+      await _loadBookings();
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(successMessage)));
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          _t(
+            nl: 'Creditbeslissing mislukt (${out.error}).',
+            en: 'Credit decision failed (${out.error}).',
+            fr: 'Décision de crédit échouée (${out.error}).',
+            es: 'Decisión de crédito fallida (${out.error}).',
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _confirmFullCredit(_CompanyBookingOverviewItem item) async {
+    await _runCreditDecision(
+      item,
+      'full_credit',
+      successMessage: _t(
+        nl: 'Volledige credit geregistreerd.',
+        en: 'Full credit recorded.',
+        fr: 'Crédit complet enregistré.',
+        es: 'Crédito total registrado.',
+      ),
+    );
+  }
+
+  Future<void> _confirmPartialCredit(_CompanyBookingOverviewItem item) async {
+    final fullAmount = _creditDecisionFullAmount(item);
+    if (fullAmount == null || fullAmount <= 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Boekingsbedrag ontbreekt voor gedeeltelijke credit.',
+              en: 'Booking amount missing for partial credit.',
+              fr: 'Montant de réservation manquant pour crédit partiel.',
+              es: 'Falta el importe de la reserva para crédito parcial.',
+            ),
+          ),
+        ),
+      );
+      return;
+    }
+    final controller = TextEditingController();
+    final tokens = _themeTokensFor(businessThemeNotifier.value);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: tokens.palette.surface,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        title: Text(
+          _t(
+            nl: 'Gedeeltelijke credit',
+            en: 'Partial credit',
+            fr: 'Crédit partiel',
+            es: 'Crédito parcial',
+          ),
+          style: TextStyle(color: tokens.textPrimary),
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              _t(
+                nl: 'Maximaal ${_moneyLabelFromAmount(fullAmount, item.currency)}. Voer een lager bedrag in.',
+                en: 'Maximum ${_moneyLabelFromAmount(fullAmount, item.currency)}. Enter a lower amount.',
+                fr: 'Maximum ${_moneyLabelFromAmount(fullAmount, item.currency)}. Saisissez un montant inférieur.',
+                es: 'Máximo ${_moneyLabelFromAmount(fullAmount, item.currency)}. Introduce un importe menor.',
+              ),
+              style: TextStyle(color: tokens.textSecondary, height: 1.35),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: controller,
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
+              ),
+              decoration: InputDecoration(
+                labelText: _t(
+                  nl: 'Creditbedrag',
+                  en: 'Credit amount',
+                  fr: 'Montant crédit',
+                  es: 'Importe crédito',
+                ),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: Text(
+              _t(nl: 'Annuleren', en: 'Cancel', fr: 'Annuler', es: 'Cancelar'),
+              style: TextStyle(color: tokens.textSecondary),
+            ),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: Text(
+              _t(
+                nl: 'Bevestigen',
+                en: 'Confirm',
+                fr: 'Confirmer',
+                es: 'Confirmar',
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    final parsed = num.tryParse(controller.text.trim().replaceAll(',', '.'));
+    if (parsed == null || parsed <= 0 || parsed >= fullAmount) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Voer een bedrag groter dan 0 en kleiner dan het volledige bedrag in.',
+              en: 'Enter an amount greater than 0 and less than the full amount.',
+              fr: 'Saisissez un montant supérieur à 0 et inférieur au montant total.',
+              es: 'Introduce un importe mayor que 0 y menor que el importe total.',
+            ),
+          ),
+        ),
+      );
+      return;
+    }
+    final partialAmountCents = (parsed * 100).round();
+    await _runCreditDecision(
+      item,
+      'partial_credit',
+      partialAmountCents: partialAmountCents,
+      successMessage: _t(
+        nl: 'Gedeeltelijke credit geregistreerd.',
+        en: 'Partial credit recorded.',
+        fr: 'Crédit partiel enregistré.',
+        es: 'Crédito parcial registrado.',
+      ),
+    );
+  }
+
+  Future<void> _confirmNoRefund(_CompanyBookingOverviewItem item) async {
+    final tokens = _themeTokensFor(businessThemeNotifier.value);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: tokens.palette.surface,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        title: Text(
+          _t(
+            nl: 'Geen terugbetaling?',
+            en: 'No refund?',
+            fr: 'Pas de remboursement ?',
+            es: '¿Sin reembolso?',
+          ),
+          style: TextStyle(color: tokens.textPrimary),
+        ),
+        content: Text(
+          _t(
+            nl: 'Deze betaalde geannuleerde rit wordt gemarkeerd als geen terugbetaling. Er wordt geen automatische Mollie-terugbetaling uitgevoerd.',
+            en: 'This paid cancelled ride will be marked as no refund. No automatic Mollie refund will be executed.',
+            fr: 'Ce trajet payé annulé sera marqué sans remboursement. Aucun remboursement Mollie automatique ne sera exécuté.',
+            es: 'Este viaje pagado cancelado se marcará como sin reembolso. No se ejecutará ningún reembolso automático de Mollie.',
+          ),
+          style: TextStyle(color: tokens.textSecondary, height: 1.35),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: Text(
+              _t(nl: 'Annuleren', en: 'Cancel', fr: 'Annuler', es: 'Cancelar'),
+              style: TextStyle(color: tokens.textSecondary),
+            ),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: Text(
+              _t(
+                nl: 'Bevestigen',
+                en: 'Confirm',
+                fr: 'Confirmer',
+                es: 'Confirmar',
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    await _runCreditDecision(
+      item,
+      'no_refund',
+      successMessage: _t(
+        nl: 'Geen terugbetaling geregistreerd.',
+        en: 'No refund recorded.',
+        fr: 'Pas de remboursement enregistré.',
+        es: 'Sin reembolso registrado.',
+      ),
+    );
+  }
+
+  Future<void> _confirmHandledManually(_CompanyBookingOverviewItem item) async {
+    final tokens = _themeTokensFor(businessThemeNotifier.value);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: tokens.palette.surface,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        title: Text(
+          _t(
+            nl: 'Handmatig afgehandeld?',
+            en: 'Mark handled manually?',
+            fr: 'Traité manuellement ?',
+            es: '¿Marcar gestionado manualmente?',
+          ),
+          style: TextStyle(color: tokens.textPrimary),
+        ),
+        content: Text(
+          _t(
+            nl: 'De creditcase wordt gemarkeerd als handmatig afgehandeld buiten het systeem om.',
+            en: 'The credit case will be marked as handled manually outside the system.',
+            fr: 'Le dossier crédit sera marqué comme traité manuellement en dehors du système.',
+            es: 'El caso de crédito se marcará como gestionado manualmente fuera del sistema.',
+          ),
+          style: TextStyle(color: tokens.textSecondary, height: 1.35),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: Text(
+              _t(nl: 'Annuleren', en: 'Cancel', fr: 'Annuler', es: 'Cancelar'),
+              style: TextStyle(color: tokens.textSecondary),
+            ),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: Text(
+              _t(
+                nl: 'Bevestigen',
+                en: 'Confirm',
+                fr: 'Confirmer',
+                es: 'Confirmar',
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    await _runCreditDecision(
+      item,
+      'handled_manually',
+      successMessage: _t(
+        nl: 'Handmatig afgehandeld geregistreerd.',
+        en: 'Handled manually recorded.',
+        fr: 'Traité manuellement enregistré.',
+        es: 'Gestionado manualmente registrado.',
+      ),
+    );
+  }
+
+  bool _shouldShowAdminCancelPaidAction(_CompanyBookingOverviewItem item) {
+    if (_filter != _CompanyBookingsFilter.open) return false;
+    if (item.bucket != _CompanyBookingsFilter.open) return false;
+    return _CompanyBookingOverviewItem.isPaidPaymentStatus(item.paymentStatus);
+  }
+
+  Future<({bool ok, String error})> _cancelPaidBookingAsAdminById(
+    String bookingId,
+  ) async {
+    final id = bookingId.trim();
+    if (id.isEmpty) return (ok: false, error: 'missing_booking_id');
+    final scopeQuery = _activeBookingScopeQuery();
+    final uri = _withActiveBookingScope(
+      kBookingBaseUrl,
+      '$kUpdateBookingStatusPath/${Uri.encodeComponent(id)}/status',
+    );
+    final payload = <String, dynamic>{
+      'booking_id': id,
+      'status': 'CANCELLED',
+      'actor_role': 'admin',
+      'actorRole': 'admin',
+      if (scopeQuery['tenant_id'] != null) 'tenant_id': scopeQuery['tenant_id'],
+      if (scopeQuery['company_id'] != null)
+        'company_id': scopeQuery['company_id'],
+      if (scopeQuery['tenantId'] != null) 'tenantId': scopeQuery['tenantId'],
+      if (scopeQuery['companyId'] != null) 'companyId': scopeQuery['companyId'],
+    };
+    try {
+      final res = await http
+          .post(uri, headers: _adminHeaders(), body: jsonEncode(payload))
+          .timeout(const Duration(seconds: 15));
+      dynamic decoded;
+      try {
+        decoded = jsonDecode(utf8.decode(res.bodyBytes));
+      } catch (_) {
+        decoded = null;
+      }
+      if (decoded is! Map<String, dynamic>) {
+        return (ok: false, error: 'invalid_payload');
+      }
+      if (res.statusCode != 200 || decoded['ok'] != true) {
+        final err = (decoded['error'] ?? '').toString().trim();
+        return (ok: false, error: err.isEmpty ? 'http_${res.statusCode}' : err);
+      }
+      return (ok: true, error: '');
+    } catch (_) {
+      return (ok: false, error: 'request_failed');
+    }
+  }
+
+  Future<void> _cancelPaidBookingAsAdmin(
+    _CompanyBookingOverviewItem item,
+  ) async {
+    if (_bulkArchiving) return;
+    final bookingId = item.bookingId.trim();
+    if (bookingId.isEmpty || _isCancellingBooking(bookingId)) return;
+    final tokens = _themeTokensFor(businessThemeNotifier.value);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: tokens.palette.surface,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        title: Text(
+          _t(
+            nl: 'Betaalde rit annuleren?',
+            en: 'Cancel paid ride?',
+            fr: 'Annuler le trajet payé ?',
+            es: '¿Cancelar viaje pagado?',
+          ),
+          style: TextStyle(color: tokens.textPrimary),
+        ),
+        content: Text(
+          _t(
+            nl: 'De rit wordt geannuleerd en verdwijnt uit planning en chauffeursweergave. De boeking komt in Geannuleerd en Te crediteren. Er wordt nog geen automatische terugbetaling uitgevoerd.',
+            en: 'The ride will be cancelled and removed from planning and the driver view. The booking will appear in Cancelled and To credit. No automatic refund will be executed yet.',
+            fr: 'Le trajet sera annulé et retiré de la planification et de la vue chauffeur. La réservation apparaîtra dans Annulées et À créditer. Aucun remboursement automatique ne sera exécuté pour l’instant.',
+            es: 'El viaje se cancelará y desaparecerá de la planificación y de la vista del conductor. La reserva aparecerá en Canceladas y Por abonar. Aún no se ejecutará ningún reembolso automático.',
+          ),
+          style: TextStyle(color: tokens.textSecondary, height: 1.35),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: Text(
+              _t(nl: 'Annuleren', en: 'Cancel', fr: 'Annuler', es: 'Cancelar'),
+              style: TextStyle(color: tokens.textSecondary),
+            ),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: tokens.danger,
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: Text(
+              _t(
+                nl: 'Annuleer betaalde rit',
+                en: 'Cancel paid ride',
+                fr: 'Annuler le trajet payé',
+                es: 'Cancelar viaje pagado',
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    setState(() {
+      _cancellingBookingIds.add(bookingId);
+    });
+    final cancelOut = await _cancelPaidBookingAsAdminById(bookingId);
+    if (!mounted) return;
+    setState(() {
+      _cancellingBookingIds.remove(bookingId);
+    });
+    if (cancelOut.ok) {
+      await _loadBookings();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Betaalde rit geannuleerd. De boeking staat nu in Geannuleerd en Te crediteren.',
+              en: 'Paid ride cancelled. The booking is now in Cancelled and To credit.',
+              fr: 'Trajet payé annulé. La réservation figure maintenant dans Annulées et À créditer.',
+              es: 'Viaje pagado cancelado. La reserva está ahora en Canceladas y Por abonar.',
+            ),
+          ),
+        ),
+      );
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          _t(
+            nl: 'Annuleren mislukt. Probeer opnieuw.',
+            en: 'Cancellation failed. Please try again.',
+            fr: 'Échec de l’annulation. Réessayez.',
+            es: 'No se pudo cancelar. Vuelve a intentarlo.',
+          ),
+        ),
+      ),
+    );
   }
 
   Map<String, String> _adminHeaders() {
@@ -337,6 +893,7 @@ class _CompanyBookingsOverviewPageState
   @override
   void initState() {
     super.initState();
+    unawaited(_refreshCreditAuthState());
     unawaited(_loadBookings());
   }
 
@@ -429,11 +986,23 @@ class _CompanyBookingsOverviewPageState
           .map((entry) => _CompanyBookingOverviewItem.fromMap(entry))
           .where((entry) => entry.bookingId.trim().isNotEmpty)
           .toList(growable: false);
+      for (final item in parsed) {
+        if (item.bucket != _CompanyBookingsFilter.cancelled) continue;
+        if (!item.isPendingCredit &&
+            _CompanyBookingOverviewItem.isPaidPaymentStatus(
+              item.paymentStatus,
+            )) {
+          debugPrint(
+            '[COMPANY_BOOKINGS][TO_CREDIT_MISSING_FIELDS] booking=${item.referenceText.trim().isNotEmpty ? item.referenceText.trim() : item.bookingId} paid=true cancelled=true refund_required=${item.refundRequired}',
+          );
+        }
+      }
       if (!mounted) return;
       setState(() {
         _all = parsed;
         _loading = false;
       });
+      unawaited(_refreshCreditAuthState());
     } on _CompanyBookingsLoadException catch (e) {
       if (!mounted) return;
       setState(() {
@@ -489,14 +1058,17 @@ class _CompanyBookingsOverviewPageState
         return _all
             .where((item) => item.bucket == _CompanyBookingsFilter.cancelled)
             .toList(growable: false);
-      case _CompanyBookingsFilter.review:
+      case _CompanyBookingsFilter.toCredit:
         return _all
-            .where((item) => item.bucket == _CompanyBookingsFilter.review)
+            .where((item) => item.isPendingCredit)
             .toList(growable: false);
     }
   }
 
   String _countText(_CompanyBookingsFilter filter) {
+    if (filter == _CompanyBookingsFilter.toCredit) {
+      return _all.where((item) => item.isPendingCredit).length.toString();
+    }
     return _all.where((item) => item.bucket == filter).length.toString();
   }
 
@@ -594,6 +1166,86 @@ class _CompanyBookingsOverviewPageState
     return normalized.replaceAll('_', ' ');
   }
 
+  String _localizedCreditStatus(String raw) {
+    final normalized = raw.trim().toUpperCase();
+    if (normalized.isEmpty || normalized == 'PENDING_CREDIT') {
+      return _t(
+        nl: 'In afwachting',
+        en: 'Pending',
+        fr: 'En attente',
+        es: 'Pendiente',
+      );
+    }
+    if (normalized == 'CREDITED') {
+      return _t(
+        nl: 'Gecrediteerd',
+        en: 'Credited',
+        fr: 'Crédité',
+        es: 'Acreditado',
+      );
+    }
+    if (normalized == 'PARTIAL_CREDIT') {
+      return _t(
+        nl: 'Gedeeltelijke credit',
+        en: 'Partial credit',
+        fr: 'Crédit partiel',
+        es: 'Crédito parcial',
+      );
+    }
+    if (normalized == 'NO_REFUND') {
+      return _t(
+        nl: 'Geen terugbetaling',
+        en: 'No refund',
+        fr: 'Pas de remboursement',
+        es: 'Sin reembolso',
+      );
+    }
+    if (normalized == 'HANDLED_MANUALLY') {
+      return _t(
+        nl: 'Handmatig afgehandeld',
+        en: 'Handled manually',
+        fr: 'Traité manuellement',
+        es: 'Gestionado manualmente',
+      );
+    }
+    return normalized.replaceAll('_', ' ');
+  }
+
+  String _localizedCreditDecision(String raw) {
+    switch (raw.trim().toUpperCase()) {
+      case 'FULL_CREDIT':
+        return _t(
+          nl: 'Volledige credit',
+          en: 'Full credit',
+          fr: 'Crédit complet',
+          es: 'Crédito total',
+        );
+      case 'PARTIAL_CREDIT':
+        return _t(
+          nl: 'Gedeeltelijke credit',
+          en: 'Partial credit',
+          fr: 'Crédit partiel',
+          es: 'Crédito parcial',
+        );
+      case 'NO_REFUND':
+        return _t(
+          nl: 'Geen terugbetaling',
+          en: 'No refund',
+          fr: 'Pas de remboursement',
+          es: 'Sin reembolso',
+        );
+      case 'HANDLED_MANUALLY':
+        return _t(
+          nl: 'Handmatig afgehandeld',
+          en: 'Handled manually',
+          fr: 'Traité manuellement',
+          es: 'Gestionado manualmente',
+        );
+      default:
+        return raw.trim().isEmpty ? '—' : raw.replaceAll('_', ' ');
+    }
+  }
+
   Color _statusColor(
     _CompanyBookingOverviewItem item,
     _CompanyBookingsThemeTokens tokens,
@@ -603,7 +1255,7 @@ class _CompanyBookingsOverviewPageState
         return tokens.palette.success;
       case _CompanyBookingsFilter.cancelled:
         return tokens.danger;
-      case _CompanyBookingsFilter.review:
+      case _CompanyBookingsFilter.toCredit:
         return tokens.warningText;
       case _CompanyBookingsFilter.open:
         if (item.statusText.trim().toUpperCase() == 'CONFIRMED') {
@@ -650,10 +1302,20 @@ class _CompanyBookingsOverviewPageState
     _CompanyBookingOverviewItem item,
     _CompanyBookingsThemeTokens tokens,
   ) {
-    final isReview = item.bucket == _CompanyBookingsFilter.review;
+    final isToCredit = item.isPendingCredit;
+    final creditDecisionLabel = _localizedCreditDecision(item.creditDecision);
+    final creditedAmountLabel = item.creditedAmountCents != null
+        ? _moneyLabelFromAmount(item.creditedAmountCents! / 100, item.currency)
+        : '';
+    final showCreditDecisionBadge =
+        !isToCredit && item.creditDecision.trim().isNotEmpty;
+    final creditTargetId = _creditDecisionTargetBookingId(item);
+    final creditBusy = _isDecidingCredit(creditTargetId);
+    final creditActionsEnabled = _canApplyCreditDecisions() && !creditBusy;
     final statusColor = _statusColor(item, tokens);
     final localizedStatus = _localizedBookingStatus(item.statusText);
     final localizedPayment = _localizedPaymentStatus(item.paymentStatus);
+    final localizedCredit = _localizedCreditStatus(item.creditStatus);
     final isPaid =
         localizedPayment ==
         _t(nl: 'Betaald', en: 'Paid', fr: 'Payé', es: 'Pagado');
@@ -664,11 +1326,6 @@ class _CompanyBookingsOverviewPageState
     );
     final legLabel = _companyLegLabel(item);
     final pickupText = _formatPickup(item.pickupIso);
-    final fromMissing = _isMissingValue(item.fromAddress);
-    final toMissing = _isMissingValue(item.toAddress);
-    final pickupMissing = _isMissingValue(pickupText);
-    final driverMissing = _isMissingValue(item.assignedDriverText);
-    final vehicleMissing = _isMissingValue(item.assignedVehicleText);
     final customerMissing = _isMissingValue(item.customerName);
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
@@ -776,11 +1433,7 @@ class _CompanyBookingsOverviewPageState
             Text(
               '${_t(nl: 'Geplande ophaal', en: 'Scheduled pickup', fr: 'Prise en charge prévue', es: 'Recogida programada')}: $pickupText',
               style: TextStyle(
-                color: isReview && pickupMissing
-                    ? tokens.reviewPlaceholderText
-                    : (isReview
-                          ? tokens.reviewPrimaryText
-                          : tokens.textPrimary),
+                color: tokens.textPrimary,
                 fontSize: 12.1,
                 fontWeight: FontWeight.w600,
               ),
@@ -819,11 +1472,7 @@ class _CompanyBookingsOverviewPageState
                         maxLines: 3,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
-                          color: isReview && fromMissing
-                              ? tokens.reviewPlaceholderText
-                              : (isReview
-                                    ? tokens.reviewPrimaryText
-                                    : tokens.textPrimary),
+                          color: tokens.textPrimary,
                           fontSize: 12.8,
                           fontWeight: FontWeight.w600,
                           height: 1.24,
@@ -835,11 +1484,7 @@ class _CompanyBookingsOverviewPageState
                         maxLines: 3,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
-                          color: isReview && toMissing
-                              ? tokens.reviewPlaceholderText
-                              : (isReview
-                                    ? tokens.reviewPrimaryText
-                                    : tokens.textPrimary),
+                          color: tokens.textPrimary,
                           fontSize: 12.8,
                           fontWeight: FontWeight.w600,
                           height: 1.24,
@@ -859,11 +1504,9 @@ class _CompanyBookingsOverviewPageState
                   Text(
                     '${_t(nl: 'Klant', en: 'Customer', fr: 'Client', es: 'Cliente')}: ${item.customerName}',
                     style: TextStyle(
-                      color: isReview && customerMissing
-                          ? tokens.reviewPlaceholderText
-                          : (isReview
-                                ? tokens.reviewSecondaryText
-                                : tokens.textSecondary),
+                      color: customerMissing
+                          ? tokens.textTertiary
+                          : tokens.textSecondary,
                       fontSize: 11.4,
                     ),
                     maxLines: 1,
@@ -871,46 +1514,16 @@ class _CompanyBookingsOverviewPageState
                   ),
                 Text(
                   '${_t(nl: 'Chauffeur', en: 'Driver', fr: 'Chauffeur', es: 'Conductor')}: ${item.assignedDriverText}',
-                  style: TextStyle(
-                    color: isReview && driverMissing
-                        ? tokens.reviewPlaceholderText
-                        : (isReview
-                              ? tokens.reviewSecondaryText
-                              : tokens.textTertiary),
-                    fontSize: 11.4,
-                  ),
+                  style: TextStyle(color: tokens.textTertiary, fontSize: 11.4),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
                 Text(
                   '${_t(nl: 'Voertuig', en: 'Vehicle', fr: 'Véhicule', es: 'Vehículo')}: ${item.assignedVehicleText}',
-                  style: TextStyle(
-                    color: isReview && vehicleMissing
-                        ? tokens.reviewPlaceholderText
-                        : (isReview
-                              ? tokens.reviewSecondaryText
-                              : tokens.textTertiary),
-                    fontSize: 11.4,
-                  ),
+                  style: TextStyle(color: tokens.textTertiary, fontSize: 11.4),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
-                if (item.bucket == _CompanyBookingsFilter.review)
-                  Text(
-                    _t(
-                      nl: 'Oude/onvolledige boeking',
-                      en: 'Old/incomplete booking',
-                      fr: 'Réservation ancienne/incomplète',
-                      es: 'Reserva antigua/incompleta',
-                    ),
-                    style: TextStyle(
-                      color: tokens.reviewWarningText,
-                      fontSize: 11.1,
-                      fontWeight: FontWeight.w700,
-                    ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
               ],
             ),
             const SizedBox(height: 10),
@@ -940,6 +1553,52 @@ class _CompanyBookingsOverviewPageState
                     ),
                   ),
                 ),
+                if (isToCredit)
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 9,
+                      vertical: 5,
+                    ),
+                    decoration: BoxDecoration(
+                      color: tokens.warningText.withOpacity(0.12),
+                      borderRadius: BorderRadius.circular(999),
+                      border: Border.all(
+                        color: tokens.warningText.withOpacity(0.42),
+                      ),
+                    ),
+                    child: Text(
+                      '${_t(nl: 'Creditstatus', en: 'Credit status', fr: 'Statut crédit', es: 'Estado crédito')}: $localizedCredit',
+                      style: TextStyle(
+                        color: tokens.warningText.withOpacity(0.98),
+                        fontSize: 11.1,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                if (showCreditDecisionBadge)
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 9,
+                      vertical: 5,
+                    ),
+                    decoration: BoxDecoration(
+                      color: tokens.textSecondary.withOpacity(0.12),
+                      borderRadius: BorderRadius.circular(999),
+                      border: Border.all(
+                        color: tokens.textSecondary.withOpacity(0.35),
+                      ),
+                    ),
+                    child: Text(
+                      creditedAmountLabel.isNotEmpty
+                          ? '$creditDecisionLabel · $creditedAmountLabel'
+                          : creditDecisionLabel,
+                      style: TextStyle(
+                        color: tokens.textSecondary.withOpacity(0.98),
+                        fontSize: 11.1,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
                 Text(
                   '${_t(nl: 'Ref', en: 'Ref', fr: 'Ref', es: 'Ref')}: ${_shortBookingReference(item)}',
                   maxLines: 1,
@@ -987,6 +1646,187 @@ class _CompanyBookingsOverviewPageState
                   ),
               ],
             ),
+            if (_shouldShowAdminCancelPaidAction(item)) ...[
+              const SizedBox(height: 10),
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  onPressed: _isCancellingBooking(item.bookingId)
+                      ? null
+                      : () => _cancelPaidBookingAsAdmin(item),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: tokens.danger.withOpacity(0.96),
+                    side: BorderSide(color: tokens.danger.withOpacity(0.45)),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 10,
+                    ),
+                  ),
+                  icon: _isCancellingBooking(item.bookingId)
+                      ? SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            valueColor: AlwaysStoppedAnimation<Color>(
+                              tokens.danger.withOpacity(0.9),
+                            ),
+                          ),
+                        )
+                      : Icon(
+                          Icons.cancel_schedule_send_rounded,
+                          size: 18,
+                          color: tokens.danger.withOpacity(0.96),
+                        ),
+                  label: Text(
+                    _isCancellingBooking(item.bookingId)
+                        ? _t(
+                            nl: 'Bezig met annuleren...',
+                            en: 'Cancelling...',
+                            fr: 'Annulation en cours...',
+                            es: 'Cancelando...',
+                          )
+                        : _t(
+                            nl: 'Annuleer betaalde rit',
+                            en: 'Cancel paid ride',
+                            fr: 'Annuler le trajet payé',
+                            es: 'Cancelar viaje pagado',
+                          ),
+                    style: const TextStyle(
+                      fontSize: 12.1,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+            if (isToCredit) ...[
+              const SizedBox(height: 10),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  OutlinedButton(
+                    onPressed: creditActionsEnabled
+                        ? () => _confirmFullCredit(item)
+                        : null,
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: tokens.accent.withOpacity(0.96),
+                      side: BorderSide(color: tokens.accent.withOpacity(0.42)),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 8,
+                      ),
+                      minimumSize: const Size(0, 32),
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                    child: Text(
+                      creditBusy
+                          ? _t(
+                              nl: 'Bezig...',
+                              en: 'Working...',
+                              fr: 'En cours...',
+                              es: 'Procesando...',
+                            )
+                          : _t(
+                              nl: 'Volledige credit',
+                              en: 'Full credit',
+                              fr: 'Crédit complet',
+                              es: 'Crédito total',
+                            ),
+                      style: const TextStyle(
+                        fontSize: 11.1,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                  OutlinedButton(
+                    onPressed: creditActionsEnabled
+                        ? () => _confirmPartialCredit(item)
+                        : null,
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: tokens.accent.withOpacity(0.96),
+                      side: BorderSide(color: tokens.accent.withOpacity(0.42)),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 8,
+                      ),
+                      minimumSize: const Size(0, 32),
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                    child: Text(
+                      _t(
+                        nl: 'Gedeeltelijke credit',
+                        en: 'Partial credit',
+                        fr: 'Crédit partiel',
+                        es: 'Crédito parcial',
+                      ),
+                      style: const TextStyle(
+                        fontSize: 11.1,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                  OutlinedButton(
+                    onPressed: creditActionsEnabled
+                        ? () => _confirmNoRefund(item)
+                        : null,
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: tokens.textSecondary,
+                      side: BorderSide(color: tokens.cardBorder),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 8,
+                      ),
+                      minimumSize: const Size(0, 32),
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                    child: Text(
+                      _t(
+                        nl: 'Geen terugbetaling',
+                        en: 'No refund',
+                        fr: 'Pas de remboursement',
+                        es: 'Sin reembolso',
+                      ),
+                      style: const TextStyle(
+                        fontSize: 11.1,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                  OutlinedButton(
+                    onPressed: creditActionsEnabled
+                        ? () => _confirmHandledManually(item)
+                        : null,
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: tokens.textSecondary,
+                      side: BorderSide(color: tokens.cardBorder),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 8,
+                      ),
+                      minimumSize: const Size(0, 32),
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                    child: Text(
+                      _t(
+                        nl: 'Handmatig afgehandeld',
+                        en: 'Mark handled manually',
+                        fr: 'Traité manuellement',
+                        es: 'Marcar gestionado manualmente',
+                      ),
+                      style: const TextStyle(
+                        fontSize: 11.1,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
           ],
         ),
       ),
@@ -1099,12 +1939,12 @@ class _CompanyBookingsOverviewPageState
                         tokens,
                       ),
                       _filterChip(
-                        _CompanyBookingsFilter.review,
+                        _CompanyBookingsFilter.toCredit,
                         _t(
-                          nl: 'Nazicht',
-                          en: 'Review',
-                          fr: 'À vérifier',
-                          es: 'Revisión',
+                          nl: 'Te crediteren',
+                          en: 'To credit',
+                          fr: 'À créditer',
+                          es: 'Por abonar',
                         ),
                         tokens,
                       ),

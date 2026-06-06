@@ -6,10 +6,11 @@ import 'package:fluxidi_tracking/customer_bookings_store.dart';
 import 'package:fluxidi_tracking/customer_profile_store.dart';
 import 'package:fluxidi_tracking/customer_theme_palette.dart';
 import 'package:fluxidi_tracking/customer_theme_store.dart';
+import 'package:fluxidi_tracking/payment/payment_booking_selection.dart';
+import 'package:fluxidi_tracking/payment/payment_method_catalog.dart';
+import 'package:fluxidi_tracking/payment/payment_method_resolver.dart';
 import 'package:http/http.dart' as http;
 import 'package:url_launcher/url_launcher.dart';
-
-enum _AirportPaymentChoice { manual, online }
 
 class AirportBookingReviewPage extends StatefulWidget {
   const AirportBookingReviewPage({
@@ -60,7 +61,7 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
   String? _submitError;
   String? _submittedBookingId;
   String? _submittedMessage;
-  _AirportPaymentChoice _selectedPaymentChoice = _AirportPaymentChoice.manual;
+  String _selectedPaymentMethodId = PaymentMethodIds.inVehicleCard;
 
   @override
   void initState() {
@@ -133,44 +134,134 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
     }
   }
 
-  bool get _isOnlinePaymentChoice =>
-      _selectedPaymentChoice == _AirportPaymentChoice.online;
+  BookingPaymentSelection get _bookingPaymentSelection =>
+      BookingPaymentSelection.fromMethodId(_selectedPaymentMethodId);
 
-  String get _selectedPaymentMode =>
-      _isOnlinePaymentChoice ? 'mollie' : 'manual';
+  String _paymentCountryCodeForResolver() {
+    final base = widget.payload;
+    for (final key in [
+      'airport_country_code',
+      'airportCountryCode',
+      'country_code',
+      'countryCode',
+    ]) {
+      final normalized = normalizeCountryCode(base[key]?.toString() ?? '');
+      if (normalized.isNotEmpty &&
+          PaymentCountryCodes.supported.contains(normalized)) {
+        return normalized;
+      }
+    }
+    final name = (base['airport_country'] ?? base['airportCountry'] ?? '')
+        .toString()
+        .trim()
+        .toLowerCase();
+    const nameToCode = {
+      'belgië': PaymentCountryCodes.belgium,
+      'belgie': PaymentCountryCodes.belgium,
+      'belgium': PaymentCountryCodes.belgium,
+      'nederland': PaymentCountryCodes.netherlands,
+      'netherlands': PaymentCountryCodes.netherlands,
+      'frankrijk': PaymentCountryCodes.france,
+      'france': PaymentCountryCodes.france,
+      'españa': PaymentCountryCodes.spain,
+      'espana': PaymentCountryCodes.spain,
+      'spain': PaymentCountryCodes.spain,
+      'united kingdom': PaymentCountryCodes.greatBritain,
+      'uk': PaymentCountryCodes.greatBritain,
+      'great britain': PaymentCountryCodes.greatBritain,
+    };
+    return nameToCode[name] ?? PaymentCountryCodes.belgium;
+  }
 
-  String _paymentChoiceLabel(_AirportPaymentChoice choice) {
-    if (choice == _AirportPaymentChoice.online) {
+  List<String> get _visiblePaymentMethodIds {
+    const manualInCar = PaymentMethodIds.inVehicleCard;
+    final onlineIds = PaymentMethodResolver.resolveIds(
+      countryCode: _paymentCountryCodeForResolver(),
+    );
+    final seen = <String>{manualInCar};
+    final out = <String>[manualInCar];
+    for (final id in onlineIds) {
+      if (id == manualInCar || !seen.add(id)) continue;
+      out.add(id);
+    }
+    return out;
+  }
+
+  String _paymentMethodLabel(String methodId) {
+    switch (normalizePaymentMethodId(methodId)) {
+      case PaymentMethodIds.inVehicleCard:
+        return _t(
+          nl: 'Betalen in de auto',
+          en: 'Pay in the car',
+          fr: 'Payer dans la voiture',
+          es: 'Pagar en el coche',
+        );
+      case PaymentMethodIds.bancontact:
+        return 'Bancontact';
+      case PaymentMethodIds.ideal:
+        return 'iDEAL';
+      case PaymentMethodIds.cardPayment:
+        return _t(
+          nl: 'Kaartbetaling',
+          en: 'Card payment',
+          fr: 'Paiement par carte',
+          es: 'Pago con tarjeta',
+        );
+      case PaymentMethodIds.applePay:
+        return 'Apple Pay';
+      case PaymentMethodIds.googlePay:
+        return 'Google Pay';
+      case PaymentMethodIds.paypal:
+        return 'PayPal';
+      case PaymentMethodIds.bizum:
+        return 'Bizum';
+      case PaymentMethodIds.cartesBancaires:
+        return 'Carte Bancaire / CB';
+      case PaymentMethodIds.payconiqWero:
+        return 'Payconiq / Wero';
+      case PaymentMethodIds.tikkie:
+        return 'Tikkie';
+      default:
+        return methodId;
+    }
+  }
+
+  String _paymentMethodDescription(String methodId) {
+    final id = normalizePaymentMethodId(methodId);
+    if (id == PaymentMethodIds.inVehicleCard ||
+        PaymentMethodCatalog.providerFor(id) == PaymentProvider.manual) {
       return _t(
-        nl: 'Nu online betalen',
-        en: 'Pay online now',
-        fr: 'Payer en ligne maintenant',
-        es: 'Pagar en línea ahora',
+        nl: 'De rit wordt bevestigd en je betaalt later in de wagen.',
+        en: 'Ride is confirmed and you pay later in the vehicle.',
+        fr: 'Le trajet est confirmé et vous payez plus tard dans le véhicule.',
+        es: 'El trayecto se confirma y pagas después en el vehículo.',
+      );
+    }
+    if (PaymentMethodCatalog.isTikkieMethod(id)) {
+      return _t(
+        nl: 'Betaalverzoek volgt na het bevestigen.',
+        en: 'A payment request follows after confirming.',
+        fr: 'Une demande de paiement suit après confirmation.',
+        es: 'Una solicitud de pago sigue tras confirmar.',
       );
     }
     return _t(
-      nl: 'Betalen in de auto',
-      en: 'Pay in the car',
-      fr: 'Payer dans la voiture',
-      es: 'Pagar en el coche',
+      nl: 'Je wordt direct doorgestuurd naar de veilige betaalpagina.',
+      en: 'You will be redirected to secure checkout immediately.',
+      fr: 'Vous serez redirigé immédiatement vers le paiement sécurisé.',
+      es: 'Se te redirigirá de inmediato al pago seguro.',
     );
   }
 
-  String _paymentChoiceDescription(_AirportPaymentChoice choice) {
-    if (choice == _AirportPaymentChoice.online) {
-      return _t(
-        nl: 'Je wordt direct doorgestuurd naar de veilige betaalpagina.',
-        en: 'You will be redirected to secure checkout immediately.',
-        fr: 'Vous serez redirigé immédiatement vers le paiement sécurisé.',
-        es: 'Se te redirigirá de inmediato al pago seguro.',
-      );
+  IconData _paymentMethodIcon(String methodId) {
+    final id = normalizePaymentMethodId(methodId);
+    if (id == PaymentMethodIds.inVehicleCard) {
+      return Icons.local_taxi_rounded;
     }
-    return _t(
-      nl: 'De rit wordt bevestigd en je betaalt later in de wagen.',
-      en: 'Ride is confirmed and you pay later in the vehicle.',
-      fr: 'Le trajet est confirmé et vous payez plus tard dans le véhicule.',
-      es: 'El trayecto se confirma y pagas después en el vehículo.',
-    );
+    if (PaymentMethodCatalog.isTikkieMethod(id)) {
+      return Icons.send_rounded;
+    }
+    return Icons.language_rounded;
   }
 
   Future<void> _openCheckoutUrl(String checkoutUrl) async {
@@ -271,6 +362,8 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
       'name_board': base['name_board'],
     };
 
+    final paymentSelection = _bookingPaymentSelection;
+
     return <String, dynamic>{
       ...base,
       if (tenantId.isNotEmpty) ...{'tenant_id': tenantId, 'tenantId': tenantId},
@@ -281,10 +374,7 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
       'booking_source': 'airport_module',
       'booking_type': 'airport_transfer',
       'entry_channel': 'flutter_airport',
-      'payment_mode': _selectedPaymentMode,
-      'paymentMode': _selectedPaymentMode,
-      'payment_provider': _selectedPaymentMode,
-      'paymentProvider': _selectedPaymentMode,
+      ...paymentSelection.toPayloadFields(),
       'customer': <String, dynamic>{
         'name': name,
         'phone': phone,
@@ -690,15 +780,15 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
     }
   }
 
-  Widget _paymentChoiceOptionTile(_AirportPaymentChoice choice) {
-    final selected = _selectedPaymentChoice == choice;
+  Widget _paymentMethodChoiceOptionTile(String methodId) {
+    final selected = _selectedPaymentMethodId == methodId;
     return InkWell(
       borderRadius: BorderRadius.circular(12),
       onTap: _isSubmitting || _isSubmitted
           ? null
           : () {
               setState(() {
-                _selectedPaymentChoice = choice;
+                _selectedPaymentMethodId = methodId;
               });
             },
       child: AnimatedContainer(
@@ -720,9 +810,7 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
         child: Row(
           children: [
             Icon(
-              choice == _AirportPaymentChoice.online
-                  ? Icons.language_rounded
-                  : Icons.local_taxi_rounded,
+              _paymentMethodIcon(methodId),
               color: selected ? _gold : _textMuted,
               size: 18,
             ),
@@ -732,7 +820,7 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    _paymentChoiceLabel(choice),
+                    _paymentMethodLabel(methodId),
                     style: TextStyle(
                       color: _textPrimary,
                       fontSize: 12.8,
@@ -741,7 +829,7 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
                   ),
                   const SizedBox(height: 2),
                   Text(
-                    _paymentChoiceDescription(choice),
+                    _paymentMethodDescription(methodId),
                     style: TextStyle(
                       color: _textMuted,
                       fontSize: 11.1,
@@ -1441,9 +1529,16 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
                         ),
                       ),
                       const SizedBox(height: 8),
-                      _paymentChoiceOptionTile(_AirportPaymentChoice.manual),
-                      const SizedBox(height: 7),
-                      _paymentChoiceOptionTile(_AirportPaymentChoice.online),
+                      for (
+                        var i = 0;
+                        i < _visiblePaymentMethodIds.length;
+                        i++
+                      ) ...[
+                        if (i > 0) const SizedBox(height: 7),
+                        _paymentMethodChoiceOptionTile(
+                          _visiblePaymentMethodIds[i],
+                        ),
+                      ],
                     ],
                   ),
                 ),

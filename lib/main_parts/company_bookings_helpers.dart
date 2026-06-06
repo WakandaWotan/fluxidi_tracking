@@ -1,6 +1,6 @@
 part of '../main.dart';
 
-enum _CompanyBookingsFilter { open, completed, cancelled, review }
+enum _CompanyBookingsFilter { open, completed, cancelled, toCredit }
 
 class _CompanyBookingsLoadException implements Exception {
   final String code;
@@ -24,6 +24,13 @@ class _CompanyBookingOverviewItem {
   final String assignedVehicleText;
   final String statusText;
   final String paymentStatus;
+  final String creditStatus;
+  final String refundStatus;
+  final bool refundRequired;
+  final String creditDecision;
+  final int? creditedAmountCents;
+  final String creditedAt;
+  final bool isPendingCredit;
   final num? amount;
   final num? parentAmount;
   final String currency;
@@ -46,6 +53,13 @@ class _CompanyBookingOverviewItem {
     required this.assignedVehicleText,
     required this.statusText,
     required this.paymentStatus,
+    required this.creditStatus,
+    required this.refundStatus,
+    required this.refundRequired,
+    required this.creditDecision,
+    required this.creditedAmountCents,
+    required this.creditedAt,
+    required this.isPendingCredit,
     required this.amount,
     required this.parentAmount,
     required this.currency,
@@ -96,12 +110,135 @@ class _CompanyBookingOverviewItem {
     return raw.trim().toUpperCase().replaceAll('-', '_').replaceAll(' ', '_');
   }
 
-  static _CompanyBookingsFilter _bucketFromStatus({
+  static bool _firstBool(Map<String, dynamic> root, List<String> paths) {
+    for (final path in paths) {
+      final value = _path(root, path);
+      if (value == true) return true;
+      if (value == false) return false;
+      final text = _text(value).toLowerCase();
+      if (text == 'true' || text == '1' || text == 'yes') return true;
+    }
+    return false;
+  }
+
+  static bool _isCancelledStatus(String statusRaw) {
+    final normalized = _normStatus(statusRaw);
+    return normalized.contains('CANCEL') || normalized == 'DELETED';
+  }
+
+  static bool isPaidPaymentStatus(String paymentStatus) {
+    final normalized = _normStatus(paymentStatus);
+    return normalized == 'PAID' ||
+        normalized == 'SUCCESS' ||
+        normalized == 'CONFIRMED' ||
+        normalized == 'COMPLETED' ||
+        normalized == 'SETTLED';
+  }
+
+  static bool _inferPaidFromRawMap(Map<String, dynamic> raw) {
+    if (isPaidPaymentStatus(
+      _firstText(raw, const <String>[
+        'payment_status',
+        'paymentStatus',
+        'record.payment_status',
+        'record.paymentStatus',
+        'booking.payment_status',
+        'booking.paymentStatus',
+        'record.booking.payment_status',
+        'record.booking.paymentStatus',
+        'quote.payment_status',
+        'quote.paymentStatus',
+        'record.quote.payment_status',
+        'record.quote.paymentStatus',
+        'payload.payment_status',
+        'payload.paymentStatus',
+        'record.payload.payment_status',
+        'record.payload.paymentStatus',
+        'mollie.status',
+        'record.mollie.status',
+        'booking.mollie.status',
+        'payload.mollie.status',
+      ]),
+    )) {
+      return true;
+    }
+    final paidAt = _firstText(raw, const <String>[
+      'paid_at',
+      'paidAt',
+      'record.paid_at',
+      'record.paidAt',
+      'booking.paid_at',
+      'booking.paidAt',
+      'record.booking.paid_at',
+      'record.booking.paidAt',
+      'payload.paid_at',
+      'payload.paidAt',
+      'record.payload.paid_at',
+      'record.payload.paidAt',
+    ]);
+    if (paidAt.isEmpty) return false;
+    final provider = _normStatus(
+      _firstText(raw, const <String>[
+        'payment_provider',
+        'paymentProvider',
+        'payment_mode',
+        'paymentMode',
+        'record.payment_provider',
+        'record.paymentProvider',
+        'record.payment_mode',
+        'record.paymentMode',
+        'booking.payment_provider',
+        'booking.paymentProvider',
+        'booking.payment_mode',
+        'booking.paymentMode',
+        'record.booking.payment_provider',
+        'record.booking.paymentProvider',
+        'payload.payment_provider',
+        'payload.paymentProvider',
+      ]),
+    );
+    return provider == 'MOLLIE' ||
+        provider == 'ONLINE' ||
+        provider == 'ONLINE_PAYMENT' ||
+        provider == 'ONLINE_PAYMENTS' ||
+        provider == 'PREPAID' ||
+        _firstText(raw, const <String>[
+          'payment_id',
+          'paymentId',
+          'record.payment_id',
+          'record.paymentId',
+          'booking.payment_id',
+          'booking.paymentId',
+          'record.booking.payment_id',
+          'record.booking.paymentId',
+        ]).isNotEmpty;
+  }
+
+  static bool _isPaidPaymentStatus(String paymentStatus) =>
+      isPaidPaymentStatus(paymentStatus);
+
+  static bool _isPendingCreditToken(String raw) {
+    return _normStatus(raw) == 'PENDING_CREDIT';
+  }
+
+  static bool _deriveIsPendingCredit({
+    required Map<String, dynamic> raw,
     required String statusRaw,
-    required String pickupIso,
-    required String fromAddress,
-    required String toAddress,
+    required String paymentStatus,
+    required String creditStatus,
+    required String refundStatus,
+    required bool refundRequired,
   }) {
+    if (!_isCancelledStatus(statusRaw)) return false;
+    if (!_isPaidPaymentStatus(paymentStatus) && !_inferPaidFromRawMap(raw)) {
+      return false;
+    }
+    return _isPendingCreditToken(creditStatus) ||
+        _isPendingCreditToken(refundStatus) ||
+        refundRequired;
+  }
+
+  static _CompanyBookingsFilter _bucketFromStatus({required String statusRaw}) {
     final normalized = _normStatus(statusRaw);
     if (normalized.contains('CANCEL')) return _CompanyBookingsFilter.cancelled;
     if (normalized == 'DELETED') return _CompanyBookingsFilter.cancelled;
@@ -109,25 +246,6 @@ class _CompanyBookingOverviewItem {
         normalized == 'DONE' ||
         normalized == 'FINISHED') {
       return _CompanyBookingsFilter.completed;
-    }
-    final hasRoute =
-        fromAddress.trim().isNotEmpty &&
-        fromAddress.trim() != '—' &&
-        toAddress.trim().isNotEmpty &&
-        toAddress.trim() != '—';
-    final pickupParsed = DateTime.tryParse(pickupIso.trim());
-    if (pickupParsed == null) {
-      return _CompanyBookingsFilter.review;
-    }
-    final pickupMs = pickupParsed.toLocal().millisecondsSinceEpoch;
-    final cutoffMs = DateTime.now()
-        .subtract(const Duration(hours: 6))
-        .millisecondsSinceEpoch;
-    if (pickupMs < cutoffMs) {
-      return _CompanyBookingsFilter.review;
-    }
-    if (!hasRoute) {
-      return _CompanyBookingsFilter.review;
     }
     return _CompanyBookingsFilter.open;
   }
@@ -363,6 +481,97 @@ class _CompanyBookingOverviewItem {
       'quote.paymentStatus',
       'record.quote.payment_status',
       'record.quote.paymentStatus',
+      'payload.payment_status',
+      'payload.paymentStatus',
+      'record.payload.payment_status',
+      'record.payload.paymentStatus',
+      'mollie.status',
+      'record.mollie.status',
+      'booking.mollie.status',
+    ]);
+    final creditStatus = _firstText(raw, const <String>[
+      'credit_status',
+      'creditStatus',
+      'record.credit_status',
+      'record.creditStatus',
+      'booking.credit_status',
+      'booking.creditStatus',
+      'record.booking.credit_status',
+      'record.booking.creditStatus',
+      'payload.credit_status',
+      'payload.creditStatus',
+      'record.payload.credit_status',
+      'record.payload.creditStatus',
+    ]);
+    final refundStatus = _firstText(raw, const <String>[
+      'refund_status',
+      'refundStatus',
+      'record.refund_status',
+      'record.refundStatus',
+      'booking.refund_status',
+      'booking.refundStatus',
+      'record.booking.refund_status',
+      'record.booking.refundStatus',
+      'payload.refund_status',
+      'payload.refundStatus',
+      'record.payload.refund_status',
+      'record.payload.refundStatus',
+    ]);
+    final refundRequired = _firstBool(raw, const <String>[
+      'refund_required',
+      'refundRequired',
+      'record.refund_required',
+      'record.refundRequired',
+      'booking.refund_required',
+      'booking.refundRequired',
+      'record.booking.refund_required',
+      'record.booking.refundRequired',
+      'payload.refund_required',
+      'payload.refundRequired',
+      'record.payload.refund_required',
+      'record.payload.refundRequired',
+    ]);
+    final creditDecision = _firstText(raw, const <String>[
+      'credit_decision',
+      'creditDecision',
+      'record.credit_decision',
+      'record.creditDecision',
+      'booking.credit_decision',
+      'booking.creditDecision',
+      'record.booking.credit_decision',
+      'record.booking.creditDecision',
+      'payload.credit_decision',
+      'payload.creditDecision',
+      'record.payload.credit_decision',
+      'record.payload.creditDecision',
+    ]);
+    final creditedAmountRaw = _firstNum(raw, const <String>[
+      'credited_amount_cents',
+      'creditedAmountCents',
+      'record.credited_amount_cents',
+      'record.creditedAmountCents',
+      'booking.credited_amount_cents',
+      'booking.creditedAmountCents',
+      'record.booking.credited_amount_cents',
+      'record.booking.creditedAmountCents',
+      'payload.credited_amount_cents',
+      'payload.creditedAmountCents',
+      'record.payload.credited_amount_cents',
+      'record.payload.creditedAmountCents',
+    ]);
+    final creditedAt = _firstText(raw, const <String>[
+      'credited_at',
+      'creditedAt',
+      'record.credited_at',
+      'record.creditedAt',
+      'booking.credited_at',
+      'booking.creditedAt',
+      'record.booking.credited_at',
+      'record.booking.creditedAt',
+      'payload.credited_at',
+      'payload.creditedAt',
+      'record.payload.credited_at',
+      'record.payload.creditedAt',
     ]);
     final amount = _firstNum(raw, const <String>[
       'leg_price_incl_vat',
@@ -429,6 +638,18 @@ class _CompanyBookingOverviewItem {
       'booking.currency',
       'record.booking.currency',
     ]);
+    final isPendingCredit = _deriveIsPendingCredit(
+      raw: raw,
+      statusRaw: statusRaw,
+      paymentStatus: paymentStatus,
+      creditStatus: creditStatus,
+      refundStatus: refundStatus,
+      refundRequired: refundRequired,
+    );
+    final normalizedPaymentStatus =
+        isPaidPaymentStatus(paymentStatus) || _inferPaidFromRawMap(raw)
+        ? 'PAID'
+        : _normStatus(paymentStatus);
     return _CompanyBookingOverviewItem(
       bookingId: bookingId,
       parentBookingId: parentBookingId.isEmpty ? bookingId : parentBookingId,
@@ -445,16 +666,18 @@ class _CompanyBookingOverviewItem {
       assignedDriverText: assignedDriver.isEmpty ? '—' : assignedDriver,
       assignedVehicleText: assignedVehicle.isEmpty ? '—' : assignedVehicle,
       statusText: _normStatus(statusRaw),
-      paymentStatus: _normStatus(paymentStatus),
+      paymentStatus: normalizedPaymentStatus,
+      creditStatus: _normStatus(creditStatus),
+      refundStatus: _normStatus(refundStatus),
+      refundRequired: refundRequired,
+      creditDecision: _normStatus(creditDecision),
+      creditedAmountCents: creditedAmountRaw?.round(),
+      creditedAt: creditedAt,
+      isPendingCredit: isPendingCredit,
       amount: amount,
       parentAmount: parentAmount,
       currency: currency,
-      bucket: _bucketFromStatus(
-        statusRaw: statusRaw,
-        pickupIso: pickupIso,
-        fromAddress: fromAddress,
-        toAddress: toAddress,
-      ),
+      bucket: _bucketFromStatus(statusRaw: statusRaw),
     );
   }
 }

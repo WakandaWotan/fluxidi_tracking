@@ -4930,6 +4930,36 @@ function _companyAuthFail() {
   return json({ ok: false, error: "unauthorized" }, 401);
 }
 
+async function _requireAdminOrCompanySessionAuth({
+  request,
+  url,
+  env,
+  tenantScope = null,
+} = {}) {
+  const hasAdmin = hasValidAdminToken(request, url, env);
+  if (hasAdmin) {
+    return { ok: true, auth_mode: "admin_token", actor_role: "admin" };
+  }
+  const companySession = await _loadCompanySessionFromRequest(request, env);
+  if (!companySession) {
+    return { ok: false, response: _companyAuthFail() };
+  }
+  if (tenantScope?.hasScope) {
+    if (
+      tenantScope.tenant_id !== companySession.tenant_id ||
+      tenantScope.company_id !== companySession.company_id
+    ) {
+      return { ok: false, response: json({ ok: false, error: "forbidden" }, 403) };
+    }
+  }
+  return {
+    ok: true,
+    auth_mode: "company_session",
+    actor_role: "company",
+    company_session: companySession,
+  };
+}
+
 async function _loadPublicDriverSessionFromRequest(request, env) {
   if (!env?.BOOKING_KV) return null;
   const token = _extractBearerToken(request);
@@ -20391,6 +20421,8 @@ GET /oauth/callback
       // POST /bookings/:id/status
       // POST /bookings/:id/payment
       // POST /bookings/:id/receipt/email
+      // POST /bookings/:id/credit-decision
+      // POST /bookings/:id/mollie-refund
       // POST /bookings/:id/assign (placeholder for future)
       // POST /bookings/:id/delete
       if (pathParts.length >= 2 && pathParts[0] === "bookings") {
@@ -20898,6 +20930,138 @@ GET /oauth/callback
               ? 400
               : (out?.error === "forbidden" ? 403 : (out.ok ? 200 : 404)),
           );
+        }
+
+        if (
+          pathParts.length === 3 &&
+          pathParts[2] === "credit-decision" &&
+          request.method === "POST"
+        ) {
+          const body = await safeJson(request);
+          const scopedRoute = requireExplicitBookingRouteScope({ request, url, body });
+          if (!scopedRoute.ok) return scopedRoute.response;
+          const tenantScope = scopedRoute.scope;
+          const auth = await _requireAdminOrCompanySessionAuth({
+            request,
+            url,
+            env,
+            tenantScope,
+          });
+          if (!auth.ok) return auth.response;
+          const actorRoleBody = _scopeText(body?.actor_role ?? body?.actorRole, 32).toLowerCase();
+          if (actorRoleBody === "customer" || actorRoleBody === "driver") {
+            return json({ ok: false, error: "forbidden" }, 403);
+          }
+          const actorRole =
+            auth.auth_mode === "company_session"
+              ? "company"
+              : (actorRoleBody === "company" ? "company" : "admin");
+          const partialAmountCentsRaw =
+            body?.partial_amount_cents ??
+            body?.partialAmountCents ??
+            body?.amount_cents ??
+            body?.amountCents ??
+            null;
+          const out = await applyBookingCreditDecisionAuthoritative(
+            bookingId,
+            env,
+            tenantScope,
+            {
+              credit_decision: body?.credit_decision ?? body?.creditDecision,
+              partial_amount_cents: partialAmountCentsRaw,
+              actor_role: actorRole,
+              source_endpoint: "/bookings/:id/credit-decision",
+            },
+          );
+          const statusCode =
+            out?.error === "missing_tenant_scope"
+              ? 400
+              : out?.error === "forbidden" ||
+                  out?.error === "credit_decision_not_pending" ||
+                  out?.error === "booking_not_cancelled" ||
+                  out?.error === "booking_not_paid"
+                ? 403
+                : out?.error === "partial_amount_invalid" ||
+                    out?.error === "partial_amount_required" ||
+                    out?.error === "invalid_credit_decision" ||
+                    out?.error === "missing_booking_amount" ||
+                    out?.error === "credit_decision_persist_failed"
+                  ? 400
+                  : out.ok
+                    ? 200
+                    : 404;
+          return json(out, statusCode);
+        }
+
+        if (
+          pathParts.length === 3 &&
+          pathParts[2] === "mollie-refund" &&
+          request.method === "POST"
+        ) {
+          const body = await safeJson(request);
+          const scopedRoute = requireExplicitBookingRouteScope({ request, url, body });
+          if (!scopedRoute.ok) return scopedRoute.response;
+          const tenantScope = scopedRoute.scope;
+          const auth = await _requireAdminOrCompanySessionAuth({
+            request,
+            url,
+            env,
+            tenantScope,
+          });
+          if (!auth.ok) return auth.response;
+          const actorRoleBody = _scopeText(body?.actor_role ?? body?.actorRole, 32).toLowerCase();
+          if (actorRoleBody === "customer" || actorRoleBody === "driver") {
+            return json({ ok: false, error: "forbidden" }, 403);
+          }
+          const actorRole =
+            auth.auth_mode === "company_session"
+              ? "company"
+              : (actorRoleBody === "company" ? "company" : "admin");
+          const refundModeRaw = safeStr(body?.refund_mode ?? body?.refundMode, 32).toLowerCase();
+          const refundMode = refundModeRaw || "full";
+          const partialAmountCentsRaw =
+            body?.partial_amount_cents ??
+            body?.partialAmountCents ??
+            body?.amount_cents ??
+            body?.amountCents ??
+            null;
+          const out = await applyMollieRefundAuthoritative(
+            bookingId,
+            env,
+            tenantScope,
+            {
+              refund_mode: refundMode,
+              partial_amount_cents: partialAmountCentsRaw,
+              actor_role: actorRole,
+              source_endpoint: "/bookings/:id/mollie-refund",
+            },
+          );
+          const statusCode =
+            out?.error === "missing_tenant_scope"
+              ? 400
+              : out?.error === "forbidden" ||
+                  out?.error === "booking_not_cancelled" ||
+                  out?.error === "booking_not_paid" ||
+                  out?.error === "booking_not_mollie_payment" ||
+                  out?.error === "credit_decision_not_refundable" ||
+                  out?.error === "credit_decision_required" ||
+                  out?.error === "payment_not_refundable"
+                ? 403
+                : out?.error === "partial_amount_invalid" ||
+                    out?.error === "partial_amount_required" ||
+                    out?.error === "invalid_refund_mode" ||
+                    out?.error === "missing_booking_amount" ||
+                    out?.error === "missing_mollie_payment_id" ||
+                    out?.error === "already_refunded_or_refund_pending" ||
+                    out?.error === "mollie_config_unavailable" ||
+                    out?.error === "mollie_payment_lookup_failed"
+                  ? 400
+                  : out?.error === "mollie_refund_failed"
+                    ? 502
+                    : out.ok
+                      ? 200
+                      : 404;
+          return json(out, statusCode);
         }
 
         if (
@@ -27586,6 +27750,1158 @@ function normalizeCompliancePaymentStatus(value) {
   return "unknown";
 }
 
+function _bookingRecordPaymentStatusNormalized(rec) {
+  if (_bookingRecordIsPaidForCredit(rec)) return "paid";
+  return normalizeCompliancePaymentStatus(
+    rec?.payment_status ??
+      rec?.paymentStatus ??
+      rec?.booking?.payment_status ??
+      rec?.booking?.paymentStatus ??
+      rec?.payload?.payment_status ??
+      rec?.payload?.paymentStatus,
+  );
+}
+
+function _bookingRecordOnlinePaidProviderSet() {
+  return new Set([
+    "mollie",
+    "online",
+    "online_payment",
+    "online-payments",
+    "online_payments",
+    "prepaid",
+  ]);
+}
+
+function _bookingRecordPaymentProviderToken(rec) {
+  if (!rec || typeof rec !== "object") return "";
+  const booking = rec?.booking && typeof rec.booking === "object" ? rec.booking : {};
+  const payload = rec?.payload && typeof rec.payload === "object" ? rec.payload : {};
+  return safeStr(
+    rec?.payment_provider ??
+      rec?.paymentProvider ??
+      booking?.payment_provider ??
+      booking?.paymentProvider ??
+      payload?.payment_provider ??
+      payload?.paymentProvider ??
+      rec?.payment_mode ??
+      rec?.paymentMode ??
+      booking?.payment_mode ??
+      booking?.paymentMode ??
+      payload?.payment_mode ??
+      payload?.paymentMode,
+    40,
+  ).toLowerCase();
+}
+
+function _bookingRecordIsPaidForCredit(rec) {
+  if (!rec || typeof rec !== "object") return false;
+  const booking = rec?.booking && typeof rec.booking === "object" ? rec.booking : {};
+  const payload = rec?.payload && typeof rec.payload === "object" ? rec.payload : {};
+  const paidLike = new Set([
+    "paid",
+    "confirmed",
+    "completed",
+    "success",
+    "settled",
+    "succeeded",
+  ]);
+  const statusTokens = [
+    rec?.payment_status,
+    rec?.paymentStatus,
+    booking?.payment_status,
+    booking?.paymentStatus,
+    payload?.payment_status,
+    payload?.paymentStatus,
+  ]
+    .map((value) => safeStr(value, 64).toLowerCase())
+    .filter(Boolean);
+  if (statusTokens.some((token) => paidLike.has(token))) return true;
+  if (
+    rec?.__mollie_paid === true ||
+    booking?.__mollie_paid === true ||
+    payload?.__mollie_paid === true
+  ) {
+    return true;
+  }
+  const mollieStatuses = [
+    rec?.mollie?.status,
+    booking?.mollie?.status,
+    payload?.mollie?.status,
+  ]
+    .map((value) => safeStr(value, 40).toLowerCase())
+    .filter(Boolean);
+  if (mollieStatuses.some((token) => paidLike.has(token))) return true;
+
+  const onlinePaidProviders = _bookingRecordOnlinePaidProviderSet();
+  const provider = _bookingRecordPaymentProviderToken(rec);
+  const paymentId = safeStr(
+    rec?.payment_id ??
+      rec?.paymentId ??
+      booking?.payment_id ??
+      booking?.paymentId ??
+      payload?.payment_id ??
+      payload?.paymentId,
+    120,
+  );
+  const molliePaymentId = safeStr(
+    rec?.mollie?.id ??
+      rec?.mollie?.payment_id ??
+      booking?.mollie?.id ??
+      booking?.mollie?.payment_id ??
+      payload?.mollie?.id ??
+      payload?.mollie?.payment_id,
+    120,
+  );
+  const paidAt = safeStr(
+    rec?.paid_at ??
+      rec?.paidAt ??
+      booking?.paid_at ??
+      booking?.paidAt ??
+      payload?.paid_at ??
+      payload?.paidAt,
+    80,
+  );
+  if (paidAt) {
+    if (onlinePaidProviders.has(provider)) return true;
+    if (paymentId || molliePaymentId) return true;
+  }
+  if (paymentId && onlinePaidProviders.has(provider)) return true;
+  if (molliePaymentId) return true;
+  return false;
+}
+
+function _resolveBookingRecordPaymentStatusForProjection(rec) {
+  if (_bookingRecordIsPaidForCredit(rec)) return "paid";
+  const raw = safeStr(
+    rec?.payment_status ??
+      rec?.paymentStatus ??
+      rec?.booking?.payment_status ??
+      rec?.booking?.paymentStatus ??
+      rec?.payload?.payment_status ??
+      rec?.payload?.paymentStatus,
+    40,
+  );
+  return raw || null;
+}
+
+function _isPendingCreditRefundStatusToken(value) {
+  const token = safeStr(value, 64).toLowerCase().replaceAll("-", "_").replaceAll(" ", "_");
+  return token === "pending_credit";
+}
+
+function _bookingHasPendingCreditState(rec) {
+  const refundStatus = safeStr(
+    rec?.refund_status ??
+      rec?.refundStatus ??
+      rec?.booking?.refund_status ??
+      rec?.booking?.refundStatus ??
+      rec?.payload?.refund_status ??
+      rec?.payload?.refundStatus,
+    64,
+  );
+  const creditStatus = safeStr(
+    rec?.credit_status ??
+      rec?.creditStatus ??
+      rec?.booking?.credit_status ??
+      rec?.booking?.creditStatus ??
+      rec?.payload?.credit_status ??
+      rec?.payload?.creditStatus,
+    64,
+  );
+  return (
+    _isPendingCreditRefundStatusToken(refundStatus) ||
+    _isPendingCreditRefundStatusToken(creditStatus) ||
+    rec?.refund_required === true ||
+    rec?.refundRequired === true ||
+    rec?.booking?.refund_required === true ||
+    rec?.booking?.refundRequired === true ||
+    rec?.payload?.refund_required === true ||
+    rec?.payload?.refundRequired === true
+  );
+}
+
+const RESOLVED_BOOKING_CREDIT_STATUSES = new Set([
+  "credited",
+  "partial_credit",
+  "no_refund",
+  "handled_manually",
+]);
+
+const BOOKING_CREDIT_DECISION_TYPES = new Set([
+  "full_credit",
+  "partial_credit",
+  "no_refund",
+  "handled_manually",
+]);
+
+function _bookingCreditDecisionRaw(rec) {
+  return safeStr(
+    rec?.credit_decision ??
+      rec?.creditDecision ??
+      rec?.booking?.credit_decision ??
+      rec?.booking?.creditDecision ??
+      rec?.payload?.credit_decision ??
+      rec?.payload?.creditDecision,
+    64,
+  )
+    .toLowerCase()
+    .replaceAll("-", "_");
+}
+
+function _bookingCreditStatusRaw(rec) {
+  return safeStr(
+    rec?.credit_status ??
+      rec?.creditStatus ??
+      rec?.booking?.credit_status ??
+      rec?.booking?.creditStatus ??
+      rec?.payload?.credit_status ??
+      rec?.payload?.creditStatus,
+    64,
+  )
+    .toLowerCase()
+    .replaceAll("-", "_");
+}
+
+function _bookingHasResolvedCreditDecision(rec) {
+  if (!rec || typeof rec !== "object") return false;
+  const decision = _bookingCreditDecisionRaw(rec);
+  if (decision && BOOKING_CREDIT_DECISION_TYPES.has(decision)) return true;
+  const creditStatus = _bookingCreditStatusRaw(rec);
+  if (RESOLVED_BOOKING_CREDIT_STATUSES.has(creditStatus)) return true;
+  const creditedAt = safeStr(
+    rec?.credited_at ??
+      rec?.creditedAt ??
+      rec?.booking?.credited_at ??
+      rec?.booking?.creditedAt ??
+      rec?.payload?.credited_at ??
+      rec?.payload?.creditedAt,
+  );
+  return !!creditedAt;
+}
+
+function applyPendingCreditStateOnPaidCancellation(rec, nowIso) {
+  if (!rec || typeof rec !== "object") return false;
+  if (!_bookingRecordIsPaidForCredit(rec)) return false;
+  if (_bookingHasResolvedCreditDecision(rec)) return false;
+  const pendingCredit = "pending_credit";
+  rec.refund_status = pendingCredit;
+  rec.refundStatus = pendingCredit;
+  rec.credit_status = pendingCredit;
+  rec.creditStatus = pendingCredit;
+  rec.refund_required = true;
+  rec.refundRequired = true;
+  rec.credit_pending_at = rec.credit_pending_at || nowIso;
+  rec.creditPendingAt = rec.creditPendingAt || rec.credit_pending_at;
+  if (rec.booking && typeof rec.booking === "object") {
+    rec.booking.refund_status = pendingCredit;
+    rec.booking.refundStatus = pendingCredit;
+    rec.booking.credit_status = pendingCredit;
+    rec.booking.creditStatus = pendingCredit;
+    rec.booking.refund_required = true;
+    rec.booking.refundRequired = true;
+    rec.booking.credit_pending_at = rec.booking.credit_pending_at || rec.credit_pending_at;
+    rec.booking.creditPendingAt = rec.booking.creditPendingAt || rec.booking.credit_pending_at;
+  }
+  if (rec.payload && typeof rec.payload === "object") {
+    rec.payload.refund_status = pendingCredit;
+    rec.payload.refundStatus = pendingCredit;
+    rec.payload.credit_status = pendingCredit;
+    rec.payload.creditStatus = pendingCredit;
+    rec.payload.refund_required = true;
+    rec.payload.refundRequired = true;
+  }
+  return true;
+}
+
+function _ensurePendingCreditStateOnCancelledPaidRecord(rec, nowIso = new Date().toISOString()) {
+  if (!rec || typeof rec !== "object") return false;
+  const cancelled = _bookingRecordIsCancelledForCreditDecision(rec);
+  if (!cancelled) return false;
+  if (!_bookingRecordIsPaidForCredit(rec)) return false;
+  if (_bookingHasPendingCreditState(rec)) return false;
+  if (_bookingHasResolvedCreditDecision(rec)) return false;
+  return applyPendingCreditStateOnPaidCancellation(rec, nowIso);
+}
+
+function _bookingRecordIsCancelledForCreditDecision(rec) {
+  if (!rec || typeof rec !== "object") return false;
+  return (
+    _trackingSyncIsCancelledBookingLifecycle(rec?.status) ||
+    _trackingSyncIsCancelledBookingLifecycle(rec?.stage) ||
+    _trackingSyncIsCancelledBookingLifecycle(rec?.lifecycle_status) ||
+    _trackingSyncIsCancelledBookingLifecycle(rec?.lifecycleStatus) ||
+    _trackingSyncIsCancelledBookingLifecycle(rec?.booking_status) ||
+    _trackingSyncIsCancelledBookingLifecycle(rec?.bookingStatus) ||
+    _trackingSyncIsCancelledBookingLifecycle(rec?.booking?.status) ||
+    _trackingSyncIsCancelledBookingLifecycle(rec?.booking?.stage) ||
+    _trackingSyncIsCancelledBookingLifecycle(rec?.booking?.lifecycle_status) ||
+    _trackingSyncIsCancelledBookingLifecycle(rec?.booking?.lifecycleStatus) ||
+    _trackingSyncIsCancelledBookingLifecycle(rec?.booking?.booking_status) ||
+    _trackingSyncIsCancelledBookingLifecycle(rec?.booking?.bookingStatus)
+  );
+}
+
+function _bookingRecordIsEligibleForCreditDecision(rec) {
+  return (
+    _bookingRecordIsCancelledForCreditDecision(rec) &&
+    _bookingRecordIsPaidForCredit(rec) &&
+    _bookingHasPendingCreditState(rec)
+  );
+}
+
+function _applyCreditDecisionFieldsToRecord(rec, fields) {
+  if (!rec || typeof rec !== "object" || !fields || typeof fields !== "object") return;
+  const {
+    creditStatus,
+    refundStatus,
+    refundRequired,
+    creditedAmountCents,
+    creditDecision,
+    creditedAt,
+    creditedBy,
+  } = fields;
+  const writeLayer = (target) => {
+    if (!target || typeof target !== "object") return;
+    target.credit_status = creditStatus;
+    target.creditStatus = creditStatus;
+    target.refund_status = refundStatus;
+    target.refundStatus = refundStatus;
+    target.refund_required = refundRequired;
+    target.refundRequired = refundRequired;
+    target.credit_decision = creditDecision;
+    target.creditDecision = creditDecision;
+    target.credited_amount_cents = creditedAmountCents;
+    target.creditedAmountCents = creditedAmountCents;
+    target.credited_at = creditedAt;
+    target.creditedAt = creditedAt;
+    target.credited_by = creditedBy;
+    target.creditedBy = creditedBy;
+  };
+  writeLayer(rec);
+  writeLayer(rec.booking);
+  writeLayer(rec.payload);
+}
+
+function _bookingCreditDecisionFinanceBuckets(rec) {
+  const decision = safeStr(rec?.credit_decision ?? rec?.creditDecision, 64)
+    .toLowerCase()
+    .replaceAll("-", "_");
+  const creditedAmountCents = Number.isFinite(
+    Number(rec?.credited_amount_cents ?? rec?.creditedAmountCents),
+  )
+    ? Math.max(0, Math.round(Number(rec?.credited_amount_cents ?? rec?.creditedAmountCents)))
+    : 0;
+  const amountResolution = _trackingSyncResolveBookingFinanceAmountFromRecord(rec);
+  const fullCents = Number.isFinite(Number(amountResolution?.cents))
+    ? Math.max(0, Math.round(Number(amountResolution.cents)))
+    : 0;
+  let credited_cents = 0;
+  let no_refund_cents = 0;
+  let partial_credit_cents = 0;
+  switch (decision) {
+    case "full_credit":
+      credited_cents = creditedAmountCents > 0 ? creditedAmountCents : fullCents;
+      break;
+    case "partial_credit":
+      partial_credit_cents = creditedAmountCents;
+      credited_cents = creditedAmountCents;
+      break;
+    case "no_refund":
+      no_refund_cents = fullCents;
+      break;
+    default:
+      break;
+  }
+  return { credited_cents, no_refund_cents, partial_credit_cents };
+}
+
+function buildBookingCreditDecisionComplianceEvent(
+  recordOrBooking,
+  bookingId,
+  {
+    creditDecision = "",
+    previousRefundStatus = "",
+    newRefundStatus = "",
+    creditedAmountCents = 0,
+    actorRole = "admin",
+  } = {},
+) {
+  const rec = recordOrBooking && typeof recordOrBooking === "object" ? recordOrBooking : {};
+  const booking = rec?.booking && typeof rec.booking === "object" ? rec.booking : {};
+  const tenantId = safeStr(
+    rec?.tenant_id ??
+      rec?.tenantId ??
+      booking?.tenant_id ??
+      booking?.tenantId,
+  );
+  const companyId = safeStr(
+    rec?.company_id ??
+      rec?.companyId ??
+      booking?.company_id ??
+      booking?.companyId,
+  );
+  if (!tenantId || !companyId) {
+    console.log(
+      "[COMPLIANCE][SKIP_SCOPE] source=booking_credit_decision reason=missing_tenant_company_scope",
+    );
+    return null;
+  }
+  const publicBookingReference = safeStr(
+    rec?.public_booking_reference ??
+      rec?.publicBookingReference ??
+      rec?.booking_reference ??
+      rec?.bookingReference ??
+      booking?.public_booking_reference ??
+      booking?.publicBookingReference ??
+      booking?.booking_reference ??
+      booking?.bookingReference,
+    120,
+  );
+  const eventAt =
+    safeStr(rec?.credited_at ?? rec?.creditedAt ?? rec?.updatedAt ?? rec?.updated_at, 64) ||
+    new Date().toISOString();
+  const eventActorRoleRaw = safeStr(actorRole, 32).toLowerCase();
+  const eventActorRole = ["customer", "admin", "driver", "system", "company"].includes(
+    eventActorRoleRaw,
+  )
+    ? eventActorRoleRaw
+    : "admin";
+  const paymentStatus = normalizeCompliancePaymentStatus(
+    rec?.payment_status ??
+      rec?.paymentStatus ??
+      booking?.payment_status ??
+      booking?.paymentStatus,
+  );
+  const creditStatus = safeStr(
+    rec?.credit_status ?? rec?.creditStatus ?? booking?.credit_status ?? booking?.creditStatus,
+    64,
+  );
+  return {
+    event_type: "booking_credit_decision",
+    tenant_id: tenantId,
+    company_id: companyId,
+    booking_id: safeStr(bookingId) || undefined,
+    public_booking_reference: publicBookingReference || undefined,
+    publicBookingReference: publicBookingReference || undefined,
+    credit_decision: safeStr(creditDecision, 64) || undefined,
+    creditDecision: safeStr(creditDecision, 64) || undefined,
+    actor_role: eventActorRole,
+    source: "booking_credit_decision",
+    timestamps: {
+      event_at_utc: eventAt,
+      credited_at_utc: eventAt,
+    },
+    payment: {
+      status: paymentStatus || "paid",
+      previous_refund_status: safeStr(previousRefundStatus, 64) || "pending_credit",
+      refund_status: safeStr(newRefundStatus, 64) || undefined,
+      credit_status: creditStatus || undefined,
+      credited_amount_cents: Number.isFinite(Number(creditedAmountCents))
+        ? Math.max(0, Math.round(Number(creditedAmountCents)))
+        : 0,
+    },
+  };
+}
+
+async function applyBookingCreditDecisionAuthoritative(
+  bookingId,
+  env,
+  tenantScope = null,
+  {
+    credit_decision: creditDecisionRaw = "",
+    partial_amount_cents: partialAmountCentsRaw = null,
+    actor_role: actorRoleRaw = "admin",
+    source_endpoint = "/bookings/:id/credit-decision",
+  } = {},
+) {
+  if (!tenantScope?.hasScope) {
+    return missingTenantScopeError();
+  }
+  if (!env?.BOOKING_KV) throw new Error("BOOKING_KV binding is missing");
+  const creditDecision = safeStr(creditDecisionRaw, 64).toLowerCase().replaceAll("-", "_");
+  if (!BOOKING_CREDIT_DECISION_TYPES.has(creditDecision)) {
+    return { ok: false, error: "invalid_credit_decision" };
+  }
+  const { key, rec } = await loadBookingRecord(env, bookingId);
+  if (!bookingMatchesRequiredTenantCompanyScope(rec, tenantScope)) {
+    return { ok: false, error: "forbidden" };
+  }
+  if (!_bookingRecordIsCancelledForCreditDecision(rec)) {
+    return { ok: false, error: "booking_not_cancelled" };
+  }
+  if (!_bookingRecordIsPaidForCredit(rec)) {
+    return { ok: false, error: "booking_not_paid" };
+  }
+  if (!_bookingHasPendingCreditState(rec)) {
+    return { ok: false, error: "credit_decision_not_pending" };
+  }
+
+  const previousRefundStatus =
+    safeStr(
+      rec?.refund_status ??
+        rec?.refundStatus ??
+        rec?.booking?.refund_status ??
+        rec?.booking?.refundStatus ??
+        rec?.payload?.refund_status ??
+        rec?.payload?.refundStatus,
+      64,
+    ) || "pending_credit";
+
+  const amountResolution = _trackingSyncResolveBookingFinanceAmountFromRecord(rec);
+  const fullAmountCents = Number.isFinite(Number(amountResolution?.cents))
+    ? Math.max(0, Math.round(Number(amountResolution.cents)))
+    : 0;
+  if (fullAmountCents <= 0) {
+    return { ok: false, error: "missing_booking_amount" };
+  }
+
+  let creditedAmountCents = 0;
+  let creditStatus = "";
+  let refundStatus = "";
+
+  if (creditDecision === "full_credit") {
+    creditedAmountCents = fullAmountCents;
+    creditStatus = "credited";
+    refundStatus = "manual_credit_approved";
+  } else if (creditDecision === "partial_credit") {
+    const partialCents = Number(partialAmountCentsRaw);
+    if (!Number.isFinite(partialCents)) {
+      return { ok: false, error: "partial_amount_required" };
+    }
+    const roundedPartial = Math.round(partialCents);
+    if (roundedPartial <= 0 || roundedPartial >= fullAmountCents) {
+      return { ok: false, error: "partial_amount_invalid" };
+    }
+    creditedAmountCents = roundedPartial;
+    creditStatus = "partial_credit";
+    refundStatus = "manual_partial_credit_approved";
+  } else if (creditDecision === "no_refund") {
+    creditedAmountCents = 0;
+    creditStatus = "no_refund";
+    refundStatus = "no_refund";
+  } else if (creditDecision === "handled_manually") {
+    creditedAmountCents = 0;
+    creditStatus = "handled_manually";
+    refundStatus = "handled_manually";
+  }
+
+  const nowIso = new Date().toISOString();
+  const creditedBy =
+    safeStr(actorRoleRaw, 32).toLowerCase() === "company" ? "company" : "admin";
+
+  _applyCreditDecisionFieldsToRecord(rec, {
+    creditStatus,
+    refundStatus,
+    refundRequired: false,
+    creditedAmountCents,
+    creditDecision,
+    creditedAt: nowIso,
+    creditedBy,
+  });
+  rec.updatedAt = nowIso;
+  rec.updated_at = nowIso;
+  if (rec.booking && typeof rec.booking === "object") {
+    rec.booking.updatedAt = nowIso;
+    rec.booking.updated_at = nowIso;
+  }
+
+  await env.BOOKING_KV.put(key, JSON.stringify(rec));
+  const persisted = await env.BOOKING_KV.get(key, { type: "json" });
+  if (
+    !persisted ||
+    typeof persisted !== "object" ||
+    _bookingCreditStatusRaw(persisted) !==
+      safeStr(creditStatus, 64).toLowerCase().replaceAll("-", "_") ||
+    _bookingHasPendingCreditState(persisted)
+  ) {
+    console.log(
+      `[BOOKING][CREDIT_DECISION][PERSIST_FAIL] booking=${_bookingIntentMask(bookingId)} decision=${creditDecision} expected_credit_status=${creditStatus}`,
+    );
+    return { ok: false, error: "credit_decision_persist_failed" };
+  }
+  await upsertCompanyBookingsListIndexBestEffort(
+    env,
+    bookingId,
+    rec,
+    tenantScope,
+  );
+  await syncScopedTrackingTripKpiBestEffort({
+    env,
+    bookingId,
+    rec,
+    tenantScope,
+    source: "booking_credit_decision",
+  });
+
+  const complianceEvent = buildBookingCreditDecisionComplianceEvent(rec, bookingId, {
+    creditDecision,
+    previousRefundStatus,
+    newRefundStatus: refundStatus,
+    creditedAmountCents,
+    actorRole: creditedBy,
+  });
+  if (complianceEvent) {
+    await emitComplianceEventBestEffort(env, complianceEvent, {
+      logLabel: "credit_decision",
+    });
+  }
+
+  console.log(
+    `[BOOKING][CREDIT_DECISION] booking=${_bookingIntentMask(bookingId)} decision=${creditDecision} credit_status=${creditStatus} refund_required=false credited_cents=${creditedAmountCents} full_cents=${fullAmountCents} source=${safeStr(source_endpoint, 80) || "credit_decision"}`,
+  );
+
+  return {
+    ok: true,
+    booking_id: bookingId,
+    credit_decision: creditDecision,
+    credit_status: creditStatus,
+    creditStatus,
+    refund_status: refundStatus,
+    refundStatus,
+    refund_required: false,
+    refundRequired: false,
+    credited_amount_cents: creditedAmountCents,
+    creditedAmountCents: creditedAmountCents,
+    credited_at: nowIso,
+    creditedAt: nowIso,
+    credited_by: creditedBy,
+    creditedBy: creditedBy,
+  };
+}
+
+const MOLLIE_REFUND_ELIGIBLE_CREDIT_DECISIONS = new Set(["full_credit", "partial_credit"]);
+
+function _looksLikeMolliePaymentId(value) {
+  return /^tr_[a-z0-9]+$/i.test(String(value || "").trim());
+}
+
+function _readMolliePaymentIdFromRecordLayers(rec) {
+  if (!rec || typeof rec !== "object") return "";
+  const booking = rec?.booking && typeof rec.booking === "object" ? rec.booking : {};
+  const payload = rec?.payload && typeof rec.payload === "object" ? rec.payload : {};
+  const candidates = [
+    rec?.mollie_payment_id,
+    rec?.molliePaymentId,
+    rec?.payment_id,
+    rec?.paymentId,
+    rec?.mollie?.id,
+    rec?.mollie?.payment_id,
+    rec?.mollie?.paymentId,
+    booking?.mollie_payment_id,
+    booking?.molliePaymentId,
+    booking?.payment_id,
+    booking?.paymentId,
+    booking?.mollie?.id,
+    booking?.mollie?.payment_id,
+    booking?.mollie?.paymentId,
+    payload?.mollie_payment_id,
+    payload?.molliePaymentId,
+    payload?.payment_id,
+    payload?.paymentId,
+    payload?.mollie?.id,
+    payload?.mollie?.payment_id,
+    payload?.mollie?.paymentId,
+  ];
+  for (const value of candidates) {
+    const token = safeStr(value, 120);
+    if (_looksLikeMolliePaymentId(token)) return token;
+  }
+  return "";
+}
+
+function _readPaymentBookingIdFromRecordLayers(rec) {
+  if (!rec || typeof rec !== "object") return "";
+  return (
+    safeStr(rec?.payment_booking_id ?? rec?.paymentBookingId, 160) ||
+    safeStr(rec?.booking?.payment_booking_id ?? rec?.booking?.paymentBookingId, 160) ||
+    safeStr(rec?.payload?.payment_booking_id ?? rec?.payload?.paymentBookingId, 160)
+  );
+}
+
+function _readNumericCentsFromRecordLayers(rec, snakeKey, camelKey) {
+  if (!rec || typeof rec !== "object") return 0;
+  const booking = rec?.booking && typeof rec.booking === "object" ? rec.booking : {};
+  const payload = rec?.payload && typeof rec.payload === "object" ? rec.payload : {};
+  const candidates = [
+    rec?.[snakeKey],
+    rec?.[camelKey],
+    booking?.[snakeKey],
+    booking?.[camelKey],
+    payload?.[snakeKey],
+    payload?.[camelKey],
+  ];
+  for (const value of candidates) {
+    const n = Number(value);
+    if (Number.isFinite(n) && n > 0) return Math.max(0, Math.round(n));
+  }
+  return 0;
+}
+
+function _readMollieRefundIdFromRecord(rec) {
+  if (!rec || typeof rec !== "object") return "";
+  const booking = rec?.booking && typeof rec.booking === "object" ? rec.booking : {};
+  const payload = rec?.payload && typeof rec.payload === "object" ? rec.payload : {};
+  return (
+    safeStr(rec?.mollie_refund_id ?? rec?.mollieRefundId, 120) ||
+    safeStr(booking?.mollie_refund_id ?? booking?.mollieRefundId, 120) ||
+    safeStr(payload?.mollie_refund_id ?? payload?.mollieRefundId, 120)
+  );
+}
+
+function _bookingRecordIsMollieOnlinePayment(rec) {
+  if (!rec || typeof rec !== "object") return false;
+  if (_readMolliePaymentIdFromRecordLayers(rec)) return true;
+  const provider = _bookingRecordPaymentProviderToken(rec).toLowerCase();
+  return provider === "mollie" || _bookingRecordOnlinePaidProviderSet().has(provider);
+}
+
+function _bookingHasMollieRefundEligibleCreditDecision(rec) {
+  const decision = _bookingCreditDecisionRaw(rec);
+  return MOLLIE_REFUND_ELIGIBLE_CREDIT_DECISIONS.has(decision);
+}
+
+function _mollieRefundStatusIsTerminalRefunded(statusToken) {
+  const token = safeStr(statusToken, 40).toLowerCase().replaceAll("-", "_");
+  return token === "refunded" || token === "completed" || token === "success";
+}
+
+function _mollieRefundStatusIsPending(statusToken) {
+  const token = safeStr(statusToken, 40).toLowerCase().replaceAll("-", "_");
+  return (
+    token === "queued" ||
+    token === "pending" ||
+    token === "processing" ||
+    token === "mollie_refund_pending"
+  );
+}
+
+function _centsToMollieAmountValue(cents) {
+  const normalized = Number.isFinite(Number(cents)) ? Math.max(0, Math.round(Number(cents))) : 0;
+  return money2(normalized / 100);
+}
+
+async function resolveMolliePaymentContextForBooking(env, bookingId, rec) {
+  const safeBookingId = safeStr(bookingId, 160);
+  if (!safeBookingId || !rec || typeof rec !== "object") {
+    return { ok: false, error: "invalid_booking_record" };
+  }
+
+  let molliePaymentId = _readMolliePaymentIdFromRecordLayers(rec);
+  let paymentBookingId = _readPaymentBookingIdFromRecordLayers(rec) || null;
+  let source = "canonical";
+
+  if (
+    !molliePaymentId &&
+    paymentBookingId &&
+    paymentBookingId !== safeBookingId &&
+    env?.BOOKING_KV
+  ) {
+    try {
+      const shadow = await env.BOOKING_KV.get(`booking:${paymentBookingId}`, { type: "json" });
+      if (shadow && typeof shadow === "object") {
+        const shadowPaymentId = _readMolliePaymentIdFromRecordLayers(shadow);
+        if (shadowPaymentId) {
+          molliePaymentId = shadowPaymentId;
+          source = "payment_shadow";
+        }
+      }
+    } catch (_) {
+      // Fall through to missing payment id handling.
+    }
+  }
+
+  if (!molliePaymentId) {
+    return { ok: false, error: "missing_mollie_payment_id" };
+  }
+
+  const amountResolution = _trackingSyncResolveBookingFinanceAmountFromRecord(rec);
+  const paidAmountCents = Number.isFinite(Number(amountResolution?.cents))
+    ? Math.max(0, Math.round(Number(amountResolution.cents)))
+    : 0;
+  const creditedAmountCents = _readNumericCentsFromRecordLayers(
+    rec,
+    "credited_amount_cents",
+    "creditedAmountCents",
+  );
+  const refundedAmountCents = _readNumericCentsFromRecordLayers(
+    rec,
+    "refunded_amount_cents",
+    "refundedAmountCents",
+  );
+  const currency =
+    safeStr(
+      rec?.currency ??
+        rec?.booking?.currency ??
+        rec?.quote?.pricing?.currency ??
+        rec?.quote?.currency ??
+        "EUR",
+      8,
+    ).toUpperCase() || "EUR";
+
+  return {
+    ok: true,
+    booking_id: safeBookingId,
+    mollie_payment_id: molliePaymentId,
+    payment_booking_id: paymentBookingId,
+    source,
+    paid_amount_cents: paidAmountCents,
+    credited_amount_cents: creditedAmountCents,
+    refunded_amount_cents: refundedAmountCents,
+    currency,
+    amount_source: safeStr(amountResolution?.source, 80) || "none",
+  };
+}
+
+function _applyMollieRefundFieldsToRecord(rec, fields) {
+  if (!rec || typeof rec !== "object" || !fields || typeof fields !== "object") return;
+  const {
+    mollieRefundId,
+    mollieRefundStatus,
+    refundStatus,
+    refundedAmountCents,
+    refundedAt,
+    mollieRefundError,
+  } = fields;
+  const writeLayer = (target) => {
+    if (!target || typeof target !== "object") return;
+    if (mollieRefundId != null) {
+      target.mollie_refund_id = mollieRefundId;
+      target.mollieRefundId = mollieRefundId;
+    }
+    if (mollieRefundStatus != null) {
+      target.mollie_refund_status = mollieRefundStatus;
+      target.mollieRefundStatus = mollieRefundStatus;
+    }
+    if (refundStatus != null) {
+      target.refund_status = refundStatus;
+      target.refundStatus = refundStatus;
+    }
+    if (refundedAmountCents != null) {
+      target.refunded_amount_cents = refundedAmountCents;
+      target.refundedAmountCents = refundedAmountCents;
+    }
+    if (refundedAt != null) {
+      target.refunded_at = refundedAt;
+      target.refundedAt = refundedAt;
+    }
+    if (mollieRefundError != null) {
+      target.mollie_refund_error = mollieRefundError;
+      target.mollieRefundError = mollieRefundError;
+    }
+    target.refund_provider = "mollie";
+    target.refundProvider = "mollie";
+  };
+  writeLayer(rec);
+  writeLayer(rec.booking);
+  writeLayer(rec.payload);
+}
+
+function buildBookingMollieRefundComplianceEvent(
+  recordOrBooking,
+  bookingId,
+  {
+    refundStatus = "",
+    refundAmountCents = 0,
+    creditDecision = "",
+    mollieRefundId = "",
+    actorRole = "admin",
+  } = {},
+) {
+  const rec = recordOrBooking && typeof recordOrBooking === "object" ? recordOrBooking : {};
+  const booking = rec?.booking && typeof rec.booking === "object" ? rec.booking : {};
+  const tenantId = safeStr(
+    rec?.tenant_id ??
+      rec?.tenantId ??
+      booking?.tenant_id ??
+      booking?.tenantId,
+  );
+  const companyId = safeStr(
+    rec?.company_id ??
+      rec?.companyId ??
+      booking?.company_id ??
+      booking?.companyId,
+  );
+  if (!tenantId || !companyId) {
+    console.log(
+      "[COMPLIANCE][SKIP_SCOPE] source=booking_mollie_refund reason=missing_tenant_company_scope",
+    );
+    return null;
+  }
+  const publicBookingReference = safeStr(
+    rec?.public_booking_reference ??
+      rec?.publicBookingReference ??
+      rec?.booking_reference ??
+      rec?.bookingReference ??
+      booking?.public_booking_reference ??
+      booking?.publicBookingReference ??
+      booking?.booking_reference ??
+      booking?.bookingReference,
+    120,
+  );
+  const eventAt =
+    safeStr(rec?.refunded_at ?? rec?.refundedAt ?? rec?.updatedAt ?? rec?.updated_at, 64) ||
+    new Date().toISOString();
+  const eventActorRoleRaw = safeStr(actorRole, 32).toLowerCase();
+  const eventActorRole = ["customer", "admin", "driver", "system", "company"].includes(
+    eventActorRoleRaw,
+  )
+    ? eventActorRoleRaw
+    : "admin";
+  return {
+    event_type: "booking_mollie_refund",
+    tenant_id: tenantId,
+    company_id: companyId,
+    booking_id: safeStr(bookingId) || undefined,
+    public_booking_reference: publicBookingReference || undefined,
+    publicBookingReference: publicBookingReference || undefined,
+    credit_decision: safeStr(creditDecision, 64) || undefined,
+    creditDecision: safeStr(creditDecision, 64) || undefined,
+    actor_role: eventActorRole,
+    source: "booking_mollie_refund",
+    timestamps: {
+      event_at_utc: eventAt,
+      refunded_at_utc: eventAt,
+    },
+    payment: {
+      status: "paid",
+      refund_status: safeStr(refundStatus, 64) || undefined,
+      refund_provider: "mollie",
+      refundProvider: "mollie",
+      refund_amount_cents: Number.isFinite(Number(refundAmountCents))
+        ? Math.max(0, Math.round(Number(refundAmountCents)))
+        : 0,
+      mollie_refund_id: safeStr(mollieRefundId, 120) || undefined,
+      mollieRefundId: safeStr(mollieRefundId, 120) || undefined,
+    },
+  };
+}
+
+async function applyMollieRefundAuthoritative(
+  bookingId,
+  env,
+  tenantScope = null,
+  {
+    refund_mode: refundModeRaw = "full",
+    partial_amount_cents: partialAmountCentsRaw = null,
+    actor_role: actorRoleRaw = "admin",
+    source_endpoint = "/bookings/:id/mollie-refund",
+  } = {},
+) {
+  if (!tenantScope?.hasScope) {
+    return missingTenantScopeError();
+  }
+  if (!env?.BOOKING_KV) throw new Error("BOOKING_KV binding is missing");
+
+  const refundMode = safeStr(refundModeRaw, 32).toLowerCase().replaceAll("-", "_") || "full";
+  if (refundMode !== "full" && refundMode !== "partial") {
+    return { ok: false, error: "invalid_refund_mode" };
+  }
+
+  const { key, rec } = await loadBookingRecord(env, bookingId);
+  if (!bookingMatchesRequiredTenantCompanyScope(rec, tenantScope)) {
+    return { ok: false, error: "forbidden" };
+  }
+  if (!_bookingRecordIsCancelledForCreditDecision(rec)) {
+    return { ok: false, error: "booking_not_cancelled" };
+  }
+  if (!_bookingRecordIsPaidForCredit(rec)) {
+    return { ok: false, error: "booking_not_paid" };
+  }
+  if (!_bookingRecordIsMollieOnlinePayment(rec)) {
+    return { ok: false, error: "booking_not_mollie_payment" };
+  }
+  if (!_bookingHasMollieRefundEligibleCreditDecision(rec)) {
+    const decision = _bookingCreditDecisionRaw(rec);
+    if (decision === "no_refund" || decision === "handled_manually") {
+      return { ok: false, error: "credit_decision_not_refundable" };
+    }
+    return { ok: false, error: "credit_decision_required" };
+  }
+
+  const existingRefundId = _readMollieRefundIdFromRecord(rec);
+  if (existingRefundId) {
+    return { ok: false, error: "already_refunded_or_refund_pending" };
+  }
+
+  const paymentContext = await resolveMolliePaymentContextForBooking(env, bookingId, rec);
+  if (!paymentContext?.ok) {
+    return { ok: false, error: paymentContext?.error || "missing_mollie_payment_id" };
+  }
+
+  const paidAmountCents = paymentContext.paid_amount_cents;
+  if (paidAmountCents <= 0) {
+    return { ok: false, error: "missing_booking_amount" };
+  }
+
+  const creditedAmountCents = paymentContext.credited_amount_cents;
+  const alreadyRefundedCents = paymentContext.refunded_amount_cents;
+  const creditDecision = _bookingCreditDecisionRaw(rec);
+  const refundCapCents =
+    creditedAmountCents > 0
+      ? Math.min(creditedAmountCents, paidAmountCents)
+      : paidAmountCents;
+
+  if (alreadyRefundedCents >= refundCapCents && refundCapCents > 0) {
+    return { ok: false, error: "already_refunded_or_refund_pending" };
+  }
+
+  let refundAmountCents = 0;
+  if (refundMode === "partial") {
+    const partialCents = Number(partialAmountCentsRaw);
+    if (!Number.isFinite(partialCents)) {
+      return { ok: false, error: "partial_amount_required" };
+    }
+    const roundedPartial = Math.round(partialCents);
+    const remainingCap = Math.max(0, refundCapCents - alreadyRefundedCents);
+    if (roundedPartial <= 0 || roundedPartial > remainingCap || roundedPartial > paidAmountCents) {
+      return { ok: false, error: "partial_amount_invalid" };
+    }
+    refundAmountCents = roundedPartial;
+  } else {
+    refundAmountCents = Math.max(0, refundCapCents - alreadyRefundedCents);
+    if (refundAmountCents <= 0) {
+      return { ok: false, error: "already_refunded_or_refund_pending" };
+    }
+  }
+
+  const currency = paymentContext.currency || "EUR";
+  const molliePaymentId = paymentContext.mollie_payment_id;
+  const mollieConfig = getMollieConfig(env);
+  if (!mollieConfig.ok) {
+    return { ok: false, error: "mollie_config_unavailable" };
+  }
+
+  let paymentSnapshot = null;
+  try {
+    paymentSnapshot = await mollieFetchPaymentJson(molliePaymentId, env);
+  } catch (fetchErr) {
+    const safeErr = safeStr(fetchErr?.message || fetchErr, 160) || "mollie_payment_lookup_failed";
+    console.log(
+      `[BOOKING][MOLLIE_REFUND][LOOKUP_FAIL] booking=${_bookingIntentMask(bookingId)} payment=${_bookingIntentMask(molliePaymentId)} reason=${safeErr}`,
+    );
+    return { ok: false, error: "mollie_payment_lookup_failed" };
+  }
+
+  const paymentStatus = safeStr(paymentSnapshot?.status, 32).toLowerCase();
+  if (paymentStatus !== "paid") {
+    return { ok: false, error: "payment_not_refundable" };
+  }
+
+  const persistFailure = async (failureFields) => {
+    _applyMollieRefundFieldsToRecord(rec, failureFields);
+    rec.updatedAt = new Date().toISOString();
+    rec.updated_at = rec.updatedAt;
+    if (rec.booking && typeof rec.booking === "object") {
+      rec.booking.updatedAt = rec.updatedAt;
+      rec.booking.updated_at = rec.updatedAt;
+    }
+    await env.BOOKING_KV.put(key, JSON.stringify(rec));
+  };
+
+  let mollieRefund = null;
+  try {
+    const refundRes = await fetch(
+      `https://api.mollie.com/v2/payments/${encodeURIComponent(molliePaymentId)}/refunds`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${mollieConfig.apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          amount: {
+            currency,
+            value: _centsToMollieAmountValue(refundAmountCents),
+          },
+        }),
+      },
+    );
+    mollieRefund = await refundRes.json().catch(() => ({}));
+    if (!refundRes.ok || !mollieRefund?.id) {
+      const mollieErrorCode = safeStr(
+        mollieRefund?.detail || mollieRefund?.title || mollieRefund?.message || mollieRefund?.error,
+        120,
+      );
+      await persistFailure({
+        mollieRefundStatus: "failed",
+        mollieRefundError: mollieErrorCode || `http_${refundRes.status}`,
+      });
+      console.log(
+        `[BOOKING][MOLLIE_REFUND][API_FAIL] booking=${_bookingIntentMask(bookingId)} payment=${_bookingIntentMask(molliePaymentId)} status=${refundRes.status} error=${mollieErrorCode || "-"}`,
+      );
+      return { ok: false, error: "mollie_refund_failed", mollie_error: mollieErrorCode || null };
+    }
+  } catch (refundErr) {
+    const safeErr = safeStr(refundErr?.message || refundErr, 160) || "mollie_refund_failed";
+    await persistFailure({
+      mollieRefundStatus: "failed",
+      mollieRefundError: safeErr,
+    });
+    console.log(
+      `[BOOKING][MOLLIE_REFUND][API_FAIL] booking=${_bookingIntentMask(bookingId)} payment=${_bookingIntentMask(molliePaymentId)} error=${safeErr}`,
+    );
+    return { ok: false, error: "mollie_refund_failed" };
+  }
+
+  const mollieRefundId = safeStr(mollieRefund?.id, 120);
+  const mollieRefundStatusRaw = safeStr(mollieRefund?.status, 40).toLowerCase();
+  const mappedRefundStatus = _mollieRefundStatusIsTerminalRefunded(mollieRefundStatusRaw)
+    ? "refunded"
+    : _mollieRefundStatusIsPending(mollieRefundStatusRaw)
+      ? "mollie_refund_pending"
+      : mollieRefundStatusRaw || "mollie_refund_pending";
+  const refundedAt =
+    safeStr(mollieRefund?.createdAt ?? mollieRefund?.created_at, 80) ||
+    new Date().toISOString();
+  const nextRefundedAmountCents = alreadyRefundedCents + refundAmountCents;
+  const actorRole =
+    safeStr(actorRoleRaw, 32).toLowerCase() === "company" ? "company" : "admin";
+
+  _applyMollieRefundFieldsToRecord(rec, {
+    mollieRefundId,
+    mollieRefundStatus: mollieRefundStatusRaw || mappedRefundStatus,
+    refundStatus: mappedRefundStatus,
+    refundedAmountCents: nextRefundedAmountCents,
+    refundedAt,
+    mollieRefundError: null,
+  });
+  rec.updatedAt = new Date().toISOString();
+  rec.updated_at = rec.updatedAt;
+  if (rec.booking && typeof rec.booking === "object") {
+    rec.booking.updatedAt = rec.updatedAt;
+    rec.booking.updated_at = rec.updatedAt;
+  }
+
+  await env.BOOKING_KV.put(key, JSON.stringify(rec));
+
+  const complianceEvent = buildBookingMollieRefundComplianceEvent(rec, bookingId, {
+    refundStatus: mappedRefundStatus,
+    refundAmountCents: refundAmountCents,
+    creditDecision,
+    mollieRefundId,
+    actorRole,
+  });
+  if (complianceEvent) {
+    await emitComplianceEventBestEffort(env, complianceEvent, {
+      logLabel: "mollie_refund",
+    });
+  }
+
+  console.log(
+    `[BOOKING][MOLLIE_REFUND] booking=${_bookingIntentMask(bookingId)} payment=${_bookingIntentMask(molliePaymentId)} refund=${_bookingIntentMask(mollieRefundId)} refund_status=${mappedRefundStatus} refund_amount_cents=${refundAmountCents} credit_decision=${creditDecision || "-"} source=${safeStr(source_endpoint, 80) || "mollie_refund"}`,
+  );
+
+  return {
+    ok: true,
+    booking_id: bookingId,
+    refund_id: mollieRefundId,
+    refund_status: mappedRefundStatus,
+    refund_amount_cents: refundAmountCents,
+    currency,
+  };
+}
+
 function normalizeComplianceText(value, fallback = "unknown") {
   const text = safeStr(value).toLowerCase();
   return text || fallback;
@@ -27899,11 +29215,30 @@ function buildBookingStatusUpdateComplianceEvent(
       booking?.payment_status ??
       booking?.paymentStatus,
   );
+  const refundStatus = safeStr(
+    rec?.refund_status ??
+      rec?.refundStatus ??
+      booking?.refund_status ??
+      booking?.refundStatus,
+    64,
+  );
+  const creditStatus = safeStr(
+    rec?.credit_status ??
+      rec?.creditStatus ??
+      booking?.credit_status ??
+      booking?.creditStatus,
+    64,
+  );
+  const refundRequired =
+    rec?.refund_required === true ||
+    rec?.refundRequired === true ||
+    booking?.refund_required === true ||
+    booking?.refundRequired === true;
   const eventActorRoleRaw = safeStr(actorRole, 32).toLowerCase();
   const eventActorRole = ["customer", "admin", "driver", "system"].includes(eventActorRoleRaw)
     ? eventActorRoleRaw
     : "system";
-  return {
+  const complianceEvent = {
     event_type: "booking_status_update",
     tenant_id: tenantId,
     company_id: companyId,
@@ -27933,6 +29268,8 @@ function buildBookingStatusUpdateComplianceEvent(
       source: normalizeComplianceText(rec?.payment_source ?? rec?.paymentSource ?? booking?.payment_source ?? booking?.paymentSource),
       provider: normalizeComplianceText(rec?.payment_provider ?? rec?.paymentProvider ?? booking?.payment_provider ?? booking?.paymentProvider),
       payment_id: safeStr(rec?.payment_id ?? rec?.paymentId ?? booking?.payment_id ?? booking?.paymentId) || undefined,
+      refund_status: refundStatus || undefined,
+      credit_status: creditStatus || undefined,
     },
     provenance: {
       producer: "booking_worker",
@@ -27941,6 +29278,18 @@ function buildBookingStatusUpdateComplianceEvent(
       validation_state: "status_update",
     },
   };
+  if (newStatusLower === "cancelled") {
+    if (refundStatus) {
+      complianceEvent.refund_status = refundStatus;
+    }
+    if (creditStatus) {
+      complianceEvent.credit_status = creditStatus;
+    }
+    if (refundRequired) {
+      complianceEvent.refund_required = true;
+    }
+  }
+  return complianceEvent;
 }
 
 async function emitComplianceEventBestEffort(env, event, options = {}) {
@@ -32238,12 +33587,25 @@ function _trackingSyncIsCancelledBookingLifecycle(value) {
 function _trackingSyncDeriveBookingFinanceContribution(bookingId, rec) {
   const safeBookingId = safeStr(bookingId, 160);
   if (!safeBookingId) return null;
-  const normalizedPayment = normalizeCompliancePaymentStatus(
-    rec?.payment_status ?? rec?.paymentStatus ?? rec?.booking?.payment_status ?? rec?.booking?.paymentStatus,
-  );
+  const normalizedPayment = _bookingRecordPaymentStatusNormalized(rec);
   const paid = normalizedPayment === "paid";
   const paidAtMonth = _trackingSyncMonthFromIso(
-    rec?.paid_at ?? rec?.paidAt ?? rec?.booking?.paid_at ?? rec?.booking?.paidAt,
+    rec?.paid_at ??
+      rec?.paidAt ??
+      rec?.booking?.paid_at ??
+      rec?.booking?.paidAt ??
+      rec?.payload?.paid_at ??
+      rec?.payload?.paidAt,
+  );
+  const cancelledAtMonth = _trackingSyncMonthFromIso(
+    rec?.cancelled_at ??
+      rec?.cancelledAt ??
+      rec?.canceled_at ??
+      rec?.canceledAt ??
+      rec?.booking?.cancelled_at ??
+      rec?.booking?.cancelledAt ??
+      rec?.booking?.canceled_at ??
+      rec?.booking?.canceledAt,
   );
   const amountResolution = _trackingSyncResolveBookingFinanceAmountFromRecord(rec);
   const amountCents = Number.isFinite(Number(amountResolution?.cents))
@@ -32263,12 +33625,36 @@ function _trackingSyncDeriveBookingFinanceContribution(bookingId, rec) {
     _trackingSyncIsCancelledBookingLifecycle(rec?.booking?.booking_status) ||
     _trackingSyncIsCancelledBookingLifecycle(rec?.booking?.bookingStatus);
   const monthlyPaid = paid && !!paidAtMonth && amountCents > 0;
+  const pendingCredit =
+    cancelled &&
+    paid &&
+    (_bookingHasPendingCreditState(rec) ||
+      rec?.refund_required === true ||
+      rec?.refundRequired === true ||
+      rec?.booking?.refund_required === true ||
+      rec?.booking?.refundRequired === true);
+  const creditBuckets = _bookingCreditDecisionFinanceBuckets(rec);
+  const financeMonth =
+    monthlyPaid
+      ? paidAtMonth
+      : (pendingCredit && amountCents > 0 ? (paidAtMonth ?? cancelledAtMonth) : null);
+  const paidCents = monthlyPaid ? amountCents : 0;
+  const creditedCents = creditBuckets.credited_cents;
+  const pendingCents = pendingCredit && amountCents > 0 ? amountCents : 0;
+  const netCents = Math.max(0, paidCents - pendingCents - creditedCents);
+  console.log(
+    `[BOOKING_FINANCE] booking=${_bookingIntentMask(safeBookingId)} paid_cents=${paidCents} credited_cents=${creditedCents} net_cents=${netCents}`,
+  );
   return {
     booking_id: safeBookingId,
-    paid_month: monthlyPaid ? paidAtMonth : null,
+    paid_month: financeMonth,
     monthly_paid_bookings_count: monthlyPaid ? 1 : 0,
     monthly_paid_bookings_income_cents: monthlyPaid ? amountCents : 0,
     monthly_cancelled_paid_bookings_cents: monthlyPaid && cancelled ? amountCents : 0,
+    monthly_pending_credit_cents: pendingCredit && amountCents > 0 ? amountCents : 0,
+    credited_cents: creditBuckets.credited_cents,
+    no_refund_cents: creditBuckets.no_refund_cents,
+    partial_credit_cents: creditBuckets.partial_credit_cents,
     paid: paid === true,
     amount_source: safeStr(amountResolution?.source, 80) || "none",
     amount_cents_raw: amountCents,
@@ -32314,6 +33700,20 @@ function _trackingSyncReadBookingFinanceContribShape(value, fallbackBookingId = 
   const cancelledPaid = Number.isFinite(Number(obj.monthly_cancelled_paid_bookings_cents))
     ? Math.round(Number(obj.monthly_cancelled_paid_bookings_cents))
     : 0;
+  const pendingCredit = Number.isFinite(Number(obj.monthly_pending_credit_cents ?? obj.pending_credit_cents))
+    ? Math.round(Number(obj.monthly_pending_credit_cents ?? obj.pending_credit_cents))
+    : 0;
+  const creditedCents = Number.isFinite(Number(obj.credited_cents ?? obj.creditedCents))
+    ? Math.max(0, Math.round(Number(obj.credited_cents ?? obj.creditedCents)))
+    : 0;
+  const noRefundCents = Number.isFinite(Number(obj.no_refund_cents ?? obj.noRefundCents))
+    ? Math.max(0, Math.round(Number(obj.no_refund_cents ?? obj.noRefundCents)))
+    : 0;
+  const partialCreditCents = Number.isFinite(
+    Number(obj.partial_credit_cents ?? obj.partialCreditCents),
+  )
+    ? Math.max(0, Math.round(Number(obj.partial_credit_cents ?? obj.partialCreditCents)))
+    : 0;
   const paymentStatus = safeStr(
     obj.payment_status ??
     obj.paymentStatus ??
@@ -32326,6 +33726,10 @@ function _trackingSyncReadBookingFinanceContribShape(value, fallbackBookingId = 
     monthly_paid_bookings_count: paidCount,
     monthly_paid_bookings_income_cents: paidIncome,
     monthly_cancelled_paid_bookings_cents: cancelledPaid,
+    monthly_pending_credit_cents: pendingCredit,
+    credited_cents: creditedCents,
+    no_refund_cents: noRefundCents,
+    partial_credit_cents: partialCreditCents,
     payment_status: paymentStatus,
   };
 }
@@ -32545,32 +33949,52 @@ async function _trackingSyncMaterializeBookingFinanceKpiBestEffort({
     next.booking_id,
   );
   const monthDeltas = {};
-  if (prev.paid_month && prev.monthly_paid_bookings_count > 0) {
+  if (
+    prev.paid_month &&
+    (prev.monthly_paid_bookings_count > 0 ||
+      prev.monthly_pending_credit_cents > 0 ||
+      prev.credited_cents > 0)
+  ) {
     monthDeltas[prev.paid_month] = monthDeltas[prev.paid_month] || {
       monthly_paid_bookings_count: 0,
       monthly_paid_bookings_income_cents: 0,
       monthly_cancelled_paid_bookings_cents: 0,
+      monthly_pending_credit_cents: 0,
+      monthly_credited_cents: 0,
     };
     monthDeltas[prev.paid_month].monthly_paid_bookings_count -= prev.monthly_paid_bookings_count;
     monthDeltas[prev.paid_month].monthly_paid_bookings_income_cents -= prev.monthly_paid_bookings_income_cents;
     monthDeltas[prev.paid_month].monthly_cancelled_paid_bookings_cents -= prev.monthly_cancelled_paid_bookings_cents;
+    monthDeltas[prev.paid_month].monthly_pending_credit_cents -= prev.monthly_pending_credit_cents;
+    monthDeltas[prev.paid_month].monthly_credited_cents -= prev.credited_cents;
   }
-  if (next.paid_month && next.monthly_paid_bookings_count > 0) {
+  if (
+    next.paid_month &&
+    (next.monthly_paid_bookings_count > 0 ||
+      next.monthly_pending_credit_cents > 0 ||
+      next.credited_cents > 0)
+  ) {
     monthDeltas[next.paid_month] = monthDeltas[next.paid_month] || {
       monthly_paid_bookings_count: 0,
       monthly_paid_bookings_income_cents: 0,
       monthly_cancelled_paid_bookings_cents: 0,
+      monthly_pending_credit_cents: 0,
+      monthly_credited_cents: 0,
     };
     monthDeltas[next.paid_month].monthly_paid_bookings_count += next.monthly_paid_bookings_count;
     monthDeltas[next.paid_month].monthly_paid_bookings_income_cents += next.monthly_paid_bookings_income_cents;
     monthDeltas[next.paid_month].monthly_cancelled_paid_bookings_cents += next.monthly_cancelled_paid_bookings_cents;
+    monthDeltas[next.paid_month].monthly_pending_credit_cents += next.monthly_pending_credit_cents;
+    monthDeltas[next.paid_month].monthly_credited_cents += next.credited_cents;
   }
   for (const [month, delta] of Object.entries(monthDeltas)) {
     if (!delta) continue;
     if (
       !delta.monthly_paid_bookings_count &&
       !delta.monthly_paid_bookings_income_cents &&
-      !delta.monthly_cancelled_paid_bookings_cents
+      !delta.monthly_cancelled_paid_bookings_cents &&
+      !delta.monthly_pending_credit_cents &&
+      !delta.monthly_credited_cents
     ) {
       continue;
     }
@@ -32585,6 +34009,12 @@ async function _trackingSyncMaterializeBookingFinanceKpiBestEffort({
     const currentCancelled = Number.isFinite(Number(current.monthly_cancelled_paid_bookings_cents))
       ? Math.round(Number(current.monthly_cancelled_paid_bookings_cents))
       : 0;
+    const currentPendingCredit = Number.isFinite(Number(current.monthly_pending_credit_cents))
+      ? Math.round(Number(current.monthly_pending_credit_cents))
+      : 0;
+    const currentCredited = Number.isFinite(Number(current.monthly_credited_cents))
+      ? Math.round(Number(current.monthly_credited_cents))
+      : 0;
     try {
       await _trackingSyncPutJson(env, monthKey, {
         month,
@@ -32597,6 +34027,14 @@ async function _trackingSyncMaterializeBookingFinanceKpiBestEffort({
         monthly_cancelled_paid_bookings_cents: Math.max(
           0,
           currentCancelled + delta.monthly_cancelled_paid_bookings_cents,
+        ),
+        monthly_pending_credit_cents: Math.max(
+          0,
+          currentPendingCredit + delta.monthly_pending_credit_cents,
+        ),
+        monthly_credited_cents: Math.max(
+          0,
+          currentCredited + delta.monthly_credited_cents,
         ),
         updated_at: new Date().toISOString(),
       });
@@ -32643,6 +34081,7 @@ async function _trackingSyncReconcileBookingFinanceMonthFromContribsBestEffort(
       monthly_paid_bookings_count: 0,
       monthly_paid_bookings_income_cents: 0,
       monthly_cancelled_paid_bookings_cents: 0,
+      monthly_pending_credit_cents: 0,
       booking_finance_reconcile_scanned: 0,
       booking_finance_reconcile_matched_month: 0,
       booking_finance_reconcile_sum_cents: 0,
@@ -32667,6 +34106,7 @@ async function _trackingSyncReconcileBookingFinanceMonthFromContribsBestEffort(
       monthly_paid_bookings_count: 0,
       monthly_paid_bookings_income_cents: 0,
       monthly_cancelled_paid_bookings_cents: 0,
+      monthly_pending_credit_cents: 0,
       booking_finance_reconcile_scanned: 0,
       booking_finance_reconcile_matched_month: 0,
       booking_finance_reconcile_sum_cents: 0,
@@ -32692,6 +34132,8 @@ async function _trackingSyncReconcileBookingFinanceMonthFromContribsBestEffort(
   let sumCount = 0;
   let sumIncome = 0;
   let sumCancelled = 0;
+  let sumPendingCredit = 0;
+  let sumCredited = 0;
   let skippedWrongMonth = 0;
   let skippedUnpaid = 0;
   let skippedMissingAmount = 0;
@@ -32830,6 +34272,12 @@ async function _trackingSyncReconcileBookingFinanceMonthFromContribsBestEffort(
                     sumCancelled += Number.isFinite(Number(parsed?.monthly_cancelled_paid_bookings_cents))
                       ? Math.max(0, Math.round(Number(parsed.monthly_cancelled_paid_bookings_cents)))
                       : 0;
+                    sumPendingCredit += Number.isFinite(Number(parsed?.monthly_pending_credit_cents))
+                      ? Math.max(0, Math.round(Number(parsed.monthly_pending_credit_cents)))
+                      : 0;
+                    sumCredited += Number.isFinite(Number(parsed?.credited_cents))
+                      ? Math.max(0, Math.round(Number(parsed.credited_cents)))
+                      : 0;
                     try {
                       const correctedContrib = {
                         ...contrib,
@@ -32877,6 +34325,12 @@ async function _trackingSyncReconcileBookingFinanceMonthFromContribsBestEffort(
           sumCancelled += Number.isFinite(Number(parsed?.monthly_cancelled_paid_bookings_cents))
             ? Math.max(0, Math.round(Number(parsed.monthly_cancelled_paid_bookings_cents)))
             : 0;
+          sumPendingCredit += Number.isFinite(Number(parsed?.monthly_pending_credit_cents))
+            ? Math.max(0, Math.round(Number(parsed.monthly_pending_credit_cents)))
+            : 0;
+          sumCredited += Number.isFinite(Number(parsed?.credited_cents))
+            ? Math.max(0, Math.round(Number(parsed.credited_cents)))
+            : 0;
         }
       }
       if (includeDebugRows && debugRows.length < maxDebugRows) {
@@ -32910,6 +34364,8 @@ async function _trackingSyncReconcileBookingFinanceMonthFromContribsBestEffort(
         monthly_paid_bookings_count: Math.max(0, sumCount),
         monthly_paid_bookings_income_cents: Math.max(0, sumIncome),
         monthly_cancelled_paid_bookings_cents: Math.max(0, sumCancelled),
+        monthly_pending_credit_cents: Math.max(0, sumPendingCredit),
+        monthly_credited_cents: Math.max(0, sumCredited),
         updated_at: new Date().toISOString(),
         source,
         reconciled_from_contrib: true,
@@ -32932,6 +34388,8 @@ async function _trackingSyncReconcileBookingFinanceMonthFromContribsBestEffort(
     monthly_paid_bookings_count: Math.max(0, sumCount),
     monthly_paid_bookings_income_cents: Math.max(0, sumIncome),
     monthly_cancelled_paid_bookings_cents: Math.max(0, sumCancelled),
+    monthly_pending_credit_cents: Math.max(0, sumPendingCredit),
+    monthly_credited_cents: Math.max(0, sumCredited),
     booking_finance_reconcile_scanned: scanned,
     booking_finance_reconcile_matched_month: matchedMonth,
     booking_finance_reconcile_sum_cents: Math.max(0, sumIncome),
@@ -35950,10 +37408,13 @@ function _flattenBookingForRidesList(bookingId, rec) {
     _pick(rec, ["booking", "email"], null) ??
     _pick(rec, ["booking", "customer", "email"], null);
   const paymentStatus =
+    _resolveBookingRecordPaymentStatusForProjection(rec) ??
     rec?.payment_status ??
     rec?.paymentStatus ??
     _pick(rec, ["booking", "payment_status"], null) ??
-    _pick(rec, ["booking", "paymentStatus"], null);
+    _pick(rec, ["booking", "paymentStatus"], null) ??
+    _pick(rec, ["payload", "payment_status"], null) ??
+    _pick(rec, ["payload", "paymentStatus"], null);
   const paidAt =
     rec?.paid_at ??
     rec?.paidAt ??
@@ -35979,6 +37440,58 @@ function _flattenBookingForRidesList(bookingId, rec) {
     rec?.paymentSource ??
     _pick(rec, ["booking", "payment_source"], null) ??
     _pick(rec, ["booking", "paymentSource"], null);
+  const refundStatus =
+    rec?.refund_status ??
+    rec?.refundStatus ??
+    _pick(rec, ["booking", "refund_status"], null) ??
+    _pick(rec, ["booking", "refundStatus"], null) ??
+    _pick(rec, ["payload", "refund_status"], null) ??
+    _pick(rec, ["payload", "refundStatus"], null);
+  const creditStatus =
+    rec?.credit_status ??
+    rec?.creditStatus ??
+    _pick(rec, ["booking", "credit_status"], null) ??
+    _pick(rec, ["booking", "creditStatus"], null) ??
+    _pick(rec, ["payload", "credit_status"], null) ??
+    _pick(rec, ["payload", "creditStatus"], null);
+  const refundRequired =
+    rec?.refund_required === true ||
+    rec?.refundRequired === true ||
+    _pick(rec, ["booking", "refund_required"], false) === true ||
+    _pick(rec, ["booking", "refundRequired"], false) === true ||
+    _pick(rec, ["payload", "refund_required"], false) === true ||
+    _pick(rec, ["payload", "refundRequired"], false) === true;
+  const creditDecision =
+    rec?.credit_decision ??
+    rec?.creditDecision ??
+    _pick(rec, ["booking", "credit_decision"], null) ??
+    _pick(rec, ["booking", "creditDecision"], null) ??
+    _pick(rec, ["payload", "credit_decision"], null) ??
+    _pick(rec, ["payload", "creditDecision"], null);
+  const creditedAmountCentsRaw =
+    rec?.credited_amount_cents ??
+    rec?.creditedAmountCents ??
+    _pick(rec, ["booking", "credited_amount_cents"], null) ??
+    _pick(rec, ["booking", "creditedAmountCents"], null) ??
+    _pick(rec, ["payload", "credited_amount_cents"], null) ??
+    _pick(rec, ["payload", "creditedAmountCents"], null);
+  const creditedAmountCents = Number.isFinite(Number(creditedAmountCentsRaw))
+    ? Math.max(0, Math.round(Number(creditedAmountCentsRaw)))
+    : null;
+  const creditedAt =
+    rec?.credited_at ??
+    rec?.creditedAt ??
+    _pick(rec, ["booking", "credited_at"], null) ??
+    _pick(rec, ["booking", "creditedAt"], null) ??
+    _pick(rec, ["payload", "credited_at"], null) ??
+    _pick(rec, ["payload", "creditedAt"], null);
+  const creditedBy =
+    rec?.credited_by ??
+    rec?.creditedBy ??
+    _pick(rec, ["booking", "credited_by"], null) ??
+    _pick(rec, ["booking", "creditedBy"], null) ??
+    _pick(rec, ["payload", "credited_by"], null) ??
+    _pick(rec, ["payload", "creditedBy"], null);
   const assignedDriverId = bookingAssignedDriverId(rec);
   const assignedVehicleId = bookingAssignedVehicleId(rec);
 
@@ -36024,6 +37537,20 @@ function _flattenBookingForRidesList(bookingId, rec) {
     paymentMethod,
     payment_source: paymentSource,
     paymentSource,
+    refund_status: refundStatus,
+    refundStatus,
+    credit_status: creditStatus,
+    creditStatus,
+    refund_required: refundRequired,
+    refundRequired,
+    credit_decision: creditDecision,
+    creditDecision,
+    credited_amount_cents: creditedAmountCents,
+    creditedAmountCents: creditedAmountCents,
+    credited_at: creditedAt,
+    creditedAt,
+    credited_by: creditedBy,
+    creditedBy,
   };
 }
 
@@ -42364,6 +43891,29 @@ async function listBookingsAuthoritative(
       staleIds.add(bookingId);
       continue;
     }
+    if (_ensurePendingCreditStateOnCancelledPaidRecord(rec)) {
+      console.log(
+        `[BOOKING][CREDIT_STATE_REPAIR] booking=${_bookingIntentMask(bookingId)} applied=true paid=true source=company_bookings_list`,
+      );
+      try {
+        await env.BOOKING_KV.put(`booking:${bookingId}`, JSON.stringify(rec));
+        await upsertCompanyBookingsListIndexBestEffort(
+          env,
+          bookingId,
+          rec,
+          tenantScope,
+        );
+        await syncScopedTrackingTripKpiBestEffort({
+          env,
+          bookingId,
+          rec,
+          tenantScope,
+          source: "company_bookings_list_pending_credit_repair",
+        });
+      } catch (_) {
+        // Best-effort repair only; still surface row with in-memory credit fields.
+      }
+    }
     const rows = _flattenBookingForRidesListWithOperationalLegs(bookingId, rec);
     for (const row of rows) {
       if (
@@ -44815,6 +46365,37 @@ async function computeDashboardBookingsKpis(
     projectionIncomeCents,
     bookingFinanceMonthIncomeCents,
   );
+  let bookingFinanceMonthPendingCreditCents = Number.isFinite(
+    Number(bookingFinanceMonth?.monthly_pending_credit_cents),
+  )
+    ? Math.max(0, Math.round(Number(bookingFinanceMonth.monthly_pending_credit_cents)))
+    : 0;
+  let bookingFinanceMonthCreditedCents = Number.isFinite(
+    Number(bookingFinanceMonth?.monthly_credited_cents),
+  )
+    ? Math.max(0, Math.round(Number(bookingFinanceMonth.monthly_credited_cents)))
+    : 0;
+  if (reconciledFinance?.ok) {
+    bookingFinanceMonthPendingCreditCents = Math.max(
+      bookingFinanceMonthPendingCreditCents,
+      Number.isFinite(Number(reconciledFinance.monthly_pending_credit_cents))
+        ? Math.max(0, Math.round(Number(reconciledFinance.monthly_pending_credit_cents)))
+        : 0,
+    );
+    bookingFinanceMonthCreditedCents = Math.max(
+      bookingFinanceMonthCreditedCents,
+      Number.isFinite(Number(reconciledFinance.monthly_credited_cents))
+        ? Math.max(0, Math.round(Number(reconciledFinance.monthly_credited_cents)))
+        : 0,
+    );
+  }
+  const grossMonthlyIncomeCents = monthlyIncomeMergedCents;
+  const pendingCreditCents = bookingFinanceMonthPendingCreditCents;
+  const creditedCents = bookingFinanceMonthCreditedCents;
+  const netMonthlyIncomeCents = Math.max(
+    0,
+    grossMonthlyIncomeCents - pendingCreditCents - creditedCents,
+  );
   console.log(
     `[DASHBOARD_BOOKINGS_KPI][BOOKING_FINANCE_READ] tenant=${_maskPublicDriverLoginValue(tenantScope.tenant_id)} company=${_maskPublicDriverLoginValue(tenantScope.company_id)} month=${selectedMonth} income_cents=${bookingFinanceMonthIncomeCents} paid_count=${bookingFinanceMonthPaidCount} key=${bookingFinanceMonthKey ? "present" : "missing"}`,
   );
@@ -44844,6 +46425,16 @@ async function computeDashboardBookingsKpis(
     month: selectedMonth,
     monthly_income_cents: monthlyIncomeMergedCents,
     monthly_income_eur: monthlyIncomeMergedCents / 100,
+    gross_monthly_income_cents: grossMonthlyIncomeCents,
+    gross_monthly_income_eur: grossMonthlyIncomeCents / 100,
+    pending_credit_cents: pendingCreditCents,
+    pending_credit_eur: pendingCreditCents / 100,
+    monthly_credited_cents: creditedCents,
+    monthly_credited_eur: creditedCents / 100,
+    credited_cents: creditedCents,
+    credited_eur: creditedCents / 100,
+    net_monthly_income_cents: netMonthlyIncomeCents,
+    net_monthly_income_eur: netMonthlyIncomeCents / 100,
     booking_finance_monthly_income_cents: bookingFinanceMonthIncomeCents,
     booking_finance_monthly_income_eur: bookingFinanceMonthIncomeCents / 100,
     booking_finance_monthly_paid_bookings_count: bookingFinanceMonthPaidCount,
@@ -45568,6 +47159,10 @@ async function updateBookingStatusAuthoritative(
       rec.booking.canceled_at = rec.booking.canceled_at || rec.cancelled_at;
       rec.booking.canceledAt = rec.booking.canceledAt || rec.cancelled_at;
     }
+    applyPendingCreditStateOnPaidCancellation(rec, nowIso);
+    console.log(
+      `[BOOKING][CREDIT_STATE] booking=${_bookingIntentMask(bookingId)} applied=${_bookingHasPendingCreditState(rec) ? "true" : "false"} paid=${_bookingRecordIsPaidForCredit(rec) ? "true" : "false"} source=status_cancel`,
+    );
   } else if (normalized === "COMPLETED") {
     rec.completed_at = rec.completed_at || nowIso;
     rec.completedAt = rec.completedAt || rec.completed_at;
@@ -45684,6 +47279,15 @@ async function updateBookingStatusAuthoritative(
     rec,
     normalizeFleetTenantScope(tenantScope),
   );
+  if (normalized === "CANCELLED") {
+    await syncScopedTrackingTripKpiBestEffort({
+      env,
+      bookingId,
+      rec,
+      tenantScope,
+      source: "booking_status_update",
+    });
+  }
   try {
     const complianceEvent = buildBookingStatusUpdateComplianceEvent(rec, bookingId, {
       newStatus: normalized,
@@ -45880,6 +47484,7 @@ async function updateBookingOperationalLegStatusAuthoritative(
     rec.cancelledAt = rec.cancelledAt || rec.cancelled_at;
     rec.canceled_at = rec.canceled_at || rec.cancelled_at;
     rec.canceledAt = rec.canceledAt || rec.cancelled_at;
+    applyPendingCreditStateOnPaidCancellation(rec, nowIso);
   }
   if (rec.booking && typeof rec.booking === "object") {
     rec.booking.status = derivedParentStatus;
@@ -45954,6 +47559,16 @@ async function updateBookingOperationalLegStatusAuthoritative(
     rec,
     normalizeFleetTenantScope(tenantScope),
   );
+
+  if (derivedParentStatus === "CANCELLED") {
+    await syncScopedTrackingTripKpiBestEffort({
+      env,
+      bookingId: safeBookingId,
+      rec,
+      tenantScope,
+      source: "booking_leg_status_parent_derivation",
+    });
+  }
 
   if (isTerminalLifecycleStatus(derivedParentStatus)) {
     await releaseAllocatorReservationForBooking({
