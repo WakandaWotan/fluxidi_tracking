@@ -2210,7 +2210,11 @@ VehicleProfile _decodeVehicle(
   final primaryPhoto = (m['primaryPhotoRef'] ?? legacyPhoto).toString();
   final gallery = toStringList(m['galleryPhotoRefs']);
   final String? publicPhotoUrl = () {
-    final raw = m['publicPhotoUrl'];
+    final raw =
+        m['publicPhotoUrl'] ??
+        m['public_photo_url'] ??
+        m['vehiclePhotoUrl'] ??
+        m['vehicle_photo_url'];
     if (raw == null) return null;
     final text = raw.toString().trim();
     return text.isEmpty ? null : text;
@@ -2556,6 +2560,59 @@ String _maskVehicleIdForDiag(String value) {
   if (text.isEmpty) return 'unknown';
   if (text.length <= 4) return '…${text.substring(text.length - 1)}';
   return '${text.substring(0, 2)}…${text.substring(text.length - 2)}';
+}
+
+String maskVehicleIdForLog(String value) => _maskVehicleIdForDiag(value);
+
+VehicleProfile? vehicleProfileById(String vehicleId) {
+  final needle = vehicleId.trim();
+  if (needle.isEmpty) return null;
+  for (final vehicle in vehiclesNotifier.value) {
+    if (vehicle.id.trim() == needle) return vehicle;
+  }
+  return null;
+}
+
+/// Applies a public HTTPS vehicle photo URL to the in-memory fleet record.
+bool applyVehiclePublicPhotoUrlToNotifier({
+  required String vehicleId,
+  required String publicPhotoUrl,
+  String? companyId,
+}) {
+  final url = resolvePublicHttpsMediaUrl(publicPhotoUrl);
+  if (url.isEmpty) return false;
+  final normalizedId = vehicleId.trim();
+  if (normalizedId.isEmpty) return false;
+  final current = vehicleProfileById(normalizedId);
+  if (current == null) {
+    debugPrint(
+      '[VEHICLE_PUBLIC_PHOTO][NOTIFIER_UPDATE] vehicle=${maskVehicleIdForLog(normalizedId)} updated=false reason=not_found',
+    );
+    return false;
+  }
+  final scopeCompany = (companyId ?? '').trim();
+  final nextCompanyId = (current.companyId?.trim().isNotEmpty ?? false)
+      ? current.companyId
+      : (scopeCompany.isEmpty ? current.companyId : scopeCompany);
+  updateVehicle(
+    current.id,
+    current.copyWith(publicPhotoUrl: url, companyId: nextCompanyId),
+  );
+  debugPrint(
+    '[VEHICLE_PUBLIC_PHOTO][NOTIFIER_UPDATE] vehicle=${maskVehicleIdForLog(normalizedId)} updated=true',
+  );
+  return true;
+}
+
+bool vehicleBelongsToCompanyPublishScope(
+  VehicleProfile vehicle,
+  String companyId,
+) {
+  final scopedCompany = vehicle.companyId?.trim() ?? '';
+  final needle = companyId.trim();
+  if (needle.isEmpty) return scopedCompany.isEmpty;
+  if (scopedCompany.isEmpty) return true;
+  return scopedCompany == needle;
 }
 
 String _shortVehicleTextForDiag(String value) {

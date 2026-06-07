@@ -2791,7 +2791,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
 
     final scopedActiveVehicles = vehiclesNotifier.value
         .where((v) => v.isActive)
-        .where((v) => (v.companyId?.trim() ?? '') == companyId)
+        .where((v) => vehicleBelongsToCompanyPublishScope(v, companyId))
         .toList(growable: false);
     final vehicles = scopedActiveVehicles
         .map((v) {
@@ -2823,6 +2823,16 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     final vehiclesWithRawPublicPhoto = scopedActiveVehicles
         .where((v) => (v.publicPhotoUrl ?? '').trim().isNotEmpty)
         .length;
+    for (final vehicle in scopedActiveVehicles) {
+      final hasRawPublic = (vehicle.publicPhotoUrl ?? '').trim().isNotEmpty;
+      final hasResolvedPublic = _publicVehiclePhotoUrlForPublish(
+        vehicle,
+      ).isNotEmpty;
+      debugPrint(
+        '[PUBLIC_PARTNER_PUBLISH][VEHICLE_MEDIA] vehicle=${maskVehicleIdForLog(vehicle.id)} '
+        'raw_public=$hasRawPublic resolved_public=$hasResolvedPublic',
+      );
+    }
 
     final scopedPublicDrivers = driversNotifier.value
         .where((d) => d.publicProfileEnabled)

@@ -200,6 +200,7 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
   }
 
   Future<bool> _persistVehiclePublicPhotoAfterUpload({
+    required String vehicleId,
     required VehicleProfile? existing,
     required String publicPhotoUrl,
     required TextEditingController publicPhotoUrlCtrl,
@@ -210,18 +211,77 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
     setLocalState(() {
       publicPhotoUrlCtrl.text = url;
     });
-    if (existing == null) {
+    debugPrint(
+      '[VEHICLE_PUBLIC_PHOTO][UPLOAD_OK] vehicle=${maskVehicleIdForLog(vehicleId)} has_public_url=true',
+    );
+    final scopeId = _vehicleMediaScopeId(existing);
+    final updated = applyVehiclePublicPhotoUrlToNotifier(
+      vehicleId: vehicleId,
+      publicPhotoUrl: url,
+      companyId: scopeId,
+    );
+    if (!updated) {
       debugPrint(
-        '[VEHICLE_PUBLIC_PHOTO][DEFERRED] reason=vehicle_not_saved_yet',
+        '[VEHICLE_PUBLIC_PHOTO][DEFERRED] vehicle=${maskVehicleIdForLog(vehicleId)} reason=vehicle_not_in_notifier_yet',
       );
       return true;
     }
-    updateVehicle(existing.id, existing.copyWith(publicPhotoUrl: url));
     await _syncFleetOrShowError();
-    debugPrint(
-      '[VEHICLE_PUBLIC_PHOTO][OK] vehicle=${existing.id.length <= 4 ? '…' : '${existing.id.substring(0, 2)}…${existing.id.substring(existing.id.length - 2)}'}',
-    );
     return true;
+  }
+
+  Future<String?> _resolvePublicPhotoUrlForVehicleSave({
+    required String vehicleId,
+    required String controllerUrl,
+    required String primaryPhotoRef,
+    required VehicleProfile? existing,
+  }) async {
+    final fromController = resolvePublicHttpsMediaUrl(controllerUrl);
+    if (fromController.isNotEmpty) return fromController;
+
+    final notifierVehicle = vehicleProfileById(vehicleId);
+    final fromNotifier = resolvePublicHttpsMediaUrl(
+      notifierVehicle?.publicPhotoUrl ?? '',
+    );
+    if (fromNotifier.isNotEmpty) return fromNotifier;
+
+    final fromPrimary = resolvePublicHttpsMediaUrl(primaryPhotoRef);
+    if (fromPrimary.isNotEmpty) return fromPrimary;
+
+    final localPrimary = primaryPhotoRef.trim();
+    if (localPrimary.isEmpty ||
+        _isAssetRef(localPrimary) ||
+        kIsWeb ||
+        !isLocalOrPrivateMediaRef(localPrimary)) {
+      return null;
+    }
+    final scopeId = _vehicleMediaScopeId(existing);
+    if (scopeId == null) return null;
+    final source = File(localPrimary);
+    if (!await source.exists()) return null;
+    try {
+      final uploaded = await uploadPublicPartnerMedia(
+        tenantId: scopeId,
+        companyId: scopeId,
+        mediaType: 'vehicle_photo',
+        entityId: vehicleId,
+        filePath: localPrimary,
+      );
+      final url = (uploaded['url'] ?? '').toString().trim();
+      final resolved = resolvePublicHttpsMediaUrl(url);
+      if (resolved.isEmpty) return null;
+      debugPrint(
+        '[VEHICLE_PUBLIC_PHOTO][UPLOAD_OK] vehicle=${maskVehicleIdForLog(vehicleId)} has_public_url=true source=save_promote_local',
+      );
+      applyVehiclePublicPhotoUrlToNotifier(
+        vehicleId: vehicleId,
+        publicPhotoUrl: resolved,
+        companyId: scopeId,
+      );
+      return resolved;
+    } catch (_) {
+      return null;
+    }
   }
 
   bool _isAssetRef(String value) =>
@@ -343,6 +403,7 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
         throw Exception('Upload did not return a valid HTTPS URL');
       }
       await _persistVehiclePublicPhotoAfterUpload(
+        vehicleId: vehicleId,
         existing: existing,
         publicPhotoUrl: url,
         publicPhotoUrlCtrl: publicPhotoUrlCtrl,
@@ -973,42 +1034,53 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
   }
 
   Future<void> _openVehicleEditor({VehicleProfile? existing}) async {
+    final resolvedExisting = existing == null
+        ? null
+        : (vehicleProfileById(existing.id) ?? existing);
     final vehicleId =
-        existing?.id ?? 'vh_${DateTime.now().millisecondsSinceEpoch}';
-    final nameCtrl = TextEditingController(text: existing?.vehicleName ?? '');
-    final modelCtrl = TextEditingController(text: existing?.brandModel ?? '');
-    final plateCtrl = TextEditingController(text: existing?.licensePlate ?? '');
+        resolvedExisting?.id ?? 'vh_${DateTime.now().millisecondsSinceEpoch}';
+    final nameCtrl = TextEditingController(
+      text: resolvedExisting?.vehicleName ?? '',
+    );
+    final modelCtrl = TextEditingController(
+      text: resolvedExisting?.brandModel ?? '',
+    );
+    final plateCtrl = TextEditingController(
+      text: resolvedExisting?.licensePlate ?? '',
+    );
     final exploitationLicenseCtrl = TextEditingController(
-      text: existing?.exploitationLicenseNumber ?? '',
+      text: resolvedExisting?.exploitationLicenseNumber ?? '',
     );
     final vehicleRegistrationCtrl = TextEditingController(
-      text: existing?.vehicleRegistrationNumber ?? '',
+      text: resolvedExisting?.vehicleRegistrationNumber ?? '',
     );
-    final colorCtrl = TextEditingController(text: existing?.color ?? '');
-    var primaryPhotoRef = existing?.primaryPhotoRef ?? '';
+    final colorCtrl = TextEditingController(
+      text: resolvedExisting?.color ?? '',
+    );
+    var primaryPhotoRef = resolvedExisting?.primaryPhotoRef ?? '';
     var galleryPhotoRefs = List<String>.from(
-      existing?.galleryPhotoRefs ?? const <String>[],
+      resolvedExisting?.galleryPhotoRefs ?? const <String>[],
     );
     final publicPhotoUrlCtrl = TextEditingController(
-      text: existing?.publicPhotoUrl ?? '',
+      text: resolvedExisting?.publicPhotoUrl ?? '',
     );
     var publicPhotoUploading = false;
     final paxCtrl = TextEditingController(
-      text: (existing?.passengerCapacity ?? 3).toString(),
+      text: (resolvedExisting?.passengerCapacity ?? 3).toString(),
     );
     final bagsCtrl = TextEditingController(
-      text: (existing?.luggageCapacity ?? 3).toString(),
+      text: (resolvedExisting?.luggageCapacity ?? 3).toString(),
     );
-    var tierId = existing?.tierId ?? appConfig.enabledTiers.first.id;
-    String? linkedDriverId = existing?.driverId;
+    var tierId = resolvedExisting?.tierId ?? appConfig.enabledTiers.first.id;
+    String? linkedDriverId = resolvedExisting?.driverId;
     {
-      final cid = _scopedVehicleCompanyId(existing);
+      final cid = _scopedVehicleCompanyId(resolvedExisting);
       final dr0 = _driverById(linkedDriverId);
       if (dr0 == null || !_canAssignDriverToVehicleInManagementUi(dr0, cid)) {
         linkedDriverId = null;
       }
     }
-    var active = existing?.isActive ?? true;
+    var active = resolvedExisting?.isActive ?? true;
 
     await showModalBottomSheet<void>(
       context: context,
@@ -1032,7 +1104,7 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        existing == null
+                        resolvedExisting == null
                             ? _t(
                                 nl: 'Voertuig toevoegen',
                                 en: 'Add vehicle',
@@ -1259,11 +1331,11 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                                     _driverVisibleInManagementUi(d) &&
                                     _canAssignDriverToVehicleInManagementUi(
                                       d,
-                                      _scopedVehicleCompanyId(existing),
+                                      _scopedVehicleCompanyId(resolvedExisting),
                                     ) &&
                                     !fleetExplicitCompanyMismatch(
                                       d.companyId,
-                                      _scopedVehicleCompanyId(existing),
+                                      _scopedVehicleCompanyId(resolvedExisting),
                                     ),
                               )
                               .map(
@@ -1523,7 +1595,7 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                                   await _useExistingVehiclePhotoAsPublic(
                                     photoRef: primaryPhotoRef,
                                     vehicleId: vehicleId,
-                                    existing: existing,
+                                    existing: resolvedExisting,
                                     publicPhotoUrlCtrl: publicPhotoUrlCtrl,
                                     setLocalState: setLocalState,
                                   );
@@ -1613,7 +1685,7 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                                                 await _useExistingVehiclePhotoAsPublic(
                                                   photoRef: ref,
                                                   vehicleId: vehicleId,
-                                                  existing: existing,
+                                                  existing: resolvedExisting,
                                                   publicPhotoUrlCtrl:
                                                       publicPhotoUrlCtrl,
                                                   setLocalState: setLocalState,
@@ -1900,7 +1972,7 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                                   );
                                   if (picked == null) return;
                                   final scopeId = _vehicleMediaScopeId(
-                                    existing,
+                                    resolvedExisting,
                                   );
                                   if (scopeId == null) {
                                     debugPrint(
@@ -1931,7 +2003,8 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                                     );
                                   }
                                   await _persistVehiclePublicPhotoAfterUpload(
-                                    existing: existing,
+                                    vehicleId: vehicleId,
+                                    existing: resolvedExisting,
                                     publicPhotoUrl: url,
                                     publicPhotoUrlCtrl: publicPhotoUrlCtrl,
                                     setLocalState: setLocalState,
@@ -2074,7 +2147,11 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                             Expanded(
                               child: FilledButton(
                                 onPressed: () async {
-                                  final cid = _scopedVehicleCompanyId(existing);
+                                  final cid =
+                                      _scopedVehicleCompanyId(
+                                        resolvedExisting,
+                                      ) ??
+                                      _activeCompanyIdForFleetUi();
                                   if (linkedDriverId != null) {
                                     final dr = _driverById(linkedDriverId);
                                     if (dr != null &&
@@ -2100,6 +2177,18 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                                       return;
                                     }
                                   }
+                                  final resolvedPublicPhoto =
+                                      await _resolvePublicPhotoUrlForVehicleSave(
+                                        vehicleId: vehicleId,
+                                        controllerUrl: publicPhotoUrlCtrl.text,
+                                        primaryPhotoRef: primaryPhotoRef,
+                                        existing: resolvedExisting,
+                                      );
+                                  if (resolvedPublicPhoto != null &&
+                                      resolvedPublicPhoto.isNotEmpty) {
+                                    publicPhotoUrlCtrl.text =
+                                        resolvedPublicPhoto;
+                                  }
                                   final vehicle = VehicleProfile(
                                     id: vehicleId,
                                     vehicleName: nameCtrl.text.trim(),
@@ -2123,15 +2212,12 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                                         .where((e) => e.trim().isNotEmpty)
                                         .take(_maxPhotosPerVehicle)
                                         .toList(growable: false),
-                                    publicPhotoUrl:
-                                        publicPhotoUrlCtrl.text.trim().isEmpty
-                                        ? null
-                                        : publicPhotoUrlCtrl.text.trim(),
+                                    publicPhotoUrl: resolvedPublicPhoto,
                                   );
-                                  if (existing == null) {
+                                  if (resolvedExisting == null) {
                                     addVehicle(vehicle);
                                   } else {
-                                    updateVehicle(existing.id, vehicle);
+                                    updateVehicle(resolvedExisting.id, vehicle);
                                   }
                                   await _syncFleetOrShowError();
                                   if (!ctx.mounted) return;
