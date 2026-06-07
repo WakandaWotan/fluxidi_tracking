@@ -178,6 +178,9 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
   };
   Set<String> _publicServiceIds = <String>{};
   bool _publicServicesConfigured = false;
+  String _paymentOwnerMode = 'fluxidi_central_demo';
+  bool _paymentDemoMode = true;
+  bool _mollieConnected = false;
   final Set<String> _expandedSections = <String>{};
   static const List<String> _airportFixedFareDirections = <String>[
     'to_airport',
@@ -475,6 +478,11 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     _backendIbanCtrl.text = p.iban;
     _backendPaymentPrefixCtrl.text = p.paymentReferencePrefix;
     _backendFooterCtrl.text = p.invoiceReceiptFooterText;
+    _paymentOwnerMode = p.paymentOwnerMode.trim().isEmpty
+        ? 'fluxidi_central_demo'
+        : p.paymentOwnerMode.trim();
+    _paymentDemoMode = p.paymentDemoMode;
+    _mollieConnected = p.mollieConnected;
   }
 
   void _hydrateBackendTaxProfile(BackendTaxProfile p) {
@@ -844,6 +852,20 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         local.invoiceReceiptFooterText,
         server.invoiceReceiptFooterText,
       ),
+      paymentOwnerMode: server.paymentOwnerMode.trim().isNotEmpty
+          ? server.paymentOwnerMode
+          : local.paymentOwnerMode,
+      paymentDemoMode: server.paymentDemoMode || local.paymentDemoMode,
+      mollieConnected: server.mollieConnected || local.mollieConnected,
+      mollieOrganizationId: server.mollieOrganizationId.isNotEmpty
+          ? server.mollieOrganizationId
+          : local.mollieOrganizationId,
+      mollieProfileId: server.mollieProfileId.isNotEmpty
+          ? server.mollieProfileId
+          : local.mollieProfileId,
+      mollieTokenRef: server.mollieTokenRef.isNotEmpty
+          ? server.mollieTokenRef
+          : local.mollieTokenRef,
     );
   }
 
@@ -1491,6 +1513,137 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     );
   }
 
+  String _paymentOwnerModeLabel(String mode) {
+    switch (mode.trim().toLowerCase()) {
+      case 'company_mollie':
+        return _t(
+          nl: 'Eigen Mollie-account',
+          en: 'Own Mollie account',
+          fr: 'Compte Mollie propre',
+          es: 'Cuenta Mollie propia',
+        );
+      case 'manual_only':
+        return _t(
+          nl: 'Alleen handmatig',
+          en: 'Manual only',
+          fr: 'Manuel uniquement',
+          es: 'Solo manual',
+        );
+      case 'fluxidi_central_demo':
+      default:
+        return _t(
+          nl: 'Fluxidi demo-betaalaccount',
+          en: 'Fluxidi demo payment account',
+          fr: 'Compte de paiement demo Fluxidi',
+          es: 'Cuenta de pago demo de Fluxidi',
+        );
+    }
+  }
+
+  Widget _paymentOwnershipCard() {
+    final demoActive = _paymentOwnerMode == 'fluxidi_central_demo';
+    return _collapsibleSettingsCard(
+      id: 'payment_ownership',
+      icon: Icons.account_balance_wallet_outlined,
+      title: _t(
+        nl: 'Betalingen ontvangen',
+        en: 'Receive payments',
+        fr: 'Recevoir les paiements',
+        es: 'Recibir pagos',
+      ),
+      subtitle: _paymentOwnerModeLabel(_paymentOwnerMode),
+      status: demoActive ? _SetupStatus.attention : _SetupStatus.incomplete,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (demoActive)
+            Text(
+              _t(
+                nl: 'Fluxidi demo-betaalaccount actief. Dit is alleen bedoeld voor interne tests en demo’s. Voor productie moet dit bedrijf later een eigen Mollie-account koppelen.',
+                en: 'Fluxidi demo payment account is active. This is only for internal tests and demos. For production, this company must later connect its own Mollie account.',
+                fr: 'Le compte de paiement demo Fluxidi est actif. Il est reserve aux tests internes et aux demos. En production, cette entreprise devra connecter son propre compte Mollie.',
+                es: 'La cuenta de pago demo de Fluxidi esta activa. Solo es para pruebas internas y demos. En produccion, esta empresa debera conectar su propia cuenta Mollie.',
+              ),
+              style: const TextStyle(color: Colors.white70, height: 1.45),
+            ),
+          const SizedBox(height: 12),
+          _paymentOwnershipInfoRow(
+            _t(
+              nl: 'Betaalmodus',
+              en: 'Payment owner mode',
+              fr: 'Mode de paiement',
+              es: 'Modo de pago',
+            ),
+            _paymentOwnerModeLabel(_paymentOwnerMode),
+          ),
+          _paymentOwnershipInfoRow(
+            _t(
+              nl: 'Mollie gekoppeld',
+              en: 'Mollie connected',
+              fr: 'Mollie connecte',
+              es: 'Mollie conectado',
+            ),
+            _mollieConnected
+                ? _t(nl: 'Ja', en: 'Yes', fr: 'Oui', es: 'Si')
+                : _t(nl: 'Nee', en: 'No', fr: 'Non', es: 'No'),
+          ),
+          _paymentOwnershipInfoRow(
+            _t(
+              nl: 'Demomodus',
+              en: 'Demo mode',
+              fr: 'Mode demo',
+              es: 'Modo demo',
+            ),
+            _paymentDemoMode
+                ? _t(nl: 'Ja', en: 'Yes', fr: 'Oui', es: 'Si')
+                : _t(nl: 'Nee', en: 'No', fr: 'Non', es: 'No'),
+          ),
+          const SizedBox(height: 12),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: OutlinedButton.icon(
+              onPressed: null,
+              icon: const Icon(Icons.link_off_outlined),
+              label: Text(
+                _t(
+                  nl: 'Mollie koppelen komt later',
+                  en: 'Connect Mollie coming later',
+                  fr: 'Connexion Mollie a venir',
+                  es: 'Conexion Mollie proximamente',
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _paymentOwnershipInfoRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            flex: 2,
+            child: Text(
+              label,
+              style: const TextStyle(color: Colors.white54, fontSize: 13),
+            ),
+          ),
+          Expanded(
+            flex: 3,
+            child: Text(
+              value,
+              style: const TextStyle(color: Colors.white, fontSize: 13),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _cancellationPolicyCard() {
     return _collapsibleSettingsCard(
       id: 'cancellation_policy',
@@ -1729,6 +1882,9 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
       iban: _backendIbanCtrl.text.trim(),
       paymentReferencePrefix: _backendPaymentPrefixCtrl.text.trim(),
       invoiceReceiptFooterText: _backendFooterCtrl.text.trim(),
+      paymentOwnerMode: _paymentOwnerMode,
+      paymentDemoMode: _paymentDemoMode,
+      mollieConnected: _mollieConnected,
     );
   }
 
@@ -7048,6 +7204,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                   ],
                 ),
               ),
+              _paymentOwnershipCard(),
               _collapsibleSettingsCard(
                 id: 'vat_settings',
                 icon: Icons.receipt_long_outlined,

@@ -290,6 +290,12 @@ class BackendBusinessProfile {
   final String iban;
   final String paymentReferencePrefix;
   final String invoiceReceiptFooterText;
+  final String paymentOwnerMode;
+  final bool paymentDemoMode;
+  final bool mollieConnected;
+  final String mollieOrganizationId;
+  final String mollieProfileId;
+  final String mollieTokenRef;
 
   const BackendBusinessProfile({
     this.companyCode = '',
@@ -323,6 +329,12 @@ class BackendBusinessProfile {
     required this.iban,
     required this.paymentReferencePrefix,
     required this.invoiceReceiptFooterText,
+    this.paymentOwnerMode = 'fluxidi_central_demo',
+    this.paymentDemoMode = true,
+    this.mollieConnected = false,
+    this.mollieOrganizationId = '',
+    this.mollieProfileId = '',
+    this.mollieTokenRef = '',
   });
 
   factory BackendBusinessProfile.defaults() => BackendBusinessProfile(
@@ -353,6 +365,9 @@ class BackendBusinessProfile {
     iban: '',
     paymentReferencePrefix: 'FLX',
     invoiceReceiptFooterText: '',
+    paymentOwnerMode: 'fluxidi_central_demo',
+    paymentDemoMode: true,
+    mollieConnected: false,
   );
 
   factory BackendBusinessProfile.fromJson(Map<String, dynamic> json) {
@@ -490,6 +505,30 @@ class BackendBusinessProfile {
         'invoiceReceiptFooterText',
         fallback.invoiceReceiptFooterText,
       ),
+      paymentOwnerMode: textAny(const [
+        'paymentOwnerMode',
+        'payment_owner_mode',
+      ], fallback.paymentOwnerMode),
+      paymentDemoMode:
+          (json['paymentDemoMode'] ?? json['payment_demo_mode']) is bool
+          ? ((json['paymentDemoMode'] ?? json['payment_demo_mode']) as bool)
+          : fallback.paymentDemoMode,
+      mollieConnected:
+          (json['mollieConnected'] ?? json['mollie_connected']) is bool
+          ? ((json['mollieConnected'] ?? json['mollie_connected']) as bool)
+          : fallback.mollieConnected,
+      mollieOrganizationId: textAny(const [
+        'mollieOrganizationId',
+        'mollie_organization_id',
+      ], fallback.mollieOrganizationId),
+      mollieProfileId: textAny(const [
+        'mollieProfileId',
+        'mollie_profile_id',
+      ], fallback.mollieProfileId),
+      mollieTokenRef: textAny(const [
+        'mollieTokenRef',
+        'mollie_token_ref',
+      ], fallback.mollieTokenRef),
     );
   }
 
@@ -548,6 +587,18 @@ class BackendBusinessProfile {
     'iban': iban,
     'paymentReferencePrefix': paymentReferencePrefix,
     'invoiceReceiptFooterText': invoiceReceiptFooterText,
+    'paymentOwnerMode': paymentOwnerMode,
+    'payment_owner_mode': paymentOwnerMode,
+    'paymentDemoMode': paymentDemoMode,
+    'payment_demo_mode': paymentDemoMode,
+    'mollieConnected': mollieConnected,
+    'mollie_connected': mollieConnected,
+    'mollieOrganizationId': mollieOrganizationId,
+    'mollie_organization_id': mollieOrganizationId,
+    'mollieProfileId': mollieProfileId,
+    'mollie_profile_id': mollieProfileId,
+    'mollieTokenRef': mollieTokenRef,
+    'mollie_token_ref': mollieTokenRef,
   };
 }
 
