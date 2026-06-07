@@ -29669,9 +29669,27 @@ async function refreshMollieRefundStatusForBooking(
     );
   }
 
+  const normalizedScope = normalizeFleetTenantScope(tenantScope);
+  const indexUpsert = await upsertCompanyBookingsListIndexBestEffort(
+    env,
+    bookingId,
+    rec,
+    normalizedScope,
+  );
+  const indexUpserted = indexUpsert?.ok === true;
+  const scopeMask = _bookingIntentScopeMask(normalizedScope);
+  console.log(
+    `[BOOKING][MOLLIE_REFUND_STATUS][INDEX_UPSERT] booking=${_bookingIntentMask(bookingId)} tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} ok=${indexUpserted} skipped=${indexUpsert?.skipped === true} reason=${safeStr(indexUpsert?.reason, 64) || "-"}`,
+  );
+
   return {
     ok: true,
     booking_id: bookingId,
+    refreshed: true,
+    index_upserted: indexUpserted,
+    indexUpserted,
+    refund_id_present: !!mollieRefundId,
+    refundIdPresent: !!mollieRefundId,
     refund_status: mapped.refundStatus,
     refundStatus: mapped.refundStatus,
     mollie_refund_status: mapped.mollieRefundStatus,

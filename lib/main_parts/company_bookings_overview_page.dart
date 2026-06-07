@@ -459,15 +459,45 @@ class _CompanyBookingsOverviewPageState
           _CompanyBookingOverviewItem.isMollieRefundStatusRefunded(
             out.mollieRefundStatus,
           );
+      final isPending =
+          !isRefunded &&
+          (_CompanyBookingOverviewItem.isRefundStatusPending(
+                out.refundStatus,
+              ) ||
+              _CompanyBookingOverviewItem.isMollieRefundStatusPending(
+                out.mollieRefundStatus,
+              ));
+      final isFailed =
+          !isRefunded &&
+          !isPending &&
+          (_CompanyBookingOverviewItem.isMollieRefundStatusFailed(
+                out.mollieRefundStatus,
+              ) ||
+              out.refundStatus.trim().toUpperCase().contains('FAIL') ||
+              out.refundStatus.trim().toUpperCase().contains('CANCEL'));
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
             isRefunded
                 ? _t(
-                    nl: 'Terugbetaling bevestigd door Mollie.',
-                    en: 'Refund confirmed by Mollie.',
-                    fr: 'Remboursement confirmé par Mollie.',
-                    es: 'Reembolso confirmado por Mollie.',
+                    nl: 'Terugbetaling bevestigd.',
+                    en: 'Refund confirmed.',
+                    fr: 'Remboursement confirmé.',
+                    es: 'Reembolso confirmado.',
+                  )
+                : isPending
+                ? _t(
+                    nl: 'Terugbetaling is nog in behandeling.',
+                    en: 'Refund is still pending.',
+                    fr: 'Le remboursement est encore en attente.',
+                    es: 'El reembolso sigue pendiente.',
+                  )
+                : isFailed
+                ? _t(
+                    nl: 'Terugbetalingsstatuscontrole mislukt.',
+                    en: 'Refund status check failed.',
+                    fr: 'Échec de la vérification du remboursement.',
+                    es: 'Falló la comprobación del reembolso.',
                   )
                 : _t(
                     nl: 'Terugbetalingsstatus bijgewerkt.',
@@ -480,14 +510,16 @@ class _CompanyBookingsOverviewPageState
       );
       return;
     }
+    await _loadBookings();
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
           _t(
-            nl: 'Statuscontrole mislukt (${out.error}).',
-            en: 'Status check failed (${out.error}).',
-            fr: 'Vérification du statut échouée (${out.error}).',
-            es: 'Comprobación de estado fallida (${out.error}).',
+            nl: 'Terugbetalingsstatuscontrole mislukt (${out.error}).',
+            en: 'Refund status check failed (${out.error}).',
+            fr: 'Échec de la vérification du remboursement (${out.error}).',
+            es: 'Falló la comprobación del reembolso (${out.error}).',
           ),
         ),
       ),
