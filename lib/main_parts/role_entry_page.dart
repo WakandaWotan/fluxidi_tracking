@@ -1494,6 +1494,26 @@ class RoleEntryPage extends StatelessWidget {
                         ),
                       ),
                     ),
+                    const SizedBox(height: 8),
+                    OutlinedButton(
+                      onPressed: () => Navigator.of(
+                        dialogContext,
+                      ).pop(_companyPairingOnboardingIntent),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: Colors.white,
+                        side: BorderSide(
+                          color: kFluxidiYellow.withOpacity(0.5),
+                        ),
+                      ),
+                      child: Text(
+                        _t(
+                          nl: 'Nieuw bedrijf aanmaken',
+                          en: 'Create new company account',
+                          fr: 'Créer un nouveau compte entreprise',
+                          es: 'Crear nueva cuenta de empresa',
+                        ),
+                      ),
+                    ),
                   ],
                 ),
               ),
@@ -1925,19 +1945,10 @@ class RoleEntryPage extends StatelessWidget {
       final activationCode = await _promptCompanyActivationCode(context);
       if (!context.mounted || activationCode == null) return;
       if (activationCode == _companyPairingOnboardingIntent) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              _t(
-                nl: 'Gebruik activatiecode of herstel om als bedrijf in te loggen.',
-                en: 'Use activation code or recovery to sign in as business owner.',
-                fr: "Utilisez le code d'activation ou la récupération pour vous connecter en tant qu'entreprise.",
-                es: 'Usa el código de activación o recuperación para iniciar sesión como empresa.',
-              ),
-            ),
-          ),
-        );
-        continue;
+        await CompanySessionStore.instance.clearLocalCompanyState();
+        if (!context.mounted) return;
+        _openBusinessOnboarding(context);
+        return;
       }
       if (activationCode == _companyRecoveryIntent) {
         await _runCompanyRecoveryFlow(context);
