@@ -19410,16 +19410,20 @@ GET /oauth/callback
 
       // Minimal admin fleet inventory endpoints (testing-only foundation)
       if (url.pathname === "/admin/fleet/vehicles" && request.method === "GET") {
-        _requireAdmin(request, url, env);
         if (!env.BOOKING_KV) return json({ ok: false, error: "BOOKING_KV binding is missing" }, 500);
-        const requestedScope = extractBookingTenantScope({ request, url });
-        if (!requestedScope.tenant_id || !requestedScope.company_id) {
-          return json({ ok: false, error: "tenant_id and company_id are required" }, 400);
-        }
-        const scope = normalizeFleetTenantScope(requestedScope);
+        const authScope = await _requireAdminOrCompanySessionForExplicitScope({
+          request,
+          url,
+          env,
+          routeLabel: "ADMIN_FLEET_VEHICLES_GET",
+        });
+        if (!authScope.ok) return authScope.response;
+        const explicitScope = authScope.explicitScope;
+        const scope = normalizeFleetTenantScope(explicitScope);
         const includeLegacyFallback =
+          authScope.auth_mode === "admin_token" &&
           String(url.searchParams.get("include_legacy_fallback") || "").trim().toLowerCase() ===
-          "true";
+            "true";
         const fleetRead = await _loadFleetInventoryRawForScope(env, scope, {
           allowLegacyFallback: includeLegacyFallback,
         });
@@ -19455,14 +19459,20 @@ GET /oauth/callback
       }
 
       if (url.pathname === "/admin/fleet/vehicles" && request.method === "POST") {
-        _requireAdmin(request, url, env);
         if (!env.BOOKING_KV) return json({ ok: false, error: "BOOKING_KV binding is missing" }, 500);
         const body = await safeJson(request);
-        const requestedScope = extractBookingTenantScope({ request, url, body });
-        if (!requestedScope.tenant_id || !requestedScope.company_id) {
-          return json({ ok: false, error: "tenant_id and company_id are required" }, 400);
-        }
-        const scope = normalizeFleetTenantScope(requestedScope);
+        const authScope = await _requireAdminOrCompanySessionForExplicitScope({
+          request,
+          url,
+          env,
+          body,
+          routeLabel: "ADMIN_FLEET_VEHICLES_POST",
+        });
+        if (!authScope.ok) return authScope.response;
+        const explicitScope = authScope.explicitScope;
+        const bodyScopeCheck = _validateSettingsPayloadScope(body, explicitScope);
+        if (!bodyScopeCheck.ok) return json(bodyScopeCheck, 400);
+        const scope = normalizeFleetTenantScope(explicitScope);
         const incoming = Array.isArray(body)
           ? body
           : (Array.isArray(body?.vehicles) ? body.vehicles : null);

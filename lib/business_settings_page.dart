@@ -2820,6 +2820,9 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     final vehiclePhotoCount = vehicles
         .where((row) => ((row['photo_url'] ?? '').toString().trim().isNotEmpty))
         .length;
+    final vehiclesWithRawPublicPhoto = scopedActiveVehicles
+        .where((v) => (v.publicPhotoUrl ?? '').trim().isNotEmpty)
+        .length;
 
     final scopedPublicDrivers = driversNotifier.value
         .where((d) => d.publicProfileEnabled)
@@ -2856,7 +2859,9 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     debugPrint(
       '[PUBLIC_PARTNER_PUBLISH][MEDIA] company=$maskedCompanyId '
       'drivers=${scopedPublicDrivers.length} portraits=$driverPortraitCount '
-      'vehicles=${scopedActiveVehicles.length} vehicle_photos=$vehiclePhotoCount',
+      'vehicles=${scopedActiveVehicles.length} '
+      'vehicle_raw_public_photos=$vehiclesWithRawPublicPhoto '
+      'vehicle_photos=$vehiclePhotoCount',
     );
 
     return <String, dynamic>{
@@ -2934,6 +2939,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
   }
 
   Future<bool> _publishPublicPartnerProfile() async {
+    if (!mounted) return false;
     setState(() {
       _publicPartnerProfilePublishing = true;
       _publicPartnerProfileStatus = null;
@@ -2949,6 +2955,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
       // uses "Publish public profile" without tapping "Save company details".
       final formProfile = _backendBusinessProfileFromForm();
       await updateLocalBackendBusinessProfileCache(formProfile);
+      if (!mounted) return false;
       final savedBusiness = await saveBackendBusinessProfile(
         formProfile,
         tenantId: scope.tenantId,
@@ -2959,17 +2966,21 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         savedBusiness,
         source: 'business_profile_publish_pre_post',
       );
+      if (!mounted) return false;
       final mergedBusiness = _mergeBackendBusinessProfile(
         local: formProfile,
         server: savedBusiness,
       );
-      _hydrateBackendBusinessProfile(mergedBusiness);
+      if (mounted) {
+        _hydrateBackendBusinessProfile(mergedBusiness);
+      }
       unawaited(updateLocalBackendBusinessProfileCache(mergedBusiness));
 
       await syncFleetInventoryToBackend(
         tenantId: scope.tenantId,
         companyId: scope.companyId,
       );
+      if (!mounted) return false;
 
       final payload = _buildPublicPartnerProfilePayload(
         companyId: scope.companyId,
@@ -3011,6 +3022,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         invoiceReceiptFooterText: mergedBusiness.invoiceReceiptFooterText,
       );
       await updateLocalBackendBusinessProfileCache(publishedBusiness);
+      if (!mounted) return false;
       final savedPublishedBusiness = await saveBackendBusinessProfile(
         publishedBusiness,
         tenantId: scope.tenantId,
@@ -3021,10 +3033,12 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         savedPublishedBusiness,
         source: 'business_profile_publish_post',
       );
+      if (!mounted) return false;
       final mergedPublishedBusiness = _mergeBackendBusinessProfile(
         local: publishedBusiness,
         server: savedPublishedBusiness,
       );
+      if (!mounted) return false;
       setState(() {
         _hydrateBackendBusinessProfile(mergedPublishedBusiness);
         _publicPartnerProfileStatus = _t(

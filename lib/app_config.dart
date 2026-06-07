@@ -2610,10 +2610,15 @@ Future<bool> _postFleetVehiclesWithTruthfulResult({
     _logVehicleAssignmentSyncOut(payload);
   }
   try {
+    final auth = await resolveCompanyOwnerAuthHeaders();
+    if (auth.mode == CompanyOwnerAuthMode.none) {
+      debugPrint('[COMPANY_SYNC][VEHICLES_ERROR] reason=missing_auth');
+      return false;
+    }
     final response = await http
         .post(
           endpoint,
-          headers: _adminJsonHeaders(),
+          headers: auth.headers,
           body: jsonEncode(<String, dynamic>{
             ...scope,
             'vehicles': fleetPayload,
@@ -2626,7 +2631,7 @@ Future<bool> _postFleetVehiclesWithTruthfulResult({
     );
     if (status < 200 || status >= 300) {
       debugPrint(
-        '[COMPANY_SYNC][VEHICLES_ERROR] status=$status reason=http_non_2xx body=$bodyPreview',
+        '[COMPANY_SYNC][VEHICLES_ERROR] status=$status auth_mode=${auth.mode.name} reason=http_non_2xx body=$bodyPreview',
       );
       return false;
     }
@@ -2648,7 +2653,9 @@ Future<bool> _postFleetVehiclesWithTruthfulResult({
         // Preserve success behavior for 2xx responses with non-JSON bodies.
       }
     }
-    debugPrint('[COMPANY_SYNC][VEHICLES_OK] count=${fleetPayload.length}');
+    debugPrint(
+      '[COMPANY_SYNC][VEHICLES_OK] auth_mode=${auth.mode.name} count=${fleetPayload.length}',
+    );
     return true;
   } catch (error) {
     debugPrint(
