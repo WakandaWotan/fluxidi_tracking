@@ -638,6 +638,11 @@ class _CompanyBookingsOverviewPageState
   }
 
   String _creditDecisionTargetBookingId(_CompanyBookingOverviewItem item) {
+    if (!_CompanyBookingOverviewItem.canExecuteCompanyBookingMoneyAction(
+      item,
+    )) {
+      return '';
+    }
     final parent = item.parentBookingId.trim();
     if (parent.isNotEmpty) return parent;
     return item.bookingId.trim();
@@ -710,6 +715,11 @@ class _CompanyBookingsOverviewPageState
     required String successMessage,
   }) async {
     if (!_canApplyCreditDecisions()) return;
+    if (!_CompanyBookingOverviewItem.canExecuteCompanyBookingMoneyAction(
+      item,
+    )) {
+      return;
+    }
     final bookingId = _creditDecisionTargetBookingId(item);
     if (bookingId.isEmpty || _isDecidingCredit(bookingId)) return;
     setState(() {
@@ -1820,7 +1830,10 @@ class _CompanyBookingsOverviewPageState
         !isToCredit && item.creditDecision.trim().isNotEmpty;
     final creditTargetId = _creditDecisionTargetBookingId(item);
     final creditBusy = _isDecidingCredit(creditTargetId);
-    final creditActionsEnabled = _canApplyCreditDecisions() && !creditBusy;
+    final creditActionsEnabled =
+        _canApplyCreditDecisions() &&
+        !creditBusy &&
+        _CompanyBookingOverviewItem.canExecuteCompanyBookingMoneyAction(item);
     final showMollieRefundStatus = _shouldShowMollieRefundStatus(item);
     final showMollieRefundAction = _canShowMollieRefundAction(item);
     final showMollieRefundStatusRefresh =

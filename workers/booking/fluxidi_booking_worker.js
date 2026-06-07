@@ -9480,6 +9480,14 @@ function companyBookingsListIndexKey(scope) {
 function bookingListIndexItemFromRecord(bookingId, rec) {
   const safeBookingId = safeStr(bookingId, 160);
   if (!safeBookingId || !rec || typeof rec !== "object") return null;
+  if (_bookingListIsPaymentShadowRecord(rec, safeBookingId)) {
+    const canonical = _resolveCanonicalBookingIdFromShadow(rec, safeBookingId);
+    if (!canonical) {
+      return null;
+    }
+    // Never index the payment-shadow KV key; canonical booking upserts separately.
+    return null;
+  }
   const hiddenFlags = [
     rec?.company_bookings_hidden,
     rec?.hidden_from_company_bookings,
@@ -45104,6 +45112,7 @@ async function listBookingsAuthoritative(
         if (!Number.isFinite(pickupTs)) continue;
         if (Number.isFinite(pickupTs) && pickupTs < cutoffMs) continue;
       }
+      if (!_companyBookingsListShouldEmitRow(bookingId, rec, row)) continue;
       out.push(row);
     }
   }
@@ -45190,6 +45199,44 @@ function _driverBookingsRowDedupeKey(row) {
   const bookingId = safeStr(row?.booking_id ?? row?.bookingId, 160);
   const legId = safeStr(row?.leg_id ?? row?.legId, 200);
   return `${bookingId}::${legId}`;
+}
+
+// Company /bookings list: skip payment-shadow and UUID rows without route context.
+function _companyBookingsListShouldEmitRow(bookingId, rec, row) {
+  const rowId = safeStr(row?.booking_id ?? row?.bookingId ?? bookingId, 160);
+  const from = safeStr(row?.from, 240).trim();
+  const to = safeStr(row?.to, 240).trim();
+  const isUuidLike = _dashboardUuidLikeId(rowId);
+  const isCanonicalId = !!_dashboardCanonicalBookingNumber(rowId);
+
+  if (_bookingListIsPaymentShadowRecord(rec, bookingId)) {
+    const canonical = _resolveCanonicalBookingIdFromShadow(rec, bookingId);
+    console.log(
+      `[BOOKINGS_LIST][SKIP_PAYMENT_SHADOW] shadow=${_bookingIntentMask(bookingId)} canonical=${_bookingIntentMask(canonical || "")} reason=payment_shadow`,
+    );
+    return false;
+  }
+
+  const identityMeta = _dashboardIdentityMeta(rec, bookingId);
+  if (
+    identityMeta?.record_shape_hint === "provisional_payment_record" &&
+    isUuidLike &&
+    !isCanonicalId
+  ) {
+    console.log(
+      `[BOOKINGS_LIST][SKIP_PAYMENT_SHADOW] booking=${_bookingIntentMask(rowId)} reason=provisional_payment_record`,
+    );
+    return false;
+  }
+
+  if (isUuidLike && !isCanonicalId && (!from || !to)) {
+    console.log(
+      `[BOOKINGS_LIST][SKIP_PAYMENT_SHADOW] booking=${_bookingIntentMask(rowId)} reason=uuid_missing_route`,
+    );
+    return false;
+  }
+
+  return true;
 }
 
 // G1: a record is a payment-shadow if it is keyed/identified by a UUID-shaped

@@ -348,6 +348,46 @@ class _CompanyBookingOverviewItem {
     return normalized == 'CREDITED' || normalized == 'PARTIAL_CREDIT';
   }
 
+  static bool _looksLikeUuidIdentity(String value) {
+    final text = value.trim();
+    if (text.length < 24) return false;
+    return RegExp(
+      r'^[0-9a-fA-F]{8}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{12}$',
+    ).hasMatch(text);
+  }
+
+  static bool _looksLikeFluxidiCanonicalBookingId(String value) {
+    final text = value.trim();
+    if (text.isEmpty) return false;
+    return RegExp(r'^[0-9]{4}-[0-9]{2}-[0-9]{3,}$').hasMatch(text);
+  }
+
+  /// True when the row references a human/canonical booking, not a bare UUID shadow.
+  static bool hasCanonicalBookingIdentity(_CompanyBookingOverviewItem item) {
+    final bookingId = item.bookingId.trim();
+    if (_looksLikeFluxidiCanonicalBookingId(bookingId)) return true;
+    final ref = item.referenceText.trim();
+    if (ref.isEmpty) return false;
+    if (_looksLikeUuidIdentity(ref)) return false;
+    if (ref.startsWith('…') && ref.length <= 8) return false;
+    return true;
+  }
+
+  /// True when pickup and route fields are present for operational display.
+  static bool hasMinimumOperationalContext(_CompanyBookingOverviewItem item) {
+    if (item.pickupIso.trim().isEmpty) return false;
+    final from = item.fromAddress.trim();
+    final to = item.toAddress.trim();
+    if (from.isEmpty || from == '—') return false;
+    if (to.isEmpty || to == '—') return false;
+    return true;
+  }
+
+  /// Gate for credit decisions and Mollie refund/money actions in Company Bookings.
+  static bool canExecuteCompanyBookingMoneyAction(
+    _CompanyBookingOverviewItem item,
+  ) => hasCanonicalBookingIdentity(item) && hasMinimumOperationalContext(item);
+
   static bool shouldShowMollieRefundStatus(_CompanyBookingOverviewItem item) {
     if (item.isPendingCredit) return false;
     if (!_isCancelledStatus(item.statusText)) return false;
@@ -358,6 +398,7 @@ class _CompanyBookingOverviewItem {
   }
 
   static bool canShowMollieRefundAction(_CompanyBookingOverviewItem item) {
+    if (!canExecuteCompanyBookingMoneyAction(item)) return false;
     if (!shouldShowMollieRefundStatus(item)) return false;
     if (item.refundRequired) return false;
     if (item.creditDecision == 'NO_REFUND' ||
@@ -371,6 +412,7 @@ class _CompanyBookingOverviewItem {
   static bool canShowMollieRefundAuditResyncAction(
     _CompanyBookingOverviewItem item,
   ) {
+    if (!canExecuteCompanyBookingMoneyAction(item)) return false;
     if (!shouldShowMollieRefundStatus(item)) return false;
     if (item.creditDecision == 'NO_REFUND' ||
         item.creditDecision == 'HANDLED_MANUALLY') {
@@ -389,6 +431,7 @@ class _CompanyBookingOverviewItem {
   static bool canShowMollieRefundStatusRefreshAction(
     _CompanyBookingOverviewItem item,
   ) {
+    if (!canExecuteCompanyBookingMoneyAction(item)) return false;
     if (!shouldShowMollieRefundStatus(item)) return false;
     if (item.mollieRefundId.trim().isEmpty) return false;
     if (isMollieRefundDisplayRefunded(item)) {
