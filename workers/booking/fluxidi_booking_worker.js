@@ -27435,6 +27435,13 @@ function normalizeBookingPaymentMethodId(raw, maxLen = 40) {
   return token.length > maxLen ? token.slice(0, maxLen) : token;
 }
 
+function boolish(value) {
+  if (value === true) return true;
+  if (value === false || value == null) return false;
+  const s = String(value).trim().toLowerCase();
+  return s === "true" || s === "1" || s === "yes" || s === "y" || s === "on";
+}
+
 function normalizePublicBookingPaymentMethod(payload = {}) {
   const source = payload && typeof payload === "object" ? payload : {};
   const paymentMethod = normalizeBookingPaymentMethodId(
