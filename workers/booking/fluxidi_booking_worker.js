@@ -9809,7 +9809,7 @@ async function rebuildCompanyBookingsListIndexForScope(env, scope, { dryRun = fa
         invalidSkipped += 1;
         continue;
       }
-      if (!bookingMatchesRequestedTenantScope(rec, normalizedScope)) continue;
+      if (!bookingMatchesRequiredTenantCompanyScope(rec, normalizedScope)) continue;
       matchedScope += 1;
       const indexItem = bookingListIndexItemFromRecord(bookingId, rec);
       if (!indexItem) {
@@ -16928,30 +16928,62 @@ function _safeResetScopedBookingIndexKey(scope) {
 }
 
 async function collectScopedResetBookingIds(env, requestedScope) {
-  if (!env?.BOOKING_KV) return { bookingIds: [], skipped: 0 };
-  const listed = await env.BOOKING_KV.list({ prefix: "booking:", limit: 1000 });
+  if (!env?.BOOKING_KV) {
+    return {
+      bookingIds: [],
+      skipped: 0,
+      scanned_count: 0,
+      matched_count: 0,
+      scan_complete: false,
+    };
+  }
   const bookingIds = [];
   let skipped = 0;
-  for (const item of listed?.keys || []) {
-    const key = String(item?.name || "");
-    if (!key.startsWith("booking:")) continue;
-    const rec = await env.BOOKING_KV.get(key, { type: "json" });
-    if (!rec || typeof rec !== "object") {
-      skipped += 1;
-      continue;
+  let scannedCount = 0;
+  let matchedCount = 0;
+  let cursor = undefined;
+  let scanComplete = true;
+  do {
+    const listed = await env.BOOKING_KV.list({
+      prefix: "booking:",
+      limit: 1000,
+      cursor,
+    });
+    for (const item of listed?.keys || []) {
+      const key = String(item?.name || "");
+      if (!key.startsWith("booking:")) continue;
+      scannedCount += 1;
+      const rec = await env.BOOKING_KV.get(key, { type: "json" });
+      if (!rec || typeof rec !== "object") {
+        skipped += 1;
+        continue;
+      }
+      if (!bookingMatchesRequiredTenantCompanyScope(rec, requestedScope)) {
+        skipped += 1;
+        continue;
+      }
+      const bookingId = key.slice("booking:".length);
+      if (!bookingId) {
+        skipped += 1;
+        continue;
+      }
+      bookingIds.push(bookingId);
+      matchedCount += 1;
     }
-    if (!bookingMatchesRequestedTenantScope(rec, requestedScope)) {
-      skipped += 1;
-      continue;
+    cursor = listed?.cursor;
+    if (listed?.list_complete !== false) break;
+    if (!cursor) {
+      scanComplete = false;
+      break;
     }
-    const bookingId = key.slice("booking:".length);
-    if (!bookingId) {
-      skipped += 1;
-      continue;
-    }
-    bookingIds.push(bookingId);
-  }
-  return { bookingIds, skipped };
+  } while (cursor);
+  return {
+    bookingIds,
+    skipped,
+    scanned_count: scannedCount,
+    matched_count: matchedCount,
+    scan_complete: scanComplete,
+  };
 }
 
 async function scopedResetTrackingByBookingIds(env, requestedScope, bookingIds = [], { dryRun = false } = {}) {
@@ -17100,7 +17132,7 @@ async function handleSafeResetDryRun(request, url, env) {
   const skipped = Number(collected?.skipped || 0) + Number(trackingPreview?.skippedUnscopedOrUnknown || 0);
   const legacyUnmodified = Number(trackingPreview?.legacyUnmodified || 0);
   console.log(
-    `[SAFE_RESET][DRY_RUN][SCOPED] tenant=${requestedTenant} company=${requestedCompany} bookingCandidates=${collected.bookingIds.length} trackingCandidates=${Number(trackingPreview?.deletedTrackingKeys || 0)} skipped=${skipped} legacyUnmodified=${legacyUnmodified}`
+    `[SAFE_RESET][DRY_RUN][SCOPED] tenant=${requestedTenant} company=${requestedCompany} scanned=${Number(collected?.scanned_count || 0)} matched=${Number(collected?.matched_count || 0)} scan_complete=${collected?.scan_complete === true} bookingCandidates=${collected.bookingIds.length} trackingCandidates=${Number(trackingPreview?.deletedTrackingKeys || 0)} skipped=${skipped} legacyUnmodified=${legacyUnmodified}`,
   );
   return json({
     ok: true,
@@ -17108,6 +17140,9 @@ async function handleSafeResetDryRun(request, url, env) {
     scoped: true,
     tenant_id: requestedTenant,
     company_id: requestedCompany,
+    scanned_count: Number(collected?.scanned_count || 0),
+    matched_count: Number(collected?.matched_count || 0),
+    scan_complete: collected?.scan_complete === true,
     candidates: {
       bookings: collected.bookingIds.length,
       tracking_keys: Number(trackingPreview?.deletedTrackingKeys || 0),
@@ -17157,7 +17192,7 @@ async function handleSafeResetOperationalData(request, url, env) {
         skippedUnscopedOrUnknown += 1;
         continue;
       }
-      if (!bookingMatchesRequestedTenantScope(rec, requestedScope)) {
+      if (!bookingMatchesRequiredTenantCompanyScope(rec, requestedScope)) {
         skippedUnscopedOrUnknown += 1;
         continue;
       }
@@ -17189,7 +17224,7 @@ async function handleSafeResetOperationalData(request, url, env) {
   legacyUnmodified += Number(trackingReset?.legacyUnmodified || 0);
 
   console.log(
-    `[SAFE_RESET][SCOPED_DONE] tenant=${requestedTenant} company=${requestedCompany} deletedBookings=${deletedBookings} deletedTrackingKeys=${deletedTrackingKeys} skipped=${skippedUnscopedOrUnknown} legacyUnmodified=${legacyUnmodified} reservationsReleased=${reservationsReleased}`
+    `[SAFE_RESET][SCOPED_DONE] tenant=${requestedTenant} company=${requestedCompany} scanned=${Number(collected?.scanned_count || 0)} matched=${Number(collected?.matched_count || 0)} scan_complete=${collected?.scan_complete === true} deletedBookings=${deletedBookings} deletedTrackingKeys=${deletedTrackingKeys} skipped=${skippedUnscopedOrUnknown} legacyUnmodified=${legacyUnmodified} reservationsReleased=${reservationsReleased}`,
   );
 
   return json({
@@ -17197,6 +17232,9 @@ async function handleSafeResetOperationalData(request, url, env) {
     scoped: true,
     tenant_id: requestedTenant,
     company_id: requestedCompany,
+    scanned_count: Number(collected?.scanned_count || 0),
+    matched_count: Number(collected?.matched_count || 0),
+    scan_complete: collected?.scan_complete === true,
     deleted_bookings: deletedBookings,
     deleted_tracking_keys: deletedTrackingKeys,
     skipped_unscoped_or_unknown: skippedUnscopedOrUnknown,
@@ -45486,7 +45524,7 @@ async function rebuildRatingAggregatesForScope(env, scope, { dryRun = false } = 
       scanned += 1;
       const rec = await env.BOOKING_KV.get(key, { type: "json" });
       if (!rec || typeof rec !== "object") continue;
-      if (!bookingMatchesRequestedTenantScope(rec, normalizedScope)) continue;
+      if (!bookingMatchesRequiredTenantCompanyScope(rec, normalizedScope)) continue;
       matchedScope += 1;
       const rating = _existingCustomerRatingValueFromBookingRecord(rec);
       if (!Number.isFinite(rating) || rating < 1 || rating > 5) {
@@ -45606,7 +45644,7 @@ async function rebuildBookingDemandIndexForScope(env, scope, { dryRun = false } 
       if (!bookingId) continue;
       const rec = await env.BOOKING_KV.get(key, { type: "json" });
       if (!rec || typeof rec !== "object") continue;
-      if (!bookingMatchesRequestedTenantScope(rec, normalizedScope)) continue;
+      if (!bookingMatchesRequiredTenantCompanyScope(rec, normalizedScope)) continue;
       matchedScope += 1;
       if (isTerminalLifecycleStatus(_bookingLifecycleValue(rec))) {
         terminalSkipped += 1;
@@ -45695,7 +45733,7 @@ async function rebuildDriverVehicleBookingIndexesForScope(env, scope, { dryRun =
         invalidSkipped += 1;
         continue;
       }
-      if (!bookingMatchesRequestedTenantScope(rec, normalizedScope)) continue;
+      if (!bookingMatchesRequiredTenantCompanyScope(rec, normalizedScope)) continue;
       matchedScope += 1;
       const item = bookingAssignmentIndexItemFromRecord(bookingId, rec);
       if (!item) {
@@ -50242,7 +50280,47 @@ async function deleteBookingAuthoritative(bookingId, env, tenantScope = null) {
     rec,
   );
   await env.BOOKING_KV.delete(key);
-  return { ok: true, booking_id: bookingId, deleted: true };
+
+  let trackingCleanupAttempted = false;
+  let trackingCleanupOk = false;
+  let trackingCleanupCount = 0;
+  let trackingCleanupError = null;
+  try {
+    trackingCleanupAttempted = true;
+    const trackingCleanup = await scopedResetTrackingByBookingIds(
+      env,
+      tenantScope,
+      [bookingId],
+      { dryRun: false },
+    );
+    trackingCleanupOk = true;
+    trackingCleanupCount = Number(trackingCleanup?.deletedTrackingKeys || 0);
+    const scopeMask = _bookingIntentScopeMask(normalizeFleetTenantScope(tenantScope));
+    console.log(
+      `[BOOKING][DELETE][TRACKING_CLEANUP] booking=${_bookingIntentMask(bookingId)} tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} ok=true count=${trackingCleanupCount} legacy_unmodified=${Number(trackingCleanup?.legacyUnmodified || 0)}`,
+    );
+  } catch (cleanupErr) {
+    trackingCleanupError =
+      safeStr(cleanupErr?.message || cleanupErr, 80) || "tracking_cleanup_failed";
+    const scopeMask = _bookingIntentScopeMask(normalizeFleetTenantScope(tenantScope));
+    console.log(
+      `[BOOKING][DELETE][TRACKING_CLEANUP] booking=${_bookingIntentMask(bookingId)} tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} ok=false reason=${trackingCleanupError}`,
+    );
+  }
+
+  return {
+    ok: true,
+    booking_id: bookingId,
+    deleted: true,
+    tracking_cleanup_attempted: trackingCleanupAttempted,
+    trackingCleanupAttempted,
+    tracking_cleanup_ok: trackingCleanupOk,
+    trackingCleanupOk,
+    tracking_cleanup_count: trackingCleanupCount,
+    trackingCleanupCount,
+    tracking_cleanup_error: trackingCleanupError,
+    trackingCleanupError,
+  };
 }
 
 async function archiveBookingAuthoritative(
