@@ -3982,8 +3982,9 @@ Future<Map<String, dynamic>> fetchAdminAirportFixedFares({
     tenantId: tenantId,
     companyId: companyId,
   );
+  final auth = await resolveCompanyOwnerAuthHeaders();
   final res = await http
-      .get(endpoint, headers: _adminJsonHeaders())
+      .get(endpoint, headers: auth.headers)
       .timeout(const Duration(seconds: 12));
   final dynamic decoded = jsonDecode(utf8.decode(res.bodyBytes));
   if (decoded is! Map) throw Exception('Invalid response');
@@ -4014,10 +4015,11 @@ Future<Map<String, dynamic>> saveAdminAirportFixedFares(
     tenantId: tenantId,
     companyId: companyId,
   );
+  final auth = await resolveCompanyOwnerAuthHeaders();
   final res = await http
       .post(
         endpoint,
-        headers: _adminJsonHeaders(),
+        headers: auth.headers,
         body: jsonEncode(<String, dynamic>{
           ...scope,
           'airport_fixed_fares': airportFixedFaresDocument,
@@ -5587,10 +5589,11 @@ Future<Map<String, dynamic>> publishBackendPublicPartnerProfile({
     tenantId: tenantId,
     companyId: companyId,
   );
+  final auth = await resolveCompanyOwnerAuthHeaders();
   final res = await http
       .post(
         endpoint,
-        headers: _adminJsonHeaders(),
+        headers: auth.headers,
         body: jsonEncode(<String, dynamic>{
           ...scope,
           'partner_profile': partnerProfile,
@@ -5657,8 +5660,9 @@ Future<Map<String, dynamic>> uploadPublicPartnerMedia({
     }
   }
 
+  final auth = await resolveCompanyOwnerAuthHeaders(json: false);
   final request = http.MultipartRequest('POST', endpoint);
-  final headers = Map<String, String>.from(_adminJsonHeaders());
+  final headers = Map<String, String>.from(auth.headers);
   headers.removeWhere((k, _) => k.toLowerCase() == 'content-type');
   request.headers.addAll(headers);
   request.fields['tenant_id'] = scope['tenant_id'] ?? '';
@@ -5784,8 +5788,9 @@ Future<Map<String, dynamic>> fetchBackendGoogleCalendarStatus({
     tenantId: tenantId,
     companyId: companyId,
   );
+  final auth = await resolveCompanyOwnerAuthHeaders();
   final res = await http
-      .get(endpoint, headers: _adminJsonHeaders())
+      .get(endpoint, headers: auth.headers)
       .timeout(const Duration(seconds: 12));
   if (res.statusCode < 200 || res.statusCode >= 300) {
     throw Exception('HTTP ${res.statusCode}: ${res.body}');
@@ -5808,10 +5813,11 @@ Future<Map<String, dynamic>> startBackendGoogleCalendarOAuth({
     tenantId: tenantId,
     companyId: companyId,
   );
+  final auth = await resolveCompanyOwnerAuthHeaders();
   final res = await http
       .post(
         endpoint,
-        headers: _adminJsonHeaders(),
+        headers: auth.headers,
         body: jsonEncode(<String, dynamic>{...scope}),
       )
       .timeout(const Duration(seconds: 12));
@@ -5836,10 +5842,11 @@ Future<Map<String, dynamic>> disconnectBackendGoogleCalendar({
     tenantId: tenantId,
     companyId: companyId,
   );
+  final auth = await resolveCompanyOwnerAuthHeaders();
   final res = await http
       .post(
         endpoint,
-        headers: _adminJsonHeaders(),
+        headers: auth.headers,
         body: jsonEncode(<String, dynamic>{...scope}),
       )
       .timeout(const Duration(seconds: 12));

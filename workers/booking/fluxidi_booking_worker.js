@@ -17307,16 +17307,16 @@ export default {
       if (url.pathname === "/oauth/start" && request.method === "GET") return oauthStart(request, env);
       if (url.pathname === "/oauth/callback" && request.method === "GET") return oauthCallback(request, env);
       if (url.pathname === "/admin/google-calendar/oauth/start" && request.method === "POST") {
-        _requireAdmin(request, url, env);
         const body = await safeJson(request);
-        const explicitScope = resolveAdminExplicitTenantCompanyScope({
+        const authScope = await _requireAdminOrCompanySessionForExplicitScope({
           request,
           url,
+          env,
           body,
+          routeLabel: "ADMIN_GOOGLE_CALENDAR_OAUTH_START",
         });
-        if (!explicitScope?.hasScope) {
-          return json(missingTenantScopeError(), 400);
-        }
+        if (!authScope.ok) return authScope.response;
+        const explicitScope = authScope.explicitScope;
         const missingEnv = [];
         if (!safeStr(env?.GOOGLE_CLIENT_ID)) missingEnv.push("GOOGLE_CLIENT_ID");
         if (!safeStr(env?.GOOGLE_CLIENT_SECRET)) missingEnv.push("GOOGLE_CLIENT_SECRET");
@@ -17375,16 +17375,16 @@ export default {
         );
       }
       if (url.pathname === "/admin/google-calendar/disconnect" && request.method === "POST") {
-        _requireAdmin(request, url, env);
         const body = await safeJson(request);
-        const explicitScope = resolveAdminExplicitTenantCompanyScope({
+        const authScope = await _requireAdminOrCompanySessionForExplicitScope({
           request,
           url,
+          env,
           body,
+          routeLabel: "ADMIN_GOOGLE_CALENDAR_DISCONNECT",
         });
-        if (!explicitScope?.hasScope) {
-          return json(missingTenantScopeError(), 400);
-        }
+        if (!authScope.ok) return authScope.response;
+        const explicitScope = authScope.explicitScope;
         if (!env?.BOOKING_KV) {
           return json({ ok: false, error: "missing_booking_kv" }, 500);
         }
@@ -17443,11 +17443,14 @@ export default {
         );
       }
       if (url.pathname === "/admin/google-calendar/status" && request.method === "GET") {
-        _requireAdmin(request, url, env);
-        const explicitScope = resolveAdminExplicitTenantCompanyScope({ request, url });
-        if (!explicitScope?.hasScope) {
-          return json(missingTenantScopeError(), 400);
-        }
+        const authScope = await _requireAdminOrCompanySessionForExplicitScope({
+          request,
+          url,
+          env,
+          routeLabel: "ADMIN_GOOGLE_CALENDAR_STATUS",
+        });
+        if (!authScope.ok) return authScope.response;
+        const explicitScope = authScope.explicitScope;
         const scopedKey = buildScopedGoogleCalendarAuthKey(explicitScope);
         const tenantId = explicitScope.tenant_id;
         const companyId = explicitScope.company_id;
@@ -19689,12 +19692,15 @@ GET /oauth/callback
       }
 
       if (url.pathname === "/admin/pricing/airport-fixed-fares" && request.method === "GET") {
-        _requireAdmin(request, url, env);
         if (!env.BOOKING_KV) return json({ ok: false, error: "BOOKING_KV binding is missing" }, 500);
-        const explicitScope = resolveAdminExplicitTenantCompanyScope({ request, url });
-        if (!explicitScope?.hasScope) {
-          return json(missingTenantScopeError(), 400);
-        }
+        const authScope = await _requireAdminOrCompanySessionForExplicitScope({
+          request,
+          url,
+          env,
+          routeLabel: "ADMIN_AIRPORT_FIXED_FARES_GET",
+        });
+        if (!authScope.ok) return authScope.response;
+        const explicitScope = authScope.explicitScope;
         const key = buildScopedAirportFixedFaresKey(explicitScope);
         const emptyDocument = { version: 1, updated_at: null, rules: [] };
         if (!key) {
@@ -19717,13 +19723,17 @@ GET /oauth/callback
       }
 
       if (url.pathname === "/admin/pricing/airport-fixed-fares" && request.method === "POST") {
-        _requireAdmin(request, url, env);
         if (!env.BOOKING_KV) return json({ ok: false, error: "BOOKING_KV binding is missing" }, 500);
         const body = await safeJson(request);
-        const explicitScope = resolveAdminExplicitTenantCompanyScope({ request, url, body });
-        if (!explicitScope?.hasScope) {
-          return json(missingTenantScopeError(), 400);
-        }
+        const authScope = await _requireAdminOrCompanySessionForExplicitScope({
+          request,
+          url,
+          env,
+          body,
+          routeLabel: "ADMIN_AIRPORT_FIXED_FARES_POST",
+        });
+        if (!authScope.ok) return authScope.response;
+        const explicitScope = authScope.explicitScope;
         const incoming = body?.airport_fixed_fares && typeof body.airport_fixed_fares === "object"
           ? body.airport_fixed_fares
           : body;
@@ -19921,12 +19931,15 @@ GET /oauth/callback
       }
 
       if (url.pathname === "/admin/partners/media/upload" && request.method === "POST") {
-        _requireAdmin(request, url, env);
         if (!env.PUBLIC_MEDIA) return json({ ok: false, error: "PUBLIC_MEDIA binding is missing" }, 500);
-        const explicitScope = resolveAdminExplicitTenantCompanyScope({ request, url });
-        if (!explicitScope?.hasScope) {
-          return json(missingTenantScopeError(), 400);
-        }
+        const authScope = await _requireAdminOrCompanySessionForExplicitScope({
+          request,
+          url,
+          env,
+          routeLabel: "ADMIN_PARTNERS_MEDIA_UPLOAD",
+        });
+        if (!authScope.ok) return authScope.response;
+        const explicitScope = authScope.explicitScope;
         const tenantId = sanitizeTenantString(explicitScope.tenant_id, 120);
         const companyId = sanitizeTenantString(explicitScope.company_id, 120);
         if (!tenantId || !companyId) {
@@ -20013,13 +20026,17 @@ GET /oauth/callback
       }
 
       if (url.pathname === "/admin/partners/profile/publish" && request.method === "POST") {
-        _requireAdmin(request, url, env);
         if (!env.BOOKING_KV) return json({ ok: false, error: "BOOKING_KV binding is missing" }, 500);
         const body = await safeJson(request);
-        const explicitScope = resolveAdminExplicitTenantCompanyScope({ request, url, body });
-        if (!explicitScope?.hasScope) {
-          return json(missingTenantScopeError(), 400);
-        }
+        const authScope = await _requireAdminOrCompanySessionForExplicitScope({
+          request,
+          url,
+          env,
+          body,
+          routeLabel: "ADMIN_PARTNERS_PROFILE_PUBLISH",
+        });
+        if (!authScope.ok) return authScope.response;
+        const explicitScope = authScope.explicitScope;
         const incoming = body?.partner_profile && typeof body.partner_profile === "object"
           ? body.partner_profile
           : body;

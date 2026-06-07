@@ -2043,13 +2043,37 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
       unawaited(updateLocalBackendBusinessProfileCache(merged));
     } catch (e) {
       if (!mounted) return;
+      final errorText = e.toString().toLowerCase();
+      final isAuthError =
+          errorText.contains('401') ||
+          errorText.contains('403') ||
+          errorText.contains('unauthorized') ||
+          errorText.contains('forbidden');
+      final isFormatError =
+          errorText.contains('unsupported content type') ||
+          errorText.contains('content_type_mismatch') ||
+          errorText.contains('unsupported content');
       setState(() {
-        _publicPartnerProfileError = _t(
-          nl: 'Upload mislukt. Controleer of dit een JPG, PNG of WEBP-afbeelding is.',
-          en: 'Upload failed. Please check that this is a JPG, PNG, or WEBP image.',
-          fr: 'Échec du téléversement. Vérifiez qu’il s’agit d’une image JPG, PNG ou WEBP.',
-          es: 'La carga falló. Verifica que sea una imagen JPG, PNG o WEBP.',
-        );
+        _publicPartnerProfileError = isAuthError
+            ? _t(
+                nl: 'Upload mislukt. Uw bedrijfssessie is niet geldig. Herkoppel of herstel uw bedrijf en probeer opnieuw.',
+                en: 'Upload failed. Your company session is not valid. Relink or recover your company and try again.',
+                fr: 'Échec du téléversement. Votre session entreprise n’est pas valide. Reconnectez ou récupérez votre entreprise et réessayez.',
+                es: 'La carga falló. Tu sesión de empresa no es válida. Vuelve a vincular o recuperar tu empresa e inténtalo de nuevo.',
+              )
+            : isFormatError
+            ? _t(
+                nl: 'Upload mislukt. Controleer of dit een JPG, PNG of WEBP-afbeelding is.',
+                en: 'Upload failed. Please check that this is a JPG, PNG, or WEBP image.',
+                fr: 'Échec du téléversement. Vérifiez qu’il s’agit d’une image JPG, PNG ou WEBP.',
+                es: 'La carga falló. Verifica que sea una imagen JPG, PNG o WEBP.',
+              )
+            : _t(
+                nl: 'Upload mislukt. Probeer opnieuw.',
+                en: 'Upload failed. Please try again.',
+                fr: 'Échec du téléversement. Réessayez.',
+                es: 'La carga falló. Inténtalo de nuevo.',
+              );
       });
     } finally {
       if (mounted) {
