@@ -37,6 +37,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:fluxidi_tracking/payment/payment_booking_selection.dart';
 import 'package:fluxidi_tracking/payment/payment_method_catalog.dart';
 import 'package:fluxidi_tracking/payment/payment_method_resolver.dart';
+import 'package:fluxidi_tracking/payment/payment_qr_panel.dart';
 import 'package:fluxidi_tracking/payment_return.dart';
 
 const bool showPricingDebug = false;
@@ -3299,6 +3300,8 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
         );
       case PaymentMethodIds.bancontact:
         return 'Bancontact';
+      case PaymentMethodIds.bancontactQr:
+        return 'Payconiq / Bancontact Pay QR';
       case PaymentMethodIds.ideal:
         return 'iDEAL';
       case PaymentMethodIds.cardPayment:
@@ -3346,6 +3349,14 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
         es: 'Una solicitud de pago sigue tras confirmar.',
       );
     }
+    if (id == PaymentMethodIds.bancontactQr) {
+      return _localizedText(
+        nl: 'Scan met Bancontact Pay, Payconiq by Bancontact of je bank-app.',
+        en: 'Scan with Bancontact Pay, Payconiq by Bancontact, or your Belgian banking app.',
+        fr: 'Scannez avec Bancontact Pay, Payconiq by Bancontact ou votre application bancaire belge.',
+        es: 'Escanea con Bancontact Pay, Payconiq by Bancontact o tu app bancaria belga.',
+      );
+    }
     return _localizedText(
       nl: 'Open de beveiligde betaalpagina na het bevestigen.',
       en: 'Open the secure checkout page after confirming.',
@@ -3362,7 +3373,77 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
     if (PaymentMethodCatalog.isTikkieMethod(id)) {
       return Icons.send_rounded;
     }
+    if (id == PaymentMethodIds.bancontactQr) {
+      return Icons.qr_code_2_rounded;
+    }
     return Icons.language_rounded;
+  }
+
+  String? _qrSrcFromBookResponse(Map<String, dynamic> body) {
+    Map<String, dynamic>? asMap(dynamic value) {
+      if (value is Map<String, dynamic>) return value;
+      if (value is Map) return Map<String, dynamic>.from(value);
+      return null;
+    }
+
+    final candidates = <Map<String, dynamic>?>[
+      asMap(body['qr_code']),
+      asMap(body['qrCode']),
+      asMap(
+        body['payment'] is Map ? (body['payment'] as Map)['qr_code'] : null,
+      ),
+      asMap(body['payment'] is Map ? (body['payment'] as Map)['qrCode'] : null),
+      if (body['booking'] is Map) ...[
+        asMap((body['booking'] as Map)['qr_code']),
+        asMap((body['booking'] as Map)['qrCode']),
+      ],
+    ];
+    for (final qr in candidates) {
+      final src = qr?['src']?.toString().trim() ?? '';
+      if (src.isNotEmpty) return src;
+    }
+    return null;
+  }
+
+  Future<void> _showPaymentQrDialog({
+    required String qrSrc,
+    required String checkoutUrl,
+    String? paymentBookingId,
+  }) async {
+    final safePaymentUrl = _isCustomerSafeCheckoutUrl(checkoutUrl)
+        ? checkoutUrl.trim()
+        : '';
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          backgroundColor: _panelAlt,
+          content: PaymentQrPanel(
+            language: widget.language,
+            qrSrc: qrSrc,
+            checkoutUrl: safePaymentUrl.isEmpty ? null : safePaymentUrl,
+            onOpenCheckout: safePaymentUrl.isEmpty
+                ? null
+                : () {
+                    final ownPaymentBookingId = (paymentBookingId ?? '').trim();
+                    if (ownPaymentBookingId.isNotEmpty) {
+                      markFluxidiPendingPaymentChecking(
+                        paymentBookingId: ownPaymentBookingId,
+                      );
+                    }
+                    Navigator.of(dialogContext).pop();
+                    _openPaymentUrl(safePaymentUrl);
+                  },
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: Text(widget.strings.bookingCloseLabel.of(widget.language)),
+            ),
+          ],
+        );
+      },
+    );
   }
 
   Widget _paymentMethodChoiceOption(String methodId) {
@@ -4130,7 +4211,32 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
       _finalPricingBookingId = publicRef.isNotEmpty ? publicRef : null;
       _createdBookingId = bookingRef.isNotEmpty ? bookingRef : publicRef;
     });
-    if (onlineCheckoutRequired && safeCheckoutUrl.isNotEmpty) {
+    final qrSrc = _qrSrcFromBookResponse(body);
+    final prefersQrCheckout =
+        normalizePaymentMethodId(_selectedPaymentMethodId) ==
+        PaymentMethodIds.bancontactQr;
+    if (onlineCheckoutRequired &&
+        prefersQrCheckout &&
+        (qrSrc ?? '').isNotEmpty) {
+      if (paymentBookingId.isNotEmpty) {
+        markFluxidiPendingPaymentChecking(paymentBookingId: paymentBookingId);
+      }
+      if (mounted) {
+        setState(() {
+          _submitStateIsError = false;
+          _submitState = _paymentCheckingStatusLabel();
+        });
+      }
+      await _showPaymentQrDialog(
+        qrSrc: qrSrc!,
+        checkoutUrl: safeCheckoutUrl,
+        paymentBookingId: paymentBookingId,
+      );
+      if (!mounted) return;
+      if (_shouldReturnToOriginAfterSuccess && mounted) {
+        Navigator.of(context).pop(true);
+      }
+    } else if (onlineCheckoutRequired && safeCheckoutUrl.isNotEmpty) {
       final openedBooking = bookingRef.isNotEmpty ? bookingRef : publicRef;
       debugPrint(
         '[BOOK][CHECKOUT_OPEN] booking=$openedBooking urlPresent=true',

@@ -6,9 +6,11 @@ import 'package:fluxidi_tracking/customer_bookings_store.dart';
 import 'package:fluxidi_tracking/customer_profile_store.dart';
 import 'package:fluxidi_tracking/customer_theme_palette.dart';
 import 'package:fluxidi_tracking/customer_theme_store.dart';
+import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/payment/payment_booking_selection.dart';
 import 'package:fluxidi_tracking/payment/payment_method_catalog.dart';
 import 'package:fluxidi_tracking/payment/payment_method_resolver.dart';
+import 'package:fluxidi_tracking/payment/payment_qr_panel.dart';
 import 'package:http/http.dart' as http;
 import 'package:url_launcher/url_launcher.dart';
 
@@ -105,6 +107,13 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
     return 'nl';
   }
 
+  AppLanguage get _appLanguage => switch (_lang) {
+    'en' => AppLanguage.en,
+    'fr' => AppLanguage.fr,
+    'es' => AppLanguage.es,
+    _ => AppLanguage.nl,
+  };
+
   @override
   void dispose() {
     _vatNumberController.removeListener(_onVatNumberChanged);
@@ -198,6 +207,8 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
         );
       case PaymentMethodIds.bancontact:
         return 'Bancontact';
+      case PaymentMethodIds.bancontactQr:
+        return 'Payconiq / Bancontact Pay QR';
       case PaymentMethodIds.ideal:
         return 'iDEAL';
       case PaymentMethodIds.cardPayment:
@@ -245,6 +256,14 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
         es: 'Una solicitud de pago sigue tras confirmar.',
       );
     }
+    if (id == PaymentMethodIds.bancontactQr) {
+      return _t(
+        nl: 'Scan met Bancontact Pay, Payconiq by Bancontact of je bank-app.',
+        en: 'Scan with Bancontact Pay, Payconiq by Bancontact, or your Belgian banking app.',
+        fr: 'Scannez avec Bancontact Pay, Payconiq by Bancontact ou votre application bancaire belge.',
+        es: 'Escanea con Bancontact Pay, Payconiq by Bancontact o tu app bancaria belga.',
+      );
+    }
     return _t(
       nl: 'Je wordt direct doorgestuurd naar de veilige betaalpagina.',
       en: 'You will be redirected to secure checkout immediately.',
@@ -261,7 +280,71 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
     if (PaymentMethodCatalog.isTikkieMethod(id)) {
       return Icons.send_rounded;
     }
+    if (id == PaymentMethodIds.bancontactQr) {
+      return Icons.qr_code_2_rounded;
+    }
     return Icons.language_rounded;
+  }
+
+  String? _qrSrcFromBookResponse(Map<String, dynamic> body) {
+    Map<String, dynamic>? asMap(dynamic value) {
+      if (value is Map<String, dynamic>) return value;
+      if (value is Map) return Map<String, dynamic>.from(value);
+      return null;
+    }
+
+    final bookingMap = body['booking'] is Map
+        ? Map<String, dynamic>.from(body['booking'] as Map)
+        : const <String, dynamic>{};
+    final candidates = <Map<String, dynamic>?>[
+      asMap(body['qr_code']),
+      asMap(body['qrCode']),
+      asMap(
+        body['payment'] is Map ? (body['payment'] as Map)['qr_code'] : null,
+      ),
+      asMap(body['payment'] is Map ? (body['payment'] as Map)['qrCode'] : null),
+      asMap(bookingMap['qr_code']),
+      asMap(bookingMap['qrCode']),
+    ];
+    for (final qr in candidates) {
+      final src = qr?['src']?.toString().trim() ?? '';
+      if (src.isNotEmpty) return src;
+    }
+    return null;
+  }
+
+  Future<void> _showPaymentQrDialog({
+    required String qrSrc,
+    required String checkoutUrl,
+  }) async {
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          backgroundColor: _panel,
+          content: PaymentQrPanel(
+            language: _appLanguage,
+            qrSrc: qrSrc,
+            checkoutUrl: checkoutUrl.trim().isEmpty ? null : checkoutUrl.trim(),
+            onOpenCheckout: checkoutUrl.trim().isEmpty
+                ? null
+                : () {
+                    Navigator.of(dialogContext).pop();
+                    _openCheckoutUrl(checkoutUrl);
+                  },
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: Text(
+                _t(nl: 'Sluiten', en: 'Close', fr: 'Fermer', es: 'Cerrar'),
+              ),
+            ),
+          ],
+        );
+      },
+    );
   }
 
   Future<void> _openCheckoutUrl(String checkoutUrl) async {
@@ -754,7 +837,15 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
           content: Text(successMessage, style: TextStyle(color: _textPrimary)),
         ),
       );
-      if (explicitOnlineRequested && hasSafeCheckoutUrl) {
+      final qrSrc = _qrSrcFromBookResponse(body);
+      final prefersQrCheckout =
+          normalizePaymentMethodId(_selectedPaymentMethodId) ==
+          PaymentMethodIds.bancontactQr;
+      if (explicitOnlineRequested &&
+          prefersQrCheckout &&
+          (qrSrc ?? '').isNotEmpty) {
+        await _showPaymentQrDialog(qrSrc: qrSrc!, checkoutUrl: checkoutUrl);
+      } else if (explicitOnlineRequested && hasSafeCheckoutUrl) {
         await _openCheckoutUrl(checkoutUrl);
       }
       Future<void>.delayed(const Duration(milliseconds: 1400), () {

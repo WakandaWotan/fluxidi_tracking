@@ -1652,6 +1652,7 @@ const PUBLIC_PAYMENT_OPTION_IDS = new Set([
   "qr_code",
   "tikkie",
   "bancontact",
+  "bancontact_qr",
   "payconiq_wero",
   "ideal",
   "cartes_bancaires",
@@ -27434,6 +27435,108 @@ function normalizeBookingPaymentMethodId(raw, maxLen = 40) {
   return token.length > maxLen ? token.slice(0, maxLen) : token;
 }
 
+function normalizePublicBookingPaymentMethod(payload = {}) {
+  const source = payload && typeof payload === "object" ? payload : {};
+  const paymentMethod = normalizeBookingPaymentMethodId(
+    source?.payment_method ?? source?.paymentMethod,
+  );
+  const mollieMethodHint = normalizeBookingPaymentMethodId(
+    source?.mollie_method ?? source?.mollieMethod,
+  );
+  const qrPreferred = boolish(source?.qr_preferred ?? source?.qrPreferred);
+  return {
+    paymentMethod,
+    mollieMethod: mollieMethodHint,
+    qrPreferred,
+  };
+}
+
+function resolveMollieMethodForPublicPayment(publicMethod, mollieMethodHint = null) {
+  const hinted = safeStr(mollieMethodHint, 40).toLowerCase();
+  if (hinted) {
+    const hintAliases = {
+      card_payment: "creditcard",
+      card: "creditcard",
+      cards: "creditcard",
+      apple_pay: "applepay",
+      google_pay: "googlepay",
+    };
+    return hintAliases[hinted] || hinted;
+  }
+  const method = safeStr(publicMethod, 40).toLowerCase();
+  if (!method) return null;
+  const aliases = {
+    bancontact_qr: "bancontact",
+    card_payment: "creditcard",
+    card: "creditcard",
+    cards: "creditcard",
+    apple_pay: "applepay",
+    google_pay: "googlepay",
+    payconiq_wero: "bancontact",
+    online_payment: null,
+  };
+  if (Object.prototype.hasOwnProperty.call(aliases, method)) {
+    return aliases[method];
+  }
+  return method;
+}
+
+function shouldRequestMollieQrCode({ qrPreferred = false, mollieMethod = null } = {}) {
+  if (!boolish(qrPreferred)) return false;
+  const method = safeStr(mollieMethod, 40).toLowerCase();
+  return new Set(["bancontact", "ideal", "banktransfer"]).has(method);
+}
+
+function extractPublicMollieQrCode(molliePayment) {
+  const qr =
+    molliePayment?.details?.qrCode ||
+    molliePayment?.details?.qr_code ||
+    molliePayment?._embedded?.["details.qrCode"] ||
+    null;
+  if (!qr || typeof qr !== "object") return null;
+  const src = safeStr(qr?.src || qr?.href || qr?.image || qr?.url, 8000);
+  if (!src) return null;
+  const out = { src };
+  const type = safeStr(qr?.type || qr?.format, 32);
+  const source = safeStr(qr?.source, 32);
+  if (type) out.type = type;
+  if (source) out.source = source;
+  return out;
+}
+
+function readMollieQrCodeFromPaymentResult(pay) {
+  if (!pay || typeof pay !== "object") return null;
+  const direct = pay?.qr_code || pay?.qrCode;
+  if (direct && typeof direct === "object" && safeStr(direct?.src, 8000)) {
+    return direct;
+  }
+  const nested = pay?.payment?.qr_code || pay?.payment?.qrCode;
+  if (nested && typeof nested === "object" && safeStr(nested?.src, 8000)) {
+    return nested;
+  }
+  return null;
+}
+
+function appendMolliePaymentPresentationFields(target, pay) {
+  if (!target || typeof target !== "object" || !pay || typeof pay !== "object") {
+    return target;
+  }
+  const qr = readMollieQrCodeFromPaymentResult(pay);
+  if (qr) {
+    target.qr_code = qr;
+    target.qrCode = qr;
+  }
+  const paymentMeta = pay?.payment;
+  if (paymentMeta && typeof paymentMeta === "object") {
+    target.payment = { ...(target.payment || {}), ...paymentMeta };
+    if (qr) {
+      target.payment.qr_code = qr;
+      target.payment.qrCode = qr;
+    }
+  }
+  return target;
+}
+
 function normalizedPaymentFields({
   status,
   provider = "mollie",
@@ -30531,19 +30634,41 @@ async function mollieCreatePayment(payload, env, request) {
     const commProfile = await resolveTenantCommunicationProfile(env, paymentTenantId, paymentCompanyId);
     const description = `${safeBrandName(commProfile?.brandName, "Fluxidi Taxi")} booking ${bookingId}`;
 
-    const mollieRes = await fetch("https://api.mollie.com/v2/payments", {
+    const paymentNorm = normalizePublicBookingPaymentMethod(payloadClean);
+    const resolvedPublicMethod =
+      paymentNorm.paymentMethod ||
+      normalizeBookingPaymentMethodId(
+        payloadClean?.payment_method ?? payloadClean?.paymentMethod,
+      );
+    const mollieMethod = resolveMollieMethodForPublicPayment(
+      resolvedPublicMethod,
+      paymentNorm.mollieMethod,
+    );
+    const includeQrCode = shouldRequestMollieQrCode({
+      qrPreferred: paymentNorm.qrPreferred,
+      mollieMethod,
+    });
+    const mollieCreateBody = {
+      amount: { currency: "EUR", value: amountValue },
+      description,
+      redirectUrl,
+      webhookUrl,
+      metadata: { bookingId },
+    };
+    if (mollieMethod) {
+      mollieCreateBody.method = mollieMethod;
+    }
+    const mollieApiUrl = includeQrCode
+      ? "https://api.mollie.com/v2/payments?include=details.qrCode"
+      : "https://api.mollie.com/v2/payments";
+
+    const mollieRes = await fetch(mollieApiUrl, {
       method: "POST",
       headers: {
         "Authorization": `Bearer ${mollieConfig.apiKey}`,
         "Content-Type": "application/json"
       },
-      body: JSON.stringify({
-        amount: { currency: "EUR", value: amountValue },
-        description,
-        redirectUrl,
-        webhookUrl,
-        metadata: { bookingId }
-      })
+      body: JSON.stringify(mollieCreateBody)
     });
 
     const mollie = await mollieRes.json().catch(() => ({}));
@@ -30563,8 +30688,9 @@ async function mollieCreatePayment(payload, env, request) {
         mollie?.error,
       160,
     );
+    const publicQrCode = extractPublicMollieQrCode(mollie);
     console.log(
-      `[MOLLIE_CREATE][RES] httpStatus=${Number(mollieRes?.status || 0)} ok=${mollieRes?.ok === true} hasId=${!!safeStr(mollie?.id, 120)} hasCheckout=${!!mollieCheckoutHref} checkoutHost=${checkoutHost || "-"} errorCode=${mollieErrorCode || "-"} errorMessage=${mollieErrorMessage || "-"}`,
+      `[MOLLIE_CREATE][RES] httpStatus=${Number(mollieRes?.status || 0)} ok=${mollieRes?.ok === true} hasId=${!!safeStr(mollie?.id, 120)} hasCheckout=${!!mollieCheckoutHref} checkoutHost=${checkoutHost || "-"} hasQr=${!!publicQrCode} method=${safeStr(mollieMethod, 24) || "-"} includeQr=${includeQrCode === true} errorCode=${mollieErrorCode || "-"} errorMessage=${mollieErrorMessage || "-"}`,
     );
     if (!mollieRes.ok || !mollie?.id || !mollie?._links?.checkout?.href) {
       // Keep booking in KV for debugging
@@ -30594,8 +30720,26 @@ async function mollieCreatePayment(payload, env, request) {
     Object.assign(stored, normalizedPaymentFields({
       status: mollie.status || "open",
       paymentId: mollie.id,
+      paymentMethod: resolvedPublicMethod,
     }));
-    stored.mollie = { id: mollie.id, payment_id: mollie.id, status: mollie.status || "open" };
+    if (resolvedPublicMethod) {
+      stored.payment_method = resolvedPublicMethod;
+      stored.paymentMethod = resolvedPublicMethod;
+    }
+    if (mollieMethod) {
+      stored.mollie_method = mollieMethod;
+      stored.mollieMethod = mollieMethod;
+    }
+    if (paymentNorm.qrPreferred) {
+      stored.qr_preferred = true;
+      stored.qrPreferred = true;
+    }
+    stored.mollie = {
+      id: mollie.id,
+      payment_id: mollie.id,
+      status: mollie.status || "open",
+      ...(mollieMethod ? { method: mollieMethod } : {}),
+    };
 
     await env.BOOKING_KV.put(
       `booking:${bookingId}`,
@@ -30603,13 +30747,25 @@ async function mollieCreatePayment(payload, env, request) {
       { expirationTtl: 60 * 60 }
     );
 
+    const paymentPresentation = {
+      payment_method: resolvedPublicMethod || null,
+      paymentMethod: resolvedPublicMethod || null,
+      mollie_method: mollieMethod || null,
+      mollieMethod: mollieMethod || null,
+      qr_preferred: paymentNorm.qrPreferred === true,
+      qrPreferred: paymentNorm.qrPreferred === true,
+      ...(publicQrCode ? { qr_code: publicQrCode, qrCode: publicQrCode } : {}),
+    };
+
     return {
       ok: true,
       bookingId, // internal payment booking id
       publicBookingId: publicBookingId || null,
       amount: { currency: "EUR", value: amountValue },
       checkoutUrl: mollie._links.checkout.href,
-      statusUrl: `${base}/pay/status?id=${encodeURIComponent(bookingId)}`
+      statusUrl: `${base}/pay/status?id=${encodeURIComponent(bookingId)}`,
+      payment: paymentPresentation,
+      ...(publicQrCode ? { qr_code: publicQrCode, qrCode: publicQrCode } : {}),
     };
   } catch (e) {
     return { ok: false, error: String(e?.message || e) };
@@ -32834,7 +32990,7 @@ async function handleBooking(payload, env, request) {
             }
           }
 
-          return {
+          return appendMolliePaymentPresentationFields({
             ok: true,
             booking_id: canonicalBookingId,
             bookingId: canonicalBookingId,
@@ -32869,7 +33025,7 @@ async function handleBooking(payload, env, request) {
             status_url: pay.statusUrl || pay.status_url || null,
             statusUrl: pay.statusUrl || pay.status_url || null,
             amount: pay.amount || null,
-          };
+          }, pay);
         }
 
         const bookingForCalendar = {
@@ -33616,7 +33772,7 @@ Retour route: ${return_from || to} → ${return_to || from}`,
         }
       }
 
-      return {
+      return appendMolliePaymentPresentationFields({
         ok: true,
         booking_id: canonicalBookingId,
         bookingId: canonicalBookingId,
@@ -33649,7 +33805,7 @@ Retour route: ${return_from || to} → ${return_to || from}`,
         status_url: pay.statusUrl || pay.status_url || null,
         statusUrl: pay.statusUrl || pay.status_url || null,
         amount: pay.amount || null,
-      };
+      }, pay);
     }
 
     // Build booking object used by email templates

@@ -18,6 +18,7 @@ extension PaymentProviderWire on PaymentProvider {
 /// Canonical public payment method id strings (snake_case).
 abstract final class PaymentMethodIds {
   static const bancontact = 'bancontact';
+  static const bancontactQr = 'bancontact_qr';
   static const ideal = 'ideal';
   static const tikkie = 'tikkie';
   static const cardPayment = 'card_payment';
@@ -36,6 +37,7 @@ abstract final class PaymentMethodIds {
 
   static const all = <String>[
     bancontact,
+    bancontactQr,
     ideal,
     tikkie,
     cardPayment,
@@ -125,6 +127,11 @@ String normalizePaymentMethodId(String raw) {
     case 'wero':
     case 'payconiq':
       return PaymentMethodIds.payconiqWero;
+    case 'bancontact_qr':
+    case 'bancontactqr':
+    case 'bancontact_pay_qr':
+    case 'payconiq_qr':
+      return PaymentMethodIds.bancontactQr;
     case 'bacs':
     case 'bank_transfer':
       return PaymentMethodIds.bankTransferBacs;
@@ -172,6 +179,7 @@ abstract final class PaymentMethodCatalog {
 
   static const Set<String> knownIds = <String>{
     PaymentMethodIds.bancontact,
+    PaymentMethodIds.bancontactQr,
     PaymentMethodIds.ideal,
     PaymentMethodIds.tikkie,
     PaymentMethodIds.cardPayment,
@@ -222,6 +230,10 @@ abstract final class PaymentMethodCatalog {
       <PaymentMethodDefinition>[
         PaymentMethodDefinition(
           id: PaymentMethodIds.bancontact,
+          provider: PaymentProvider.mollie,
+        ),
+        PaymentMethodDefinition(
+          id: PaymentMethodIds.bancontactQr,
           provider: PaymentProvider.mollie,
         ),
         PaymentMethodDefinition(
@@ -289,6 +301,7 @@ abstract final class PaymentMethodCatalog {
   static const Map<String, List<String>> _countryProfiles =
       <String, List<String>>{
         PaymentCountryCodes.belgium: <String>[
+          PaymentMethodIds.bancontactQr,
           PaymentMethodIds.bancontact,
           PaymentMethodIds.cardPayment,
           PaymentMethodIds.applePay,

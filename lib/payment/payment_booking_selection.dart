@@ -14,6 +14,8 @@ class BookingPaymentSelection {
     required this.isMollieCheckout,
     required this.isTikkieRequest,
     required this.isManualCollection,
+    this.mollieMethod,
+    this.qrPreferred = false,
   });
 
   /// Canonical payment method id (e.g. [PaymentMethodIds.ideal]).
@@ -33,6 +35,12 @@ class BookingPaymentSelection {
 
   /// True when payment is collected manually during or after the ride.
   final bool isManualCollection;
+
+  /// Mollie API method token when applicable (e.g. `bancontact`, `ideal`).
+  final String? mollieMethod;
+
+  /// True when the customer prefers an in-app QR flow (Belgian Bancontact QR).
+  final bool qrPreferred;
 
   /// Default manual method for unknown or empty input ("pay in the car").
   static const String defaultManualMethodId = PaymentMethodIds.inVehicleCard;
@@ -76,6 +84,8 @@ class BookingPaymentSelection {
         providerWire = PaymentProvider.manual.wireValue;
     }
 
+    final mollieExtras = _mollieExtrasForMethodId(definition.id);
+
     return BookingPaymentSelection(
       paymentMethodId: definition.id,
       paymentMode: mode,
@@ -83,18 +93,61 @@ class BookingPaymentSelection {
       isMollieCheckout: provider == PaymentProvider.mollie,
       isTikkieRequest: provider == PaymentProvider.tikkieManual,
       isManualCollection: provider == PaymentProvider.manual,
+      mollieMethod: mollieExtras.$1,
+      qrPreferred: mollieExtras.$2,
     );
   }
 
+  static (String?, bool) _mollieExtrasForMethodId(String methodId) {
+    switch (methodId) {
+      case PaymentMethodIds.bancontactQr:
+        return ('bancontact', true);
+      case PaymentMethodIds.bancontact:
+        return ('bancontact', false);
+      case PaymentMethodIds.ideal:
+        return ('ideal', false);
+      case PaymentMethodIds.cardPayment:
+        return ('creditcard', false);
+      case PaymentMethodIds.applePay:
+        return ('applepay', false);
+      case PaymentMethodIds.googlePay:
+        return ('googlepay', false);
+      case PaymentMethodIds.paypal:
+        return ('paypal', false);
+      case PaymentMethodIds.cartesBancaires:
+        return ('creditcard', false);
+      case PaymentMethodIds.bizum:
+        return ('creditcard', false);
+      case PaymentMethodIds.payconiqWero:
+        return ('bancontact', false);
+      case PaymentMethodIds.onlinePayment:
+        return (null, false);
+      default:
+        return (null, false);
+    }
+  }
+
   /// Additive booking payload fields (snake_case and camelCase mirrors).
-  Map<String, String> toPayloadFields() => {
-    'payment_mode': paymentMode,
-    'paymentMode': paymentMode,
-    'payment_provider': paymentProvider,
-    'paymentProvider': paymentProvider,
-    'payment_method': paymentMethodId,
-    'paymentMethod': paymentMethodId,
-  };
+  Map<String, dynamic> toPayloadFields() {
+    final fields = <String, dynamic>{
+      'payment_mode': paymentMode,
+      'paymentMode': paymentMode,
+      'payment_provider': paymentProvider,
+      'paymentProvider': paymentProvider,
+      'payment_method': paymentMethodId,
+      'paymentMethod': paymentMethodId,
+    };
+    final mollie = mollieMethod?.trim();
+    if (mollie != null && mollie.isNotEmpty) {
+      fields['mollie_method'] = mollie;
+      fields['mollieMethod'] = mollie;
+    }
+    if (qrPreferred) {
+      fields['qr_preferred'] = true;
+      fields['qrPreferred'] = true;
+    }
+    return fields;
+  }
 
   @override
   bool operator ==(Object other) =>
@@ -106,7 +159,9 @@ class BookingPaymentSelection {
           paymentProvider == other.paymentProvider &&
           isMollieCheckout == other.isMollieCheckout &&
           isTikkieRequest == other.isTikkieRequest &&
-          isManualCollection == other.isManualCollection;
+          isManualCollection == other.isManualCollection &&
+          mollieMethod == other.mollieMethod &&
+          qrPreferred == other.qrPreferred;
 
   @override
   int get hashCode => Object.hash(
@@ -116,11 +171,14 @@ class BookingPaymentSelection {
     isMollieCheckout,
     isTikkieRequest,
     isManualCollection,
+    mollieMethod,
+    qrPreferred,
   );
 
   @override
   String toString() =>
       'BookingPaymentSelection(method: $paymentMethodId, mode: $paymentMode, '
       'provider: $paymentProvider, mollie: $isMollieCheckout, '
-      'tikkie: $isTikkieRequest, manual: $isManualCollection)';
+      'tikkie: $isTikkieRequest, manual: $isManualCollection, '
+      'mollieMethod: $mollieMethod, qrPreferred: $qrPreferred)';
 }
