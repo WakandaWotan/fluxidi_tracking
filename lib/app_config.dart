@@ -5,6 +5,7 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
+import 'package:fluxidi_tracking/company_session_store.dart';
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
 import 'package:path_provider/path_provider.dart';
@@ -2424,6 +2425,58 @@ Map<String, String> _adminJsonHeaders() {
   return headers;
 }
 
+/// How company-owner admin API calls authenticated.
+enum CompanyOwnerAuthMode { admin, companySession, none }
+
+class CompanyOwnerAuthHeaders {
+  const CompanyOwnerAuthHeaders({required this.headers, required this.mode});
+
+  final Map<String, String> headers;
+  final CompanyOwnerAuthMode mode;
+}
+
+/// Resolves auth headers for company-owner calls to scoped `/admin/*` routes.
+///
+/// Prefers compile-time admin token when present (dev/ops builds). Otherwise
+/// falls back to the active company session bearer from local storage.
+Future<CompanyOwnerAuthHeaders> resolveCompanyOwnerAuthHeaders({
+  bool json = true,
+}) async {
+  final headers = <String, String>{'Accept': 'application/json'};
+  if (json) headers['Content-Type'] = 'application/json';
+
+  final adminToken = _fleetSyncAdminToken.trim();
+  if (adminToken.isNotEmpty) {
+    headers['Authorization'] = 'Bearer $adminToken';
+    headers['x-admin-token'] = adminToken;
+    debugPrint('[COMPANY_OWNER_AUTH][MODE] auth_mode=admin');
+    return CompanyOwnerAuthHeaders(
+      headers: headers,
+      mode: CompanyOwnerAuthMode.admin,
+    );
+  }
+
+  final resolved = await CompanySessionStore.instance
+      .resolveCompanyBootstrapToken();
+  final companyToken = (resolved.token ?? '').trim();
+  if (companyToken.isNotEmpty) {
+    headers['Authorization'] = 'Bearer $companyToken';
+    debugPrint(
+      '[COMPANY_OWNER_AUTH][MODE] auth_mode=company_session source=${resolved.source}',
+    );
+    return CompanyOwnerAuthHeaders(
+      headers: headers,
+      mode: CompanyOwnerAuthMode.companySession,
+    );
+  }
+
+  debugPrint('[COMPANY_OWNER_AUTH][MODE] auth_mode=none');
+  return CompanyOwnerAuthHeaders(
+    headers: headers,
+    mode: CompanyOwnerAuthMode.none,
+  );
+}
+
 String _maskCompanyScopeForLog(String value) {
   final text = value.trim();
   if (text.isEmpty) return '—';
@@ -2955,10 +3008,11 @@ Future<bool> syncPricingProfileToBackend({
       tenantId: tenantId,
       companyId: companyId,
     );
+    final auth = await resolveCompanyOwnerAuthHeaders();
     final res = await http
         .post(
           endpoint,
-          headers: _adminJsonHeaders(),
+          headers: auth.headers,
           body: jsonEncode(<String, dynamic>{
             ...scope,
             'pricing_profile': profilePayload,
@@ -2972,7 +3026,7 @@ Future<bool> syncPricingProfileToBackend({
           ? '${snippet.substring(0, 120)}...'
           : snippet;
       debugPrint(
-        '[PRICING_PROFILE_SYNC][FAIL] status=$status reason=http_error'
+        '[PRICING_PROFILE_SYNC][FAIL] status=$status auth_mode=${auth.mode.name} reason=http_error'
         '${safeSnippet.isNotEmpty ? ' detail=$safeSnippet' : ''}',
       );
       return false;
@@ -3216,10 +3270,16 @@ Future<Map<String, dynamic>?> rotateDriverLoginCode({
       'driver_id': normalizedDriverId,
       'driverId': normalizedDriverId,
     };
+    final auth = await resolveCompanyOwnerAuthHeaders();
     final response = await http
-        .post(endpoint, headers: _adminJsonHeaders(), body: jsonEncode(payload))
+        .post(endpoint, headers: auth.headers, body: jsonEncode(payload))
         .timeout(const Duration(seconds: 12));
-    if (response.statusCode < 200 || response.statusCode >= 300) return null;
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      debugPrint(
+        '[DRIVER_LOGIN_CODE_ROTATE][FAIL] status=${response.statusCode} auth_mode=${auth.mode.name}',
+      );
+      return null;
+    }
     final decoded = jsonDecode(utf8.decode(response.bodyBytes));
     if (decoded is! Map) return null;
     final map = Map<String, dynamic>.from(decoded);
@@ -3613,8 +3673,9 @@ Future<BackendBusinessProfile> fetchBackendBusinessProfile({
     tenantId: tenantId,
     companyId: companyId,
   );
+  final auth = await resolveCompanyOwnerAuthHeaders();
   final res = await http
-      .get(endpoint, headers: _adminJsonHeaders())
+      .get(endpoint, headers: auth.headers)
       .timeout(const Duration(seconds: 12));
   if (res.statusCode < 200 || res.statusCode >= 300) {
     throw Exception('HTTP ${res.statusCode}: ${res.body}');
@@ -3661,10 +3722,11 @@ Future<BackendBusinessProfile> saveBackendBusinessProfile(
     tenantId: tenantId,
     companyId: companyId,
   );
+  final auth = await resolveCompanyOwnerAuthHeaders();
   final res = await http
       .post(
         endpoint,
-        headers: _adminJsonHeaders(),
+        headers: auth.headers,
         body: jsonEncode(<String, dynamic>{
           ...scope,
           'business_profile': profile.toJson(),
@@ -3711,8 +3773,9 @@ Future<BackendTaxProfile> fetchBackendTaxProfile({
     tenantId: tenantId,
     companyId: companyId,
   );
+  final auth = await resolveCompanyOwnerAuthHeaders();
   final res = await http
-      .get(endpoint, headers: _adminJsonHeaders())
+      .get(endpoint, headers: auth.headers)
       .timeout(const Duration(seconds: 12));
   if (res.statusCode < 200 || res.statusCode >= 300) {
     throw Exception('HTTP ${res.statusCode}: ${res.body}');
@@ -3738,10 +3801,11 @@ Future<BackendTaxProfile> saveBackendTaxProfile(
     tenantId: tenantId,
     companyId: companyId,
   );
+  final auth = await resolveCompanyOwnerAuthHeaders();
   final res = await http
       .post(
         endpoint,
-        headers: _adminJsonHeaders(),
+        headers: auth.headers,
         body: jsonEncode(<String, dynamic>{
           ...scope,
           'tax_profile': profile.toJson(),
@@ -3767,8 +3831,9 @@ Future<BackendCancellationPolicyProfile> fetchBackendCancellationPolicyProfile({
     tenantId: tenantId,
     companyId: companyId,
   );
+  final auth = await resolveCompanyOwnerAuthHeaders();
   final res = await http
-      .get(endpoint, headers: _adminJsonHeaders())
+      .get(endpoint, headers: auth.headers)
       .timeout(const Duration(seconds: 12));
   if (res.statusCode < 200 || res.statusCode >= 300) {
     throw Exception('HTTP ${res.statusCode}: ${res.body}');
@@ -3796,10 +3861,11 @@ Future<BackendCancellationPolicyProfile> saveBackendCancellationPolicyProfile(
     tenantId: tenantId,
     companyId: companyId,
   );
+  final auth = await resolveCompanyOwnerAuthHeaders();
   final res = await http
       .post(
         endpoint,
-        headers: _adminJsonHeaders(),
+        headers: auth.headers,
         body: jsonEncode(<String, dynamic>{
           ...scope,
           'cancellation_policy_profile': profile.toApiPayload(),

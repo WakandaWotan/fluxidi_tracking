@@ -123,13 +123,9 @@ class _BusinessHomePageState extends State<BusinessHomePage>
     return double.tryParse(text.replaceAll(',', '.'));
   }
 
-  Map<String, String> _adminHeaders() {
-    final headers = <String, String>{'Content-Type': 'application/json'};
-    final token = kAdminToken.trim();
-    if (token.isNotEmpty) {
-      headers['x-admin-token'] = token;
-    }
-    return headers;
+  Future<Map<String, String>> _companyOwnerHeaders() async {
+    final auth = await resolveCompanyOwnerAuthHeaders();
+    return auth.headers;
   }
 
   String _activeMonthToken() {
@@ -220,7 +216,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
     _kpiRefreshInFlight = true;
     try {
       final month = _activeMonthToken();
-      final headers = _adminHeaders();
+      final headers = await _companyOwnerHeaders();
       final bookingsUri = _withActiveBookingScope(
         kBookingBaseUrl,
         '/admin/dashboard/bookings-kpis',

@@ -12,3 +12,7 @@ service = "fluxidi-compliance-api"
 [[kv_namespaces]]
 binding = "FLUXIDI_TRACKING"
 id = "e457c0f51cfe44bca031250a0485b31e"
+
+[[kv_namespaces]]
+binding = "BOOKING_KV"
+id = "6805da1ffefe4a3982b4c419250c59b1"

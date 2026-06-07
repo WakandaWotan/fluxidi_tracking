@@ -65,6 +65,101 @@ function requireAdmin(req, url, env) {
   if (!got || got !== expected) throw new Error("Unauthorized");
 }
 
+function hasValidAdminToken(req, url, env) {
+  const expected = (env?.ADMIN_TOKEN || "").trim();
+  if (!expected) return false;
+  const got = getToken(req, url);
+  return !!got && got === expected;
+}
+
+const COMPANY_SESSION_KEY_PREFIX = "company_admin:session:";
+const COMPANY_SESSION_KEY_SUFFIX = ":v1";
+
+function companySessionKey(tokenHash) {
+  const safeHash = safeStr(tokenHash, 200);
+  if (!safeHash) return "";
+  return `${COMPANY_SESSION_KEY_PREFIX}${safeHash.toLowerCase()}${COMPANY_SESSION_KEY_SUFFIX}`;
+}
+
+async function sha256Hex(text) {
+  const data = new TextEncoder().encode(String(text || ""));
+  const digest = await crypto.subtle.digest("SHA-256", data);
+  const bytes = new Uint8Array(digest);
+  let hex = "";
+  for (const byte of bytes) {
+    hex += byte.toString(16).padStart(2, "0");
+  }
+  return hex;
+}
+
+async function hashCompanySessionToken(token) {
+  const normalized = safeStr(token, 512);
+  if (!normalized) return "";
+  const hash = await sha256Hex(normalized);
+  const trimmed = safeStr(hash, 200);
+  return trimmed ? trimmed.toLowerCase() : "";
+}
+
+async function loadCompanySessionFromRequest(req, env) {
+  if (!env?.BOOKING_KV) return null;
+  const token = getBearerToken(req);
+  if (!token) return null;
+  const tokenHash = await hashCompanySessionToken(token);
+  if (!tokenHash) return null;
+  const key = companySessionKey(tokenHash);
+  if (!key) return null;
+  const record = await env.BOOKING_KV.get(key, { type: "json" });
+  if (!record || typeof record !== "object" || Array.isArray(record)) return null;
+  const role = (safeStr(record.role, 40) ?? "").toLowerCase();
+  if (role !== "company_admin") return null;
+  const tenantId = safeStr(record.tenant_id ?? record.tenantId, 80);
+  const companyId = safeStr(record.company_id ?? record.companyId, 80);
+  const expiresAt = safeStr(record.expires_at ?? record.expiresAt, 80);
+  const expiresAtMs = Date.parse(expiresAt || "");
+  if (!Number.isFinite(expiresAtMs) || Date.now() >= expiresAtMs) {
+    try {
+      await env.BOOKING_KV.delete(key);
+    } catch (_) {}
+    return null;
+  }
+  if (!tenantId || !companyId) return null;
+  return { tenant_id: tenantId, company_id: companyId };
+}
+
+function maskScopeForTripKpiLog(value) {
+  const text = safeStr(value, 80) ?? "";
+  if (!text) return "-";
+  if (text.length <= 4) return `…${text.substring(text.length - 1)}`;
+  return `${text.substring(0, 2)}…${text.substring(text.length - 2)}`;
+}
+
+async function requireAdminOrCompanySessionForScope(req, url, env, scope, origin) {
+  if (hasValidAdminToken(req, url, env)) {
+    console.log("[TRIP_KPIS][AUTH] auth_mode=admin_token");
+    return { ok: true, auth_mode: "admin_token" };
+  }
+  const companySession = await loadCompanySessionFromRequest(req, env);
+  if (!companySession) {
+    throw new Error("Unauthorized");
+  }
+  if (
+    scope.tenant_id !== companySession.tenant_id ||
+    scope.company_id !== companySession.company_id
+  ) {
+    return {
+      ok: false,
+      response: withCors(
+        json({ ok: false, error: "forbidden" }, { status: 403 }),
+        origin,
+      ),
+    };
+  }
+  console.log(
+    `[TRIP_KPIS][AUTH] auth_mode=company_session tenant=${maskScopeForTripKpiLog(companySession.tenant_id)} company=${maskScopeForTripKpiLog(companySession.company_id)}`,
+  );
+  return { ok: true, auth_mode: "company_session" };
+}
+
 function requireMapbox(env) {
   const t = (env.MAPBOX_TOKEN || "").trim();
   if (!t) throw new Error("MAPBOX_TOKEN is not configured on the Worker (set as secret).");
@@ -3086,13 +3181,14 @@ async function handleDashboardTripKpisReconcile(req, url, env, origin) {
 }
 
 async function handleDashboardTripKpis(req, url, env, origin) {
-  requireAdmin(req, url, env);
   const requiredScope = parseRequiredTenantCompanyScope(req, url, null, {
     returnResponse: true,
     origin,
   });
   if (requiredScope instanceof Response) return requiredScope;
   const scope = requiredScope;
+  const auth = await requireAdminOrCompanySessionForScope(req, url, env, scope, origin);
+  if (!auth.ok) return auth.response;
   const monthRaw = safeStr(url.searchParams.get("month"), 16);
   const defaultMonth = new Date().toISOString().slice(0, 7);
   const selectedMonth = monthRaw ? _normalizeDashboardMonth(monthRaw) : defaultMonth;

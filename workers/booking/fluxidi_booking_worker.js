@@ -5037,6 +5037,50 @@ async function _requireAdminOrCompanySessionAuth({
   };
 }
 
+async function _requireAdminOrCompanySessionForExplicitScope({
+  request,
+  url,
+  env,
+  body = null,
+  routeLabel = "",
+} = {}) {
+  const explicitScope = resolveAdminExplicitTenantCompanyScope({ request, url, body });
+  const hasAdmin = hasValidAdminToken(request, url, env);
+  if (hasAdmin) {
+    if (!explicitScope?.hasScope) {
+      return { ok: false, response: json(missingTenantScopeError(), 400) };
+    }
+    if (routeLabel) {
+      console.log(`[${routeLabel}][AUTH] auth_mode=admin_token`);
+    }
+    return { ok: true, auth_mode: "admin_token", explicitScope };
+  }
+  const companySession = await _loadCompanySessionFromRequest(request, env);
+  if (!companySession) {
+    return { ok: false, response: _companyAuthFail() };
+  }
+  if (!explicitScope?.hasScope) {
+    return { ok: false, response: json(missingTenantScopeError(), 400) };
+  }
+  if (
+    explicitScope.tenant_id !== companySession.tenant_id ||
+    explicitScope.company_id !== companySession.company_id
+  ) {
+    return { ok: false, response: json({ ok: false, error: "forbidden" }, 403) };
+  }
+  if (routeLabel) {
+    console.log(
+      `[${routeLabel}][AUTH] auth_mode=company_session tenant=${_maskPublicDriverLoginValue(companySession.tenant_id)} company=${_maskPublicDriverLoginValue(companySession.company_id)}`,
+    );
+  }
+  return {
+    ok: true,
+    auth_mode: "company_session",
+    explicitScope,
+    company_session: companySession,
+  };
+}
+
 async function _loadPublicDriverSessionFromRequest(request, env) {
   if (!env?.BOOKING_KV) return null;
   const token = _extractBearerToken(request);
@@ -11704,15 +11748,19 @@ async function handleAdminCompanyDriversIndexDelete(request, url, env) {
 
 async function handleAdminCompanyDriverLoginCodeRotate(request, url, env) {
   const body = await readAdminCompanyLinkBody(request.clone());
-  _requireAdmin(request, url, env);
   if (!env?.BOOKING_KV) return json({ ok: false, error: "BOOKING_KV binding is missing" }, 500);
   if (!body || typeof body !== "object" || Array.isArray(body)) {
     return json({ ok: false, error: "invalid_body" }, 400);
   }
-  const explicitScope = resolveAdminExplicitTenantCompanyScope({ request, url, body });
-  if (!explicitScope?.hasScope) {
-    return json(missingTenantScopeError(), 400);
-  }
+  const authScope = await _requireAdminOrCompanySessionForExplicitScope({
+    request,
+    url,
+    env,
+    body,
+    routeLabel: "ADMIN_DRIVER_LOGIN_CODE_ROTATE",
+  });
+  if (!authScope.ok) return authScope.response;
+  const explicitScope = authScope.explicitScope;
   const tenantId = sanitizeTenantString(explicitScope.tenant_id, 80);
   const companyId = sanitizeTenantString(explicitScope.company_id, 80);
   if (!_isSafeCompanyLinkScopePart(tenantId) || !_isSafeCompanyLinkScopePart(companyId)) {
@@ -18550,12 +18598,19 @@ GET /oauth/callback
       // =========================
       // GET /bookings?limit=50&include_history=1
       if (url.pathname === "/bookings" && request.method === "GET") {
-        _requireAdmin(request, url, env);
         const limit = Number(url.searchParams.get("limit") || "50");
         const includeHistory =
           (url.searchParams.get("include_history") || "").toLowerCase() === "1";
         const scopedRoute = requireExplicitBookingRouteScope({ request, url });
         if (!scopedRoute.ok) return scopedRoute.response;
+        const auth = await _requireAdminOrCompanySessionAuth({
+          request,
+          url,
+          env,
+          tenantScope: scopedRoute.scope,
+        });
+        if (!auth.ok) return auth.response;
+        console.log(`[COMPANY_BOOKINGS_LIST][AUTH] auth_mode=${auth.auth_mode}`);
         const tenantScope = scopedRoute.scope;
         const listOut = await listBookingsAuthoritative(env, {
           limit,
@@ -18638,9 +18693,16 @@ GET /oauth/callback
         url.pathname === "/admin/dashboard/bookings-kpis" &&
         request.method === "GET"
       ) {
-        _requireAdmin(request, url, env);
         const scopedRoute = requireExplicitBookingRouteScope({ request, url });
         if (!scopedRoute.ok) return scopedRoute.response;
+        const auth = await _requireAdminOrCompanySessionAuth({
+          request,
+          url,
+          env,
+          tenantScope: scopedRoute.scope,
+        });
+        if (!auth.ok) return auth.response;
+        console.log(`[ADMIN_DASHBOARD_BOOKINGS_KPIS][AUTH] auth_mode=${auth.auth_mode}`);
         const debugRaw = safeStr(url.searchParams.get("debug"), 16).toLowerCase();
         const debugEnabled = debugRaw === "1" || debugRaw === "true";
         const debugBookingFinanceRaw = safeStr(
@@ -19467,11 +19529,14 @@ GET /oauth/callback
       }
 
       if (url.pathname === "/admin/pricing/profile" && request.method === "GET") {
-        _requireAdmin(request, url, env);
-        const explicitScope = resolveAdminExplicitTenantCompanyScope({ request, url });
-        if (!explicitScope?.hasScope) {
-          return json(missingTenantScopeError(), 400);
-        }
+        const authScope = await _requireAdminOrCompanySessionForExplicitScope({
+          request,
+          url,
+          env,
+          routeLabel: "ADMIN_PRICING_PROFILE_GET",
+        });
+        if (!authScope.ok) return authScope.response;
+        const explicitScope = authScope.explicitScope;
         const scopedKeys = buildScopedSettingsKeys(explicitScope);
         const profile = await _loadTenantPricingProfile(env, explicitScope, {
           allowTenantLegacyFallback: false,
@@ -19484,13 +19549,17 @@ GET /oauth/callback
       }
 
       if (url.pathname === "/admin/pricing/profile" && request.method === "POST") {
-        _requireAdmin(request, url, env);
         if (!env.BOOKING_KV) return json({ ok: false, error: "BOOKING_KV binding is missing" }, 500);
         const body = await safeJson(request);
-        const explicitScope = resolveAdminExplicitTenantCompanyScope({ request, url, body });
-        if (!explicitScope?.hasScope) {
-          return json(missingTenantScopeError(), 400);
-        }
+        const authScope = await _requireAdminOrCompanySessionForExplicitScope({
+          request,
+          url,
+          env,
+          body,
+          routeLabel: "ADMIN_PRICING_PROFILE_POST",
+        });
+        if (!authScope.ok) return authScope.response;
+        const explicitScope = authScope.explicitScope;
         const incoming = body?.pricing_profile && typeof body.pricing_profile === "object"
           ? body.pricing_profile
           : body;
@@ -19531,11 +19600,14 @@ GET /oauth/callback
       }
 
       if (url.pathname === "/admin/cancellation-policy/profile" && request.method === "GET") {
-        _requireAdmin(request, url, env);
-        const explicitScope = resolveAdminExplicitTenantCompanyScope({ request, url });
-        if (!explicitScope?.hasScope) {
-          return json(missingTenantScopeError(), 400);
-        }
+        const authScope = await _requireAdminOrCompanySessionForExplicitScope({
+          request,
+          url,
+          env,
+          routeLabel: "ADMIN_CANCELLATION_POLICY_GET",
+        });
+        if (!authScope.ok) return authScope.response;
+        const explicitScope = authScope.explicitScope;
         const scopedKeys = buildScopedSettingsKeys(explicitScope);
         const profile = await loadCancellationPolicyProfile(env, explicitScope, {
           allowTenantLegacyFallback: false,
@@ -19548,13 +19620,17 @@ GET /oauth/callback
       }
 
       if (url.pathname === "/admin/cancellation-policy/profile" && request.method === "POST") {
-        _requireAdmin(request, url, env);
         if (!env.BOOKING_KV) return json({ ok: false, error: "BOOKING_KV binding is missing" }, 500);
         const body = await safeJson(request);
-        const explicitScope = resolveAdminExplicitTenantCompanyScope({ request, url, body });
-        if (!explicitScope?.hasScope) {
-          return json(missingTenantScopeError(), 400);
-        }
+        const authScope = await _requireAdminOrCompanySessionForExplicitScope({
+          request,
+          url,
+          env,
+          body,
+          routeLabel: "ADMIN_CANCELLATION_POLICY_POST",
+        });
+        if (!authScope.ok) return authScope.response;
+        const explicitScope = authScope.explicitScope;
         const incoming =
           body?.cancellation_policy_profile && typeof body.cancellation_policy_profile === "object"
             ? body.cancellation_policy_profile
@@ -19672,11 +19748,14 @@ GET /oauth/callback
       }
 
       if (url.pathname === "/admin/business/profile" && request.method === "GET") {
-        _requireAdmin(request, url, env);
-        const explicitScope = resolveAdminExplicitTenantCompanyScope({ request, url });
-        if (!explicitScope?.hasScope) {
-          return json(missingTenantScopeError(), 400);
-        }
+        const authScope = await _requireAdminOrCompanySessionForExplicitScope({
+          request,
+          url,
+          env,
+          routeLabel: "ADMIN_BUSINESS_PROFILE_GET",
+        });
+        if (!authScope.ok) return authScope.response;
+        const explicitScope = authScope.explicitScope;
         const scopedKeys = buildScopedSettingsKeys(explicitScope);
         const profile = await loadBusinessProfile(env, explicitScope, {
           allowTenantLegacyFallback: false,
@@ -19749,12 +19828,16 @@ GET /oauth/callback
       }
 
       if (url.pathname === "/admin/business/profile" && request.method === "POST") {
-        _requireAdmin(request, url, env);
         const body = await safeJson(request);
-        const explicitScope = resolveAdminExplicitTenantCompanyScope({ request, url, body });
-        if (!explicitScope?.hasScope) {
-          return json(missingTenantScopeError(), 400);
-        }
+        const authScope = await _requireAdminOrCompanySessionForExplicitScope({
+          request,
+          url,
+          env,
+          body,
+          routeLabel: "ADMIN_BUSINESS_PROFILE_POST",
+        });
+        if (!authScope.ok) return authScope.response;
+        const explicitScope = authScope.explicitScope;
         const incoming = body?.business_profile && typeof body.business_profile === "object"
           ? body.business_profile
           : body;
@@ -20159,11 +20242,14 @@ GET /oauth/callback
       }
 
       if (url.pathname === "/admin/tax/profile" && request.method === "GET") {
-        _requireAdmin(request, url, env);
-        const explicitScope = resolveAdminExplicitTenantCompanyScope({ request, url });
-        if (!explicitScope?.hasScope) {
-          return json(missingTenantScopeError(), 400);
-        }
+        const authScope = await _requireAdminOrCompanySessionForExplicitScope({
+          request,
+          url,
+          env,
+          routeLabel: "ADMIN_TAX_PROFILE_GET",
+        });
+        if (!authScope.ok) return authScope.response;
+        const explicitScope = authScope.explicitScope;
         const scopedKeys = buildScopedSettingsKeys(explicitScope);
         const profile = await loadTaxProfile(env, explicitScope, {
           allowTenantLegacyFallback: false,
@@ -20176,12 +20262,16 @@ GET /oauth/callback
       }
 
       if (url.pathname === "/admin/tax/profile" && request.method === "POST") {
-        _requireAdmin(request, url, env);
         const body = await safeJson(request);
-        const explicitScope = resolveAdminExplicitTenantCompanyScope({ request, url, body });
-        if (!explicitScope?.hasScope) {
-          return json(missingTenantScopeError(), 400);
-        }
+        const authScope = await _requireAdminOrCompanySessionForExplicitScope({
+          request,
+          url,
+          env,
+          body,
+          routeLabel: "ADMIN_TAX_PROFILE_POST",
+        });
+        if (!authScope.ok) return authScope.response;
+        const explicitScope = authScope.explicitScope;
         const incoming = body?.tax_profile && typeof body.tax_profile === "object"
           ? body.tax_profile
           : body;
