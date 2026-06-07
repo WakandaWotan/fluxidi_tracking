@@ -199,6 +199,31 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
     );
   }
 
+  Future<bool> _persistVehiclePublicPhotoAfterUpload({
+    required VehicleProfile? existing,
+    required String publicPhotoUrl,
+    required TextEditingController publicPhotoUrlCtrl,
+    required StateSetter setLocalState,
+  }) async {
+    final url = resolvePublicHttpsMediaUrl(publicPhotoUrl);
+    if (url.isEmpty) return false;
+    setLocalState(() {
+      publicPhotoUrlCtrl.text = url;
+    });
+    if (existing == null) {
+      debugPrint(
+        '[VEHICLE_PUBLIC_PHOTO][DEFERRED] reason=vehicle_not_saved_yet',
+      );
+      return true;
+    }
+    updateVehicle(existing.id, existing.copyWith(publicPhotoUrl: url));
+    await _syncFleetOrShowError();
+    debugPrint(
+      '[VEHICLE_PUBLIC_PHOTO][OK] vehicle=${existing.id.length <= 4 ? '…' : '${existing.id.substring(0, 2)}…${existing.id.substring(existing.id.length - 2)}'}',
+    );
+    return true;
+  }
+
   bool _isAssetRef(String value) =>
       value.trim().toLowerCase().startsWith('assets/');
 
@@ -317,9 +342,12 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
       if (!_isPublicHttpsUrl(url)) {
         throw Exception('Upload did not return a valid HTTPS URL');
       }
-      setLocalState(() {
-        publicPhotoUrlCtrl.text = url;
-      });
+      await _persistVehiclePublicPhotoAfterUpload(
+        existing: existing,
+        publicPhotoUrl: url,
+        publicPhotoUrlCtrl: publicPhotoUrlCtrl,
+        setLocalState: setLocalState,
+      );
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -1902,9 +1930,12 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                                       'Upload did not return a valid HTTPS URL',
                                     );
                                   }
-                                  setLocalState(() {
-                                    publicPhotoUrlCtrl.text = url;
-                                  });
+                                  await _persistVehiclePublicPhotoAfterUpload(
+                                    existing: existing,
+                                    publicPhotoUrl: url,
+                                    publicPhotoUrlCtrl: publicPhotoUrlCtrl,
+                                    setLocalState: setLocalState,
+                                  );
                                   if (!mounted) return;
                                   ScaffoldMessenger.of(context).showSnackBar(
                                     SnackBar(

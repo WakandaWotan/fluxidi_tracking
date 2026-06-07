@@ -1419,6 +1419,60 @@ String get kBookingBaseUrl {
   return appConfig.bookingBaseUrl;
 }
 
+/// True when [raw] looks like a private/local filesystem or app asset reference.
+bool isLocalOrPrivateMediaRef(String raw) {
+  final text = raw.trim();
+  if (text.isEmpty) return true;
+  final lower = text.toLowerCase();
+  if (lower.startsWith('assets/')) return true;
+  if (lower.startsWith('file://') || lower.startsWith('content://')) {
+    return true;
+  }
+  if (lower.contains(r':\') || RegExp(r'^[a-zA-Z]:[\\/]').hasMatch(text)) {
+    return true;
+  }
+  if (text.startsWith(r'\\')) return true;
+  if (lower.startsWith('/data/') ||
+      lower.startsWith('/storage/') ||
+      lower.startsWith('/sdcard/') ||
+      lower.startsWith('/var/mobile/') ||
+      lower.startsWith('/private/var/mobile/') ||
+      lower.startsWith('/var/containers/')) {
+    return true;
+  }
+  if (lower.startsWith('/') && !lower.startsWith('/public/media/')) {
+    return true;
+  }
+  if (lower.startsWith('.') && !lower.startsWith('https://')) return true;
+  return false;
+}
+
+/// Resolves partner media refs to an HTTPS booking-worker URL for public output.
+/// Returns empty when the input is missing, local/private, or non-HTTPS.
+String resolvePublicHttpsMediaUrl(String raw, {String? bookingBaseUrl}) {
+  final text = raw.trim();
+  if (text.isEmpty || isLocalOrPrivateMediaRef(text)) return '';
+  final lower = text.toLowerCase();
+  if (lower.startsWith('https://')) return text;
+  if (lower.startsWith('http://')) return '';
+
+  final base = (bookingBaseUrl ?? kBookingBaseUrl).trim();
+  if (base.isEmpty) return '';
+  final normalizedBase = base.endsWith('/')
+      ? base.substring(0, base.length - 1)
+      : base;
+
+  if (lower.startsWith('/public/media/')) {
+    return '$normalizedBase$text';
+  }
+  if (lower.startsWith('public-media/')) {
+    final suffix = text.substring('public-media/'.length).trim();
+    if (suffix.isEmpty) return '';
+    return '$normalizedBase/public/media/$suffix';
+  }
+  return '';
+}
+
 enum AppRole { customer, driver, companyAdmin, dispatcher }
 
 final ValueNotifier<AppRole> appRoleNotifier = ValueNotifier<AppRole>(

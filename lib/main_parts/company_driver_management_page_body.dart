@@ -1154,17 +1154,13 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                                       }
                                       setDialogState(() {
                                         publicPortraitUrlCtrl.text = url;
-                                        if (publicProfileEnabled) {
-                                          publicPhotoEnabled = true;
-                                        }
+                                        publicPhotoEnabled = true;
                                       });
                                       final uploadedDriver = existing.copyWith(
                                         publicPortraitUrl: url,
                                         publicProfileEnabled:
                                             publicProfileEnabled,
-                                        publicPhotoEnabled: publicProfileEnabled
-                                            ? true
-                                            : existing.publicPhotoEnabled,
+                                        publicPhotoEnabled: true,
                                       );
                                       final persisted =
                                           await syncDriverIndexEntryToBackend(

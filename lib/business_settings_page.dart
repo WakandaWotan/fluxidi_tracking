@@ -2147,16 +2147,24 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
   }
 
   bool _isPublicHttpsUrl(String value) {
-    final raw = value.trim();
-    if (raw.isEmpty) return false;
-    final lower = raw.toLowerCase();
-    if (lower.startsWith('assets/')) return false;
-    if (lower.contains(r':\') ||
-        lower.startsWith('/') ||
-        lower.startsWith('.')) {
-      return false;
+    return resolvePublicHttpsMediaUrl(value).isNotEmpty;
+  }
+
+  String _publicPublishMediaUrl(String raw) => resolvePublicHttpsMediaUrl(raw);
+
+  String _publicDriverPortraitUrlForPublish(DriverProfile driver) {
+    if (!driver.publicProfileEnabled ||
+        !driver.publicPhotoEnabled ||
+        !driver.isActive) {
+      return '';
     }
-    return lower.startsWith('https://');
+    return _publicPublishMediaUrl(driver.publicPortraitUrl ?? '');
+  }
+
+  String _publicVehiclePhotoUrlForPublish(VehicleProfile vehicle) {
+    final publicPhoto = _publicPublishMediaUrl(vehicle.publicPhotoUrl ?? '');
+    if (publicPhoto.isNotEmpty) return publicPhoto;
+    return _publicPublishMediaUrl(vehicle.primaryPhotoRef);
   }
 
   Widget _publicMediaPreview() {
@@ -2781,9 +2789,11 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
       profileForm.publicServiceRadiusKm,
     );
 
-    final vehicles = vehiclesNotifier.value
+    final scopedActiveVehicles = vehiclesNotifier.value
         .where((v) => v.isActive)
         .where((v) => (v.companyId?.trim() ?? '') == companyId)
+        .toList(growable: false);
+    final vehicles = scopedActiveVehicles
         .map((v) {
           final brand = v.brandModel.trim();
           final tier = v.tierId.trim().toLowerCase();
@@ -2795,8 +2805,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                 brand.toLowerCase().contains('ev'))
               'ev_available',
           };
-          final publicPhoto = v.publicPhotoUrl?.trim() ?? '';
-          final photoRef = v.primaryPhotoRef.trim();
+          final photoUrl = _publicVehiclePhotoUrlForPublish(v);
           return <String, dynamic>{
             'name': v.vehicleName.trim(),
             'brand_model': brand,
@@ -2804,20 +2813,23 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
             'pax': v.passengerCapacity < 0 ? 0 : v.passengerCapacity,
             'luggage': v.luggageCapacity < 0 ? 0 : v.luggageCapacity,
             'features': features.toList(growable: false),
-            'photo_url': _isPublicHttpsUrl(publicPhoto)
-                ? publicPhoto
-                : (_isPublicHttpsUrl(photoRef) ? photoRef : ''),
+            'photo_url': photoUrl,
           };
         })
         .toList(growable: false);
+    final vehiclePhotoCount = vehicles
+        .where((row) => ((row['photo_url'] ?? '').toString().trim().isNotEmpty))
+        .length;
 
-    final drivers = driversNotifier.value
+    final scopedPublicDrivers = driversNotifier.value
         .where((d) => d.publicProfileEnabled)
         .where((d) => d.isActive)
         .where((d) => (d.companyId?.trim() ?? '') == companyId)
+        .toList(growable: false);
+    final drivers = scopedPublicDrivers
         .map((d) {
           final displayName = d.publicDisplayName?.trim() ?? '';
-          final candidatePortrait = d.publicPortraitUrl?.trim() ?? '';
+          final portraitUrl = _publicDriverPortraitUrlForPublish(d);
           return <String, dynamic>{
             'display_name': displayName.isNotEmpty
                 ? displayName
@@ -2829,15 +2841,23 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                   ),
             'languages': const <String>[],
             'badges': const <String>['verified_professional'],
-            'portrait_url':
-                d.publicProfileEnabled &&
-                    d.publicPhotoEnabled &&
-                    _isPublicHttpsUrl(candidatePortrait)
-                ? candidatePortrait
-                : '',
+            'portrait_url': portraitUrl,
           };
         })
         .toList(growable: false);
+    final driverPortraitCount = drivers
+        .where(
+          (row) => ((row['portrait_url'] ?? '').toString().trim().isNotEmpty),
+        )
+        .length;
+    final maskedCompanyId = companyId.length <= 4
+        ? '…'
+        : '${companyId.substring(0, 2)}…${companyId.substring(companyId.length - 2)}';
+    debugPrint(
+      '[PUBLIC_PARTNER_PUBLISH][MEDIA] company=$maskedCompanyId '
+      'drivers=${scopedPublicDrivers.length} portraits=$driverPortraitCount '
+      'vehicles=${scopedActiveVehicles.length} vehicle_photos=$vehiclePhotoCount',
+    );
 
     return <String, dynamic>{
       'partner_id': companyId,
@@ -2877,12 +2897,10 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         'booking_email': profileForm.bookingEmail.trim(),
       },
       'media': <String, dynamic>{
-        'logo_url': _isPublicHttpsUrl(profileForm.publicLogoUrl)
-            ? profileForm.publicLogoUrl.trim()
-            : '',
-        'hero_photo_url': _isPublicHttpsUrl(profileForm.publicHeroPhotoUrl)
-            ? profileForm.publicHeroPhotoUrl.trim()
-            : '',
+        'logo_url': _publicPublishMediaUrl(profileForm.publicLogoUrl),
+        'hero_photo_url': _publicPublishMediaUrl(
+          profileForm.publicHeroPhotoUrl,
+        ),
         'gallery': const <String>[],
       },
       'services': services,
@@ -2947,6 +2965,11 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
       );
       _hydrateBackendBusinessProfile(mergedBusiness);
       unawaited(updateLocalBackendBusinessProfileCache(mergedBusiness));
+
+      await syncFleetInventoryToBackend(
+        tenantId: scope.tenantId,
+        companyId: scope.companyId,
+      );
 
       final payload = _buildPublicPartnerProfilePayload(
         companyId: scope.companyId,
