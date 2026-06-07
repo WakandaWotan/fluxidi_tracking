@@ -217,6 +217,14 @@ abstract final class PaymentMethodCatalog {
   static bool isTikkieMethod(String rawId) =>
       providerFor(rawId) == PaymentProvider.tikkieManual;
 
+  /// Manual methods always shown in booking pickers (before country profile methods).
+  ///
+  /// Online ownership gating must not remove these; only an explicit future
+  /// business setting may disable manual collection.
+  static const List<String> alwaysVisibleManualMethodIds = <String>[
+    PaymentMethodIds.inVehicleCard,
+  ];
+
   /// Default visible method order for a market (before partner enablement filter).
   static List<String> defaultMethodOrderForCountry(String rawCountryCode) {
     final country = normalizeCountryCode(rawCountryCode);

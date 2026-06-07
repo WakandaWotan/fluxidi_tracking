@@ -130,12 +130,27 @@ abstract final class PaymentMethodResolver {
     final onlineAllowed = gate.onlinePaymentsAvailable;
 
     final methods = <PaymentMethodDefinition>[];
+    final includedIds = <String>{};
     for (final id in profileOrder) {
       if (enabledSet != null && !enabledSet.contains(id)) continue;
       final def = PaymentMethodCatalog.definitionFor(id);
       if (def == null) continue;
       if (!onlineAllowed && def.isMollie) continue;
       methods.add(def);
+      includedIds.add(def.id);
+    }
+
+    // Pay in the car / manual in-vehicle collection is not in every country
+    // profile (e.g. BE lists online methods only). Pre-P3A.1 UI prepended it
+    // explicitly; retain that contract here so ownership gating only affects
+    // online Mollie methods.
+    for (final manualId
+        in PaymentMethodCatalog.alwaysVisibleManualMethodIds.reversed) {
+      if (includedIds.contains(manualId)) continue;
+      final def = PaymentMethodCatalog.definitionFor(manualId);
+      if (def == null) continue;
+      methods.insert(0, def);
+      includedIds.add(def.id);
     }
 
     return ResolvedPaymentMethods(
