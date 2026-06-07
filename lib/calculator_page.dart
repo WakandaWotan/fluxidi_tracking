@@ -3249,17 +3249,27 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
   BookingPaymentSelection get _bookingPaymentSelection =>
       BookingPaymentSelection.fromMethodId(_selectedPaymentMethodId);
 
-  List<String> get _visiblePaymentMethodIds {
-    const manualInCar = PaymentMethodIds.inVehicleCard;
-    final onlineIds = PaymentMethodResolver.resolveIds(countryCode: 'BE');
-    final seen = <String>{manualInCar};
-    final out = <String>[manualInCar];
-    for (final id in onlineIds) {
-      if (id == manualInCar || !seen.add(id)) continue;
-      out.add(id);
-    }
-    return out;
+  PaymentOwnershipGate get _paymentOwnershipGate {
+    final profile = localBackendBusinessProfileNotifier.value;
+    if (profile == null) return const PaymentOwnershipGate();
+    return PaymentOwnershipGate(
+      paymentOwnerMode: profile.paymentOwnerMode,
+      paymentDemoMode: profile.paymentDemoMode,
+      mollieConnected: profile.mollieConnected,
+    );
   }
+
+  ResolvedPaymentMethods get _resolvedPaymentMethods =>
+      PaymentMethodResolver.resolve(
+        countryCode: 'BE',
+        ownershipGate: _paymentOwnershipGate,
+        languageCode: widget.language.name,
+      );
+
+  List<String> get _visiblePaymentMethodIds => _resolvedPaymentMethods.ids;
+
+  String? get _onlinePaymentsBlockedMessage =>
+      _resolvedPaymentMethods.onlinePaymentsBlockedMessage;
 
   String _paymentChoiceTitle() {
     return _localizedText(
@@ -5041,6 +5051,18 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
                     height: 1.2,
                   ),
                 ),
+                if (_onlinePaymentsBlockedMessage != null) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    _onlinePaymentsBlockedMessage!,
+                    style: TextStyle(
+                      color: _textMuted.withOpacity(0.95),
+                      fontSize: 11,
+                      height: 1.25,
+                      fontStyle: FontStyle.italic,
+                    ),
+                  ),
+                ],
                 const SizedBox(height: 8),
                 for (var i = 0; i < _visiblePaymentMethodIds.length; i++) ...[
                   if (i > 0) const SizedBox(height: 7),

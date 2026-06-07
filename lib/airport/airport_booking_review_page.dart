@@ -6,6 +6,7 @@ import 'package:fluxidi_tracking/customer_bookings_store.dart';
 import 'package:fluxidi_tracking/customer_profile_store.dart';
 import 'package:fluxidi_tracking/customer_theme_palette.dart';
 import 'package:fluxidi_tracking/customer_theme_store.dart';
+import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/payment/payment_booking_selection.dart';
 import 'package:fluxidi_tracking/payment/payment_method_catalog.dart';
@@ -182,19 +183,27 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
     return nameToCode[name] ?? PaymentCountryCodes.belgium;
   }
 
-  List<String> get _visiblePaymentMethodIds {
-    const manualInCar = PaymentMethodIds.inVehicleCard;
-    final onlineIds = PaymentMethodResolver.resolveIds(
-      countryCode: _paymentCountryCodeForResolver(),
+  PaymentOwnershipGate get _paymentOwnershipGate {
+    final profile = localBackendBusinessProfileNotifier.value;
+    if (profile == null) return const PaymentOwnershipGate();
+    return PaymentOwnershipGate(
+      paymentOwnerMode: profile.paymentOwnerMode,
+      paymentDemoMode: profile.paymentDemoMode,
+      mollieConnected: profile.mollieConnected,
     );
-    final seen = <String>{manualInCar};
-    final out = <String>[manualInCar];
-    for (final id in onlineIds) {
-      if (id == manualInCar || !seen.add(id)) continue;
-      out.add(id);
-    }
-    return out;
   }
+
+  ResolvedPaymentMethods get _resolvedPaymentMethods =>
+      PaymentMethodResolver.resolve(
+        countryCode: _paymentCountryCodeForResolver(),
+        ownershipGate: _paymentOwnershipGate,
+        languageCode: widget.languageCode,
+      );
+
+  List<String> get _visiblePaymentMethodIds => _resolvedPaymentMethods.ids;
+
+  String? get _onlinePaymentsBlockedMessage =>
+      _resolvedPaymentMethods.onlinePaymentsBlockedMessage;
 
   String _paymentMethodLabel(String methodId) {
     switch (normalizePaymentMethodId(methodId)) {
@@ -1619,6 +1628,18 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
                           height: 1.2,
                         ),
                       ),
+                      if (_onlinePaymentsBlockedMessage != null) ...[
+                        const SizedBox(height: 8),
+                        Text(
+                          _onlinePaymentsBlockedMessage!,
+                          style: TextStyle(
+                            color: _textMuted,
+                            fontSize: 11,
+                            height: 1.25,
+                            fontStyle: FontStyle.italic,
+                          ),
+                        ),
+                      ],
                       const SizedBox(height: 8),
                       for (
                         var i = 0;

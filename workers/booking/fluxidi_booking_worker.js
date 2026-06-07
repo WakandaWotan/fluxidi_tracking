@@ -17515,12 +17515,36 @@ GET /oauth/callback
       // Create payment (PENDING booking saved in KV)
       if (url.pathname === "/pay/create" && request.method === "POST") {
         const body = await safeJson(request);
-        const paymentScope = resolveExplicitBookingRequestScope({
-          request,
+        const requestedPublicPartnerId = _extractRequestedPublicPartnerId({
           url,
           body,
-          allowLegacyFallback: false,
         });
+        let routedPublicPartner = null;
+        let paymentScope = null;
+        if (requestedPublicPartnerId) {
+          routedPublicPartner = await resolvePublicPartnerBookingScope(
+            env,
+            requestedPublicPartnerId,
+          );
+          if (!routedPublicPartner?.ok) {
+            return json(
+              { ok: false, error: routedPublicPartner?.error || "invalid public partner" },
+              routedPublicPartner?.status || 400,
+            );
+          }
+          paymentScope = {
+            tenant_id: routedPublicPartner.tenant_id,
+            company_id: routedPublicPartner.company_id,
+            hasScope: true,
+          };
+        } else {
+          paymentScope = resolveExplicitBookingRequestScope({
+            request,
+            url,
+            body,
+            allowLegacyFallback: false,
+          });
+        }
         if (!paymentScope?.hasScope) {
           return json(
             paymentScope?.error === "tenant_scope_conflict" ? scopeConflictError() : missingTenantScopeError(),
@@ -17533,8 +17557,23 @@ GET /oauth/callback
           tenantId: paymentScope.tenant_id,
           company_id: paymentScope.company_id,
           companyId: paymentScope.company_id,
+          ...(routedPublicPartner?.ok
+            ? {
+                __trusted_tenant_context: {
+                  tenant_id: routedPublicPartner.tenant_id,
+                  company_id: routedPublicPartner.company_id,
+                  trusted_source: "public_partner_route",
+                },
+                public_partner_id: routedPublicPartner.partner_id,
+                publicPartnerId: routedPublicPartner.partner_id,
+                partner_id: routedPublicPartner.partner_id,
+                partnerId: routedPublicPartner.partner_id,
+              }
+            : {}),
         };
-        const out = await mollieCreatePayment(normalizedBody, env, request);
+        const out = await mollieCreatePayment(normalizedBody, env, request, {
+          trustedPublicPartnerScope: routedPublicPartner,
+        });
         return json(out, out.ok ? 200 : 400);
       }
 
@@ -18054,6 +18093,11 @@ GET /oauth/callback
           companyId: requestScope.company_id,
           ...(routedPublicPartner?.ok
             ? {
+                __trusted_tenant_context: {
+                  tenant_id: routedPublicPartner.tenant_id,
+                  company_id: routedPublicPartner.company_id,
+                  trusted_source: "public_partner_route",
+                },
                 public_partner_id: routedPublicPartner.partner_id,
                 publicPartnerId: routedPublicPartner.partner_id,
                 partner_id: routedPublicPartner.partner_id,
@@ -18061,7 +18105,9 @@ GET /oauth/callback
               }
             : {}),
         };
-        const out = await handleBooking(normalizedBody, env, request);
+        const out = await handleBooking(normalizedBody, env, request, {
+          trustedPublicPartnerScope: routedPublicPartner,
+        });
         // Build tag helps verify correct deployment
         if (out && typeof out === "object") out.build = "v15-2026-01-20-gcal-hardfix";
         const statusCode = out?.ok === true
@@ -27560,6 +27606,220 @@ function isCentralDemoAllowedForCompany(env, tenantId, companyId, keyKind, devLi
   return false;
 }
 
+function _readTrustedTenantContextFromPayload(payload) {
+  const trusted =
+    payload &&
+    typeof payload === "object" &&
+    payload.__trusted_tenant_context &&
+    typeof payload.__trusted_tenant_context === "object" &&
+    !Array.isArray(payload.__trusted_tenant_context)
+      ? payload.__trusted_tenant_context
+      : null;
+  if (!trusted) return null;
+  const tenantId = safeStr(trusted.tenant_id ?? trusted.tenantId, 80);
+  const companyId = safeStr(trusted.company_id ?? trusted.companyId, 80);
+  if (!tenantId || !companyId) return null;
+  return {
+    tenant_id: tenantId,
+    company_id: companyId,
+    trusted_source: safeStr(trusted.trusted_source ?? trusted.source, 64) || "trusted_gateway_context",
+  };
+}
+
+function _paymentScopeMatchesRequested(trustedScope, requestedScope) {
+  const tenantId = safeStr(requestedScope?.tenant_id ?? requestedScope?.tenantId, 80);
+  const companyId = safeStr(requestedScope?.company_id ?? requestedScope?.companyId, 80);
+  return (
+    !!tenantId &&
+    !!companyId &&
+    trustedScope?.tenant_id === tenantId &&
+    trustedScope?.company_id === companyId
+  );
+}
+
+async function assertTrustedOnlinePaymentScope(env, request, requestedScope, options = {}) {
+  const tenantId = safeStr(requestedScope?.tenant_id ?? requestedScope?.tenantId, 80);
+  const companyId = safeStr(requestedScope?.company_id ?? requestedScope?.companyId, 80);
+  const scopeMask = _bookingIntentScopeMask(requestedScope || {});
+  const body = options.body && typeof options.body === "object" ? options.body : {};
+  const url = options.url || (request?.url ? new URL(request.url) : null);
+
+  if (!tenantId || !companyId) {
+    console.log(
+      `[PAYMENT_SCOPE][BLOCK] tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} reason=missing_scope`,
+    );
+    return { ok: false, error: "online_payment_scope_not_trusted", trusted_source: null };
+  }
+
+  if (hasValidAdminToken(request, url, env)) {
+    console.log(
+      `[PAYMENT_SCOPE][TRUSTED] tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} source=admin_session`,
+    );
+    return {
+      ok: true,
+      trusted_source: "admin_session",
+      tenant_id: tenantId,
+      company_id: companyId,
+    };
+  }
+
+  const companySession = await _loadCompanySessionFromRequest(request, env);
+  if (companySession && _paymentScopeMatchesRequested(companySession, requestedScope)) {
+    console.log(
+      `[PAYMENT_SCOPE][TRUSTED] tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} source=company_session`,
+    );
+    return {
+      ok: true,
+      trusted_source: "company_session",
+      tenant_id: tenantId,
+      company_id: companyId,
+    };
+  }
+
+  const driverSession = await _loadPublicDriverSessionFromRequest(request, env);
+  if (driverSession && _paymentScopeMatchesRequested(driverSession, requestedScope)) {
+    console.log(
+      `[PAYMENT_SCOPE][TRUSTED] tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} source=driver_session`,
+    );
+    return {
+      ok: true,
+      trusted_source: "driver_session",
+      tenant_id: tenantId,
+      company_id: companyId,
+    };
+  }
+
+  const trustedPublicPartner = options.trustedPublicPartnerScope;
+  if (trustedPublicPartner?.ok && _paymentScopeMatchesRequested(trustedPublicPartner, requestedScope)) {
+    console.log(
+      `[PAYMENT_SCOPE][TRUSTED] tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} source=public_partner_route`,
+    );
+    return {
+      ok: true,
+      trusted_source: "public_partner_route",
+      tenant_id: tenantId,
+      company_id: companyId,
+    };
+  }
+
+  const partnerId = _extractRequestedPublicPartnerId({ url, body });
+  if (partnerId) {
+    const resolvedPartner = await resolvePublicPartnerBookingScope(env, partnerId);
+    if (resolvedPartner?.ok && _paymentScopeMatchesRequested(resolvedPartner, requestedScope)) {
+      console.log(
+        `[PAYMENT_SCOPE][TRUSTED] tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} source=public_partner_resolve`,
+      );
+      return {
+        ok: true,
+        trusted_source: "public_partner_resolve",
+        tenant_id: tenantId,
+        company_id: companyId,
+      };
+    }
+  }
+
+  const trustedGateway = _readTrustedTenantContextFromPayload(body);
+  if (trustedGateway && _paymentScopeMatchesRequested(trustedGateway, requestedScope)) {
+    console.log(
+      `[PAYMENT_SCOPE][TRUSTED] tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} source=${trustedGateway.trusted_source || "trusted_gateway_context"}`,
+    );
+    return {
+      ok: true,
+      trusted_source: trustedGateway.trusted_source || "trusted_gateway_context",
+      tenant_id: tenantId,
+      company_id: companyId,
+    };
+  }
+
+  const companyCodeRaw = safeStr(
+    body?.company_code ?? body?.companyCode ?? body?.public_company_code ?? body?.publicCompanyCode,
+    80,
+  );
+  if (companyCodeRaw) {
+    const codeValidation = validatePublicCompanyCode(companyCodeRaw);
+    if (codeValidation.ok) {
+      const linkRecord = await loadCompanyLinkRecordByCode(env, codeValidation.code);
+      if (linkRecord && _paymentScopeMatchesRequested(linkRecord, requestedScope)) {
+        console.log(
+          `[PAYMENT_SCOPE][TRUSTED] tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} source=public_company_code`,
+        );
+        return {
+          ok: true,
+          trusted_source: "public_company_code",
+          tenant_id: tenantId,
+          company_id: companyId,
+        };
+      }
+    }
+  }
+
+  let businessProfile = null;
+  try {
+    businessProfile = await loadBusinessProfile(env, {
+      tenant_id: tenantId,
+      company_id: companyId,
+    });
+  } catch (_) {
+    businessProfile = null;
+  }
+  businessProfile = normalizeBusinessProfile(businessProfile || DEFAULT_BUSINESS_PROFILE);
+  const ownerMode = normalizePaymentOwnerMode(businessProfile.payment_owner_mode);
+  const mollieConfig = getMollieConfig(env);
+  const devLike = isDevelopmentLikeMollieEnv(mollieRuntimeEnv(env));
+  if (ownerMode === "fluxidi_central_demo" && mollieConfig.ok) {
+    const allowed = isCentralDemoAllowedForCompany(
+      env,
+      tenantId,
+      companyId,
+      mollieConfig.keyKind,
+      devLike,
+    );
+    if (allowed) {
+      console.log(
+        `[PAYMENT_SCOPE][TRUSTED] tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} source=demo_allowlist keyKind=${mollieConfig.keyKind}`,
+      );
+      return {
+        ok: true,
+        trusted_source: "demo_allowlist",
+        tenant_id: tenantId,
+        company_id: companyId,
+      };
+    }
+  }
+
+  console.log(
+    `[PAYMENT_SCOPE][BLOCK] tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} reason=no_trusted_source ownerMode=${ownerMode}`,
+  );
+  return { ok: false, error: "online_payment_scope_not_trusted", trusted_source: null };
+}
+
+function _validateMollieWebhookMetadataScope(stored, metadataTenantId, metadataCompanyId) {
+  const storedScope = normalizeFleetTenantScope(resolveBookingTenantScopeFromRecord(stored || {}));
+  const storedTenantId = safeStr(storedScope?.tenant_id, 80);
+  const storedCompanyId = safeStr(storedScope?.company_id, 80);
+  const metaTenantId = safeStr(metadataTenantId, 80);
+  const metaCompanyId = safeStr(metadataCompanyId, 80);
+
+  if (metaTenantId && metaCompanyId) {
+    if (!storedTenantId || !storedCompanyId) {
+      return { ok: false, reason: "stored_scope_missing" };
+    }
+    if (metaTenantId !== storedTenantId || metaCompanyId !== storedCompanyId) {
+      return { ok: false, reason: "metadata_scope_mismatch" };
+    }
+    return { ok: true, reason: "metadata_scope_match" };
+  }
+
+  const storedOwnership = readPaymentOwnershipFromRecord(stored || {});
+  if (storedOwnership.payment_owner_mode === "fluxidi_central_demo") {
+    return { ok: true, reason: "legacy_demo_metadata_missing" };
+  }
+  if (storedOwnership.payment_credential_source === "fluxidi_central_demo") {
+    return { ok: true, reason: "legacy_demo_credential_missing_metadata" };
+  }
+  return { ok: false, reason: "metadata_scope_missing" };
+}
+
 function readPaymentOwnershipFromRecord(rec) {
   const source = rec && typeof rec === "object" ? rec : {};
   const paymentDemoRaw = source.payment_demo_mode ?? source.paymentDemoMode;
@@ -27624,26 +27884,39 @@ async function resolveRideMollieCredentials(env, tenantScope = {}, options = {})
   }
   businessProfile = normalizeBusinessProfile(businessProfile || DEFAULT_BUSINESS_PROFILE);
 
-  const paymentOwnerMode = normalizePaymentOwnerMode(
+  const storedCredentialSource = safeStr(
+    options.paymentCredentialSource ?? options.payment_credential_source,
+    40,
+  ).toLowerCase() || null;
+  let paymentOwnerMode = normalizePaymentOwnerMode(
     options.paymentOwnerMode ??
       options.payment_owner_mode ??
       businessProfile.payment_owner_mode,
   );
+  if (storedCredentialSource === "company_mollie") {
+    paymentOwnerMode = "company_mollie";
+  } else if (storedCredentialSource === "manual_only") {
+    paymentOwnerMode = "manual_only";
+  } else if (storedCredentialSource === "fluxidi_central_demo") {
+    paymentOwnerMode = "fluxidi_central_demo";
+  }
   const paymentDemoMode =
     typeof options.paymentDemoMode === "boolean"
       ? options.paymentDemoMode
       : (typeof options.payment_demo_mode === "boolean"
         ? options.payment_demo_mode
         : businessProfile.payment_demo_mode === true);
+  const scopeMask = _bookingIntentScopeMask({ tenant_id: tenantId, company_id: companyId });
 
   if (paymentOwnerMode === "manual_only") {
     console.log(
-      `[MOLLIE_CREDENTIALS][BLOCK] tenant=${_bookingIntentScopeMask({ tenant_id: tenantId, company_id: companyId }).tenant || "-"} company=${_bookingIntentScopeMask({ tenant_id: tenantId, company_id: companyId }).company || "-"} mode=${paymentOwnerMode} reason=online_payments_disabled_for_company`,
+      `[MOLLIE_CREDENTIALS][BLOCK] tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} mode=${paymentOwnerMode} credentialSource=${storedCredentialSource || "-"} reason=online_payments_disabled_for_company`,
     );
     return {
       ok: false,
       error: "online_payments_disabled_for_company",
       payment_owner_mode: paymentOwnerMode,
+      payment_credential_source: storedCredentialSource || "manual_only",
       payment_demo_mode: paymentDemoMode,
     };
   }
@@ -27651,14 +27924,30 @@ async function resolveRideMollieCredentials(env, tenantScope = {}, options = {})
   if (paymentOwnerMode === "company_mollie") {
     const connected = boolish(businessProfile.mollie_connected);
     const tokenRef = safeStr(businessProfile.mollie_token_ref, 160);
+    const errorCode = connected && tokenRef
+      ? "company_mollie_credentials_unavailable"
+      : "company_mollie_not_connected";
     console.log(
-      `[MOLLIE_CREDENTIALS][BLOCK] tenant=${_bookingIntentScopeMask({ tenant_id: tenantId, company_id: companyId }).tenant || "-"} company=${_bookingIntentScopeMask({ tenant_id: tenantId, company_id: companyId }).company || "-"} mode=${paymentOwnerMode} connected=${connected} hasTokenRef=${!!tokenRef} reason=company_mollie_not_connected`,
+      `[MOLLIE_CREDENTIALS][BLOCK] tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} mode=${paymentOwnerMode} credentialSource=${storedCredentialSource || "company_mollie"} connected=${connected} hasTokenRef=${!!tokenRef} reason=${errorCode}`,
     );
     return {
       ok: false,
-      error: "company_mollie_not_connected",
+      error: errorCode,
       payment_owner_mode: paymentOwnerMode,
       payment_credential_source: "company_mollie",
+      payment_demo_mode: paymentDemoMode,
+    };
+  }
+
+  if (paymentOwnerMode !== "fluxidi_central_demo") {
+    console.log(
+      `[MOLLIE_CREDENTIALS][BLOCK] tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} mode=${paymentOwnerMode} credentialSource=${storedCredentialSource || "-"} reason=online_payments_disabled_for_company`,
+    );
+    return {
+      ok: false,
+      error: "online_payments_disabled_for_company",
+      payment_owner_mode: paymentOwnerMode,
+      payment_credential_source: storedCredentialSource,
       payment_demo_mode: paymentDemoMode,
     };
   }
@@ -27668,6 +27957,7 @@ async function resolveRideMollieCredentials(env, tenantScope = {}, options = {})
     return {
       ...mollieConfig,
       payment_owner_mode: paymentOwnerMode,
+      payment_credential_source: "fluxidi_central_demo",
       payment_demo_mode: paymentDemoMode,
     };
   }
@@ -27682,7 +27972,7 @@ async function resolveRideMollieCredentials(env, tenantScope = {}, options = {})
   );
   if (!allowed) {
     console.log(
-      `[MOLLIE_CREDENTIALS][BLOCK] tenant=${_bookingIntentScopeMask({ tenant_id: tenantId, company_id: companyId }).tenant || "-"} company=${_bookingIntentScopeMask({ tenant_id: tenantId, company_id: companyId }).company || "-"} mode=${paymentOwnerMode} keyKind=${mollieConfig.keyKind} env=${mollieRuntimeEnv(env) || "unset"} reason=central_mollie_not_allowed_for_company`,
+      `[MOLLIE_CREDENTIALS][BLOCK] tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} mode=${paymentOwnerMode} credentialSource=${storedCredentialSource || "fluxidi_central_demo"} keyKind=${mollieConfig.keyKind} env=${mollieRuntimeEnv(env) || "unset"} reason=central_mollie_not_allowed_for_company`,
     );
     return {
       ok: false,
@@ -27694,7 +27984,7 @@ async function resolveRideMollieCredentials(env, tenantScope = {}, options = {})
   }
 
   console.log(
-    `[MOLLIE_CREDENTIALS][ALLOW] tenant=${_bookingIntentScopeMask({ tenant_id: tenantId, company_id: companyId }).tenant || "-"} company=${_bookingIntentScopeMask({ tenant_id: tenantId, company_id: companyId }).company || "-"} mode=${paymentOwnerMode} source=fluxidi_central_demo keyKind=${mollieConfig.keyKind} demo=${paymentDemoMode === true}`,
+    `[MOLLIE_CREDENTIALS][ALLOW] tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} mode=${paymentOwnerMode} credentialSource=${storedCredentialSource || "fluxidi_central_demo"} source=fluxidi_central_demo keyKind=${mollieConfig.keyKind} demo=${paymentDemoMode === true}`,
   );
 
   return {
@@ -30793,7 +31083,7 @@ function maskEmailForLog(value) {
 }
 
 
-async function mollieCreatePayment(payload, env, request) {
+async function mollieCreatePayment(payload, env, request, options = {}) {
   try {
     if (!env.BOOKING_KV) {
       return { ok: false, error: "Missing BOOKING_KV binding in Cloudflare." };
@@ -30858,6 +31148,22 @@ async function mollieCreatePayment(payload, env, request) {
       return requestedScope?.error === "tenant_scope_conflict"
         ? scopeConflictError()
         : missingTenantScopeError();
+    }
+    const trustedPaymentScope = await assertTrustedOnlinePaymentScope(
+      env,
+      request,
+      requestedScope,
+      {
+        url: new URL(request.url),
+        body: payload,
+        trustedPublicPartnerScope: options.trustedPublicPartnerScope || null,
+      },
+    );
+    if (!trustedPaymentScope?.ok) {
+      return {
+        ok: false,
+        error: trustedPaymentScope?.error || "online_payment_scope_not_trusted",
+      };
     }
     const paymentTenantId = safeStr(requestedScope.tenant_id, 80);
     const paymentCompanyId = safeStr(requestedScope.company_id, 80);
@@ -31227,16 +31533,43 @@ async function mollieWebhook(request, env) {
     const bookingId = safeStr(p.data?.metadata?.bookingId);
     const metadataTenantId = safeStr(p.data?.metadata?.tenantId ?? p.data?.metadata?.tenant_id, 80);
     const metadataCompanyId = safeStr(p.data?.metadata?.companyId ?? p.data?.metadata?.company_id, 80);
-    let rideCredentials = null;
-    if (metadataTenantId && metadataCompanyId) {
+
+    if (!bookingId) {
+      return { ok: true, received: true, processed: false, reason: "No bookingId in Mollie metadata" };
+    }
+
+    const key = `booking:${bookingId}`;
+    const stored = (await env.BOOKING_KV.get(key, "json")) || {};
+    const webhookScopeValidation = _validateMollieWebhookMetadataScope(
+      stored,
+      metadataTenantId,
+      metadataCompanyId,
+    );
+    if (!webhookScopeValidation.ok) {
+      const storedScopeMask = _bookingIntentScopeMask(resolveBookingTenantScopeFromRecord(stored));
+      console.log(
+        `[MOLLIE_WEBHOOK][SCOPE_MISMATCH] booking=${_bookingIntentMask(bookingId)} metaTenant=${_bookingIntentScopeMask({ tenant_id: metadataTenantId }).tenant || "-"} metaCompany=${_bookingIntentScopeMask({ tenant_id: metadataTenantId, company_id: metadataCompanyId }).company || "-"} storedTenant=${storedScopeMask.tenant || "-"} storedCompany=${storedScopeMask.company || "-"} reason=${webhookScopeValidation.reason || "scope_mismatch"}`,
+      );
+      return {
+        ok: true,
+        received: true,
+        processed: false,
+        reason: "metadata_scope_mismatch",
+        bookingId,
+      };
+    }
+
+    let rideCredentials = await resolveRideMollieCredentialsForPaymentRecord(env, stored);
+    if (!rideCredentials?.ok && metadataTenantId && metadataCompanyId) {
       rideCredentials = await resolveRideMollieCredentials(env, {
         tenant_id: metadataTenantId,
         company_id: metadataCompanyId,
         hasScope: true,
+      }, {
+        paymentOwnerMode: readPaymentOwnershipFromRecord(stored).payment_owner_mode,
+        paymentCredentialSource: readPaymentOwnershipFromRecord(stored).payment_credential_source,
+        paymentDemoMode: readPaymentOwnershipFromRecord(stored).payment_demo_mode,
       });
-    } else if (bookingId) {
-      const bootstrapStored = (await env.BOOKING_KV.get(`booking:${bookingId}`, "json")) || {};
-      rideCredentials = await resolveRideMollieCredentialsForPaymentRecord(env, bootstrapStored);
     }
     if (rideCredentials?.ok) {
       p = await mollieFetchPayment(mollieId, env, rideCredentials);
@@ -31246,13 +31579,6 @@ async function mollieWebhook(request, env) {
     }
 
     const mollieStatus = safeStr(p.data?.status);
-
-    if (!bookingId) {
-      return { ok: true, received: true, processed: false, reason: "No bookingId in Mollie metadata" };
-    }
-
-    const key = `booking:${bookingId}`;
-    const stored = (await env.BOOKING_KV.get(key, "json")) || {};
 
     // Persist latest Mollie status
     Object.assign(stored, normalizedPaymentFields({
@@ -31801,7 +32127,7 @@ function readMollieCheckoutUrlFromPaymentResult(pay) {
   );
 }
 
-async function handleBooking(payload, env, request) {
+async function handleBooking(payload, env, request, options = {}) {
   let allocatorReservationAcquired = false;
   let bookingPersisted = false;
   let allocatorReleaseBookingId = "";
@@ -33224,7 +33550,10 @@ async function handleBooking(payload, env, request) {
               vat_amount: totalPricing.price_vat,
             },
             env,
-            request
+            request,
+            {
+              trustedPublicPartnerScope: options?.trustedPublicPartnerScope || null,
+            },
           );
           const checkoutUrl = readMollieCheckoutUrlFromPaymentResult(pay);
           if (pay?.ok !== true || !checkoutUrl) {
@@ -33865,7 +34194,10 @@ Retour route: ${return_from || to} → ${return_to || from}`,
           vat_amount: totalPricing.price_vat,
         },
         env,
-        request
+        request,
+        {
+          trustedPublicPartnerScope: options?.trustedPublicPartnerScope || null,
+        },
       );
       const checkoutUrl = readMollieCheckoutUrlFromPaymentResult(pay);
       if (pay?.ok !== true || !checkoutUrl) {
@@ -35465,6 +35797,12 @@ async function _trackingSyncMaterializeBookingFinanceKpiBestEffort({
   source = "booking_payment_update",
 } = {}) {
   if (!env?.FLUXIDI_TRACKING || !scope?.tenant_id || !scope?.company_id) return;
+  if (_bookingListIsPaymentShadowRecord(rec, bookingId)) {
+    console.log(
+      `[BOOKING_FINANCE][SKIP_PAYMENT_SHADOW] booking=${_bookingIntentMask(bookingId)}`,
+    );
+    return;
+  }
   const nextRaw = _trackingSyncDeriveBookingFinanceContribution(bookingId, rec);
   if (!nextRaw?.booking_id) return;
   console.log(
@@ -47509,6 +47847,12 @@ async function _markDashboardBookingsKpiAggregateDirtyBestEffort(env, scope, { r
 async function upsertDashboardBookingsKpiProjectionBestEffort(env, bookingId, rec, scopeHint = null) {
   try {
     if (!env?.BOOKING_KV) return { ok: false, reason: "missing_kv" };
+    if (_bookingListIsPaymentShadowRecord(rec, bookingId)) {
+      console.log(
+        `[DASHBOARD_KPI][SKIP_PAYMENT_SHADOW] booking=${_bookingIntentMask(bookingId)}`,
+      );
+      return { ok: false, skipped: true, reason: "payment_shadow" };
+    }
     const recordScope = resolveBookingTenantScopeFromRecord(rec);
     const scope = normalizeFleetTenantScope(scopeHint?.hasScope ? scopeHint : recordScope);
     if (!scope?.hasScope) return { ok: false, skipped: true, reason: "missing_scope" };
@@ -48587,6 +48931,11 @@ async function resumeBookingCheckoutAuthoritative(
     };
   }
 
+  resumePayload.__trusted_tenant_context = {
+    tenant_id: tenantScope.tenant_id,
+    company_id: tenantScope.company_id,
+    trusted_source: "verified_booking_resume",
+  };
   const pay = await mollieCreatePayment(resumePayload, env, request);
   const checkoutUrl = readMollieCheckoutUrlFromPaymentResult(pay);
   if (pay?.ok !== true || !checkoutUrl) {
