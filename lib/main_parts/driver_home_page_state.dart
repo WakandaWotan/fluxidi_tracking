@@ -563,6 +563,7 @@ class _DriverHomePageState extends State<DriverHomePage>
 
   void _onDriverThemeSourceChanged() {
     if (!mounted) return;
+    chauffeurShellFrameThemeNotifier.value = _activeDriverThemeListenable.value;
     setState(() {});
   }
 
@@ -946,6 +947,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     );
     appLanguageNotifier.addListener(_onAppLanguageChanged);
     _activeDriverThemeListenable.addListener(_onDriverThemeSourceChanged);
+    chauffeurShellFrameThemeNotifier.value = _activeDriverThemeListenable.value;
     fluxidiPendingPaymentNotifier.addListener(_onPendingPaymentStatusChanged);
 
     _splashAnimCtrl = AnimationController(
@@ -1052,6 +1054,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     _setNavigationWakelock(false);
     appLanguageNotifier.removeListener(_onAppLanguageChanged);
     _activeDriverThemeListenable.removeListener(_onDriverThemeSourceChanged);
+    chauffeurShellFrameThemeNotifier.value = null;
     fluxidiPendingPaymentNotifier.removeListener(
       _onPendingPaymentStatusChanged,
     );
@@ -10303,9 +10306,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         Expanded(
           child: card(
             icon: Icons.schedule_rounded,
-            accentColor: isMidnightBlue
-                ? _midnightBlueAccent()
-                : const Color(0xFFFFB54D),
+            accentColor: const Color(0xFFFFB54D),
             label: _tr(
               nl: 'Volgende',
               en: 'Next',

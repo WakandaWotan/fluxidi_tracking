@@ -9,6 +9,10 @@ import 'driver_theme_palette.dart';
 final ValueNotifier<DriverThemeVariant> driverThemeNotifier =
     driverAppThemeNotifier;
 
+/// Active chauffeur shell theme while [DriverHomePage] is mounted; otherwise null.
+final ValueNotifier<DriverThemeVariant?> chauffeurShellFrameThemeNotifier =
+    ValueNotifier<DriverThemeVariant?>(null);
+
 Future<void> loadDriverThemePreference() async {
   await loadDriverAppThemePreference();
 }
