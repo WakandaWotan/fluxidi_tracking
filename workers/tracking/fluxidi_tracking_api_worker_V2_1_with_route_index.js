@@ -3671,11 +3671,11 @@ async function handleDevDashboardKpisReset(req, url, env, origin, { forceDryRun 
 }
 
 async function handleTripsHistory(req, url, env, origin) {
-  requireAdmin(req, url, env);
-
   const requiredScope = parseRequiredTenantCompanyScope(req, url, null, { returnResponse: true, origin });
   if (requiredScope instanceof Response) return requiredScope;
   const scope = requiredScope;
+  const auth = await requireAdminOrCompanySessionForScope(req, url, env, scope, origin);
+  if (!auth.ok) return auth.response;
   const tenant_id = scope.tenant_id;
   const company_id = scope.company_id;
   const driver_id = safeStr(url.searchParams.get("driver_id"), 96);

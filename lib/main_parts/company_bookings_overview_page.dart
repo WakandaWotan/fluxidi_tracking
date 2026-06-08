@@ -1192,6 +1192,11 @@ class _CompanyBookingsOverviewPageState
     return headers;
   }
 
+  Future<Map<String, String>> _companyOwnerHeaders() async {
+    final auth = await resolveCompanyOwnerAuthHeaders();
+    return auth.headers;
+  }
+
   bool _isArchivingBooking(String bookingId) {
     return _archivingBookingIds.contains(bookingId);
   }
@@ -1462,7 +1467,7 @@ class _CompanyBookingsOverviewPageState
         },
       );
       final res = await http
-          .get(uri, headers: _adminHeaders())
+          .get(uri, headers: await _companyOwnerHeaders())
           .timeout(const Duration(seconds: 12));
       dynamic decoded;
       try {

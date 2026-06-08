@@ -1,12 +1,8 @@
 part of '../main.dart';
 
-Map<String, String> _trackingOverlayHeaders() {
-  final headers = <String, String>{};
-  final token = kAdminToken.trim();
-  if (token.isNotEmpty) {
-    headers['x-admin-token'] = token;
-  }
-  return headers;
+Future<Map<String, String>> _trackingOverlayHeaders() async {
+  final auth = await resolveCompanyOwnerAuthHeaders();
+  return auth.headers;
 }
 
 bool _isPaidTrackingPaymentToken(String? raw) {
@@ -581,7 +577,7 @@ Future<List<_TrackingTripPaymentEntry>> _fetchTrackingOverlayTrips({
   ).replace(queryParameters: scoped);
   try {
     final res = await http
-        .get(uri, headers: _trackingOverlayHeaders())
+        .get(uri, headers: await _trackingOverlayHeaders())
         .timeout(const Duration(seconds: 10));
     if (res.statusCode != 200) {
       debugPrint(

@@ -1089,6 +1089,11 @@ class _DriverHomePageState extends State<DriverHomePage>
     return h;
   }
 
+  Future<Map<String, String>> _companyOwnerHeaders() async {
+    final auth = await resolveCompanyOwnerAuthHeaders();
+    return auth.headers;
+  }
+
   void _startBookingPolling({required String reason}) {
     if (_liveRideActive) {
       _stopBookingPolling(reason: 'tracking_started');
@@ -8621,8 +8626,9 @@ class _DriverHomePageState extends State<DriverHomePage>
         '&driver_id=${Uri.encodeQueryComponent(driverId)}'
         '&limit=200',
       );
+      final historyHeaders = await _companyOwnerHeaders();
       final res = await http
-          .get(uri, headers: _headers(admin: true))
+          .get(uri, headers: historyHeaders)
           .timeout(const Duration(seconds: 10));
 
       if (res.statusCode != 200) {
@@ -9848,9 +9854,10 @@ class _DriverHomePageState extends State<DriverHomePage>
                               ? Icon(Icons.check_rounded, color: iconAccent)
                               : null,
                           onTap: () async {
+                            final navigator = Navigator.of(ctx);
                             await saveDriverAppThemePreference(variant);
                             if (!mounted) return;
-                            Navigator.of(ctx).pop();
+                            navigator.pop();
                             _toast(
                               _tr(
                                 nl: 'Persoonlijk thema opgeslagen',
@@ -14894,7 +14901,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     _openTripHistoryFromDashboard();
   }
 
-  void _openTripHistoryFromDashboard() {
+  Future<void> _openTripHistoryFromDashboard() async {
     if (!_canAccessDriverOpsScreens()) {
       _denyRoleAccess();
       return;
@@ -14943,6 +14950,8 @@ class _DriverHomePageState extends State<DriverHomePage>
       );
       return;
     }
+    final historyHeaders = await _companyOwnerHeaders();
+    if (!mounted) return;
     unawaited(
       Navigator.of(context)
           .push(
@@ -14952,7 +14961,7 @@ class _DriverHomePageState extends State<DriverHomePage>
                 tenantId: strictScope.tenantId,
                 companyId: strictScope.companyId,
                 driverId: kDriverId,
-                headers: _headers(admin: true),
+                headers: historyHeaders,
                 bookingDetailsById: bookingDetailsById,
               ),
             ),
