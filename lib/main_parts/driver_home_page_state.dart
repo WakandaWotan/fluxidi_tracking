@@ -545,6 +545,118 @@ class _DriverHomePageState extends State<DriverHomePage>
   bool get kIsWindows => !kIsWeb && Platform.isWindows;
   bool _isAssetRef(String v) => v.trim().toLowerCase().startsWith('assets/');
 
+  String _maskCompanyIdForBrandLog(String? value) {
+    final text = (value ?? '').trim();
+    if (text.isEmpty) return '—';
+    if (text.length <= 6) return '…${text.substring(text.length - 1)}';
+    return '${text.substring(0, 4)}…${text.substring(text.length - 4)}';
+  }
+
+  String _activeCompanyIdForBrand() {
+    for (final candidate in <String?>[
+      companyProfileNotifier.value?.companyId,
+      activeCompanySessionNotifier.value?.companyId,
+      resolvedCompanyId,
+    ]) {
+      final normalized = (candidate ?? '').trim();
+      if (normalized.isNotEmpty) return normalized;
+    }
+    return '';
+  }
+
+  String? _resolveDriverHomeBrandLogoRef({
+    required BusinessSettingsState businessSettings,
+    required ActiveDriverSession? session,
+  }) {
+    String? normalizeLogoRef(String? raw) {
+      final text = (raw ?? '').trim();
+      if (text.isEmpty) return null;
+      if (_isAssetRef(text)) return text;
+      final resolved = resolvePublicHttpsMediaUrl(text);
+      if (resolved.isNotEmpty) return resolved;
+      final lower = text.toLowerCase();
+      if (lower.startsWith('https://') || lower.startsWith('http://')) {
+        return text;
+      }
+      if (lower.startsWith('/public/media/') ||
+          lower.startsWith('public-media/')) {
+        return text;
+      }
+      if (kIsWeb) return null;
+      try {
+        if (File(text).existsSync()) return text;
+      } catch (_) {}
+      return null;
+    }
+
+    final isBusinessPreview = widget.openedFromBusinessHome;
+    final brandSource = isBusinessPreview
+        ? 'business_preview'
+        : 'standalone_driver';
+    final activeCompanyId = _activeCompanyIdForBrand();
+    final sessionCompanyId = (session?.companyId ?? session?.tenantId ?? '')
+        .trim();
+    final previewScope = _activeBusinessPreviewScope();
+    final brandCompanyId = isBusinessPreview
+        ? (previewScope?.companyId ?? activeCompanyId)
+        : sessionCompanyId;
+    final businessLocalLogo = normalizeLogoRef(businessSettings.logoAssetPath);
+    final sessionLogo = normalizeLogoRef(session?.companyLogoUrl);
+    final backendLogo = normalizeLogoRef(
+      localBackendBusinessProfileNotifier.value?.publicLogoUrl,
+    );
+
+    String logoSource = 'default';
+    String? selected;
+
+    if (isBusinessPreview) {
+      if (businessLocalLogo != null &&
+          brandCompanyId.isNotEmpty &&
+          activeCompanyId == brandCompanyId) {
+        selected = businessLocalLogo;
+        logoSource = 'business_profile';
+      } else if (sessionLogo != null) {
+        selected = sessionLogo;
+        logoSource = 'session';
+      } else if (backendLogo != null &&
+          brandCompanyId.isNotEmpty &&
+          activeCompanyId == brandCompanyId) {
+        selected = backendLogo;
+        logoSource = 'business_profile';
+      }
+    } else {
+      if (sessionLogo != null) {
+        selected = sessionLogo;
+        logoSource = 'session';
+      } else if (businessLocalLogo != null &&
+          sessionCompanyId.isNotEmpty &&
+          activeCompanyId == sessionCompanyId) {
+        selected = businessLocalLogo;
+        logoSource = 'business_profile';
+      } else if (backendLogo != null &&
+          sessionCompanyId.isNotEmpty &&
+          activeCompanyId == sessionCompanyId) {
+        selected = backendLogo;
+        logoSource = 'business_profile';
+      } else if (businessLocalLogo != null &&
+          sessionCompanyId.isNotEmpty &&
+          activeCompanyId.isNotEmpty &&
+          activeCompanyId != sessionCompanyId) {
+        logoSource = 'blocked_mismatch';
+      }
+    }
+
+    final resolvedRef = (selected ?? kFluxidiLogoAsset).trim();
+    final logoPresent =
+        logoSource != 'default' &&
+        logoSource != 'blocked_mismatch' &&
+        resolvedRef.isNotEmpty;
+    debugPrint(
+      '[DRIVER_BRAND][RESOLVE] source=$brandSource active_company=${_maskCompanyIdForBrandLog(activeCompanyId)} brand_company=${_maskCompanyIdForBrandLog(brandCompanyId)} logo=${logoPresent ? 'present' : 'missing'} logo_source=$logoSource',
+    );
+    return resolvedRef;
+  }
+
   void _setNavigationWakelock(bool enabled) {
     if (_navigationWakelockEnabled == enabled) return;
     _navigationWakelockEnabled = enabled;
@@ -572,15 +684,6 @@ class _DriverHomePageState extends State<DriverHomePage>
     BoxFit fit = BoxFit.contain,
     Widget? fallback,
   }) {
-    String? safeRemoteImageUrl(String? value) {
-      final text = (value ?? '').trim();
-      if (text.isEmpty) return null;
-      if (text.startsWith('https://') || text.startsWith('http://')) {
-        return text;
-      }
-      return null;
-    }
-
     bool isHttpImageRef(String value) {
       final lower = value.trim().toLowerCase();
       return lower.startsWith('https://') || lower.startsWith('http://');
@@ -598,41 +701,45 @@ class _DriverHomePageState extends State<DriverHomePage>
           );
     }
 
-    return ValueListenableBuilder<BusinessSettingsState>(
-      valueListenable: businessSettingsNotifier,
-      builder: (context, s, _) {
-        final localRef = s.logoAssetPath.trim();
-        final sessionLogoRef = safeRemoteImageUrl(
-          activeDriverSessionNotifier.value?.companyLogoUrl,
-        );
-        final ref = localRef.isNotEmpty
-            ? localRef
-            : (sessionLogoRef ?? kFluxidiLogoAsset);
-        if (_isAssetRef(ref)) {
-          return Image.asset(
-            ref,
-            height: height,
-            fit: fit,
-            filterQuality: FilterQuality.high,
-            errorBuilder: (_, __, ___) => resolvedFallback(),
-          );
-        }
-        if (isHttpImageRef(ref)) {
-          return Image.network(
-            ref,
-            height: height,
-            fit: fit,
-            filterQuality: FilterQuality.high,
-            errorBuilder: (_, __, ___) => resolvedFallback(),
-          );
-        }
-        if (kIsWeb) return resolvedFallback();
-        return Image.file(
-          File(ref),
-          height: height,
-          fit: fit,
-          filterQuality: FilterQuality.high,
-          errorBuilder: (_, __, ___) => resolvedFallback(),
+    return ValueListenableBuilder<ActiveDriverSession?>(
+      valueListenable: activeDriverSessionNotifier,
+      builder: (context, session, _) {
+        return ValueListenableBuilder<BusinessSettingsState>(
+          valueListenable: businessSettingsNotifier,
+          builder: (context, businessSettings, __) {
+            final ref =
+                _resolveDriverHomeBrandLogoRef(
+                  businessSettings: businessSettings,
+                  session: session,
+                ) ??
+                kFluxidiLogoAsset;
+            if (_isAssetRef(ref)) {
+              return Image.asset(
+                ref,
+                height: height,
+                fit: fit,
+                filterQuality: FilterQuality.high,
+                errorBuilder: (_, ___, ____) => resolvedFallback(),
+              );
+            }
+            if (isHttpImageRef(ref)) {
+              return Image.network(
+                ref,
+                height: height,
+                fit: fit,
+                filterQuality: FilterQuality.high,
+                errorBuilder: (_, ___, ____) => resolvedFallback(),
+              );
+            }
+            if (kIsWeb) return resolvedFallback();
+            return Image.file(
+              File(ref),
+              height: height,
+              fit: fit,
+              filterQuality: FilterQuality.high,
+              errorBuilder: (_, ___, ____) => resolvedFallback(),
+            );
+          },
         );
       },
     );
@@ -9958,17 +10065,19 @@ class _DriverHomePageState extends State<DriverHomePage>
   }
 
   Widget _buildDriverDashboardHeader() {
-    final screenW = MediaQuery.of(context).size.width;
+    final screenSize = MediaQuery.sizeOf(context);
+    final screenW = screenSize.width;
     const driverLogoTargetMaxWidth = 260.0;
-    final logoWidth = math.min(
-      driverLogoTargetMaxWidth,
-      math.max(220.0, screenW - 118),
-    );
+    const rightClusterWidth = 128.0;
+    final isPhonePortrait = screenW < 600 && screenSize.height > screenW;
+    final logoWidth = isPhonePortrait
+        ? math.min(200.0, math.max(150.0, screenW - rightClusterWidth - 12.0))
+        : math.min(driverLogoTargetMaxWidth, math.max(220.0, screenW - 118));
     final logoHeight = logoWidth * 0.39;
     final topBandHeight = math.max(62.0, logoHeight - 34.0);
-    const headerLeftPull = -16.0;
+    final headerLeftPull = isPhonePortrait ? -8.0 : -16.0;
     const headerTopPull = -8.0;
-    const logoVisualLift = -14.0;
+    final logoVisualLift = isPhonePortrait ? -6.0 : -14.0;
     final avatarPhotoPath = _dashboardAvatarPhotoPath();
     final avatarPhotoUrl = _dashboardAvatarNetworkUrl();
     return Column(
@@ -9988,18 +10097,26 @@ class _DriverHomePageState extends State<DriverHomePage>
                 Positioned(
                   top: logoVisualLift,
                   left: 0,
-                  child: SizedBox(
-                    width: logoWidth,
-                    height: logoHeight,
-                    child: _tenantLogo(
+                  right: isPhonePortrait ? rightClusterWidth : null,
+                  child: Align(
+                    alignment: Alignment.topLeft,
+                    child: SizedBox(
+                      width: logoWidth,
                       height: logoHeight,
-                      fit: BoxFit.contain,
-                      fallback: Image.asset(
-                        kFluxidiLogoAsset,
-                        height: logoHeight,
-                        fit: BoxFit.contain,
-                        alignment: Alignment.topLeft,
-                        errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+                      child: Align(
+                        alignment: Alignment.centerLeft,
+                        child: _tenantLogo(
+                          height: logoHeight,
+                          fit: BoxFit.contain,
+                          fallback: Image.asset(
+                            kFluxidiLogoAsset,
+                            height: logoHeight,
+                            fit: BoxFit.contain,
+                            alignment: Alignment.centerLeft,
+                            errorBuilder: (_, __, ___) =>
+                                const SizedBox.shrink(),
+                          ),
+                        ),
                       ),
                     ),
                   ),
