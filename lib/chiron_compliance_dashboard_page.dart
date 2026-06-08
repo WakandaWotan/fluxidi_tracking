@@ -1,11 +1,14 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/business_theme_palette.dart';
 import 'package:fluxidi_tracking/business_theme_store.dart';
 import 'package:fluxidi_tracking/compliance_ledger_reader.dart';
+import 'package:fluxidi_tracking/compliance_register_receipt_bridge.dart';
 import 'package:fluxidi_tracking/company_session_store.dart';
 import 'package:fluxidi_tracking/customer_bookings_store.dart';
 import 'package:fluxidi_tracking/driver_documents_store.dart';
@@ -4292,21 +4295,130 @@ class _LocalComplianceLedgerSection extends StatefulWidget {
 
 class _LocalComplianceLedgerSectionState
     extends State<_LocalComplianceLedgerSection> {
-  late Future<ComplianceLedgerReadResult> _future;
   final ComplianceLedgerReader _reader = ComplianceLedgerReader();
+  ComplianceLedgerReadResult? _result;
+  bool _isLoading = true;
   bool _isClearingLocalTestData = false;
   bool _isClearingLocalCustomerBookings = false;
 
   @override
   void initState() {
     super.initState();
-    _future = _reader.readLatestGrouped(groupLimit: 20);
+    unawaited(_loadRegister());
+  }
+
+  Future<void> _loadRegister() async {
+    if (mounted) {
+      setState(() => _isLoading = true);
+    }
+    final result = await _reader.loadRegisterGrouped(
+      groupLimit: 20,
+      apiBaseUrl: _complianceApiBaseUrl,
+      adminToken: _complianceAdminToken,
+      onLocalLoaded: (local) {
+        if (!mounted) return;
+        setState(() {
+          _result = local;
+          _isLoading = false;
+        });
+      },
+    );
+    if (!mounted) return;
+    setState(() {
+      _result = result;
+      _isLoading = false;
+    });
   }
 
   void _refresh() {
-    setState(() {
-      _future = _reader.readLatestGrouped(groupLimit: 20);
-    });
+    unawaited(_loadRegister());
+  }
+
+  Future<void> _hideGroupFromRegister(List<ComplianceLedgerEntry> group) async {
+    if (group.isEmpty) return;
+    final groupKey = ComplianceLedgerReader.groupKeyFor(group.first);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) {
+        final tokens = _chironTokens();
+        return AlertDialog(
+          backgroundColor: tokens.card,
+          title: Text(
+            _t(
+              nl: 'Verbergen uit lokaal register?',
+              en: 'Hide from local register?',
+              fr: 'Masquer du registre local ?',
+              es: '¿Ocultar del registro local?',
+            ),
+            style: TextStyle(color: tokens.textPrimary),
+          ),
+          content: Text(
+            _t(
+              nl: 'Dit verbergt alleen deze rit in het lokale register op dit toestel. Compliance- en auditgegevens op de backend blijven behouden.',
+              en: 'This only hides this ride from the local register on this device. Compliance and audit records on the backend remain intact.',
+              fr: 'Cela masque uniquement ce trajet du registre local sur cet appareil. Les données de conformité et d’audit backend restent intactes.',
+              es: 'Esto solo oculta este viaje del registro local en este dispositivo. Los registros de cumplimiento y auditoría del backend permanecen intactos.',
+            ),
+            style: TextStyle(color: tokens.textSecondary),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: Text(
+                _t(
+                  nl: 'Annuleren',
+                  en: 'Cancel',
+                  fr: 'Annuler',
+                  es: 'Cancelar',
+                ),
+              ),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(ctx).pop(true),
+              child: Text(
+                _t(nl: 'Verbergen', en: 'Hide', fr: 'Masquer', es: 'Ocultar'),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+    if (confirmed != true || !mounted) return;
+    await _reader.hideGroupFromRegister(groupKey);
+    if (!mounted) return;
+    _refresh();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          _t(
+            nl: 'Rit verborgen uit lokaal register.',
+            en: 'Ride hidden from local register.',
+            fr: 'Trajet masqué du registre local.',
+            es: 'Viaje oculto del registro local.',
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _copyReference(ComplianceLedgerEntry entry) async {
+    final reference = _businessReferenceForLocalCard(entry);
+    final text = reference.value.trim();
+    if (text.isEmpty || text == '—') return;
+    await Clipboard.setData(ClipboardData(text: text));
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          _t(
+            nl: 'Referentie gekopieerd.',
+            en: 'Reference copied.',
+            fr: 'Référence copiée.',
+            es: 'Referencia copiada.',
+          ),
+        ),
+      ),
+    );
   }
 
   ({String tenantId, String companyId})? _effectiveTenantCompanyIds() {
@@ -5970,6 +6082,114 @@ class _LocalComplianceLedgerSectionState
             ),
           ],
           const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 4,
+            children: [
+              TextButton.icon(
+                onPressed: () => runComplianceRegisterReceiptAction(
+                  context: context,
+                  entry: summary,
+                  action: ComplianceRegisterReceiptAction.viewDetails,
+                ),
+                icon: Icon(
+                  Icons.visibility_outlined,
+                  size: 16,
+                  color: _chironGold,
+                ),
+                label: Text(
+                  _t(
+                    nl: 'Details',
+                    en: 'View details',
+                    fr: 'Détails',
+                    es: 'Detalles',
+                  ),
+                  style: TextStyle(color: _chironGold, fontSize: 12),
+                ),
+              ),
+              TextButton.icon(
+                onPressed: () => runComplianceRegisterReceiptAction(
+                  context: context,
+                  entry: summary,
+                  action: ComplianceRegisterReceiptAction.downloadReceipt,
+                ),
+                icon: Icon(
+                  Icons.picture_as_pdf_outlined,
+                  size: 16,
+                  color: _chironGold,
+                ),
+                label: Text(
+                  _t(nl: 'Ritbon', en: 'Receipt', fr: 'Reçu', es: 'Recibo'),
+                  style: TextStyle(color: _chironGold, fontSize: 12),
+                ),
+              ),
+              if (summary.bookingId.trim().isNotEmpty)
+                TextButton.icon(
+                  onPressed: () => runComplianceRegisterReceiptAction(
+                    context: context,
+                    entry: summary,
+                    action: ComplianceRegisterReceiptAction.downloadInvoice,
+                  ),
+                  icon: Icon(
+                    Icons.receipt_long_outlined,
+                    size: 16,
+                    color: _chironGold,
+                  ),
+                  label: Text(
+                    _t(
+                      nl: 'Factuur',
+                      en: 'Invoice',
+                      fr: 'Facture',
+                      es: 'Factura',
+                    ),
+                    style: TextStyle(color: _chironGold, fontSize: 12),
+                  ),
+                ),
+              TextButton.icon(
+                onPressed: () => runComplianceRegisterReceiptAction(
+                  context: context,
+                  entry: summary,
+                  action: ComplianceRegisterReceiptAction.shareReceipt,
+                ),
+                icon: Icon(Icons.share_outlined, size: 16, color: _chironGold),
+                label: Text(
+                  _t(nl: 'Delen', en: 'Share', fr: 'Partager', es: 'Compartir'),
+                  style: TextStyle(color: _chironGold, fontSize: 12),
+                ),
+              ),
+              TextButton.icon(
+                onPressed: () => _copyReference(summary),
+                icon: Icon(Icons.copy_outlined, size: 16, color: _chironGold),
+                label: Text(
+                  _t(
+                    nl: 'Referentie',
+                    en: 'Reference',
+                    fr: 'Référence',
+                    es: 'Referencia',
+                  ),
+                  style: TextStyle(color: _chironGold, fontSize: 12),
+                ),
+              ),
+              TextButton.icon(
+                onPressed: () => _hideGroupFromRegister(group),
+                icon: Icon(
+                  Icons.visibility_off_outlined,
+                  size: 16,
+                  color: _chironGold,
+                ),
+                label: Text(
+                  _t(
+                    nl: 'Verbergen uit lokaal register',
+                    en: 'Hide from local register',
+                    fr: 'Masquer du registre local',
+                    es: 'Ocultar del registro local',
+                  ),
+                  style: TextStyle(color: _chironGold, fontSize: 12),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
           ExpansionTile(
             tilePadding: EdgeInsets.zero,
             collapsedIconColor: _chironTextSecondary,
@@ -6095,18 +6315,17 @@ class _LocalComplianceLedgerSectionState
             const SizedBox(height: 6),
             Text(
               _t(
-                nl: 'Laatste lokale ritten (alleen-lezen, geen synchronisatie).',
-                en: 'Latest local rides (read-only, no synchronization).',
-                fr: 'Derniers trajets locaux (lecture seule, sans synchronisation).',
-                es: 'Últimos viajes locales (solo lectura, sin sincronización).',
+                nl: 'Lokale cache met backend/compliance als bron. Verbergen wist geen auditdata.',
+                en: 'Local cache with backend/compliance as source of truth. Hiding does not delete audit data.',
+                fr: 'Cache local avec backend/conformité comme source. Masquer ne supprime pas les données d’audit.',
+                es: 'Caché local con backend/cumplimiento como fuente. Ocultar no elimina datos de auditoría.',
               ),
               style: TextStyle(color: _chironTextSecondary, fontSize: 12),
             ),
             const SizedBox(height: 10),
-            FutureBuilder<ComplianceLedgerReadResult>(
-              future: _future,
-              builder: (context, snapshot) {
-                if (snapshot.connectionState != ConnectionState.done) {
+            Builder(
+              builder: (context) {
+                if (_isLoading && _result == null) {
                   return Row(
                     children: [
                       SizedBox(
@@ -6135,7 +6354,7 @@ class _LocalComplianceLedgerSectionState
                 }
 
                 final result =
-                    snapshot.data ??
+                    _result ??
                     const ComplianceLedgerReadResult(
                       entries: <ComplianceLedgerEntry>[],
                       fileExists: false,
@@ -6165,31 +6384,75 @@ class _LocalComplianceLedgerSectionState
                   );
                 }
 
-                if (result.entries.isEmpty) {
-                  return Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      color: _chironPanel,
-                      borderRadius: BorderRadius.circular(10),
-                      border: Border.all(color: _chironBorder),
-                    ),
-                    child: Text(
-                      _t(
-                        nl: 'Nog geen lokale compliance-ritten gevonden.',
-                        en: 'No local compliance rides found yet.',
-                        fr: 'Aucun trajet de conformité local trouvé.',
-                        es: 'Aún no se encontraron trayectos locales de cumplimiento.',
-                      ),
-                      style: TextStyle(color: _chironTextMuted, fontSize: 12),
-                    ),
-                  );
-                }
-
                 final groupedEntries = _groupedLedgerEntries(result.entries);
                 return Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    if (result.isSyncingBackend)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: Row(
+                          children: [
+                            SizedBox(
+                              width: 12,
+                              height: 12,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: _chironGold,
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Text(
+                              _t(
+                                nl: 'Backend compliance wordt opgehaald...',
+                                en: 'Fetching backend compliance...',
+                                fr: 'Récupération conformité backend...',
+                                es: 'Obteniendo cumplimiento backend...',
+                              ),
+                              style: TextStyle(
+                                color: _chironTextSecondary,
+                                fontSize: 11,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    if (!result.backendFetchOk &&
+                        (result.backendError ?? '').isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: Text(
+                          _t(
+                            nl: 'Backend sync niet beschikbaar (${result.backendError}). Lokale cache wordt getoond.',
+                            en: 'Backend sync unavailable (${result.backendError}). Showing local cache.',
+                            fr: 'Sync backend indisponible (${result.backendError}). Cache local affiché.',
+                            es: 'Sync backend no disponible (${result.backendError}). Mostrando caché local.',
+                          ),
+                          style: TextStyle(color: _chironWarning, fontSize: 11),
+                        ),
+                      ),
+                    if (result.entries.isEmpty)
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: _chironPanel,
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(color: _chironBorder),
+                        ),
+                        child: Text(
+                          _t(
+                            nl: 'Nog geen ritten in het register voor deze scope.',
+                            en: 'No rides in the register for this scope yet.',
+                            fr: 'Aucun trajet dans le registre pour cette portée.',
+                            es: 'Aún no hay viajes en el registro para este ámbito.',
+                          ),
+                          style: TextStyle(
+                            color: _chironTextMuted,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ),
                     if (result.skippedMalformedLines > 0)
                       Padding(
                         padding: const EdgeInsets.only(bottom: 8),

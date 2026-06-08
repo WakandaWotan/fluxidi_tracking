@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart' show debugPrint, kIsWeb;
 import 'package:fluxidi_tracking/company_session_store.dart';
 import 'package:fluxidi_tracking/driver_session_store.dart';
+import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 
 String _sanitizeScopeSegment(String value) {
@@ -263,11 +264,23 @@ class ComplianceLedgerReadResult {
     required this.entries,
     required this.fileExists,
     required this.skippedMalformedLines,
+    this.localCount = 0,
+    this.backendCount = 0,
+    this.mergedCount = 0,
+    this.backendFetchOk = false,
+    this.backendError,
+    this.isSyncingBackend = false,
   });
 
   final List<ComplianceLedgerEntry> entries;
   final bool fileExists;
   final int skippedMalformedLines;
+  final int localCount;
+  final int backendCount;
+  final int mergedCount;
+  final bool backendFetchOk;
+  final String? backendError;
+  final bool isSyncingBackend;
 }
 
 class ComplianceLedgerReader {
@@ -476,6 +489,7 @@ class ComplianceLedgerReader {
     }
     await ledgerFile.writeAsString('', flush: true);
     await localDirectFile.writeAsString('', flush: true);
+    await clearHiddenGroupKeys();
     await _pruneLegacyForScope(tenantId: tenantId, companyId: companyId);
     debugPrint(
       '[LOCAL_SCOPE][CLEANUP] target=compliance tenant=${_maskScope(tenantId)} company=${_maskScope(companyId)}',
@@ -679,6 +693,591 @@ class ComplianceLedgerReader {
       entries: merged,
       fileExists: true,
       skippedMalformedLines: read.skippedMalformedLines,
+    );
+  }
+
+  static const String _hiddenRegisterFileName =
+      'local_ride_register_hidden_v1.json';
+
+  static Future<File?> _hiddenRegisterFile() async {
+    final scope = _activeComplianceScope();
+    if (scope == null) return null;
+    return _scopedHiddenRegisterFile(
+      tenantId: scope.tenantId,
+      companyId: scope.companyId,
+    );
+  }
+
+  static Future<File> _scopedHiddenRegisterFile({
+    required String tenantId,
+    required String companyId,
+  }) async {
+    final root = await _rootDir();
+    final scopedDir = Directory(
+      '${root.path}${Platform.pathSeparator}compliance_state${Platform.pathSeparator}tenant_${_sanitizeScopeSegment(tenantId)}${Platform.pathSeparator}company_${_sanitizeScopeSegment(companyId)}',
+    );
+    if (!await scopedDir.exists()) {
+      await scopedDir.create(recursive: true);
+    }
+    return File(
+      '${scopedDir.path}${Platform.pathSeparator}$_hiddenRegisterFileName',
+    );
+  }
+
+  Future<Set<String>> loadHiddenGroupKeys() async {
+    if (kIsWeb) return <String>{};
+    final file = await _hiddenRegisterFile();
+    if (file == null || !await file.exists()) return <String>{};
+    try {
+      final decoded = jsonDecode(await file.readAsString());
+      if (decoded is! Map) return <String>{};
+      final raw = decoded['hidden_group_keys'];
+      if (raw is! List) return <String>{};
+      return raw
+          .map((value) => value.toString().trim())
+          .where((value) => value.isNotEmpty)
+          .toSet();
+    } catch (_) {
+      return <String>{};
+    }
+  }
+
+  Future<void> hideGroupFromRegister(String groupKey) async {
+    if (kIsWeb) return;
+    final scope = _activeComplianceScope();
+    if (scope == null) return;
+    final normalized = groupKey.trim();
+    if (normalized.isEmpty) return;
+    final file = await _scopedHiddenRegisterFile(
+      tenantId: scope.tenantId,
+      companyId: scope.companyId,
+    );
+    final hidden = await loadHiddenGroupKeys();
+    hidden.add(normalized);
+    await file.writeAsString(
+      jsonEncode(<String, dynamic>{
+        'hidden_group_keys': hidden.toList(growable: false)..sort(),
+      }),
+      flush: true,
+    );
+    debugPrint('[LOCAL_RIDE_REGISTER][HIDE_LOCAL] key=$normalized');
+  }
+
+  Future<void> clearHiddenGroupKeys() async {
+    if (kIsWeb) return;
+    final scope = _activeComplianceScope();
+    if (scope == null) return;
+    final file = await _scopedHiddenRegisterFile(
+      tenantId: scope.tenantId,
+      companyId: scope.companyId,
+    );
+    if (await file.exists()) {
+      await file.writeAsString(
+        jsonEncode(const <String, dynamic>{'hidden_group_keys': <String>[]}),
+        flush: true,
+      );
+    }
+  }
+
+  List<ComplianceLedgerEntry> _filterHiddenGroups(
+    List<ComplianceLedgerEntry> entries,
+    Set<String> hiddenGroupKeys,
+  ) {
+    if (hiddenGroupKeys.isEmpty) return entries;
+    return entries
+        .where((entry) => !hiddenGroupKeys.contains(groupKeyFor(entry)))
+        .toList(growable: false);
+  }
+
+  static String entryDedupKey(
+    ComplianceLedgerEntry entry, {
+    String? backendKey,
+  }) {
+    final eventId = entry.eventId.trim();
+    if (eventId.isNotEmpty) return 'event_id:${eventId.toLowerCase()}';
+    final key = (backendKey ?? '').trim();
+    if (key.isNotEmpty) return 'backend_key:${key.toLowerCase()}';
+    final ts = entry.sortTimestamp?.toUtc().toIso8601String() ?? '';
+    return [
+      entry.eventType.trim().toLowerCase(),
+      entry.bookingId.trim().toLowerCase(),
+      entry.tripId.trim().toLowerCase(),
+      entry.receiptReference.trim().toLowerCase(),
+      entry.publicBookingReference.trim().toLowerCase(),
+      ts,
+      entry.paymentStatus.trim().toLowerCase(),
+      entry.paymentMethod.trim().toLowerCase(),
+      entry.lifecycleStatus.trim().toLowerCase(),
+    ].join('|');
+  }
+
+  static Map<String, dynamic> backendEventToLedgerRaw(
+    Map<String, dynamic> event, {
+    required String tenantId,
+    required String companyId,
+  }) {
+    Map<String, dynamic> asMap(Object? value) {
+      if (value is Map) return Map<String, dynamic>.from(value);
+      return const <String, dynamic>{};
+    }
+
+    String text(String key) => (event[key] ?? '').toString().trim();
+    String? nestedText(Map<String, dynamic> map, String key) {
+      final value = (map[key] ?? '').toString().trim();
+      return value.isEmpty ? null : value;
+    }
+
+    final timestamps = asMap(event['timestamps']);
+    final payment = asMap(event['payment']);
+    final fare = asMap(event['fare']);
+    final provenance = asMap(event['provenance']);
+    final driver = asMap(event['driver']);
+    final vehicle = asMap(event['vehicle']);
+    final locations = asMap(event['locations']);
+    final pickup = asMap(locations['pickup']);
+    final dropoff = asMap(locations['dropoff']);
+
+    final eventType = text('event_type').isEmpty
+        ? 'unknown'
+        : text('event_type');
+    final backendKey = text('key');
+    final eventId = text('event_id').isEmpty ? backendKey : text('event_id');
+    final startedAt =
+        nestedText(timestamps, 'started_at_utc') ??
+        nestedText(timestamps, 'started_at');
+    final stoppedAt =
+        nestedText(timestamps, 'stopped_at_utc') ??
+        nestedText(timestamps, 'stopped_at') ??
+        nestedText(timestamps, 'event_at_utc');
+    final paidAt =
+        nestedText(timestamps, 'paid_at_utc') ??
+        nestedText(payment, 'paid_at_utc') ??
+        nestedText(payment, 'paid_at');
+    final createdAt = text('created_at_utc').isEmpty
+        ? (stoppedAt ?? paidAt ?? DateTime.now().toUtc().toIso8601String())
+        : text('created_at_utc');
+
+    var lifecycle = text('lifecycle_status');
+    if (lifecycle.isEmpty) lifecycle = text('ride_status');
+    if (lifecycle.isEmpty) lifecycle = text('status');
+    if (eventType == 'ride_stop' && lifecycle == 'stopped') {
+      lifecycle = 'completed';
+    }
+    if (eventType == 'payment_update') {
+      lifecycle = 'payment_updated';
+    }
+
+    final publicBookingReference =
+        ComplianceLedgerEntry._firstNonEmptyText(<Object?>[
+          event['public_booking_reference'],
+          event['publicBookingReference'],
+          event['booking_reference'],
+          event['bookingReference'],
+          event['public_reference'],
+          event['publicReference'],
+        ]);
+    final receiptReference = ComplianceLedgerEntry._firstNonEmptyText(<Object?>[
+      event['receipt_reference'],
+      event['receiptReference'],
+    ]);
+    final planningReference = ComplianceLedgerEntry._firstNonEmptyText(
+      <Object?>[event['planning_reference'], event['planningReference']],
+    );
+
+    double? totalEur = ComplianceLedgerEntry._toDouble(fare['total_eur']);
+    totalEur ??= ComplianceLedgerEntry._toDouble(fare['total_amount']);
+
+    final paymentPayload = <String, dynamic>{
+      if (nestedText(payment, 'status') != null) 'status': payment['status'],
+      if (nestedText(payment, 'method') != null) 'method': payment['method'],
+      if (nestedText(payment, 'source') != null) 'source': payment['source'],
+      if (nestedText(payment, 'provider') != null)
+        'provider': payment['provider'],
+      if (nestedText(payment, 'payment_id') != null)
+        'payment_id': payment['payment_id'],
+      if (paidAt != null) 'paid_at_utc': paidAt,
+    };
+
+    return <String, dynamic>{
+      'ledger_version': '1.0',
+      'event_type': eventType,
+      'event_id': eventId,
+      '_backend_key': backendKey,
+      'ride_id': text('ride_id'),
+      'ride_type': text('ride_type'),
+      'lifecycle_status': lifecycle,
+      'tenant_id': text('tenant_id').isEmpty ? tenantId : text('tenant_id'),
+      'company_id': text('company_id').isEmpty ? companyId : text('company_id'),
+      'driver_id': nestedText(driver, 'driver_id') ?? text('driver_id'),
+      'vehicle_id': nestedText(vehicle, 'vehicle_id') ?? text('vehicle_id'),
+      'booking_id': text('booking_id'),
+      'trip_id': text('trip_id'),
+      'session_id': text('session_id'),
+      'started_at_utc': startedAt,
+      'ended_at_utc': stoppedAt,
+      'created_at_utc': createdAt,
+      'finalized_at_utc': stoppedAt ?? paidAt ?? createdAt,
+      'distance_km': fare['distance_km'],
+      'wait_seconds_total': fare['wait_seconds_total'],
+      'pickup': pickup.isEmpty
+          ? <String, dynamic>{}
+          : <String, dynamic>{'label': pickup['label']},
+      'dropoff': dropoff.isEmpty
+          ? <String, dynamic>{}
+          : <String, dynamic>{'label': dropoff['label']},
+      'fare': <String, dynamic>{
+        if (totalEur != null) 'total_eur': totalEur,
+        'currency': (fare['currency'] ?? payment['currency'] ?? 'EUR')
+            .toString()
+            .trim(),
+      },
+      'payment': paymentPayload,
+      'references': <String, dynamic>{
+        if (receiptReference.isNotEmpty) 'receipt_reference': receiptReference,
+        if (planningReference.isNotEmpty)
+          'planning_reference': planningReference,
+        if (publicBookingReference.isNotEmpty)
+          'public_booking_reference': publicBookingReference,
+      },
+      'provenance': <String, dynamic>{
+        ...provenance,
+        'backend_confirmed': provenance['backend_confirmed'] ?? true,
+        'validation_state':
+            provenance['validation_state'] ??
+            (eventType == 'payment_update' ? 'payment_update' : 'exportable'),
+        'cache_source': 'backend_restore',
+      },
+    };
+  }
+
+  static List<ComplianceLedgerEntry> mergeLedgerEntries({
+    required List<ComplianceLedgerEntry> localEntries,
+    required List<ComplianceLedgerEntry> backendEntries,
+  }) {
+    final merged = <String, ComplianceLedgerEntry>{};
+    for (final entry in localEntries) {
+      final backendKey = ComplianceLedgerEntry._toStringOrEmpty(
+        entry.raw['_backend_key'],
+      );
+      merged[entryDedupKey(entry, backendKey: backendKey)] = entry;
+    }
+    for (final entry in backendEntries) {
+      final backendKey = ComplianceLedgerEntry._toStringOrEmpty(
+        entry.raw['_backend_key'],
+      );
+      final key = entryDedupKey(entry, backendKey: backendKey);
+      final existing = merged[key];
+      if (existing == null || _compareEntriesNewestFirst(entry, existing) < 0) {
+        merged[key] = entry;
+      }
+    }
+    final out = merged.values.toList(growable: false)
+      ..sort(_compareEntriesNewestFirst);
+    return out;
+  }
+
+  ComplianceLedgerReadResult _groupedFromEntries({
+    required List<ComplianceLedgerEntry> entries,
+    required int groupLimit,
+    required int skippedMalformedLines,
+    required bool fileExists,
+    int localCount = 0,
+    int backendCount = 0,
+    int mergedCount = 0,
+    bool backendFetchOk = false,
+    String? backendError,
+    bool isSyncingBackend = false,
+  }) {
+    final grouped = <String, List<ComplianceLedgerEntry>>{};
+    for (final entry in entries) {
+      grouped
+          .putIfAbsent(groupKeyFor(entry), () => <ComplianceLedgerEntry>[])
+          .add(entry);
+    }
+
+    DateTime? newestInGroup(List<ComplianceLedgerEntry> group) {
+      DateTime? newest;
+      for (final entry in group) {
+        final ts = entry.sortTimestamp;
+        if (ts == null) continue;
+        if (newest == null || ts.isAfter(newest)) newest = ts;
+      }
+      return newest;
+    }
+
+    final groups = grouped.entries.toList(growable: false)
+      ..sort((a, b) {
+        final aNewest = newestInGroup(a.value);
+        final bNewest = newestInGroup(b.value);
+        if (aNewest != null && bNewest != null) {
+          final byTime = bNewest.compareTo(aNewest);
+          if (byTime != 0) return byTime;
+        } else if (aNewest != null) {
+          return -1;
+        } else if (bNewest != null) {
+          return 1;
+        }
+        final aIndex = a.value
+            .map((entry) => entry.sourceLineIndex)
+            .fold<int>(0, (prev, next) => next > prev ? next : prev);
+        final bIndex = b.value
+            .map((entry) => entry.sourceLineIndex)
+            .fold<int>(0, (prev, next) => next > prev ? next : prev);
+        return bIndex.compareTo(aIndex);
+      });
+
+    final effectiveGroupLimit = groupLimit <= 0 ? 20 : groupLimit;
+    final selectedGroups = groups.take(effectiveGroupLimit);
+    final merged = <ComplianceLedgerEntry>[];
+    for (final group in selectedGroups) {
+      merged.addAll(group.value);
+    }
+
+    return ComplianceLedgerReadResult(
+      entries: merged,
+      fileExists: fileExists,
+      skippedMalformedLines: skippedMalformedLines,
+      localCount: localCount,
+      backendCount: backendCount,
+      mergedCount: mergedCount,
+      backendFetchOk: backendFetchOk,
+      backendError: backendError,
+      isSyncingBackend: isSyncingBackend,
+    );
+  }
+
+  Future<ComplianceLedgerReadResult> readLocalGrouped({
+    int groupLimit = 20,
+    bool allowLegacyWithoutScope = false,
+  }) async {
+    final read = await _readScopedEntries(
+      allowLegacyWithoutScope: allowLegacyWithoutScope,
+    );
+    if (read == null) {
+      return const ComplianceLedgerReadResult(
+        entries: <ComplianceLedgerEntry>[],
+        fileExists: false,
+        skippedMalformedLines: 0,
+      );
+    }
+    final hidden = await loadHiddenGroupKeys();
+    final visible = _filterHiddenGroups(read.entries, hidden);
+    debugPrint(
+      '[LOCAL_RIDE_REGISTER][LOAD_LOCAL] count=${visible.length} hidden=${hidden.length}',
+    );
+    return _groupedFromEntries(
+      entries: visible,
+      groupLimit: groupLimit,
+      skippedMalformedLines: read.skippedMalformedLines,
+      fileExists: read.fileExists,
+      localCount: visible.length,
+      mergedCount: visible.length,
+    );
+  }
+
+  Future<({List<ComplianceLedgerEntry> entries, bool ok, String? error})>
+  fetchBackendEntries({
+    required String apiBaseUrl,
+    required String adminToken,
+    int limit = 100,
+  }) async {
+    final scope = _activeComplianceScope();
+    if (scope == null) {
+      return (
+        entries: const <ComplianceLedgerEntry>[],
+        ok: false,
+        error: 'missing_scope',
+      );
+    }
+    final token = adminToken.trim();
+    final base = apiBaseUrl.trim();
+    debugPrint(
+      '[LOCAL_RIDE_REGISTER][FETCH_BACKEND] scope=tenant:${_maskScope(scope.tenantId)} company:${_maskScope(scope.companyId)}',
+    );
+    if (base.isEmpty) {
+      return (
+        entries: const <ComplianceLedgerEntry>[],
+        ok: false,
+        error: 'missing_api_base_url',
+      );
+    }
+    if (token.isEmpty) {
+      return (
+        entries: const <ComplianceLedgerEntry>[],
+        ok: false,
+        error: 'missing_admin_token',
+      );
+    }
+
+    final uri = Uri.parse('$base/compliance/events/recent').replace(
+      queryParameters: <String, String>{
+        'tenant_id': scope.tenantId,
+        'company_id': scope.companyId,
+        'limit': '$limit',
+      },
+    );
+    try {
+      final res = await http
+          .get(
+            uri,
+            headers: <String, String>{
+              'Authorization': 'Bearer $token',
+              'x-admin-token': token,
+            },
+          )
+          .timeout(const Duration(seconds: 12));
+      Map<String, dynamic> asMap(Object? value) {
+        if (value is Map) return Map<String, dynamic>.from(value);
+        return const <String, dynamic>{};
+      }
+
+      final payload = asMap(jsonDecode(res.body));
+      if (res.statusCode < 200 || res.statusCode >= 300) {
+        final err = (payload['error'] ?? '').toString().trim();
+        debugPrint(
+          '[LOCAL_RIDE_REGISTER][FETCH_RESULT] count=0 status=error error=$err',
+        );
+        return (
+          entries: const <ComplianceLedgerEntry>[],
+          ok: false,
+          error: err.isEmpty ? 'backend_fetch_failed' : err,
+        );
+      }
+
+      final eventsRaw = payload['events'];
+      final events = eventsRaw is List
+          ? eventsRaw
+                .whereType<Map>()
+                .map((e) => Map<String, dynamic>.from(e))
+                .toList(growable: false)
+          : const <Map<String, dynamic>>[];
+      final parsed = <ComplianceLedgerEntry>[];
+      for (var i = 0; i < events.length; i++) {
+        final raw = backendEventToLedgerRaw(
+          events[i],
+          tenantId: scope.tenantId,
+          companyId: scope.companyId,
+        );
+        parsed.add(ComplianceLedgerEntry.fromRaw(raw, sourceLineIndex: i));
+      }
+      debugPrint(
+        '[LOCAL_RIDE_REGISTER][FETCH_RESULT] count=${parsed.length} status=ok',
+      );
+      return (entries: parsed, ok: true, error: null);
+    } catch (err) {
+      debugPrint(
+        '[LOCAL_RIDE_REGISTER][FETCH_RESULT] count=0 status=error error=$err',
+      );
+      return (
+        entries: const <ComplianceLedgerEntry>[],
+        ok: false,
+        error: err.toString(),
+      );
+    }
+  }
+
+  Future<void> saveCacheEntries(List<ComplianceLedgerEntry> entries) async {
+    if (kIsWeb) return;
+    final scope = _activeComplianceScope();
+    if (scope == null) return;
+    final file = await _scopedFile(
+      tenantId: scope.tenantId,
+      companyId: scope.companyId,
+    );
+    if (!await file.parent.exists()) {
+      await file.parent.create(recursive: true);
+    }
+    final buffer = StringBuffer();
+    for (final entry in entries) {
+      buffer.writeln(jsonEncode(entry.raw));
+    }
+    await file.writeAsString(buffer.toString(), flush: true);
+    debugPrint('[LOCAL_RIDE_REGISTER][CACHE_SAVE] count=${entries.length}');
+  }
+
+  Future<ComplianceLedgerReadResult> loadRegisterGrouped({
+    required int groupLimit,
+    required String apiBaseUrl,
+    required String adminToken,
+    bool allowLegacyWithoutScope = false,
+    void Function(ComplianceLedgerReadResult localSnapshot)? onLocalLoaded,
+  }) async {
+    final localRead = await _readScopedEntries(
+      allowLegacyWithoutScope: allowLegacyWithoutScope,
+    );
+    final hidden = await loadHiddenGroupKeys();
+    final localEntries = localRead?.entries ?? const <ComplianceLedgerEntry>[];
+    final visibleLocal = _filterHiddenGroups(localEntries, hidden);
+    final localSnapshot = _groupedFromEntries(
+      entries: visibleLocal,
+      groupLimit: groupLimit,
+      skippedMalformedLines: localRead?.skippedMalformedLines ?? 0,
+      fileExists: localRead?.fileExists ?? false,
+      localCount: visibleLocal.length,
+      mergedCount: visibleLocal.length,
+      isSyncingBackend: true,
+    );
+    onLocalLoaded?.call(localSnapshot);
+
+    final backend = await fetchBackendEntries(
+      apiBaseUrl: apiBaseUrl,
+      adminToken: adminToken,
+    );
+    if (!backend.ok) {
+      return localSnapshot.copyWith(
+        backendFetchOk: false,
+        backendError: backend.error,
+        isSyncingBackend: false,
+      );
+    }
+
+    final mergedAll = mergeLedgerEntries(
+      localEntries: localEntries,
+      backendEntries: backend.entries,
+    );
+    debugPrint(
+      '[LOCAL_RIDE_REGISTER][MERGE] local=${localEntries.length} backend=${backend.entries.length} merged=${mergedAll.length} deduped=${localEntries.length + backend.entries.length - mergedAll.length}',
+    );
+    await saveCacheEntries(mergedAll);
+
+    final visibleMerged = _filterHiddenGroups(mergedAll, hidden);
+    return _groupedFromEntries(
+      entries: visibleMerged,
+      groupLimit: groupLimit,
+      skippedMalformedLines: localRead?.skippedMalformedLines ?? 0,
+      fileExists: true,
+      localCount: localEntries.length,
+      backendCount: backend.entries.length,
+      mergedCount: mergedAll.length,
+      backendFetchOk: true,
+      isSyncingBackend: false,
+    );
+  }
+}
+
+extension _ComplianceLedgerReadResultCopy on ComplianceLedgerReadResult {
+  ComplianceLedgerReadResult copyWith({
+    List<ComplianceLedgerEntry>? entries,
+    bool? fileExists,
+    int? skippedMalformedLines,
+    int? localCount,
+    int? backendCount,
+    int? mergedCount,
+    bool? backendFetchOk,
+    String? backendError,
+    bool? isSyncingBackend,
+  }) {
+    return ComplianceLedgerReadResult(
+      entries: entries ?? this.entries,
+      fileExists: fileExists ?? this.fileExists,
+      skippedMalformedLines:
+          skippedMalformedLines ?? this.skippedMalformedLines,
+      localCount: localCount ?? this.localCount,
+      backendCount: backendCount ?? this.backendCount,
+      mergedCount: mergedCount ?? this.mergedCount,
+      backendFetchOk: backendFetchOk ?? this.backendFetchOk,
+      backendError: backendError ?? this.backendError,
+      isSyncingBackend: isSyncingBackend ?? this.isSyncingBackend,
     );
   }
 }

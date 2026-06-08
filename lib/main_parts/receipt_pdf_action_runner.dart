@@ -111,6 +111,68 @@ class _ReceiptPdfActionRunner {
     }
   }
 
+  static Future<void> previewReceiptPdf({
+    required BuildContext context,
+    required _TripHistoryItem item,
+  }) async {
+    final bundle = await _buildReceiptPdfBundle(
+      context: context,
+      item: item,
+      skipBackendInvoice: true,
+    );
+    if (bundle == null) {
+      if (!context.mounted) return;
+      await _fallbackCopyText(context: context, item: item);
+      return;
+    }
+    debugPrint('[PDF][ACTION][REGISTER_RECEIPT_VIEW] hasPdf=true');
+    if (!context.mounted) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => _ReceiptPdfPreviewPage(
+          title: _receiptText('viewPdf'),
+          bytes: bundle.bytes,
+        ),
+      ),
+    );
+  }
+
+  static Future<void> previewInvoicePdf({
+    required BuildContext context,
+    required _TripHistoryItem item,
+  }) async {
+    final bundle = await _tryFetchBackendInvoicePdfBundle(
+      item: item,
+      source: 'local_register_invoice',
+    );
+    if (bundle == null) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _tr(
+              nl: 'Geen factuur-PDF beschikbaar voor deze rit.',
+              en: 'No invoice PDF available for this ride.',
+              fr: 'Aucun PDF de facture disponible pour ce trajet.',
+              es: 'No hay PDF de factura disponible para este viaje.',
+            ),
+          ),
+        ),
+      );
+      return;
+    }
+    debugPrint('[PDF][ACTION][REGISTER_INVOICE_VIEW] hasPdf=true');
+    if (!context.mounted) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => _ReceiptPdfPreviewPage(
+          title: _receiptText('viewPdf'),
+          bytes: bundle.bytes,
+        ),
+      ),
+    );
+  }
+
   static Future<void> previewPdf({
     required BuildContext context,
     required _TripHistoryItem item,
@@ -671,12 +733,15 @@ class _ReceiptPdfActionRunner {
   static Future<_ReceiptPdfBundle?> _buildReceiptPdfBundle({
     required BuildContext context,
     required _TripHistoryItem item,
+    bool skipBackendInvoice = false,
   }) async {
-    final backendBundle = await _tryFetchBackendInvoicePdfBundle(
-      item: item,
-      source: 'receipt_pdf_bundle_static_layout',
-    );
-    if (backendBundle != null) return backendBundle;
+    if (!skipBackendInvoice) {
+      final backendBundle = await _tryFetchBackendInvoicePdfBundle(
+        item: item,
+        source: 'receipt_pdf_bundle_static_layout',
+      );
+      if (backendBundle != null) return backendBundle;
+    }
     try {
       final smartRef = _businessReferenceDisplayForItem(
         item,

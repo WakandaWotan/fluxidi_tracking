@@ -55,6 +55,8 @@ import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/company_session_store.dart';
 import 'package:fluxidi_tracking/company_onboarding_page.dart';
 import 'package:fluxidi_tracking/chiron_compliance_dashboard_page.dart';
+import 'package:fluxidi_tracking/compliance_ledger_reader.dart';
+import 'package:fluxidi_tracking/compliance_register_receipt_bridge.dart';
 import 'package:fluxidi_tracking/driver_documents_store.dart';
 import 'package:fluxidi_tracking/driver_document_sheet.dart';
 import 'package:fluxidi_tracking/driver_my_documents_page.dart';
@@ -1447,8 +1449,49 @@ Future<void> _runStartupDeferredWork({
 // re-exported above so existing references in this file (and other modules)
 // keep working unchanged.
 
+void _registerComplianceRegisterReceiptBridge() {
+  registerComplianceRegisterReceiptHandler((
+    BuildContext context,
+    ComplianceLedgerEntry entry, {
+    required ComplianceRegisterReceiptAction action,
+  }) async {
+    final item = _TripHistoryItem.fromJson(
+      tripHistoryJsonFromLedgerEntry(entry),
+    );
+    final key = ComplianceLedgerReader.groupKeyFor(entry);
+    switch (action) {
+      case ComplianceRegisterReceiptAction.viewDetails:
+        await Navigator.of(context).push(
+          MaterialPageRoute<void>(builder: (_) => _RideReceiptPage(item: item)),
+        );
+      case ComplianceRegisterReceiptAction.downloadReceipt:
+        debugPrint(
+          '[LOCAL_RIDE_REGISTER][EXPORT_RECEIPT] key=$key source=register',
+        );
+        await _ReceiptPdfActionRunner.previewReceiptPdf(
+          context: context,
+          item: item,
+        );
+      case ComplianceRegisterReceiptAction.downloadInvoice:
+        debugPrint(
+          '[LOCAL_RIDE_REGISTER][EXPORT_INVOICE] key=$key source=register',
+        );
+        await _ReceiptPdfActionRunner.previewInvoicePdf(
+          context: context,
+          item: item,
+        );
+      case ComplianceRegisterReceiptAction.shareReceipt:
+        debugPrint(
+          '[LOCAL_RIDE_REGISTER][EXPORT_RECEIPT] key=$key source=share',
+        );
+        await _ReceiptPdfActionRunner.sharePdf(context: context, item: item);
+    }
+  });
+}
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  _registerComplianceRegisterReceiptBridge();
   await loadBusinessThemePreference();
   await loadCompanyDriverViewThemePreference();
   await loadDriverAppThemePreference();
