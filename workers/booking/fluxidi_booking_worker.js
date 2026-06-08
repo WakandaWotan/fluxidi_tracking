@@ -16174,7 +16174,54 @@ function normalizeRegionInterestName(value) {
 }
 
 function normalizeRegionInterestPhone(value) {
-  return safeStr(value, 64);
+  const normalized = _normalizeCustomerPhone(safeStr(value, 64));
+  return normalized || safeStr(value, 64);
+}
+
+// Phone-first dedup: the same person often reuses one number across email typos.
+function normalizeRegionInterestPhoneForDedup(value) {
+  const normalized = _normalizeCustomerPhone(safeStr(value, 64));
+  if (!normalized) return "";
+  const digits = normalized.replace(/[^0-9]/g, "");
+  if (digits.length < 6) return "";
+  return normalized;
+}
+
+async function buildRegionInterestDedupIdentity({ country, postcode, email, phone } = {}) {
+  const normalizedCountry = normalizeRegionInterestCountry(country);
+  const normalizedPostcode = normalizeRegionInterestPostcode(postcode);
+  if (!normalizedCountry || !normalizedPostcode) return null;
+
+  const normalizedEmail = normalizeRegionInterestEmail(email);
+  const normalizedPhone = normalizeRegionInterestPhoneForDedup(phone);
+  const hasPhone = normalizedPhone.length > 0;
+  const hasEmail = normalizedEmail.length > 0 && isValidEmail(normalizedEmail);
+
+  let identityType = "";
+  let identity = "";
+  if (hasPhone) {
+    identityType = "phone";
+    identity = normalizedPhone;
+  } else if (hasEmail) {
+    identityType = "email";
+    identity = normalizedEmail;
+  } else {
+    return null;
+  }
+
+  const dedupHash = await sha256Hex(
+    `${identityType}|${identity}|${normalizedCountry}|${normalizedPostcode}`,
+  );
+  if (!dedupHash) return null;
+
+  return {
+    country: normalizedCountry,
+    postcode: normalizedPostcode,
+    identityType,
+    dedupHash,
+    has_phone: hasPhone,
+    has_email: hasEmail,
+  };
 }
 
 function normalizeRegionInterestLocale(value) {
@@ -16187,9 +16234,9 @@ function normalizeRegionInterestSource(value) {
   return raw.replace(/[^a-z0-9_-]/g, "").slice(0, 32) || "regio_radar";
 }
 
-function regionInterestContactKey({ country, postcode, emailHash }) {
-  if (!country || !postcode || !emailHash) return "";
-  return `${REGION_INTEREST_CONTACT_PREFIX}/${country}/${postcode}/${emailHash}`;
+function regionInterestContactKey({ country, postcode, dedupHash }) {
+  if (!country || !postcode || !dedupHash) return "";
+  return `${REGION_INTEREST_CONTACT_PREFIX}/${country}/${postcode}/${dedupHash}`;
 }
 
 function regionInterestContactPrefix({ country, postcode }) {
@@ -16504,9 +16551,20 @@ async function handleRegionInterestPost(request, env) {
     return json({ ok: false, error: "invalid_region_interest_payload" }, 400);
   }
 
-  const emailHash = await sha256Hex(`${email}|${country}|${postcode}`);
-  const key = regionInterestContactKey({ country, postcode, emailHash });
-  if (!key) return json({ ok: false, error: "invalid_region_interest_key" }, 400);
+  const dedupIdentity = await buildRegionInterestDedupIdentity({
+    country,
+    postcode,
+    email,
+    phone,
+  });
+  const key = regionInterestContactKey({
+    country: dedupIdentity?.country,
+    postcode: dedupIdentity?.postcode,
+    dedupHash: dedupIdentity?.dedupHash,
+  });
+  if (!key || !dedupIdentity) {
+    return json({ ok: false, error: "invalid_region_interest_key" }, 400);
+  }
 
   const nowIso = new Date().toISOString();
   const existing = await env.BOOKING_KV.get(key, { type: "json" });
@@ -16521,13 +16579,16 @@ async function handleRegionInterestPost(request, env) {
     postcode,
     name,
     email,
-    phone,
+    phone: dedupIdentity.has_phone ? normalizeRegionInterestPhoneForDedup(phone) : phone,
     locale,
     source,
     consent: true,
     created_at: createdAt,
     updated_at: nowIso,
-    email_hash: emailHash,
+    dedup_hash: dedupIdentity.dedupHash,
+    dedup_identity_type: dedupIdentity.identityType,
+    has_phone: dedupIdentity.has_phone,
+    has_email: dedupIdentity.has_email,
   };
   await env.BOOKING_KV.put(key, JSON.stringify(record));
   const postcodeMasked = maskRegionInterestPostcodeForLog(postcode);
@@ -16591,7 +16652,7 @@ async function handleRegionInterestPost(request, env) {
   }
 
   console.log(
-    `[REGION_RADAR][SUBMIT_COUNTER_CHECK] country=${country} postcode_masked=${postcodeMasked} existed=${existedBeforeWrite} counter_ok=${counterOk} action=${counterAction}`,
+    `[REGION_RADAR][SUBMIT_COUNTER_CHECK] country=${country} postcode_masked=${postcodeMasked} dedup_type=${dedupIdentity.identityType} existed=${existedBeforeWrite} counter_ok=${counterOk} action=${counterAction}`,
   );
 
   const count =
