@@ -123,6 +123,9 @@ class ComplianceLedgerEntry {
   bool get isPaymentUpdate =>
       eventType.toLowerCase().trim() == 'payment_update';
 
+  DateTime? get sortTimestamp =>
+      finalizedAtUtc ?? createdAtUtc ?? paidAtUtc ?? endedAtUtc ?? startedAtUtc;
+
   factory ComplianceLedgerEntry.fromRaw(
     Map<String, dynamic> raw, {
     required int sourceLineIndex,
@@ -271,6 +274,43 @@ class ComplianceLedgerReader {
   static const String fileName = 'compliance_ledger_v1.jsonl';
   static const String localDirectHistoryFileName =
       'local_direct_trip_history_v1.jsonl';
+
+  static String _ledgerGroupToken(String raw) {
+    return raw.trim().toLowerCase().replaceAll('-', '_').replaceAll(' ', '_');
+  }
+
+  static String? _ledgerGroupKeyPart(String prefix, String value) {
+    final normalized = value.trim();
+    if (normalized.isEmpty || normalized == '—') return null;
+    return '$prefix:${normalized.toLowerCase()}';
+  }
+
+  /// Groups ledger rows by booking/trip/receipt so register detail can show
+  /// full audit history even when a flat "latest N" slice would drop older rows.
+  static String groupKeyFor(ComplianceLedgerEntry entry) {
+    final booking = _ledgerGroupKeyPart('booking', entry.bookingId);
+    if (booking != null) return booking;
+    final trip = _ledgerGroupKeyPart('trip', entry.tripId);
+    if (trip != null) return trip;
+    final receipt = _ledgerGroupKeyPart('receipt', entry.receiptReference);
+    if (receipt != null) return receipt;
+    final ride = _ledgerGroupKeyPart('ride', entry.rideId);
+    if (ride != null) return ride;
+    final event = _ledgerGroupKeyPart('event', entry.eventId);
+    if (event != null) return event;
+    return 'event:index_${entry.sourceLineIndex}';
+  }
+
+  static bool isMeaningfulLifecycleToken(String raw) {
+    switch (_ledgerGroupToken(raw)) {
+      case '':
+      case 'unknown':
+      case 'payment_updated':
+        return false;
+      default:
+        return true;
+    }
+  }
 
   static Future<Directory> _rootDir() async {
     final base = await getApplicationDocumentsDirectory();
@@ -442,44 +482,32 @@ class ComplianceLedgerReader {
     );
   }
 
-  Future<ComplianceLedgerReadResult> readLatest({
-    int limit = 20,
-    bool allowLegacyWithoutScope = false,
-  }) async {
-    if (kIsWeb) {
-      return const ComplianceLedgerReadResult(
-        entries: <ComplianceLedgerEntry>[],
-        fileExists: false,
-        skippedMalformedLines: 0,
-      );
-    }
+  Future<
+    ({
+      List<ComplianceLedgerEntry> entries,
+      bool fileExists,
+      int skippedMalformedLines,
+      bool useScoped,
+    })?
+  >
+  _readScopedEntries({bool allowLegacyWithoutScope = false}) async {
+    if (kIsWeb) return null;
 
     final scope = _activeComplianceScope();
-    if (scope == null) {
-      return const ComplianceLedgerReadResult(
-        entries: <ComplianceLedgerEntry>[],
-        fileExists: false,
-        skippedMalformedLines: 0,
-      );
-    }
+    if (scope == null) return null;
     final tenantId = scope.tenantId.trim();
     final companyId = scope.companyId.trim();
     final scopedFile = await _file();
-    if (scopedFile == null) {
-      return const ComplianceLedgerReadResult(
-        entries: <ComplianceLedgerEntry>[],
-        fileExists: false,
-        skippedMalformedLines: 0,
-      );
-    }
+    if (scopedFile == null) return null;
     final legacyFile = await _legacyFile();
     final useScoped = await scopedFile.exists();
     final file = useScoped ? scopedFile : legacyFile;
     if (!await file.exists()) {
-      return const ComplianceLedgerReadResult(
-        entries: <ComplianceLedgerEntry>[],
+      return (
+        entries: const <ComplianceLedgerEntry>[],
         fileExists: false,
         skippedMalformedLines: 0,
+        useScoped: useScoped,
       );
     }
 
@@ -512,31 +540,145 @@ class ComplianceLedgerReader {
       }
     }
 
-    int compareDateDesc(DateTime? a, DateTime? b) {
-      if (a == null && b == null) return 0;
-      if (a == null) return 1;
-      if (b == null) return -1;
-      return b.compareTo(a);
+    return (
+      entries: parsed,
+      fileExists: true,
+      skippedMalformedLines: skippedMalformedLines,
+      useScoped: useScoped,
+    );
+  }
+
+  static int _compareEntriesNewestFirst(
+    ComplianceLedgerEntry a,
+    ComplianceLedgerEntry b,
+  ) {
+    int compareDateDesc(DateTime? left, DateTime? right) {
+      if (left == null && right == null) return 0;
+      if (left == null) return 1;
+      if (right == null) return -1;
+      return right.compareTo(left);
     }
 
-    parsed.sort((a, b) {
-      final byFinalized = compareDateDesc(a.finalizedAtUtc, b.finalizedAtUtc);
-      if (byFinalized != 0) return byFinalized;
-      final byCreated = compareDateDesc(a.createdAtUtc, b.createdAtUtc);
-      if (byCreated != 0) return byCreated;
-      return b.sourceLineIndex.compareTo(a.sourceLineIndex);
-    });
+    final byFinalized = compareDateDesc(a.finalizedAtUtc, b.finalizedAtUtc);
+    if (byFinalized != 0) return byFinalized;
+    final byCreated = compareDateDesc(a.createdAtUtc, b.createdAtUtc);
+    if (byCreated != 0) return byCreated;
+    return b.sourceLineIndex.compareTo(a.sourceLineIndex);
+  }
 
+  Future<ComplianceLedgerReadResult> readLatest({
+    int limit = 20,
+    bool allowLegacyWithoutScope = false,
+  }) async {
+    final read = await _readScopedEntries(
+      allowLegacyWithoutScope: allowLegacyWithoutScope,
+    );
+    if (read == null) {
+      return const ComplianceLedgerReadResult(
+        entries: <ComplianceLedgerEntry>[],
+        fileExists: false,
+        skippedMalformedLines: 0,
+      );
+    }
+    if (!read.fileExists) {
+      return ComplianceLedgerReadResult(
+        entries: read.entries,
+        fileExists: false,
+        skippedMalformedLines: read.skippedMalformedLines,
+      );
+    }
+
+    final parsed = [...read.entries]..sort(_compareEntriesNewestFirst);
     final effectiveLimit = limit <= 0 ? 20 : limit;
     final latest = parsed.take(effectiveLimit).toList(growable: false);
+    final scope = _activeComplianceScope();
     debugPrint(
-      '[LOCAL_SCOPE][COMPLIANCE_FILTER] tenant=${_maskScope(tenantId)} company=${_maskScope(companyId)} source=${useScoped ? 'scoped' : 'legacy'} kept=${latest.length} malformed=$skippedMalformedLines',
+      '[LOCAL_SCOPE][COMPLIANCE_FILTER] tenant=${_maskScope(scope?.tenantId ?? '')} company=${_maskScope(scope?.companyId ?? '')} source=${read.useScoped ? 'scoped' : 'legacy'} kept=${latest.length} malformed=${read.skippedMalformedLines}',
     );
 
     return ComplianceLedgerReadResult(
       entries: latest,
       fileExists: true,
-      skippedMalformedLines: skippedMalformedLines,
+      skippedMalformedLines: read.skippedMalformedLines,
+    );
+  }
+
+  Future<ComplianceLedgerReadResult> readLatestGrouped({
+    int groupLimit = 20,
+    bool allowLegacyWithoutScope = false,
+  }) async {
+    final read = await _readScopedEntries(
+      allowLegacyWithoutScope: allowLegacyWithoutScope,
+    );
+    if (read == null) {
+      return const ComplianceLedgerReadResult(
+        entries: <ComplianceLedgerEntry>[],
+        fileExists: false,
+        skippedMalformedLines: 0,
+      );
+    }
+    if (!read.fileExists) {
+      return ComplianceLedgerReadResult(
+        entries: read.entries,
+        fileExists: false,
+        skippedMalformedLines: read.skippedMalformedLines,
+      );
+    }
+
+    final grouped = <String, List<ComplianceLedgerEntry>>{};
+    for (final entry in read.entries) {
+      grouped
+          .putIfAbsent(groupKeyFor(entry), () => <ComplianceLedgerEntry>[])
+          .add(entry);
+    }
+
+    DateTime? newestInGroup(List<ComplianceLedgerEntry> group) {
+      DateTime? newest;
+      for (final entry in group) {
+        final ts = entry.sortTimestamp;
+        if (ts == null) continue;
+        if (newest == null || ts.isAfter(newest)) newest = ts;
+      }
+      return newest;
+    }
+
+    final groups = grouped.entries.toList(growable: false)
+      ..sort((a, b) {
+        final aNewest = newestInGroup(a.value);
+        final bNewest = newestInGroup(b.value);
+        if (aNewest != null && bNewest != null) {
+          final byTime = bNewest.compareTo(aNewest);
+          if (byTime != 0) return byTime;
+        } else if (aNewest != null) {
+          return -1;
+        } else if (bNewest != null) {
+          return 1;
+        }
+        final aIndex = a.value
+            .map((entry) => entry.sourceLineIndex)
+            .fold<int>(0, (prev, next) => next > prev ? next : prev);
+        final bIndex = b.value
+            .map((entry) => entry.sourceLineIndex)
+            .fold<int>(0, (prev, next) => next > prev ? next : prev);
+        return bIndex.compareTo(aIndex);
+      });
+
+    final effectiveGroupLimit = groupLimit <= 0 ? 20 : groupLimit;
+    final selectedGroups = groups.take(effectiveGroupLimit);
+    final merged = <ComplianceLedgerEntry>[];
+    for (final group in selectedGroups) {
+      merged.addAll(group.value);
+    }
+
+    final scope = _activeComplianceScope();
+    debugPrint(
+      '[LOCAL_SCOPE][COMPLIANCE_FILTER] tenant=${_maskScope(scope?.tenantId ?? '')} company=${_maskScope(scope?.companyId ?? '')} source=${read.useScoped ? 'scoped' : 'legacy'} grouped=${selectedGroups.length} kept=${merged.length} malformed=${read.skippedMalformedLines}',
+    );
+
+    return ComplianceLedgerReadResult(
+      entries: merged,
+      fileExists: true,
+      skippedMalformedLines: read.skippedMalformedLines,
     );
   }
 }

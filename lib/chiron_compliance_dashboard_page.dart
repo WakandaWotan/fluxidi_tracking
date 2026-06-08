@@ -4300,12 +4300,12 @@ class _LocalComplianceLedgerSectionState
   @override
   void initState() {
     super.initState();
-    _future = _reader.readLatest(limit: 20);
+    _future = _reader.readLatestGrouped(groupLimit: 20);
   }
 
   void _refresh() {
     setState(() {
-      _future = _reader.readLatest(limit: 20);
+      _future = _reader.readLatestGrouped(groupLimit: 20);
     });
   }
 
@@ -5032,6 +5032,8 @@ class _LocalComplianceLedgerSectionState
     final token = _ledgerToken(raw);
     switch (token) {
       case 'ride_stop':
+      case 'ride_completed':
+      case 'completed':
         return _t(
           nl: 'Rit afgerond',
           en: 'Ride completed',
@@ -5118,15 +5120,11 @@ class _LocalComplianceLedgerSectionState
   }
 
   String _ledgerGroupKey(ComplianceLedgerEntry e, int index) {
-    final booking = _ledgerKeyPart('booking', e.bookingId);
-    if (booking != null) return booking;
-    final trip = _ledgerKeyPart('trip', e.tripId);
-    if (trip != null) return trip;
-    final receipt = _ledgerKeyPart('receipt', e.receiptReference);
-    if (receipt != null) return receipt;
-    final event = _ledgerKeyPart('event', e.eventId);
-    if (event != null) return event;
-    return 'event:index_$index';
+    final key = ComplianceLedgerReader.groupKeyFor(e);
+    if (key.startsWith('event:index_')) {
+      return 'event:index_$index';
+    }
+    return key;
   }
 
   DateTime? _ledgerSortTime(ComplianceLedgerEntry e) {
@@ -5189,9 +5187,177 @@ class _LocalComplianceLedgerSectionState
   ) {
     final sorted = [...entries]..sort(_compareLedgerEntries);
     for (final entry in sorted.reversed) {
+      if (_isLedgerCompletionEntry(entry)) return entry;
+    }
+    for (final entry in sorted.reversed) {
       if (!entry.isPaymentUpdate) return entry;
     }
     return sorted.last;
+  }
+
+  bool _isLedgerCompletionEventType(String raw) {
+    switch (_ledgerToken(raw)) {
+      case 'ride_stop':
+      case 'ride_completed':
+      case 'completed':
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  bool _isLedgerCancellationEntry(ComplianceLedgerEntry entry) {
+    if (entry.isPaymentUpdate) return false;
+    final lifecycle = _ledgerToken(entry.lifecycleStatus);
+    return lifecycle == 'cancelled' || lifecycle == 'canceled';
+  }
+
+  bool _isLedgerCompletionEntry(ComplianceLedgerEntry entry) {
+    if (_isLedgerCompletionEventType(entry.eventType)) return true;
+    if (entry.isPaymentUpdate) return false;
+    final lifecycle = _ledgerToken(entry.lifecycleStatus);
+    if (lifecycle == 'completed') return true;
+    if (entry.endedAtUtc != null &&
+        lifecycle != 'payment_updated' &&
+        lifecycle != 'planned' &&
+        lifecycle != 'pending') {
+      return true;
+    }
+    if (_ledgerToken(entry.validationState) == 'exportable' &&
+        (entry.endedAtUtc != null || entry.finalizedAtUtc != null)) {
+      return true;
+    }
+    return false;
+  }
+
+  String? _storedLifecycleTokenFromEntry(ComplianceLedgerEntry entry) {
+    final candidates = <String?>[
+      entry.lifecycleStatus,
+      _rawPathText(entry.raw, const ['lifecycle_status']),
+      _rawPathText(entry.raw, const ['ride_status']),
+      _rawPathText(entry.raw, const ['status']),
+      _rawPathText(entry.raw, const ['booking', 'status']),
+      _rawPathText(entry.raw, const ['booking', 'lifecycle_status']),
+    ];
+    for (final candidate in candidates) {
+      final token = _ledgerToken(candidate ?? '');
+      if (ComplianceLedgerReader.isMeaningfulLifecycleToken(token)) {
+        return token;
+      }
+    }
+    return null;
+  }
+
+  String _resolveLedgerLifecycleToken(List<ComplianceLedgerEntry> entries) {
+    if (entries.any(_isLedgerCompletionEntry)) return 'completed';
+    if (entries.any(_isLedgerCancellationEntry)) return 'cancelled';
+
+    for (final entry in entries.where((e) => !e.isPaymentUpdate)) {
+      final lifecycle = _ledgerToken(entry.lifecycleStatus);
+      if (lifecycle == 'completed') return 'completed';
+      if (lifecycle == 'cancelled' || lifecycle == 'canceled')
+        return 'cancelled';
+      if (lifecycle == 'in_progress' ||
+          lifecycle == 'active' ||
+          lifecycle == 'started') {
+        return 'in_progress';
+      }
+      if (entry.startedAtUtc != null && entry.endedAtUtc == null) {
+        return 'in_progress';
+      }
+    }
+
+    for (final entry in entries) {
+      final stored = _storedLifecycleTokenFromEntry(entry);
+      if (stored == null) continue;
+      if (stored == 'completed') return 'completed';
+      if (stored == 'cancelled' || stored == 'canceled') return 'cancelled';
+      if (stored == 'in_progress' ||
+          stored == 'active' ||
+          stored == 'started') {
+        return 'in_progress';
+      }
+      if (stored == 'planned' || stored == 'pending') return 'planned';
+    }
+
+    return 'planned';
+  }
+
+  String _localizedLedgerLifecycleTitle(String lifecycle, String rideType) {
+    switch (_ledgerToken(lifecycle)) {
+      case 'completed':
+        return _t(
+          nl: 'Rit voltooid',
+          en: 'Completed ride',
+          fr: 'Course terminée',
+          es: 'Viaje completado',
+        );
+      case 'cancelled':
+      case 'canceled':
+        return _t(
+          nl: 'Rit geannuleerd',
+          en: 'Cancelled ride',
+          fr: 'Course annulée',
+          es: 'Viaje cancelado',
+        );
+      case 'in_progress':
+      case 'active':
+      case 'started':
+        return _t(
+          nl: 'Rit bezig',
+          en: 'Ride in progress',
+          fr: 'Course en cours',
+          es: 'Viaje en curso',
+        );
+      case 'planned':
+      case 'pending':
+      default:
+        return _rideTypeLabel(rideType);
+    }
+  }
+
+  String _localizedLedgerLifecycleStatusLabel(String lifecycle) {
+    switch (_ledgerToken(lifecycle)) {
+      case 'completed':
+        return _t(
+          nl: 'voltooid',
+          en: 'completed',
+          fr: 'terminée',
+          es: 'completado',
+        );
+      case 'cancelled':
+      case 'canceled':
+        return _t(
+          nl: 'geannuleerd',
+          en: 'cancelled',
+          fr: 'annulée',
+          es: 'cancelado',
+        );
+      case 'in_progress':
+      case 'active':
+      case 'started':
+        return _t(
+          nl: 'bezig',
+          en: 'in progress',
+          fr: 'en cours',
+          es: 'en curso',
+        );
+      case 'planned':
+      case 'pending':
+        return _t(
+          nl: 'gepland',
+          en: 'planned',
+          fr: 'planifiée',
+          es: 'planificado',
+        );
+      default:
+        return _t(
+          nl: 'onbekend',
+          en: 'unknown',
+          fr: 'inconnu',
+          es: 'desconocido',
+        );
+    }
   }
 
   ComplianceLedgerEntry? _latestPaymentUpdateInGroup(
@@ -5538,6 +5704,7 @@ class _LocalComplianceLedgerSectionState
     ComplianceLedgerEntry entry, {
     required ComplianceLedgerEntry? latestPaymentUpdate,
     required ComplianceLedgerEntry summaryEntry,
+    required String groupLifecycle,
   }) {
     final eventToken = _ledgerToken(entry.eventType);
     final eventTime = _fmtDateTime(_ledgerSortTime(entry));
@@ -5547,9 +5714,15 @@ class _LocalComplianceLedgerSectionState
         _isNewerLedgerEntry(latestPaymentUpdate, entry);
     final isUnknownEventType = eventToken.isEmpty || eventToken == 'unknown';
     final inferCompleted =
-        isUnknownEventType &&
-        (_ledgerToken(entry.validationState) == 'exportable' ||
-            identical(entry, summaryEntry));
+        isUnknownEventType && _isLedgerCompletionEntry(entry);
+    final auditLifecycle = entry.isPaymentUpdate
+        ? ''
+        : (_isLedgerCompletionEntry(entry)
+              ? 'completed'
+              : (_isLedgerCancellationEntry(entry)
+                    ? 'cancelled'
+                    : (_storedLifecycleTokenFromEntry(entry) ??
+                          groupLifecycle)));
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
       padding: const EdgeInsets.all(8),
@@ -5579,14 +5752,13 @@ class _LocalComplianceLedgerSectionState
             spacing: 6,
             runSpacing: 6,
             children: [
-              if (entry.isPaymentUpdate &&
-                  _ledgerToken(entry.validationState) == 'payment_update')
+              if (entry.isPaymentUpdate)
                 _chip(_paymentUpdatedLabel())
               else
                 _chip(
                   _labelValue(
                     _statusLabel(),
-                    _validationStateLabel(entry.validationState),
+                    _localizedLedgerLifecycleStatusLabel(auditLifecycle),
                   ),
                 ),
               _chip(_backendChipLabel(entry.backendConfirmed)),
@@ -5651,9 +5823,10 @@ class _LocalComplianceLedgerSectionState
     final summary = _summaryLedgerEntry(group);
     final latestPaymentUpdate = _latestPaymentUpdateInGroup(group);
     final effectivePayment = latestPaymentUpdate ?? summary;
+    final lifecycle = _resolveLedgerLifecycleToken(group);
     final businessReference = _businessReferenceForLocalCard(summary);
     final title =
-        '${_rideTypeLabel(summary.rideType)} • ${_labelValue(businessReference.label, businessReference.value)}';
+        '${_localizedLedgerLifecycleTitle(lifecycle, summary.rideType)} • ${_labelValue(businessReference.label, businessReference.value)}';
     final route = _routeDisplay(summary);
     final rideTime = _fmtDateTime(_ledgerSortTime(summary));
     final latestTime = _fmtDateTime(_ledgerSortTime(newest));
@@ -5664,7 +5837,7 @@ class _LocalComplianceLedgerSectionState
                 _ledgerSortTime(latestPaymentUpdate),
           );
     final fare = _fareDisplay(effectivePayment) ?? _fareDisplay(summary);
-    final sortedAudit = [...group]..sort((a, b) => _compareLedgerEntries(b, a));
+    final sortedAudit = [...group]..sort(_compareLedgerEntries);
 
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
@@ -5783,7 +5956,7 @@ class _LocalComplianceLedgerSectionState
               _chip(
                 _labelValue(
                   _statusLabel(),
-                  _validationStateLabel(summary.validationState),
+                  _localizedLedgerLifecycleStatusLabel(lifecycle),
                 ),
               ),
               if (latestPaymentUpdate != null) _chip(_paymentUpdatedLabel()),
@@ -5815,6 +5988,7 @@ class _LocalComplianceLedgerSectionState
                     entry,
                     latestPaymentUpdate: latestPaymentUpdate,
                     summaryEntry: summary,
+                    groupLifecycle: lifecycle,
                   ),
                 )
                 .toList(growable: false),
