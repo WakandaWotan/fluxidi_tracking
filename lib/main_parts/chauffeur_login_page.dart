@@ -1,7 +1,9 @@
 part of '../main.dart';
 
 class ChauffeurLoginPage extends StatefulWidget {
-  const ChauffeurLoginPage({super.key});
+  const ChauffeurLoginPage({super.key, this.openedFromBusinessHome = false});
+
+  final bool openedFromBusinessHome;
 
   @override
   State<ChauffeurLoginPage> createState() => _ChauffeurLoginPageState();
@@ -33,6 +35,96 @@ class _BackendDriverLoginResult {
   final String vehiclePhotoUrl;
   final String driverSessionToken;
   final int? expiresInSeconds;
+}
+
+const List<String> _driverPhotoPayloadKeys = <String>[
+  'public_portrait_url',
+  'publicPortraitUrl',
+  'driver_photo_url',
+  'driverPhotoUrl',
+  'photo_url',
+  'photoUrl',
+  'avatar_url',
+  'avatarUrl',
+  'profile_photo_url',
+  'profilePhotoUrl',
+  'portrait_url',
+  'portraitUrl',
+  'image_url',
+  'imageUrl',
+];
+
+void _logStandalonePhotoKeys({
+  required String driverId,
+  required Map<String, dynamic> payload,
+  required Map<String, dynamic> driverMap,
+}) {
+  final hits = <String>[];
+  void scanMap(Map<String, dynamic> map, String prefix) {
+    for (final key in _driverPhotoPayloadKeys) {
+      final value = (map[key] ?? '').toString().trim();
+      if (value.isNotEmpty) hits.add('$prefix.$key');
+    }
+  }
+
+  scanMap(driverMap, 'driver');
+  final profileRaw = payload['profile'];
+  if (profileRaw is Map) {
+    scanMap(Map<String, dynamic>.from(profileRaw), 'profile');
+  }
+  scanMap(payload, 'payload');
+  final trimmedDriverId = driverId.trim();
+  final maskedDriverId = trimmedDriverId.length <= 4
+      ? trimmedDriverId
+      : '${trimmedDriverId.substring(0, 2)}…${trimmedDriverId.substring(trimmedDriverId.length - 2)}';
+  debugPrint(
+    '[DRIVER_SESSION][STANDALONE_PHOTO_KEYS] driver=$maskedDriverId keys=${hits.isEmpty ? 'none' : hits.join(',')}',
+  );
+}
+
+String? _readDriverPhotoUrlFromMap(Map<String, dynamic> map) {
+  for (final key in _driverPhotoPayloadKeys) {
+    final value = (map[key] ?? '').toString().trim();
+    if (value.isNotEmpty) return value;
+  }
+  return null;
+}
+
+({String? url, String source}) _extractStandaloneDriverPhotoFromPairingPayload({
+  required Map<String, dynamic> payload,
+  required Map<String, dynamic> driverMap,
+}) {
+  final fromDriver = _readDriverPhotoUrlFromMap(driverMap);
+  if (fromDriver != null) {
+    return (url: fromDriver, source: 'payload');
+  }
+  final profileRaw = payload['profile'];
+  if (profileRaw is Map) {
+    final fromProfile = _readDriverPhotoUrlFromMap(
+      Map<String, dynamic>.from(profileRaw),
+    );
+    if (fromProfile != null) {
+      return (url: fromProfile, source: 'profile');
+    }
+  }
+  final fromPayload = _readDriverPhotoUrlFromMap(payload);
+  if (fromPayload != null) {
+    return (url: fromPayload, source: 'payload');
+  }
+  return (url: null, source: 'none');
+}
+
+String? _resolveStandaloneDriverPhotoForSave(String? raw) {
+  final text = (raw ?? '').trim();
+  if (text.isEmpty) return null;
+  final resolved = resolvePublicHttpsMediaUrl(text);
+  if (resolved.isNotEmpty) return resolved;
+  final lower = text.toLowerCase();
+  if (lower.startsWith('https://') || lower.startsWith('http://')) return text;
+  if (lower.startsWith('/public/media/') || lower.startsWith('public-media/')) {
+    return text;
+  }
+  return null;
 }
 
 class _ChauffeurLoginPageState extends State<ChauffeurLoginPage> {
@@ -78,6 +170,83 @@ class _ChauffeurLoginPageState extends State<ChauffeurLoginPage> {
     super.dispose();
   }
 
+  Future<void> _openDriverHomeAfterLogin({required bool fromBusiness}) async {
+    if (!mounted) return;
+    setState(() => _busy = false);
+    setAppRole(AppRole.driver);
+    Navigator.of(context).pushReplacement(
+      MaterialPageRoute(
+        builder: (_) => DriverHomePage(openedFromBusinessHome: fromBusiness),
+      ),
+    );
+  }
+
+  Future<void> _completeBusinessDriverViewLogin({
+    required String tenantId,
+    required String companyId,
+    required String driverId,
+    required String employeeNumber,
+    required String fullName,
+    String? companyCode,
+    String? assignedVehicleId,
+    String? driverPhotoUrl,
+    String? companyLogoUrl,
+    String? vehiclePhotoUrl,
+    String? driverSessionToken,
+    String? driverSessionExpiresAtUtc,
+  }) async {
+    await DriverSessionStore.instance.saveBusinessDriverPreview(
+      BusinessDriverPreviewRecord(
+        tenantId: tenantId,
+        companyId: companyId,
+        driverId: driverId,
+        vehicleId: assignedVehicleId,
+        driverName: fullName,
+        driverPhotoUrl: driverPhotoUrl,
+      ),
+    );
+    final now = DateTime.now().toUtc().toIso8601String();
+    DriverSessionStore.instance.setBusinessDriverViewSessionInMemory(
+      ActiveDriverSession(
+        driverId: driverId.trim(),
+        employeeNumber: employeeNumber.trim(),
+        fullName: fullName.trim(),
+        phone: '',
+        loggedInAt: now,
+        updatedAt: now,
+        tenantId: tenantId.trim(),
+        companyId: companyId.trim(),
+        companyCode: (companyCode ?? '').trim().isEmpty
+            ? null
+            : companyCode!.trim(),
+        assignedVehicleId: (assignedVehicleId ?? '').trim().isEmpty
+            ? null
+            : assignedVehicleId!.trim(),
+        driverPhotoUrl: (driverPhotoUrl ?? '').trim().isEmpty
+            ? null
+            : driverPhotoUrl!.trim(),
+        companyLogoUrl: (companyLogoUrl ?? '').trim().isEmpty
+            ? null
+            : companyLogoUrl!.trim(),
+        vehiclePhotoUrl: (vehiclePhotoUrl ?? '').trim().isEmpty
+            ? null
+            : vehiclePhotoUrl!.trim(),
+        driverSessionToken: (driverSessionToken ?? '').trim().isEmpty
+            ? null
+            : driverSessionToken!.trim(),
+        driverSessionExpiresAtUtc:
+            (driverSessionExpiresAtUtc ?? '').trim().isEmpty
+            ? null
+            : driverSessionExpiresAtUtc!.trim(),
+        linkMethod: kCompanyAdminDriverViewLinkMethod,
+      ),
+    );
+    debugPrint(
+      '[DRIVER_LOGIN][OK] source=business_preview driver=${_maskLoginCode(driverId)}',
+    );
+    await _openDriverHomeAfterLogin(fromBusiness: true);
+  }
+
   Future<void> _submit() async {
     setState(() => _lookupError = null);
     FocusScope.of(context).unfocus();
@@ -101,6 +270,35 @@ class _ChauffeurLoginPageState extends State<ChauffeurLoginPage> {
       driverCode: enteredDriverCode,
     );
     if (backendLogin != null) {
+      if (widget.openedFromBusinessHome) {
+        String? tokenExpiry;
+        if ((backendLogin.expiresInSeconds ?? 0) > 0) {
+          tokenExpiry = DateTime.now()
+              .toUtc()
+              .add(Duration(seconds: backendLogin.expiresInSeconds!))
+              .toIso8601String();
+        }
+        await _completeBusinessDriverViewLogin(
+          tenantId: backendLogin.tenantId,
+          companyId: backendLogin.companyId,
+          driverId: backendLogin.driverId,
+          employeeNumber: backendLogin.driverId,
+          fullName: backendLogin.driverName,
+          assignedVehicleId: backendLogin.assignedVehicleId,
+          driverPhotoUrl: backendLogin.driverPhotoUrl,
+          companyLogoUrl: backendLogin.companyLogoUrl,
+          vehiclePhotoUrl: backendLogin.vehiclePhotoUrl,
+          driverSessionToken: backendLogin.driverSessionToken,
+          driverSessionExpiresAtUtc: tokenExpiry,
+        );
+        return;
+      }
+      final resolvedBackendPhoto = _resolveStandaloneDriverPhotoForSave(
+        backendLogin.driverPhotoUrl,
+      );
+      debugPrint(
+        '[DRIVER_SESSION][STANDALONE_PHOTO] driver=${_maskLoginCode(backendLogin.driverId)} photo=${resolvedBackendPhoto == null ? 'missing' : 'present'} source=payload',
+      );
       await DriverSessionStore.instance.saveBackendDriverLoginSession(
         tenantId: backendLogin.tenantId,
         companyId: backendLogin.companyId,
@@ -108,7 +306,7 @@ class _ChauffeurLoginPageState extends State<ChauffeurLoginPage> {
         driverName: backendLogin.driverName,
         companyDisplayName: backendLogin.companyDisplayName,
         assignedVehicleId: backendLogin.assignedVehicleId,
-        driverPhotoUrl: backendLogin.driverPhotoUrl,
+        driverPhotoUrl: resolvedBackendPhoto,
         companyLogoUrl: backendLogin.companyLogoUrl,
         vehiclePhotoUrl: backendLogin.vehiclePhotoUrl,
         driverSessionToken: backendLogin.driverSessionToken,
@@ -120,12 +318,7 @@ class _ChauffeurLoginPageState extends State<ChauffeurLoginPage> {
       debugPrint(
         '[DRIVER_LOGIN][OK] source=backend driver=${_maskLoginCode(backendLogin.driverId)}',
       );
-      if (!mounted) return;
-      setState(() => _busy = false);
-      setAppRole(AppRole.driver);
-      Navigator.of(context).pushReplacement(
-        MaterialPageRoute(builder: (_) => const DriverHomePage()),
-      );
+      await _openDriverHomeAfterLogin(fromBusiness: false);
       return;
     }
     debugPrint('[DRIVER_LOGIN][FALLBACK_LOCAL] reason=backend_failed');
@@ -192,6 +385,20 @@ class _ChauffeurLoginPageState extends State<ChauffeurLoginPage> {
         '[DRIVER_LOGIN][MIGRATE] driver=${_maskLoginCode(selectedDriver.id)} company=${_maskLoginCode(activeCompanyId)} code=${_maskLoginCode(normalizedMatch.employeeNumber)} reason=${lookup.reason}',
       );
     }
+    if (widget.openedFromBusinessHome) {
+      await _completeBusinessDriverViewLogin(
+        tenantId: activeCompanyId,
+        companyId: activeCompanyId,
+        driverId: normalizedMatch.id,
+        employeeNumber: normalizedMatch.employeeNumber,
+        fullName: normalizedMatch.fullName,
+        assignedVehicleId: _resolveFleetVehicleIdForDriverGlobal(
+          normalizedMatch.id,
+        ),
+        driverPhotoUrl: normalizedMatch.publicPortraitUrl,
+      );
+      return;
+    }
     final prev = await DriverSessionStore.instance.load();
     await DriverSessionStore.instance.saveFromDriverProfile(
       normalizedMatch,
@@ -201,12 +408,7 @@ class _ChauffeurLoginPageState extends State<ChauffeurLoginPage> {
     debugPrint(
       '[DRIVER_LOGIN][OK] driverId=${_maskLoginCode(normalizedMatch.id)}',
     );
-    if (!mounted) return;
-    setState(() => _busy = false);
-    setAppRole(AppRole.driver);
-    Navigator.of(context).pushReplacement(
-      MaterialPageRoute(builder: (_) => const DriverHomePage()),
-    );
+    await _openDriverHomeAfterLogin(fromBusiness: false);
   }
 
   Future<_BackendDriverLoginResult?> _loginDriverWithBackend({
@@ -259,16 +461,21 @@ class _ChauffeurLoginPageState extends State<ChauffeurLoginPage> {
                   '')
               .toString()
               .trim();
-      final driverPhotoUrl =
-          (body['driver_photo_url'] ??
-                  body['driverPhotoUrl'] ??
-                  body['public_portrait_url'] ??
-                  body['publicPortraitUrl'] ??
-                  body['profile_photo_url'] ??
-                  body['profilePhotoUrl'] ??
-                  '')
-              .toString()
-              .trim();
+      final driverBody = body['driver'] is Map
+          ? Map<String, dynamic>.from(body['driver'] as Map)
+          : <String, dynamic>{};
+      var driverPhotoUrl = _readDriverPhotoUrlFromMap(body) ?? '';
+      if (driverPhotoUrl.isEmpty && driverBody.isNotEmpty) {
+        driverPhotoUrl = _readDriverPhotoUrlFromMap(driverBody) ?? '';
+      }
+      final profileBody = body['profile'] is Map
+          ? Map<String, dynamic>.from(body['profile'] as Map)
+          : <String, dynamic>{};
+      if (driverPhotoUrl.isEmpty && profileBody.isNotEmpty) {
+        driverPhotoUrl = _readDriverPhotoUrlFromMap(profileBody) ?? '';
+      }
+      driverPhotoUrl =
+          (_resolveStandaloneDriverPhotoForSave(driverPhotoUrl) ?? '').trim();
       final companyLogoUrl =
           (body['company_logo_url'] ??
                   body['companyLogoUrl'] ??
@@ -649,6 +856,35 @@ class _ChauffeurLoginPageState extends State<ChauffeurLoginPage> {
     final expiresAt = DateTime.tryParse(
       (payload['expires_at'] ?? '').toString().trim(),
     );
+    if (widget.openedFromBusinessHome) {
+      await _completeBusinessDriverViewLogin(
+        tenantId: tenantId,
+        companyId: companyId,
+        driverId: driverId,
+        employeeNumber: employeeNumber,
+        fullName: driverName,
+        companyCode: resolvedCompanyCode,
+        assignedVehicleId: assignedVehicleId,
+        driverSessionToken: pairingDriverSessionToken,
+        driverSessionExpiresAtUtc: pairingTokenExpiresAt?.toIso8601String(),
+      );
+      return;
+    }
+    _logStandalonePhotoKeys(
+      driverId: driverId,
+      payload: payload,
+      driverMap: driverMap,
+    );
+    final pairingPhoto = _extractStandaloneDriverPhotoFromPairingPayload(
+      payload: payload,
+      driverMap: driverMap,
+    );
+    final resolvedPairingPhoto = _resolveStandaloneDriverPhotoForSave(
+      pairingPhoto.url,
+    );
+    debugPrint(
+      '[DRIVER_SESSION][STANDALONE_PHOTO] driver=${_maskLoginCode(driverId)} photo=${resolvedPairingPhoto == null ? 'missing' : 'present'} source=${pairingPhoto.source}',
+    );
     await DriverSessionStore.instance.saveVerifiedDriverPairingSession(
       tenantId: tenantId,
       companyId: companyId,
@@ -657,17 +893,13 @@ class _ChauffeurLoginPageState extends State<ChauffeurLoginPage> {
       driverName: driverName,
       employeeNumber: employeeNumber,
       assignedVehicleId: assignedVehicleId,
+      driverPhotoUrl: resolvedPairingPhoto,
       driverSessionToken: pairingDriverSessionToken,
       driverSessionExpiresAtUtc: pairingTokenExpiresAt,
       issuedAt: issuedAt,
       expiresAt: expiresAt,
     );
-    if (!mounted) return;
-    setState(() => _busy = false);
-    setAppRole(AppRole.driver);
-    Navigator.of(context).pushReplacement(
-      MaterialPageRoute(builder: (_) => const DriverHomePage()),
-    );
+    await _openDriverHomeAfterLogin(fromBusiness: false);
   }
 
   Future<void> _scanDriverLoginQr() async {
@@ -1169,6 +1401,35 @@ class _ChauffeurLoginPageState extends State<ChauffeurLoginPage> {
     final expiresAt = DateTime.tryParse(
       (payload['expires_at'] ?? '').toString().trim(),
     );
+    if (widget.openedFromBusinessHome) {
+      await _completeBusinessDriverViewLogin(
+        tenantId: tenantId,
+        companyId: companyId,
+        driverId: driverId,
+        employeeNumber: employeeNumber,
+        fullName: driverName,
+        companyCode: companyCode,
+        assignedVehicleId: assignedVehicleId,
+        driverSessionToken: pairingDriverSessionToken,
+        driverSessionExpiresAtUtc: pairingTokenExpiresAt?.toIso8601String(),
+      );
+      return;
+    }
+    _logStandalonePhotoKeys(
+      driverId: driverId,
+      payload: payload,
+      driverMap: driverMap,
+    );
+    final pairingPhoto = _extractStandaloneDriverPhotoFromPairingPayload(
+      payload: payload,
+      driverMap: driverMap,
+    );
+    final resolvedPairingPhoto = _resolveStandaloneDriverPhotoForSave(
+      pairingPhoto.url,
+    );
+    debugPrint(
+      '[DRIVER_SESSION][STANDALONE_PHOTO] driver=${_maskLoginCode(driverId)} photo=${resolvedPairingPhoto == null ? 'missing' : 'present'} source=${pairingPhoto.source}',
+    );
     await DriverSessionStore.instance.saveVerifiedDriverPairingSession(
       tenantId: tenantId,
       companyId: companyId,
@@ -1177,17 +1438,13 @@ class _ChauffeurLoginPageState extends State<ChauffeurLoginPage> {
       driverName: driverName,
       employeeNumber: employeeNumber,
       assignedVehicleId: assignedVehicleId,
+      driverPhotoUrl: resolvedPairingPhoto,
       driverSessionToken: pairingDriverSessionToken,
       driverSessionExpiresAtUtc: pairingTokenExpiresAt,
       issuedAt: issuedAt,
       expiresAt: expiresAt,
     );
-    if (!mounted) return;
-    setState(() => _busy = false);
-    setAppRole(AppRole.driver);
-    Navigator.of(context).pushReplacement(
-      MaterialPageRoute(builder: (_) => const DriverHomePage()),
-    );
+    await _openDriverHomeAfterLogin(fromBusiness: false);
   }
 
   @override

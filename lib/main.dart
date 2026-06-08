@@ -359,8 +359,6 @@ bool _isBridgeBootstrapFreshForCompany(String companyId) {
   return age <= const Duration(minutes: 10);
 }
 
-const String kCompanyAdminDriverViewLinkMethod = 'company_admin_driver_view';
-
 typedef _BridgeTranslator =
     String Function({
       required String nl,
@@ -398,12 +396,88 @@ bool _isSeededOrPlaceholderBridgeDriver(DriverProfile driver) {
   return isDefaultEmployee && (isDefaultId || isDefaultName);
 }
 
+bool _isBusinessAdminPreviewEligibleDriver(DriverProfile driver) {
+  final driverId = driver.id.trim();
+  final companyId = (driver.companyId ?? '').trim();
+  if (!driver.isActive) return false;
+  if (_isSeededOrPlaceholderBridgeDriver(driver)) return false;
+  if (driverId.isEmpty) return false;
+  return fleetRecordBelongsToActiveCompanyOrLegacy(companyId);
+}
+
 List<DriverProfile> _resolveSelectableDriverBridgeCandidatesGlobal({
   bool logCandidates = true,
+  bool requireEmployeeNumber = true,
 }) {
   return _resolveDriverBridgeCandidatesReportGlobal(
     logCandidates: logCandidates,
+    requireEmployeeNumber: requireEmployeeNumber,
   ).selectable;
+}
+
+List<DriverProfile> _resolveBusinessAdminDriverBridgeCandidatesGlobal({
+  bool logCandidates = true,
+}) {
+  return _resolveSelectableDriverBridgeCandidatesGlobal(
+    logCandidates: logCandidates,
+    requireEmployeeNumber: false,
+  );
+}
+
+DriverProfile? _findBusinessAdminEligibleDriverByIdGlobal(String driverId) {
+  final normalized = driverId.trim();
+  if (normalized.isEmpty) return null;
+  for (final driver in driversNotifier.value) {
+    if (driver.id.trim() == normalized &&
+        _isBusinessAdminPreviewEligibleDriver(driver)) {
+      return driver;
+    }
+  }
+  return null;
+}
+
+String? _resolveFleetVehicleIdForDriverGlobal(String driverId) {
+  final normalizedDriverId = driverId.trim();
+  if (normalizedDriverId.isEmpty) return null;
+  final activeCompany = resolvedCompanyId.trim().isNotEmpty
+      ? resolvedCompanyId.trim()
+      : kOutboundTenantId.trim();
+  for (final vehicle in vehiclesNotifier.value) {
+    if (!vehicle.isActive) continue;
+    final vehicleId = vehicle.id.trim();
+    if (vehicleId.isEmpty) continue;
+    if ((vehicle.driverId?.trim() ?? '') != normalizedDriverId) continue;
+    final vehicleCompany = vehicle.companyId?.trim() ?? '';
+    if (vehicleCompany.isNotEmpty &&
+        activeCompany.isNotEmpty &&
+        vehicleCompany != activeCompany) {
+      continue;
+    }
+    return vehicleId;
+  }
+  return null;
+}
+
+String _canonicalDriverPortraitUrlGlobal(DriverProfile driver) {
+  return (driver.publicPortraitUrl ?? '').trim();
+}
+
+Future<void> _saveBusinessDriverPreviewFromProfileGlobal(
+  DriverProfile driver, {
+  required String tenantId,
+  required String companyId,
+}) async {
+  final photo = _canonicalDriverPortraitUrlGlobal(driver);
+  await DriverSessionStore.instance.saveBusinessDriverPreview(
+    BusinessDriverPreviewRecord(
+      tenantId: tenantId,
+      companyId: companyId,
+      driverId: driver.id.trim(),
+      vehicleId: _resolveFleetVehicleIdForDriverGlobal(driver.id),
+      driverName: driver.fullName.trim(),
+      driverPhotoUrl: photo.isEmpty ? null : photo,
+    ),
+  );
 }
 
 ({
@@ -414,6 +488,7 @@ List<DriverProfile> _resolveSelectableDriverBridgeCandidatesGlobal({
 _resolveDriverBridgeCandidatesReportGlobal({
   bool logCandidates = true,
   String? excludeDriverId,
+  bool requireEmployeeNumber = true,
 }) {
   final normalizedExcludedDriverId = (excludeDriverId ?? '').trim();
   final selected = <DriverProfile>[];
@@ -456,8 +531,7 @@ _resolveDriverBridgeCandidatesReportGlobal({
       reason = 'missing_id';
     } else if (isCurrentDriver) {
       reason = 'current_driver';
-    } else if (!employeePresent) {
-      // Required because DriverSessionStore validation expects employeeNumber.
+    } else if (requireEmployeeNumber && !employeePresent) {
       reason = 'missing_employee_number';
     }
 
@@ -831,7 +905,10 @@ Future<bool> _hydrateCompanyBootstrapFromActiveSession({
       );
     }
     await _applyCompanyProfileFromBootstrapPayload(bootstrap);
-    await DriverSessionStore.instance.bootstrap(driversNotifier.value);
+    await DriverSessionStore.instance.bootstrap(
+      driversNotifier.value,
+      useStandaloneScopePointer: false,
+    );
     final hydratedCompanyId = _firstBootstrapText(<dynamic>[
       companyProfileNotifier.value?.companyId,
       activeCompanySessionNotifier.value?.companyId,
@@ -1282,7 +1359,11 @@ Future<void> main() async {
       '[COMPANY_PAIRING][AUTO_ROUTE_SKIP] reason=no_valid_company_context',
     );
   }
-  await DriverSessionStore.instance.bootstrap(driversNotifier.value);
+  DriverSessionStore.instance.prepareStandaloneDriverEntry();
+  await DriverSessionStore.instance.bootstrap(
+    driversNotifier.value,
+    useStandaloneScopePointer: !_startInCompanyAdminHome,
+  );
   final startupDriverSession = activeDriverSessionNotifier.value;
   if (!_startInCompanyAdminHome && startupDriverSession != null) {
     if (_isCompanyAdminDriverViewSession(startupDriverSession)) {

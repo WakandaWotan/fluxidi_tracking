@@ -8410,12 +8410,18 @@ class _DriverHomePageState extends State<DriverHomePage>
     }
   }
 
-  String? _dashboardAvatarNetworkUrl() {
-    bool isHttpUrl(String value) {
-      final lower = value.trim().toLowerCase();
-      return lower.startsWith('https://') || lower.startsWith('http://');
-    }
+  String? _resolveDashboardDriverPhotoUrl(String? raw) {
+    final text = (raw ?? '').trim();
+    if (text.isEmpty) return null;
+    final resolved = resolvePublicHttpsMediaUrl(text);
+    if (resolved.isNotEmpty) return resolved;
+    final lower = text.toLowerCase();
+    if (lower.startsWith('https://') || lower.startsWith('http://'))
+      return text;
+    return null;
+  }
 
+  String? _dashboardAvatarNetworkUrl() {
     bool isPreferredFluxidiMediaUrl(String value) {
       final lower = value.trim().toLowerCase();
       return lower.contains('/public/media/') ||
@@ -8427,15 +8433,30 @@ class _DriverHomePageState extends State<DriverHomePage>
     final session = activeDriverSessionNotifier.value;
     final backendPhoto = (profile?.publicPortraitUrl ?? '').trim();
     final sessionPhoto = (session?.driverPhotoUrl ?? '').trim();
+    final resolvedSessionPhoto = _resolveDashboardDriverPhotoUrl(sessionPhoto);
+    final resolvedBackendPhoto = _resolveDashboardDriverPhotoUrl(backendPhoto);
+    final isBusinessPreview =
+        widget.openedFromBusinessHome &&
+        (session?.isCompanyAdminDriverViewSession ?? false);
 
     String source = 'fallback';
     String? selected;
-    if (backendPhoto.isNotEmpty && isHttpUrl(backendPhoto)) {
-      selected = backendPhoto;
-      source = 'backend';
-    } else if (sessionPhoto.isNotEmpty && isHttpUrl(sessionPhoto)) {
-      selected = sessionPhoto;
-      source = 'session';
+    if (isBusinessPreview) {
+      if (resolvedBackendPhoto != null) {
+        selected = resolvedBackendPhoto;
+        source = profile != null ? 'local' : 'backend';
+      } else if (resolvedSessionPhoto != null) {
+        selected = resolvedSessionPhoto;
+        source = 'session';
+      }
+    } else {
+      if (resolvedSessionPhoto != null) {
+        selected = resolvedSessionPhoto;
+        source = 'session';
+      } else if (resolvedBackendPhoto != null) {
+        selected = resolvedBackendPhoto;
+        source = profile != null ? 'local' : 'backend';
+      }
     }
     if (backendPhoto.isNotEmpty &&
         isPreferredFluxidiMediaUrl(backendPhoto) &&
@@ -8779,7 +8800,11 @@ class _DriverHomePageState extends State<DriverHomePage>
     required String reason,
   }) async {
     try {
-      return await DriverSessionStore.instance.load();
+      final persisted = await DriverSessionStore.instance.load();
+      if (persisted == null) return null;
+      if (persisted.isCompanyAdminDriverViewSession) return null;
+      if (!persisted.isStandaloneLoginSession) return null;
+      return persisted;
     } catch (_) {
       debugPrint(
         '[DRIVER_PREVIEW][TOKEN] reason=$reason token_present=false source=persisted_load error=load_failed',
@@ -8793,6 +8818,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     required ActiveDriverSession? previous,
     ActiveDriverSession? persisted,
     required String reason,
+    String? photoOverride,
   }) {
     final now = DateTime.now().toUtc().toIso8601String();
     final profileCompanyId =
@@ -8807,6 +8833,18 @@ class _DriverHomePageState extends State<DriverHomePage>
     final resolvedCompanyCode =
         (activeCompanySessionNotifier.value?.companyCode ?? '').trim();
     final fleetVehicleId = _resolveFleetVehicleIdForDriver(driver.id.trim());
+    final portraitUrl = () {
+      final profilePhoto = _canonicalDriverPortraitUrlGlobal(driver);
+      if (profilePhoto.isNotEmpty) return profilePhoto;
+      final override = (photoOverride ?? '').trim();
+      if (override.isNotEmpty) return override;
+      return (previous?.driverPhotoUrl ?? '').trim();
+    }();
+    if (portraitUrl.isNotEmpty) {
+      debugPrint(
+        '[DRIVER_SESSION][BUSINESS_PREVIEW_PHOTO] driver=${_maskBridgeDriverIdGlobal(driver.id)} photo=${portraitUrl.length <= 12 ? 'present' : '${portraitUrl.substring(0, 6)}…${portraitUrl.substring(portraitUrl.length - 4)}'}',
+      );
+    }
     final resolvedToken = _resolveBusinessPreviewSessionToken(
       driver: driver,
       resolvedTenantId: resolvedTenantId,
@@ -8829,6 +8867,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       companyId: resolvedCompanyId.isEmpty ? null : resolvedCompanyId,
       companyCode: resolvedCompanyCode.isEmpty ? null : resolvedCompanyCode,
       assignedVehicleId: fleetVehicleId,
+      driverPhotoUrl: portraitUrl.isEmpty ? null : portraitUrl,
       driverSessionToken: resolvedToken.token,
       driverSessionExpiresAtUtc: resolvedToken.tokenExpiryUtc,
       linkMethod: kCompanyAdminDriverViewLinkMethod,
@@ -8838,6 +8877,7 @@ class _DriverHomePageState extends State<DriverHomePage>
   Future<ActiveDriverSession> _hydrateBusinessPreviewDriverSession({
     required DriverProfile driver,
     required String reason,
+    String? photoOverride,
   }) async {
     final previous = activeDriverSessionNotifier.value;
     final notifierTokenPresent = (previous?.driverSessionToken ?? '')
@@ -8864,6 +8904,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       previous: previous,
       persisted: persisted,
       reason: reason,
+      photoOverride: photoOverride,
     );
   }
 
@@ -8876,52 +8917,42 @@ class _DriverHomePageState extends State<DriverHomePage>
       );
       return;
     }
-    final previewDriverId = await DriverSessionStore.instance
-        .loadBusinessPreviewDriverSelection(
+    final savedPreview = await DriverSessionStore.instance
+        .loadBusinessDriverPreview(
           tenantId: scope.tenantId,
           companyId: scope.companyId,
         );
-    if ((previewDriverId ?? '').trim().isEmpty) {
+    if (savedPreview == null) {
       _businessPreviewDriverId = null;
       debugPrint(
         '[DRIVER_VIEW_ORIGIN][PREVIEW_LOAD] source=business_home driver=missing reason=no_saved_preview',
       );
       _logCurrentDriverOrigin(reason: 'preview_load_empty');
-      DriverProfile? activeDriver = _dashboardActiveDriverProfile();
-      if (activeDriver == null) {
-        final sessionDriverId =
-            activeDriverSessionNotifier.value?.driverId.trim() ?? '';
-        if (sessionDriverId.isNotEmpty) {
-          for (final driver in driversNotifier.value) {
-            if (driver.id.trim() == sessionDriverId) {
-              activeDriver = driver;
-              break;
-            }
-          }
-        }
-      }
-      if (activeDriver != null) {
+      final adminCandidates = _resolveBusinessAdminDriverBridgeCandidatesGlobal(
+        logCandidates: false,
+      );
+      if (adminCandidates.isNotEmpty) {
+        final fallbackDriver = adminCandidates.first;
+        _businessPreviewDriverId = fallbackDriver.id.trim();
         activeDriverSessionNotifier.value =
             await _hydrateBusinessPreviewDriverSession(
-              driver: activeDriver,
-              reason: 'preview_load_no_saved',
+              driver: fallbackDriver,
+              reason: 'preview_load_fallback_first',
             );
-        _syncDriverRideScopeContext(reason: 'preview_load_no_saved');
+        await _saveBusinessDriverPreviewFromProfileGlobal(
+          fallbackDriver,
+          tenantId: scope.tenantId,
+          companyId: scope.companyId,
+        );
+        _syncDriverRideScopeContext(reason: 'preview_load_fallback_first');
       }
       if (!mounted) return;
       unawaited(_refreshBookings(force: true, trigger: 'init_boot'));
       return;
     }
-    final selectableDrivers = _resolveSelectableDriverBridgeCandidatesGlobal(
-      logCandidates: false,
+    DriverProfile? selectedDriver = _findBusinessAdminEligibleDriverByIdGlobal(
+      savedPreview.driverId,
     );
-    DriverProfile? selectedDriver;
-    for (final driver in selectableDrivers) {
-      if (driver.id.trim() == previewDriverId!.trim()) {
-        selectedDriver = driver;
-        break;
-      }
-    }
     if (selectedDriver == null) {
       _businessPreviewDriverId = null;
       await DriverSessionStore.instance.clearBusinessPreviewDriverSelection(
@@ -8939,6 +8970,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         await _hydrateBusinessPreviewDriverSession(
           driver: selectedDriver,
           reason: 'preview_load_applied',
+          photoOverride: savedPreview.driverPhotoUrl,
         );
     _syncDriverRideScopeContext(reason: 'preview_load_applied');
     debugPrint(
@@ -9184,6 +9216,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     final candidateReport = _resolveDriverBridgeCandidatesReportGlobal(
       logCandidates: true,
       excludeDriverId: currentDriverId,
+      requireEmployeeNumber: !widget.openedFromBusinessHome,
     );
     final selectableDrivers = candidateReport.selectable;
     final visibleCompanyDrivers = candidateReport.visibleCompanyDrivers;
@@ -9241,7 +9274,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       '[DRIVER_VIEW_ORIGIN][PICKER_SELECTED] source=${widget.openedFromBusinessHome ? "business_home" : "driver_home"} driver=${_maskBridgeDriverIdGlobal(selectedDriver.id)}',
     );
     debugPrint(
-      '[DRIVER_OWNER_BRIDGE][SELECTED] driver=${_maskBridgeDriverIdGlobal(selectedDriver.id)}',
+      '[DRIVER_OWNER_BRIDGE][SELECT] driver=${_maskBridgeDriverIdGlobal(selectedDriver.id)} reason=dashboard_switch',
     );
     if (widget.openedFromBusinessHome) {
       _businessPreviewDriverId = selectedDriver.id.trim();
@@ -9252,10 +9285,10 @@ class _DriverHomePageState extends State<DriverHomePage>
           );
       final scope = _activeBusinessPreviewScope();
       if (scope != null) {
-        await DriverSessionStore.instance.saveBusinessPreviewDriverSelection(
+        await _saveBusinessDriverPreviewFromProfileGlobal(
+          selectedDriver,
           tenantId: scope.tenantId,
           companyId: scope.companyId,
-          driverId: selectedDriver.id,
         );
         debugPrint(
           '[DRIVER_VIEW_ORIGIN][PREVIEW_SAVE] source=business_home driver=${_maskBridgeDriverIdGlobal(selectedDriver.id)}',
@@ -9265,10 +9298,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       if (mounted) setState(() {});
       _logRidesHubVisibleCounts(source: 'preview_picker_selected');
     } else {
-      await DriverSessionStore.instance.saveFromDriverProfile(
-        selectedDriver,
-        linkMethodOverride: kCompanyAdminDriverViewLinkMethod,
-      );
+      await DriverSessionStore.instance.saveFromDriverProfile(selectedDriver);
       await DriverSessionStore.instance.bootstrap(driversNotifier.value);
     }
     if (!mounted) return;

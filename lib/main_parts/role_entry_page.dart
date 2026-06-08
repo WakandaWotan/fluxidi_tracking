@@ -1790,6 +1790,10 @@ class RoleEntryPage extends StatelessWidget {
       expiresInSeconds: expiresInSeconds,
       linkMethod: linkMethod,
     );
+    await DriverSessionStore.instance.clearStandaloneSessionIfScopeMismatch(
+      tenantId: tenantId,
+      companyId: companyId,
+    );
     if (companySessionToken.isNotEmpty) {
       final normalizedLinkMethod = linkMethod.trim().toLowerCase();
       final restoredSource = normalizedLinkMethod.contains('recovery')
@@ -2071,6 +2075,7 @@ class RoleEntryPage extends StatelessWidget {
   }
 
   Future<void> _goDriver(BuildContext context) async {
+    DriverSessionStore.instance.prepareStandaloneDriverEntry();
     await DriverSessionStore.instance.bootstrap(driversNotifier.value);
     await DriverDocumentsStore.instance.load();
     if (!context.mounted) return;

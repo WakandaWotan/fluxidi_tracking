@@ -4145,6 +4145,71 @@ function _normalizeSafeRemoteMediaRef(value) {
   return "";
 }
 
+function _readDriverPhotoUrlFromRecord(entry) {
+  if (!entry || typeof entry !== "object") return "";
+  return _normalizeSafeRemoteMediaRef(
+    entry.driver_photo_url ??
+      entry.driverPhotoUrl ??
+      entry.public_portrait_url ??
+      entry.publicPortraitUrl ??
+      entry.profile_photo_url ??
+      entry.profilePhotoUrl ??
+      entry.photo_url ??
+      entry.photoUrl ??
+      entry.portrait_url ??
+      entry.portraitUrl ??
+      entry.avatar_url ??
+      entry.avatarUrl ??
+      entry.image_url ??
+      entry.imageUrl,
+  );
+}
+
+function _resolvePublicDriverPhotoForResponse(mediaRef, requestOrigin = "") {
+  const normalized = _normalizeSafeRemoteMediaRef(mediaRef);
+  if (!normalized) return "";
+  const lower = normalized.toLowerCase();
+  if (lower.startsWith("https://")) return normalized;
+  if (lower.startsWith("http://")) return "";
+  const origin = sanitizeTenantString(requestOrigin, 240).replace(/\/+$/, "");
+  if (!origin) return normalized;
+  if (lower.startsWith("/public/media/")) return `${origin}${normalized}`;
+  if (lower.startsWith("public-media/")) {
+    const suffix = normalized.slice("public-media/".length).trim();
+    if (!suffix) return "";
+    return `${origin}/public/media/${suffix}`;
+  }
+  return "";
+}
+
+async function _loadScopedDriverPhotoUrl(env, scope, driverId) {
+  const normalizedDriverId = sanitizeTenantString(driverId, 96);
+  const tenantId = sanitizeTenantString(scope?.tenant_id ?? scope?.tenantId, 80);
+  const companyId = sanitizeTenantString(scope?.company_id ?? scope?.companyId, 80);
+  if (!normalizedDriverId || !tenantId || !companyId) return "";
+  try {
+    const driverIndex = await _loadDriverIndexRecord(env, {
+      tenant_id: tenantId,
+      company_id: companyId,
+    });
+    const entry = driverIndex?.drivers?.[normalizedDriverId] || null;
+    return _readDriverPhotoUrlFromRecord(entry);
+  } catch (_) {
+    return "";
+  }
+}
+
+function _driverPhotoResponseFields(driverPhotoUrl) {
+  const normalized = _normalizeSafeRemoteMediaRef(driverPhotoUrl);
+  if (!normalized) return {};
+  return {
+    driver_photo_url: normalized,
+    driverPhotoUrl: normalized,
+    public_portrait_url: normalized,
+    publicPortraitUrl: normalized,
+  };
+}
+
 function _normalizeVehiclePhotoRef(value) {
   const text = sanitizeTenantString(value, 1200);
   if (!text) return "";
@@ -5233,7 +5298,12 @@ function _constantTimeEquals(a, b) {
   return diff === 0;
 }
 
-function _projectDriverSessionPayloadFromChallenge(challenge, nowIso, issuedSession = null) {
+function _projectDriverSessionPayloadFromChallenge(
+  challenge,
+  nowIso,
+  issuedSession = null,
+  options = {},
+) {
   const assignedVehicleId = sanitizeTenantString(
     challenge.assigned_vehicle_id ?? challenge.assignedVehicleId,
     96,
@@ -5249,6 +5319,11 @@ function _projectDriverSessionPayloadFromChallenge(challenge, nowIso, issuedSess
   const expiresInSeconds = Number.isFinite(Number(issuedSession?.expiresInSeconds))
     ? Math.max(1, Math.round(Number(issuedSession.expiresInSeconds)))
     : null;
+  const driverPhotoUrl = _resolvePublicDriverPhotoForResponse(
+    options.driverPhotoUrl || "",
+    options.requestOrigin || "",
+  );
+  const driverPhotoFields = _driverPhotoResponseFields(driverPhotoUrl);
   return {
     ok: true,
     role: "driver",
@@ -5266,7 +5341,9 @@ function _projectDriverSessionPayloadFromChallenge(challenge, nowIso, issuedSess
             assignedVehicleId: assignedVehicleId,
           }
         : {}),
+      ...driverPhotoFields,
     },
+    ...driverPhotoFields,
     issued_at: nowIso,
     expires_at: _normalizeDriverPairingSessionExpiry(Date.parse(nowIso)),
     ...(driverSessionToken
@@ -12088,7 +12165,7 @@ async function handleAdminCompanyDriverLinkCodeCreate(request, url, env) {
   );
 }
 
-async function handlePublicCompanyDriverLinkVerify(body, env) {
+async function handlePublicCompanyDriverLinkVerify(body, env, request = null) {
   if (!body || typeof body !== "object" || Array.isArray(body)) {
     return json({ ok: false, error: "invalid_body" }, 400);
   }
@@ -12259,10 +12336,39 @@ async function handlePublicCompanyDriverLinkVerify(body, env) {
   console.info(
     `[DRIVER_LINK_VERIFY][RESULT] ok=true reason=verified company=${_maskPublicDriverLoginValue(codeValidation.code)}`,
   );
-  return json(_projectDriverSessionPayloadFromChallenge(challenge, nowIso, issuedSession), 200);
+  const driverPhotoScope = {
+    tenant_id: sanitizeTenantString(challenge.tenant_id, 80),
+    company_id: sanitizeTenantString(challenge.company_id, 80),
+  };
+  const driverPhotoRaw = await _loadScopedDriverPhotoUrl(
+    env,
+    driverPhotoScope,
+    challenge.driver_id,
+  );
+  const requestOrigin =
+    request?.url && typeof request.url === "string"
+      ? new URL(request.url).origin
+      : "";
+  const driverPhotoResolved = _resolvePublicDriverPhotoForResponse(
+    driverPhotoRaw,
+    requestOrigin,
+  );
+  console.info(
+    `[DRIVER_PHOTO][SOURCE] route=driver_link_verify driver=${_maskPublicDriverLoginValue(challenge.driver_id)} has_photo=${!!driverPhotoRaw}`,
+  );
+  console.info(
+    `[DRIVER_PHOTO][RESPONSE] route=driver_link_verify driver=${_maskPublicDriverLoginValue(challenge.driver_id)} photo_field=${driverPhotoResolved ? "present" : "missing"}`,
+  );
+  return json(
+    _projectDriverSessionPayloadFromChallenge(challenge, nowIso, issuedSession, {
+      driverPhotoUrl: driverPhotoRaw,
+      requestOrigin,
+    }),
+    200,
+  );
 }
 
-async function handlePublicDriverLogin(body, env) {
+async function handlePublicDriverLogin(body, env, request = null) {
   if (!body || typeof body !== "object" || Array.isArray(body)) {
     return _publicDriverLoginFail("invalid_body");
   }
@@ -12457,6 +12563,20 @@ async function handlePublicDriverLogin(body, env) {
   if (!issuedSession?.ok) {
     return _publicDriverLoginFail(issuedSession?.error || "session_issue_failed");
   }
+  const requestOrigin =
+    request?.url && typeof request.url === "string"
+      ? new URL(request.url).origin
+      : "";
+  const driverPhotoResolved = _resolvePublicDriverPhotoForResponse(
+    driverPhotoUrl,
+    requestOrigin,
+  );
+  console.info(
+    `[DRIVER_PHOTO][SOURCE] route=public_driver_login driver=${_maskPublicDriverLoginValue(driverId)} has_photo=${!!driverPhotoUrl}`,
+  );
+  console.info(
+    `[DRIVER_PHOTO][RESPONSE] route=public_driver_login driver=${_maskPublicDriverLoginValue(driverId)} photo_field=${driverPhotoResolved ? "present" : "missing"}`,
+  );
   console.log(
     `[PUBLIC_DRIVER_LOGIN][OK] tenant=${_maskPublicDriverLoginValue(scope.tenant_id)} company=${_maskPublicDriverLoginValue(scope.company_id)} driver=${_maskPublicDriverLoginValue(driverId)}`,
   );
@@ -12475,12 +12595,7 @@ async function handlePublicDriverLogin(body, env) {
             assignedVehicleId: assignedVehicleId,
           }
         : {}),
-      ...(driverPhotoUrl
-        ? {
-            driver_photo_url: driverPhotoUrl,
-            driverPhotoUrl: driverPhotoUrl,
-          }
-        : {}),
+      ..._driverPhotoResponseFields(driverPhotoResolved),
       ...(companyLogoUrl
         ? {
             company_logo_url: companyLogoUrl,
@@ -18513,7 +18628,7 @@ GET /oauth/callback
           return json({ ok: false, error: "method_not_allowed" }, 405);
         }
         const body = await safeJson(request);
-        return handlePublicCompanyDriverLinkVerify(body, env);
+        return handlePublicCompanyDriverLinkVerify(body, env, request);
       }
 
       if (url.pathname === "/public/driver/login") {
@@ -18521,7 +18636,7 @@ GET /oauth/callback
           return json({ ok: false, error: "method_not_allowed" }, 405);
         }
         const body = await safeJson(request);
-        return handlePublicDriverLogin(body, env);
+        return handlePublicDriverLogin(body, env, request);
       }
 
       if (url.pathname === "/public/driver/availability") {
@@ -19440,17 +19555,38 @@ GET /oauth/callback
         if (!profileResult?.profile) {
           return json({ ok: false, error: "partner profile not found" }, 404);
         }
+        const requestOrigin = new URL(request.url).origin;
         const profile = profileResult.profile;
-        const drivers = Array.isArray(profile.drivers) ? profile.drivers : [];
+        const driversRaw = Array.isArray(profile.drivers) ? profile.drivers : [];
+        const drivers = driversRaw.map((row) => {
+          if (!row || typeof row !== "object") return row;
+          const portraitResolved = _resolvePublicDriverPhotoForResponse(
+            _readDriverPhotoUrlFromRecord(row),
+            requestOrigin,
+          );
+          if (!portraitResolved) return row;
+          return {
+            ...row,
+            ..._driverPhotoResponseFields(portraitResolved),
+            portrait_url: portraitResolved,
+            portraitUrl: portraitResolved,
+          };
+        });
         const publicDriverPortraitsCount = drivers.reduce((count, row) => {
           if (!row || typeof row !== "object") return count;
-          const portraitUrl = _safePublicHttpsUrl(row.portrait_url ?? row.portraitUrl, 600);
+          const portraitUrl = _resolvePublicDriverPhotoForResponse(
+            _readDriverPhotoUrlFromRecord(row),
+            requestOrigin,
+          );
           return portraitUrl ? count + 1 : count;
         }, 0);
         return json(
           {
             ok: true,
-            profile,
+            profile: {
+              ...profile,
+              drivers,
+            },
             profiles_source: sanitizeTenantString(profileResult.meta?.profiles_source, 48) || "unknown",
             projection_updated_at: sanitizeTenantString(
               profileResult.meta?.projection_updated_at,
@@ -41215,11 +41351,32 @@ function _normalizePublicDrivers(raw) {
   const out = [];
   for (const row of raw) {
     if (!row || typeof row !== "object") continue;
+    const driverId = _safePublicText(row.driver_id ?? row.driverId ?? row.id, 96);
+    const portraitRaw = _readDriverPhotoUrlFromRecord(row);
+    const portraitUrl =
+      _safePublicHttpsUrl(portraitRaw, 600) ||
+      _normalizeSafeRemoteMediaRef(portraitRaw);
     out.push({
+      ...(driverId
+        ? {
+            driver_id: driverId,
+            driverId: driverId,
+            id: driverId,
+          }
+        : {}),
       display_name: _safePublicText(row.display_name ?? row.displayName, 120),
       languages: _safePublicStringList(row.languages, { maxItems: 8, maxItemLen: 12 }),
       badges: _safePublicStringList(row.badges, { maxItems: 8, maxItemLen: 64 }),
-      portrait_url: _safePublicHttpsUrl(row.portrait_url ?? row.portraitUrl, 600),
+      ...(portraitUrl
+        ? {
+            portrait_url: portraitUrl,
+            portraitUrl: portraitUrl,
+            public_portrait_url: portraitUrl,
+            publicPortraitUrl: portraitUrl,
+            driver_photo_url: portraitUrl,
+            driverPhotoUrl: portraitUrl,
+          }
+        : {}),
     });
   }
   return out;
