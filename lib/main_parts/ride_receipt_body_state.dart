@@ -5,6 +5,31 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
 
   _TripHistoryItem get item => widget.item;
 
+  void _setReceiptScopeAssignedAliasesIfEmpty(
+    Map<String, dynamic> target, {
+    String? driverId,
+    String? vehicleId,
+  }) {
+    void setPairIfEmpty(String snakeKey, String camelKey, String value) {
+      final trimmed = value.trim();
+      if (trimmed.isEmpty) return;
+      final existingSnake = target[snakeKey]?.toString().trim() ?? '';
+      final existingCamel = target[camelKey]?.toString().trim() ?? '';
+      if (existingSnake.isNotEmpty || existingCamel.isNotEmpty) return;
+      target[snakeKey] = trimmed;
+      target[camelKey] = trimmed;
+    }
+
+    final driver = (driverId ?? '').trim();
+    if (driver.isNotEmpty) {
+      setPairIfEmpty('assigned_driver_id', 'assignedDriverId', driver);
+    }
+    final vehicle = (vehicleId ?? '').trim();
+    if (vehicle.isNotEmpty) {
+      setPairIfEmpty('assigned_vehicle_id', 'assignedVehicleId', vehicle);
+    }
+  }
+
   Map<String, dynamic> _driverScopeBookingViewForReceipt() {
     final map = <String, dynamic>{...item.bookingDetails};
     final bookingId = (item.bookingId ?? '').trim();
@@ -15,13 +40,30 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
     if (map['booking'] is! Map) {
       map['booking'] = <String, dynamic>{...item.bookingDetails};
     }
-    if ((item.vehicleId ?? '').trim().isNotEmpty) {
-      map['vehicle_id'] = item.vehicleId!.trim();
-      map['vehicleId'] = item.vehicleId!.trim();
+    final driverId = item.driverId.trim();
+    final vehicleId = (item.vehicleId ?? '').trim();
+    if (vehicleId.isNotEmpty) {
+      map['vehicle_id'] = vehicleId;
+      map['vehicleId'] = vehicleId;
     }
-    if (item.driverId.trim().isNotEmpty) {
-      map['driver_id'] = item.driverId.trim();
-      map['driverId'] = item.driverId.trim();
+    if (driverId.isNotEmpty) {
+      map['driver_id'] = driverId;
+      map['driverId'] = driverId;
+    }
+    _setReceiptScopeAssignedAliasesIfEmpty(
+      map,
+      driverId: driverId,
+      vehicleId: vehicleId,
+    );
+    final nestedBooking = map['booking'];
+    if (nestedBooking is Map) {
+      final nested = Map<String, dynamic>.from(nestedBooking);
+      _setReceiptScopeAssignedAliasesIfEmpty(
+        nested,
+        driverId: driverId,
+        vehicleId: vehicleId,
+      );
+      map['booking'] = nested;
     }
     return map;
   }
@@ -39,20 +81,10 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
           ['booking', 'bookingId'],
         ]) ??
         'unknown';
-    final assignedVehicleId =
-        _bookingScopeFirstText(booking, const [
-          ['assigned_vehicle_id'],
-          ['assignedVehicleId'],
-          ['vehicle_id'],
-          ['vehicleId'],
-          ['booking', 'assigned_vehicle_id'],
-          ['booking', 'assignedVehicleId'],
-          ['booking', 'vehicle_id'],
-          ['booking', 'vehicleId'],
-        ]) ??
-        '';
+    final assignedDriverId = _bookingScopeAssignedDriverId(booking) ?? '';
+    final assignedVehicleId = _bookingScopeAssignedVehicleId(booking) ?? '';
     debugPrint(
-      '[DRIVER_SCOPE][BLOCK] action=$action booking_id=$bookingId assigned_vehicle_id=$assignedVehicleId active_driver_id=${_resolvedActiveDriverIdForScope()} active_vehicle_id=${_activeDriverSessionVehicleIdForScope()} allowed=false',
+      '[DRIVER_SCOPE][BLOCK] action=$action booking_id=$bookingId assigned_driver_id=$assignedDriverId assigned_vehicle_id=$assignedVehicleId active_driver_id=${_resolvedActiveDriverIdForScope()} active_vehicle_id=${_activeDriverSessionVehicleIdForScope()} allowed=false',
     );
     if (context.mounted) {
       ScaffoldMessenger.of(
