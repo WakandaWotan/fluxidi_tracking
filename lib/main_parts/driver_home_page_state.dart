@@ -9966,8 +9966,6 @@ class _DriverHomePageState extends State<DriverHomePage>
     );
     final logoHeight = logoWidth * 0.39;
     final topBandHeight = math.max(62.0, logoHeight - 34.0);
-    const headerIconButtonSize = 46.0;
-    const headerIconGlyphSize = 25.0;
     const headerLeftPull = -16.0;
     const headerTopPull = -8.0;
     const logoVisualLift = -14.0;
@@ -10012,40 +10010,6 @@ class _DriverHomePageState extends State<DriverHomePage>
                   child: Row(
                     children: [
                       _driverLanguagePill(),
-                      const SizedBox(width: 8),
-                      Stack(
-                        clipBehavior: Clip.none,
-                        children: [
-                          Container(
-                            width: headerIconButtonSize,
-                            height: headerIconButtonSize,
-                            decoration: BoxDecoration(
-                              color: const Color(0xFF111214),
-                              borderRadius: BorderRadius.circular(12),
-                              border: Border.all(
-                                color: Colors.white.withOpacity(0.10),
-                              ),
-                            ),
-                            child: const Icon(
-                              Icons.notifications_none_rounded,
-                              color: Colors.white,
-                              size: headerIconGlyphSize,
-                            ),
-                          ),
-                          Positioned(
-                            top: 8,
-                            right: 8,
-                            child: Container(
-                              width: 8,
-                              height: 8,
-                              decoration: const BoxDecoration(
-                                color: Color(0xFFFFD36A),
-                                shape: BoxShape.circle,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
                       const SizedBox(width: 8),
                       Stack(
                         clipBehavior: Clip.none,
