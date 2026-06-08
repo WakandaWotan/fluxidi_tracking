@@ -23,6 +23,12 @@ Future<CustomerProfile?> _loadCachedCustomerProfileIfNeeded() async {
   return loaded;
 }
 
+void _invalidateCustomerProfileCaches() {
+  _clearCachedCustomerProfile();
+  CustomerProfileStore.instance.invalidateCache();
+  CustomerBookingsStore.instance.invalidateCache();
+}
+
 Future<Map<String, String>> _customerOwnershipProof({
   required String bookingId,
   Set<String>? aliases,
@@ -430,6 +436,10 @@ Future<CustomerProfile?> _syncCustomerProfileFromBackendBestEffort({
       );
       return null;
     }
+    await ActiveLocalCustomerStore.instance.setActiveCustomerId(
+      session.customerId,
+    );
+    _invalidateCustomerProfileCaches();
     final remote = await fetchPublicCustomerProfile(
       customerSessionToken: session.customerSessionToken,
     );
@@ -472,6 +482,10 @@ Future<CustomerProfile?> _syncCustomerProfileToBackendBestEffort({
       );
       return null;
     }
+    await ActiveLocalCustomerStore.instance.setActiveCustomerId(
+      session.customerId,
+    );
+    _invalidateCustomerProfileCaches();
     final remote = await upsertPublicCustomerProfile(
       customerSessionToken: session.customerSessionToken,
       payload: <String, dynamic>{

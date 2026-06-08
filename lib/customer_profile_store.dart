@@ -1,10 +1,9 @@
 import 'dart:convert';
 import 'dart:io';
-import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
+import 'package:fluxidi_tracking/active_local_customer_store.dart';
 import 'package:fluxidi_tracking/customer_session_store.dart';
-import 'package:fluxidi_tracking/effective_tenant_company_scope.dart';
 import 'package:path_provider/path_provider.dart';
 
 class CustomerProfile {
@@ -122,9 +121,12 @@ class CustomerProfileStore {
 
   static const String _fileName = 'customer_profile_v1.json';
   static const String _deviceLocalScopeDir = 'device_local';
+  static const String _legacyMigrationMarker =
+      'legacy_profile_migration_v1.done';
 
   CustomerProfile? _cache;
   String _cacheScopeKey = '';
+  bool _legacyMigrationDone = false;
 
   String _maskCustomerId(String value) {
     final trimmed = value.trim();
@@ -140,23 +142,9 @@ class CustomerProfileStore {
     return sanitized;
   }
 
-  ({String tenantId, String companyId})? _activeLocalScope() {
-    final strict = resolveStrictTenantCompanyScope(allowDriverFallback: true);
-    if (strict != null) {
-      return (tenantId: strict.tenantId, companyId: strict.companyId);
-    }
-    final session = CustomerSessionStore.instance.peekCachedSession();
-    final defaultTenant = (session?.defaultTenantId ?? '').trim();
-    final defaultCompany = (session?.defaultCompanyId ?? '').trim();
-    if (defaultTenant.isEmpty || defaultCompany.isEmpty) return null;
-    final tenantLower = defaultTenant.toLowerCase();
-    final companyLower = defaultCompany.toLowerCase();
-    if (tenantLower == 'global' || companyLower == 'global') return null;
-    if (tenantLower == 'fluxidi' || companyLower == 'fluxidi') return null;
-    debugPrint(
-      '[CUSTOMER_PROFILE][SCOPE_FALLBACK] source=customer_session_default',
-    );
-    return (tenantId: defaultTenant, companyId: defaultCompany);
+  void invalidateCache() {
+    _cache = null;
+    _cacheScopeKey = '';
   }
 
   Future<Directory> _stateRootDir() async {
@@ -170,24 +158,6 @@ class CustomerProfileStore {
     return dir;
   }
 
-  Future<File> _scopedFile({
-    required String tenantId,
-    required String companyId,
-  }) async {
-    final root = await _stateRootDir();
-    final scopedDir = Directory(
-      '${root.path}${Platform.pathSeparator}tenant_${_localScopeSegment(tenantId)}${Platform.pathSeparator}company_${_localScopeSegment(companyId)}',
-    );
-    if (!await scopedDir.exists()) {
-      await scopedDir.create(recursive: true);
-    }
-    final file = File('${scopedDir.path}${Platform.pathSeparator}$_fileName');
-    debugPrint(
-      '[CUSTOMER_PROFILE][PATH] tenant=$tenantId company=$companyId path=${file.path}',
-    );
-    return file;
-  }
-
   Future<String> _activeValidCustomerSessionId() async {
     final cached = CustomerSessionStore.instance.peekCachedSession();
     if (cached != null && CustomerSessionStore.instance.isValid(cached)) {
@@ -196,6 +166,15 @@ class CustomerProfileStore {
     }
     final loaded = await CustomerSessionStore.instance.loadValidSession();
     return (loaded?.customerId ?? '').trim();
+  }
+
+  Future<String> _resolveActiveCustomerId() async {
+    final sessionId = await _activeValidCustomerSessionId();
+    if (sessionId.isNotEmpty) {
+      await ActiveLocalCustomerStore.instance.setActiveCustomerId(sessionId);
+      return sessionId;
+    }
+    return ActiveLocalCustomerStore.instance.getActiveCustomerId();
   }
 
   Future<File> _customerSessionFile({required String customerId}) async {
@@ -207,61 +186,56 @@ class CustomerProfileStore {
       await scopedDir.create(recursive: true);
     }
     final file = File('${scopedDir.path}${Platform.pathSeparator}$_fileName');
-    debugPrint('[CUSTOMER_PROFILE][PATH] scope=customer_session');
+    debugPrint(
+      '[CUSTOMER_PROFILE][PATH] scope=customer_session customer=${_maskCustomerId(customerId)}',
+    );
     return file;
   }
 
-  Future<File> _deviceLocalFile() async {
+  Future<File> _deviceLocalFile({required String customerId}) async {
     final root = await _stateRootDir();
     final scopedDir = Directory(
-      '${root.path}${Platform.pathSeparator}$_deviceLocalScopeDir',
+      '${root.path}${Platform.pathSeparator}$_deviceLocalScopeDir${Platform.pathSeparator}customer_${_localScopeSegment(customerId)}',
     );
     if (!await scopedDir.exists()) {
       await scopedDir.create(recursive: true);
     }
-    return File('${scopedDir.path}${Platform.pathSeparator}$_fileName');
+    final file = File('${scopedDir.path}${Platform.pathSeparator}$_fileName');
+    debugPrint(
+      '[CUSTOMER_PROFILE][PATH] scope=device_local customer=${_maskCustomerId(customerId)}',
+    );
+    return file;
   }
 
-  Future<CustomerProfile?> _readDeviceLocalProfileFallback() async {
-    try {
-      return await _readFromFile(await _deviceLocalFile());
-    } catch (_) {
-      return null;
-    }
+  Future<File> _legacyDeviceLocalMonolithFile() async {
+    final root = await _stateRootDir();
+    final scopedDir = Directory(
+      '${root.path}${Platform.pathSeparator}$_deviceLocalScopeDir',
+    );
+    return File('${scopedDir.path}${Platform.pathSeparator}$_fileName');
   }
 
   Future<({String scopeKey, String scopeType, String customerId, File file})>
   _resolveStorageTarget() async {
-    final scope = _activeLocalScope();
-    if (scope != null) {
-      final file = await _scopedFile(
-        tenantId: scope.tenantId,
-        companyId: scope.companyId,
-      );
-      return (
-        scopeKey: '${scope.tenantId.trim()}::${scope.companyId.trim()}',
-        scopeType: 'tenant_company',
-        customerId: '',
-        file: file,
-      );
+    final customerId = (await _resolveActiveCustomerId()).trim();
+    if (customerId.isEmpty) {
+      throw StateError('missing_active_customer_id');
     }
-    final customerId = await _activeValidCustomerSessionId();
-    if (customerId.isNotEmpty) {
-      debugPrint('[CUSTOMER_PROFILE][SCOPE_FALLBACK] source=customer_session');
-      final file = await _customerSessionFile(customerId: customerId);
+    final sessionId = await _activeValidCustomerSessionId();
+    if (sessionId.isNotEmpty) {
+      final file = await _customerSessionFile(customerId: sessionId);
       return (
-        scopeKey: 'customer_session::$customerId',
+        scopeKey: 'customer_session::$sessionId',
         scopeType: 'customer_session',
-        customerId: customerId,
+        customerId: sessionId,
         file: file,
       );
     }
-    debugPrint('[CUSTOMER_PROFILE][SCOPE_FALLBACK] source=device_local');
-    final file = await _deviceLocalFile();
+    final file = await _deviceLocalFile(customerId: customerId);
     return (
-      scopeKey: 'device_local',
+      scopeKey: 'device_local::$customerId',
       scopeType: 'device_local',
-      customerId: '',
+      customerId: customerId,
       file: file,
     );
   }
@@ -280,28 +254,168 @@ class CustomerProfileStore {
   }
 
   String _generateCustomerId() {
-    final random = math.Random.secure();
-    final partA = DateTime.now().microsecondsSinceEpoch.toRadixString(16);
-    final partB = random.nextInt(0x7fffffff).toRadixString(16).padLeft(8, '0');
-    return 'cust_${partA}_$partB';
+    return ActiveLocalCustomerStore.instance.generateCustomerId();
+  }
+
+  Future<String> _ensureActiveLocalCustomerId() async {
+    final existing =
+        (await ActiveLocalCustomerStore.instance.getActiveCustomerId()).trim();
+    if (existing.isNotEmpty) return existing;
+    return ActiveLocalCustomerStore.instance.createNewLocalCustomerId();
+  }
+
+  Future<void> _backupLegacyFile(File file) async {
+    if (!await file.exists()) return;
+    final backupPath = '${file.path}.migrated_backup';
+    if (await File(backupPath).exists()) return;
+    await file.rename(backupPath);
+    debugPrint('[CUSTOMER_PROFILE][MIGRATE] backup=${file.path}');
+  }
+
+  Future<void> _importLegacyProfileToCustomerScope(
+    CustomerProfile profile, {
+    required String customerId,
+  }) async {
+    final normalizedId = customerId.trim();
+    if (normalizedId.isEmpty) return;
+    final target = await _deviceLocalFile(customerId: normalizedId);
+    if (await target.exists()) return;
+    final payload = profile.copyWithCustomerId(normalizedId);
+    await target.writeAsString(jsonEncode(payload.toJson()));
+  }
+
+  Future<void> ensureLegacyMigration() async {
+    await _migrateLegacyProfileOnceIfNeeded();
+  }
+
+  Future<void> _migrateLegacyProfileOnceIfNeeded() async {
+    if (_legacyMigrationDone) return;
+    _legacyMigrationDone = true;
+
+    final root = await _stateRootDir();
+    final marker = File(
+      '${root.path}${Platform.pathSeparator}$_legacyMigrationMarker',
+    );
+    if (await marker.exists()) return;
+
+    try {
+      final legacyMonolith = await _legacyDeviceLocalMonolithFile();
+      if (await legacyMonolith.exists()) {
+        final profile = await _readFromFile(legacyMonolith);
+        if (profile != null) {
+          var customerId = profile.customerId.trim();
+          if (customerId.isEmpty) {
+            customerId = _generateCustomerId();
+          }
+          await ActiveLocalCustomerStore.instance.setActiveCustomerId(
+            customerId,
+          );
+          await _importLegacyProfileToCustomerScope(
+            profile,
+            customerId: customerId,
+          );
+        }
+        await _backupLegacyFile(legacyMonolith);
+      }
+
+      await for (final tenantEntry in root.list(followLinks: false)) {
+        if (tenantEntry is! Directory) continue;
+        final tenantLeaf = tenantEntry.path.split(Platform.pathSeparator).last;
+        if (!tenantLeaf.startsWith('tenant_')) continue;
+        await for (final companyEntry in tenantEntry.list(followLinks: false)) {
+          if (companyEntry is! Directory) continue;
+          final companyLeaf = companyEntry.path
+              .split(Platform.pathSeparator)
+              .last;
+          if (!companyLeaf.startsWith('company_')) continue;
+          final legacyFile = File(
+            '${companyEntry.path}${Platform.pathSeparator}$_fileName',
+          );
+          if (!await legacyFile.exists()) continue;
+          final profile = await _readFromFile(legacyFile);
+          if (profile != null) {
+            var customerId = profile.customerId.trim();
+            if (customerId.isEmpty) {
+              customerId = _generateCustomerId();
+            }
+            final activeId =
+                (await ActiveLocalCustomerStore.instance.getActiveCustomerId())
+                    .trim();
+            if (activeId.isEmpty) {
+              await ActiveLocalCustomerStore.instance.setActiveCustomerId(
+                customerId,
+              );
+            }
+            final importId =
+                (await ActiveLocalCustomerStore.instance.getActiveCustomerId())
+                    .trim();
+            if (importId.isNotEmpty) {
+              await _importLegacyProfileToCustomerScope(
+                profile,
+                customerId: importId,
+              );
+            }
+          }
+          await _backupLegacyFile(legacyFile);
+        }
+      }
+
+      await marker.writeAsString('ok', flush: true);
+      debugPrint('[CUSTOMER_PROFILE][MIGRATE] ok=true');
+    } catch (err) {
+      debugPrint('[CUSTOMER_PROFILE][MIGRATE] ok=false error=$err');
+    }
+  }
+
+  Future<bool> hasResolvableLocalProfile() async {
+    final sessionId = await _activeValidCustomerSessionId();
+    if (sessionId.isNotEmpty) return true;
+    await _migrateLegacyProfileOnceIfNeeded();
+    final activeId =
+        (await ActiveLocalCustomerStore.instance.getActiveCustomerId()).trim();
+    if (activeId.isNotEmpty) {
+      final file = await _deviceLocalFile(customerId: activeId);
+      if (await file.exists()) return true;
+    }
+    final legacyMonolith = await _legacyDeviceLocalMonolithFile();
+    if (await legacyMonolith.exists()) return true;
+    final root = await _stateRootDir();
+    final deviceLocalRoot = Directory(
+      '${root.path}${Platform.pathSeparator}$_deviceLocalScopeDir',
+    );
+    if (await deviceLocalRoot.exists()) {
+      await for (final entry in deviceLocalRoot.list(followLinks: false)) {
+        if (entry is! Directory) continue;
+        if (!entry.path
+            .split(Platform.pathSeparator)
+            .last
+            .startsWith('customer_')) {
+          continue;
+        }
+        final file = File('${entry.path}${Platform.pathSeparator}$_fileName');
+        if (await file.exists()) return true;
+      }
+    }
+    return false;
   }
 
   Future<CustomerProfile?> load() async {
-    final target = await _resolveStorageTarget();
-    final scopeKey = target.scopeKey;
-    if (_cache != null && _cacheScopeKey == scopeKey) return _cache;
-    _cache = null;
-    _cacheScopeKey = scopeKey;
+    await _migrateLegacyProfileOnceIfNeeded();
     try {
-      var profile = await _readFromFile(target.file);
-      if (profile == null && target.scopeType != 'device_local') {
-        profile = await _readDeviceLocalProfileFallback();
-        if (profile != null) {
-          debugPrint('[CUSTOMER_PROFILE][LOAD] scope=fallback_device_local');
-        }
-      }
+      final target = await _resolveStorageTarget();
+      final scopeKey = target.scopeKey;
+      if (_cache != null && _cacheScopeKey == scopeKey) return _cache;
+      _cache = null;
+      _cacheScopeKey = scopeKey;
+      final profile = await _readFromFile(target.file);
       _cache = profile;
       return profile;
+    } on StateError catch (err) {
+      if ('$err'.contains('missing_active_customer_id')) {
+        return null;
+      }
+      debugPrint('[CUSTOMER_PROFILE][LOAD_ERROR] $err');
+      return null;
     } catch (err) {
       debugPrint('[CUSTOMER_PROFILE][LOAD_ERROR] $err');
       return null;
@@ -318,10 +432,13 @@ class CustomerProfileStore {
     String? sessionCustomerId,
     Set<String>? favoritePartnerIds,
   }) async {
+    await _migrateLegacyProfileOnceIfNeeded();
     final existing = await load();
     final now = DateTime.now().toIso8601String();
     final sessionId = (sessionCustomerId ?? '').trim();
-    final existingId = existing?.customerId.trim() ?? '';
+    final activeLocalId = sessionId.isEmpty
+        ? (await ActiveLocalCustomerStore.instance.getActiveCustomerId()).trim()
+        : '';
     final resolvedFavoritePartnerIds =
         (favoritePartnerIds
                   ?.map((id) => id.trim())
@@ -329,10 +446,13 @@ class CustomerProfileStore {
                   .toSet() ??
               (existing?.favoritePartnerIds.toSet() ?? <String>{}))
           ..removeWhere((id) => id.isEmpty);
+    final resolvedCustomerId = sessionId.isNotEmpty
+        ? sessionId
+        : (activeLocalId.isNotEmpty
+              ? activeLocalId
+              : await _ensureActiveLocalCustomerId());
     final profile = CustomerProfile(
-      customerId: sessionId.isNotEmpty
-          ? sessionId
-          : (existingId.isNotEmpty ? existingId : _generateCustomerId()),
+      customerId: resolvedCustomerId,
       name: name.trim(),
       phone: phone.trim(),
       email: email.trim().toLowerCase(),
@@ -356,9 +476,9 @@ class CustomerProfileStore {
             '[CUSTOMER_PROFILE][SAVE] scope=customer_session customer=${_maskCustomerId(target.customerId)}',
           );
         case 'device_local':
-          debugPrint('[CUSTOMER_PROFILE][SAVE] scope=device_local');
-        case 'tenant_company':
-          debugPrint('[CUSTOMER_PROFILE][SAVE] scope=tenant_company');
+          debugPrint(
+            '[CUSTOMER_PROFILE][SAVE] scope=device_local customer=${_maskCustomerId(target.customerId)}',
+          );
       }
     } catch (err) {
       debugPrint('[CUSTOMER_PROFILE][SAVE_ERROR] $err');
@@ -387,6 +507,9 @@ class CustomerProfileStore {
       return local.trim();
     }
 
+    await ActiveLocalCustomerStore.instance.setActiveCustomerId(
+      sessionCustomerId.trim(),
+    );
     final existing = await load();
     final nowIso = DateTime.now().toIso8601String();
     final backendCustomerId = readAny(const ['customer_id', 'customerId']);
@@ -502,5 +625,22 @@ class CustomerProfileStore {
       debugPrint('[CUSTOMER_PROFILE][MERGE_BACKEND] ok=false error=$err');
     }
     return merged;
+  }
+}
+
+extension _CustomerProfileCopy on CustomerProfile {
+  CustomerProfile copyWithCustomerId(String customerId) {
+    return CustomerProfile(
+      customerId: customerId,
+      name: name,
+      phone: phone,
+      email: email,
+      preferredPostcode: preferredPostcode,
+      companyName: companyName,
+      vatNumber: vatNumber,
+      favoritePartnerIds: favoritePartnerIds,
+      createdAt: createdAt,
+      updatedAt: updatedAt,
+    );
   }
 }

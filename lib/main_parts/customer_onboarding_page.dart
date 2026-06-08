@@ -45,6 +45,15 @@ class _CustomerOnboardingPageState extends State<CustomerOnboardingPage> {
     if (!_formKey.currentState!.validate()) return;
     setState(() => _saving = true);
     final session = await CustomerSessionStore.instance.loadValidSession();
+    if (session == null) {
+      final activeId = await ActiveLocalCustomerStore.instance
+          .getActiveCustomerId();
+      if (activeId.trim().isEmpty) {
+        await ActiveLocalCustomerStore.instance.createNewLocalCustomerId();
+      }
+    }
+    _clearCachedCustomerProfile();
+    CustomerProfileStore.instance.invalidateCache();
     final saved = await CustomerProfileStore.instance.save(
       name: _nameCtrl.text,
       phone: _phoneCtrl.text,

@@ -346,6 +346,12 @@ class RoleEntryPage extends StatelessWidget {
     setAppRole(AppRole.customer);
     final validSession = await CustomerSessionStore.instance.loadValidSession();
     if (validSession != null) {
+      await ActiveLocalCustomerStore.instance.setActiveCustomerId(
+        validSession.customerId,
+      );
+      _clearCachedCustomerProfile();
+      CustomerProfileStore.instance.invalidateCache();
+      CustomerBookingsStore.instance.invalidateCache();
       await _bootstrapCustomerSessionAndMergeBookings(
         reason: 'customer_role_entry',
       );
@@ -358,11 +364,13 @@ class RoleEntryPage extends StatelessWidget {
       );
       return;
     }
-    final existingProfile = await CustomerProfileStore.instance.load();
+    await CustomerProfileStore.instance.ensureLegacyMigration();
+    final hasExistingLocalProfile = await CustomerProfileStore.instance
+        .hasResolvableLocalProfile();
     if (!context.mounted) return;
     final entryIntent = await _promptCustomerEntryIntent(
       context,
-      hasExistingLocalProfile: existingProfile != null,
+      hasExistingLocalProfile: hasExistingLocalProfile,
     );
     if (!context.mounted || entryIntent == null) return;
     if (entryIntent == _customerEntryPhoneLoginIntent) {
@@ -370,6 +378,12 @@ class RoleEntryPage extends StatelessWidget {
         MaterialPageRoute(builder: (_) => const CustomerPhoneRecoveryPage()),
       );
       if (!context.mounted || sessionResult == null) return;
+      await ActiveLocalCustomerStore.instance.setActiveCustomerId(
+        sessionResult.customerId,
+      );
+      _clearCachedCustomerProfile();
+      CustomerProfileStore.instance.invalidateCache();
+      CustomerBookingsStore.instance.invalidateCache();
       await _bootstrapCustomerSessionAndMergeBookings(
         reason: 'customer_phone_login',
       );
@@ -383,13 +397,30 @@ class RoleEntryPage extends StatelessWidget {
       return;
     }
     if (entryIntent == _customerEntryNewIntent) {
+      await ActiveLocalCustomerStore.instance.createNewLocalCustomerId();
+      _clearCachedCustomerProfile();
+      CustomerProfileStore.instance.invalidateCache();
+      CustomerBookingsStore.instance.invalidateCache();
+      if (!context.mounted) return;
       Navigator.of(context).pushReplacement(
         MaterialPageRoute(builder: (_) => const CustomerOnboardingPage()),
       );
       return;
     }
     if (!context.mounted) return;
-    if (existingProfile != null) {
+    if (entryIntent == _customerEntryContinueIntent ||
+        hasExistingLocalProfile) {
+      final profile = await CustomerProfileStore.instance.load();
+      if (profile != null) {
+        await ActiveLocalCustomerStore.instance.setActiveCustomerId(
+          profile.customerId,
+        );
+      }
+      _clearCachedCustomerProfile();
+      CustomerProfileStore.instance.invalidateCache();
+      CustomerBookingsStore.instance.invalidateCache();
+      await _refreshCachedCustomerProfile();
+      if (!context.mounted) return;
       Navigator.of(context).pushReplacement(
         MaterialPageRoute(builder: (_) => const CustomerHomePage()),
       );

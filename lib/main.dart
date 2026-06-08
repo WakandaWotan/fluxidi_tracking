@@ -24,6 +24,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:fluxidi_tracking/calculator_page.dart';
+import 'package:fluxidi_tracking/active_local_customer_store.dart';
 import 'package:fluxidi_tracking/customer_booking_store.dart';
 import 'package:fluxidi_tracking/customer_bookings_store.dart';
 import 'package:fluxidi_tracking/customer_phone_recovery_page.dart';
@@ -131,6 +132,10 @@ final RouteObserver<PageRoute<dynamic>> kAppRouteObserver =
 
 Future<void> _refreshCachedCustomerProfile() async {
   _cachedCustomerProfile = await CustomerProfileStore.instance.load();
+}
+
+void _clearCachedCustomerProfile() {
+  _cachedCustomerProfile = null;
 }
 
 void _setCachedCustomerProfile(CustomerProfile profile) {
