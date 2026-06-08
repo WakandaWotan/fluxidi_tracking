@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart' show debugPrint, kIsWeb;
 import 'package:fluxidi_tracking/company_session_store.dart';
+import 'package:fluxidi_tracking/driver_session_store.dart';
 import 'package:path_provider/path_provider.dart';
 
 String _sanitizeScopeSegment(String value) {
@@ -28,6 +29,14 @@ String _maskScope(String value) {
       activeCompanySessionNotifier.value?.companyId.trim() ?? '';
   if (sessionCompanyId.isNotEmpty) {
     return (tenantId: sessionCompanyId, companyId: sessionCompanyId);
+  }
+  final driverSession = activeDriverSessionNotifier.value;
+  final driverTenantId = (driverSession?.tenantId ?? '').trim();
+  final driverCompanyId = (driverSession?.companyId ?? '').trim();
+  if ((driverSession?.isVerifiedPairingSession ?? false) &&
+      driverTenantId.isNotEmpty &&
+      driverCompanyId.isNotEmpty) {
+    return (tenantId: driverTenantId, companyId: driverCompanyId);
   }
   return null;
 }

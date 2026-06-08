@@ -1710,6 +1710,26 @@ class _DriverHomePageState extends State<DriverHomePage>
     return Uri.parse('$baseUrl$path').replace(queryParameters: scope);
   }
 
+  ({String tenantId, String companyId})? _complianceLedgerScopeForStop() {
+    final strictBookingScope = _strictActiveBookingScopeQuery();
+    if (strictBookingScope != null) {
+      final tenantId =
+          (strictBookingScope['tenant_id'] ??
+                  strictBookingScope['tenantId'] ??
+                  '')
+              .trim();
+      final companyId =
+          (strictBookingScope['company_id'] ??
+                  strictBookingScope['companyId'] ??
+                  '')
+              .trim();
+      if (tenantId.isNotEmpty && companyId.isNotEmpty) {
+        return (tenantId: tenantId, companyId: companyId);
+      }
+    }
+    return _strictActiveLocalScopeIds();
+  }
+
   Future<void> _startTrip(BookingItem b) async {
     try {
       if (!_canOperateBookingWithGuard(
@@ -4635,32 +4655,15 @@ class _DriverHomePageState extends State<DriverHomePage>
       stoppedAt: stoppedAt,
       bookingId: bookingId,
     );
-    final strictScope = _strictComplianceScopeFromValues(
-      tenantCandidates: <dynamic>[
-        details['tenant_id'],
-        details['tenantId'],
-        _compliancePathText(details, 'booking.tenant_id'),
-        _compliancePathText(details, 'booking.tenantId'),
-        activeDriverSessionNotifier.value?.tenantId,
-      ],
-      companyCandidates: <dynamic>[
-        details['company_id'],
-        details['companyId'],
-        _compliancePathText(details, 'booking.company_id'),
-        _compliancePathText(details, 'booking.companyId'),
-        activeDriverSessionNotifier.value?.companyId,
-        companyProfileNotifier.value?.companyId,
-        activeCompanySessionNotifier.value?.companyId,
-      ],
-    );
+    final ledgerScope = _complianceLedgerScopeForStop();
 
     return <String, dynamic>{
       'ledger_version': '1.0',
       'ride_id': rideId,
       'ride_type': 'planned',
       'lifecycle_status': 'completed',
-      'tenant_id': strictScope?.tenantId ?? '',
-      'company_id': strictScope?.companyId ?? '',
+      'tenant_id': ledgerScope?.tenantId ?? '',
+      'company_id': ledgerScope?.companyId ?? '',
       'driver_id': driverId,
       'vehicle_id': vehicleId,
       'booking_id': bookingId,
@@ -4732,22 +4735,15 @@ class _DriverHomePageState extends State<DriverHomePage>
       startedAt: startedAt,
       stoppedAt: stoppedAt,
     );
-    final strictScope = _strictComplianceScopeFromValues(
-      tenantCandidates: <dynamic>[activeDriverSessionNotifier.value?.tenantId],
-      companyCandidates: <dynamic>[
-        activeDriverSessionNotifier.value?.companyId,
-        companyProfileNotifier.value?.companyId,
-        activeCompanySessionNotifier.value?.companyId,
-      ],
-    );
+    final ledgerScope = _complianceLedgerScopeForStop();
 
     return <String, dynamic>{
       'ledger_version': '1.0',
       'ride_id': rideId,
       'ride_type': 'direct',
       'lifecycle_status': 'completed',
-      'tenant_id': strictScope?.tenantId ?? '',
-      'company_id': strictScope?.companyId ?? '',
+      'tenant_id': ledgerScope?.tenantId ?? '',
+      'company_id': ledgerScope?.companyId ?? '',
       'driver_id': driverId,
       'vehicle_id': vehicleId,
       'booking_id': null,

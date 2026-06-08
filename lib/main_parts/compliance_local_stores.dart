@@ -44,6 +44,36 @@ String _maskLocalScopeId(String value) {
   return null;
 }
 
+({String tenantId, String companyId})? _resolveComplianceLedgerScope({
+  String? tenantId,
+  String? companyId,
+}) {
+  final recordTenant = (tenantId ?? '').trim();
+  final recordCompany = (companyId ?? '').trim();
+  if (recordTenant.isNotEmpty && recordCompany.isNotEmpty) {
+    return (tenantId: recordTenant, companyId: recordCompany);
+  }
+  final strictLocal = _strictActiveLocalScopeIds();
+  if (strictLocal != null) {
+    return strictLocal;
+  }
+  final bookingScope = _strictActiveBookingScopeQuery();
+  if (bookingScope != null) {
+    final resolvedTenant =
+        (bookingScope['tenant_id'] ?? bookingScope['tenantId'] ?? '')
+            .toString()
+            .trim();
+    final resolvedCompany =
+        (bookingScope['company_id'] ?? bookingScope['companyId'] ?? '')
+            .toString()
+            .trim();
+    if (resolvedTenant.isNotEmpty && resolvedCompany.isNotEmpty) {
+      return (tenantId: resolvedTenant, companyId: resolvedCompany);
+    }
+  }
+  return null;
+}
+
 /// Phase 0b local-only compliance ledger sink (append-only JSONL).
 /// Best-effort by design: write failures must never break ride UX.
 class _ComplianceRideLedgerStore {
@@ -73,14 +103,21 @@ class _ComplianceRideLedgerStore {
   }
 
   static Future<File> _fileForRecord(Map<String, dynamic> record) async {
-    final activeScope = _activeLocalScopeIds();
-    final tenantId = (record['tenant_id'] ?? '').toString().trim().isNotEmpty
-        ? (record['tenant_id'] ?? '').toString().trim()
-        : activeScope.tenantId;
-    final companyId = (record['company_id'] ?? '').toString().trim().isNotEmpty
-        ? (record['company_id'] ?? '').toString().trim()
-        : activeScope.companyId;
-    return _scopedFile(tenantId: tenantId, companyId: companyId);
+    final resolved = _resolveComplianceLedgerScope(
+      tenantId: (record['tenant_id'] ?? '').toString(),
+      companyId: (record['company_id'] ?? '').toString(),
+    );
+    if (resolved == null) {
+      final activeScope = _activeLocalScopeIds();
+      return _scopedFile(
+        tenantId: activeScope.tenantId,
+        companyId: activeScope.companyId,
+      );
+    }
+    return _scopedFile(
+      tenantId: resolved.tenantId,
+      companyId: resolved.companyId,
+    );
   }
 
   static Future<void> append(Map<String, dynamic> record) async {
@@ -101,18 +138,30 @@ class _ComplianceRideLedgerStore {
 Future<void> _writeComplianceLedgerRecord({
   required Map<String, dynamic> record,
 }) async {
-  final tenantId = (record['tenant_id'] ?? '').toString().trim();
-  final companyId = (record['company_id'] ?? '').toString().trim();
-  if (tenantId.isEmpty || companyId.isEmpty) {
+  final recordTenant = (record['tenant_id'] ?? '').toString().trim();
+  final recordCompany = (record['company_id'] ?? '').toString().trim();
+  final scopeSource = recordTenant.isNotEmpty && recordCompany.isNotEmpty
+      ? 'record'
+      : (_strictActiveLocalScopeIds() != null
+            ? 'strict_local'
+            : 'strict_booking');
+  final resolved = _resolveComplianceLedgerScope(
+    tenantId: recordTenant,
+    companyId: recordCompany,
+  );
+  if (resolved == null) {
     debugPrint(
       '[COMPLIANCE_LEDGER][SKIP_SCOPE] reason=missing_tenant_company_scope',
     );
     return;
   }
+  final payload = Map<String, dynamic>.from(record)
+    ..['tenant_id'] = resolved.tenantId
+    ..['company_id'] = resolved.companyId;
   try {
-    await _ComplianceRideLedgerStore.append(record);
+    await _ComplianceRideLedgerStore.append(payload);
     debugPrint(
-      '[COMPLIANCE_LEDGER][WRITE] event_type=${record['event_type']} ride_type=${record['ride_type']} validation_state=${record['provenance']?['validation_state']} backend_confirmed=${record['provenance']?['backend_confirmed']}',
+      '[COMPLIANCE_LEDGER][WRITE] scope_source=$scopeSource event_type=${payload['event_type']} ride_type=${payload['ride_type']} validation_state=${payload['provenance']?['validation_state']} backend_confirmed=${payload['provenance']?['backend_confirmed']} tenant=${_maskLocalScopeId(resolved.tenantId)} company=${_maskLocalScopeId(resolved.companyId)}',
     );
   } catch (e) {
     debugPrint('[COMPLIANCE_LEDGER][WARN] write_failed reason=$e');
