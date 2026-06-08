@@ -153,30 +153,14 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
   Future<void> _toggleFavoritePartner() async {
     final partnerId = widget.partnerId.trim();
     if (partnerId.isEmpty || _favoriteBusy) return;
-    final session = await CustomerSessionStore.instance.loadValidSession();
-    final sessionToken = (session?.customerSessionToken ?? '').trim();
-    if (session == null || sessionToken.isEmpty) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            _t(
-              nl: 'Log in of herstel je klantprofiel om favorieten te bewaren.',
-              en: 'Log in or recover your customer profile to save favorites.',
-              fr: 'Connectez-vous ou récupérez votre profil client pour enregistrer des favoris.',
-              es: 'Inicia sesión o recupera tu perfil de cliente para guardar favoritos.',
-            ),
-          ),
-        ),
-      );
-      return;
-    }
+
     final nextFavorites = _favoritePartnerIds.toSet();
     if (nextFavorites.contains(partnerId)) {
       nextFavorites.remove(partnerId);
     } else {
       nextFavorites.add(partnerId);
     }
+
     if (!mounted) return;
     setState(() {
       _favoriteBusy = true;
@@ -185,56 +169,73 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
 
     var localSaved = false;
     var remoteSaved = false;
+    var hasValidSession = false;
     try {
+      final session = await CustomerSessionStore.instance.loadValidSession();
+      final sessionToken = (session?.customerSessionToken ?? '').trim();
+      hasValidSession = session != null && sessionToken.isNotEmpty;
       debugPrint(
-        '[FAVORITE_SYNC][REQUEST] requested_count=${nextFavorites.length}',
+        '[FAVORITE_SYNC][REQUEST] requested_count=${nextFavorites.length} session=$hasValidSession',
       );
+
       final existingProfile = await CustomerProfileStore.instance.load();
-      await CustomerProfileStore.instance.save(
+      final sessionCustomerId = hasValidSession
+          ? session.customerId.trim()
+          : '';
+      final savedProfile = await CustomerProfileStore.instance.save(
         name: existingProfile?.name ?? '',
         phone: existingProfile?.phone ?? '',
         email: existingProfile?.email ?? '',
         preferredPostcode: existingProfile?.preferredPostcode ?? '',
         companyName: existingProfile?.companyName ?? '',
         vatNumber: existingProfile?.vatNumber ?? '',
-        sessionCustomerId: (session.customerId).trim(),
+        sessionCustomerId: sessionCustomerId.isNotEmpty
+            ? sessionCustomerId
+            : null,
         favoritePartnerIds: nextFavorites,
       );
       localSaved = true;
+      if (mounted) {
+        setState(() {
+          _favoritePartnerIds = savedProfile.favoritePartnerIds.toSet();
+        });
+      }
 
-      final remoteProfile = await upsertPublicCustomerProfile(
-        customerSessionToken: sessionToken,
-        payload: <String, dynamic>{
-          'name': existingProfile?.name ?? '',
-          'phone': existingProfile?.phone ?? '',
-          'email': existingProfile?.email ?? '',
-          'preferred_postcode': existingProfile?.preferredPostcode ?? '',
-          'company_name': existingProfile?.companyName ?? '',
-          'vat_number': existingProfile?.vatNumber ?? '',
-          'favorite_partner_ids': nextFavorites.toList(growable: false),
-          'favoritePartnerIds': nextFavorites.toList(growable: false),
-        },
-      );
-      if (remoteProfile != null) {
-        final remoteFavorites = _favoritePartnerIdsFromAnyMap(remoteProfile);
-        final remoteFavoriteKeys = remoteProfile.keys
-            .where(
-              (k) =>
-                  k == 'favorite_partner_ids' ||
-                  k == 'favoritePartnerIds' ||
-                  k == 'favourite_partner_ids' ||
-                  k == 'favouritePartnerIds',
-            )
-            .toList(growable: false);
-        remoteSaved =
-            remoteFavorites.length == nextFavorites.length &&
-            remoteFavorites.containsAll(nextFavorites) &&
-            nextFavorites.containsAll(remoteFavorites);
-        debugPrint(
-          '[FAVORITE_SYNC][RESPONSE] remote_count=${remoteFavorites.length} matched=$remoteSaved keys=${remoteFavoriteKeys.join(",")}',
+      if (hasValidSession) {
+        final remoteProfile = await upsertPublicCustomerProfile(
+          customerSessionToken: sessionToken,
+          payload: <String, dynamic>{
+            'name': savedProfile.name,
+            'phone': savedProfile.phone,
+            'email': savedProfile.email,
+            'preferred_postcode': savedProfile.preferredPostcode,
+            'company_name': savedProfile.companyName,
+            'vat_number': savedProfile.vatNumber,
+            'favorite_partner_ids': savedProfile.favoritePartnerIds,
+            'favoritePartnerIds': savedProfile.favoritePartnerIds,
+          },
         );
-        if (remoteFavoriteKeys.isEmpty) {
-          debugPrint('[FAVORITE_SYNC][NO_FAVORITE_KEYS]');
+        if (remoteProfile != null) {
+          final remoteFavorites = _favoritePartnerIdsFromAnyMap(remoteProfile);
+          final remoteFavoriteKeys = remoteProfile.keys
+              .where(
+                (k) =>
+                    k == 'favorite_partner_ids' ||
+                    k == 'favoritePartnerIds' ||
+                    k == 'favourite_partner_ids' ||
+                    k == 'favouritePartnerIds',
+              )
+              .toList(growable: false);
+          remoteSaved =
+              remoteFavorites.length == nextFavorites.length &&
+              remoteFavorites.containsAll(nextFavorites) &&
+              nextFavorites.containsAll(remoteFavorites);
+          debugPrint(
+            '[FAVORITE_SYNC][RESPONSE] remote_count=${remoteFavorites.length} matched=$remoteSaved keys=${remoteFavoriteKeys.join(",")}',
+          );
+          if (remoteFavoriteKeys.isEmpty) {
+            debugPrint('[FAVORITE_SYNC][NO_FAVORITE_KEYS]');
+          }
         }
       }
     } catch (_) {
@@ -244,21 +245,39 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
         setState(() {
           _favoriteBusy = false;
         });
-        if (localSaved && !remoteSaved) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                _t(
-                  nl: 'Favoriet lokaal bewaard. Synchronisatie volgt later.',
-                  en: 'Favorite saved locally. Sync will follow later.',
-                  fr: 'Favori enregistré localement. La synchronisation suivra plus tard.',
-                  es: 'Favorito guardado localmente. La sincronización llegará más tarde.',
-                ),
-              ),
-            ),
-          );
-        }
       }
+    }
+
+    if (!mounted || !localSaved) return;
+
+    if (!hasValidSession) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Favoriet bewaard op deze gsm. Log in met gsm om je favorieten ook online te bewaren.',
+              en: 'Favorite saved on this phone. Log in with your phone to keep your favorites online too.',
+              fr: 'Favori enregistré sur ce gsm. Connectez-vous avec votre gsm pour conserver vos favoris en ligne.',
+              es: 'Favorito guardado en este móvil. Inicia sesión con tu móvil para conservar tus favoritos en línea.',
+            ),
+          ),
+        ),
+      );
+      return;
+    }
+    if (!remoteSaved) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Favoriet lokaal bewaard. Synchronisatie volgt later.',
+              en: 'Favorite saved locally. Sync will follow later.',
+              fr: 'Favori enregistré localement. La synchronisation suivra plus tard.',
+              es: 'Favorito guardado localmente. La sincronización llegará más tarde.',
+            ),
+          ),
+        ),
+      );
     }
   }
 
