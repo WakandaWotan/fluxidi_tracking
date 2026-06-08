@@ -474,10 +474,10 @@ class _BusinessHomePageState extends State<BusinessHomePage>
       SnackBar(
         content: Text(
           _tr(
-            nl: 'Geen actieve chauffeur gevonden voor dit bedrijf.',
-            en: 'No active driver found for this company.',
-            fr: 'Aucun chauffeur actif trouvé pour cette entreprise.',
-            es: 'No se encontró ningún conductor activo para esta empresa.',
+            nl: 'Geen operationele chauffeur met voertuigtoewijzing gevonden.',
+            en: 'No operational driver with a vehicle assignment found.',
+            fr: 'Aucun chauffeur opérationnel avec véhicule assigné.',
+            es: 'No se encontró ningún conductor operativo con vehículo asignado.',
           ),
         ),
       ),
@@ -522,18 +522,23 @@ class _BusinessHomePageState extends State<BusinessHomePage>
           tenantId: scope.tenantId,
           companyId: scope.companyId,
         );
-    if (savedPreview != null) {
-      final restoredDriver = _findBusinessAdminEligibleDriverByIdGlobal(
-        savedPreview.driverId,
+    final resolvedPreview = _resolveBusinessDriverForPreviewGlobal(
+      tenantId: scope.tenantId,
+      companyId: scope.companyId,
+      savedPreview: savedPreview,
+    );
+    final resolvedDriver = resolvedPreview.driver;
+    if (resolvedDriver != null) {
+      if (!context.mounted) return;
+      await _persistAndOpenBusinessDriverPreview(
+        context,
+        scope: scope,
+        driver: resolvedDriver,
+        reason: resolvedPreview.reason,
       );
-      if (restoredDriver != null) {
-        debugPrint(
-          '[DRIVER_OWNER_BRIDGE][OPEN] driver=${_maskBridgeDriverId(restoredDriver.id)} reason=saved_preview',
-        );
-        if (!context.mounted) return;
-        await _openBusinessDriverCockpitHome(context);
-        return;
-      }
+      return;
+    }
+    if (savedPreview != null) {
       await DriverSessionStore.instance.clearBusinessPreviewDriverSelection(
         tenantId: scope.tenantId,
         companyId: scope.companyId,
@@ -554,9 +559,15 @@ class _BusinessHomePageState extends State<BusinessHomePage>
       );
       return;
     }
-    final selectableDrivers = _resolveBusinessAdminDriverBridgeCandidates();
+    final selectableDrivers =
+        _resolveOperationalCockpitDriverBridgeCandidatesGlobal(
+          companyId: scope.companyId,
+          logCandidates: true,
+        );
     if (selectableDrivers.isEmpty) {
-      debugPrint('[DRIVER_OWNER_BRIDGE][SKIP] reason=no_admin_eligible_driver');
+      debugPrint(
+        '[DRIVER_OWNER_BRIDGE][SKIP] reason=no_operational_assigned_driver',
+      );
       if (!context.mounted) return;
       _showNoBusinessDriverAvailable(context);
       return;

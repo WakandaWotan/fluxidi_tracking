@@ -8381,25 +8381,13 @@ class _DriverHomePageState extends State<DriverHomePage>
   }
 
   String? _resolveFleetVehicleIdForDriver(String driverId) {
-    final normalizedDriverId = driverId.trim();
-    if (normalizedDriverId.isEmpty) return null;
     final activeCompany = resolvedCompanyId.trim().isNotEmpty
         ? resolvedCompanyId.trim()
         : kOutboundTenantId.trim();
-    for (final vehicle in vehiclesNotifier.value) {
-      if (!vehicle.isActive) continue;
-      final vehicleId = vehicle.id.trim();
-      if (vehicleId.isEmpty) continue;
-      if ((vehicle.driverId?.trim() ?? '') != normalizedDriverId) continue;
-      final vehicleCompany = vehicle.companyId?.trim() ?? '';
-      if (vehicleCompany.isNotEmpty &&
-          activeCompany.isNotEmpty &&
-          vehicleCompany != activeCompany) {
-        continue;
-      }
-      return vehicleId;
-    }
-    return null;
+    return resolveFleetVehicleIdForDriver(
+      driverId,
+      companyId: activeCompany.isNotEmpty ? activeCompany : null,
+    );
   }
 
   String _effectiveActiveDriverIdForRideScope() {
@@ -8538,9 +8526,27 @@ class _DriverHomePageState extends State<DriverHomePage>
 
     final profile = _dashboardActiveDriverProfile();
     final session = activeDriverSessionNotifier.value;
+    final effectiveDriverId = _effectiveActiveDriverIdForRideScope();
+    final sessionDriverId = session?.driverId.trim() ?? '';
     final backendPhoto = (profile?.publicPortraitUrl ?? '').trim();
     final sessionPhoto = (session?.driverPhotoUrl ?? '').trim();
-    final resolvedSessionPhoto = _resolveDashboardDriverPhotoUrl(sessionPhoto);
+    if (sessionPhoto.isNotEmpty &&
+        sessionDriverId.isNotEmpty &&
+        effectiveDriverId.isNotEmpty &&
+        sessionDriverId != effectiveDriverId) {
+      debugPrint(
+        '[DRIVER_PHOTO_CANONICAL][MISMATCH_BLOCK] requested_driver=${_maskBridgeDriverIdGlobal(effectiveDriverId)} cached_driver=${_maskBridgeDriverIdGlobal(sessionDriverId)}',
+      );
+    }
+    final sessionPhotoForEffective =
+        sessionDriverId.isNotEmpty &&
+            effectiveDriverId.isNotEmpty &&
+            sessionDriverId == effectiveDriverId
+        ? sessionPhoto
+        : '';
+    final resolvedSessionPhoto = _resolveDashboardDriverPhotoUrl(
+      sessionPhotoForEffective,
+    );
     final resolvedBackendPhoto = _resolveDashboardDriverPhotoUrl(backendPhoto);
     final isBusinessPreview =
         widget.openedFromBusinessHome &&
@@ -8549,7 +8555,8 @@ class _DriverHomePageState extends State<DriverHomePage>
     String source = 'fallback';
     String? selected;
     if (isBusinessPreview) {
-      if (resolvedBackendPhoto != null) {
+      if (resolvedBackendPhoto != null &&
+          (profile?.id.trim() ?? '') == effectiveDriverId) {
         selected = resolvedBackendPhoto;
         source = profile != null ? 'local' : 'backend';
       } else if (resolvedSessionPhoto != null) {
@@ -8940,13 +8947,27 @@ class _DriverHomePageState extends State<DriverHomePage>
     final resolvedCompanyCode =
         (activeCompanySessionNotifier.value?.companyCode ?? '').trim();
     final fleetVehicleId = _resolveFleetVehicleIdForDriver(driver.id.trim());
+    final requestedDriverId = driver.id.trim();
+    final previousDriverId = previous?.driverId.trim() ?? '';
     final portraitUrl = () {
       final profilePhoto = _canonicalDriverPortraitUrlGlobal(driver);
       if (profilePhoto.isNotEmpty) return profilePhoto;
       final override = (photoOverride ?? '').trim();
       if (override.isNotEmpty) return override;
+      if (previousDriverId.isNotEmpty &&
+          previousDriverId != requestedDriverId) {
+        debugPrint(
+          '[DRIVER_PHOTO_CANONICAL][MISMATCH_BLOCK] requested_driver=${_maskBridgeDriverIdGlobal(requestedDriverId)} cached_driver=${_maskBridgeDriverIdGlobal(previousDriverId)}',
+        );
+        return '';
+      }
       return (previous?.driverPhotoUrl ?? '').trim();
     }();
+    if (previousDriverId.isNotEmpty && previousDriverId != requestedDriverId) {
+      debugPrint(
+        '[DRIVER_SESSION][BUSINESS_PREVIEW_PHOTO_REFRESH] old_driver=${_maskBridgeDriverIdGlobal(previousDriverId)} new_driver=${_maskBridgeDriverIdGlobal(requestedDriverId)} photo=${portraitUrl.isEmpty ? 'missing' : 'present'}',
+      );
+    }
     if (portraitUrl.isNotEmpty) {
       debugPrint(
         '[DRIVER_SESSION][BUSINESS_PREVIEW_PHOTO] driver=${_maskBridgeDriverIdGlobal(driver.id)} photo=${portraitUrl.length <= 12 ? 'present' : '${portraitUrl.substring(0, 6)}…${portraitUrl.substring(portraitUrl.length - 4)}'}',
@@ -9006,13 +9027,15 @@ class _DriverHomePageState extends State<DriverHomePage>
         '[DRIVER_PREVIEW][TOKEN] reason=$reason token_present=$persistedTokenPresent source=persisted_load',
       );
     }
-    return _buildBusinessPreviewDriverSession(
+    final built = _buildBusinessPreviewDriverSession(
       driver: driver,
       previous: previous,
       persisted: persisted,
       reason: reason,
       photoOverride: photoOverride,
     );
+    DriverSessionStore.instance.setBusinessDriverViewSessionInMemory(built);
+    return built;
   }
 
   Future<void> _restoreBusinessPreviewDriverSelectionOnOpen() async {
@@ -9029,15 +9052,29 @@ class _DriverHomePageState extends State<DriverHomePage>
           tenantId: scope.tenantId,
           companyId: scope.companyId,
         );
-    if (savedPreview == null) {
+    final resolvedPreview = _resolveBusinessDriverForPreviewGlobal(
+      tenantId: scope.tenantId,
+      companyId: scope.companyId,
+      savedPreview: savedPreview,
+    );
+    final selectedDriver = resolvedPreview.driver;
+    if (selectedDriver == null) {
       _businessPreviewDriverId = null;
+      if (savedPreview != null) {
+        await DriverSessionStore.instance.clearBusinessPreviewDriverSelection(
+          tenantId: scope.tenantId,
+          companyId: scope.companyId,
+        );
+      }
       debugPrint(
-        '[DRIVER_VIEW_ORIGIN][PREVIEW_LOAD] source=business_home driver=missing reason=no_saved_preview',
+        '[DRIVER_VIEW_ORIGIN][PREVIEW_LOAD] source=business_home driver=missing reason=${savedPreview == null ? 'no_saved_preview' : 'invalid_or_inactive'}',
       );
       _logCurrentDriverOrigin(reason: 'preview_load_empty');
-      final adminCandidates = _resolveBusinessAdminDriverBridgeCandidatesGlobal(
-        logCandidates: false,
-      );
+      final adminCandidates =
+          _resolveOperationalCockpitDriverBridgeCandidatesGlobal(
+            companyId: scope.companyId,
+            logCandidates: false,
+          );
       if (adminCandidates.isNotEmpty) {
         final fallbackDriver = adminCandidates.first;
         _businessPreviewDriverId = fallbackDriver.id.trim();
@@ -9057,31 +9094,31 @@ class _DriverHomePageState extends State<DriverHomePage>
       unawaited(_refreshBookings(force: true, trigger: 'init_boot'));
       return;
     }
-    DriverProfile? selectedDriver = _findBusinessAdminEligibleDriverByIdGlobal(
-      savedPreview.driverId,
-    );
-    if (selectedDriver == null) {
-      _businessPreviewDriverId = null;
-      await DriverSessionStore.instance.clearBusinessPreviewDriverSelection(
-        tenantId: scope.tenantId,
-        companyId: scope.companyId,
-      );
-      debugPrint(
-        '[DRIVER_VIEW_ORIGIN][PREVIEW_LOAD] source=business_home driver=missing reason=invalid_or_inactive',
-      );
-      _logCurrentDriverOrigin(reason: 'preview_load_invalid');
-      return;
-    }
     _businessPreviewDriverId = selectedDriver.id.trim();
     activeDriverSessionNotifier.value =
         await _hydrateBusinessPreviewDriverSession(
           driver: selectedDriver,
           reason: 'preview_load_applied',
-          photoOverride: savedPreview.driverPhotoUrl,
+          photoOverride:
+              savedPreview != null &&
+                  savedPreview.driverId.trim() == selectedDriver.id.trim()
+              ? savedPreview.driverPhotoUrl
+              : null,
         );
+    if (resolvedPreview.reason == 'vehicle_assignment' ||
+        resolvedPreview.reason == 'first_assigned_driver' ||
+        resolvedPreview.reason == 'saved_preview' ||
+        savedPreview == null ||
+        savedPreview.driverId.trim() != selectedDriver.id.trim()) {
+      await _saveBusinessDriverPreviewFromProfileGlobal(
+        selectedDriver,
+        tenantId: scope.tenantId,
+        companyId: scope.companyId,
+      );
+    }
     _syncDriverRideScopeContext(reason: 'preview_load_applied');
     debugPrint(
-      '[DRIVER_VIEW_ORIGIN][PREVIEW_LOAD] source=business_home driver=${_maskBridgeDriverIdGlobal(selectedDriver.id)}',
+      '[DRIVER_VIEW_ORIGIN][PREVIEW_LOAD] source=business_home driver=${_maskBridgeDriverIdGlobal(selectedDriver.id)} reason=${resolvedPreview.reason}',
     );
     _logCurrentDriverOrigin(reason: 'preview_load_applied');
     if (mounted) setState(() {});
@@ -9320,37 +9357,32 @@ class _DriverHomePageState extends State<DriverHomePage>
     await _refreshDriverBridgeCandidatesIfNeeded();
     final currentDriverId = _effectiveCurrentDriverIdForBusinessPreview();
     _logCurrentDriverOrigin(reason: 'switch_candidates');
-    final candidateReport = _resolveDriverBridgeCandidatesReportGlobal(
-      logCandidates: true,
-      excludeDriverId: currentDriverId,
-      requireEmployeeNumber: !widget.openedFromBusinessHome,
-    );
-    final selectableDrivers = candidateReport.selectable;
-    final visibleCompanyDrivers = candidateReport.visibleCompanyDrivers;
-    final excludedCounts = candidateReport.excludedCounts;
+    final List<DriverProfile> selectableDrivers;
+    if (widget.openedFromBusinessHome) {
+      final scope = _activeBusinessPreviewScope();
+      selectableDrivers =
+          _resolveOperationalCockpitDriverBridgeCandidatesGlobal(
+            companyId: scope?.companyId,
+            excludeDriverId: currentDriverId,
+            logCandidates: true,
+          );
+    } else {
+      final candidateReport = _resolveDriverBridgeCandidatesReportGlobal(
+        logCandidates: true,
+        excludeDriverId: currentDriverId,
+        requireEmployeeNumber: true,
+      );
+      selectableDrivers = candidateReport.selectable;
+    }
     if (selectableDrivers.isEmpty) {
       debugPrint('[DRIVER_OWNER_BRIDGE][SKIP] reason=no_selectable_driver');
-      final currentExcluded = excludedCounts['current_driver'] ?? 0;
-      final missingEmployee = excludedCounts['missing_employee_number'] ?? 0;
-      final hasOnlyCurrentVisible =
-          visibleCompanyDrivers.isNotEmpty &&
-          currentExcluded == visibleCompanyDrivers.length;
-      final hasOtherVisibleDrivers =
-          visibleCompanyDrivers.length > currentExcluded;
       _toast(
-        hasOnlyCurrentVisible
+        widget.openedFromBusinessHome
             ? _tr(
-                nl: 'Geen andere chauffeur beschikbaar.',
-                en: 'No other driver available.',
-                fr: 'Aucun autre chauffeur disponible.',
-                es: 'No hay otro conductor disponible.',
-              )
-            : (hasOtherVisibleDrivers && missingEmployee > 0)
-            ? _tr(
-                nl: 'Deze chauffeur mist een koppelcode/werknemersnummer.',
-                en: 'This driver is missing a pairing code/employee number.',
-                fr: 'Ce chauffeur n’a pas de code de liaison/numéro employé.',
-                es: 'Este conductor no tiene código de vinculación/número de empleado.',
+                nl: 'Geen andere chauffeur met voertuigtoewijzing beschikbaar.',
+                en: 'No other vehicle-assigned driver available.',
+                fr: 'Aucun autre chauffeur avec véhicule assigné.',
+                es: 'No hay otro conductor con vehículo asignado.',
               )
             : _tr(
                 nl: 'Geen beschikbare chauffeursweergave gevonden.',
@@ -9381,7 +9413,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       '[DRIVER_VIEW_ORIGIN][PICKER_SELECTED] source=${widget.openedFromBusinessHome ? "business_home" : "driver_home"} driver=${_maskBridgeDriverIdGlobal(selectedDriver.id)}',
     );
     debugPrint(
-      '[DRIVER_OWNER_BRIDGE][SELECT] driver=${_maskBridgeDriverIdGlobal(selectedDriver.id)} reason=dashboard_switch',
+      '[DRIVER_OWNER_BRIDGE][SELECT] driver=${_maskBridgeDriverIdGlobal(selectedDriver.id)} reason=manual_preview',
     );
     if (widget.openedFromBusinessHome) {
       _businessPreviewDriverId = selectedDriver.id.trim();
@@ -9404,6 +9436,10 @@ class _DriverHomePageState extends State<DriverHomePage>
       _logCurrentDriverOrigin(reason: 'preview_save_applied');
       if (mounted) setState(() {});
       _logRidesHubVisibleCounts(source: 'preview_picker_selected');
+      unawaited(
+        _refreshBookings(force: true, trigger: 'preview_picker_selected'),
+      );
+      return;
     } else {
       await DriverSessionStore.instance.saveFromDriverProfile(selectedDriver);
       await DriverSessionStore.instance.bootstrap(driversNotifier.value);
@@ -10080,6 +10116,9 @@ class _DriverHomePageState extends State<DriverHomePage>
     final logoVisualLift = isPhonePortrait ? -6.0 : -14.0;
     final avatarPhotoPath = _dashboardAvatarPhotoPath();
     final avatarPhotoUrl = _dashboardAvatarNetworkUrl();
+    final avatarDriverId = _effectiveActiveDriverIdForRideScope();
+    final avatarCacheKey =
+        '${avatarDriverId}_${avatarPhotoPath ?? avatarPhotoUrl ?? 'none'}';
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -10151,6 +10190,9 @@ class _DriverHomePageState extends State<DriverHomePage>
                                             )
                                           : Image.network(
                                               avatarPhotoUrl,
+                                              key: ValueKey<String>(
+                                                avatarCacheKey,
+                                              ),
                                               fit: BoxFit.cover,
                                               errorBuilder: (_, __, ___) => Center(
                                                 child:
@@ -10159,6 +10201,7 @@ class _DriverHomePageState extends State<DriverHomePage>
                                             ))
                                     : Image.file(
                                         File(avatarPhotoPath),
+                                        key: ValueKey<String>(avatarCacheKey),
                                         fit: BoxFit.cover,
                                         errorBuilder: (_, __, ___) => Center(
                                           child: _dashboardAvatarFallback(),
@@ -12022,7 +12065,45 @@ class _DriverHomePageState extends State<DriverHomePage>
   // UI
   // -------------------------------
 
+  Widget _buildStandaloneOperationalBlockPanel(String reason) {
+    final message = reason == 'no_vehicle_assigned'
+        ? _tr(
+            nl: 'Geen voertuig toegewezen. Vraag je bedrijfsbeheerder om een voertuig toe te wijzen.',
+            en: 'No vehicle assigned. Ask your company admin to assign a vehicle.',
+            fr: 'Aucun véhicule assigné. Demandez à votre administrateur d’assigner un véhicule.',
+            es: 'Sin vehículo asignado. Pide a tu administrador que asigne un vehículo.',
+          )
+        : _tr(
+            nl: 'Chauffeurscockpit geblokkeerd. Neem contact op met je bedrijfsbeheerder.',
+            en: 'Driver cockpit blocked. Contact your company admin.',
+            fr: 'Cockpit chauffeur bloqué. Contactez votre administrateur.',
+            es: 'Cockpit bloqueado. Contacta a tu administrador.',
+          );
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Text(
+          message,
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            color: Colors.white.withOpacity(0.88),
+            fontSize: 15,
+            fontWeight: FontWeight.w600,
+            height: 1.45,
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildHintPanel() {
+    if (!widget.openedFromBusinessHome) {
+      final blockReason =
+          DriverSessionStore.instance.standaloneOperationalBlockReason;
+      if ((blockReason ?? '').trim().isNotEmpty) {
+        return _buildStandaloneOperationalBlockPanel(blockReason!.trim());
+      }
+    }
     return _buildPremiumDriverDashboard();
   }
 

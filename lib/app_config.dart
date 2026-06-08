@@ -1703,6 +1703,521 @@ void _decodeDeletedDriverTombstonesFromPersistence(dynamic raw) {
   }
 }
 
+String _normalizeDriverIdentityText(String raw) {
+  return raw.trim().toLowerCase().replaceAll(RegExp(r'\s+'), ' ');
+}
+
+/// True for the seeded demo driver (e.g. drv_1 / Standaard chauffeur).
+bool isSeededOrPlaceholderDriver(DriverProfile driver) {
+  final id = _normalizeDriverIdentityText(driver.id);
+  final isDefaultId = id == 'drv_1';
+  final employee = _normalizeDriverIdentityText(driver.employeeNumber);
+  final isDefaultEmployee = employee == 'drv-001';
+  final name = _normalizeDriverIdentityText(driver.fullName);
+  final isDefaultName =
+      name == 'standaard chauffeur' ||
+      name == 'default driver' ||
+      name == 'standard driver' ||
+      name == 'chauffeur standard' ||
+      name == 'conductor estándar';
+  if (isDefaultId || isDefaultName) return true;
+  return isDefaultEmployee && (isDefaultId || isDefaultName);
+}
+
+String? resolveActiveCompanyIdForFleetUi() {
+  final profileCompanyId = companyProfileNotifier.value?.companyId.trim() ?? '';
+  if (profileCompanyId.isNotEmpty) return profileCompanyId;
+  final sessionCompanyId =
+      activeCompanySessionNotifier.value?.companyId.trim() ?? '';
+  if (sessionCompanyId.isNotEmpty) return sessionCompanyId;
+  return null;
+}
+
+bool _fleetVehicleBelongsToScope(VehicleProfile vehicle, String companyId) {
+  if (companyId.isEmpty) {
+    return fleetRecordBelongsToActiveCompanyOrLegacy(vehicle.companyId);
+  }
+  final scoped = vehicle.companyId?.trim() ?? '';
+  return scoped.isEmpty || scoped == companyId;
+}
+
+bool _isPrimaryFleetVehicleName(String rawName) {
+  final normalized = rawName.trim().toLowerCase();
+  return normalized == 'hoofdwagen' ||
+      normalized == 'main vehicle' ||
+      normalized == 'véhicule principal' ||
+      normalized == 'vehículo principal';
+}
+
+List<VehicleProfile> scopedActiveFleetVehicles({String? companyId}) {
+  final effectiveCompany =
+      (companyId ?? resolveActiveCompanyIdForFleetUi() ?? '').trim();
+  return vehiclesNotifier.value
+      .where(
+        (vehicle) =>
+            vehicle.isActive &&
+            _fleetVehicleBelongsToScope(vehicle, effectiveCompany),
+      )
+      .toList(growable: false);
+}
+
+String? resolvePrimaryFleetVehicleId({String? companyId}) {
+  final scoped = scopedActiveFleetVehicles(companyId: companyId);
+  if (scoped.isEmpty) return null;
+  for (final vehicle in scoped) {
+    if (_isPrimaryFleetVehicleName(vehicle.vehicleName)) {
+      final vehicleId = vehicle.id.trim();
+      if (vehicleId.isNotEmpty) return vehicleId;
+    }
+  }
+  final firstId = scoped.first.id.trim();
+  return firstId.isEmpty ? null : firstId;
+}
+
+String? resolveFleetDriverIdForVehicle(String vehicleId, {String? companyId}) {
+  final normalizedVehicleId = vehicleId.trim();
+  if (normalizedVehicleId.isEmpty) return null;
+  final effectiveCompany =
+      (companyId ?? resolveActiveCompanyIdForFleetUi() ?? '').trim();
+  for (final vehicle in vehiclesNotifier.value) {
+    if (!vehicle.isActive) continue;
+    if (vehicle.id.trim() != normalizedVehicleId) continue;
+    if (!_fleetVehicleBelongsToScope(vehicle, effectiveCompany)) continue;
+    final driverId = vehicle.driverId?.trim() ?? '';
+    return driverId.isEmpty ? null : driverId;
+  }
+  return null;
+}
+
+String? resolveFleetVehicleIdForDriver(String driverId, {String? companyId}) {
+  final normalizedDriverId = driverId.trim();
+  if (normalizedDriverId.isEmpty) return null;
+  final effectiveCompany =
+      (companyId ?? resolveActiveCompanyIdForFleetUi() ?? '').trim();
+  for (final vehicle in vehiclesNotifier.value) {
+    if (!vehicle.isActive) continue;
+    final vehicleId = vehicle.id.trim();
+    if (vehicleId.isEmpty) continue;
+    if ((vehicle.driverId?.trim() ?? '') != normalizedDriverId) continue;
+    if (!_fleetVehicleBelongsToScope(vehicle, effectiveCompany)) continue;
+    return vehicleId;
+  }
+  return null;
+}
+
+String? resolvePrimaryFleetVehicleLinkedDriverId({String? companyId}) {
+  final vehicleId = resolvePrimaryFleetVehicleId(companyId: companyId);
+  if (vehicleId == null) return null;
+  return resolveFleetDriverIdForVehicle(vehicleId, companyId: companyId);
+}
+
+bool isDriverFleetLinkedToVehicle({
+  required String driverId,
+  String? vehicleId,
+  String? companyId,
+}) {
+  final normalizedDriverId = driverId.trim();
+  if (normalizedDriverId.isEmpty) return false;
+  final linkedVehicleId = resolveFleetVehicleIdForDriver(
+    normalizedDriverId,
+    companyId: companyId,
+  );
+  if (linkedVehicleId == null) return false;
+  final normalizedVehicleId = (vehicleId ?? '').trim();
+  if (normalizedVehicleId.isEmpty) return true;
+  return linkedVehicleId == normalizedVehicleId;
+}
+
+class OperationalCockpitDriver {
+  const OperationalCockpitDriver({required this.driver, required this.vehicle});
+
+  final DriverProfile driver;
+  final VehicleProfile vehicle;
+}
+
+List<OperationalCockpitDriver> resolveOperationalCockpitEligibleDrivers({
+  String? companyId,
+  bool logCandidates = false,
+}) {
+  final effectiveCompany =
+      (companyId ?? resolveActiveCompanyIdForFleetUi() ?? '').trim();
+  final assigned = <OperationalCockpitDriver>[];
+  final seenDriverIds = <String>{};
+
+  void logSkip(String driverId, String reason) {
+    if (!logCandidates) return;
+    debugPrint(
+      '[DRIVER_COCKPIT][SKIP] driver=${_maskDriverIdForDiag(driverId)} reason=$reason',
+    );
+  }
+
+  DriverProfile? findDriver(String driverId) {
+    for (final driver in driversNotifier.value) {
+      if (driver.id.trim() == driverId) return driver;
+    }
+    return null;
+  }
+
+  for (final vehicle in scopedActiveFleetVehicles(
+    companyId: effectiveCompany,
+  )) {
+    final driverId = vehicle.driverId?.trim() ?? '';
+    if (driverId.isEmpty || seenDriverIds.contains(driverId)) continue;
+    seenDriverIds.add(driverId);
+
+    if (effectiveCompany.isNotEmpty &&
+        _isDriverIdTombstonedForScope(
+          tenantId: effectiveCompany,
+          companyId: effectiveCompany,
+          driverId: driverId,
+        )) {
+      logSkip(driverId, 'deleted');
+      continue;
+    }
+
+    final driver = findDriver(driverId);
+    if (driver == null) {
+      logSkip(driverId, 'missing_driver');
+      continue;
+    }
+    if (!driver.isActive) {
+      logSkip(driverId, 'inactive');
+      continue;
+    }
+    if (isSeededOrPlaceholderDriver(driver)) {
+      logSkip(driverId, 'placeholder');
+      continue;
+    }
+    final driverCompany = (driver.companyId ?? '').trim();
+    if (effectiveCompany.isNotEmpty &&
+        driverCompany.isNotEmpty &&
+        driverCompany != effectiveCompany) {
+      logSkip(driverId, 'scope_mismatch');
+      continue;
+    }
+
+    assigned.add(OperationalCockpitDriver(driver: driver, vehicle: vehicle));
+  }
+
+  if (logCandidates) {
+    debugPrint(
+      '[DRIVER_COCKPIT][ELIGIBLE] count=${assigned.length} assigned=${assigned.length}',
+    );
+  }
+  return assigned;
+}
+
+String? standaloneDriverSessionOperationalBlockReason({
+  required String driverId,
+  required String? assignedVehicleId,
+  required String? tenantId,
+  required String? companyId,
+  required List<DriverProfile> drivers,
+  String? activeCompanyId,
+}) {
+  final normalizedDriverId = driverId.trim();
+  if (normalizedDriverId.isEmpty) return null;
+
+  final normalizedCompany = (companyId ?? '').trim();
+  final activeCompany =
+      (activeCompanyId ?? resolveActiveCompanyIdForFleetUi() ?? '').trim();
+  final canUseActiveDriverInventory =
+      normalizedCompany.isNotEmpty &&
+      activeCompany.isNotEmpty &&
+      normalizedCompany == activeCompany;
+
+  if (!canUseActiveDriverInventory) return null;
+
+  DriverProfile? matched;
+  for (final driver in drivers) {
+    if (driver.id.trim() != normalizedDriverId) continue;
+    final driverCompany = (driver.companyId ?? '').trim();
+    if (normalizedCompany.isNotEmpty &&
+        driverCompany.isNotEmpty &&
+        driverCompany != normalizedCompany) {
+      continue;
+    }
+    matched = driver;
+    break;
+  }
+  if (matched == null ||
+      !matched.isActive ||
+      isSeededOrPlaceholderDriver(matched)) {
+    return null;
+  }
+
+  final sessionVehicleId = (assignedVehicleId ?? '').trim();
+  final linkedVehicleId = resolveFleetVehicleIdForDriver(
+    normalizedDriverId,
+    companyId: normalizedCompany,
+  );
+
+  if (sessionVehicleId.isNotEmpty) {
+    final vehicleDriverId = resolveFleetDriverIdForVehicle(
+      sessionVehicleId,
+      companyId: normalizedCompany,
+    );
+    if (vehicleDriverId != normalizedDriverId) {
+      return 'vehicle_assignment_changed';
+    }
+    return null;
+  }
+
+  if (linkedVehicleId == null) {
+    return 'no_vehicle_assigned';
+  }
+
+  return null;
+}
+
+String? standaloneDriverSessionFleetInvalidationReason({
+  required String driverId,
+  required String employeeNumber,
+  required String? assignedVehicleId,
+  required String? tenantId,
+  required String? companyId,
+  required List<DriverProfile> drivers,
+  required bool validateVehicleAssignment,
+  String? activeCompanyId,
+}) {
+  final normalizedDriverId = driverId.trim();
+  if (normalizedDriverId.isEmpty) return 'driver_deleted';
+
+  final normalizedTenant = (tenantId ?? '').trim();
+  final normalizedCompany = (companyId ?? '').trim();
+  final activeCompany =
+      (activeCompanyId ?? resolveActiveCompanyIdForFleetUi() ?? '').trim();
+
+  if (normalizedTenant.isNotEmpty &&
+      normalizedCompany.isNotEmpty &&
+      _isDriverIdTombstonedForScope(
+        tenantId: normalizedTenant,
+        companyId: normalizedCompany,
+        driverId: normalizedDriverId,
+      )) {
+    debugPrint(
+      '[DRIVER_SESSION][VALIDATE_ASSIGNMENT] session_company=${_maskCompanyScopeForLog(normalizedCompany)} active_company=${_maskCompanyScopeForLog(activeCompany)} source=scoped_bootstrap',
+    );
+    return 'driver_deleted';
+  }
+
+  final canUseActiveDriverInventory =
+      normalizedCompany.isNotEmpty &&
+      activeCompany.isNotEmpty &&
+      normalizedCompany == activeCompany;
+
+  if (!canUseActiveDriverInventory) {
+    debugPrint(
+      '[DRIVER_SESSION][VALIDATE_ASSIGNMENT] session_company=${_maskCompanyScopeForLog(normalizedCompany)} active_company=${_maskCompanyScopeForLog(activeCompany)} source=active_company_blocked',
+    );
+    if (normalizedCompany.isNotEmpty &&
+        activeCompany.isNotEmpty &&
+        normalizedCompany != activeCompany) {
+      debugPrint(
+        '[DRIVER_SESSION][INVALIDATE_SKIP] reason=active_company_mismatch_not_proof driver=${_maskDriverIdForDiag(normalizedDriverId)}',
+      );
+    }
+    return null;
+  }
+
+  DriverProfile? matched;
+  for (final driver in drivers) {
+    if (driver.id.trim() != normalizedDriverId) continue;
+    final driverCompany = (driver.companyId ?? '').trim();
+    if (normalizedCompany.isNotEmpty &&
+        driverCompany.isNotEmpty &&
+        driverCompany != normalizedCompany) {
+      continue;
+    }
+    matched = driver;
+    break;
+  }
+  if (matched == null) {
+    debugPrint(
+      '[DRIVER_SESSION][VALIDATE_ASSIGNMENT] session_company=${_maskCompanyScopeForLog(normalizedCompany)} active_company=${_maskCompanyScopeForLog(activeCompany)} source=session_scope',
+    );
+    return 'driver_deleted';
+  }
+  if (!matched.isActive) return 'driver_inactive';
+  if (isSeededOrPlaceholderDriver(matched)) return 'driver_deleted';
+
+  final sessionEmployee = employeeNumber.trim();
+  final profileEmployee = matched.employeeNumber.trim();
+  if (sessionEmployee.isEmpty ||
+      profileEmployee.isEmpty ||
+      sessionEmployee.toLowerCase() != profileEmployee.toLowerCase()) {
+    return 'scope_mismatch';
+  }
+
+  if (!validateVehicleAssignment) return null;
+
+  final blockReason = standaloneDriverSessionOperationalBlockReason(
+    driverId: normalizedDriverId,
+    assignedVehicleId: assignedVehicleId,
+    tenantId: normalizedTenant,
+    companyId: normalizedCompany,
+    drivers: drivers,
+    activeCompanyId: activeCompany,
+  );
+  if (blockReason == 'vehicle_assignment_changed') {
+    debugPrint(
+      '[DRIVER_SESSION][VALIDATE_ASSIGNMENT] driver=${_maskDriverIdForDiag(normalizedDriverId)} session_company=${_maskCompanyScopeForLog(normalizedCompany)} active_company=${_maskCompanyScopeForLog(activeCompany)} source=session_scope',
+    );
+    return 'vehicle_assignment_changed';
+  }
+
+  return null;
+}
+
+void _normalizeFleetVehicleDriverExclusivity({
+  required String vehicleId,
+  required String? newDriverId,
+  String? companyId,
+}) {
+  final normalizedVehicleId = vehicleId.trim();
+  final normalizedDriverId = (newDriverId ?? '').trim();
+  if (normalizedVehicleId.isEmpty || normalizedDriverId.isEmpty) return;
+
+  var changed = false;
+  final next = vehiclesNotifier.value
+      .map((vehicle) {
+        if (vehicle.id.trim() == normalizedVehicleId) return vehicle;
+        if ((vehicle.driverId?.trim() ?? '') != normalizedDriverId) {
+          return vehicle;
+        }
+        if (!_fleetVehicleBelongsToScope(
+          vehicle,
+          (companyId ?? resolveActiveCompanyIdForFleetUi() ?? '').trim(),
+        )) {
+          return vehicle;
+        }
+        changed = true;
+        debugPrint(
+          '[VEHICLE_ASSIGNMENT][UNLINK] vehicle=${_maskVehicleIdForDiag(vehicle.id)} driver=${_maskDriverIdForDiag(normalizedDriverId)} reason=reassigned_elsewhere',
+        );
+        return vehicle.copyWith(driverId: null);
+      })
+      .toList(growable: false);
+  if (changed) {
+    vehiclesNotifier.value = next;
+  }
+}
+
+({String tenantId, String companyId})? _resolveDriverSanitizeScope({
+  String? tenantId,
+  String? companyId,
+}) {
+  final explicitTenant = (tenantId ?? '').trim();
+  final explicitCompany = (companyId ?? '').trim();
+  if (explicitTenant.isNotEmpty && explicitCompany.isNotEmpty) {
+    return (tenantId: explicitTenant, companyId: explicitCompany);
+  }
+  final activeCompanyId = resolveActiveCompanyIdForFleetUi();
+  if (activeCompanyId != null && activeCompanyId.isNotEmpty) {
+    return (tenantId: activeCompanyId, companyId: activeCompanyId);
+  }
+  final strictScope = _activeStrictPrivateCompanyScope();
+  if (strictScope != null) return strictScope;
+  return null;
+}
+
+bool _driverBelongsToSanitizeScope(DriverProfile driver, String companyId) {
+  if (companyId.isEmpty) return true;
+  final scoped = driver.companyId?.trim() ?? '';
+  return scoped.isEmpty || scoped == companyId;
+}
+
+List<DriverProfile> sanitizeScopedDriverInventory({
+  required List<DriverProfile> drivers,
+  String? tenantId,
+  String? companyId,
+  required String reason,
+}) {
+  final scope = _resolveDriverSanitizeScope(
+    tenantId: tenantId,
+    companyId: companyId,
+  );
+  final effectiveTenant = scope?.tenantId ?? '';
+  final effectiveCompany = scope?.companyId ?? '';
+
+  final realDriversInScope = drivers
+      .where(
+        (driver) =>
+            !isSeededOrPlaceholderDriver(driver) &&
+            _driverBelongsToSanitizeScope(driver, effectiveCompany),
+      )
+      .length;
+
+  final out = <DriverProfile>[];
+  for (final driver in drivers) {
+    final driverId = driver.id.trim();
+    if (driverId.isEmpty) continue;
+
+    final tombstoned =
+        effectiveTenant.isNotEmpty &&
+        effectiveCompany.isNotEmpty &&
+        _isDriverIdTombstonedForScope(
+          tenantId: effectiveTenant,
+          companyId: effectiveCompany,
+          driverId: driverId,
+        );
+    if (tombstoned) {
+      debugPrint(
+        '[DRIVER_MANAGEMENT][DEFAULT_FILTER] driver=${_maskDriverIdForDiag(driverId)} reason=tombstone source=$reason',
+      );
+      continue;
+    }
+
+    if (isSeededOrPlaceholderDriver(driver)) {
+      if (realDriversInScope > 0) {
+        if (effectiveTenant.isNotEmpty && effectiveCompany.isNotEmpty) {
+          _markDeletedDriverForScope(
+            tenantId: effectiveTenant,
+            companyId: effectiveCompany,
+            driverId: driverId,
+          );
+          debugPrint(
+            '[DRIVER_MANAGEMENT][DEFAULT_TOMBSTONE] driver=${_maskDriverIdForDiag(driverId)} reason=real_drivers_exist source=$reason',
+          );
+        }
+        debugPrint(
+          '[DRIVER_MANAGEMENT][DEFAULT_SKIP_RECREATE] driver=${_maskDriverIdForDiag(driverId)} reason=real_drivers_exist count=$realDriversInScope source=$reason',
+        );
+        continue;
+      }
+      out.add(driver);
+      continue;
+    }
+
+    out.add(driver);
+  }
+  return out;
+}
+
+void _applySanitizedDriversToNotifier({
+  String? tenantId,
+  String? companyId,
+  required String reason,
+  bool persist = false,
+}) {
+  final sanitized = sanitizeScopedDriverInventory(
+    drivers: driversNotifier.value,
+    tenantId: tenantId,
+    companyId: companyId,
+    reason: reason,
+  );
+  if (sanitized.length == driversNotifier.value.length &&
+      sanitized.every(
+        (driver) => driversNotifier.value.any((d) => d.id == driver.id),
+      )) {
+    return;
+  }
+  driversNotifier.value = sanitized;
+  if (persist) {
+    unawaited(_persistLocalTenantState());
+  }
+}
+
 const FleetSubscriptionPolicy fleetSubscriptionPolicy = FleetSubscriptionPolicy(
   includedVehicles: 1,
   upsellMode: FleetUpsellMode.perVehicleMonthly,
@@ -1774,15 +2289,43 @@ String _effectiveStrictAdminScopeId({String? tenantId, String? companyId}) {
 }
 
 void addVehicle(VehicleProfile vehicle) {
+  final driverId = vehicle.driverId?.trim() ?? '';
+  if (driverId.isNotEmpty) {
+    _normalizeFleetVehicleDriverExclusivity(
+      vehicleId: vehicle.id,
+      newDriverId: driverId,
+      companyId: vehicle.companyId,
+    );
+  }
   vehiclesNotifier.value = <VehicleProfile>[...vehiclesNotifier.value, vehicle];
   _persistLocalTenantState();
   unawaited(syncLocalCompanyInventoryToBackend(reason: 'vehicle_save'));
 }
 
 void updateVehicle(String id, VehicleProfile updated) {
+  final normalizedVehicleId = id.trim();
+  VehicleProfile? previous;
+  for (final vehicle in vehiclesNotifier.value) {
+    if (vehicle.id.trim() == normalizedVehicleId) {
+      previous = vehicle;
+      break;
+    }
+  }
+  final previousDriverId = previous?.driverId?.trim() ?? '';
+  final nextDriverId = updated.driverId?.trim() ?? '';
+  if (nextDriverId.isNotEmpty) {
+    _normalizeFleetVehicleDriverExclusivity(
+      vehicleId: normalizedVehicleId,
+      newDriverId: nextDriverId,
+      companyId: updated.companyId,
+    );
+  }
   vehiclesNotifier.value = vehiclesNotifier.value
       .map((v) => v.id == id ? updated : v)
       .toList(growable: false);
+  debugPrint(
+    '[VEHICLE_ASSIGNMENT][LOCAL] vehicle=${_maskVehicleIdForDiag(normalizedVehicleId)} previousDriver=${_maskDriverIdForDiag(previousDriverId)} nextDriver=${_maskDriverIdForDiag(nextDriverId)}',
+  );
   _persistLocalTenantState();
   unawaited(syncLocalCompanyInventoryToBackend(reason: 'vehicle_save'));
 }
@@ -1800,6 +2343,9 @@ void addDriver(DriverProfile driver) {
     ...driversNotifier.value,
     normalizedDriver,
   ];
+  if (!isSeededOrPlaceholderDriver(normalizedDriver)) {
+    _applySanitizedDriversToNotifier(reason: 'driver_add');
+  }
   _persistLocalTenantState();
   unawaited(syncLocalCompanyInventoryToBackend(reason: 'driver_save'));
 }
@@ -3698,6 +4244,13 @@ Future<void> syncLocalCompanyInventoryToBackend({
           skippedCount += 1;
           debugPrint(
             '[COMPANY_SYNC][DRIVER_SKIP] reason=missing_driver_id driver=unknown',
+          );
+          continue;
+        }
+        if (isSeededOrPlaceholderDriver(driver)) {
+          skippedCount += 1;
+          debugPrint(
+            '[COMPANY_SYNC][DRIVER_SKIP] reason=placeholder driver=$maskedDriver',
           );
           continue;
         }
@@ -5677,6 +6230,12 @@ Future<bool> hydrateCompanyStateFromBootstrap(
       }
       mappedDriversCount = nextDrivers.length;
       driversNotifier.value = nextDrivers;
+      _applySanitizedDriversToNotifier(
+        tenantId: tenantId,
+        companyId: bootstrapScopeCompanyId,
+        reason: 'bootstrap_hydrate',
+      );
+      mappedDriversCount = driversNotifier.value.length;
     }
 
     debugPrint(
@@ -6091,6 +6650,10 @@ Future<void> loadLocalTenantState() async {
           .toList(growable: false);
       if (loadedDrivers.isNotEmpty) {
         driversNotifier.value = loadedDrivers;
+        _applySanitizedDriversToNotifier(
+          reason: 'tenant_state_load',
+          persist: true,
+        );
       }
     }
     debugPrint(

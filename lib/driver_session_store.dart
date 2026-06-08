@@ -385,6 +385,14 @@ class DriverSessionStore {
 
   ActiveDriverSession? _cache;
   String _cacheScopeKey = '';
+  String? _standaloneOperationalBlockReason;
+
+  String? get standaloneOperationalBlockReason =>
+      _standaloneOperationalBlockReason;
+
+  void clearStandaloneOperationalBlockReason() {
+    _standaloneOperationalBlockReason = null;
+  }
 
   String _safeScopeSegment(String value) {
     final trimmed = value.trim();
@@ -891,6 +899,37 @@ class DriverSessionStore {
     ActiveDriverSession s, {
     required String restoreSource,
   }) async {
+    _standaloneOperationalBlockReason = null;
+    if (s.isStandaloneLoginSession && !s.isCompanyAdminDriverViewSession) {
+      final invalidationReason = standaloneDriverSessionFleetInvalidationReason(
+        driverId: s.driverId,
+        employeeNumber: s.employeeNumber,
+        assignedVehicleId: s.assignedVehicleId,
+        tenantId: s.tenantId,
+        companyId: s.companyId,
+        drivers: drivers,
+        validateVehicleAssignment: true,
+      );
+      if (invalidationReason != null) {
+        debugPrint(
+          '[DRIVER_SESSION][INVALIDATE] reason=$invalidationReason driver=${_maskIdForLog(s.driverId)}',
+        );
+        return false;
+      }
+      final blockReason = standaloneDriverSessionOperationalBlockReason(
+        driverId: s.driverId,
+        assignedVehicleId: s.assignedVehicleId,
+        tenantId: s.tenantId,
+        companyId: s.companyId,
+        drivers: drivers,
+      );
+      if (blockReason != null) {
+        _standaloneOperationalBlockReason = blockReason;
+        debugPrint(
+          '[DRIVER_SESSION][BLOCK] reason=$blockReason driver=${_maskIdForLog(s.driverId)}',
+        );
+      }
+    }
     if (_isStillValid(drivers, s)) {
       ActiveDriverSession resolved = s;
       final matched = _findScopedLocalDriver(drivers, s);

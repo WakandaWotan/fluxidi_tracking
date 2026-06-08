@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
+import 'package:fluxidi_tracking/driver_creator_dialog.dart';
 import 'package:fluxidi_tracking/business_theme_palette.dart';
 import 'package:fluxidi_tracking/business_theme_store.dart';
 import 'package:fluxidi_tracking/company_session_store.dart';
@@ -450,6 +451,7 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
   }
 
   bool _driverVisibleInManagementUi(DriverProfile driver) {
+    if (isSeededOrPlaceholderDriver(driver)) return false;
     final activeCompanyId = _activeCompanyIdForFleetUi();
     if (activeCompanyId == null) {
       return fleetRecordBelongsToActiveCompanyOrLegacy(driver.companyId);
@@ -585,181 +587,21 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
     return ok == true;
   }
 
-  Future<DriverProfile?> _openDriverCreator({DriverProfile? existing}) async {
-    final isEdit = existing != null;
-    final nameCtrl = TextEditingController(text: existing?.fullName ?? '');
-    final idCtrl = TextEditingController(text: existing?.employeeNumber ?? '');
-    final phoneCtrl = TextEditingController(text: existing?.phone ?? '');
-    final taxiCardNumberCtrl = TextEditingController(
-      text: existing?.taxiDriverCardNumber ?? '',
-    );
-    final taxiCardExpiryCtrl = TextEditingController(
-      text: existing?.taxiDriverCardExpiry ?? '',
-    );
-    DriverProfile? saved;
-    await showDialog<void>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
-        backgroundColor: _sheetBg,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: Text(
-          isEdit
-              ? _t(
-                  nl: 'Chauffeur bewerken',
-                  en: 'Edit driver',
-                  fr: 'Modifier chauffeur',
-                  es: 'Editar conductor',
-                )
-              : _t(
-                  nl: 'Chauffeur toevoegen',
-                  en: 'New driver',
-                  fr: 'Ajouter un chauffeur',
-                  es: 'Agregar conductor',
-                ),
-        ),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              _txt(
-                nameCtrl,
-                _t(nl: 'Naam', en: 'Name', fr: 'Nom', es: 'Nombre'),
-              ),
-              _txt(
-                idCtrl,
-                _t(
-                  nl: 'Chauffeur-ID',
-                  en: 'Driver ID',
-                  fr: 'ID chauffeur',
-                  es: 'ID conductor',
-                ),
-                enabled: !isEdit,
-              ),
-              _txt(
-                phoneCtrl,
-                _t(
-                  nl: 'Telefoonnummer',
-                  en: 'Phone number',
-                  fr: 'Numéro de téléphone',
-                  es: 'Número de teléfono',
-                ),
-              ),
-              _txt(
-                taxiCardNumberCtrl,
-                _t(
-                  nl: 'Kaartnummer',
-                  en: 'Card number',
-                  fr: 'N° carte',
-                  es: 'N.º tarjeta',
-                ),
-              ),
-              _txt(
-                taxiCardExpiryCtrl,
-                _t(
-                  nl: 'Vervaldatum kaart',
-                  en: 'Card expiry',
-                  fr: 'Expiration carte',
-                  es: 'Vencimiento tarjeta',
-                ),
-              ),
-              const SizedBox(height: 10),
-              Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton(
-                      onPressed: () => Navigator.pop(ctx),
-                      style: OutlinedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 8,
-                          vertical: 12,
-                        ),
-                      ),
-                      child: Text(
-                        _t(
-                          nl: 'Annuleren',
-                          en: 'Cancel',
-                          fr: 'Annuler',
-                          es: 'Cancelar',
-                        ),
-                        maxLines: 1,
-                        softWrap: false,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: FilledButton(
-                      onPressed: () {
-                        final fullName = nameCtrl.text.trim();
-                        final employeeNumber = idCtrl.text.trim();
-                        if (!isEdit &&
-                            (fullName.isEmpty || employeeNumber.isEmpty)) {
-                          return;
-                        }
-                        if (isEdit) {
-                          saved = existing.copyWith(
-                            fullName: fullName,
-                            phone: phoneCtrl.text.trim(),
-                            taxiDriverCardNumber: taxiCardNumberCtrl.text
-                                .trim(),
-                            taxiDriverCardExpiry: taxiCardExpiryCtrl.text
-                                .trim(),
-                          );
-                          updateDriver(existing.id, saved!);
-                        } else {
-                          saved = DriverProfile(
-                            id: 'drv_${DateTime.now().millisecondsSinceEpoch}',
-                            fullName: fullName,
-                            employeeNumber: employeeNumber,
-                            phone: phoneCtrl.text.trim(),
-                            taxiDriverCardNumber: taxiCardNumberCtrl.text
-                                .trim(),
-                            taxiDriverCardExpiry: taxiCardExpiryCtrl.text
-                                .trim(),
-                            isActive: true,
-                            companyId: _activeCompanyIdForFleetUi(),
-                          );
-                          addDriver(saved!);
-                        }
-                        Navigator.pop(ctx);
-                      },
-                      style: FilledButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 8,
-                          vertical: 12,
-                        ),
-                      ),
-                      child: Text(
-                        isEdit
-                            ? _t(
-                                nl: 'Opslaan',
-                                en: 'Save',
-                                fr: 'Enregistrer',
-                                es: 'Guardar',
-                              )
-                            : _t(
-                                nl: 'Toevoegen',
-                                en: 'Add',
-                                fr: 'Ajouter',
-                                es: 'Agregar',
-                              ),
-                        maxLines: 1,
-                        softWrap: false,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
+  Future<DriverProfile?> _openDriverCreator({DriverProfile? existing}) {
+    return showDriverCreatorDialog(
+      context,
+      existing: existing,
+      companyId: _activeCompanyIdForFleetUi(),
+      style: DriverCreatorDialogStyle(
+        sheetBg: _sheetBg,
+        textPrimary: _textPrimary,
+        textSecondary: _textSecondary,
+        inputFill: _inputFill,
+        inputBorder: _inputBorder,
+        gold: _gold,
+        textOnAccent: _theme.palette.textOnAccent,
       ),
     );
-    return saved;
   }
 
   Future<void> _pickVehiclePhoto({

@@ -62,6 +62,7 @@ import 'package:fluxidi_tracking/driver_theme_palette.dart';
 import 'package:fluxidi_tracking/company_driver_view_theme_store.dart';
 import 'package:fluxidi_tracking/driver_app_theme_store.dart';
 import 'package:fluxidi_tracking/driver_theme_store.dart';
+import 'package:fluxidi_tracking/driver_creator_dialog.dart';
 import 'package:fluxidi_tracking/driver_session_store.dart';
 import 'package:fluxidi_tracking/fluxidi_responsive.dart';
 import 'package:fluxidi_tracking/security/fluxidi_app_lock_gate_page.dart';
@@ -383,17 +384,7 @@ bool _isCompanyAdminDriverViewSession(ActiveDriverSession? session) {
 }
 
 bool _isSeededOrPlaceholderBridgeDriver(DriverProfile driver) {
-  final id = _normalizeBridgeTextGlobal(driver.id);
-  final isDefaultId = id == 'drv_1';
-  final employee = _normalizeBridgeTextGlobal(driver.employeeNumber);
-  final isDefaultEmployee = employee == 'drv-001';
-  final name = _normalizeBridgeTextGlobal(driver.fullName);
-  final isDefaultName =
-      name == 'standaard chauffeur' ||
-      name == 'default driver' ||
-      name == 'standard driver';
-  if (isDefaultId || isDefaultName) return true;
-  return isDefaultEmployee && (isDefaultId || isDefaultName);
+  return isSeededOrPlaceholderDriver(driver);
 }
 
 bool _isBusinessAdminPreviewEligibleDriver(DriverProfile driver) {
@@ -437,25 +428,159 @@ DriverProfile? _findBusinessAdminEligibleDriverByIdGlobal(String driverId) {
 }
 
 String? _resolveFleetVehicleIdForDriverGlobal(String driverId) {
-  final normalizedDriverId = driverId.trim();
-  if (normalizedDriverId.isEmpty) return null;
   final activeCompany = resolvedCompanyId.trim().isNotEmpty
       ? resolvedCompanyId.trim()
       : kOutboundTenantId.trim();
-  for (final vehicle in vehiclesNotifier.value) {
-    if (!vehicle.isActive) continue;
-    final vehicleId = vehicle.id.trim();
-    if (vehicleId.isEmpty) continue;
-    if ((vehicle.driverId?.trim() ?? '') != normalizedDriverId) continue;
-    final vehicleCompany = vehicle.companyId?.trim() ?? '';
-    if (vehicleCompany.isNotEmpty &&
-        activeCompany.isNotEmpty &&
-        vehicleCompany != activeCompany) {
-      continue;
+  return resolveFleetVehicleIdForDriver(
+    driverId,
+    companyId: activeCompany.isNotEmpty ? activeCompany : null,
+  );
+}
+
+bool _isOperationalCockpitDriverGlobal(
+  DriverProfile driver, {
+  required String companyId,
+}) {
+  if (!_isBusinessAdminPreviewEligibleDriver(driver)) return false;
+  return resolveFleetVehicleIdForDriver(driver.id, companyId: companyId) !=
+      null;
+}
+
+List<DriverProfile> _resolveOperationalCockpitDriverBridgeCandidatesGlobal({
+  String? companyId,
+  String? excludeDriverId,
+  bool logCandidates = true,
+}) {
+  final scopedCompanyId =
+      (companyId ?? resolveActiveCompanyIdForFleetUi() ?? '').trim();
+  final excluded = (excludeDriverId ?? '').trim();
+  final eligible = resolveOperationalCockpitEligibleDrivers(
+    companyId: scopedCompanyId.isEmpty ? null : scopedCompanyId,
+    logCandidates: logCandidates,
+  );
+  return eligible
+      .map((entry) => entry.driver)
+      .where((driver) => excluded.isEmpty || driver.id.trim() != excluded)
+      .toList(growable: false);
+}
+
+({DriverProfile? driver, String reason})
+_resolveBusinessDriverForPreviewGlobal({
+  required String tenantId,
+  required String companyId,
+  BusinessDriverPreviewRecord? savedPreview,
+}) {
+  final scopedCompanyId = companyId.trim();
+
+  bool tryOperationalPreviewDriver(
+    DriverProfile driver, {
+    required String selectReason,
+    String? savedVehicleId,
+  }) {
+    if (!_isOperationalCockpitDriverGlobal(
+      driver,
+      companyId: scopedCompanyId,
+    )) {
+      debugPrint(
+        '[DRIVER_OWNER_BRIDGE][SKIP_PREVIEW] driver=${_maskBridgeDriverIdGlobal(driver.id)} reason=unassigned',
+      );
+      return false;
     }
-    return vehicleId;
+    final linkedVehicleId = resolveFleetVehicleIdForDriver(
+      driver.id,
+      companyId: scopedCompanyId,
+    );
+    if ((savedVehicleId ?? '').trim().isNotEmpty &&
+        linkedVehicleId != savedVehicleId!.trim()) {
+      debugPrint(
+        '[DRIVER_OWNER_BRIDGE][SKIP_PREVIEW] driver=${_maskBridgeDriverIdGlobal(driver.id)} reason=vehicle_changed vehicle=${_maskBridgeDriverIdGlobal(savedVehicleId)}',
+      );
+      return false;
+    }
+    debugPrint(
+      '[DRIVER_VIEW_ORIGIN][MANUAL_PREVIEW_LOCK] driver=${_maskBridgeDriverIdGlobal(driver.id)} vehicle=${_maskBridgeDriverIdGlobal(linkedVehicleId ?? '')}',
+    );
+    debugPrint(
+      '[DRIVER_OWNER_BRIDGE][SELECT] driver=${_maskBridgeDriverIdGlobal(driver.id)} reason=$selectReason',
+    );
+    return true;
   }
-  return null;
+
+  if (savedPreview != null) {
+    final previewDriverId = savedPreview.driverId.trim();
+    DriverProfile? rawPreviewDriver;
+    for (final driver in driversNotifier.value) {
+      if (driver.id.trim() == previewDriverId) {
+        rawPreviewDriver = driver;
+        break;
+      }
+    }
+    if (rawPreviewDriver != null && !rawPreviewDriver.isActive) {
+      debugPrint(
+        '[DRIVER_OWNER_BRIDGE][SKIP_PREVIEW] driver=${_maskBridgeDriverIdGlobal(previewDriverId)} reason=inactive',
+      );
+    } else if (rawPreviewDriver != null &&
+        isSeededOrPlaceholderDriver(rawPreviewDriver)) {
+      debugPrint(
+        '[DRIVER_OWNER_BRIDGE][SKIP_PREVIEW] driver=${_maskBridgeDriverIdGlobal(previewDriverId)} reason=placeholder',
+      );
+    } else {
+      final previewDriver = _findBusinessAdminEligibleDriverByIdGlobal(
+        previewDriverId,
+      );
+      if (previewDriver == null) {
+        debugPrint(
+          '[DRIVER_OWNER_BRIDGE][SKIP_PREVIEW] driver=${_maskBridgeDriverIdGlobal(previewDriverId)} reason=missing_driver',
+        );
+      } else if (tryOperationalPreviewDriver(
+        previewDriver,
+        selectReason: 'saved_preview',
+        savedVehicleId: savedPreview.vehicleId,
+      )) {
+        return (driver: previewDriver, reason: 'saved_preview');
+      }
+    }
+  }
+
+  final primaryVehicleId = resolvePrimaryFleetVehicleId(
+    companyId: scopedCompanyId,
+  );
+  if (primaryVehicleId != null) {
+    final vehicleDriverId = resolveFleetDriverIdForVehicle(
+      primaryVehicleId,
+      companyId: scopedCompanyId,
+    );
+    if ((vehicleDriverId ?? '').trim().isNotEmpty) {
+      final vehicleDriver = _findBusinessAdminEligibleDriverByIdGlobal(
+        vehicleDriverId!,
+      );
+      if (vehicleDriver != null &&
+          _isOperationalCockpitDriverGlobal(
+            vehicleDriver,
+            companyId: scopedCompanyId,
+          )) {
+        debugPrint(
+          '[DRIVER_OWNER_BRIDGE][SELECT] driver=${_maskBridgeDriverIdGlobal(vehicleDriver.id)} reason=vehicle_assignment vehicle=${_maskBridgeDriverIdGlobal(primaryVehicleId)}',
+        );
+        return (driver: vehicleDriver, reason: 'vehicle_assignment');
+      }
+    }
+  }
+
+  final operationalDrivers =
+      _resolveOperationalCockpitDriverBridgeCandidatesGlobal(
+        companyId: scopedCompanyId,
+        logCandidates: true,
+      );
+  if (operationalDrivers.isNotEmpty) {
+    final firstDriver = operationalDrivers.first;
+    debugPrint(
+      '[DRIVER_OWNER_BRIDGE][SELECT] driver=${_maskBridgeDriverIdGlobal(firstDriver.id)} reason=first_assigned_driver',
+    );
+    return (driver: firstDriver, reason: 'first_assigned_driver');
+  }
+
+  return (driver: null, reason: 'no_match');
 }
 
 String _canonicalDriverPortraitUrlGlobal(DriverProfile driver) {

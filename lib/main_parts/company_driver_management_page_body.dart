@@ -2015,6 +2015,28 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
     );
   }
 
+  Future<void> _openAddDriverFlow(BuildContext context) async {
+    debugPrint('[DRIVER_MANAGEMENT][ADD_OPEN]');
+    final created = await showDriverCreatorDialog(
+      context,
+      companyId: resolveActiveCompanyIdForFleetUi(),
+      style: DriverCreatorDialogStyle(
+        sheetBg: _dialogBg,
+        textPrimary: _textPrimary,
+        textSecondary: _textSecondary,
+        inputFill: _inputFill,
+        inputBorder: _inputBorderColor,
+        gold: _gold,
+        textOnAccent: _textOnAccent,
+      ),
+    );
+    if (created == null) return;
+    debugPrint(
+      '[DRIVER_MANAGEMENT][ADD_SAVE] driver=${_shortDriverIdForDiag(created.id)}',
+    );
+    unawaited(onRequestMutationRefresh?.call(reason: 'drivers_add'));
+  }
+
   Future<void> _deleteDriverFromBackendAndLocal(
     BuildContext context,
     DriverProfile driver,
@@ -2028,6 +2050,31 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
     }
     final maskedDriver = _maskDriverForLog(driverId);
     final maskedCompany = _maskScopeForLog(scope.companyId);
+    if (isSeededOrPlaceholderDriver(driver)) {
+      removeDriverLocallyAfterBackendDelete(
+        driverId,
+        tenantId: scope.tenantId,
+        companyId: scope.companyId,
+      );
+      unawaited(onRequestMutationRefresh?.call(reason: 'drivers_delete'));
+      debugPrint(
+        '[DRIVER_DELETE][LOCAL_ONLY] driver=$maskedDriver reason=placeholder company=$maskedCompany',
+      );
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Chauffeur verwijderd.',
+              en: 'Driver removed.',
+              fr: 'Chauffeur supprimé.',
+              es: 'Conductor eliminado.',
+            ),
+          ),
+        ),
+      );
+      return;
+    }
     debugPrint(
       '[DRIVER_DELETE][REQ] driver=$maskedDriver company=$maskedCompany',
     );
@@ -4225,9 +4272,11 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                     media.size.width < media.size.height;
                 final visible = drivers
                     .where(
-                      (d) => fleetRecordBelongsToActiveCompanyOrLegacy(
-                        d.companyId,
-                      ),
+                      (d) =>
+                          !isSeededOrPlaceholderDriver(d) &&
+                          fleetRecordBelongsToActiveCompanyOrLegacy(
+                            d.companyId,
+                          ),
                     )
                     .toList(growable: false);
                 final docsStore = DriverDocumentsStore.instance;
@@ -4609,10 +4658,10 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                                       );
                                   final vehicleName = assignedVehicle == null
                                       ? _t(
-                                          nl: 'Geen voertuig',
-                                          en: 'No vehicle',
-                                          fr: 'Aucun véhicule',
-                                          es: 'Sin vehículo',
+                                          nl: 'Geen voertuig toegewezen',
+                                          en: 'No vehicle assigned',
+                                          fr: 'Aucun véhicule assigné',
+                                          es: 'Sin vehículo asignado',
                                         )
                                       : (assignedVehicle.vehicleName
                                                 .trim()
@@ -5533,20 +5582,7 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                                   fr: 'Nouveau',
                                   es: 'Nuevo',
                                 ),
-                                onTap: () {
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    SnackBar(
-                                      content: Text(
-                                        _t(
-                                          nl: 'Nieuwe chauffeur toevoegen komt binnenkort.',
-                                          en: 'Adding a new driver is coming soon.',
-                                          fr: 'L’ajout d’un nouveau chauffeur arrive bientôt.',
-                                          es: 'Agregar un nuevo conductor llegará pronto.',
-                                        ),
-                                      ),
-                                    ),
-                                  );
-                                },
+                                onTap: () => _openAddDriverFlow(context),
                               ),
                             ),
                           ],

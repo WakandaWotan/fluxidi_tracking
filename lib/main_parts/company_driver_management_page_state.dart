@@ -47,7 +47,11 @@ class _CompanyDriverManagementPageState
 
   List<DriverProfile> _adminVisibleDrivers() {
     return driversNotifier.value
-        .where((d) => fleetRecordBelongsToActiveCompanyOrLegacy(d.companyId))
+        .where(
+          (d) =>
+              !isSeededOrPlaceholderDriver(d) &&
+              fleetRecordBelongsToActiveCompanyOrLegacy(d.companyId),
+        )
         .toList(growable: false);
   }
 
