@@ -1898,9 +1898,36 @@ class RoleEntryPage extends StatelessWidget {
               );
               return;
             }
-            setAppRole(AppRole.companyAdmin);
-            Navigator.of(ctx).pushReplacement(
-              MaterialPageRoute<void>(builder: (_) => const BusinessHomePage()),
+            final hasToken = await _hasUsableCompanyBootstrapToken(
+              reason: 'onboarding_complete',
+              logDegraded: true,
+            );
+            if (!ctx.mounted) return;
+            if (!hasToken) {
+              await _blockBusinessHomeEntryWithoutBootstrapToken(
+                ctx,
+                blockLog: '[COMPANY_SESSION][ONBOARDING_BLOCKED_NO_TOKEN]',
+                recoveryReason: 'onboarding_blocked_no_token',
+                retryReason: 'onboarding_after_recovery',
+              );
+              if (!ctx.mounted) return;
+              final hasTokenAfter = await _hasUsableCompanyBootstrapToken(
+                reason: 'onboarding_after_recovery',
+              );
+              if (!hasTokenAfter) {
+                if (!ctx.mounted) return;
+                Navigator.of(ctx).pushAndRemoveUntil(
+                  MaterialPageRoute<void>(
+                    builder: (_) => const RoleEntryPage(),
+                  ),
+                  (route) => false,
+                );
+              }
+              return;
+            }
+            await _navigateToBusinessHomeWithBootstrapHydration(
+              ctx,
+              reason: 'onboarding_complete',
             );
           },
         ),
@@ -1915,28 +1942,19 @@ class RoleEntryPage extends StatelessWidget {
         reason: 'role_entry',
         logDegraded: true,
       );
+      if (!context.mounted) return;
       if (hasToken) {
-        await _hydrateCompanyBootstrapFromActiveSession(
+        await _navigateToBusinessHomeWithBootstrapHydration(
+          context,
           reason: 'role_entry',
-          clearOnUnauthorized: true,
-        );
-        unawaited(
-          _triggerCompanyInventoryBackfillRestore(
-            reason: 'company_home_restore',
-          ),
-        );
-        if (!context.mounted) return;
-        setAppRole(AppRole.companyAdmin);
-        Navigator.of(context).pushReplacement(
-          MaterialPageRoute(builder: (_) => const BusinessHomePage()),
         );
         return;
       }
-      debugPrint('[COMPANY_BOOTSTRAP][SKIP_REMOTE_NO_TOKEN] reason=role_entry');
-      if (!context.mounted) return;
-      setAppRole(AppRole.companyAdmin);
-      Navigator.of(context).pushReplacement(
-        MaterialPageRoute(builder: (_) => const BusinessHomePage()),
+      await _blockBusinessHomeEntryWithoutBootstrapToken(
+        context,
+        blockLog: '[COMPANY_SESSION][ROLE_ENTRY_BLOCKED_NO_TOKEN]',
+        recoveryReason: 'role_entry_blocked_no_token',
+        retryReason: 'role_entry_after_recovery',
       );
       return;
     }

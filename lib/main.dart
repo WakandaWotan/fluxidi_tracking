@@ -125,6 +125,7 @@ final bool kIsWindows = !kIsWeb && Platform.isWindows;
 CustomerProfile? _cachedCustomerProfile;
 bool _startInCompanyAdminHome = false;
 bool _startInDriverHome = false;
+bool _startupBlockedCompanySessionRecovery = false;
 final RouteObserver<PageRoute<dynamic>> kAppRouteObserver =
     RouteObserver<PageRoute<dynamic>>();
 
@@ -878,6 +879,48 @@ Future<bool> _hasUsableCompanyBootstrapToken({
   return state.hasToken;
 }
 
+Future<void> _navigateToBusinessHomeWithBootstrapHydration(
+  BuildContext context, {
+  required String reason,
+}) async {
+  final hasToken = await _hasUsableCompanyBootstrapToken(
+    reason: reason,
+    logDegraded: true,
+  );
+  if (!hasToken || !context.mounted) return;
+  await _hydrateCompanyBootstrapFromActiveSession(
+    reason: reason,
+    clearOnUnauthorized: true,
+  );
+  unawaited(
+    _triggerCompanyInventoryBackfillRestore(reason: 'company_home_restore'),
+  );
+  if (!context.mounted) return;
+  setAppRole(AppRole.companyAdmin);
+  Navigator.of(context).pushReplacement(
+    MaterialPageRoute<void>(builder: (_) => const BusinessHomePage()),
+  );
+}
+
+Future<void> _blockBusinessHomeEntryWithoutBootstrapToken(
+  BuildContext context, {
+  required String blockLog,
+  required String recoveryReason,
+  required String retryReason,
+}) async {
+  debugPrint(blockLog);
+  if (!context.mounted) return;
+  await _showDegradedCompanySessionRecoveryDialog(
+    context,
+    reason: recoveryReason,
+  );
+  if (!context.mounted) return;
+  await _navigateToBusinessHomeWithBootstrapHydration(
+    context,
+    reason: retryReason,
+  );
+}
+
 Future<({bool usable, String reasonCode, String tokenSource, String companyId})>
 _resolveBackendUsableCompanyContextForAdmin({
   required String reason,
@@ -1215,12 +1258,20 @@ Future<void> main() async {
   }
   hasLocalCompanyContext = CompanySessionStore.instance.hasValidCompanyContext;
   if (hasLocalCompanyContext) {
-    setAppRole(AppRole.companyAdmin);
-    _startInCompanyAdminHome = true;
-    _startInDriverHome = false;
-    debugPrint(
-      '[COMPANY_PAIRING][AUTO_ROUTE] target=business_home has_token=$hasBootstrapToken',
-    );
+    if (hasBootstrapToken) {
+      setAppRole(AppRole.companyAdmin);
+      _startInCompanyAdminHome = true;
+      _startInDriverHome = false;
+      debugPrint(
+        '[COMPANY_PAIRING][AUTO_ROUTE] target=business_home has_token=true',
+      );
+    } else {
+      _startupBlockedCompanySessionRecovery = true;
+      debugPrint('[COMPANY_SESSION][AUTO_ROUTE_BLOCKED_NO_TOKEN]');
+      debugPrint(
+        '[COMPANY_PAIRING][AUTO_ROUTE] target=role_entry has_token=false',
+      );
+    }
   } else {
     debugPrint(
       '[COMPANY_PAIRING][AUTO_ROUTE_SKIP] reason=no_valid_company_context',
@@ -1387,6 +1438,39 @@ String _tr({
   return nl;
 }
 
+class _CompanySessionRecoveryRoleEntryGate extends StatefulWidget {
+  const _CompanySessionRecoveryRoleEntryGate();
+
+  @override
+  State<_CompanySessionRecoveryRoleEntryGate> createState() =>
+      _CompanySessionRecoveryRoleEntryGateState();
+}
+
+class _CompanySessionRecoveryRoleEntryGateState
+    extends State<_CompanySessionRecoveryRoleEntryGate> {
+  @override
+  void initState() {
+    super.initState();
+    if (!_startupBlockedCompanySessionRecovery) return;
+    _startupBlockedCompanySessionRecovery = false;
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
+      await _showDegradedCompanySessionRecoveryDialog(
+        context,
+        reason: 'startup_blocked_no_token',
+      );
+      if (!mounted) return;
+      await _navigateToBusinessHomeWithBootstrapHydration(
+        context,
+        reason: 'startup_after_recovery',
+      );
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) => const RoleEntryPage();
+}
+
 class FluxidiDriverApp extends StatelessWidget {
   const FluxidiDriverApp({super.key});
 
@@ -1436,7 +1520,9 @@ class FluxidiDriverApp extends StatelessWidget {
 
     final Widget startupTarget = _startInCompanyAdminHome
         ? const BusinessHomePage()
-        : (_startInDriverHome ? const DriverHomePage() : const RoleEntryPage());
+        : (_startInDriverHome
+              ? const DriverHomePage()
+              : const _CompanySessionRecoveryRoleEntryGate());
     final bool shouldGateStartupSession =
         _startInCompanyAdminHome || _startInDriverHome;
 
