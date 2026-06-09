@@ -2,6 +2,27 @@ part of '../main.dart';
 
 enum _DriverRidesHubSegment { available, myRides, history }
 
+/// Cross-instance cache of the last known good driver photo URL keyed by
+/// driverId. Survives State recreation across navigation, theme change, and
+/// short windows where [activeDriverSessionNotifier] is null while standalone
+/// restore is in progress. Never mixes photos across different driverIds.
+final Map<String, String> _lastKnownDriverPhotoByDriverId = <String, String>{};
+
+void _rememberLastKnownDriverPhoto(String? driverId, String? photoUrl) {
+  final id = (driverId ?? '').trim();
+  final url = (photoUrl ?? '').trim();
+  if (id.isEmpty || url.isEmpty) return;
+  _lastKnownDriverPhotoByDriverId[id] = url;
+}
+
+String? _readLastKnownDriverPhoto(String? driverId) {
+  final id = (driverId ?? '').trim();
+  if (id.isEmpty) return null;
+  final cached = _lastKnownDriverPhotoByDriverId[id];
+  if (cached == null) return null;
+  return cached.trim().isEmpty ? null : cached;
+}
+
 class _DriverHomePageState extends State<DriverHomePage>
     with TickerProviderStateMixin {
   ValueListenable<DriverThemeVariant> get _activeDriverThemeListenable =>
@@ -36,6 +57,16 @@ class _DriverHomePageState extends State<DriverHomePage>
   bool _isWaiting = false;
   bool _driverManualPause = false;
   bool _driverAvailabilitySaving = false;
+  String _resolvedOperationalAvailability = 'available';
+  Timer? _driverAvailabilityPollTimer;
+  bool _driverAvailabilityRefreshInFlight = false;
+  DateTime? _lastDriverAvailabilityRefreshAt;
+  static const Duration _driverAvailabilityPollInterval = Duration(seconds: 20);
+  static const Duration _driverAvailabilityMinRefreshInterval = Duration(
+    seconds: 15,
+  );
+  VoidCallback? _driversNotifierListener;
+  VoidCallback? _activeDriverSessionListener;
   DateTime? _waitStartedAt;
   Duration _waitElapsed = Duration.zero;
 
@@ -1085,13 +1116,44 @@ class _DriverHomePageState extends State<DriverHomePage>
     });
     unawaited(_restoreBusinessPreviewDriverSelectionOnOpen());
     _syncDriverRideScopeContext(reason: 'init_state');
+    if (widget.openedFromBusinessHome) {
+      debugPrint('[DRIVER_VIEW_ORIGIN][BUSINESS_PREVIEW_SESSION_BYPASS]');
+      debugPrint(
+        '[DRIVER_SESSION][SKIP_STANDALONE_VALIDATION] reason=business_preview',
+      );
+    }
+    _driversNotifierListener = () {
+      if (!mounted) return;
+      _reconcileDriverAvailability(source: 'local', reason: 'drivers_notifier');
+    };
+    driversNotifier.addListener(_driversNotifierListener!);
+    // Seed the last-known photo cache from the current active session so the
+    // avatar can preserve the driver photo across short session-null windows
+    // (theme switch, navigation, restore-in-progress) without falling back
+    // to the generic "fluxidi_driver_01" / unknown avatar.
+    {
+      final initialSession = activeDriverSessionNotifier.value;
+      _rememberLastKnownDriverPhoto(
+        initialSession?.driverId,
+        initialSession?.driverPhotoUrl,
+      );
+    }
+    _activeDriverSessionListener = () {
+      if (!mounted) return;
+      final session = activeDriverSessionNotifier.value;
+      _rememberLastKnownDriverPhoto(session?.driverId, session?.driverPhotoUrl);
+      // Trigger rebuild so the avatar swaps to the freshly restored photo.
+      setState(() {});
+    };
+    activeDriverSessionNotifier.addListener(_activeDriverSessionListener!);
+    _startDriverAvailabilityPolling(reason: 'init');
     // Business preview restore hydrates the preview driver/token and triggers its
     // own forced refresh; init_boot in parallel raced ahead without a token.
     if (!widget.openedFromBusinessHome) {
       _refreshBookings(trigger: 'init_boot');
     }
     unawaited(_refreshCompletedTodayCount(reason: 'init_boot'));
-    _syncDriverPauseFromProfile(reason: 'init_boot');
+    unawaited(_refreshDriverAvailabilityFromBackend(reason: 'init_boot'));
     _startBookingPolling(reason: 'init');
     _renderDebugWindowTimer?.cancel();
     _renderDebugWindowTimer = Timer.periodic(const Duration(minutes: 1), (_) {
@@ -1103,20 +1165,209 @@ class _DriverHomePageState extends State<DriverHomePage>
     });
   }
 
-  void _syncDriverPauseFromProfile({required String reason}) {
-    final profile = _dashboardActiveDriverProfile();
-    if (profile == null) return;
-    final paused =
-        normalizeDriverAvailabilityState(
-          profile.availabilityStatus,
-          fallback: 'available',
-        ) ==
-        'paused';
-    if (_driverManualPause == paused) return;
-    _driverManualPause = paused;
+  void _startDriverAvailabilityPolling({required String reason}) {
+    _driverAvailabilityPollTimer?.cancel();
     debugPrint(
-      '[DRIVER_AVAILABILITY][SESSION_PATCH] driver=${_shortDriverIdForDiag(profile.id)} availability=${paused ? 'paused' : 'available'}',
+      '[DRIVER_AVAILABILITY][POLL][START] reason=$reason intervalMs=${_driverAvailabilityPollInterval.inMilliseconds}',
     );
+    _driverAvailabilityPollTimer = Timer.periodic(
+      _driverAvailabilityPollInterval,
+      (_) {
+        if (!mounted) return;
+        unawaited(
+          _refreshDriverAvailabilityFromBackend(reason: 'periodic_poll'),
+        );
+      },
+    );
+  }
+
+  void _stopDriverAvailabilityPolling({required String reason}) {
+    _driverAvailabilityPollTimer?.cancel();
+    _driverAvailabilityPollTimer = null;
+    debugPrint('[DRIVER_AVAILABILITY][POLL][STOP] reason=$reason');
+  }
+
+  bool get _isBusinessPreviewMode => widget.openedFromBusinessHome;
+
+  String _resolvedOperationalAvailabilityForDriver({DriverProfile? profile}) {
+    final fromProfile = normalizeDriverAvailabilityState(
+      profile?.availabilityStatus,
+      fallback: _resolvedOperationalAvailability,
+    );
+    return fromProfile;
+  }
+
+  void _reconcileDriverAvailability({
+    required String source,
+    required String reason,
+    String? incomingStatus,
+  }) {
+    final profile = _dashboardActiveDriverProfile();
+    final oldStatus = normalizeDriverAvailabilityState(
+      _resolvedOperationalAvailability,
+      fallback: 'available',
+    );
+    final newStatus = normalizeDriverAvailabilityState(
+      incomingStatus ?? profile?.availabilityStatus ?? oldStatus,
+      fallback: oldStatus,
+    );
+    final paused = newStatus == 'paused';
+    final changed = oldStatus != newStatus || _driverManualPause != paused;
+    debugPrint(
+      '[DRIVER_AVAILABILITY][REFRESH] driver=${_shortDriverIdForDiag(profile?.id ?? activeDriverSessionNotifier.value?.driverId ?? '')} status=$newStatus source=$source reason=$reason',
+    );
+    if (changed) {
+      debugPrint(
+        '[DRIVER_AVAILABILITY][RECONCILE] old=$oldStatus new=$newStatus source=$source reason=$reason',
+      );
+    }
+    _resolvedOperationalAvailability = newStatus;
+    if (_driverManualPause != paused) {
+      _driverManualPause = paused;
+      if (mounted) setState(() {});
+    } else if (changed && mounted) {
+      setState(() {});
+    }
+    if (_isBusinessPreviewMode) {
+      debugPrint(
+        '[DRIVER_VIEW_ORIGIN][BUSINESS_PREVIEW_STATUS] driver=${_shortDriverIdForDiag(profile?.id ?? '')} status=$newStatus',
+      );
+    }
+    final action = _dashboardAvailabilityButtonAction(
+      availabilityStatus: newStatus,
+    );
+    debugPrint(
+      '[DRIVER_AVAILABILITY][BUTTON_STATE] driver=${_shortDriverIdForDiag(profile?.id ?? activeDriverSessionNotifier.value?.driverId ?? '')} status=$newStatus action=$action',
+    );
+  }
+
+  Future<void> _refreshDriverAvailabilityFromBackend({
+    required String reason,
+    bool force = false,
+  }) async {
+    if (!mounted) return;
+    if (_driverAvailabilityRefreshInFlight) return;
+    final now = DateTime.now();
+    if (!force &&
+        _lastDriverAvailabilityRefreshAt != null &&
+        now.difference(_lastDriverAvailabilityRefreshAt!) <
+            _driverAvailabilityMinRefreshInterval) {
+      return;
+    }
+    _lastDriverAvailabilityRefreshAt = now;
+    _driverAvailabilityRefreshInFlight = true;
+    try {
+      final profile = _dashboardActiveDriverProfile();
+      final session = activeDriverSessionNotifier.value;
+      final driverId =
+          profile?.id.trim() ??
+          session?.driverId.trim() ??
+          _effectiveActiveDriverIdForRideScope();
+      if (driverId.isEmpty) return;
+
+      var source = 'local';
+      var resolvedStatus = normalizeDriverAvailabilityState(
+        profile?.availabilityStatus,
+        fallback: _resolvedOperationalAvailability,
+      );
+
+      if (_isBusinessPreviewMode) {
+        final hydrated = await _hydrateCompanyBootstrapFromActiveSession(
+          reason: 'driver_availability_$reason',
+          bootstrapDriverSession: false,
+        );
+        if (hydrated) {
+          source = 'company_bootstrap';
+          final refreshed = _dashboardActiveDriverProfile();
+          resolvedStatus = normalizeDriverAvailabilityState(
+            refreshed?.availabilityStatus,
+            fallback: resolvedStatus,
+          );
+        } else {
+          final scope = _activeBusinessPreviewScope();
+          final lookup = await fetchDriverOperationalAvailabilityStatus(
+            driverId: driverId,
+            tenantId: scope?.tenantId ?? session?.tenantId ?? '',
+            companyId: scope?.companyId ?? session?.companyId ?? '',
+            companySessionToken:
+                activeCompanySessionNotifier.value?.companySessionToken,
+          );
+          if (lookup.ok) {
+            source = lookup.source;
+            resolvedStatus = lookup.availabilityStatus;
+            if (profile != null &&
+                lookup.availabilityStatus !=
+                    normalizeDriverAvailabilityState(
+                      profile.availabilityStatus,
+                      fallback: 'available',
+                    )) {
+              updateDriver(
+                profile.id,
+                profile.copyWith(availabilityStatus: lookup.availabilityStatus),
+                syncInventory: false,
+              );
+            }
+          }
+        }
+      } else {
+        final companyToken =
+            activeCompanySessionNotifier.value?.companySessionToken;
+        final lookup = await fetchDriverOperationalAvailabilityStatus(
+          driverId: driverId,
+          tenantId: session?.tenantId ?? '',
+          companyId: session?.companyId ?? '',
+          companySessionToken: companyToken,
+        );
+        if (lookup.ok) {
+          source = lookup.source;
+          resolvedStatus = lookup.availabilityStatus;
+          final activeProfile = _dashboardActiveDriverProfile();
+          if (activeProfile != null &&
+              lookup.availabilityStatus !=
+                  normalizeDriverAvailabilityState(
+                    activeProfile.availabilityStatus,
+                    fallback: 'available',
+                  )) {
+            updateDriver(
+              activeProfile.id,
+              activeProfile.copyWith(
+                availabilityStatus: lookup.availabilityStatus,
+              ),
+              syncInventory: false,
+            );
+          }
+        } else if (CompanySessionStore.instance.hasValidCompanyContext) {
+          // Standalone: do not re-bootstrap driver session here — that runs
+          // fleet validation that can no-op block UI even if non-destructive.
+          // We only need company hydration to refresh availability lookups.
+          final hydrated = await _hydrateCompanyBootstrapFromActiveSession(
+            reason: 'driver_availability_$reason',
+            bootstrapDriverSession: false,
+          );
+          if (hydrated) {
+            source = 'company_bootstrap';
+            final refreshed = _dashboardActiveDriverProfile();
+            resolvedStatus = normalizeDriverAvailabilityState(
+              refreshed?.availabilityStatus,
+              fallback: resolvedStatus,
+            );
+          }
+        }
+      }
+
+      if (!mounted) return;
+      _reconcileDriverAvailability(
+        source: source,
+        reason: reason,
+        incomingStatus: resolvedStatus,
+      );
+    } finally {
+      _driverAvailabilityRefreshInFlight = false;
+    }
+  }
+
+  void _syncDriverPauseFromProfile({required String reason}) {
+    _reconcileDriverAvailability(source: 'local', reason: reason);
   }
 
   // ---------------------------------------------------------------------------
@@ -1161,6 +1412,15 @@ class _DriverHomePageState extends State<DriverHomePage>
     _setNavigationWakelock(false);
     appLanguageNotifier.removeListener(_onAppLanguageChanged);
     _activeDriverThemeListenable.removeListener(_onDriverThemeSourceChanged);
+    if (_driversNotifierListener != null) {
+      driversNotifier.removeListener(_driversNotifierListener!);
+      _driversNotifierListener = null;
+    }
+    if (_activeDriverSessionListener != null) {
+      activeDriverSessionNotifier.removeListener(_activeDriverSessionListener!);
+      _activeDriverSessionListener = null;
+    }
+    _stopDriverAvailabilityPolling(reason: 'dispose');
     chauffeurShellFrameThemeNotifier.value = null;
     fluxidiPendingPaymentNotifier.removeListener(
       _onPendingPaymentStatusChanged,
@@ -1377,6 +1637,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       final effectiveDriverId = widget.openedFromBusinessHome
           ? _effectiveCurrentDriverIdForBusinessPreview()
           : (activeDriverSession?.driverId.trim() ?? '');
+      final businessPreviewMode = widget.openedFromBusinessHome;
       Uri primaryUri;
       Map<String, String> requestHeaders;
       final useDriverEndpoint = _shouldUseDriverBookingsRefreshEndpoint(
@@ -1384,6 +1645,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         hubVisible: _bookingsHubVisible,
         previewDriverId: previewDriverId,
         effectiveDriverId: effectiveDriverId,
+        businessPreviewMode: businessPreviewMode,
       );
       if (useDriverEndpoint) {
         if (driverSessionToken.isEmpty) {
@@ -1472,6 +1734,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         driverUiContext: inDriverUiContext,
         previewDriverId: previewDriverId,
         effectiveDriverId: effectiveDriverId,
+        businessPreviewMode: businessPreviewMode,
       )) {
         debugPrint(
           '[RIDES][REFRESH][BLOCK_COMPANY_IN_DRIVER_CONTEXT] trigger=$trigger',
@@ -1491,8 +1754,15 @@ class _DriverHomePageState extends State<DriverHomePage>
           kListBookingsPath,
           extraQuery: <String, String>{'limit': '50', 't': '$ts'},
         );
-        requestHeaders = _headers(admin: true);
-        debugPrint('[RIDES][REFRESH][MODE] source=company_bookings');
+        if (businessPreviewMode) {
+          requestHeaders = await _companyOwnerHeaders();
+          debugPrint(
+            '[RIDES][REFRESH][MODE] source=company_bookings reason=business_preview',
+          );
+        } else {
+          requestHeaders = _headers(admin: true);
+          debugPrint('[RIDES][REFRESH][MODE] source=company_bookings');
+        }
       }
       debugPrint('[RIDES][REFRESH][REQ] trigger=$trigger GET $primaryUri');
       final res = await http.get(primaryUri, headers: requestHeaders);
@@ -1502,6 +1772,17 @@ class _DriverHomePageState extends State<DriverHomePage>
 
       if (useDriverEndpoint && res.statusCode == 401) {
         debugPrint('[RIDES][REFRESH][AUTH_EXPIRED]');
+        if (businessPreviewMode) {
+          debugPrint(
+            '[DRIVER_VIEW_ORIGIN][INVALID_SESSION_BLOCKED] source=business_preview',
+          );
+          if (!mounted) return;
+          setState(() {
+            _loadingBookings = false;
+          });
+          _markBookingsUiDirty();
+          return;
+        }
         _stopBookingPolling(reason: 'driver_token_auth_expired');
         if (!mounted) return;
         setState(() {
@@ -8580,6 +8861,33 @@ class _DriverHomePageState extends State<DriverHomePage>
         '[DRIVER_PHOTO_CANONICAL][LEGACY_IGNORED] driver=${_shortDriverIdForDiag(profile?.id ?? session?.driverId ?? "")} reason=session_legacy_remote_overridden',
       );
     }
+    // If we resolved a real photo for the effective driverId, remember it so
+    // brief session-null windows during restore do not regress the avatar.
+    final cacheDriverId = effectiveDriverId.isNotEmpty
+        ? effectiveDriverId
+        : sessionDriverId;
+    if (selected != null && cacheDriverId.isNotEmpty) {
+      _rememberLastKnownDriverPhoto(cacheDriverId, selected);
+    }
+    if (selected == null && !isBusinessPreview) {
+      // Restore-in-progress / brief session-null window: prefer last known
+      // photo for the SAME driverId. Never swap photos across drivers.
+      final preserveDriverId = cacheDriverId;
+      if (preserveDriverId.isNotEmpty) {
+        final preserved = _readLastKnownDriverPhoto(preserveDriverId);
+        if (preserved != null) {
+          debugPrint(
+            '[DRIVER_PHOTO_CANONICAL][PRESERVE] driver=${_shortDriverIdForDiag(preserveDriverId)} reason=session_restore_in_progress',
+          );
+          selected = preserved;
+          source = 'preserved';
+        }
+      }
+    }
+    final photoState = selected == null ? 'missing' : 'present';
+    debugPrint(
+      '[DRIVER_PHOTO_CANONICAL][RESOLVE] driver=${_shortDriverIdForDiag(profile?.id ?? session?.driverId ?? "")} source=$source photo=$photoState reason=${isBusinessPreview ? 'business_preview' : 'standalone'}',
+    );
     debugPrint(
       '[DRIVER_PHOTO_CANONICAL][SOURCE] driver=${_shortDriverIdForDiag(profile?.id ?? session?.driverId ?? "")} source=$source',
     );
@@ -8636,9 +8944,51 @@ class _DriverHomePageState extends State<DriverHomePage>
                 (_directRideDestinationText ?? '').trim().isNotEmpty));
     if (hasNavLeg) return _DriverDashboardStatus.onTheWay;
 
-    _syncDriverPauseFromProfile(reason: 'dashboard_status_eval');
-    if (_driverManualPause) return _DriverDashboardStatus.pause;
+    final operational = normalizeDriverAvailabilityState(
+      _resolvedOperationalAvailabilityForDriver(
+        profile: _dashboardActiveDriverProfile(),
+      ),
+      fallback: 'available',
+    );
+    if (operational == 'offline') return _DriverDashboardStatus.pause;
+    if (operational == 'paused') return _DriverDashboardStatus.pause;
     return _DriverDashboardStatus.ready;
+  }
+
+  String _dashboardAvailabilityButtonAction({String? availabilityStatus}) {
+    final normalized = normalizeDriverAvailabilityState(
+      availabilityStatus ?? _resolvedOperationalAvailability,
+      fallback: 'available',
+    );
+    switch (normalized) {
+      case 'paused':
+        return 'resume';
+      case 'offline':
+        return 'start_shift';
+      default:
+        return 'pause';
+    }
+  }
+
+  String _dashboardAvailabilityActionLabel() {
+    switch (_dashboardAvailabilityButtonAction()) {
+      case 'resume':
+        return _tr(
+          nl: 'Hervatten',
+          en: 'Resume',
+          fr: 'Reprendre',
+          es: 'Reanudar',
+        );
+      case 'start_shift':
+        return _tr(
+          nl: 'Dienst starten',
+          en: 'Start shift',
+          fr: 'Commencer le service',
+          es: 'Iniciar turno',
+        );
+      default:
+        return _tr(nl: 'Pauze', en: 'Pause', fr: 'Pause', es: 'Pausa');
+    }
   }
 
   String _dashboardStatusLabel() {
@@ -8817,6 +9167,126 @@ class _DriverHomePageState extends State<DriverHomePage>
     );
   }
 
+  /// Handle the standalone "Switch driver" action from the More menu.
+  /// Safe by design:
+  ///   - blocked in business preview / company-admin chauffeurweergave
+  ///   - blocked while a live ride is active
+  ///   - clears ONLY the standalone driver session + standalone scope pointer
+  ///     (no company / business / customer session is touched)
+  ///   - navigates to [ChauffeurLoginPage] for a fresh login.
+  Future<void> _handleStandaloneSwitchDriverRequest() async {
+    if (!mounted) return;
+    final session = activeDriverSessionNotifier.value;
+    final maskedDriver = _shortDriverIdForDiag(session?.driverId ?? '');
+    debugPrint(
+      '[DRIVER_SESSION][SWITCH_REQUEST] driver=$maskedDriver business_preview=${widget.openedFromBusinessHome} live_ride=$_liveRideActive',
+    );
+
+    if (widget.openedFromBusinessHome ||
+        (session?.isCompanyAdminDriverViewSession ?? false)) {
+      debugPrint(
+        '[DRIVER_SESSION][SWITCH_BLOCKED] reason=business_preview driver=$maskedDriver',
+      );
+      _toast(
+        _tr(
+          nl: 'Wissel chauffeur is alleen beschikbaar in de chauffeurs-app, niet in de bedrijfsweergave.',
+          en: 'Switch driver is only available in the standalone driver app, not in the business preview.',
+          fr: 'Changer de chauffeur n\'est disponible que dans l\'application chauffeur, pas dans l\'apercu entreprise.',
+          es: 'Cambiar conductor solo esta disponible en la aplicacion del conductor, no en la vista previa de empresa.',
+        ),
+      );
+      return;
+    }
+
+    if (_liveRideActive) {
+      debugPrint(
+        '[DRIVER_SESSION][SWITCH_BLOCKED] reason=active_ride driver=$maskedDriver',
+      );
+      _toast(
+        _tr(
+          nl: 'Beeindig of annuleer eerst de actieve rit voordat je van chauffeur wisselt.',
+          en: 'Finish or cancel the active ride before switching drivers.',
+          fr: 'Terminez ou annulez la course en cours avant de changer de chauffeur.',
+          es: 'Termina o cancela la carrera activa antes de cambiar de conductor.',
+        ),
+      );
+      return;
+    }
+
+    if (session == null) {
+      debugPrint(
+        '[DRIVER_SESSION][SWITCH_BLOCKED] reason=missing_session driver=$maskedDriver',
+      );
+    }
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(
+          _tr(
+            nl: 'Wissel chauffeur?',
+            en: 'Switch driver?',
+            fr: 'Changer de chauffeur ?',
+            es: '\u00bfCambiar conductor?',
+          ),
+        ),
+        content: Text(
+          _tr(
+            nl:
+                'De huidige chauffeurs-sessie wordt afgemeld op dit toestel. '
+                'Bedrijfs- en klantgegevens blijven bewaard.',
+            en:
+                'The current driver session will be signed out on this device. '
+                'Company and customer data are kept intact.',
+            fr:
+                'La session chauffeur actuelle sera deconnectee sur cet appareil. '
+                'Les donnees entreprise et client restent intactes.',
+            es:
+                'La sesion del conductor actual se cerrara en este dispositivo. '
+                'Los datos de empresa y cliente se mantienen intactos.',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text(
+              _tr(nl: 'Annuleren', en: 'Cancel', fr: 'Annuler', es: 'Cancelar'),
+            ),
+          ),
+          FilledButton.icon(
+            onPressed: () => Navigator.pop(ctx, true),
+            icon: const Icon(Icons.swap_horiz),
+            label: Text(
+              _tr(
+                nl: 'Wissel chauffeur',
+                en: 'Switch driver',
+                fr: 'Changer de chauffeur',
+                es: 'Cambiar conductor',
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+    if (!mounted) return;
+
+    debugPrint('[DRIVER_SESSION][SWITCH_CONFIRMED] driver=$maskedDriver');
+    debugPrint(
+      '[DRIVER_SESSION][SWITCH_CLEAR] scope=standalone_only driver=$maskedDriver',
+    );
+    // clear() removes the scoped session file + standalone scope pointer +
+    // in-memory cache + nulls activeDriverSessionNotifier. It does NOT touch
+    // CompanySessionStore / CustomerSessionStore / business preview state.
+    await DriverSessionStore.instance.clear();
+    if (!mounted) return;
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute<void>(builder: (_) => const ChauffeurLoginPage()),
+      (route) => false,
+    );
+  }
+
   bool _hasCompanyAdminDriverBridgeContext() {
     return CompanySessionStore.instance.hasValidCompanyContext &&
         _isCompanyAdminDriverViewSession(activeDriverSessionNotifier.value);
@@ -8880,39 +9350,22 @@ class _DriverHomePageState extends State<DriverHomePage>
     ActiveDriverSession? previous,
     ActiveDriverSession? persisted,
   }) {
-    final driverId = driver.id.trim();
-    final tenantId = resolvedTenantId.trim();
-    final companyId = resolvedCompanyId.trim();
-    for (final candidate in <({String source, ActiveDriverSession? session})>[
-      (source: 'notifier', session: previous),
-      (source: 'persisted', session: persisted),
-    ]) {
-      final session = candidate.session;
-      if (session == null) continue;
-      if (!_businessPreviewSessionIdentityMatches(
-        session: session,
-        driverId: driverId,
-        tenantId: tenantId,
-        companyId: companyId,
-      )) {
-        continue;
-      }
-      if (!_isBusinessPreviewDriverSessionTokenUsable(session)) continue;
-      final token = (session.driverSessionToken ?? '').trim();
-      if (token.isEmpty) continue;
-      final expiry = (session.driverSessionExpiresAtUtc ?? '').trim();
-      return (
-        token: token,
-        tokenExpiryUtc: expiry.isEmpty ? null : expiry,
-        source: candidate.source,
-      );
-    }
+    // Business preview never borrows standalone chauffeur session tokens.
+    debugPrint(
+      '[DRIVER_SESSION][SKIP_STANDALONE_VALIDATION] reason=business_preview action=skip_token_reuse',
+    );
     return (token: null, tokenExpiryUtc: null, source: 'none');
   }
 
   Future<ActiveDriverSession?> _loadPersistedDriverSessionForPreview({
     required String reason,
   }) async {
+    if (_isBusinessPreviewMode) {
+      debugPrint(
+        '[DRIVER_SESSION][SKIP_STANDALONE_VALIDATION] reason=business_preview action=skip_persisted_standalone_load trigger=$reason',
+      );
+      return null;
+    }
     try {
       final persisted = await DriverSessionStore.instance.load();
       if (persisted == null) return null;
@@ -9122,6 +9575,20 @@ class _DriverHomePageState extends State<DriverHomePage>
     );
     _logCurrentDriverOrigin(reason: 'preview_load_applied');
     if (mounted) setState(() {});
+    _reconcileDriverAvailability(
+      source: 'local',
+      reason: 'preview_load_applied',
+      incomingStatus: normalizeDriverAvailabilityState(
+        selectedDriver.availabilityStatus,
+        fallback: 'available',
+      ),
+    );
+    unawaited(
+      _refreshDriverAvailabilityFromBackend(
+        reason: 'preview_load_applied',
+        force: true,
+      ),
+    );
     debugPrint(
       '[DRIVER_VIEW_ORIGIN][BUSINESS_PREVIEW_REFRESH] reason=preview_restore driver=${_maskBridgeDriverIdGlobal(selectedDriver.id)}',
     );
@@ -9167,8 +9634,11 @@ class _DriverHomePageState extends State<DriverHomePage>
       debugPrint('[DRIVER_OWNER_BRIDGE][REFRESH_SKIP] reason=no_company_token');
       return;
     }
+    // Picker refresh must never re-bootstrap the standalone driver session;
+    // refreshing the candidate list does not require running fleet validation.
     final hydrated = await _hydrateCompanyBootstrapFromActiveSession(
       reason: 'driver_switch_candidates',
+      bootstrapDriverSession: false,
     );
     debugPrint('[DRIVER_OWNER_BRIDGE][REFRESH_DONE] ok=$hydrated');
   }
@@ -9435,6 +9905,20 @@ class _DriverHomePageState extends State<DriverHomePage>
       }
       _logCurrentDriverOrigin(reason: 'preview_save_applied');
       if (mounted) setState(() {});
+      _reconcileDriverAvailability(
+        source: 'local',
+        reason: 'preview_switch',
+        incomingStatus: normalizeDriverAvailabilityState(
+          selectedDriver.availabilityStatus,
+          fallback: 'available',
+        ),
+      );
+      unawaited(
+        _refreshDriverAvailabilityFromBackend(
+          reason: 'preview_switch',
+          force: true,
+        ),
+      );
       _logRidesHubVisibleCounts(source: 'preview_picker_selected');
       unawaited(
         _refreshBookings(force: true, trigger: 'preview_picker_selected'),
@@ -9510,7 +9994,19 @@ class _DriverHomePageState extends State<DriverHomePage>
       return;
     }
     final profile = _dashboardActiveDriverProfile();
-    if (profile != null && !profile.isActive && _driverManualPause) {
+    final currentOperational = normalizeDriverAvailabilityState(
+      _resolvedOperationalAvailabilityForDriver(profile: profile),
+      fallback: 'available',
+    );
+    final buttonAction = _dashboardAvailabilityButtonAction(
+      availabilityStatus: currentOperational,
+    );
+    final desired = switch (buttonAction) {
+      'resume' => 'available',
+      'start_shift' => 'available',
+      _ => 'paused',
+    };
+    if (profile != null && !profile.isActive && desired == 'available') {
       _toast(
         _tr(
           nl: 'Account is inactief. Vraag je bedrijf om activatie.',
@@ -9521,11 +10017,106 @@ class _DriverHomePageState extends State<DriverHomePage>
       );
       return;
     }
-    final desired = _driverManualPause ? 'available' : 'paused';
     final safeDriverRef = _shortDriverIdForDiag(
       profile?.id ?? activeDriverSessionNotifier.value?.driverId ?? '',
     );
+    debugPrint(
+      '[DRIVER_AVAILABILITY][LOCAL_CHANGE] driver=$safeDriverRef status=$desired action=$buttonAction',
+    );
     debugPrint('[DRIVER_AVAILABILITY][PAUSE_START] driver=$safeDriverRef');
+
+    if (_isBusinessPreviewMode) {
+      if (profile == null) return;
+      final scope = _activeBusinessPreviewScope();
+      var companyToken =
+          (activeCompanySessionNotifier.value?.companySessionToken ?? '')
+              .trim();
+      if (companyToken.isEmpty && scope != null) {
+        final resolved = await CompanySessionStore.instance
+            .resolveCompanyBootstrapToken();
+        companyToken = (resolved.token ?? '').trim();
+      }
+      if (scope == null || companyToken.isEmpty) {
+        _toast(
+          _tr(
+            nl: 'Deze actie vereist een actieve bedrijfssessie.',
+            en: 'This action requires an active company session.',
+            fr: 'Cette action nécessite une session entreprise active.',
+            es: 'Esta acción requiere una sesión de empresa activa.',
+          ),
+        );
+        return;
+      }
+      setState(() => _driverAvailabilitySaving = true);
+      try {
+        final optimistic = profile.copyWith(availabilityStatus: desired);
+        _reconcileDriverAvailability(
+          source: 'local',
+          reason: 'business_preview_optimistic',
+          incomingStatus: desired,
+        );
+        final result = await syncDriverStatusToBackend(
+          optimistic,
+          tenantId: scope.tenantId,
+          companyId: scope.companyId,
+          companySessionToken: companyToken,
+        );
+        debugPrint(
+          '[DRIVER_AVAILABILITY][SYNC_SAVE] driver=$safeDriverRef status=$desired ok=${result.ok} source=company_admin',
+        );
+        if (!result.ok) {
+          _reconcileDriverAvailability(
+            source: 'local',
+            reason: 'business_preview_rollback',
+            incomingStatus: currentOperational,
+          );
+          _toast(
+            _tr(
+              nl: 'Status kon niet worden opgeslagen. Probeer opnieuw.',
+              en: 'Could not save status. Please try again.',
+              fr: 'Le statut n’a pas pu être enregistré.',
+              es: 'No se pudo guardar el estado.',
+            ),
+          );
+          return;
+        }
+        updateDriver(optimistic.id, optimistic, syncInventory: false);
+        _reconcileDriverAvailability(
+          source: 'backend',
+          reason: 'business_preview_save',
+          incomingStatus: desired,
+        );
+        unawaited(
+          _refreshDriverAvailabilityFromBackend(
+            reason: 'business_preview_save',
+            force: true,
+          ),
+        );
+        _toast(
+          desired == 'paused'
+              ? _tr(
+                  nl: 'Status aangepast: Pauze',
+                  en: 'Status updated: Pause',
+                  fr: 'Statut mis a jour : Pause',
+                  es: 'Estado actualizado: Pausa',
+                )
+              : _tr(
+                  nl: 'Status aangepast: Klaar',
+                  en: 'Status updated: Ready',
+                  fr: 'Statut mis a jour : Pret',
+                  es: 'Estado actualizado: Listo',
+                ),
+        );
+      } finally {
+        if (mounted) {
+          setState(() => _driverAvailabilitySaving = false);
+        } else {
+          _driverAvailabilitySaving = false;
+        }
+      }
+      return;
+    }
+
     final sessionBeforeRecovery = activeDriverSessionNotifier.value;
     var token = (sessionBeforeRecovery?.driverSessionToken ?? '').trim();
     if (token.isEmpty) {
@@ -9536,8 +10127,18 @@ class _DriverHomePageState extends State<DriverHomePage>
       try {
         final loadedSession = await DriverSessionStore.instance.load();
         recoverySource = loadedSession == null ? 'load_empty' : 'load_hit';
-        await DriverSessionStore.instance.bootstrap(driversNotifier.value);
-        recoverySource = '$recoverySource+bootstrap';
+        if (loadedSession != null &&
+            (loadedSession.driverSessionToken ?? '').trim().isNotEmpty) {
+          // Re-publish the loaded session non-destructively without running
+          // fleet validation; bootstrap() is reserved for app start.
+          activeDriverSessionNotifier.value = loadedSession;
+          recoverySource = '$recoverySource+notifier_publish';
+        } else {
+          // No usable session; bootstrap is now non-destructive on recoverable
+          // failures and only deletes on expired/security_mismatch.
+          await DriverSessionStore.instance.bootstrap(driversNotifier.value);
+          recoverySource = '$recoverySource+bootstrap';
+        }
       } catch (_) {
         recoverySource = 'load_bootstrap_error';
       }
@@ -9566,6 +10167,11 @@ class _DriverHomePageState extends State<DriverHomePage>
     }
     setState(() => _driverAvailabilitySaving = true);
     try {
+      _reconcileDriverAvailability(
+        source: 'local',
+        reason: 'optimistic',
+        incomingStatus: desired,
+      );
       debugPrint(
         '[DRIVER_AVAILABILITY][REQUEST] driver=$safeDriverRef status=$desired endpoint=/public/driver/availability',
       );
@@ -9577,6 +10183,11 @@ class _DriverHomePageState extends State<DriverHomePage>
         '[DRIVER_AVAILABILITY][RESPONSE] driver=$safeDriverRef status=${result.statusCode ?? 0} ok=${result.ok}',
       );
       if (!result.ok) {
+        _reconcileDriverAvailability(
+          source: 'local',
+          reason: 'rollback',
+          incomingStatus: currentOperational,
+        );
         debugPrint(
           '[DRIVER_AVAILABILITY][FAILED] driver=$safeDriverRef error=${result.errorCode}',
         );
@@ -9594,14 +10205,9 @@ class _DriverHomePageState extends State<DriverHomePage>
         result.availabilityStatus,
         fallback: desired,
       );
-      final paused = savedStatus == 'paused';
-      if (mounted) {
-        setState(() {
-          _driverManualPause = paused;
-        });
-      } else {
-        _driverManualPause = paused;
-      }
+      debugPrint(
+        '[DRIVER_AVAILABILITY][SYNC_SAVE] driver=$safeDriverRef status=$savedStatus source=public_driver',
+      );
       if (profile != null) {
         final updated = profile.copyWith(availabilityStatus: savedStatus);
         updateDriver(updated.id, updated, syncInventory: false);
@@ -9609,8 +10215,10 @@ class _DriverHomePageState extends State<DriverHomePage>
           '[DRIVER_AVAILABILITY][ADMIN_VISIBLE] driver=$safeDriverRef availability=$savedStatus',
         );
       }
-      debugPrint(
-        '[DRIVER_AVAILABILITY][SESSION_PATCH] driver=$safeDriverRef availability=$savedStatus',
+      _reconcileDriverAvailability(
+        source: 'backend',
+        reason: 'public_driver_save',
+        incomingStatus: savedStatus,
       );
       if (savedStatus == 'paused') {
         debugPrint(
@@ -9618,7 +10226,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         );
       }
       _toast(
-        paused
+        savedStatus == 'paused'
             ? _tr(
                 nl: 'Status aangepast: Pauze',
                 en: 'Status updated: Pause',
@@ -9821,6 +10429,34 @@ class _DriverHomePageState extends State<DriverHomePage>
                       onTap: () {
                         Navigator.of(ctx).pop();
                         unawaited(_changeDriverViewFromDashboard());
+                      },
+                    ),
+                  if (!widget.openedFromBusinessHome)
+                    ListTile(
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                      leading: Icon(Icons.swap_horiz, color: iconAccent),
+                      title: Text(
+                        _tr(
+                          nl: 'Wissel chauffeur',
+                          en: 'Switch driver',
+                          fr: 'Changer de chauffeur',
+                          es: 'Cambiar conductor',
+                        ),
+                        style: TextStyle(color: titleColor),
+                      ),
+                      subtitle: Text(
+                        _tr(
+                          nl: 'Meld een andere chauffeur aan',
+                          en: 'Log in another driver',
+                          fr: 'Connecter un autre chauffeur',
+                          es: 'Iniciar sesion con otro conductor',
+                        ),
+                        style: TextStyle(color: subtitleColor, fontSize: 11.5),
+                      ),
+                      onTap: () {
+                        Navigator.of(ctx).pop();
+                        unawaited(_handleStandaloneSwitchDriverRequest());
                       },
                     ),
                   ListTile(
@@ -11368,7 +12004,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     final nextRide = _nextVisibleBookingForDashboard();
     final driverName = _dashboardDriverName();
     final statusKind = _dashboardDriverStatus();
-    final statusLabel = _dashboardStatusLabel();
+    final actionLabel = _dashboardAvailabilityActionLabel();
     final statusReady = statusKind == _DriverDashboardStatus.ready;
     double clampDouble(double v, double min, double max) =>
         v < min ? min : (v > max ? max : v);
@@ -11692,7 +12328,7 @@ class _DriverHomePageState extends State<DriverHomePage>
                       ),
                       const SizedBox(width: 6),
                       Text(
-                        statusLabel,
+                        actionLabel,
                         style: TextStyle(
                           color: statusReady
                               ? const Color(0xFFBCF6D0)
@@ -15554,6 +16190,14 @@ class _DriverHomePageState extends State<DriverHomePage>
                       if (!(isDriver && session != null)) {
                         return const SizedBox.shrink();
                       }
+                      final isBusinessPreviewSession =
+                          widget.openedFromBusinessHome ||
+                          (session.isCompanyAdminDriverViewSession);
+                      if (isBusinessPreviewSession) {
+                        debugPrint(
+                          '[DRIVER_SESSION][CLEAR_BLOCKED] reason=business_preview_switch_action',
+                        );
+                      }
                       return Column(
                         children: [
                           cockpitRailButton(
@@ -15576,26 +16220,27 @@ class _DriverHomePageState extends State<DriverHomePage>
                               );
                             },
                           ),
-                          cockpitRailButton(
-                            icon: Icons.swap_horiz_rounded,
-                            semanticLabel: _tr(
-                              nl: 'Wissel',
-                              en: 'Switch',
-                              fr: 'Changer',
-                              es: 'Cambiar',
+                          if (!isBusinessPreviewSession)
+                            cockpitRailButton(
+                              icon: Icons.swap_horiz_rounded,
+                              semanticLabel: _tr(
+                                nl: 'Wissel',
+                                en: 'Switch',
+                                fr: 'Changer',
+                                es: 'Cambiar',
+                              ),
+                              onTap: () async {
+                                Navigator.pop(context);
+                                await DriverSessionStore.instance.clear();
+                                if (!context.mounted) return;
+                                Navigator.of(context).pushAndRemoveUntil(
+                                  MaterialPageRoute(
+                                    builder: (_) => const ChauffeurLoginPage(),
+                                  ),
+                                  (route) => false,
+                                );
+                              },
                             ),
-                            onTap: () async {
-                              Navigator.pop(context);
-                              await DriverSessionStore.instance.clear();
-                              if (!context.mounted) return;
-                              Navigator.of(context).pushAndRemoveUntil(
-                                MaterialPageRoute(
-                                  builder: (_) => const ChauffeurLoginPage(),
-                                ),
-                                (route) => false,
-                              );
-                            },
-                          ),
                         ],
                       );
                     },
