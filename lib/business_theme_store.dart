@@ -15,6 +15,14 @@ const CustomerThemeVariant _kDefaultPublishedCustomerTheme =
 final ValueNotifier<BusinessThemeVariant> businessThemeNotifier =
     ValueNotifier<BusinessThemeVariant>(_kDefaultBusinessTheme);
 
+/// True only while a business owner / company admin page is mounted on the
+/// route stack. When false, [FluxidiFrame] must not consume the business
+/// theme accent, otherwise the accent leaks globally onto PIN/unlock, login,
+/// role entry, customer pages, and standalone driver shells. Each business
+/// shell entry point flips this on in `initState` and back off in `dispose`.
+final ValueNotifier<bool> businessShellFrameActiveNotifier =
+    ValueNotifier<bool>(false);
+
 final ValueNotifier<CustomerThemeVariant>
 businessPublishedCustomerThemeNotifier = ValueNotifier<CustomerThemeVariant>(
   _kDefaultPublishedCustomerTheme,

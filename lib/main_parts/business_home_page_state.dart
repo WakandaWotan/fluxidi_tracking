@@ -69,6 +69,12 @@ class _BusinessHomePageState extends State<BusinessHomePage>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    // Opt this shell into the business frame accent. While BusinessHomePage
+    // is mounted on the route stack, FluxidiFrame is allowed to consume the
+    // active BusinessThemeVariant accent. Cleared on dispose so non-business
+    // shells (PIN/unlock, login, customer, standalone driver) keep the brand
+    // default accent.
+    businessShellFrameActiveNotifier.value = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _guardBusinessAccessOrRedirect(reason: 'business_home_init');
     });
@@ -93,6 +99,11 @@ class _BusinessHomePageState extends State<BusinessHomePage>
       kAppRouteObserver.unsubscribe(this);
       _routeObserverSubscribed = false;
     }
+    // Releasing the business shell flag here means the next non-business
+    // screen (role entry, login, customer, driver standalone) renders with
+    // the brand default frame accent instead of inheriting Neon Rush /
+    // Emerald Ivory / Corporate Blue / Clean Professional.
+    businessShellFrameActiveNotifier.value = false;
     super.dispose();
   }
 
