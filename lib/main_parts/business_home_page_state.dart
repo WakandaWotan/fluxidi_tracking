@@ -26,6 +26,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
     String? corporateBlueAsset,
     String? cleanProfessionalAsset,
     String? emeraldIvoryAsset,
+    String? fluxidiNeonRushAsset,
   }) {
     switch (businessThemeNotifier.value) {
       case BusinessThemeVariant.executiveGold:
@@ -36,6 +37,8 @@ class _BusinessHomePageState extends State<BusinessHomePage>
         return cleanProfessionalAsset ?? executiveGoldAsset;
       case BusinessThemeVariant.emeraldIvory:
         return emeraldIvoryAsset ?? executiveGoldAsset;
+      case BusinessThemeVariant.fluxidiNeonRush:
+        return fluxidiNeonRushAsset ?? executiveGoldAsset;
     }
   }
 
@@ -2841,6 +2844,8 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                       'assets/Clean & Professional Compagny/company_header_fleet_clean_professional.png',
                   emeraldIvoryAsset:
                       'assets/Emerald_Ivory_Company/company_header_emerald_ivory.png',
+                  fluxidiNeonRushAsset:
+                      'assets/🥇 Fluxidi Neon Rush/company_header_fleet_neon_rush.png',
                 );
                 final businessQuickActionCardHeight = isTabletLandscape
                     ? clampDouble(H * 0.21, 150.0, 188.0)
@@ -3341,6 +3346,8 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                           'assets/Clean & Professional Compagny/company_settings_clean_professional.png',
                                       emeraldIvoryAsset:
                                           'assets/Emerald_Ivory_Company/company_settings_alt_emerald_ivory.png',
+                                      fluxidiNeonRushAsset:
+                                          'assets/🥇 Fluxidi Neon Rush/company_settings_neon_rush.png',
                                     ),
                                     useImageBackground: useTabletVisualMode,
                                     compact: isTabletLandscape,
@@ -3377,6 +3384,8 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                             'assets/Clean & Professional Compagny/company_bookings_clean_professional.png',
                                         emeraldIvoryAsset:
                                             'assets/Emerald_Ivory_Company/company_bookings_emerald_ivory.png',
+                                        fluxidiNeonRushAsset:
+                                            'assets/🥇 Fluxidi Neon Rush/company_bookings_neon_rush.png',
                                       ),
                                       useImageBackground: useTabletVisualMode,
                                       compact: isTabletLandscape,
@@ -3416,6 +3425,8 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                           'assets/Clean & Professional Compagny/company_subscriptions_clean_professional.png',
                                       emeraldIvoryAsset:
                                           'assets/Emerald_Ivory_Company/company_plan_emerald_ivory.png',
+                                      fluxidiNeonRushAsset:
+                                          'assets/🥇 Fluxidi Neon Rush/company_subscriptions_neon_rush.png',
                                     ),
                                     useImageBackground: useTabletVisualMode,
                                     compact: isTabletLandscape,
@@ -3455,6 +3466,8 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                           'assets/Clean & Professional Compagny/company_vehicles_clean_professional.png',
                                       emeraldIvoryAsset:
                                           'assets/Emerald_Ivory_Company/company_vehicle_emerald_ivory.png',
+                                      fluxidiNeonRushAsset:
+                                          'assets/🥇 Fluxidi Neon Rush/company_vehicles_neon_rush.png',
                                     ),
                                     useImageBackground: useTabletVisualMode,
                                     compact: isTabletLandscape,
@@ -3489,6 +3502,8 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                           'assets/Clean & Professional Compagny/company_chiron_clean_professional.png',
                                       emeraldIvoryAsset:
                                           'assets/Emerald_Ivory_Company/company_chiron_emerald_ivory.png',
+                                      fluxidiNeonRushAsset:
+                                          'assets/🥇 Fluxidi Neon Rush/company_chiron_neon_rush.png',
                                     ),
                                     useImageBackground: useTabletVisualMode,
                                     compact: isTabletLandscape,
@@ -3555,6 +3570,8 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                           'assets/Clean & Professional Compagny/company_drivers_clean_professional.png',
                                       emeraldIvoryAsset:
                                           'assets/Emerald_Ivory_Company/company_drivers_emerald_ivory.png',
+                                      fluxidiNeonRushAsset:
+                                          'assets/🥇 Fluxidi Neon Rush/company_drivers_neon_rush.png',
                                     ),
                                     useImageBackground: useTabletVisualMode,
                                     compact: isTabletLandscape,
@@ -3588,6 +3605,8 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                           'assets/Clean & Professional Compagny/company_driver_view_clean_professional.png',
                                       emeraldIvoryAsset:
                                           'assets/Emerald_Ivory_Company/company_driver_view_emerald_ivory.png',
+                                      fluxidiNeonRushAsset:
+                                          'assets/🥇 Fluxidi Neon Rush/company_driver_view_neon_rush.png',
                                     ),
                                     useImageBackground: useTabletVisualMode,
                                     compact: isTabletLandscape,
@@ -3627,6 +3646,8 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                           'assets/Clean & Professional Compagny/company_demand_radar_clean_professional.png',
                                       emeraldIvoryAsset:
                                           'assets/Emerald_Ivory_Company/company_demand_radar_emerald_ivory.png',
+                                      fluxidiNeonRushAsset:
+                                          'assets/🥇 Fluxidi Neon Rush/company_demand_radar_neon_rush.png',
                                     ),
                                     useImageBackground: useTabletVisualMode,
                                     compact: isTabletLandscape,
@@ -3662,6 +3683,8 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                           'assets/Clean & Professional Compagny/company_share_booking_link_clean_professional.png',
                                       emeraldIvoryAsset:
                                           'assets/Emerald_Ivory_Company/company_share_booking_emerald_ivory.png',
+                                      fluxidiNeonRushAsset:
+                                          'assets/🥇 Fluxidi Neon Rush/company_share_booking_link_neon_rush.png',
                                     ),
                                     useImageBackground: useTabletVisualMode,
                                     compact: isTabletLandscape,
@@ -3698,6 +3721,8 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                             'assets/Clean & Professional Compagny/company_bookings_clean_professional.png',
                                         emeraldIvoryAsset:
                                             'assets/Emerald_Ivory_Company/company_bookings_emerald_ivory.png',
+                                        fluxidiNeonRushAsset:
+                                            'assets/🥇 Fluxidi Neon Rush/company_bookings_neon_rush.png',
                                       ),
                                       useImageBackground: useTabletVisualMode,
                                       compact: isTabletLandscape,
@@ -3736,6 +3761,8 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                           'assets/Clean & Professional Compagny/company_ai_dispatch_clean_professional.png',
                                       emeraldIvoryAsset:
                                           'assets/Emerald_Ivory_Company/company_ai_dispatch_emerald_ivory.png',
+                                      fluxidiNeonRushAsset:
+                                          'assets/🥇 Fluxidi Neon Rush/company_ai_dispatch_neon_rush.png',
                                     ),
                                     useImageBackground: useTabletVisualMode,
                                     compact: isTabletLandscape,

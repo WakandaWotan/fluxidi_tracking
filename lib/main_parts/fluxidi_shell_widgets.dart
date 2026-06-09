@@ -69,6 +69,10 @@ class FluxidiFrame extends StatelessWidget {
                       paletteForBusinessTheme(
                         BusinessThemeVariant.emeraldIvory,
                       ).accent,
+                    BusinessThemeVariant.fluxidiNeonRush =>
+                      paletteForBusinessTheme(
+                        BusinessThemeVariant.fluxidiNeonRush,
+                      ).accent,
                   };
             // Hard Frame A: a visible HUD border that contains the whole UI.
             // Target: visually ~2–3mm on phone screens.

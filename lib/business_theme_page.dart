@@ -64,6 +64,21 @@ class _BusinessThemePageState extends State<BusinessThemePage> {
         return 'Clean Professional';
       case BusinessThemeVariant.emeraldIvory:
         return 'Emerald Ivory';
+      case BusinessThemeVariant.fluxidiNeonRush:
+        return 'Fluxidi Neon Rush';
+    }
+  }
+
+  String _subtitleForBusiness(BusinessThemeVariant variant) {
+    switch (variant) {
+      case BusinessThemeVariant.emeraldIvory:
+        return 'Luxury emerald, ivory and gold business look';
+      case BusinessThemeVariant.fluxidiNeonRush:
+        return 'Donker neon, premium taxi-energie';
+      case BusinessThemeVariant.executiveGold:
+      case BusinessThemeVariant.corporateBlue:
+      case BusinessThemeVariant.cleanProfessional:
+        return 'Business/admin weergave';
     }
   }
 
@@ -224,9 +239,7 @@ class _BusinessThemePageState extends State<BusinessThemePage> {
             for (final variant in BusinessThemeVariant.values) ...[
               _selectableThemeTile(
                 title: _labelForBusiness(variant),
-                subtitle: variant == BusinessThemeVariant.emeraldIvory
-                    ? 'Luxury emerald, ivory and gold business look'
-                    : 'Business/admin weergave',
+                subtitle: _subtitleForBusiness(variant),
                 selected: variant == current,
                 swatches: [
                   paletteForBusinessTheme(variant).background,

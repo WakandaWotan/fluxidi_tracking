@@ -5,6 +5,7 @@ enum BusinessThemeVariant {
   corporateBlue,
   cleanProfessional,
   emeraldIvory,
+  fluxidiNeonRush,
 }
 
 @immutable
@@ -110,6 +111,26 @@ const BusinessThemePalette _emeraldIvoryPalette = BusinessThemePalette(
   isDark: true,
 );
 
+/// Dark premium palette with neon magenta-violet accents and electric-mint
+/// success cues. Designed to feel like a high-end taxi/dispatch console: glowy
+/// but not gamer-childish, with high contrast on tablet and phone.
+const BusinessThemePalette _fluxidiNeonRushPalette = BusinessThemePalette(
+  background: Color(0xFF0A0716),
+  surface: Color(0xFF120D26),
+  surfaceAlt: Color(0xFF1B1437),
+  textPrimary: Color(0xFFF5F0FF),
+  textSecondary: Color(0xFFD9CCFF),
+  textMuted: Color(0xFF9D8FCC),
+  textOnAccent: Color(0xFF0A0716),
+  textOnWarning: Color(0xFFFFE9A8),
+  accent: Color(0xFFB845FF),
+  border: Color(0xFF3D2D63),
+  danger: Color(0xFFFF4D86),
+  success: Color(0xFF4CFFB0),
+  shadow: Color(0x99000000),
+  isDark: true,
+);
+
 BusinessThemePalette paletteForBusinessTheme(BusinessThemeVariant variant) {
   switch (variant) {
     case BusinessThemeVariant.executiveGold:
@@ -120,5 +141,7 @@ BusinessThemePalette paletteForBusinessTheme(BusinessThemeVariant variant) {
       return _cleanProfessionalPalette;
     case BusinessThemeVariant.emeraldIvory:
       return _emeraldIvoryPalette;
+    case BusinessThemeVariant.fluxidiNeonRush:
+      return _fluxidiNeonRushPalette;
   }
 }
