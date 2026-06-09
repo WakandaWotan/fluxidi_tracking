@@ -4842,11 +4842,8 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                                                                     Text(
                                                                       ratingLabel,
                                                                       style: TextStyle(
-                                                                        color: Colors
-                                                                            .white
-                                                                            .withOpacity(
-                                                                              0.70,
-                                                                            ),
+                                                                        color:
+                                                                            _textMuted,
                                                                         fontSize:
                                                                             14.8,
                                                                         fontWeight:
@@ -4863,11 +4860,8 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                                                                     Icon(
                                                                       Icons
                                                                           .phone_outlined,
-                                                                      color: Colors
-                                                                          .white
-                                                                          .withOpacity(
-                                                                            0.68,
-                                                                          ),
+                                                                      color:
+                                                                          _textMuted,
                                                                       size: 13,
                                                                     ),
                                                                     const SizedBox(
@@ -4884,9 +4878,8 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                                                                                 es: 'Sin teléfono',
                                                                               ),
                                                                         style: TextStyle(
-                                                                          color: Colors.white.withOpacity(
-                                                                            0.66,
-                                                                          ),
+                                                                          color:
+                                                                              _textMuted,
                                                                           fontSize:
                                                                               14.4,
                                                                         ),
