@@ -1501,6 +1501,7 @@ Future<void> main() async {
   _registerComplianceRegisterReceiptBridge();
   await loadBusinessThemePreference();
   await loadBusinessHomeMobileLayoutPreference();
+  await loadDriverHomeMobileLayoutPreference();
   await loadCompanyDriverViewThemePreference();
   await loadDriverAppThemePreference();
   await loadLocalTenantState();
@@ -1878,7 +1879,19 @@ class DriverHomePage extends StatefulWidget {
 class _RideReceiptPage extends StatelessWidget {
   final _TripHistoryItem item;
 
-  const _RideReceiptPage({required this.item});
+  /// Effective chauffeur-theme source for this receipt. Mirrors the pattern
+  /// already used by [_TripHistoryPage], [_BookingsHubPage], [CalculatorPage]
+  /// and [DriverMyDocumentsPage]: when omitted the page falls back to the
+  /// global [driverThemeNotifier] (standalone personal driver theme), and
+  /// when provided it follows the caller's active driver-theme listenable.
+  /// Opening from Driver History forwards `_activeDriverThemeListenable`,
+  /// which resolves to `companyDriverViewThemeNotifier` in the business /
+  /// admin chauffeur view and to `driverAppThemeNotifier` in the standalone
+  /// driver app, so the receipt detail uses the same chauffeur palette as
+  /// the History list.
+  final ValueListenable<DriverThemeVariant>? driverThemeListenable;
+
+  const _RideReceiptPage({required this.item, this.driverThemeListenable});
 
   @override
   Widget build(BuildContext context) {
@@ -1889,6 +1902,7 @@ class _RideReceiptPage extends StatelessWidget {
         initialAction: null,
         autoPopAfterInitialAction: false,
         showReceiptUi: true,
+        driverThemeListenable: driverThemeListenable,
       ),
     );
   }
@@ -1899,12 +1913,14 @@ class _RideReceiptBody extends StatefulWidget {
   final _ReceiptQuickAction? initialAction;
   final bool autoPopAfterInitialAction;
   final bool showReceiptUi;
+  final ValueListenable<DriverThemeVariant>? driverThemeListenable;
 
   const _RideReceiptBody({
     required this.item,
     this.initialAction,
     this.autoPopAfterInitialAction = false,
     this.showReceiptUi = true,
+    this.driverThemeListenable,
   });
 
   @override

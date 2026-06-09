@@ -710,6 +710,11 @@ class _DriverHomePageState extends State<DriverHomePage>
     setState(() {});
   }
 
+  void _onDriverHomeMobileLayoutChanged() {
+    if (!mounted) return;
+    setState(() {});
+  }
+
   Widget _tenantLogo({
     required double height,
     BoxFit fit = BoxFit.contain,
@@ -1087,6 +1092,9 @@ class _DriverHomePageState extends State<DriverHomePage>
     _activeDriverThemeListenable.addListener(_onDriverThemeSourceChanged);
     chauffeurShellFrameThemeNotifier.value = _activeDriverThemeListenable.value;
     fluxidiPendingPaymentNotifier.addListener(_onPendingPaymentStatusChanged);
+    driverHomeMobileLayoutNotifier.addListener(
+      _onDriverHomeMobileLayoutChanged,
+    );
 
     _splashAnimCtrl = AnimationController(
       vsync: this,
@@ -1412,6 +1420,9 @@ class _DriverHomePageState extends State<DriverHomePage>
     _setNavigationWakelock(false);
     appLanguageNotifier.removeListener(_onAppLanguageChanged);
     _activeDriverThemeListenable.removeListener(_onDriverThemeSourceChanged);
+    driverHomeMobileLayoutNotifier.removeListener(
+      _onDriverHomeMobileLayoutChanged,
+    );
     if (_driversNotifierListener != null) {
       driversNotifier.removeListener(_driversNotifierListener!);
       _driversNotifierListener = null;
@@ -11634,6 +11645,11 @@ class _DriverHomePageState extends State<DriverHomePage>
     bool compactLandscape = false,
     bool useImageBackgrounds = false,
     double? tabletPortraitSpacing,
+    // Phone-portrait Visual layout overrides. Only honored when
+    // isTabletPortrait == false && isTabletLandscape == false.
+    bool isPhoneVisual = false,
+    double? phoneVisualCardMinHeight,
+    double? phoneVisualSpacing,
   }) {
     final isMidnightBlue =
         driverThemeNotifier.value == DriverThemeVariant.midnightBlue;
@@ -11660,6 +11676,8 @@ class _DriverHomePageState extends State<DriverHomePage>
                 ? (tabletPortraitCardMinHeight ?? 120.0)
                 : isTabletLandscape
                 ? (landscapeCardMinHeight ?? 98.0)
+                : isPhoneVisual
+                ? (phoneVisualCardMinHeight ?? 104.0)
                 : 68.0,
           ),
           decoration: BoxDecoration(
@@ -11842,6 +11860,8 @@ class _DriverHomePageState extends State<DriverHomePage>
             ? (tabletPortraitSpacing ?? 11.0)
             : isTabletLandscape
             ? (landscapeSpacing ?? 8.0)
+            : isPhoneVisual
+            ? (phoneVisualSpacing ?? 10.0)
             : 8.0;
         int columns;
         if (isTabletPortrait) {
@@ -11852,6 +11872,8 @@ class _DriverHomePageState extends State<DriverHomePage>
           if (preferredWidth < 105.0) {
             columns = 2;
           }
+        } else if (isPhoneVisual) {
+          columns = 1;
         } else {
           const minTileWidth = 162.0;
           columns = (c.maxWidth / minTileWidth).floor();
@@ -12022,6 +12044,14 @@ class _DriverHomePageState extends State<DriverHomePage>
             screenClass == FluxidiScreenClass.desktop) &&
         W > H &&
         H >= 700;
+    // Phone-portrait Visual layout opt-in. Strictly gated to phone portrait so
+    // tablet portrait, tablet landscape, and phone landscape stay unchanged.
+    final isPhonePortrait = !isTabletPortrait && !isTabletLandscape && W < H;
+    final useDriverPhoneVisualMode =
+        isPhonePortrait &&
+        driverHomeMobileLayoutNotifier.value == DriverHomeMobileLayout.visual;
+    final phoneVisualCardMinHeight = clampDouble(W * 0.28, 100.0, 116.0);
+    const phoneVisualSpacing = 10.0;
     final isMidnightBlue =
         driverThemeNotifier.value == DriverThemeVariant.midnightBlue;
     final isMiddayGold =
@@ -12630,8 +12660,12 @@ class _DriverHomePageState extends State<DriverHomePage>
                         isTabletPortrait: isTabletPortrait,
                         tabletPortraitCardMinHeight:
                             driverQuickActionCardMinHeight,
-                        useImageBackgrounds: isTabletPortrait,
+                        useImageBackgrounds:
+                            isTabletPortrait || useDriverPhoneVisualMode,
                         tabletPortraitSpacing: driverQuickActionGap,
+                        isPhoneVisual: useDriverPhoneVisualMode,
+                        phoneVisualCardMinHeight: phoneVisualCardMinHeight,
+                        phoneVisualSpacing: phoneVisualSpacing,
                       ),
                     ],
                   ],
@@ -15787,6 +15821,7 @@ class _DriverHomePageState extends State<DriverHomePage>
                 driverId: kDriverId,
                 headers: historyHeaders,
                 bookingDetailsById: bookingDetailsById,
+                driverThemeListenable: _activeDriverThemeListenable,
               ),
             ),
           )

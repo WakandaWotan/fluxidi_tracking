@@ -53,6 +53,7 @@ class _BusinessThemePageState extends State<BusinessThemePage> {
     await Future.wait<void>([
       loadBusinessThemePreference(),
       loadBusinessHomeMobileLayoutPreference(),
+      loadDriverHomeMobileLayoutPreference(),
       loadCompanyDriverViewThemePreference(),
     ]);
   }
@@ -148,6 +149,44 @@ class _BusinessThemePageState extends State<BusinessThemePage> {
           en: 'Wide action cards with business images.',
           fr: 'Grandes cartes d’action avec images d’entreprise.',
           es: 'Tarjetas de acción amplias con imágenes de empresa.',
+        );
+    }
+  }
+
+  String _labelForDriverMobileLayout(DriverHomeMobileLayout variant) {
+    switch (variant) {
+      case DriverHomeMobileLayout.compact:
+        return _localized(
+          nl: 'Compact',
+          en: 'Compact',
+          fr: 'Compact',
+          es: 'Compacto',
+        );
+      case DriverHomeMobileLayout.visual:
+        return _localized(
+          nl: 'Visueel',
+          en: 'Visual',
+          fr: 'Visuel',
+          es: 'Visual',
+        );
+    }
+  }
+
+  String _subtitleForDriverMobileLayout(DriverHomeMobileLayout variant) {
+    switch (variant) {
+      case DriverHomeMobileLayout.compact:
+        return _localized(
+          nl: 'Standaard compacte chauffeur startpagina.',
+          en: 'Standard compact driver home.',
+          fr: 'Accueil chauffeur compact standard.',
+          es: 'Inicio del conductor compacto estándar.',
+        );
+      case DriverHomeMobileLayout.visual:
+        return _localized(
+          nl: 'Brede actiekaarten met afbeeldingen voor de chauffeur.',
+          en: 'Wide action cards with driver images.',
+          fr: "Grandes cartes d'action avec images chauffeur.",
+          es: 'Tarjetas de acción amplias con imágenes del conductor.',
         );
     }
   }
@@ -403,6 +442,51 @@ class _BusinessThemePageState extends State<BusinessThemePage> {
     );
   }
 
+  Widget _driverMobileLayoutSection() {
+    return ValueListenableBuilder<AppLanguage>(
+      valueListenable: appLanguageNotifier,
+      builder: (context, _, __) {
+        return ValueListenableBuilder<DriverHomeMobileLayout>(
+          valueListenable: driverHomeMobileLayoutNotifier,
+          builder: (context, current, ___) {
+            final palette = _activeVisuals.palette;
+            return Column(
+              children: [
+                for (final variant in DriverHomeMobileLayout.values) ...[
+                  _selectableThemeTile(
+                    title: _labelForDriverMobileLayout(variant),
+                    subtitle: _subtitleForDriverMobileLayout(variant),
+                    selected: variant == current,
+                    swatches: [
+                      palette.background,
+                      palette.surface,
+                      palette.accent,
+                    ],
+                    onTap: () async {
+                      await saveDriverHomeMobileLayoutPreference(variant);
+                      if (!context.mounted) return;
+                      _showSavedSnack(
+                        _localized(
+                          nl: 'Chauffeur startpagina opgeslagen: ${_labelForDriverMobileLayout(variant)}',
+                          en: 'Driver home layout saved: ${_labelForDriverMobileLayout(variant)}',
+                          fr: 'Accueil chauffeur enregistré : ${_labelForDriverMobileLayout(variant)}',
+                          es: 'Inicio del conductor guardado: ${_labelForDriverMobileLayout(variant)}',
+                        ),
+                      );
+                    },
+                    visuals: _activeVisuals,
+                  ),
+                  if (variant != DriverHomeMobileLayout.values.last)
+                    const SizedBox(height: 8),
+                ],
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return ValueListenableBuilder<BusinessThemeVariant>(
@@ -459,6 +543,25 @@ class _BusinessThemePageState extends State<BusinessThemePage> {
                         es: 'Solo teléfono en vertical. Tablet y horizontal sin cambios.',
                       ),
                       child: _mobileLayoutSection(),
+                      visuals: _activeVisuals,
+                    ),
+                  ),
+                  ValueListenableBuilder<AppLanguage>(
+                    valueListenable: appLanguageNotifier,
+                    builder: (context, _, __) => _sectionCard(
+                      title: _localized(
+                        nl: 'D. Chauffeur startpagina op gsm',
+                        en: 'D. Driver home on phone',
+                        fr: 'D. Accueil chauffeur sur mobile',
+                        es: 'D. Inicio del conductor en móvil',
+                      ),
+                      subtitle: _localized(
+                        nl: 'Alleen telefoon staand. Tablet en telefoon liggend blijven ongewijzigd.',
+                        en: 'Phone portrait only. Tablet and phone landscape stay unchanged.',
+                        fr: 'Téléphone en mode portrait uniquement. Tablette et paysage inchangés.',
+                        es: 'Solo teléfono en vertical. Tablet y horizontal sin cambios.',
+                      ),
+                      child: _driverMobileLayoutSection(),
                       visuals: _activeVisuals,
                     ),
                   ),

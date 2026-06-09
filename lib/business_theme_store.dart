@@ -23,6 +23,17 @@ enum BusinessHomeMobileLayout { compact, visual }
 const BusinessHomeMobileLayout _kDefaultBusinessHomeMobileLayout =
     BusinessHomeMobileLayout.compact;
 
+/// Phone-portrait Driver Home dashboard layout preference.
+///
+/// - [compact]: existing default phone-portrait driver home (no image
+///   background quick action cards). Preserves current production behavior.
+/// - [visual]: opt-in single-column wide image cards on phone portrait only.
+///   Tablet portrait/landscape and phone landscape are unaffected.
+enum DriverHomeMobileLayout { compact, visual }
+
+const DriverHomeMobileLayout _kDefaultDriverHomeMobileLayout =
+    DriverHomeMobileLayout.compact;
+
 final ValueNotifier<BusinessThemeVariant> businessThemeNotifier =
     ValueNotifier<BusinessThemeVariant>(_kDefaultBusinessTheme);
 
@@ -31,6 +42,12 @@ final ValueNotifier<BusinessThemeVariant> businessThemeNotifier =
 /// behavior until the user opts in to the visual layout.
 final ValueNotifier<BusinessHomeMobileLayout> businessHomeMobileLayoutNotifier =
     ValueNotifier<BusinessHomeMobileLayout>(_kDefaultBusinessHomeMobileLayout);
+
+/// Selected mobile (phone-portrait) Driver Home layout. Defaults to
+/// [DriverHomeMobileLayout.compact] so existing installs keep the current
+/// behavior until the user opts in to the visual layout.
+final ValueNotifier<DriverHomeMobileLayout> driverHomeMobileLayoutNotifier =
+    ValueNotifier<DriverHomeMobileLayout>(_kDefaultDriverHomeMobileLayout);
 
 /// True only while a business owner / company admin page is mounted on the
 /// route stack. When false, [FluxidiFrame] must not consume the business
@@ -51,6 +68,8 @@ const String _publishedCustomerThemeFileName =
     'business_published_customer_theme_v1.json';
 const String _businessHomeMobileLayoutFileName =
     'business_home_mobile_layout_v1.json';
+const String _driverHomeMobileLayoutFileName =
+    'driver_home_mobile_layout_v1.json';
 
 Future<File> _businessThemeFile(String fileName) async {
   final base = await getApplicationDocumentsDirectory();
@@ -85,6 +104,14 @@ BusinessHomeMobileLayout _businessHomeMobileLayoutFromStorage(String raw) {
     if (variant.name == normalized) return variant;
   }
   return _kDefaultBusinessHomeMobileLayout;
+}
+
+DriverHomeMobileLayout _driverHomeMobileLayoutFromStorage(String raw) {
+  final normalized = raw.trim();
+  for (final variant in DriverHomeMobileLayout.values) {
+    if (variant.name == normalized) return variant;
+  }
+  return _kDefaultDriverHomeMobileLayout;
 }
 
 Future<void> loadBusinessThemePreference() async {
@@ -204,6 +231,48 @@ Future<void> saveBusinessHomeMobileLayoutPreference(
   businessHomeMobileLayoutNotifier.value = variant;
   try {
     final file = await _businessThemeFile(_businessHomeMobileLayoutFileName);
+    final payload = <String, dynamic>{
+      'variant': variant.name,
+      'updatedAt': DateTime.now().toUtc().toIso8601String(),
+    };
+    await file.writeAsString(jsonEncode(payload), flush: true);
+  } catch (_) {
+    // Keep in-memory value when persistence temporarily fails.
+  }
+}
+
+Future<void> loadDriverHomeMobileLayoutPreference() async {
+  try {
+    final file = await _businessThemeFile(_driverHomeMobileLayoutFileName);
+    if (!await file.exists()) {
+      driverHomeMobileLayoutNotifier.value = _kDefaultDriverHomeMobileLayout;
+      return;
+    }
+    final raw = await file.readAsString();
+    if (raw.trim().isEmpty) {
+      driverHomeMobileLayoutNotifier.value = _kDefaultDriverHomeMobileLayout;
+      return;
+    }
+    final decoded = jsonDecode(raw);
+    if (decoded is! Map) {
+      driverHomeMobileLayoutNotifier.value = _kDefaultDriverHomeMobileLayout;
+      return;
+    }
+    final variantRaw = (decoded['variant'] ?? '').toString();
+    driverHomeMobileLayoutNotifier.value = _driverHomeMobileLayoutFromStorage(
+      variantRaw,
+    );
+  } catch (_) {
+    driverHomeMobileLayoutNotifier.value = _kDefaultDriverHomeMobileLayout;
+  }
+}
+
+Future<void> saveDriverHomeMobileLayoutPreference(
+  DriverHomeMobileLayout variant,
+) async {
+  driverHomeMobileLayoutNotifier.value = variant;
+  try {
+    final file = await _businessThemeFile(_driverHomeMobileLayoutFileName);
     final payload = <String, dynamic>{
       'variant': variant.name,
       'updatedAt': DateTime.now().toUtc().toIso8601String(),

@@ -3,6 +3,23 @@ part of '../main.dart';
 class _RideReceiptBodyState extends State<_RideReceiptBody> {
   _ReceiptPaymentStatus _paymentStatus = _ReceiptPaymentStatus.pending;
 
+  /// Resolved chauffeur palette for the current build pass. Set inside the
+  /// outer [ValueListenableBuilder] in [build] before any helper widgets that
+  /// read it (e.g. [_receiptRow], [_sectionTitle], [_paymentSection],
+  /// [_receiptActionsSection]) are constructed. The default initialises to
+  /// Night Gold so any (currently non-existent) call path outside [build]
+  /// still has a defined palette and we never NPE.
+  DriverThemePalette _palette = paletteForDriverTheme(
+    DriverThemeVariant.nightGold,
+  );
+
+  /// Mirrors the active driver-theme listenable: when the host (Driver
+  /// History) supplies one we follow it, otherwise we fall back to the
+  /// global standalone notifier so existing callers (e.g. compliance
+  /// register) keep working unchanged.
+  ValueListenable<DriverThemeVariant> get _receiptThemeListenable =>
+      widget.driverThemeListenable ?? driverThemeNotifier;
+
   _TripHistoryItem get item => widget.item;
 
   void _setReceiptScopeAssignedAliasesIfEmpty(
@@ -2715,7 +2732,7 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
             flex: 5,
             child: Text(
               label,
-              style: const TextStyle(color: Colors.white60, fontSize: 13),
+              style: TextStyle(color: _palette.textMuted, fontSize: 13),
               softWrap: true,
             ),
           ),
@@ -2727,7 +2744,7 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
               textAlign: TextAlign.right,
               softWrap: true,
               style: TextStyle(
-                color: highlight ? const Color(0xFFFFD400) : Colors.white,
+                color: highlight ? _palette.accent : _palette.textPrimary,
                 fontWeight: highlight ? FontWeight.w900 : FontWeight.w700,
                 fontSize: highlight ? 18 : 14,
               ),
@@ -2749,8 +2766,8 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
       padding: const EdgeInsets.only(top: 18, bottom: 6),
       child: Text(
         title,
-        style: const TextStyle(
-          color: Color(0xFFFFD400),
+        style: TextStyle(
+          color: _palette.accent,
           fontSize: 15,
           fontWeight: FontWeight.w900,
         ),
@@ -2906,17 +2923,17 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: const Color(0xFF141B2F),
+        color: _palette.surface,
         borderRadius: BorderRadius.circular(22),
-        border: Border.all(color: Colors.white12),
+        border: Border.all(color: _palette.border.withOpacity(0.55)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Text(
             _receiptText('paymentActions'),
-            style: const TextStyle(
-              color: Colors.white,
+            style: TextStyle(
+              color: _palette.textPrimary,
               fontSize: 18,
               fontWeight: FontWeight.w900,
             ),
@@ -2963,17 +2980,17 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: const Color(0xFF141B2F),
+        color: _palette.surface,
         borderRadius: BorderRadius.circular(22),
-        border: Border.all(color: Colors.white12),
+        border: Border.all(color: _palette.border.withOpacity(0.55)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Text(
             _receiptText('receiptActions'),
-            style: const TextStyle(
-              color: Colors.white,
+            style: TextStyle(
+              color: _palette.textPrimary,
               fontSize: 18,
               fontWeight: FontWeight.w900,
             ),
@@ -3025,257 +3042,277 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
       item,
       source: 'receipt_screen_row',
     );
-    if (!widget.showReceiptUi) {
-      return Scaffold(
-        backgroundColor: const Color(0xFF0B1020),
-        body: Center(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const CircularProgressIndicator(),
-              const SizedBox(height: 12),
-              Text(
-                _receiptText('pdfReady'),
-                style: const TextStyle(color: Colors.white70),
-              ),
-            ],
-          ),
-        ),
-      );
-    }
-    return Scaffold(
-      backgroundColor: const Color(0xFF050505),
-      appBar: AppBar(
-        backgroundColor: const Color(0xFF050505),
-        elevation: 0,
-        title: Text(_receiptText('receiptTitle')),
-      ),
-      body: SafeArea(
-        child: ListView(
-          padding: const EdgeInsets.all(16),
-          children: [
-            Container(
-              padding: const EdgeInsets.all(18),
-              decoration: BoxDecoration(
-                color: const Color(0xFF141B2F),
-                borderRadius: BorderRadius.circular(22),
-                border: Border.all(color: Colors.white12),
-              ),
+    return ValueListenableBuilder<DriverThemeVariant>(
+      valueListenable: _receiptThemeListenable,
+      builder: (context, themeVariant, _) {
+        _palette = paletteForDriverTheme(themeVariant);
+        if (!widget.showReceiptUi) {
+          return Scaffold(
+            backgroundColor: _palette.background,
+            body: Center(
               child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  Row(
-                    children: [
-                      Image.asset(
-                        kFluxidiLogoAsset,
-                        width: 46,
-                        height: 46,
-                        fit: BoxFit.contain,
-                        errorBuilder: (_, __, ___) => const Icon(
-                          Icons.local_taxi,
-                          color: Color(0xFFFFD400),
-                          size: 38,
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Text(
-                              'Fluxidi',
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontSize: 22,
-                                fontWeight: FontWeight.w900,
-                              ),
-                            ),
-                            Text(
-                              _receiptText('rideReceipt'),
-                              style: const TextStyle(color: Colors.white60),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 18),
-                  _receiptRow(receiptRefDisplay.label, receiptRefDisplay.value),
-                  _receiptRow(_receiptText('type'), item.kindLabel),
-                  _optionalReceiptRow(_receiptText('subtype'), subtypeLabel),
-                  _receiptRow(
-                    _receiptText('startTime'),
-                    _formatDate(item.startedAt),
-                  ),
-                  _receiptRow(
-                    _receiptText('endTime'),
-                    _formatDate(item.stoppedAt),
-                  ),
-                  _receiptRow(_receiptText('from'), route.from),
-                  _receiptRow(_receiptText('to'), route.to),
-                  _receiptRow(_receiptText('distance'), _kmText()),
-                  _receiptRow(
-                    _receiptText('actualWaitingTime'),
-                    _formatWait(item.waitSecondsTotal),
-                  ),
-                  _receiptRow(
-                    _receiptText('total'),
-                    _totalText(),
-                    highlight: true,
-                  ),
-                  if (_hasAnyRawCustomerContact) ...[
-                    _sectionTitle(_receiptText('customerDetails')),
-                    _optionalReceiptRow(
-                      _receiptText('customerName'),
-                      _customerName,
-                    ),
-                    _optionalReceiptRow(
-                      _receiptText('customerPhone'),
-                      _customerPhoneRaw,
-                    ),
-                    _optionalReceiptRow(
-                      _receiptText('customerEmail'),
-                      _customerEmail,
-                    ),
-                  ],
-                  if (businessFields.isBusinessDocument) ...[
-                    _sectionTitle(
-                      _tr(
-                        nl: 'Zakelijk / Factuur',
-                        en: 'Business / Invoice',
-                        fr: 'Professionnel / Facture',
-                        es: 'Empresa / Factura',
-                      ),
-                    ),
-                    _optionalReceiptRow(
-                      _tr(
-                        nl: 'Bedrijfsnaam',
-                        en: 'Company name',
-                        fr: "Nom de l'entreprise",
-                        es: 'Empresa',
-                      ),
-                      businessFields.companyName.isEmpty
-                          ? null
-                          : businessFields.companyName,
-                    ),
-                    _optionalReceiptRow(
-                      _tr(
-                        nl: 'BTW-nummer',
-                        en: 'VAT number',
-                        fr: 'Numero de TVA',
-                        es: 'NIF/IVA',
-                      ),
-                      businessFields.vatNumber.isEmpty
-                          ? null
-                          : businessFields.vatNumber,
-                    ),
-                    _optionalReceiptRow(
-                      _tr(
-                        nl: 'Factuur e-mail',
-                        en: 'Invoice email',
-                        fr: 'E-mail facture',
-                        es: 'Email de factura',
-                      ),
-                      businessFields.invoiceEmail.isEmpty
-                          ? null
-                          : businessFields.invoiceEmail,
-                    ),
-                    _optionalReceiptRow(
-                      _tr(
-                        nl: 'Factuuradres',
-                        en: 'Invoice address',
-                        fr: 'Adresse de facturation',
-                        es: 'Direccion de factura',
-                      ),
-                      businessFields.invoiceAddress.isEmpty
-                          ? null
-                          : businessFields.invoiceAddress,
-                    ),
-                  ],
-                  if (_isPlannedReceipt) ...[
-                    _sectionTitle(_receiptText('plannedBookingDetails')),
-                    _optionalReceiptRow(
-                      _receiptText('scheduledPickup'),
-                      _detailText('scheduled_pickup_at') == null
-                          ? null
-                          : _formatDate(_detailText('scheduled_pickup_at')),
-                    ),
-                    _optionalReceiptRow(
-                      _receiptText('service'),
-                      _displayServiceToken(_detailText('service_type')),
-                    ),
-                    _optionalReceiptRow(
-                      _receiptText('tier'),
-                      _displayTierToken(_detailText('tier')),
-                    ),
-                    _optionalReceiptRow(
-                      _receiptText('passengers'),
-                      _detailText('passengers'),
-                    ),
-                    _optionalReceiptRow(
-                      _receiptText('bags'),
-                      _detailText('luggage_count'),
-                    ),
-                    _optionalReceiptRow(
-                      _receiptText('bookedWaitingTime'),
-                      _minutesText('booked_wait_minutes'),
-                    ),
-                    _optionalReceiptRow(
-                      _receiptText('extraStops'),
-                      _detailText('stops'),
-                    ),
-                    _receiptRow(
-                      _receiptText('extras'),
-                      _plannedExtrasText() ??
-                          _tr(
-                            nl: 'Geen extra opties',
-                            en: 'No extra options',
-                            fr: 'Aucune option supplementaire',
-                            es: 'Sin opciones extra',
-                          ),
-                    ),
-                    _optionalReceiptRow(
-                      _receiptText('notes'),
-                      _detailText('notes'),
-                    ),
-                    _sectionTitle(_receiptText('routeAndPrices')),
-                    _optionalReceiptRow(
-                      _receiptText('routeDetails'),
-                      _routeSegmentsText(),
-                    ),
-                    ..._plannedPriceRows(),
-                    _optionalReceiptRow(
-                      _receiptText('returnPlanned'),
-                      _detailText('return_scheduled_pickup_at') == null
-                          ? null
-                          : _formatDate(
-                              _detailText('return_scheduled_pickup_at'),
-                            ),
-                    ),
-                    _optionalReceiptRow(
-                      _receiptText('returnRoute'),
-                      _detailText('return_route'),
-                    ),
-                  ],
-                  _sectionTitle(_receiptText('statusPaymentSection')),
-                  _receiptRow(
-                    _receiptText('rideStatus'),
-                    _localizedRideStatus(item.status),
-                  ),
-                  _receiptRow(
-                    _receiptText('paymentStatus'),
-                    _paymentStatusText(),
+                  CircularProgressIndicator(color: _palette.accent),
+                  const SizedBox(height: 12),
+                  Text(
+                    _receiptText('pdfReady'),
+                    style: TextStyle(color: _palette.textMuted),
                   ),
                 ],
               ),
             ),
-            const SizedBox(height: 16),
-            _paymentSection(context),
-            const SizedBox(height: 16),
-            _receiptActionsSection(context),
-          ],
-        ),
-      ),
+          );
+        }
+        return Scaffold(
+          backgroundColor: _palette.background,
+          appBar: AppBar(
+            backgroundColor: _palette.background,
+            elevation: 0,
+            iconTheme: IconThemeData(color: _palette.textPrimary),
+            titleTextStyle: TextStyle(
+              color: _palette.textPrimary,
+              fontSize: 20,
+              fontWeight: FontWeight.w600,
+            ),
+            title: Text(_receiptText('receiptTitle')),
+          ),
+          body: SafeArea(
+            child: ListView(
+              padding: const EdgeInsets.all(16),
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(18),
+                  decoration: BoxDecoration(
+                    color: _palette.surface,
+                    borderRadius: BorderRadius.circular(22),
+                    border: Border.all(
+                      color: _palette.border.withOpacity(0.55),
+                    ),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Row(
+                        children: [
+                          Image.asset(
+                            kFluxidiLogoAsset,
+                            width: 46,
+                            height: 46,
+                            fit: BoxFit.contain,
+                            errorBuilder: (_, __, ___) => Icon(
+                              Icons.local_taxi,
+                              color: _palette.accent,
+                              size: 38,
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'Fluxidi',
+                                  style: TextStyle(
+                                    color: _palette.textPrimary,
+                                    fontSize: 22,
+                                    fontWeight: FontWeight.w900,
+                                  ),
+                                ),
+                                Text(
+                                  _receiptText('rideReceipt'),
+                                  style: TextStyle(color: _palette.textMuted),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 18),
+                      _receiptRow(
+                        receiptRefDisplay.label,
+                        receiptRefDisplay.value,
+                      ),
+                      _receiptRow(_receiptText('type'), item.kindLabel),
+                      _optionalReceiptRow(
+                        _receiptText('subtype'),
+                        subtypeLabel,
+                      ),
+                      _receiptRow(
+                        _receiptText('startTime'),
+                        _formatDate(item.startedAt),
+                      ),
+                      _receiptRow(
+                        _receiptText('endTime'),
+                        _formatDate(item.stoppedAt),
+                      ),
+                      _receiptRow(_receiptText('from'), route.from),
+                      _receiptRow(_receiptText('to'), route.to),
+                      _receiptRow(_receiptText('distance'), _kmText()),
+                      _receiptRow(
+                        _receiptText('actualWaitingTime'),
+                        _formatWait(item.waitSecondsTotal),
+                      ),
+                      _receiptRow(
+                        _receiptText('total'),
+                        _totalText(),
+                        highlight: true,
+                      ),
+                      if (_hasAnyRawCustomerContact) ...[
+                        _sectionTitle(_receiptText('customerDetails')),
+                        _optionalReceiptRow(
+                          _receiptText('customerName'),
+                          _customerName,
+                        ),
+                        _optionalReceiptRow(
+                          _receiptText('customerPhone'),
+                          _customerPhoneRaw,
+                        ),
+                        _optionalReceiptRow(
+                          _receiptText('customerEmail'),
+                          _customerEmail,
+                        ),
+                      ],
+                      if (businessFields.isBusinessDocument) ...[
+                        _sectionTitle(
+                          _tr(
+                            nl: 'Zakelijk / Factuur',
+                            en: 'Business / Invoice',
+                            fr: 'Professionnel / Facture',
+                            es: 'Empresa / Factura',
+                          ),
+                        ),
+                        _optionalReceiptRow(
+                          _tr(
+                            nl: 'Bedrijfsnaam',
+                            en: 'Company name',
+                            fr: "Nom de l'entreprise",
+                            es: 'Empresa',
+                          ),
+                          businessFields.companyName.isEmpty
+                              ? null
+                              : businessFields.companyName,
+                        ),
+                        _optionalReceiptRow(
+                          _tr(
+                            nl: 'BTW-nummer',
+                            en: 'VAT number',
+                            fr: 'Numero de TVA',
+                            es: 'NIF/IVA',
+                          ),
+                          businessFields.vatNumber.isEmpty
+                              ? null
+                              : businessFields.vatNumber,
+                        ),
+                        _optionalReceiptRow(
+                          _tr(
+                            nl: 'Factuur e-mail',
+                            en: 'Invoice email',
+                            fr: 'E-mail facture',
+                            es: 'Email de factura',
+                          ),
+                          businessFields.invoiceEmail.isEmpty
+                              ? null
+                              : businessFields.invoiceEmail,
+                        ),
+                        _optionalReceiptRow(
+                          _tr(
+                            nl: 'Factuuradres',
+                            en: 'Invoice address',
+                            fr: 'Adresse de facturation',
+                            es: 'Direccion de factura',
+                          ),
+                          businessFields.invoiceAddress.isEmpty
+                              ? null
+                              : businessFields.invoiceAddress,
+                        ),
+                      ],
+                      if (_isPlannedReceipt) ...[
+                        _sectionTitle(_receiptText('plannedBookingDetails')),
+                        _optionalReceiptRow(
+                          _receiptText('scheduledPickup'),
+                          _detailText('scheduled_pickup_at') == null
+                              ? null
+                              : _formatDate(_detailText('scheduled_pickup_at')),
+                        ),
+                        _optionalReceiptRow(
+                          _receiptText('service'),
+                          _displayServiceToken(_detailText('service_type')),
+                        ),
+                        _optionalReceiptRow(
+                          _receiptText('tier'),
+                          _displayTierToken(_detailText('tier')),
+                        ),
+                        _optionalReceiptRow(
+                          _receiptText('passengers'),
+                          _detailText('passengers'),
+                        ),
+                        _optionalReceiptRow(
+                          _receiptText('bags'),
+                          _detailText('luggage_count'),
+                        ),
+                        _optionalReceiptRow(
+                          _receiptText('bookedWaitingTime'),
+                          _minutesText('booked_wait_minutes'),
+                        ),
+                        _optionalReceiptRow(
+                          _receiptText('extraStops'),
+                          _detailText('stops'),
+                        ),
+                        _receiptRow(
+                          _receiptText('extras'),
+                          _plannedExtrasText() ??
+                              _tr(
+                                nl: 'Geen extra opties',
+                                en: 'No extra options',
+                                fr: 'Aucune option supplementaire',
+                                es: 'Sin opciones extra',
+                              ),
+                        ),
+                        _optionalReceiptRow(
+                          _receiptText('notes'),
+                          _detailText('notes'),
+                        ),
+                        _sectionTitle(_receiptText('routeAndPrices')),
+                        _optionalReceiptRow(
+                          _receiptText('routeDetails'),
+                          _routeSegmentsText(),
+                        ),
+                        ..._plannedPriceRows(),
+                        _optionalReceiptRow(
+                          _receiptText('returnPlanned'),
+                          _detailText('return_scheduled_pickup_at') == null
+                              ? null
+                              : _formatDate(
+                                  _detailText('return_scheduled_pickup_at'),
+                                ),
+                        ),
+                        _optionalReceiptRow(
+                          _receiptText('returnRoute'),
+                          _detailText('return_route'),
+                        ),
+                      ],
+                      _sectionTitle(_receiptText('statusPaymentSection')),
+                      _receiptRow(
+                        _receiptText('rideStatus'),
+                        _localizedRideStatus(item.status),
+                      ),
+                      _receiptRow(
+                        _receiptText('paymentStatus'),
+                        _paymentStatusText(),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 16),
+                _paymentSection(context),
+                const SizedBox(height: 16),
+                _receiptActionsSection(context),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 }

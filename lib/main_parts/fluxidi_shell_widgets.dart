@@ -56,40 +56,68 @@ class FluxidiFrame extends StatelessWidget {
               valueListenable: businessThemeNotifier,
               builder: (context, themeVariant, _) {
                 // Frame accent precedence (explicit, no wildcard):
-                //   1. chauffeur shell midnight-blue overrides everything
-                //   2. business shell flag must be active to consume the
-                //      business theme accent — otherwise the brand default
-                //      kFluxidiYellow is used so PIN/unlock, login, role entry,
-                //      customer, and standalone driver screens never inherit
-                //      a business theme accent
+                //   1. when the chauffeur shell is mounted (i.e.
+                //      `chauffeurShellFrameThemeNotifier` is non-null because
+                //      [_DriverHomePageState] published the effective driver
+                //      variant on init), the outer HUD MUST follow the
+                //      effective chauffeur theme — even when the business
+                //      shell flag is still true underneath because Driver
+                //      view was opened from Business Home. This stops the
+                //      business accent (e.g. Neon Rush purple) from wrapping
+                //      Driver Home / History / Documents / Bookings.
+                //   2. otherwise, business shell flag must be active to
+                //      consume the business theme accent — else the brand
+                //      default kFluxidiYellow is used so PIN/unlock, login,
+                //      role entry, customer, and standalone driver screens
+                //      never inherit a business theme accent.
                 //   3. inside an active business shell, fall through the
-                //      exhaustive BusinessThemeVariant switch unchanged
-                final frameAccent =
-                    chauffeurShellTheme == DriverThemeVariant.midnightBlue
-                    ? paletteForDriverTheme(
-                        DriverThemeVariant.midnightBlue,
-                      ).border
-                    : !businessShellActive
-                    ? kFluxidiYellow
-                    : switch (themeVariant) {
-                        BusinessThemeVariant.executiveGold => kFluxidiYellow,
-                        BusinessThemeVariant.corporateBlue =>
-                          paletteForBusinessTheme(
-                            BusinessThemeVariant.corporateBlue,
-                          ).accent,
-                        BusinessThemeVariant.cleanProfessional =>
-                          paletteForBusinessTheme(
-                            BusinessThemeVariant.cleanProfessional,
-                          ).accent,
-                        BusinessThemeVariant.emeraldIvory =>
-                          paletteForBusinessTheme(
-                            BusinessThemeVariant.emeraldIvory,
-                          ).accent,
-                        BusinessThemeVariant.fluxidiNeonRush =>
-                          paletteForBusinessTheme(
-                            BusinessThemeVariant.fluxidiNeonRush,
-                          ).accent,
-                      };
+                //      exhaustive BusinessThemeVariant switch unchanged.
+                final Color frameAccent;
+                final String frameSource;
+                if (chauffeurShellTheme != null) {
+                  frameAccent = switch (chauffeurShellTheme) {
+                    DriverThemeVariant.midnightBlue => paletteForDriverTheme(
+                      DriverThemeVariant.midnightBlue,
+                    ).border,
+                    // Soft warm champagne, aligned with the Midday Gold
+                    // panelBorder/accent used by `_DriverDocumentsThemeTokens`
+                    // and `_BookingsHubThemeTokens` so the outer frame
+                    // matches the Documents/Bookings/History highContrast
+                    // styling instead of reading as Night Gold.
+                    DriverThemeVariant.highContrast => const Color(0xFFFFDFA3),
+                    // Same value as the legacy `kFluxidiYellow` brand default
+                    // (`appConfig.primaryColor` for the chauffeur build),
+                    // so Night Gold keeps its existing frame look exactly.
+                    DriverThemeVariant.nightGold => paletteForDriverTheme(
+                      DriverThemeVariant.nightGold,
+                    ).accent,
+                  };
+                  frameSource = 'driver';
+                } else if (!businessShellActive) {
+                  frameAccent = kFluxidiYellow;
+                  frameSource = 'brand';
+                } else {
+                  frameAccent = switch (themeVariant) {
+                    BusinessThemeVariant.executiveGold => kFluxidiYellow,
+                    BusinessThemeVariant.corporateBlue =>
+                      paletteForBusinessTheme(
+                        BusinessThemeVariant.corporateBlue,
+                      ).accent,
+                    BusinessThemeVariant.cleanProfessional =>
+                      paletteForBusinessTheme(
+                        BusinessThemeVariant.cleanProfessional,
+                      ).accent,
+                    BusinessThemeVariant.emeraldIvory =>
+                      paletteForBusinessTheme(
+                        BusinessThemeVariant.emeraldIvory,
+                      ).accent,
+                    BusinessThemeVariant.fluxidiNeonRush =>
+                      paletteForBusinessTheme(
+                        BusinessThemeVariant.fluxidiNeonRush,
+                      ).accent,
+                  };
+                  frameSource = 'business';
+                }
                 // Hard Frame A: a visible HUD border that contains the whole UI.
                 // Target: visually ~2–3mm on phone screens.
                 return Container(
