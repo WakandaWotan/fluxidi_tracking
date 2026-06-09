@@ -4220,7 +4220,9 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
           appBar: AppBar(
             backgroundColor: _pageBg,
             foregroundColor: _textPrimary,
-            iconTheme: isPortraitHeader ? const IconThemeData(size: 29) : null,
+            iconTheme: isPortraitHeader
+                ? IconThemeData(size: 29, color: _textPrimary)
+                : IconThemeData(color: _textPrimary),
             toolbarHeight: isPortraitHeader ? 92 : null,
             title: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -4569,10 +4571,10 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                                           icon: Icons.groups_rounded,
                                           accent: _gold,
                                           label: _t(
-                                            nl: 'Totaal chauffeurs',
-                                            en: 'Total drivers',
-                                            fr: 'Total chauffeurs',
-                                            es: 'Total conductores',
+                                            nl: 'Totaal',
+                                            en: 'Total',
+                                            fr: 'Total',
+                                            es: 'Total',
                                           ),
                                           value: '$totalDrivers',
                                         ),
@@ -5183,15 +5185,12 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                                                               : _displayDriverName(
                                                                   d.fullName,
                                                                 ),
-                                                          style:
-                                                              const TextStyle(
-                                                                color: Colors
-                                                                    .white,
-                                                                fontSize: 19.0,
-                                                                fontWeight:
-                                                                    FontWeight
-                                                                        .w800,
-                                                              ),
+                                                          style: TextStyle(
+                                                            color: _textPrimary,
+                                                            fontSize: 19.0,
+                                                            fontWeight:
+                                                                FontWeight.w800,
+                                                          ),
                                                           maxLines: 1,
                                                           overflow: TextOverflow
                                                               .ellipsis,
@@ -5214,63 +5213,69 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                                                             const SizedBox(
                                                               width: 3,
                                                             ),
-                                                            Text(
-                                                              ratingLabel,
-                                                              style: TextStyle(
-                                                                color: Colors
-                                                                    .white
-                                                                    .withOpacity(
-                                                                      0.70,
-                                                                    ),
-                                                                fontSize: 13.6,
+                                                            Expanded(
+                                                              child: Text(
+                                                                ratingLabel,
+                                                                style: TextStyle(
+                                                                  color:
+                                                                      _textMuted,
+                                                                  fontSize:
+                                                                      13.6,
+                                                                ),
+                                                                maxLines: 1,
+                                                                overflow:
+                                                                    TextOverflow
+                                                                        .ellipsis,
                                                               ),
                                                             ),
-                                                            const SizedBox(
-                                                              width: 10,
-                                                            ),
-                                                            if (hasPhone)
-                                                              InkWell(
-                                                                onTap: () => unawaited(
+                                                          ],
+                                                        ),
+                                                        if (hasPhone) ...[
+                                                          const SizedBox(
+                                                            height: 2,
+                                                          ),
+                                                          InkWell(
+                                                            onTap: () =>
+                                                                unawaited(
                                                                   callDriver()
                                                                       .catchError(
                                                                         (_) {},
                                                                       ),
                                                                 ),
-                                                                child: Row(
-                                                                  mainAxisSize:
-                                                                      MainAxisSize
-                                                                          .min,
-                                                                  children: [
-                                                                    Icon(
-                                                                      Icons
-                                                                          .phone_outlined,
-                                                                      size: 13,
-                                                                      color: _gold
-                                                                          .withOpacity(
-                                                                            0.98,
-                                                                          ),
-                                                                    ),
-                                                                    const SizedBox(
-                                                                      width: 3,
-                                                                    ),
-                                                                    Text(
-                                                                      d.phone
-                                                                          .trim(),
-                                                                      style: TextStyle(
-                                                                        color: Colors
-                                                                            .white
-                                                                            .withOpacity(
-                                                                              0.64,
-                                                                            ),
-                                                                        fontSize:
-                                                                            13.8,
+                                                            child: Row(
+                                                              children: [
+                                                                Icon(
+                                                                  Icons
+                                                                      .phone_outlined,
+                                                                  size: 13,
+                                                                  color: _gold
+                                                                      .withOpacity(
+                                                                        0.98,
                                                                       ),
-                                                                    ),
-                                                                  ],
                                                                 ),
-                                                              ),
-                                                          ],
-                                                        ),
+                                                                const SizedBox(
+                                                                  width: 3,
+                                                                ),
+                                                                Expanded(
+                                                                  child: Text(
+                                                                    d.phone
+                                                                        .trim(),
+                                                                    style: TextStyle(
+                                                                      color:
+                                                                          _textMuted,
+                                                                      fontSize:
+                                                                          13.8,
+                                                                    ),
+                                                                    maxLines: 1,
+                                                                    overflow:
+                                                                        TextOverflow
+                                                                            .ellipsis,
+                                                                  ),
+                                                                ),
+                                                              ],
+                                                            ),
+                                                          ),
+                                                        ],
                                                       ],
                                                     ),
                                                   ),
@@ -5287,6 +5292,12 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                                                       ),
                                                     ),
                                                     splashRadius: 18,
+                                                    padding: EdgeInsets.zero,
+                                                    constraints:
+                                                        const BoxConstraints(
+                                                          minWidth: 36,
+                                                          minHeight: 36,
+                                                        ),
                                                     visualDensity:
                                                         VisualDensity.compact,
                                                   ),
@@ -5301,7 +5312,7 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                                                     padding:
                                                         const EdgeInsets.symmetric(
                                                           horizontal: 10,
-                                                          vertical: 6,
+                                                          vertical: 4,
                                                         ),
                                                     decoration: BoxDecoration(
                                                       color: d.isActive
@@ -5309,10 +5320,7 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                                                                 .withOpacity(
                                                                   0.16,
                                                                 )
-                                                          : Colors.white
-                                                                .withOpacity(
-                                                                  0.06,
-                                                                ),
+                                                          : _subPanelBg,
                                                       borderRadius:
                                                           BorderRadius.circular(
                                                             999,
@@ -5323,7 +5331,12 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                                                                   .withOpacity(
                                                                     0.44,
                                                                   )
-                                                            : Colors.white24,
+                                                            : _border
+                                                                  .withOpacity(
+                                                                    _isDark
+                                                                        ? 0.42
+                                                                        : 0.85,
+                                                                  ),
                                                       ),
                                                     ),
                                                     child: Text(
@@ -5348,7 +5361,7 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                                                       padding:
                                                           const EdgeInsets.symmetric(
                                                             horizontal: 10,
-                                                            vertical: 6,
+                                                            vertical: 4,
                                                           ),
                                                       decoration: BoxDecoration(
                                                         color: availabilityColor
@@ -5401,8 +5414,7 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                                                     ? vehicleName
                                                     : '$vehicleName · $plate',
                                                 style: TextStyle(
-                                                  color: Colors.white
-                                                      .withOpacity(0.70),
+                                                  color: _textMuted,
                                                   fontSize: 14.4,
                                                 ),
                                                 maxLines: 1,
@@ -5461,8 +5473,10 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                                                 child: LinearProgressIndicator(
                                                   minHeight: 7,
                                                   value: progress,
-                                                  backgroundColor:
-                                                      Colors.white12,
+                                                  backgroundColor: _border
+                                                      .withOpacity(
+                                                        _isDark ? 0.42 : 0.55,
+                                                      ),
                                                   valueColor:
                                                       AlwaysStoppedAnimation<
                                                         Color
