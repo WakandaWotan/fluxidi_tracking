@@ -305,6 +305,7 @@ class _ChauffeurLoginPageState extends State<ChauffeurLoginPage> {
         driverId: backendLogin.driverId,
         driverName: backendLogin.driverName,
         companyDisplayName: backendLogin.companyDisplayName,
+        employeeNumber: enteredDriverCode,
         assignedVehicleId: backendLogin.assignedVehicleId,
         driverPhotoUrl: resolvedBackendPhoto,
         companyLogoUrl: backendLogin.companyLogoUrl,

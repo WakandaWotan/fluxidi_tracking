@@ -2046,7 +2046,10 @@ String? standaloneDriverSessionFleetInvalidationReason({
   if (sessionEmployee.isEmpty ||
       profileEmployee.isEmpty ||
       sessionEmployee.toLowerCase() != profileEmployee.toLowerCase()) {
-    return 'scope_mismatch';
+    debugPrint(
+      '[DRIVER_SESSION][VALIDATE_ASSIGNMENT] reason=employee_mismatch driver=${_maskDriverIdForDiag(normalizedDriverId)} session_company=${_maskCompanyScopeForLog(normalizedCompany)} active_company=${_maskCompanyScopeForLog(activeCompany)}',
+    );
+    return 'employee_mismatch';
   }
 
   if (!validateVehicleAssignment) return null;
@@ -3372,6 +3375,133 @@ Future<DriverAvailabilitySaveResult> syncPublicDriverAvailabilityToBackend({
   }
 }
 
+class DriverOperationalAvailabilityLookup {
+  const DriverOperationalAvailabilityLookup({
+    required this.ok,
+    required this.availabilityStatus,
+    required this.source,
+  });
+
+  final bool ok;
+  final String availabilityStatus;
+  final String source;
+}
+
+String? _readDriverAvailabilityFromPayloadMap(Map<String, dynamic> map) {
+  final raw = map['availability_status'] ?? map['availabilityStatus'];
+  if (raw == null) return null;
+  return normalizeDriverAvailabilityState(raw, fallback: 'available');
+}
+
+String _readDriverIdFromPayloadMap(Map<String, dynamic> map) {
+  for (final key in const ['driver_id', 'driverId', 'id']) {
+    final value = (map[key] ?? '').toString().trim();
+    if (value.isNotEmpty) return value;
+  }
+  return '';
+}
+
+/// Resolves live operational availability for one driver from canonical backend
+/// sources. Prefers company bootstrap (driver index), then public partner profile.
+Future<DriverOperationalAvailabilityLookup>
+fetchDriverOperationalAvailabilityStatus({
+  required String driverId,
+  required String tenantId,
+  required String companyId,
+  String? companySessionToken,
+}) async {
+  final normalizedDriverId = driverId.trim();
+  final normalizedCompanyId = companyId.trim().isNotEmpty
+      ? companyId.trim()
+      : tenantId.trim();
+  if (normalizedDriverId.isEmpty || normalizedCompanyId.isEmpty) {
+    return const DriverOperationalAvailabilityLookup(
+      ok: false,
+      availabilityStatus: 'available',
+      source: 'local',
+    );
+  }
+
+  final token = (companySessionToken ?? '').trim();
+  if (token.isNotEmpty) {
+    final bootstrap = await fetchCompanyBootstrapWithToken(
+      companySessionToken: token,
+    );
+    final driversRaw = bootstrap?['drivers'];
+    if (driversRaw is List) {
+      for (final row in driversRaw) {
+        if (row is! Map) continue;
+        final map = Map<String, dynamic>.from(row);
+        final rowDriverId = _readDriverIdFromPayloadMap(map);
+        if (rowDriverId != normalizedDriverId) continue;
+        final status =
+            _readDriverAvailabilityFromPayloadMap(map) ?? 'available';
+        return DriverOperationalAvailabilityLookup(
+          ok: true,
+          availabilityStatus: status,
+          source: 'company_bootstrap',
+        );
+      }
+    }
+  }
+
+  final partnerUri = Uri.parse('${appConfig.bookingBaseUrl}/partners/profile')
+      .replace(
+        queryParameters: <String, String>{'partner_id': normalizedCompanyId},
+      );
+  try {
+    final response = await http
+        .get(
+          partnerUri,
+          headers: const <String, String>{'Accept': 'application/json'},
+        )
+        .timeout(const Duration(seconds: 12));
+    if (response.statusCode >= 200 && response.statusCode < 300) {
+      final decoded = jsonDecode(utf8.decode(response.bodyBytes));
+      if (decoded is Map && decoded['ok'] == true) {
+        final profileRaw = decoded['profile'];
+        if (profileRaw is Map) {
+          final profile = Map<String, dynamic>.from(profileRaw);
+          final driversRaw = profile['drivers'];
+          if (driversRaw is List) {
+            for (final row in driversRaw) {
+              if (row is! Map) continue;
+              final map = Map<String, dynamic>.from(row);
+              final rowDriverId = _readDriverIdFromPayloadMap(map);
+              if (rowDriverId != normalizedDriverId) continue;
+              final status =
+                  _readDriverAvailabilityFromPayloadMap(map) ?? 'available';
+              return DriverOperationalAvailabilityLookup(
+                ok: true,
+                availabilityStatus: status,
+                source: 'partner_profile',
+              );
+            }
+          }
+        }
+      }
+    }
+  } catch (_) {}
+
+  for (final driver in driversNotifier.value) {
+    if (driver.id.trim() != normalizedDriverId) continue;
+    return DriverOperationalAvailabilityLookup(
+      ok: true,
+      availabilityStatus: normalizeDriverAvailabilityState(
+        driver.availabilityStatus,
+        fallback: 'available',
+      ),
+      source: 'local',
+    );
+  }
+
+  return const DriverOperationalAvailabilityLookup(
+    ok: false,
+    availabilityStatus: 'available',
+    source: 'local',
+  );
+}
+
 Map<String, String> _resolveAdminTenantCompanyScope({
   String? tenantId,
   String? companyId,
@@ -3630,6 +3760,14 @@ Map<String, dynamic> _encodeDriverForBackendIndexPayload(
     if (normalizedPhone != null) 'phone': normalizedPhone,
     'is_active': isActiveOverride ?? driver.isActive,
     'isActive': isActiveOverride ?? driver.isActive,
+    'availability_status': normalizeDriverAvailabilityState(
+      driver.availabilityStatus,
+      fallback: 'available',
+    ),
+    'availabilityStatus': normalizeDriverAvailabilityState(
+      driver.availabilityStatus,
+      fallback: 'available',
+    ),
     'taxi_driver_card_number': driver.taxiDriverCardNumber.trim(),
     'taxiDriverCardNumber': driver.taxiDriverCardNumber.trim(),
     'taxi_driver_card_expiry': driver.taxiDriverCardExpiry.trim(),

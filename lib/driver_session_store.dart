@@ -216,9 +216,9 @@ class ActiveDriverSession {
       phone: read('phone'),
       loggedInAt: read('loggedInAt'),
       updatedAt: read('updatedAt'),
-      tenantId: readOptional('tenantId'),
-      companyId: readOptional('companyId'),
-      companyCode: readOptional('companyCode'),
+      tenantId: readOptional('tenantId') ?? readOptional('tenant_id'),
+      companyId: readOptional('companyId') ?? readOptional('company_id'),
+      companyCode: readOptional('companyCode') ?? readOptional('company_code'),
       assignedVehicleId:
           readOptional('assignedVehicleId') ??
           readOptional('assigned_vehicle_id'),
@@ -562,14 +562,169 @@ class DriverSessionStore {
     _cacheScopeKey = '$tenant::$company';
   }
 
+  void _logScopeValidate({
+    required String expectedTenant,
+    required String expectedCompany,
+    required String sessionTenant,
+    required String sessionCompany,
+    required String pointerTenant,
+    required String pointerCompany,
+    required String fileScopeTenant,
+    required String fileScopeCompany,
+    required String source,
+    required String result,
+  }) {
+    debugPrint(
+      '[DRIVER_SESSION][SCOPE_VALIDATE] expected_tenant=${_maskIdForLog(expectedTenant)} expected_company=${_maskIdForLog(expectedCompany)} session_tenant=${_maskIdForLog(sessionTenant)} session_company=${_maskIdForLog(sessionCompany)} pointer_tenant=${_maskIdForLog(pointerTenant)} pointer_company=${_maskIdForLog(pointerCompany)} file_tenant=${_maskIdForLog(fileScopeTenant)} file_company=${_maskIdForLog(fileScopeCompany)} source=$source result=$result',
+    );
+  }
+
+  bool _fileScopeMatchesRestoreScope({
+    required String fileScopeTenant,
+    required String fileScopeCompany,
+    required String expectedTenant,
+    required String expectedCompany,
+  }) {
+    return fileScopeTenant.trim() == expectedTenant.trim() &&
+        fileScopeCompany.trim() == expectedCompany.trim();
+  }
+
+  bool _isTrueStandaloneScopeSecurityMismatch({
+    required String fileScopeTenant,
+    required String fileScopeCompany,
+    required String expectedTenant,
+    required String expectedCompany,
+    StandaloneDriverScopePointer? pointer,
+  }) {
+    if (!_fileScopeMatchesRestoreScope(
+      fileScopeTenant: fileScopeTenant,
+      fileScopeCompany: fileScopeCompany,
+      expectedTenant: expectedTenant,
+      expectedCompany: expectedCompany,
+    )) {
+      return true;
+    }
+    if (pointer == null) return false;
+    return pointer.tenantId.trim() != fileScopeTenant.trim() ||
+        pointer.companyId.trim() != fileScopeCompany.trim();
+  }
+
+  ActiveDriverSession _copySessionWithScope(
+    ActiveDriverSession session, {
+    required String tenantId,
+    required String companyId,
+  }) {
+    return ActiveDriverSession(
+      driverId: session.driverId,
+      employeeNumber: session.employeeNumber,
+      fullName: session.fullName,
+      phone: session.phone,
+      loggedInAt: session.loggedInAt,
+      updatedAt: DateTime.now().toUtc().toIso8601String(),
+      tenantId: tenantId,
+      companyId: companyId,
+      companyCode: session.companyCode,
+      assignedVehicleId: session.assignedVehicleId,
+      driverPhotoUrl: session.driverPhotoUrl,
+      companyLogoUrl: session.companyLogoUrl,
+      vehiclePhotoUrl: session.vehiclePhotoUrl,
+      driverSessionToken: session.driverSessionToken,
+      driverSessionExpiresAtUtc: session.driverSessionExpiresAtUtc,
+      linkMethod: session.linkMethod,
+      expiresAt: session.expiresAt,
+    );
+  }
+
+  Future<ActiveDriverSession?> _resolveStandaloneSessionForRestore({
+    required ActiveDriverSession session,
+    required String fileScopeTenant,
+    required String fileScopeCompany,
+    required String expectedTenant,
+    required String expectedCompany,
+    required String source,
+    StandaloneDriverScopePointer? pointer,
+  }) async {
+    if (!_isRestorableStandaloneSession(session)) return null;
+
+    final sessionTenant = (session.tenantId ?? '').trim();
+    final sessionCompany = (session.companyId ?? '').trim();
+    final pointerTenant = (pointer?.tenantId ?? '').trim();
+    final pointerCompany = (pointer?.companyId ?? '').trim();
+
+    if (_isTrueStandaloneScopeSecurityMismatch(
+      fileScopeTenant: fileScopeTenant,
+      fileScopeCompany: fileScopeCompany,
+      expectedTenant: expectedTenant,
+      expectedCompany: expectedCompany,
+      pointer: pointer,
+    )) {
+      _logScopeValidate(
+        expectedTenant: expectedTenant,
+        expectedCompany: expectedCompany,
+        sessionTenant: sessionTenant,
+        sessionCompany: sessionCompany,
+        pointerTenant: pointerTenant,
+        pointerCompany: pointerCompany,
+        fileScopeTenant: fileScopeTenant,
+        fileScopeCompany: fileScopeCompany,
+        source: source,
+        result: 'security_mismatch',
+      );
+      return null;
+    }
+
+    if (sessionTenant == expectedTenant.trim() &&
+        sessionCompany == expectedCompany.trim()) {
+      _logScopeValidate(
+        expectedTenant: expectedTenant,
+        expectedCompany: expectedCompany,
+        sessionTenant: sessionTenant,
+        sessionCompany: sessionCompany,
+        pointerTenant: pointerTenant,
+        pointerCompany: pointerCompany,
+        fileScopeTenant: fileScopeTenant,
+        fileScopeCompany: fileScopeCompany,
+        source: source,
+        result: 'ok',
+      );
+      return session;
+    }
+
+    final repaired = _copySessionWithScope(
+      session,
+      tenantId: expectedTenant.trim(),
+      companyId: expectedCompany.trim(),
+    );
+    await _writeSessionAtScope(repaired);
+    if (pointer != null &&
+        (pointerTenant != expectedTenant.trim() ||
+            pointerCompany != expectedCompany.trim())) {
+      await saveStandaloneScopePointer(repaired);
+    }
+    _logScopeValidate(
+      expectedTenant: expectedTenant,
+      expectedCompany: expectedCompany,
+      sessionTenant: sessionTenant,
+      sessionCompany: sessionCompany,
+      pointerTenant: pointerTenant,
+      pointerCompany: pointerCompany,
+      fileScopeTenant: fileScopeTenant,
+      fileScopeCompany: fileScopeCompany,
+      source: source,
+      result: 'repair',
+    );
+    debugPrint(
+      '[DRIVER_SESSION][SCOPE_REPAIR] driver=${_maskIdForLog(repaired.driverId)} ok=true source=$source',
+    );
+    return repaired;
+  }
+
   bool _validateStandalonePointerRestore(
     StandaloneDriverScopePointer pointer,
     ActiveDriverSession session,
   ) {
     if (!_isRestorableStandaloneSession(session)) return false;
-    if (pointer.tenantId != (session.tenantId ?? '').trim()) return false;
-    if (pointer.companyId != (session.companyId ?? '').trim()) return false;
-    if (pointer.driverId != session.driverId.trim()) return false;
+    if (pointer.driverId.trim() != session.driverId.trim()) return false;
     final pointerLink = pointer.linkMethod.trim().toLowerCase();
     final sessionLink = (session.linkMethod ?? '').trim().toLowerCase();
     if (pointerLink.isNotEmpty &&
@@ -581,6 +736,38 @@ class DriverSessionStore {
       if ((session.driverSessionToken ?? '').trim().isEmpty) return false;
     }
     return true;
+  }
+
+  String _firstNonEmptyScopeField(
+    Map<String, dynamic>? payload,
+    List<String> keys,
+  ) {
+    if (payload == null) return '';
+    for (final key in keys) {
+      final value = (payload[key] ?? '').toString().trim();
+      if (value.isNotEmpty) return value;
+    }
+    return '';
+  }
+
+  /// Preserve previous [ActiveDriverSession.driverPhotoUrl] when [incomingPhoto]
+  /// is empty for the same [driverId]. Never preserves across different drivers.
+  String? _preservePhotoForSameDriver({
+    required String? incomingPhoto,
+    required ActiveDriverSession? existing,
+    required String newDriverId,
+    required String saveSource,
+  }) {
+    final incoming = (incomingPhoto ?? '').trim();
+    if (incoming.isNotEmpty) return incoming;
+    if (existing == null) return null;
+    if (existing.driverId.trim() != newDriverId.trim()) return null;
+    final existingPhoto = (existing.driverPhotoUrl ?? '').trim();
+    if (existingPhoto.isEmpty) return null;
+    debugPrint(
+      '[DRIVER_SESSION][PHOTO_PRESERVE] driver=${_maskIdForLog(newDriverId)} source=existing_session save=$saveSource',
+    );
+    return existingPhoto;
   }
 
   Future<void> _clearSessionAtScope({
@@ -894,46 +1081,187 @@ class DriverSessionStore {
     }
   }
 
-  Future<bool> _restoreValidatedSession(
+  Future<({bool ok, String? destructiveReason, String? recoverableReason})>
+  _restoreValidatedSession(
     List<DriverProfile> drivers,
     ActiveDriverSession s, {
     required String restoreSource,
+    required String fileScopeTenant,
+    required String fileScopeCompany,
+    StandaloneDriverScopePointer? pointer,
   }) async {
     _standaloneOperationalBlockReason = null;
+
+    var sessionForRestore = s;
     if (s.isStandaloneLoginSession && !s.isCompanyAdminDriverViewSession) {
-      final invalidationReason = standaloneDriverSessionFleetInvalidationReason(
-        driverId: s.driverId,
-        employeeNumber: s.employeeNumber,
-        assignedVehicleId: s.assignedVehicleId,
-        tenantId: s.tenantId,
-        companyId: s.companyId,
-        drivers: drivers,
-        validateVehicleAssignment: true,
-      );
-      if (invalidationReason != null) {
-        debugPrint(
-          '[DRIVER_SESSION][INVALIDATE] reason=$invalidationReason driver=${_maskIdForLog(s.driverId)}',
+      final expectedTenant = fileScopeTenant.trim();
+      final expectedCompany = fileScopeCompany.trim();
+      if (expectedTenant.isNotEmpty && expectedCompany.isNotEmpty) {
+        final repaired = await _resolveStandaloneSessionForRestore(
+          session: s,
+          fileScopeTenant: fileScopeTenant,
+          fileScopeCompany: fileScopeCompany,
+          expectedTenant: expectedTenant,
+          expectedCompany: expectedCompany,
+          source: restoreSource == 'standalone_pointer'
+              ? 'pointer'
+              : 'scoped_file',
+          pointer: pointer,
         );
-        return false;
+        if (repaired == null &&
+            _isTrueStandaloneScopeSecurityMismatch(
+              fileScopeTenant: fileScopeTenant,
+              fileScopeCompany: fileScopeCompany,
+              expectedTenant: expectedTenant,
+              expectedCompany: expectedCompany,
+              pointer: pointer,
+            )) {
+          debugPrint(
+            '[DRIVER_SESSION][INVALIDATE] reason=scope_mismatch driver=${_maskIdForLog(s.driverId)}',
+          );
+          return (
+            ok: false,
+            destructiveReason: 'security_mismatch',
+            recoverableReason: null,
+          );
+        }
+        if (repaired != null) {
+          sessionForRestore = repaired;
+        }
+      }
+
+      if (sessionForRestore.isVerifiedPairingSession) {
+        final expiresAt = sessionForRestore.expiresAtUtc;
+        if (expiresAt != null && expiresAt.isBefore(DateTime.now().toUtc())) {
+          debugPrint(
+            '[DRIVER_SESSION][INVALIDATE] reason=expired driver=${_maskIdForLog(sessionForRestore.driverId)}',
+          );
+          return (
+            ok: false,
+            destructiveReason: 'expired',
+            recoverableReason: null,
+          );
+        }
+      } else if (sessionForRestore.isPublicDriverLoginSession) {
+        // Token expiry is destructive (re-login overwrites file).
+        final expiresRaw = (sessionForRestore.driverSessionExpiresAtUtc ?? '')
+            .trim();
+        if (expiresRaw.isNotEmpty) {
+          final expiresAt = DateTime.tryParse(expiresRaw)?.toUtc();
+          if (expiresAt != null && expiresAt.isBefore(DateTime.now().toUtc())) {
+            debugPrint(
+              '[DRIVER_SESSION][INVALIDATE] reason=expired driver=${_maskIdForLog(sessionForRestore.driverId)}',
+            );
+            return (
+              ok: false,
+              destructiveReason: 'expired',
+              recoverableReason: null,
+            );
+          }
+        }
+        // Required identity must be present for backend session to be usable.
+        final hasIdentity =
+            sessionForRestore.driverId.trim().isNotEmpty &&
+            (sessionForRestore.driverSessionToken ?? '').trim().isNotEmpty &&
+            (sessionForRestore.tenantId ?? '').trim().isNotEmpty &&
+            (sessionForRestore.companyId ?? '').trim().isNotEmpty;
+        if (!hasIdentity) {
+          debugPrint(
+            '[DRIVER_SESSION][RESTORE_BLOCKED_NON_DESTRUCTIVE] reason=missing_identity driver=${_maskIdForLog(sessionForRestore.driverId)}',
+          );
+          return (
+            ok: false,
+            destructiveReason: null,
+            recoverableReason: 'missing_identity',
+          );
+        }
+        // Fleet validation runs in informational mode only — backend login
+        // owns identity, employee_mismatch is tolerated.
+        final fleetReason = standaloneDriverSessionFleetInvalidationReason(
+          driverId: sessionForRestore.driverId,
+          employeeNumber: sessionForRestore.employeeNumber,
+          assignedVehicleId: sessionForRestore.assignedVehicleId,
+          tenantId: sessionForRestore.tenantId,
+          companyId: sessionForRestore.companyId,
+          drivers: drivers,
+          validateVehicleAssignment: true,
+          activeCompanyId: fileScopeCompany.trim().isNotEmpty
+              ? fileScopeCompany.trim()
+              : null,
+        );
+        if (fleetReason != null) {
+          debugPrint(
+            '[DRIVER_SESSION][EMPLOYEE_MISMATCH_TOLERATED] method=public_driver_login reason=$fleetReason driver=${_maskIdForLog(sessionForRestore.driverId)}',
+          );
+        }
+      } else {
+        final invalidationReason =
+            standaloneDriverSessionFleetInvalidationReason(
+              driverId: sessionForRestore.driverId,
+              employeeNumber: sessionForRestore.employeeNumber,
+              assignedVehicleId: sessionForRestore.assignedVehicleId,
+              tenantId: sessionForRestore.tenantId,
+              companyId: sessionForRestore.companyId,
+              drivers: drivers,
+              validateVehicleAssignment: true,
+              activeCompanyId: fileScopeCompany.trim().isNotEmpty
+                  ? fileScopeCompany.trim()
+                  : null,
+            );
+        if (invalidationReason != null) {
+          // Recoverable: keep the file, just block UI entry. The session may
+          // become valid again once company inventory hydrates.
+          debugPrint(
+            '[DRIVER_SESSION][RESTORE_BLOCKED_NON_DESTRUCTIVE] reason=$invalidationReason driver=${_maskIdForLog(sessionForRestore.driverId)}',
+          );
+          return (
+            ok: false,
+            destructiveReason: null,
+            recoverableReason: invalidationReason,
+          );
+        }
       }
       final blockReason = standaloneDriverSessionOperationalBlockReason(
-        driverId: s.driverId,
-        assignedVehicleId: s.assignedVehicleId,
-        tenantId: s.tenantId,
-        companyId: s.companyId,
+        driverId: sessionForRestore.driverId,
+        assignedVehicleId: sessionForRestore.assignedVehicleId,
+        tenantId: sessionForRestore.tenantId,
+        companyId: sessionForRestore.companyId,
         drivers: drivers,
+        activeCompanyId: fileScopeCompany.trim().isNotEmpty
+            ? fileScopeCompany.trim()
+            : null,
       );
       if (blockReason != null) {
         _standaloneOperationalBlockReason = blockReason;
         debugPrint(
-          '[DRIVER_SESSION][BLOCK] reason=$blockReason driver=${_maskIdForLog(s.driverId)}',
+          '[DRIVER_SESSION][BLOCK] reason=$blockReason driver=${_maskIdForLog(sessionForRestore.driverId)}',
         );
       }
     }
-    if (_isStillValid(drivers, s)) {
-      ActiveDriverSession resolved = s;
-      final matched = _findScopedLocalDriver(drivers, s);
-      final sessionPhotoRaw = (s.driverPhotoUrl ?? '').trim();
+    final stillValid = _isStillValid(drivers, sessionForRestore);
+    if (!stillValid &&
+        sessionForRestore.isPublicDriverLoginSession &&
+        sessionForRestore.driverId.trim().isNotEmpty &&
+        (sessionForRestore.driverSessionToken ?? '').trim().isNotEmpty) {
+      // public_driver_login already validated identity+expiry above; ignore
+      // local inventory shape mismatch and proceed with restore.
+      debugPrint(
+        '[DRIVER_SESSION][EMPLOYEE_MISMATCH_TOLERATED] method=public_driver_login reason=is_still_valid_inventory driver=${_maskIdForLog(sessionForRestore.driverId)}',
+      );
+    } else if (!stillValid) {
+      debugPrint(
+        '[DRIVER_SESSION][RESTORE_BLOCKED_NON_DESTRUCTIVE] reason=invalid_session_state driver=${_maskIdForLog(sessionForRestore.driverId)}',
+      );
+      return (
+        ok: false,
+        destructiveReason: null,
+        recoverableReason: 'invalid_session_state',
+      );
+    }
+    {
+      ActiveDriverSession resolved = sessionForRestore;
+      final matched = _findScopedLocalDriver(drivers, sessionForRestore);
+      final sessionPhotoRaw = (sessionForRestore.driverPhotoUrl ?? '').trim();
       final backendPhotoRaw = (matched?.publicPortraitUrl ?? '').trim();
       final legacyLooksPreferred =
           sessionPhotoRaw.isNotEmpty &&
@@ -942,7 +1270,7 @@ class DriverSessionStore {
           _isPreferredCanonicalPhotoUrl(backendPhotoRaw);
       if (legacyLooksPreferred) {
         debugPrint(
-          '[DRIVER_PHOTO_CANONICAL][LEGACY_IGNORED] driver=${_maskIdForLog(s.driverId)} reason=session_prefers_legacy_remote',
+          '[DRIVER_PHOTO_CANONICAL][LEGACY_IGNORED] driver=${_maskIdForLog(sessionForRestore.driverId)} reason=session_prefers_legacy_remote',
         );
       }
       final resolvedSessionPhoto = _resolvePersistableDriverPhotoUrl(
@@ -961,14 +1289,14 @@ class DriverSessionStore {
         restorePhotoSource = 'local';
       }
       if (canonicalCandidate == null &&
-          s.isStandaloneLoginSession &&
-          !s.isCompanyAdminDriverViewSession) {
+          sessionForRestore.isStandaloneLoginSession &&
+          !sessionForRestore.isCompanyAdminDriverViewSession) {
         final backfill = await _backfillStandaloneDriverPhoto(
-          session: s,
+          session: sessionForRestore,
           drivers: drivers,
         );
         debugPrint(
-          '[DRIVER_SESSION][RESTORE_PHOTO_BACKFILL] driver=${_maskIdForLog(s.driverId)} photo=${backfill.photo == null ? 'missing' : 'present'} source=${backfill.source}',
+          '[DRIVER_SESSION][RESTORE_PHOTO_BACKFILL] driver=${_maskIdForLog(sessionForRestore.driverId)} photo=${backfill.photo == null ? 'missing' : 'present'} source=${backfill.source}',
         );
         if (backfill.photo != null) {
           canonicalCandidate = backfill.photo;
@@ -976,7 +1304,7 @@ class DriverSessionStore {
         }
       }
       debugPrint(
-        '[DRIVER_SESSION][RESTORE_PHOTO] driver=${_maskIdForLog(s.driverId)} photo=${canonicalCandidate == null ? 'missing' : 'present'} source=$restorePhotoSource',
+        '[DRIVER_SESSION][RESTORE_PHOTO] driver=${_maskIdForLog(sessionForRestore.driverId)} photo=${canonicalCandidate == null ? 'missing' : 'present'} source=$restorePhotoSource',
       );
       final source = () {
         switch (restorePhotoSource) {
@@ -993,38 +1321,39 @@ class DriverSessionStore {
       }();
       if (canonicalCandidate != null && canonicalCandidate.isNotEmpty) {
         debugPrint(
-          '[DRIVER_SESSION][STANDALONE_PHOTO] driver=${_maskIdForLog(s.driverId)} photo=present source=$restorePhotoSource',
+          '[DRIVER_SESSION][STANDALONE_PHOTO] driver=${_maskIdForLog(sessionForRestore.driverId)} photo=present source=$restorePhotoSource',
         );
       }
       debugPrint(
-        '[DRIVER_PHOTO_CANONICAL][SOURCE] driver=${_maskIdForLog(s.driverId)} source=$source',
+        '[DRIVER_PHOTO_CANONICAL][SOURCE] driver=${_maskIdForLog(sessionForRestore.driverId)} source=$source',
       );
       final shouldPatch =
           canonicalCandidate != null &&
           canonicalCandidate.trim() != sessionPhotoRaw;
       if (shouldPatch) {
         resolved = ActiveDriverSession(
-          driverId: s.driverId,
-          employeeNumber: s.employeeNumber,
-          fullName: s.fullName,
-          phone: s.phone,
-          loggedInAt: s.loggedInAt,
+          driverId: sessionForRestore.driverId,
+          employeeNumber: sessionForRestore.employeeNumber,
+          fullName: sessionForRestore.fullName,
+          phone: sessionForRestore.phone,
+          loggedInAt: sessionForRestore.loggedInAt,
           updatedAt: DateTime.now().toUtc().toIso8601String(),
-          tenantId: s.tenantId,
-          companyId: s.companyId,
-          companyCode: s.companyCode,
-          assignedVehicleId: s.assignedVehicleId,
+          tenantId: sessionForRestore.tenantId,
+          companyId: sessionForRestore.companyId,
+          companyCode: sessionForRestore.companyCode,
+          assignedVehicleId: sessionForRestore.assignedVehicleId,
           driverPhotoUrl: canonicalCandidate,
-          companyLogoUrl: s.companyLogoUrl,
-          vehiclePhotoUrl: s.vehiclePhotoUrl,
-          driverSessionToken: s.driverSessionToken,
-          driverSessionExpiresAtUtc: s.driverSessionExpiresAtUtc,
-          linkMethod: s.linkMethod,
-          expiresAt: s.expiresAt,
+          companyLogoUrl: sessionForRestore.companyLogoUrl,
+          vehiclePhotoUrl: sessionForRestore.vehiclePhotoUrl,
+          driverSessionToken: sessionForRestore.driverSessionToken,
+          driverSessionExpiresAtUtc:
+              sessionForRestore.driverSessionExpiresAtUtc,
+          linkMethod: sessionForRestore.linkMethod,
+          expiresAt: sessionForRestore.expiresAt,
         );
         await _writeSessionAtScope(resolved);
         debugPrint(
-          '[DRIVER_SESSION][RESTORE_PHOTO_PATCH_SAVE] driver=${_maskIdForLog(s.driverId)} ok=true',
+          '[DRIVER_SESSION][RESTORE_PHOTO_PATCH_SAVE] driver=${_maskIdForLog(sessionForRestore.driverId)} ok=true',
         );
       } else {
         _cache = resolved;
@@ -1035,10 +1364,10 @@ class DriverSessionStore {
         }
       }
       debugPrint(
-        '[DRIVER_PHOTO_CANONICAL][SESSION_PATCH] driver=${_maskIdForLog(s.driverId)} updated=$shouldPatch',
+        '[DRIVER_PHOTO_CANONICAL][SESSION_PATCH] driver=${_maskIdForLog(sessionForRestore.driverId)} updated=$shouldPatch',
       );
       debugPrint(
-        '[DRIVER_PHOTO_CANONICAL][DONE] driver=${_maskIdForLog(s.driverId)} urlSource=$source',
+        '[DRIVER_PHOTO_CANONICAL][DONE] driver=${_maskIdForLog(sessionForRestore.driverId)} urlSource=$source',
       );
       activeDriverSessionNotifier.value = resolved;
       if (restoreSource == 'standalone_pointer') {
@@ -1049,9 +1378,8 @@ class DriverSessionStore {
       debugPrint(
         '[DRIVER_SESSION][RESTORE_OK] driver=${_maskIdForLog(resolved.driverId)} mode=${resolved.sessionMode} tenant=${_maskIdForLog(resolved.tenantId ?? '')} company=${_maskIdForLog(resolved.companyId ?? '')} source=$restoreSource',
       );
-      return true;
+      return (ok: true, destructiveReason: null, recoverableReason: null);
     }
-    return false;
   }
 
   /// Call after tenant drivers are loaded. Clears stale sessions.
@@ -1067,6 +1395,8 @@ class DriverSessionStore {
 
     ActiveDriverSession? candidate;
     var restoreSource = 'none';
+    var fileScopeTenant = '';
+    var fileScopeCompany = '';
     StandaloneDriverScopePointer? pointer;
 
     if (active != null) {
@@ -1078,6 +1408,8 @@ class DriverSessionStore {
         if (!standaloneRestoreOnly) {
           candidate = activeSession;
           restoreSource = 'active_scope';
+          fileScopeTenant = active.tenantId;
+          fileScopeCompany = active.companyId;
         } else if (activeSession.isCompanyAdminDriverViewSession) {
           debugPrint(
             '[DRIVER_SESSION][RESTORE_SKIP_BUSINESS_VIEW] driver=${_maskIdForLog(activeSession.driverId)}',
@@ -1086,10 +1418,21 @@ class DriverSessionStore {
             tenantId: active.tenantId,
             companyId: active.companyId,
           );
-        } else if (_isRestorableStandaloneSession(activeSession) &&
-            _sessionScopeMatchesActive(activeSession)) {
-          candidate = activeSession;
-          restoreSource = 'active_scope';
+        } else if (_isRestorableStandaloneSession(activeSession)) {
+          final resolvedSession = await _resolveStandaloneSessionForRestore(
+            session: activeSession,
+            fileScopeTenant: active.tenantId,
+            fileScopeCompany: active.companyId,
+            expectedTenant: active.tenantId,
+            expectedCompany: active.companyId,
+            source: 'scoped_file',
+          );
+          if (resolvedSession != null) {
+            candidate = resolvedSession;
+            restoreSource = 'active_scope';
+            fileScopeTenant = active.tenantId;
+            fileScopeCompany = active.companyId;
+          }
         }
       }
     }
@@ -1107,18 +1450,51 @@ class DriverSessionStore {
           companyId: pointer.companyId,
         );
         if (pointerSession != null &&
-            _validateStandalonePointerRestore(pointer, pointerSession)) {
-          candidate = pointerSession;
-          restoreSource = 'standalone_pointer';
+            _isRestorableStandaloneSession(pointerSession)) {
+          final expectedTenant = pointer.tenantId;
+          final expectedCompany = pointer.companyId;
+          final resolvedSession = await _resolveStandaloneSessionForRestore(
+            session: pointerSession,
+            fileScopeTenant: pointer.tenantId,
+            fileScopeCompany: pointer.companyId,
+            expectedTenant: expectedTenant,
+            expectedCompany: expectedCompany,
+            source: 'pointer',
+            pointer: pointer,
+          );
+          if (resolvedSession != null &&
+              _validateStandalonePointerRestore(pointer, resolvedSession)) {
+            candidate = resolvedSession;
+            restoreSource = 'standalone_pointer';
+            fileScopeTenant = pointer.tenantId;
+            fileScopeCompany = pointer.companyId;
+          } else {
+            final securityMismatch = _isTrueStandaloneScopeSecurityMismatch(
+              fileScopeTenant: pointer.tenantId,
+              fileScopeCompany: pointer.companyId,
+              expectedTenant: expectedTenant,
+              expectedCompany: expectedCompany,
+              pointer: pointer,
+            );
+            debugPrint(
+              '[DRIVER_SESSION][STANDALONE_POINTER_SKIP] tenant=${_maskIdForLog(pointer.tenantId)} company=${_maskIdForLog(pointer.companyId)} driver=${_maskIdForLog(pointer.driverId)} reason=${securityMismatch ? 'security_mismatch' : 'validation_failed'}',
+            );
+            if (securityMismatch) {
+              await _clearSessionAtScope(
+                tenantId: pointer.tenantId,
+                companyId: pointer.companyId,
+              );
+              await clearStandaloneScopePointer();
+            }
+          }
+        } else if (pointerSession == null) {
+          debugPrint(
+            '[DRIVER_SESSION][STANDALONE_POINTER_NEEDS_LOGIN] tenant=${_maskIdForLog(pointer.tenantId)} company=${_maskIdForLog(pointer.companyId)} driver=${_maskIdForLog(pointer.driverId)} reason=missing_session_no_token keep_pointer=true',
+          );
         } else {
           debugPrint(
-            '[DRIVER_SESSION][STANDALONE_POINTER_SKIP] tenant=${_maskIdForLog(pointer.tenantId)} company=${_maskIdForLog(pointer.companyId)} driver=${_maskIdForLog(pointer.driverId)} reason=${pointerSession == null ? 'missing_session' : 'validation_failed'}',
+            '[DRIVER_SESSION][STANDALONE_POINTER_SKIP] tenant=${_maskIdForLog(pointer.tenantId)} company=${_maskIdForLog(pointer.companyId)} driver=${_maskIdForLog(pointer.driverId)} reason=non_restorable',
           );
-          await _clearSessionAtScope(
-            tenantId: pointer.tenantId,
-            companyId: pointer.companyId,
-          );
-          await clearStandaloneScopePointer();
         }
       }
     }
@@ -1155,25 +1531,45 @@ class DriverSessionStore {
       return;
     }
 
-    if (await _restoreValidatedSession(
+    if (fileScopeTenant.isEmpty || fileScopeCompany.isEmpty) {
+      fileScopeTenant = (candidate.tenantId ?? '').trim();
+      fileScopeCompany = (candidate.companyId ?? '').trim();
+    }
+
+    final restoreResult = await _restoreValidatedSession(
       drivers,
       candidate,
       restoreSource: restoreSource,
-    )) {
-      return;
-    }
+      fileScopeTenant: fileScopeTenant,
+      fileScopeCompany: fileScopeCompany,
+      pointer: pointer,
+    );
+    if (restoreResult.ok) return;
 
-    debugPrint('[DRIVER_SESSION][CLEAR_STALE] reason=inactive_or_missing');
-    if (restoreSource == 'standalone_pointer' && pointer != null) {
-      await _clearSessionAtScope(
-        tenantId: pointer.tenantId,
-        companyId: pointer.companyId,
-      );
-      await clearStandaloneScopePointer();
-    } else if (active != null) {
-      await _clearSessionAtScope(
-        tenantId: active.tenantId,
-        companyId: active.companyId,
+    final destructive = restoreResult.destructiveReason;
+    final recoverable = restoreResult.recoverableReason;
+    if (destructive != null) {
+      debugPrint('[DRIVER_SESSION][CLEAR_STALE] reason=$destructive');
+      final clearTenant = fileScopeTenant.isNotEmpty
+          ? fileScopeTenant
+          : (pointer?.tenantId ?? active?.tenantId ?? '');
+      final clearCompany = fileScopeCompany.isNotEmpty
+          ? fileScopeCompany
+          : (pointer?.companyId ?? active?.companyId ?? '');
+      if (clearTenant.isNotEmpty && clearCompany.isNotEmpty) {
+        await _clearSessionAtScope(
+          tenantId: clearTenant,
+          companyId: clearCompany,
+        );
+      }
+      if (destructive == 'security_mismatch' &&
+          restoreSource == 'standalone_pointer' &&
+          pointer != null) {
+        await clearStandaloneScopePointer();
+      }
+    } else {
+      debugPrint(
+        '[DRIVER_SESSION][RESTORE_BLOCKED_NON_DESTRUCTIVE] reason=${recoverable ?? 'unknown'} driver=${_maskIdForLog(candidate.driverId)} keep_file=true keep_pointer=true',
       );
     }
     activeDriverSessionNotifier.value = null;
@@ -1298,6 +1694,15 @@ class DriverSessionStore {
       newTenantId: (activeScope?.tenantId ?? '').trim(),
       newCompanyId: (activeScope?.companyId ?? '').trim(),
     );
+    final incomingPhoto = _resolvePersistableDriverPhotoUrl(
+      driver.publicPortraitUrl,
+    );
+    final preservedPhoto = _preservePhotoForSameDriver(
+      incomingPhoto: incomingPhoto,
+      existing: effectivePrevious,
+      newDriverId: driver.id.trim(),
+      saveSource: 'saveFromDriverProfile',
+    );
     final session = ActiveDriverSession(
       driverId: driver.id.trim(),
       employeeNumber: driver.employeeNumber.trim(),
@@ -1307,9 +1712,7 @@ class DriverSessionStore {
       updatedAt: now,
       tenantId: activeScope?.tenantId,
       companyId: activeScope?.companyId,
-      driverPhotoUrl: _resolvePersistableDriverPhotoUrl(
-        driver.publicPortraitUrl,
-      ),
+      driverPhotoUrl: preservedPhoto,
       driverSessionToken: preservedToken.token,
       driverSessionExpiresAtUtc: preservedToken.tokenExpiryUtc,
       linkMethod: normalizedLinkOverride.isEmpty
@@ -1351,10 +1754,41 @@ class DriverSessionStore {
     DateTime? driverSessionExpiresAtUtc,
     DateTime? issuedAt,
     DateTime? expiresAt,
+    Map<String, dynamic>? verifiedPayload,
   }) async {
-    final normalizedTenantId = tenantId.trim();
-    final normalizedCompanyId = companyId.trim();
-    final normalizedCompanyCode = companyCode.trim().toUpperCase();
+    final payload = verifiedPayload ?? const <String, dynamic>{};
+    var normalizedTenantId = tenantId.trim().isNotEmpty
+        ? tenantId.trim()
+        : _firstNonEmptyScopeField(payload, <String>['tenant_id', 'tenantId']);
+    var normalizedCompanyId = companyId.trim().isNotEmpty
+        ? companyId.trim()
+        : _firstNonEmptyScopeField(payload, <String>[
+            'company_id',
+            'companyId',
+          ]);
+    var normalizedCompanyCode = companyCode.trim().isNotEmpty
+        ? companyCode.trim().toUpperCase()
+        : _firstNonEmptyScopeField(payload, <String>[
+            'company_code',
+            'companyCode',
+          ]).toUpperCase();
+    final activeScope = _activeScope();
+    if (normalizedTenantId.isEmpty && activeScope != null) {
+      normalizedTenantId = activeScope.tenantId.trim();
+    }
+    if (normalizedCompanyId.isEmpty && activeScope != null) {
+      normalizedCompanyId = activeScope.companyId.trim();
+    }
+    if (normalizedTenantId.isNotEmpty &&
+        normalizedCompanyId.isEmpty &&
+        activeScope != null) {
+      normalizedCompanyId = normalizedTenantId;
+    }
+    if (normalizedCompanyId.isNotEmpty &&
+        normalizedTenantId.isEmpty &&
+        activeScope != null) {
+      normalizedTenantId = normalizedCompanyId;
+    }
     final normalizedDriverId = driverId.trim();
     final normalizedDriverName = driverName.trim();
     final normalizedEmployeeNumber = employeeNumber.trim();
@@ -1396,6 +1830,14 @@ class DriverSessionStore {
     final resolvedTokenExpiryUtc = tokenFromPairing
         ? incomingTokenExpiryUtc
         : preservedToken.tokenExpiryUtc;
+    final preservedPhoto = _preservePhotoForSameDriver(
+      incomingPhoto: normalizedDriverPhotoUrl.isEmpty
+          ? null
+          : normalizedDriverPhotoUrl,
+      existing: existingScopedSession,
+      newDriverId: normalizedDriverId,
+      saveSource: 'saveVerifiedDriverPairingSession',
+    );
     final session = ActiveDriverSession(
       driverId: normalizedDriverId,
       employeeNumber: normalizedEmployeeNumber,
@@ -1411,9 +1853,7 @@ class DriverSessionStore {
       assignedVehicleId: normalizedAssignedVehicleId.isEmpty
           ? null
           : normalizedAssignedVehicleId,
-      driverPhotoUrl: normalizedDriverPhotoUrl.isEmpty
-          ? null
-          : normalizedDriverPhotoUrl,
+      driverPhotoUrl: (preservedPhoto ?? '').isEmpty ? null : preservedPhoto,
       driverSessionToken: resolvedToken,
       driverSessionExpiresAtUtc: resolvedTokenExpiryUtc,
       linkMethod: 'driver_pairing_code',
@@ -1424,8 +1864,9 @@ class DriverSessionStore {
       _cache = session;
       _cacheScopeKey = '$normalizedTenantId::$normalizedCompanyId';
       activeDriverSessionNotifier.value = session;
+      final savedPhoto = (session.driverPhotoUrl ?? '').trim();
       debugPrint(
-        '[DRIVER_SESSION][STANDALONE_PHOTO] driver=${_maskIdForLog(session.driverId)} photo=${normalizedDriverPhotoUrl.isEmpty ? 'missing' : 'present'} source=pairing',
+        '[DRIVER_SESSION][STANDALONE_PHOTO] driver=${_maskIdForLog(session.driverId)} photo=${savedPhoto.isEmpty ? 'missing' : 'present'} source=pairing',
       );
       debugPrint(
         '[DRIVER_SESSION][SAVE_VERIFIED] tenant=$normalizedTenantId company=$normalizedCompanyId driver=${_maskIdForLog(session.driverId)} method=driver_pairing_code path=${scopedFile.path}',
@@ -1442,6 +1883,7 @@ class DriverSessionStore {
     required String driverId,
     required String driverName,
     required String companyDisplayName,
+    String? employeeNumber,
     String? assignedVehicleId,
     String? driverPhotoUrl,
     String? companyLogoUrl,
@@ -1461,6 +1903,7 @@ class DriverSessionStore {
     final normalizedCompanyLogoUrl = (companyLogoUrl ?? '').trim();
     final normalizedVehiclePhotoUrl = (vehiclePhotoUrl ?? '').trim();
     final normalizedDriverSessionToken = (driverSessionToken ?? '').trim();
+    final normalizedEmployeeNumber = (employeeNumber ?? '').trim();
     if (normalizedTenantId.isEmpty ||
         normalizedCompanyId.isEmpty ||
         normalizedDriverId.isEmpty) {
@@ -1480,9 +1923,29 @@ class DriverSessionStore {
     final fallbackName = normalizedCompanyDisplayName.isEmpty
         ? normalizedDriverId
         : '$normalizedCompanyDisplayName chauffeur';
+    // Prefer the real driver code (chauffeur login code) for employeeNumber so
+    // local fleet validation can match the local DriverProfile. Fall back to
+    // driverId only when no code is provided (backward compatible).
+    final resolvedEmployeeNumber = normalizedEmployeeNumber.isEmpty
+        ? normalizedDriverId
+        : normalizedEmployeeNumber;
+    final existingScopedSession = await _readSession(
+      await _scopedFile(
+        tenantId: normalizedTenantId,
+        companyId: normalizedCompanyId,
+      ),
+    );
+    final preservedPhoto = _preservePhotoForSameDriver(
+      incomingPhoto: normalizedDriverPhotoUrl.isEmpty
+          ? null
+          : normalizedDriverPhotoUrl,
+      existing: existingScopedSession,
+      newDriverId: normalizedDriverId,
+      saveSource: 'saveBackendDriverLoginSession',
+    );
     final session = ActiveDriverSession(
       driverId: normalizedDriverId,
-      employeeNumber: normalizedDriverId,
+      employeeNumber: resolvedEmployeeNumber,
       fullName: normalizedDriverName.isEmpty
           ? fallbackName
           : normalizedDriverName,
@@ -1494,9 +1957,7 @@ class DriverSessionStore {
       assignedVehicleId: normalizedAssignedVehicleId.isEmpty
           ? null
           : normalizedAssignedVehicleId,
-      driverPhotoUrl: normalizedDriverPhotoUrl.isEmpty
-          ? null
-          : normalizedDriverPhotoUrl,
+      driverPhotoUrl: (preservedPhoto ?? '').isEmpty ? null : preservedPhoto,
       companyLogoUrl: normalizedCompanyLogoUrl.isEmpty
           ? null
           : normalizedCompanyLogoUrl,
@@ -1518,8 +1979,9 @@ class DriverSessionStore {
       _cache = session;
       _cacheScopeKey = '$normalizedTenantId::$normalizedCompanyId';
       activeDriverSessionNotifier.value = session;
+      final savedPhoto = (session.driverPhotoUrl ?? '').trim();
       debugPrint(
-        '[DRIVER_SESSION][STANDALONE_PHOTO] driver=${_maskIdForLog(session.driverId)} photo=${normalizedDriverPhotoUrl.isEmpty ? 'missing' : 'present'} source=backend',
+        '[DRIVER_SESSION][STANDALONE_PHOTO] driver=${_maskIdForLog(session.driverId)} photo=${savedPhoto.isEmpty ? 'missing' : 'present'} source=backend',
       );
       debugPrint(
         '[DRIVER_SESSION][SAVE_BACKEND] tenant=$normalizedTenantId company=$normalizedCompanyId driver=${_maskIdForLog(session.driverId)} method=public_driver_login path=${file.path}',

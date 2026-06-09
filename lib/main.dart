@@ -934,6 +934,7 @@ String? _publicCompanyCodeFromBootstrapPayload(Map<String, dynamic> bootstrap) {
 Future<bool> _hydrateCompanyBootstrapFromActiveSession({
   required String reason,
   bool clearOnUnauthorized = false,
+  bool bootstrapDriverSession = true,
 }) async {
   debugPrint('[COMPANY_BOOTSTRAP_REFRESH][START] reason=$reason');
   try {
@@ -1032,10 +1033,16 @@ Future<bool> _hydrateCompanyBootstrapFromActiveSession({
       );
     }
     await _applyCompanyProfileFromBootstrapPayload(bootstrap);
-    await DriverSessionStore.instance.bootstrap(
-      driversNotifier.value,
-      useStandaloneScopePointer: false,
-    );
+    if (bootstrapDriverSession) {
+      await DriverSessionStore.instance.bootstrap(
+        driversNotifier.value,
+        useStandaloneScopePointer: false,
+      );
+    } else {
+      debugPrint(
+        '[DRIVER_SESSION][BOOTSTRAP_SKIP] reason=business_preview hydrate_reason=$reason',
+      );
+    }
     final hydratedCompanyId = _firstBootstrapText(<dynamic>[
       companyProfileNotifier.value?.companyId,
       activeCompanySessionNotifier.value?.companyId,

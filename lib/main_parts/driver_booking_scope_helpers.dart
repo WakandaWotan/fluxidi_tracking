@@ -214,7 +214,11 @@ bool _shouldUseDriverBookingsRefreshEndpoint({
   bool hubVisible = false,
   String? previewDriverId,
   String? effectiveDriverId,
+  bool businessPreviewMode = false,
 }) {
+  // Business preview uses company/admin bookings refresh — never a standalone
+  // chauffeur session token.
+  if (businessPreviewMode) return false;
   // F3-E: any of these signals are sufficient to prefer the /driver/bookings
   // endpoint over /bookings. The token is still required at call-time to
   // actually authenticate against /driver/bookings; when the token is
@@ -237,7 +241,9 @@ bool _shouldBlockCompanyBookingsListRefreshInDriverContext({
   bool driverUiContext = false,
   String? previewDriverId,
   String? effectiveDriverId,
+  bool businessPreviewMode = false,
 }) {
+  if (businessPreviewMode) return false;
   if (appRoleNotifier.value == AppRole.driver) return true;
   if (bookingsHubVisible) return true;
   // F3-E: also block while previewing a driver from business_home and any
@@ -250,6 +256,7 @@ bool _shouldBlockCompanyBookingsListRefreshInDriverContext({
     hubVisible: bookingsHubVisible,
     previewDriverId: previewDriverId,
     effectiveDriverId: effectiveDriverId,
+    businessPreviewMode: businessPreviewMode,
   );
 }
 
