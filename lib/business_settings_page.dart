@@ -448,6 +448,10 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     _backendPostcodeCtrl.text = p.postcode;
     _backendCityCtrl.text = p.city;
     _backendCountryCtrl.text = p.country;
+    final normalizedCountryCode = _normalizeBusinessCountryCode(p.country);
+    if (normalizedCountryCode.isNotEmpty) {
+      _backendCountryCtrl.text = normalizedCountryCode;
+    }
     _backendPhoneCtrl.text = p.phone;
     _backendEmailCtrl.text = p.email;
     _backendWebsiteCtrl.text = p.website;
@@ -5747,6 +5751,89 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     );
   }
 
+  String _countryLabelForCode(String code) {
+    for (final entry in _kBusinessCountryCodes) {
+      if (entry[0] == code) {
+        switch (_lang) {
+          case AppLanguage.nl:
+            return entry[1];
+          case AppLanguage.en:
+            return entry[2];
+          case AppLanguage.fr:
+            return entry[3];
+          case AppLanguage.es:
+            return entry[4];
+        }
+      }
+    }
+    return code;
+  }
+
+  Widget _businessCountryDropdown() {
+    final currentCode = _normalizeBusinessCountryCode(_backendCountryCtrl.text);
+    final dropdownValue = currentCode.isEmpty ? null : currentCode;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: DropdownButtonFormField<String>(
+        isExpanded: true,
+        value: dropdownValue,
+        style: TextStyle(color: _textPrimary),
+        iconEnabledColor: _textSecondary,
+        dropdownColor: _inputFill,
+        decoration: InputDecoration(
+          labelText: _t(nl: 'Land', en: 'Country', fr: 'Pays', es: 'País'),
+          labelStyle: TextStyle(color: _textSecondary),
+          helperText: _t(
+            nl: 'Gebruikt voor facturatie, betalingen en officiële bedrijfsgegevens.',
+            en: 'Used for invoicing, payments and official company details.',
+            fr: "Utilisé pour la facturation, les paiements et les coordonnées officielles de l'entreprise.",
+            es: 'Se usa para facturación, pagos y datos oficiales de la empresa.',
+          ),
+          helperStyle: TextStyle(color: _textMuted, fontSize: 11.5),
+          floatingLabelBehavior: FloatingLabelBehavior.always,
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 14,
+            vertical: 16,
+          ),
+          filled: true,
+          fillColor: _inputFill,
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(10),
+            borderSide: BorderSide(color: _inputBorderColor),
+          ),
+          enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(10),
+            borderSide: BorderSide(color: _inputBorderColor),
+          ),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(10),
+            borderSide: BorderSide(color: _inputFocusColor, width: 1.2),
+          ),
+        ),
+        items: _kBusinessCountryCodes
+            .map(
+              (entry) => DropdownMenuItem<String>(
+                value: entry[0],
+                child: Text(
+                  '${_countryLabelForCode(entry[0])} (${entry[0]})',
+                  style: TextStyle(color: _textPrimary),
+                  overflow: TextOverflow.ellipsis,
+                  maxLines: 1,
+                ),
+              ),
+            )
+            .toList(growable: false),
+        onChanged: (value) {
+          if (value == null) return;
+          if (_backendCountryCtrl.text.trim() == value) return;
+          setState(() {
+            _backendCountryCtrl.text = value;
+          });
+        },
+      ),
+    );
+  }
+
   Widget _cancellationCutoffField({
     required TextEditingController controller,
     required String label,
@@ -7179,10 +7266,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                         ),
                       ],
                     ),
-                    _txt(
-                      _backendCountryCtrl,
-                      _t(nl: 'Land', en: 'Country', fr: 'Pays', es: 'Pais'),
-                    ),
+                    _businessCountryDropdown(),
                     _txt(
                       _backendPhoneCtrl,
                       _t(
@@ -8430,4 +8514,79 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
       ),
     );
   }
+}
+
+// ---------------------------------------------------------------------------
+// Official company details — supported country options + normalization.
+//
+// Keep this list aligned with what BusinessSettings persists in
+// `BackendBusinessProfile.country`. The code (column 0) is the value stored.
+// Columns 1..4 are display labels in nl/en/fr/es. Used by the in-page
+// dropdown and by [_normalizeBusinessCountryCode] to translate legacy free
+// text values into a canonical ISO-style code on hydrate.
+// ---------------------------------------------------------------------------
+const List<List<String>> _kBusinessCountryCodes = <List<String>>[
+  <String>['BE', 'België', 'Belgium', 'Belgique', 'Bélgica'],
+  <String>['NL', 'Nederland', 'Netherlands', 'Pays-Bas', 'Países Bajos'],
+  <String>['LU', 'Luxemburg', 'Luxembourg', 'Luxembourg', 'Luxemburgo'],
+  <String>['FR', 'Frankrijk', 'France', 'France', 'Francia'],
+  <String>['DE', 'Duitsland', 'Germany', 'Allemagne', 'Alemania'],
+  <String>['ES', 'Spanje', 'Spain', 'Espagne', 'España'],
+  <String>[
+    'GB',
+    'Verenigd Koninkrijk',
+    'United Kingdom',
+    'Royaume-Uni',
+    'Reino Unido',
+  ],
+];
+
+String _stripBusinessCountryDiacritics(String input) {
+  const fromMap = 'àáäâãèéëêìíïîòóöôõùúüûñç';
+  const toMap = 'aaaaaeeeeiiiioooooouuuunc';
+  final buffer = StringBuffer();
+  for (final ch in input.runes) {
+    final source = String.fromCharCode(ch);
+    final idx = fromMap.indexOf(source);
+    buffer.write(idx >= 0 ? toMap[idx] : source);
+  }
+  return buffer.toString();
+}
+
+/// Normalizes a free-text or ISO country value to one of the codes supported
+/// by the business country dropdown: BE, NL, LU, FR, DE, ES, GB.
+///
+/// Returns an empty string when the input does not map to a supported code,
+/// so callers can preserve unknown legacy values without overwriting them.
+String _normalizeBusinessCountryCode(String? value) {
+  if (value == null) return '';
+  final raw = value.trim();
+  if (raw.isEmpty) return '';
+  final upper = raw.toUpperCase();
+  if (upper.length == 2) {
+    if (upper == 'UK') return 'GB';
+    for (final entry in _kBusinessCountryCodes) {
+      if (entry[0] == upper) return upper;
+    }
+  }
+  final norm = _stripBusinessCountryDiacritics(raw.toLowerCase());
+  for (final entry in _kBusinessCountryCodes) {
+    for (var i = 1; i < entry.length; i++) {
+      if (_stripBusinessCountryDiacritics(entry[i].toLowerCase()) == norm) {
+        return entry[0];
+      }
+    }
+  }
+  switch (norm) {
+    case 'belgie':
+      return 'BE';
+    case 'holanda':
+    case 'paises bajos':
+      return 'NL';
+    case 'deutschland':
+      return 'DE';
+    case 'great britain':
+      return 'GB';
+  }
+  return '';
 }
