@@ -1500,6 +1500,7 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   _registerComplianceRegisterReceiptBridge();
   await loadBusinessThemePreference();
+  await loadBusinessHomeMobileLayoutPreference();
   await loadCompanyDriverViewThemePreference();
   await loadDriverAppThemePreference();
   await loadLocalTenantState();

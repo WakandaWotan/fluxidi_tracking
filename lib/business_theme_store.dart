@@ -12,8 +12,25 @@ const BusinessThemeVariant _kDefaultBusinessTheme =
 const CustomerThemeVariant _kDefaultPublishedCustomerTheme =
     CustomerThemeVariant.premiumLight;
 
+/// Phone-portrait Business Home dashboard layout preference.
+///
+/// - [compact]: existing default phone-portrait layout (2-column compact
+///   tiles, no image background). Preserves current production behavior.
+/// - [visual]: opt-in single-column wide image cards on phone portrait only.
+///   Tablet portrait/landscape and phone landscape are unaffected.
+enum BusinessHomeMobileLayout { compact, visual }
+
+const BusinessHomeMobileLayout _kDefaultBusinessHomeMobileLayout =
+    BusinessHomeMobileLayout.compact;
+
 final ValueNotifier<BusinessThemeVariant> businessThemeNotifier =
     ValueNotifier<BusinessThemeVariant>(_kDefaultBusinessTheme);
+
+/// Selected mobile (phone-portrait) Business Home layout. Defaults to
+/// [BusinessHomeMobileLayout.compact] so existing installs keep the current
+/// behavior until the user opts in to the visual layout.
+final ValueNotifier<BusinessHomeMobileLayout> businessHomeMobileLayoutNotifier =
+    ValueNotifier<BusinessHomeMobileLayout>(_kDefaultBusinessHomeMobileLayout);
 
 /// True only while a business owner / company admin page is mounted on the
 /// route stack. When false, [FluxidiFrame] must not consume the business
@@ -32,6 +49,8 @@ const String _businessThemeStateDirName = 'business_state';
 const String _businessThemeFileName = 'business_theme_v1.json';
 const String _publishedCustomerThemeFileName =
     'business_published_customer_theme_v1.json';
+const String _businessHomeMobileLayoutFileName =
+    'business_home_mobile_layout_v1.json';
 
 Future<File> _businessThemeFile(String fileName) async {
   final base = await getApplicationDocumentsDirectory();
@@ -58,6 +77,14 @@ CustomerThemeVariant _customerThemeVariantFromStorage(String raw) {
     if (variant.name == normalized) return variant;
   }
   return _kDefaultPublishedCustomerTheme;
+}
+
+BusinessHomeMobileLayout _businessHomeMobileLayoutFromStorage(String raw) {
+  final normalized = raw.trim();
+  for (final variant in BusinessHomeMobileLayout.values) {
+    if (variant.name == normalized) return variant;
+  }
+  return _kDefaultBusinessHomeMobileLayout;
 }
 
 Future<void> loadBusinessThemePreference() async {
@@ -133,6 +160,50 @@ Future<void> saveBusinessPublishedCustomerThemePreference(
   businessPublishedCustomerThemeNotifier.value = variant;
   try {
     final file = await _businessThemeFile(_publishedCustomerThemeFileName);
+    final payload = <String, dynamic>{
+      'variant': variant.name,
+      'updatedAt': DateTime.now().toUtc().toIso8601String(),
+    };
+    await file.writeAsString(jsonEncode(payload), flush: true);
+  } catch (_) {
+    // Keep in-memory value when persistence temporarily fails.
+  }
+}
+
+Future<void> loadBusinessHomeMobileLayoutPreference() async {
+  try {
+    final file = await _businessThemeFile(_businessHomeMobileLayoutFileName);
+    if (!await file.exists()) {
+      businessHomeMobileLayoutNotifier.value =
+          _kDefaultBusinessHomeMobileLayout;
+      return;
+    }
+    final raw = await file.readAsString();
+    if (raw.trim().isEmpty) {
+      businessHomeMobileLayoutNotifier.value =
+          _kDefaultBusinessHomeMobileLayout;
+      return;
+    }
+    final decoded = jsonDecode(raw);
+    if (decoded is! Map) {
+      businessHomeMobileLayoutNotifier.value =
+          _kDefaultBusinessHomeMobileLayout;
+      return;
+    }
+    final variantRaw = (decoded['variant'] ?? '').toString();
+    businessHomeMobileLayoutNotifier.value =
+        _businessHomeMobileLayoutFromStorage(variantRaw);
+  } catch (_) {
+    businessHomeMobileLayoutNotifier.value = _kDefaultBusinessHomeMobileLayout;
+  }
+}
+
+Future<void> saveBusinessHomeMobileLayoutPreference(
+  BusinessHomeMobileLayout variant,
+) async {
+  businessHomeMobileLayoutNotifier.value = variant;
+  try {
+    final file = await _businessThemeFile(_businessHomeMobileLayoutFileName);
     final payload = <String, dynamic>{
       'variant': variant.name,
       'updatedAt': DateTime.now().toUtc().toIso8601String(),

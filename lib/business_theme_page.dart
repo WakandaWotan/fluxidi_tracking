@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:fluxidi_tracking/app_config.dart';
+import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/business_theme_palette.dart';
 import 'package:fluxidi_tracking/business_theme_store.dart';
 import 'package:fluxidi_tracking/company_driver_view_theme_store.dart';
@@ -50,6 +52,7 @@ class _BusinessThemePageState extends State<BusinessThemePage> {
   Future<void> _loadPreferences() async {
     await Future.wait<void>([
       loadBusinessThemePreference(),
+      loadBusinessHomeMobileLayoutPreference(),
       loadCompanyDriverViewThemePreference(),
     ]);
   }
@@ -90,6 +93,62 @@ class _BusinessThemePageState extends State<BusinessThemePage> {
         return 'Midnight Blue';
       case DriverThemeVariant.highContrast:
         return 'Midday Gold';
+    }
+  }
+
+  String _localized({
+    required String nl,
+    required String en,
+    required String fr,
+    required String es,
+  }) {
+    switch (appLanguageNotifier.value) {
+      case AppLanguage.en:
+        return en;
+      case AppLanguage.fr:
+        return fr;
+      case AppLanguage.es:
+        return es;
+      case AppLanguage.nl:
+        return nl;
+    }
+  }
+
+  String _labelForMobileLayout(BusinessHomeMobileLayout variant) {
+    switch (variant) {
+      case BusinessHomeMobileLayout.compact:
+        return _localized(
+          nl: 'Compact',
+          en: 'Compact',
+          fr: 'Compact',
+          es: 'Compacto',
+        );
+      case BusinessHomeMobileLayout.visual:
+        return _localized(
+          nl: 'Visueel',
+          en: 'Visual',
+          fr: 'Visuel',
+          es: 'Visual',
+        );
+    }
+  }
+
+  String _subtitleForMobileLayout(BusinessHomeMobileLayout variant) {
+    switch (variant) {
+      case BusinessHomeMobileLayout.compact:
+        return _localized(
+          nl: 'Standaard compacte tegels.',
+          en: 'Standard compact tiles.',
+          fr: 'Tuiles compactes standard.',
+          es: 'Tarjetas compactas estándar.',
+        );
+      case BusinessHomeMobileLayout.visual:
+        return _localized(
+          nl: 'Brede actiekaarten met bedrijfsafbeeldingen.',
+          en: 'Wide action cards with business images.',
+          fr: 'Grandes cartes d’action avec images d’entreprise.',
+          es: 'Tarjetas de acción amplias con imágenes de empresa.',
+        );
     }
   }
 
@@ -299,6 +358,51 @@ class _BusinessThemePageState extends State<BusinessThemePage> {
     );
   }
 
+  Widget _mobileLayoutSection() {
+    return ValueListenableBuilder<AppLanguage>(
+      valueListenable: appLanguageNotifier,
+      builder: (context, _, __) {
+        return ValueListenableBuilder<BusinessHomeMobileLayout>(
+          valueListenable: businessHomeMobileLayoutNotifier,
+          builder: (context, current, ___) {
+            final palette = _activeVisuals.palette;
+            return Column(
+              children: [
+                for (final variant in BusinessHomeMobileLayout.values) ...[
+                  _selectableThemeTile(
+                    title: _labelForMobileLayout(variant),
+                    subtitle: _subtitleForMobileLayout(variant),
+                    selected: variant == current,
+                    swatches: [
+                      palette.background,
+                      palette.surface,
+                      palette.accent,
+                    ],
+                    onTap: () async {
+                      await saveBusinessHomeMobileLayoutPreference(variant);
+                      if (!context.mounted) return;
+                      _showSavedSnack(
+                        _localized(
+                          nl: 'Mobiele dashboardweergave opgeslagen: ${_labelForMobileLayout(variant)}',
+                          en: 'Mobile dashboard layout saved: ${_labelForMobileLayout(variant)}',
+                          fr: 'Affichage mobile enregistré : ${_labelForMobileLayout(variant)}',
+                          es: 'Vista móvil guardada: ${_labelForMobileLayout(variant)}',
+                        ),
+                      );
+                    },
+                    visuals: _activeVisuals,
+                  ),
+                  if (variant != BusinessHomeMobileLayout.values.last)
+                    const SizedBox(height: 8),
+                ],
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return ValueListenableBuilder<BusinessThemeVariant>(
@@ -338,6 +442,25 @@ class _BusinessThemePageState extends State<BusinessThemePage> {
                     subtitle: 'Kies het thema voor chauffeur/driver schermen.',
                     child: _driverSection(),
                     visuals: _activeVisuals,
+                  ),
+                  ValueListenableBuilder<AppLanguage>(
+                    valueListenable: appLanguageNotifier,
+                    builder: (context, _, __) => _sectionCard(
+                      title: _localized(
+                        nl: 'C. Mobiele dashboardweergave',
+                        en: 'C. Mobile dashboard layout',
+                        fr: 'C. Affichage mobile du tableau de bord',
+                        es: 'C. Vista móvil del panel',
+                      ),
+                      subtitle: _localized(
+                        nl: 'Alleen telefoon staand. Tablet en telefoon liggend blijven ongewijzigd.',
+                        en: 'Phone portrait only. Tablet and phone landscape stay unchanged.',
+                        fr: 'Téléphone en mode portrait uniquement. Tablette et paysage inchangés.',
+                        es: 'Solo teléfono en vertical. Tablet y horizontal sin cambios.',
+                      ),
+                      child: _mobileLayoutSection(),
+                      visuals: _activeVisuals,
+                    ),
                   ),
                 ],
               );

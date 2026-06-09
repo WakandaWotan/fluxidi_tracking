@@ -1404,8 +1404,8 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
             ),
           Text(
             _googleCalendarStatusLabel(),
-            style: const TextStyle(
-              color: Colors.white,
+            style: TextStyle(
+              color: _textPrimary,
               fontWeight: FontWeight.w800,
               fontSize: 13.5,
             ),
@@ -1564,7 +1564,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                 fr: 'Le compte de paiement demo Fluxidi est actif. Il est reserve aux tests internes et aux demos. En production, cette entreprise devra connecter son propre compte Mollie.',
                 es: 'La cuenta de pago demo de Fluxidi esta activa. Solo es para pruebas internas y demos. En produccion, esta empresa debera conectar su propia cuenta Mollie.',
               ),
-              style: const TextStyle(color: Colors.white70, height: 1.45),
+              style: TextStyle(color: _textSecondary, height: 1.45),
             ),
           const SizedBox(height: 12),
           _paymentOwnershipInfoRow(
@@ -1629,14 +1629,14 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
             flex: 2,
             child: Text(
               label,
-              style: const TextStyle(color: Colors.white54, fontSize: 13),
+              style: TextStyle(color: _textMuted, fontSize: 13),
             ),
           ),
           Expanded(
             flex: 3,
             child: Text(
               value,
-              style: const TextStyle(color: Colors.white, fontSize: 13),
+              style: TextStyle(color: _textPrimary, fontSize: 13),
             ),
           ),
         ],
@@ -1780,8 +1780,8 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
               fr: 'Reservations payees',
               es: 'Reservas pagadas',
             ),
-            style: const TextStyle(
-              color: Colors.white,
+            style: TextStyle(
+              color: _textPrimary,
               fontSize: 12.8,
               fontWeight: FontWeight.w700,
             ),
@@ -6416,12 +6416,32 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
       animation: Listenable.merge([appLanguageNotifier, businessThemeNotifier]),
       builder: (context, _) => Theme(
         data: Theme.of(context).copyWith(
+          // Scope a brightness/text-theme override to BusinessSettingsPage
+          // only. The global app theme stays Brightness.dark with white
+          // textTheme, so driver/customer/role-entry screens are unchanged.
+          // Without this override, every default-styled Text widget on the
+          // settings page (SwitchListTile titles, ExpansionTile headers,
+          // DropdownButtonFormField items, etc.) would inherit white text
+          // and disappear on the Clean Professional light palette.
+          brightness: _isDark ? Brightness.dark : Brightness.light,
           scaffoldBackgroundColor: _pageBg,
+          textTheme:
+              (_isDark
+                      ? Typography.whiteMountainView
+                      : Typography.blackMountainView)
+                  .apply(bodyColor: _textPrimary, displayColor: _textPrimary),
+          primaryTextTheme:
+              (_isDark
+                      ? Typography.whiteMountainView
+                      : Typography.blackMountainView)
+                  .apply(bodyColor: _textPrimary, displayColor: _textPrimary),
           colorScheme: Theme.of(context).colorScheme.copyWith(
+            brightness: _isDark ? Brightness.dark : Brightness.light,
             primary: _accent,
             secondary: _accent,
             surface: _panelBg,
             onSurface: _textPrimary,
+            onPrimary: _textOnAccent,
           ),
           appBarTheme: AppBarTheme(
             backgroundColor: _pageBg,
@@ -6798,7 +6818,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                                   es: 'Comparte este enlace o código QR con los clientes para que puedan reservar directamente.',
                                 ),
                                 style: TextStyle(
-                                  color: Colors.white.withOpacity(0.78),
+                                  color: _textSecondary,
                                   fontSize: 12.5,
                                   height: 1.35,
                                 ),
@@ -7055,7 +7075,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                                   es: 'La página pública de reserva se vinculará más a este código Fluxidi.',
                                 ),
                                 style: TextStyle(
-                                  color: Colors.white.withOpacity(0.66),
+                                  color: _textMuted,
                                   fontSize: 12,
                                   height: 1.3,
                                 ),
@@ -7401,10 +7421,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                               fr: 'Enregistre uniquement les paramètres TVA.',
                               es: 'Guarda solo la configuración de IVA.',
                             ),
-                            style: const TextStyle(
-                              color: Colors.white54,
-                              fontSize: 11,
-                            ),
+                            style: TextStyle(color: _textMuted, fontSize: 11),
                             textAlign: TextAlign.right,
                           ),
                         ],
@@ -7444,10 +7461,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                         fr: 'Publiez des informations publiques sécurisées afin que les clients puissent vous trouver.',
                         es: 'Publica información segura de la empresa para que los clientes puedan encontrarte.',
                       ),
-                      style: const TextStyle(
-                        color: Colors.white70,
-                        fontSize: 12.5,
-                      ),
+                      style: TextStyle(color: _textSecondary, fontSize: 12.5),
                     ),
                     const SizedBox(height: 10),
                     Text(
@@ -7457,10 +7471,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                         fr: 'Téléversez un logo ou une photo de couverture. Fluxidi crée automatiquement un lien public sécurisé.',
                         es: 'Sube un logo o una foto de portada. Fluxidi crea automáticamente un enlace público seguro.',
                       ),
-                      style: const TextStyle(
-                        color: Colors.white60,
-                        fontSize: 11.4,
-                      ),
+                      style: TextStyle(color: _textMuted, fontSize: 11.4),
                     ),
                     const SizedBox(height: 10),
                     _txt(
@@ -7488,10 +7499,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                         fr: 'Utilisez des virgules, espaces ou retours à la ligne entre les codes postaux.',
                         es: 'Usa comas, espacios o saltos de línea entre códigos postales.',
                       ),
-                      style: const TextStyle(
-                        color: Colors.white60,
-                        fontSize: 11.2,
-                      ),
+                      style: TextStyle(color: _textMuted, fontSize: 11.2),
                     ),
                     const SizedBox(height: 10),
                     Text(
@@ -7501,10 +7509,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                         fr: 'Couverture publique pour Taxis à proximité (optionnel).',
                         es: 'Cobertura pública para Taxis cercanos (opcional).',
                       ),
-                      style: const TextStyle(
-                        color: Colors.white60,
-                        fontSize: 11.2,
-                      ),
+                      style: TextStyle(color: _textMuted, fontSize: 11.2),
                     ),
                     const SizedBox(height: 8),
                     SizedBox(
@@ -7609,8 +7614,8 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                         fr: 'Services publics et visibilité du profil',
                         es: 'Servicios públicos y visibilidad del perfil',
                       ),
-                      style: const TextStyle(
-                        color: Colors.white70,
+                      style: TextStyle(
+                        color: _textSecondary,
                         fontSize: 12.6,
                         fontWeight: FontWeight.w700,
                       ),
@@ -7623,10 +7628,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                         fr: 'Ceci est séparé de la configuration des services. Cette section contrôle le profil public et les CTA de réservation.',
                         es: 'Esto es independiente de la configuración de servicios. Estos controles afectan el perfil público y los CTA de reserva.',
                       ),
-                      style: const TextStyle(
-                        color: Colors.white60,
-                        fontSize: 11.2,
-                      ),
+                      style: TextStyle(color: _textMuted, fontSize: 11.2),
                     ),
                     const SizedBox(height: 8),
                     Wrap(
@@ -7679,8 +7681,8 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                         fr: 'Moyens de paiement visibles par les clients',
                         es: 'Opciones de pago visibles para clientes',
                       ),
-                      style: const TextStyle(
-                        color: Colors.white70,
+                      style: TextStyle(
+                        color: _textSecondary,
                         fontSize: 12.6,
                         fontWeight: FontWeight.w700,
                       ),
@@ -7824,10 +7826,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                           fr: 'Avancé : URLs publiques manuelles (secours)',
                           es: 'Avanzado: URLs públicas manuales (respaldo)',
                         ),
-                        style: const TextStyle(
-                          color: Colors.white70,
-                          fontSize: 12.3,
-                        ),
+                        style: TextStyle(color: _textSecondary, fontSize: 12.3),
                       ),
                       children: [
                         _txt(
@@ -7937,10 +7936,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                           fr: 'Derniere publication: ${_publicPartnerProfilePublishedAt.trim()}',
                           es: 'Ultima publicacion: ${_publicPartnerProfilePublishedAt.trim()}',
                         ),
-                        style: const TextStyle(
-                          color: Colors.white54,
-                          fontSize: 10.8,
-                        ),
+                        style: TextStyle(color: _textMuted, fontSize: 10.8),
                       ),
                     ],
                     if (_publicPartnerProfileError != null) ...[
@@ -8232,10 +8228,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                           padding: const EdgeInsets.only(bottom: 8),
                           child: Text(
                             '${_t(nl: 'BTW wordt beheerd via BTW-instellingen hierboven.', en: 'VAT is managed in the VAT settings above.', fr: 'La TVA est gérée dans les paramètres TVA ci-dessus.', es: 'El IVA se gestiona en los ajustes de IVA de arriba.')} (${vatPercent % 1 == 0 ? vatPercent.toStringAsFixed(0) : vatPercent.toStringAsFixed(2)}%, $vatModeLabel)',
-                            style: const TextStyle(
-                              color: Colors.white70,
-                              fontSize: 12,
-                            ),
+                            style: TextStyle(color: _textMuted, fontSize: 12),
                           ),
                         );
                       },

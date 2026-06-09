@@ -75,10 +75,21 @@ class _BusinessHomePageState extends State<BusinessHomePage>
     // shells (PIN/unlock, login, customer, standalone driver) keep the brand
     // default accent.
     businessShellFrameActiveNotifier.value = true;
+    // Rebuild when the user toggles between Compact and Visual mobile layout
+    // from the theme page. Only affects phone-portrait rendering; tablet and
+    // phone-landscape gates remain unchanged.
+    businessHomeMobileLayoutNotifier.addListener(
+      _onBusinessHomeMobileLayoutChanged,
+    );
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _guardBusinessAccessOrRedirect(reason: 'business_home_init');
     });
     unawaited(_refreshDashboardKpis(reason: 'init'));
+  }
+
+  void _onBusinessHomeMobileLayoutChanged() {
+    if (!mounted) return;
+    setState(() {});
   }
 
   @override
@@ -99,6 +110,9 @@ class _BusinessHomePageState extends State<BusinessHomePage>
       kAppRouteObserver.unsubscribe(this);
       _routeObserverSubscribed = false;
     }
+    businessHomeMobileLayoutNotifier.removeListener(
+      _onBusinessHomeMobileLayoutChanged,
+    );
     // Releasing the business shell flag here means the next non-business
     // screen (role entry, login, customer, driver standalone) renders with
     // the brand default frame accent instead of inheriting Neon Rush /
@@ -1776,30 +1790,38 @@ class _BusinessHomePageState extends State<BusinessHomePage>
     final palette = _businessThemePalette;
     final themeVariant = businessThemeNotifier.value;
     final isExecutiveGold = themeVariant == BusinessThemeVariant.executiveGold;
+    // Executive Gold keeps its bespoke near-black gradient (theme intent).
+    // Every other variant falls through to palette-aware surfaces so that
+    // the Clean Professional light palette renders a light card instead of a
+    // black block, and the other dark palettes (Corporate Blue, Emerald
+    // Ivory, Fluxidi Neon Rush) use their own dark surface tones.
+    final gradientColors = isExecutiveGold
+        ? const <Color>[Color(0xFF101010), Color(0xFF07080C), Color(0xFF07080C)]
+        : <Color>[palette.surface, palette.surfaceAlt, palette.background];
+    final outerGlow = isExecutiveGold
+        ? kFluxidiYellow.withOpacity(0.07)
+        : palette.accent.withOpacity(0.10);
+    final dropShadowColor = palette.shadow.withOpacity(
+      palette.isDark ? 0.36 : 0.18,
+    );
     return Container(
       padding: padding ?? const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        gradient: const LinearGradient(
+        gradient: LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          colors: [Color(0xFF101010), Color(0xFF07080C), Color(0xFF07080C)],
+          colors: gradientColors,
         ),
         borderRadius: BorderRadius.circular(16),
         border: Border.all(
           color: isExecutiveGold
               ? kFluxidiYellow.withOpacity(0.17)
-              : palette.accent.withOpacity(0.22),
+              : palette.accent.withOpacity(palette.isDark ? 0.22 : 0.34),
         ),
         boxShadow: [
+          BoxShadow(color: outerGlow, blurRadius: 12, spreadRadius: 0.2),
           BoxShadow(
-            color: isExecutiveGold
-                ? kFluxidiYellow.withOpacity(0.07)
-                : palette.accent.withOpacity(0.10),
-            blurRadius: 12,
-            spreadRadius: 0.2,
-          ),
-          BoxShadow(
-            color: Colors.black.withOpacity(0.36),
+            color: dropShadowColor,
             blurRadius: 10,
             offset: const Offset(0, 4),
           ),
@@ -2841,6 +2863,26 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                 final useTabletVisualMode =
                     isTabletPortrait || isTabletLandscape;
                 final usesTabletHeader = useTabletVisualMode;
+                // Phone-portrait Visual layout is opt-in via the business
+                // theme settings page. It must NOT activate on tablet (any
+                // orientation) or on phone landscape, so existing layouts
+                // remain byte-for-byte unchanged for those cases.
+                final useVisualMobileMode =
+                    !isTabletPortrait &&
+                    !isTabletLandscape &&
+                    W < H &&
+                    businessHomeMobileLayoutNotifier.value ==
+                        BusinessHomeMobileLayout.visual;
+                // Flexible target for visual cards across small + large
+                // Android phones. Clamped to a comfortable 100–116 px range
+                // regardless of width so labels stay legible without
+                // overflowing on narrow phones.
+                final visualMobileCardHeight = clampDouble(
+                  W * 0.28,
+                  100.0,
+                  116.0,
+                );
+                final visualMobileCardSpacing = 10.0;
                 final businessHeaderHeight = isTabletLandscape
                     ? clampDouble(H * 0.17, 110.0, 150.0)
                     : isTabletPortrait
@@ -2862,11 +2904,15 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                     ? clampDouble(H * 0.21, 150.0, 188.0)
                     : isTabletPortrait
                     ? clampDouble(H * 0.105, 132.0, 148.0)
+                    : useVisualMobileMode
+                    ? visualMobileCardHeight
                     : 132.0;
                 final businessQuickActionSpacing = isTabletLandscape
                     ? 8.0
                     : isTabletPortrait
                     ? 14.0
+                    : useVisualMobileMode
+                    ? visualMobileCardSpacing
                     : 12.0;
                 final businessBackButtonGap = isTabletLandscape
                     ? clampDouble(H * 0.025, 10.0, 22.0)
@@ -3024,8 +3070,8 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                     fr: 'Bonjour ! 👋',
                                     es: '¡Buenos días! 👋',
                                   ),
-                                  style: const TextStyle(
-                                    color: Colors.white,
+                                  style: TextStyle(
+                                    color: _businessThemePalette.textPrimary,
                                     fontWeight: FontWeight.w800,
                                     fontSize: 19,
                                   ),
@@ -3039,7 +3085,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                     es: 'Resumen de empresa',
                                   ),
                                   style: TextStyle(
-                                    color: Colors.white.withOpacity(0.74),
+                                    color: _businessThemePalette.textMuted,
                                     fontSize: 12.5,
                                   ),
                                 ),
@@ -3311,10 +3357,14 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                           builder: (context, constraints) {
                             final quickActionColumns = isTabletLandscape
                                 ? 5
+                                : useVisualMobileMode
+                                ? 1
                                 : 2;
                             final totalHorizontalSpacing =
-                                businessQuickActionSpacing *
-                                (quickActionColumns - 1);
+                                quickActionColumns > 1
+                                ? businessQuickActionSpacing *
+                                      (quickActionColumns - 1)
+                                : 0.0;
                             final cardWidth =
                                 (constraints.maxWidth -
                                     totalHorizontalSpacing) /
@@ -3360,7 +3410,9 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                       fluxidiNeonRushAsset:
                                           'assets/🥇 Fluxidi Neon Rush/company_settings_neon_rush.png',
                                     ),
-                                    useImageBackground: useTabletVisualMode,
+                                    useImageBackground:
+                                        useTabletVisualMode ||
+                                        useVisualMobileMode,
                                     compact: isTabletLandscape,
                                   ),
                                 ),
@@ -3398,7 +3450,9 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                         fluxidiNeonRushAsset:
                                             'assets/🥇 Fluxidi Neon Rush/company_bookings_neon_rush.png',
                                       ),
-                                      useImageBackground: useTabletVisualMode,
+                                      useImageBackground:
+                                          useTabletVisualMode ||
+                                          useVisualMobileMode,
                                       compact: isTabletLandscape,
                                     ),
                                   ),
@@ -3439,7 +3493,9 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                       fluxidiNeonRushAsset:
                                           'assets/🥇 Fluxidi Neon Rush/company_subscriptions_neon_rush.png',
                                     ),
-                                    useImageBackground: useTabletVisualMode,
+                                    useImageBackground:
+                                        useTabletVisualMode ||
+                                        useVisualMobileMode,
                                     compact: isTabletLandscape,
                                   ),
                                 ),
@@ -3480,7 +3536,9 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                       fluxidiNeonRushAsset:
                                           'assets/🥇 Fluxidi Neon Rush/company_vehicles_neon_rush.png',
                                     ),
-                                    useImageBackground: useTabletVisualMode,
+                                    useImageBackground:
+                                        useTabletVisualMode ||
+                                        useVisualMobileMode,
                                     compact: isTabletLandscape,
                                   ),
                                 ),
@@ -3516,7 +3574,9 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                       fluxidiNeonRushAsset:
                                           'assets/🥇 Fluxidi Neon Rush/company_chiron_neon_rush.png',
                                     ),
-                                    useImageBackground: useTabletVisualMode,
+                                    useImageBackground:
+                                        useTabletVisualMode ||
+                                        useVisualMobileMode,
                                     compact: isTabletLandscape,
                                   ),
                                 ),
@@ -3584,7 +3644,9 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                       fluxidiNeonRushAsset:
                                           'assets/🥇 Fluxidi Neon Rush/company_drivers_neon_rush.png',
                                     ),
-                                    useImageBackground: useTabletVisualMode,
+                                    useImageBackground:
+                                        useTabletVisualMode ||
+                                        useVisualMobileMode,
                                     compact: isTabletLandscape,
                                   ),
                                 ),
@@ -3619,7 +3681,9 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                       fluxidiNeonRushAsset:
                                           'assets/🥇 Fluxidi Neon Rush/company_driver_view_neon_rush.png',
                                     ),
-                                    useImageBackground: useTabletVisualMode,
+                                    useImageBackground:
+                                        useTabletVisualMode ||
+                                        useVisualMobileMode,
                                     compact: isTabletLandscape,
                                   ),
                                 ),
@@ -3660,7 +3724,9 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                       fluxidiNeonRushAsset:
                                           'assets/🥇 Fluxidi Neon Rush/company_demand_radar_neon_rush.png',
                                     ),
-                                    useImageBackground: useTabletVisualMode,
+                                    useImageBackground:
+                                        useTabletVisualMode ||
+                                        useVisualMobileMode,
                                     compact: isTabletLandscape,
                                   ),
                                 ),
@@ -3697,7 +3763,9 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                       fluxidiNeonRushAsset:
                                           'assets/🥇 Fluxidi Neon Rush/company_share_booking_link_neon_rush.png',
                                     ),
-                                    useImageBackground: useTabletVisualMode,
+                                    useImageBackground:
+                                        useTabletVisualMode ||
+                                        useVisualMobileMode,
                                     compact: isTabletLandscape,
                                   ),
                                 ),
@@ -3735,7 +3803,9 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                         fluxidiNeonRushAsset:
                                             'assets/🥇 Fluxidi Neon Rush/company_bookings_neon_rush.png',
                                       ),
-                                      useImageBackground: useTabletVisualMode,
+                                      useImageBackground:
+                                          useTabletVisualMode ||
+                                          useVisualMobileMode,
                                       compact: isTabletLandscape,
                                     ),
                                   ),
@@ -3775,7 +3845,9 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                       fluxidiNeonRushAsset:
                                           'assets/🥇 Fluxidi Neon Rush/company_ai_dispatch_neon_rush.png',
                                     ),
-                                    useImageBackground: useTabletVisualMode,
+                                    useImageBackground:
+                                        useTabletVisualMode ||
+                                        useVisualMobileMode,
                                     compact: isTabletLandscape,
                                   ),
                                 ),
