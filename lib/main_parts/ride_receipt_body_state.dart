@@ -581,8 +581,17 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
   }
 
   String? _cleanContactText(dynamic value) {
-    final text = value?.toString().trim();
-    if (text == null || text.isEmpty || text == 'null') return null;
+    if (value == null) return null;
+    // Defensive guard: never stringify Map/Iterable nodes. When path lookups
+    // land on raw compliance/booking sub-trees (e.g. {label: ''}, {}, lists),
+    // Dart's default toString() would surface "{}", "{label: }" or "[]" into
+    // receipt UI / PDF fields. Treat those as "no scalar value found" so the
+    // resolver can fall back to the next path. Route-aware extraction of
+    // {label}/{lat,lon} happens upstream (e.g. _TripHistoryItem._placeLabel
+    // and _TripHistoryItem._extractRouteLabel) before reaching this helper.
+    if (value is Map || value is Iterable) return null;
+    final text = value.toString().trim();
+    if (text.isEmpty || text == 'null') return null;
     return text;
   }
 
@@ -679,7 +688,69 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
     final text = value?.trim();
     if (text == null || text.isEmpty) return true;
     if (text == '-' || text == '—') return true;
-    return text.toLowerCase() == _receiptText('currentLocation').toLowerCase();
+    if (_looksLikeMapLiteralRoute(text)) return true;
+    final lower = text.toLowerCase();
+    if (lower == _receiptText('currentLocation').toLowerCase()) return true;
+    // Localized fallback labels from `_sanitizeCustomerFacingRouteLabel` are
+    // NOT valid route values — they exist only to fill a void when no actual
+    // address could be resolved. Treat them as placeholders so the wider
+    // path-based picker can still surface the real requested-booking address.
+    if (lower == _receiptStartPointFallback().toLowerCase()) return true;
+    if (lower == _receiptStartLocationFallback().toLowerCase()) return true;
+    return false;
+  }
+
+  /// Detects stringified Map / List literals such as `{}`, `{label: }`,
+  /// `{label: , lat: 50.8}` or `[]`. These can sneak in when an upstream
+  /// resolver calls `value.toString()` on a Map (e.g. legacy
+  /// `_extractRouteLabel` fallback) and must never be shown to the user as
+  /// an address.
+  bool _looksLikeMapLiteralRoute(String? value) {
+    if (value == null) return false;
+    final trimmed = value.trim();
+    if (trimmed.length < 2) return false;
+    final start = trimmed[0];
+    final end = trimmed[trimmed.length - 1];
+    return (start == '{' && end == '}') || (start == '[' && end == ']');
+  }
+
+  /// Resolves a clean route-display String from a value that may be a String,
+  /// a Map (`{label,address,formatted_address,name,text,value}`) or `null`.
+  /// Returns `null` for placeholders / empty Maps / Iterables. Never calls
+  /// `toString()` on a Map or Iterable.
+  String? _resolveRouteValueText(dynamic value) {
+    if (value == null) return null;
+    if (value is String) {
+      final cleaned = _cleanContactText(value);
+      if (cleaned == null) return null;
+      if (_isPlaceholderRouteLabel(cleaned)) return null;
+      return cleaned;
+    }
+    if (value is Map) {
+      for (final key in const <String>[
+        'label',
+        'address',
+        'formatted_address',
+        'formattedAddress',
+        'name',
+        'text',
+        'value',
+      ]) {
+        final inner = value[key];
+        if (inner is String) {
+          final cleaned = _cleanContactText(inner);
+          if (cleaned == null) continue;
+          if (_isPlaceholderRouteLabel(cleaned)) continue;
+          return cleaned;
+        }
+      }
+      return null;
+    }
+    if (value is Iterable) return null;
+    final cleaned = _cleanContactText(value);
+    if (cleaned == null) return null;
+    if (_isPlaceholderRouteLabel(cleaned)) return null;
+    return cleaned;
   }
 
   ({String from, String to}) _resolvedRouteForPdf() {
@@ -692,53 +763,144 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
 
     String? pickLabel(List<List<String>> paths) {
       for (final path in paths) {
-        final text = _cleanContactText(_detailAt(path));
-        if (!_isPlaceholderRouteLabel(text)) return text;
+        final raw = _detailAt(path);
+        final text = _resolveRouteValueText(raw);
+        if (text != null) return text;
       }
       return null;
     }
 
     final rawFrom = pickLabel(const [
+      // Top-level mirrored by the hydration bridge — strongest signal.
       ['from'],
       ['pickup'],
+      ['origin'],
       ['pickup_address'],
       ['pickupAddress'],
+      ['pickup_from'],
+      ['pickupFrom'],
+      ['pickup_label'],
+      ['pickupLabel'],
+      ['requested_from'],
+      ['requestedFrom'],
       ['pickupLocation'],
       ['pickup_location'],
-      ['origin'],
       ['start_address'],
       ['startAddress'],
+      // Booking subtree (requested booking route).
       ['booking', 'from'],
       ['booking', 'pickup'],
+      ['booking', 'origin'],
       ['booking', 'pickup_address'],
       ['booking', 'pickupAddress'],
+      ['booking', 'pickup_from'],
+      ['booking', 'pickupFrom'],
+      ['booking', 'pickup_label'],
+      ['booking', 'pickupLabel'],
+      ['booking', 'requested_from'],
+      ['booking', 'requestedFrom'],
+      // Authoritative record subtree returned by /bookings/{id}.
       ['record', 'from'],
+      ['record', 'pickup'],
+      ['record', 'origin'],
+      ['record', 'pickup_address'],
+      ['record', 'pickup_from'],
+      ['record', 'pickup_label'],
+      ['record', 'requested_from'],
+      ['record', 'requestedFrom'],
       ['record', 'booking', 'from'],
       ['record', 'booking', 'pickup'],
-      ['payload', 'from'],
-      ['payload', 'booking', 'from'],
+      ['record', 'booking', 'origin'],
+      ['record', 'booking', 'pickup_address'],
+      ['record', 'booking', 'pickup_from'],
+      // booking_details mirrors / nested.
+      ['booking_details', 'from'],
+      ['booking_details', 'pickup'],
+      ['booking_details', 'origin'],
+      ['booking_details', 'pickup_address'],
+      ['record', 'booking_details', 'from'],
+      ['record', 'booking_details', 'pickup'],
+      ['record', 'booking_details', 'origin'],
+      ['record', 'booking_details', 'pickup_address'],
+      ['record', 'booking', 'booking_details', 'from'],
+      ['record', 'booking', 'booking_details', 'pickup'],
+      // Quote / payload (planned online bookings often originate here).
       ['quote', 'inputs', 'from'],
+      ['quote', 'inputs', 'pickup'],
+      ['record', 'quote', 'inputs', 'from'],
+      ['record', 'quote', 'inputs', 'pickup'],
+      ['payload', 'from'],
+      ['payload', 'pickup'],
+      ['payload', 'pickup_address'],
+      ['payload', 'booking', 'from'],
+      ['record', 'payload', 'from'],
+      ['record', 'payload', 'pickup'],
+      ['record', 'payload', 'pickup_address'],
     ]);
     final rawTo = pickLabel(const [
       ['to'],
       ['destination'],
+      ['dropoff'],
       ['destination_address'],
       ['destinationAddress'],
-      ['dropoff'],
       ['dropoff_address'],
       ['dropoffAddress'],
+      ['dropoff_to'],
+      ['dropoffTo'],
+      ['dropoff_label'],
+      ['dropoffLabel'],
+      ['requested_to'],
+      ['requestedTo'],
       ['end_address'],
       ['endAddress'],
       ['booking', 'to'],
       ['booking', 'destination'],
+      ['booking', 'dropoff'],
       ['booking', 'destination_address'],
       ['booking', 'destinationAddress'],
+      ['booking', 'dropoff_address'],
+      ['booking', 'dropoffAddress'],
+      ['booking', 'dropoff_to'],
+      ['booking', 'dropoffTo'],
+      ['booking', 'dropoff_label'],
+      ['booking', 'dropoffLabel'],
+      ['booking', 'requested_to'],
+      ['booking', 'requestedTo'],
       ['record', 'to'],
+      ['record', 'destination'],
+      ['record', 'dropoff'],
+      ['record', 'destination_address'],
+      ['record', 'dropoff_address'],
+      ['record', 'dropoff_to'],
+      ['record', 'dropoff_label'],
+      ['record', 'requested_to'],
+      ['record', 'requestedTo'],
       ['record', 'booking', 'to'],
       ['record', 'booking', 'destination'],
-      ['payload', 'to'],
-      ['payload', 'booking', 'to'],
+      ['record', 'booking', 'dropoff'],
+      ['record', 'booking', 'destination_address'],
+      ['record', 'booking', 'dropoff_to'],
+      ['booking_details', 'to'],
+      ['booking_details', 'destination'],
+      ['booking_details', 'dropoff'],
+      ['booking_details', 'destination_address'],
+      ['record', 'booking_details', 'to'],
+      ['record', 'booking_details', 'destination'],
+      ['record', 'booking_details', 'dropoff'],
+      ['record', 'booking_details', 'destination_address'],
+      ['record', 'booking', 'booking_details', 'to'],
+      ['record', 'booking', 'booking_details', 'destination'],
       ['quote', 'inputs', 'to'],
+      ['quote', 'inputs', 'destination'],
+      ['record', 'quote', 'inputs', 'to'],
+      ['record', 'quote', 'inputs', 'destination'],
+      ['payload', 'to'],
+      ['payload', 'destination'],
+      ['payload', 'destination_address'],
+      ['payload', 'booking', 'to'],
+      ['record', 'payload', 'to'],
+      ['record', 'payload', 'destination'],
+      ['record', 'payload', 'destination_address'],
     ]);
 
     final from = _sanitizeCustomerFacingRouteLabel(

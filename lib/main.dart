@@ -1456,15 +1456,336 @@ Future<void> _runStartupDeferredWork({
 // re-exported above so existing references in this file (and other modules)
 // keep working unchanged.
 
+/// Builds best-available auth headers for a server-side booking GET issued
+/// from the Local Ride Register bridge. Mirrors the precedence already used
+/// by [_ReceiptPdfActionRunner._backendInvoicePdfHeaders]:
+///   1) compile-time admin token (dev/ops),
+///   2) active driver session bearer (standalone driver / driver-owns booking),
+///   3) company-owner / company-session bearer for business-admin context.
+///
+/// Tokens are never logged. The returned map contains only `Accept` when no
+/// trusted source is available, so the caller can decide to skip the GET.
+Future<Map<String, String>> _localRegisterBookingFetchHeaders() async {
+  final headers = <String, String>{'Accept': 'application/json'};
+  final admin = _adminHeaders();
+  if (admin.isNotEmpty) {
+    headers.addAll(admin);
+    return headers;
+  }
+  final driverSessionToken =
+      (activeDriverSessionNotifier.value?.driverSessionToken ?? '').trim();
+  if (driverSessionToken.isNotEmpty) {
+    headers['Authorization'] = 'Bearer $driverSessionToken';
+    return headers;
+  }
+  final companyAuth = await resolveCompanyOwnerAuthHeaders(json: false);
+  if (companyAuth.mode != CompanyOwnerAuthMode.none) {
+    headers.addAll(companyAuth.headers);
+  }
+  return headers;
+}
+
+/// Best-effort hydration for Local Ride Register receipts via the Tracking
+/// Worker `GET /trips/history` projection. This is the SAME shape and source
+/// the chauffeur History receipt uses (see `_TripHistoryPageState._fetch`)
+/// and carries `origin.label`, `destination.label`, and a `booking_details`
+/// block with `pickup_address`, `destination_address`, `scheduled_pickup_at`,
+/// `service_type`, `tier`, `passengers`, `luggage_count`, `customer_*`,
+/// `payment_*` and price fields — populated when the chauffeur stopped the
+/// planned ride via `/trip/record-planned-stop`.
+///
+/// Skipped gracefully when auth is insufficient (only a pure driver-session
+/// bearer is available; `/trips/history` requires admin OR company-session).
+/// The caller continues with the booking-worker hydration as before.
+Future<Map<String, dynamic>> _hydrateRegisterReceiptFromTripsHistory(
+  ComplianceLedgerEntry entry,
+  Map<String, dynamic> baseJson,
+) async {
+  final maskedBooking = _maskScopeForLog(entry.bookingId);
+  final maskedTrip = _maskScopeForLog(entry.tripId);
+  final tenantId = entry.tenantId.trim();
+  final companyId = entry.companyId.trim();
+  final driverId = entry.driverId.trim();
+  // `missing_scope` means tenant or company is missing — those two are
+  // required by the tracking worker. `driver_id` is INTENTIONALLY optional:
+  // Local Ride Register entries are an admin / compliance projection that may
+  // legitimately have an empty driver_id (e.g. driver-not-linked compliance
+  // rows). In that case we still want the tenant/company-scoped trips list so
+  // we can match by `trip_id` / `booking_id`.
+  if (tenantId.isEmpty || companyId.isEmpty) {
+    debugPrint(
+      '[LOCAL_RIDE_REGISTER][HYDRATE_TRIP] booking=$maskedBooking trip=$maskedTrip ok=false matched=false trips=0 source=trips_history driver_filter=false reason=missing_scope',
+    );
+    return baseJson;
+  }
+  final driverFilterActive = driverId.isNotEmpty;
+  try {
+    // `/trips/history` is authenticated by `requireAdminOrCompanySessionForScope`
+    // in the tracking worker — it accepts ONLY a compile-time admin token or a
+    // company-session bearer. A pure driver-session bearer is rejected, so we
+    // build headers via `resolveCompanyOwnerAuthHeaders` (the same helper
+    // chauffeur History uses via `_companyOwnerHeaders`) instead of the
+    // booking-worker helper (which prefers a driver-session bearer when
+    // present and would fail-close here).
+    final companyAuth = await resolveCompanyOwnerAuthHeaders(json: false);
+    if (companyAuth.mode == CompanyOwnerAuthMode.none) {
+      debugPrint(
+        '[LOCAL_RIDE_REGISTER][HYDRATE_TRIP] booking=$maskedBooking trip=$maskedTrip ok=false matched=false trips=0 source=trips_history driver_filter=$driverFilterActive reason=auth_insufficient',
+      );
+      return baseJson;
+    }
+    final headers = <String, String>{
+      'Accept': 'application/json',
+      ...companyAuth.headers,
+    };
+    // driver_id filter is added ONLY when we actually have a non-empty driver
+    // identifier from the compliance entry. Without it we fetch the broader
+    // tenant/company-scoped list and rely on trip_id / booking_id matching.
+    final query = <String, String>{
+      'tenant_id': tenantId,
+      'company_id': companyId,
+      'tenantId': tenantId,
+      'companyId': companyId,
+      if (driverFilterActive) 'driver_id': driverId,
+      'include_archived': '1',
+      'include_active': '0',
+      'limit': '200',
+    };
+    final uri = Uri.parse(
+      '$kWorkerBaseUrl$kTripsHistoryPath',
+    ).replace(queryParameters: query);
+    final res = await http
+        .get(uri, headers: headers)
+        .timeout(const Duration(seconds: 10));
+    final status = res.statusCode;
+    if (status != 200) {
+      debugPrint(
+        '[LOCAL_RIDE_REGISTER][HYDRATE_TRIP] booking=$maskedBooking trip=$maskedTrip ok=false matched=false trips=0 source=trips_history driver_filter=$driverFilterActive reason=http_$status',
+      );
+      return baseJson;
+    }
+    final decoded = jsonDecode(utf8.decode(res.bodyBytes));
+    if (decoded is! Map || decoded['ok'] != true) {
+      debugPrint(
+        '[LOCAL_RIDE_REGISTER][HYDRATE_TRIP] booking=$maskedBooking trip=$maskedTrip ok=false matched=false trips=0 source=trips_history driver_filter=$driverFilterActive reason=invalid_body',
+      );
+      return baseJson;
+    }
+    final trips = decoded['trips'];
+    if (trips is! List) {
+      debugPrint(
+        '[LOCAL_RIDE_REGISTER][HYDRATE_TRIP] booking=$maskedBooking trip=$maskedTrip ok=true matched=false trips=0 source=trips_history driver_filter=$driverFilterActive reason=no_trips',
+      );
+      return baseJson;
+    }
+    final tripCount = trips.length;
+    final targetTripId = entry.tripId.trim();
+    final targetBookingId = entry.bookingId.trim();
+    final targetPlanning = entry.planningReference.trim();
+    final targetPublicBooking = entry.publicBookingReference.trim();
+
+    String detailText(Map<String, dynamic>? details, String key) {
+      if (details == null) return '';
+      final v = details[key];
+      if (v == null) return '';
+      return v.toString().trim();
+    }
+
+    String tripText(Map<String, dynamic> trip, String key) {
+      final v = trip[key];
+      if (v == null) return '';
+      return v.toString().trim();
+    }
+
+    Map<String, dynamic>? matchedByTripId;
+    Map<String, dynamic>? matchedByBookingId;
+    Map<String, dynamic>? matchedByParentBookingId;
+    Map<String, dynamic>? matchedByPlanning;
+    Map<String, dynamic>? matchedByPublicBooking;
+    for (final raw in trips) {
+      if (raw is! Map) continue;
+      final m = Map<String, dynamic>.from(raw);
+      final details = m['booking_details'] is Map
+          ? Map<String, dynamic>.from(m['booking_details'] as Map)
+          : null;
+
+      if (targetTripId.isNotEmpty && tripText(m, 'trip_id') == targetTripId) {
+        matchedByTripId = m;
+        break;
+      }
+      if (matchedByBookingId == null &&
+          targetBookingId.isNotEmpty &&
+          tripText(m, 'booking_id') == targetBookingId) {
+        matchedByBookingId = m;
+      }
+      if (matchedByParentBookingId == null && targetBookingId.isNotEmpty) {
+        final parent = detailText(details, 'parent_booking_id').isNotEmpty
+            ? detailText(details, 'parent_booking_id')
+            : detailText(details, 'parentBookingId');
+        if (parent == targetBookingId) {
+          matchedByParentBookingId = m;
+        }
+      }
+      if (matchedByPlanning == null && targetPlanning.isNotEmpty) {
+        final planning = <String>[
+          tripText(m, 'planning_reference'),
+          tripText(m, 'planningReference'),
+          tripText(m, 'planning_no'),
+          tripText(m, 'planningNo'),
+          detailText(details, 'planning_reference'),
+          detailText(details, 'planningReference'),
+          detailText(details, 'planning_no'),
+          detailText(details, 'planningNo'),
+        ].firstWhere((v) => v.isNotEmpty, orElse: () => '');
+        if (planning == targetPlanning) {
+          matchedByPlanning = m;
+        }
+      }
+      if (matchedByPublicBooking == null && targetPublicBooking.isNotEmpty) {
+        final pub = <String>[
+          tripText(m, 'public_booking_reference'),
+          tripText(m, 'publicBookingReference'),
+          tripText(m, 'public_reference'),
+          tripText(m, 'publicReference'),
+          detailText(details, 'public_booking_reference'),
+          detailText(details, 'publicBookingReference'),
+          detailText(details, 'public_reference'),
+          detailText(details, 'publicReference'),
+        ].firstWhere((v) => v.isNotEmpty, orElse: () => '');
+        if (pub == targetPublicBooking) {
+          matchedByPublicBooking = m;
+        }
+      }
+    }
+    final matchedTrip =
+        matchedByTripId ??
+        matchedByBookingId ??
+        matchedByParentBookingId ??
+        matchedByPlanning ??
+        matchedByPublicBooking;
+    final matchMethod = matchedByTripId != null
+        ? 'trip_id'
+        : matchedByBookingId != null
+        ? 'booking_id'
+        : matchedByParentBookingId != null
+        ? 'parent_booking_id'
+        : matchedByPlanning != null
+        ? 'planning_reference'
+        : matchedByPublicBooking != null
+        ? 'public_booking_reference'
+        : 'none';
+    if (matchedTrip == null) {
+      debugPrint(
+        '[LOCAL_RIDE_REGISTER][HYDRATE_TRIP] booking=$maskedBooking trip=$maskedTrip ok=true matched=false trips=$tripCount source=trips_history driver_filter=$driverFilterActive match=$matchMethod',
+      );
+      return baseJson;
+    }
+    final merged = mergeTrackingTripIntoTripHistoryJson(
+      tripJson: matchedTrip,
+      baseJson: baseJson,
+    );
+    debugPrint(
+      '[LOCAL_RIDE_REGISTER][HYDRATE_TRIP] booking=$maskedBooking trip=$maskedTrip ok=true matched=true trips=$tripCount source=trips_history driver_filter=$driverFilterActive match=$matchMethod',
+    );
+    return merged;
+  } catch (err) {
+    debugPrint(
+      '[LOCAL_RIDE_REGISTER][HYDRATE_TRIP] booking=$maskedBooking trip=$maskedTrip ok=false matched=false trips=0 source=trips_history driver_filter=$driverFilterActive reason=${_shortErrorForDiag(err)}',
+    );
+    return baseJson;
+  }
+}
+
+/// Best-effort hydration for Local Ride Register receipts. Compliance entries
+/// often omit pickup/dropoff/customer/fare data; when a `booking_id` is
+/// present the booking worker can provide an authoritative record. On any
+/// failure (no booking_id, no auth, non-200, malformed body) the original
+/// compliance-only JSON is returned unchanged so the receipt page still opens.
+///
+/// Runs `/trips/history` first to obtain the authoritative chauffeur-recorded
+/// trip shape (matches what the chauffeur History receipt sees), then refines
+/// with `GET ${kBookingBaseUrl}/bookings/{id}` for business references and any
+/// fields the trip projection doesn't carry.
+Future<Map<String, dynamic>> _hydrateRegisterReceiptJson(
+  ComplianceLedgerEntry entry,
+  Map<String, dynamic> baseJson,
+) async {
+  final bookingId = entry.bookingId.trim();
+  final maskedBooking = _maskScopeForLog(bookingId);
+
+  // Step 1: tracking worker `/trips/history` — authoritative for planned
+  // chauffeur-stopped rides (route + booking_details).
+  final afterTrip = await _hydrateRegisterReceiptFromTripsHistory(
+    entry,
+    baseJson,
+  );
+
+  if (bookingId.isEmpty) {
+    debugPrint(
+      '[LOCAL_RIDE_REGISTER][HYDRATE_BOOKING] booking=$maskedBooking ok=false status=- fields=0 source=register reason=no_booking_id',
+    );
+    return afterTrip;
+  }
+  try {
+    final headers = await _localRegisterBookingFetchHeaders();
+    if (!headers.containsKey('Authorization') &&
+        !headers.containsKey('x-admin-token')) {
+      debugPrint(
+        '[LOCAL_RIDE_REGISTER][HYDRATE_BOOKING] booking=$maskedBooking ok=false status=- fields=0 source=register reason=no_auth',
+      );
+      return afterTrip;
+    }
+    final uri = _withActiveBookingScope(
+      kBookingBaseUrl,
+      '/bookings/${Uri.encodeComponent(bookingId)}',
+    );
+    final res = await http
+        .get(uri, headers: headers)
+        .timeout(const Duration(seconds: 12));
+    final status = res.statusCode;
+    if (status != 200) {
+      debugPrint(
+        '[LOCAL_RIDE_REGISTER][HYDRATE_BOOKING] booking=$maskedBooking ok=false status=$status fields=0 source=register',
+      );
+      return afterTrip;
+    }
+    final decoded = jsonDecode(utf8.decode(res.bodyBytes));
+    if (decoded is! Map || decoded['ok'] != true) {
+      debugPrint(
+        '[LOCAL_RIDE_REGISTER][HYDRATE_BOOKING] booking=$maskedBooking ok=false status=$status fields=0 source=register reason=invalid_body',
+      );
+      return afterTrip;
+    }
+    final merged = mergeBookingRecordIntoTripHistoryJson(
+      tripHistoryJson: afterTrip,
+      decodedResponse: Map<String, dynamic>.from(decoded),
+    );
+    final mergedDetails = merged['booking_details'];
+    final fieldCount = mergedDetails is Map ? mergedDetails.length : 0;
+    debugPrint(
+      '[LOCAL_RIDE_REGISTER][HYDRATE_BOOKING] booking=$maskedBooking ok=true status=$status fields=$fieldCount source=register',
+    );
+    return merged;
+  } catch (err) {
+    debugPrint(
+      '[LOCAL_RIDE_REGISTER][HYDRATE_BOOKING] booking=$maskedBooking ok=false status=- fields=0 source=register reason=${_shortErrorForDiag(err)}',
+    );
+    return afterTrip;
+  }
+}
+
 void _registerComplianceRegisterReceiptBridge() {
   registerComplianceRegisterReceiptHandler((
     BuildContext context,
     ComplianceLedgerEntry entry, {
     required ComplianceRegisterReceiptAction action,
   }) async {
-    final item = _TripHistoryItem.fromJson(
+    final hydratedJson = await _hydrateRegisterReceiptJson(
+      entry,
       tripHistoryJsonFromLedgerEntry(entry),
     );
+    if (!context.mounted) return;
+    final item = _TripHistoryItem.fromJson(hydratedJson);
     final key = ComplianceLedgerReader.groupKeyFor(entry);
     switch (action) {
       case ComplianceRegisterReceiptAction.viewDetails:
