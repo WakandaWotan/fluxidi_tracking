@@ -2171,21 +2171,478 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
     );
   }
 
+  // Compact two-line label/value cell used inside the phone-landscape
+  // 4-column vehicle card. Kept private and small so it can't be reused
+  // elsewhere by accident — phone portrait and tablet layouts continue to
+  // use _driverInfoLine / inline Text widgets unchanged.
+  Widget _compactCellLine(String label, String value, {IconData? icon}) {
+    final shown = value.trim().isEmpty ? '—' : value.trim();
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 2),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (icon != null) ...[
+            Icon(icon, size: 11.5, color: _gold.withOpacity(0.85)),
+            const SizedBox(width: 4),
+          ],
+          Expanded(
+            child: RichText(
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              text: TextSpan(
+                style: TextStyle(color: _textPrimary, fontSize: 10.8),
+                children: [
+                  TextSpan(
+                    text: '$label: ',
+                    style: TextStyle(
+                      color: _textSecondary,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  TextSpan(
+                    text: shown,
+                    style: const TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _compactSectionHeading(String label) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 3),
+      child: Text(
+        label,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(
+          color: _gold.withOpacity(0.96),
+          fontSize: 11.4,
+          fontWeight: FontWeight.w800,
+          letterSpacing: 0.2,
+        ),
+      ),
+    );
+  }
+
+  Widget _vehicleCompactLandscapeCard({
+    required VehicleProfile v,
+    required DriverProfile? linkedDriver,
+    required String status,
+  }) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
+      decoration: BoxDecoration(
+        color: _cardBg,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: _gold.withOpacity(0.28)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Column 1: photo + status overlay (flex 34)
+          Expanded(
+            flex: 34,
+            child: Stack(
+              children: [
+                _photoPreviewBox(
+                  photoRef: v.primaryPhotoRef,
+                  fallbackPhotoRef: v.publicPhotoUrl,
+                  height: 130,
+                  onTap: null,
+                  placeholderText: _t(
+                    nl: 'Geen voertuigfoto',
+                    en: 'No vehicle photo',
+                    fr: 'Pas de photo véhicule',
+                    es: 'Sin foto del vehículo',
+                  ),
+                ),
+                Positioned(
+                  top: 6,
+                  left: 6,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 7,
+                      vertical: 2,
+                    ),
+                    decoration: BoxDecoration(
+                      color: v.isActive
+                          ? _success.withOpacity(0.85)
+                          : _panelBg.withOpacity(0.85),
+                      borderRadius: BorderRadius.circular(999),
+                      border: Border.all(
+                        color: v.isActive
+                            ? _success.withOpacity(0.7)
+                            : _theme.border.withOpacity(0.85),
+                      ),
+                    ),
+                    child: Text(
+                      status,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: v.isActive ? Colors.white : _textPrimary,
+                        fontSize: 10.4,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          // Column 2: vehicle identity + short specs (flex 24)
+          Expanded(
+            flex: 24,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  _displayVehicleName(v.vehicleName),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: _textPrimary,
+                    fontWeight: FontWeight.w800,
+                    fontSize: 13.2,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  v.brandModel.trim().isEmpty ? '—' : v.brandModel.trim(),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: _textPrimary,
+                    fontWeight: FontWeight.w700,
+                    fontSize: 11.0,
+                  ),
+                ),
+                Text(
+                  '${_t(nl: 'Nummerplaat', en: 'Plate', fr: 'Plaque', es: 'Matrícula')}: ${v.licensePlate.isEmpty ? '—' : v.licensePlate}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: _textSecondary,
+                    fontWeight: FontWeight.w600,
+                    fontSize: 10.4,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Wrap(
+                  spacing: 4,
+                  runSpacing: 4,
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 6,
+                        vertical: 2,
+                      ),
+                      decoration: BoxDecoration(
+                        color: _gold.withOpacity(0.13),
+                        borderRadius: BorderRadius.circular(999),
+                        border: Border.all(color: _gold.withOpacity(0.42)),
+                      ),
+                      child: Text(
+                        _tierLabel(v.tierId),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: _gold.withOpacity(0.98),
+                          fontWeight: FontWeight.w700,
+                          fontSize: 10.2,
+                        ),
+                      ),
+                    ),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 6,
+                        vertical: 2,
+                      ),
+                      decoration: BoxDecoration(
+                        color: _panelBg.withOpacity(0.48),
+                        borderRadius: BorderRadius.circular(999),
+                        border: Border.all(
+                          color: _theme.border.withOpacity(0.8),
+                        ),
+                      ),
+                      child: Text(
+                        '${v.passengerCapacity} ${_t(nl: 'pass.', en: 'pax', fr: 'pass.', es: 'pas.')}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: _textPrimary,
+                          fontSize: 10.2,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 6,
+                        vertical: 2,
+                      ),
+                      decoration: BoxDecoration(
+                        color: _panelBg.withOpacity(0.48),
+                        borderRadius: BorderRadius.circular(999),
+                        border: Border.all(
+                          color: _theme.border.withOpacity(0.8),
+                        ),
+                      ),
+                      child: Text(
+                        '${v.luggageCapacity} ${_t(nl: 'koffers', en: 'bags', fr: 'bagages', es: 'maletas')}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: _textPrimary,
+                          fontSize: 10.2,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          // Column 3: driver + permit/registration (flex 28)
+          Expanded(
+            flex: 28,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _compactSectionHeading(
+                  _t(
+                    nl: 'Chauffeur',
+                    en: 'Driver',
+                    fr: 'Chauffeur',
+                    es: 'Conductor',
+                  ),
+                ),
+                _compactCellLine(
+                  _t(nl: 'Naam', en: 'Name', fr: 'Nom', es: 'Nombre'),
+                  linkedDriver == null
+                      ? '—'
+                      : _displayDriverName(linkedDriver.fullName),
+                  icon: Icons.person_outline,
+                ),
+                if (linkedDriver != null) ...[
+                  _compactCellLine(
+                    _t(nl: 'ID', en: 'ID', fr: 'ID', es: 'ID'),
+                    linkedDriver.employeeNumber,
+                    icon: Icons.badge_outlined,
+                  ),
+                  _compactCellLine(
+                    _t(nl: 'Tel.', en: 'Phone', fr: 'Tél.', es: 'Tel.'),
+                    linkedDriver.phone,
+                    icon: Icons.phone_outlined,
+                  ),
+                ],
+                const SizedBox(height: 4),
+                _compactSectionHeading(
+                  _t(
+                    nl: 'Vergunning',
+                    en: 'Permit',
+                    fr: 'Permis',
+                    es: 'Permiso',
+                  ),
+                ),
+                _compactCellLine(
+                  _t(
+                    nl: 'Vergunning',
+                    en: 'License',
+                    fr: 'Licence',
+                    es: 'Licencia',
+                  ),
+                  v.exploitationLicenseNumber,
+                  icon: Icons.verified_user_outlined,
+                ),
+                _compactCellLine(
+                  _t(
+                    nl: 'VIN/chassis',
+                    en: 'VIN/chassis',
+                    fr: 'VIN/châssis',
+                    es: 'VIN/chasis',
+                  ),
+                  v.vehicleRegistrationNumber,
+                  icon: Icons.numbers_outlined,
+                ),
+                _compactCellLine(
+                  _t(nl: 'Kleur', en: 'Color', fr: 'Couleur', es: 'Color'),
+                  _displayColor(v.color),
+                  icon: Icons.palette_outlined,
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          // Column 4: company + actions (flex 16)
+          Expanded(
+            flex: 16,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(
+                  _t(
+                    nl: 'Bedrijf',
+                    en: 'Company',
+                    fr: 'Entreprise',
+                    es: 'Empresa',
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: _textSecondary,
+                    fontSize: 10.2,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  (v.companyId?.trim().isNotEmpty ?? false)
+                      ? v.companyId!.trim()
+                      : _t(
+                          nl: '(legacy)',
+                          en: '(legacy)',
+                          fr: '(ancien)',
+                          es: '(legacy)',
+                        ),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  softWrap: true,
+                  style: TextStyle(
+                    color: _textFaint,
+                    fontSize: 10.4,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed: () => _openVehicleEditor(existing: v),
+                    icon: const Icon(Icons.edit_outlined, size: 14),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: _gold.withOpacity(0.95),
+                      side: BorderSide(color: _gold.withOpacity(0.42)),
+                      backgroundColor: _panelBg,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 6,
+                      ),
+                      minimumSize: const Size(0, 30),
+                      textStyle: const TextStyle(fontSize: 11.4),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                    ),
+                    label: Text(
+                      _t(
+                        nl: 'Bewerken',
+                        en: 'Edit',
+                        fr: 'Modifier',
+                        es: 'Editar',
+                      ),
+                      maxLines: 1,
+                      softWrap: false,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 4),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed: () async {
+                      deleteVehicle(v.id);
+                      await _syncFleetOrShowError();
+                    },
+                    icon: const Icon(Icons.delete_outline, size: 14),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: _danger,
+                      side: BorderSide(color: _danger.withOpacity(0.45)),
+                      backgroundColor: _danger.withOpacity(0.16),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 6,
+                      ),
+                      minimumSize: const Size(0, 30),
+                      textStyle: const TextStyle(fontSize: 11.4),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                    ),
+                    label: Text(
+                      _t(
+                        nl: 'Verwijder',
+                        en: 'Delete',
+                        fr: 'Supprimer',
+                        es: 'Eliminar',
+                      ),
+                      maxLines: 1,
+                      softWrap: false,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _summaryTile({
     required String label,
     required String value,
     required IconData icon,
     required Color accent,
     bool compact = false,
+    // Phone-landscape needs even smaller KPI tiles than tablet's compact
+    // mode. `dense` only takes effect when `compact == true`, so phone
+    // portrait and tablet layouts are unaffected.
+    bool dense = false,
   }) {
-    final tilePadding = compact
+    final bool denseCompact = compact && dense;
+    final tilePadding = denseCompact
+        ? const EdgeInsets.fromLTRB(8, 4, 8, 4)
+        : compact
         ? const EdgeInsets.fromLTRB(12, 8, 12, 8)
         : const EdgeInsets.fromLTRB(12, 9, 12, 9);
-    final iconBubble = compact ? 58.0 : 46.0;
-    final iconSize = compact ? 34.0 : 28.0;
-    final gap = compact ? 16.0 : 12.0;
-    final labelFontSize = compact ? 14.0 : 12.5;
-    final valueFontSize = compact ? 30.0 : 23.0;
+    final iconBubble = denseCompact
+        ? 28.0
+        : compact
+        ? 58.0
+        : 46.0;
+    final iconSize = denseCompact
+        ? 15.0
+        : compact
+        ? 34.0
+        : 28.0;
+    final gap = denseCompact
+        ? 6.0
+        : compact
+        ? 16.0
+        : 12.0;
+    final labelFontSize = denseCompact
+        ? 10.4
+        : compact
+        ? 14.0
+        : 12.5;
+    final valueFontSize = denseCompact
+        ? 15.6
+        : compact
+        ? 30.0
+        : 23.0;
     return Container(
       padding: tilePadding,
       decoration: BoxDecoration(
@@ -2279,6 +2736,14 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
             final isTabletLandscape =
                 media.size.width >= 900 &&
                 media.orientation == Orientation.landscape;
+            // Phone-class landscape with a short height: intro/KPIs and the
+            // vehicle card must pack more densely so vehicle identity and
+            // assignment are visible without scrolling far. Tablet landscape
+            // and portrait orientations are unchanged.
+            final isCompactLandscape =
+                !isTabletLandscape &&
+                media.orientation == Orientation.landscape &&
+                media.size.height < 500;
             final visible = vehicles
                 .where((v) => _vehicleVisibleInManagementUi(v))
                 .toList(growable: false);
@@ -2287,593 +2752,704 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
             final linkedCount = visible
                 .where((v) => (v.driverId?.trim().isNotEmpty ?? false))
                 .length;
-            final summaryAspectRatio = isTabletLandscape ? 2.7 : 2.05;
-            return CustomScrollView(
-              slivers: [
-                SliverToBoxAdapter(
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(12, 12, 12, 10),
-                    child: Column(
-                      children: [
-                        Container(
-                          width: double.infinity,
-                          padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
-                          decoration: BoxDecoration(
-                            color: _cardBg,
-                            borderRadius: BorderRadius.circular(14),
-                            border: Border.all(color: _gold.withOpacity(0.30)),
+            final summaryAspectRatio = isCompactLandscape
+                ? 3.6
+                : isTabletLandscape
+                ? 2.7
+                : 2.05;
+            return SafeArea(
+              top: false,
+              child: CustomScrollView(
+                slivers: [
+                  SliverToBoxAdapter(
+                    child: Padding(
+                      padding: isCompactLandscape
+                          ? const EdgeInsets.fromLTRB(12, 4, 12, 4)
+                          : const EdgeInsets.fromLTRB(12, 12, 12, 10),
+                      child: Column(
+                        children: [
+                          Container(
+                            width: double.infinity,
+                            padding: isCompactLandscape
+                                ? const EdgeInsets.fromLTRB(12, 4, 12, 4)
+                                : const EdgeInsets.fromLTRB(12, 10, 12, 12),
+                            decoration: BoxDecoration(
+                              color: _cardBg,
+                              borderRadius: BorderRadius.circular(14),
+                              border: Border.all(
+                                color: _gold.withOpacity(0.30),
+                              ),
+                            ),
+                            child: isCompactLandscape
+                                ? Row(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.center,
+                                    children: [
+                                      Text(
+                                        _t(
+                                          nl: 'Voertuigen',
+                                          en: 'Vehicles',
+                                          fr: 'Véhicules',
+                                          es: 'Vehículos',
+                                        ),
+                                        style: TextStyle(
+                                          color: _textPrimary,
+                                          fontWeight: FontWeight.w900,
+                                          fontSize: 13.2,
+                                        ),
+                                      ),
+                                      Text(
+                                        '  ·  ',
+                                        style: TextStyle(
+                                          color: _textMuted.withOpacity(0.7),
+                                          fontWeight: FontWeight.w900,
+                                          fontSize: 11.6,
+                                        ),
+                                      ),
+                                      Expanded(
+                                        child: Text(
+                                          _t(
+                                            nl: 'Beheer wagenpark, chauffeurskoppeling en documenten',
+                                            en: 'Manage fleet, driver assignment and documents',
+                                            fr: 'Gérez la flotte, les chauffeurs liés et les documents',
+                                            es: 'Gestiona la flota, conductores vinculados y documentos',
+                                          ),
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: TextStyle(
+                                            color: _textMuted,
+                                            fontSize: 10.6,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  )
+                                : Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        _t(
+                                          nl: 'Voertuigen',
+                                          en: 'Vehicles',
+                                          fr: 'Véhicules',
+                                          es: 'Vehículos',
+                                        ),
+                                        style: TextStyle(
+                                          color: _textPrimary,
+                                          fontWeight: FontWeight.w900,
+                                          fontSize: 16,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 4),
+                                      Text(
+                                        _t(
+                                          nl: 'Beheer wagenpark, chauffeurskoppeling en documenten',
+                                          en: 'Manage fleet, driver assignment and documents',
+                                          fr: 'Gérez la flotte, les chauffeurs liés et les documents',
+                                          es: 'Gestiona la flota, conductores vinculados y documentos',
+                                        ),
+                                        style: TextStyle(
+                                          color: _textMuted,
+                                          fontSize: 12.4,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
                           ),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                _t(
-                                  nl: 'Voertuigen',
-                                  en: 'Vehicles',
-                                  fr: 'Véhicules',
-                                  es: 'Vehículos',
-                                ),
-                                style: TextStyle(
-                                  color: _textPrimary,
-                                  fontWeight: FontWeight.w900,
-                                  fontSize: 16,
-                                ),
+                          SizedBox(height: isCompactLandscape ? 4 : 10),
+                          Container(
+                            width: double.infinity,
+                            padding: isCompactLandscape
+                                ? const EdgeInsets.all(4)
+                                : const EdgeInsets.all(10),
+                            decoration: BoxDecoration(
+                              color: _panelBg,
+                              borderRadius: BorderRadius.circular(14),
+                              border: Border.all(
+                                color: _gold.withOpacity(0.30),
                               ),
-                              const SizedBox(height: 4),
-                              Text(
-                                _t(
-                                  nl: 'Beheer wagenpark, chauffeurskoppeling en documenten',
-                                  en: 'Manage fleet, driver assignment and documents',
-                                  fr: 'Gérez la flotte, les chauffeurs liés et les documents',
-                                  es: 'Gestiona la flota, conductores vinculados y documentos',
+                            ),
+                            child: GridView.count(
+                              crossAxisCount: 3,
+                              crossAxisSpacing: isCompactLandscape ? 4 : 8,
+                              mainAxisSpacing: isCompactLandscape ? 4 : 8,
+                              childAspectRatio: summaryAspectRatio,
+                              shrinkWrap: true,
+                              physics: const NeverScrollableScrollPhysics(),
+                              children: [
+                                _summaryTile(
+                                  label: _t(
+                                    nl: 'Totaal',
+                                    en: 'Total',
+                                    fr: 'Total',
+                                    es: 'Total',
+                                  ),
+                                  value: '$totalCount',
+                                  icon: Icons.directions_car_filled_outlined,
+                                  accent: _gold,
+                                  compact:
+                                      isTabletLandscape || isCompactLandscape,
+                                  dense: isCompactLandscape,
                                 ),
-                                style: TextStyle(
-                                  color: _textMuted,
-                                  fontSize: 12.4,
+                                _summaryTile(
+                                  label: _t(
+                                    nl: 'Actief',
+                                    en: 'Active',
+                                    fr: 'Actifs',
+                                    es: 'Activos',
+                                  ),
+                                  value: '$activeCount',
+                                  icon: Icons.verified_outlined,
+                                  accent: _success,
+                                  compact:
+                                      isTabletLandscape || isCompactLandscape,
+                                  dense: isCompactLandscape,
                                 ),
-                              ),
-                            ],
+                                _summaryTile(
+                                  label: _t(
+                                    nl: 'Gekoppeld',
+                                    en: 'Linked',
+                                    fr: 'Liés',
+                                    es: 'Vinculados',
+                                  ),
+                                  value: '$linkedCount',
+                                  icon: Icons.link_rounded,
+                                  accent: _linkedAccent,
+                                  compact:
+                                      isTabletLandscape || isCompactLandscape,
+                                  dense: isCompactLandscape,
+                                ),
+                              ],
+                            ),
                           ),
-                        ),
-                        const SizedBox(height: 10),
-                        Container(
-                          width: double.infinity,
-                          padding: const EdgeInsets.all(10),
-                          decoration: BoxDecoration(
-                            color: _panelBg,
-                            borderRadius: BorderRadius.circular(14),
-                            border: Border.all(color: _gold.withOpacity(0.30)),
-                          ),
-                          child: GridView.count(
-                            crossAxisCount: 3,
-                            crossAxisSpacing: 8,
-                            mainAxisSpacing: 8,
-                            childAspectRatio: summaryAspectRatio,
-                            shrinkWrap: true,
-                            physics: const NeverScrollableScrollPhysics(),
-                            children: [
-                              _summaryTile(
-                                label: _t(
-                                  nl: 'Totaal',
-                                  en: 'Total',
-                                  fr: 'Total',
-                                  es: 'Total',
-                                ),
-                                value: '$totalCount',
-                                icon: Icons.directions_car_filled_outlined,
-                                accent: _gold,
-                                compact: isTabletLandscape,
-                              ),
-                              _summaryTile(
-                                label: _t(
-                                  nl: 'Actief',
-                                  en: 'Active',
-                                  fr: 'Actifs',
-                                  es: 'Activos',
-                                ),
-                                value: '$activeCount',
-                                icon: Icons.verified_outlined,
-                                accent: _success,
-                                compact: isTabletLandscape,
-                              ),
-                              _summaryTile(
-                                label: _t(
-                                  nl: 'Gekoppeld',
-                                  en: 'Linked',
-                                  fr: 'Liés',
-                                  es: 'Vinculados',
-                                ),
-                                value: '$linkedCount',
-                                icon: Icons.link_rounded,
-                                accent: _linkedAccent,
-                                compact: isTabletLandscape,
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
                   ),
-                ),
-                if (visible.isEmpty)
-                  SliverFillRemaining(
-                    hasScrollBody: false,
-                    child: Center(
-                      child: Padding(
-                        padding: const EdgeInsets.all(24),
-                        child: Container(
-                          width: double.infinity,
-                          padding: const EdgeInsets.all(14),
-                          decoration: BoxDecoration(
-                            color: _cardBg,
-                            borderRadius: BorderRadius.circular(12),
-                            border: Border.all(color: _gold.withOpacity(0.24)),
-                          ),
-                          child: Text(
-                            _t(
-                              nl: 'Nog geen voertuigen.',
-                              en: 'No vehicles yet.',
-                              fr: 'Aucun véhicule.',
-                              es: 'Sin vehículos.',
+                  if (visible.isEmpty)
+                    SliverFillRemaining(
+                      hasScrollBody: false,
+                      child: Center(
+                        child: Padding(
+                          padding: const EdgeInsets.all(24),
+                          child: Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.all(14),
+                            decoration: BoxDecoration(
+                              color: _cardBg,
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(
+                                color: _gold.withOpacity(0.24),
+                              ),
                             ),
-                            style: TextStyle(color: _textSecondary),
-                            textAlign: TextAlign.center,
+                            child: Text(
+                              _t(
+                                nl: 'Nog geen voertuigen.',
+                                en: 'No vehicles yet.',
+                                fr: 'Aucun véhicule.',
+                                es: 'Sin vehículos.',
+                              ),
+                              style: TextStyle(color: _textSecondary),
+                              textAlign: TextAlign.center,
+                            ),
                           ),
                         ),
                       ),
-                    ),
-                  )
-                else
-                  SliverPadding(
-                    padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-                    sliver: SliverList(
-                      delegate: SliverChildBuilderDelegate((context, i) {
-                        final v = visible[i];
-                        final linkedDriver = _driverById(v.driverId);
-                        final status = v.isActive
-                            ? _t(
-                                nl: 'Actief',
-                                en: 'Active',
-                                fr: 'Actif',
-                                es: 'Activo',
-                              )
-                            : _t(
-                                nl: 'Inactief',
-                                en: 'Inactive',
-                                fr: 'Inactif',
-                                es: 'Inactivo',
-                              );
-                        return Container(
-                          margin: const EdgeInsets.only(bottom: 10),
-                          padding: const EdgeInsets.fromLTRB(10, 10, 10, 10),
-                          decoration: BoxDecoration(
-                            color: _cardBg,
-                            borderRadius: BorderRadius.circular(14),
-                            border: Border.all(color: _gold.withOpacity(0.28)),
-                          ),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              _photoPreviewBox(
-                                photoRef: v.primaryPhotoRef,
-                                fallbackPhotoRef: v.publicPhotoUrl,
-                                height: 176,
-                                onTap: null,
-                                placeholderText: _t(
-                                  nl: 'Geen voertuigfoto',
-                                  en: 'No vehicle photo',
-                                  fr: 'Pas de photo véhicule',
-                                  es: 'Sin foto del vehículo',
-                                ),
+                    )
+                  else
+                    SliverPadding(
+                      padding: isCompactLandscape
+                          ? const EdgeInsets.fromLTRB(12, 0, 12, 8)
+                          : const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                      sliver: SliverList(
+                        delegate: SliverChildBuilderDelegate((context, i) {
+                          final v = visible[i];
+                          final linkedDriver = _driverById(v.driverId);
+                          final status = v.isActive
+                              ? _t(
+                                  nl: 'Actief',
+                                  en: 'Active',
+                                  fr: 'Actif',
+                                  es: 'Activo',
+                                )
+                              : _t(
+                                  nl: 'Inactief',
+                                  en: 'Inactive',
+                                  fr: 'Inactif',
+                                  es: 'Inactivo',
+                                );
+                          if (isCompactLandscape) {
+                            return _vehicleCompactLandscapeCard(
+                              v: v,
+                              linkedDriver: linkedDriver,
+                              status: status,
+                            );
+                          }
+                          return Container(
+                            margin: const EdgeInsets.only(bottom: 10),
+                            padding: const EdgeInsets.fromLTRB(10, 10, 10, 10),
+                            decoration: BoxDecoration(
+                              color: _cardBg,
+                              borderRadius: BorderRadius.circular(14),
+                              border: Border.all(
+                                color: _gold.withOpacity(0.28),
                               ),
-                              const SizedBox(height: 9),
-                              Row(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Expanded(
-                                    child: Text(
-                                      _displayVehicleName(v.vehicleName),
-                                      style: TextStyle(
-                                        fontWeight: FontWeight.w800,
-                                        fontSize: 15.8,
-                                        color: _textPrimary,
-                                      ),
-                                      maxLines: 2,
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                  ),
-                                  const SizedBox(width: 8),
-                                  Container(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 8,
-                                      vertical: 4,
-                                    ),
-                                    decoration: BoxDecoration(
-                                      color: v.isActive
-                                          ? _success.withOpacity(0.16)
-                                          : _panelBg.withOpacity(0.5),
-                                      borderRadius: BorderRadius.circular(999),
-                                      border: Border.all(
-                                        color: v.isActive
-                                            ? _success.withOpacity(0.5)
-                                            : _theme.border.withOpacity(0.8),
-                                      ),
-                                    ),
-                                    child: Text(
-                                      status,
-                                      style: TextStyle(
-                                        color: v.isActive
-                                            ? _success
-                                            : _textSecondary,
-                                        fontSize: 11.6,
-                                        fontWeight: FontWeight.w700,
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                              const SizedBox(height: 7),
-                              Text(
-                                v.brandModel.trim().isEmpty
-                                    ? '—'
-                                    : v.brandModel.trim(),
-                                style: TextStyle(
-                                  color: _textPrimary,
-                                  fontWeight: FontWeight.w700,
-                                ),
-                              ),
-                              Text(
-                                '${_t(nl: 'Nummerplaat', en: 'Plate', fr: 'Plaque', es: 'Matrícula')}: ${v.licensePlate.isEmpty ? '—' : v.licensePlate}',
-                                style: TextStyle(
-                                  color: _textSecondary,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                              const SizedBox(height: 7),
-                              Wrap(
-                                spacing: 6,
-                                runSpacing: 6,
-                                children: [
-                                  Container(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 9,
-                                      vertical: 5,
-                                    ),
-                                    decoration: BoxDecoration(
-                                      color: _gold.withOpacity(0.13),
-                                      borderRadius: BorderRadius.circular(999),
-                                      border: Border.all(
-                                        color: _gold.withOpacity(0.42),
-                                      ),
-                                    ),
-                                    child: Text(
-                                      _tierLabel(v.tierId),
-                                      style: TextStyle(
-                                        color: _gold.withOpacity(0.98),
-                                        fontWeight: FontWeight.w700,
-                                        fontSize: 11.6,
-                                      ),
-                                    ),
-                                  ),
-                                  Container(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 9,
-                                      vertical: 5,
-                                    ),
-                                    decoration: BoxDecoration(
-                                      color: _panelBg.withOpacity(0.48),
-                                      borderRadius: BorderRadius.circular(999),
-                                      border: Border.all(
-                                        color: _theme.border.withOpacity(0.8),
-                                      ),
-                                    ),
-                                    child: Text(
-                                      '${v.passengerCapacity} ${_t(nl: 'passagiers', en: 'passengers', fr: 'passagers', es: 'pasajeros')}',
-                                      style: TextStyle(
-                                        color: _textPrimary,
-                                        fontSize: 11.4,
-                                        fontWeight: FontWeight.w600,
-                                      ),
-                                    ),
-                                  ),
-                                  Container(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 9,
-                                      vertical: 5,
-                                    ),
-                                    decoration: BoxDecoration(
-                                      color: _panelBg.withOpacity(0.48),
-                                      borderRadius: BorderRadius.circular(999),
-                                      border: Border.all(
-                                        color: _theme.border.withOpacity(0.8),
-                                      ),
-                                    ),
-                                    child: Text(
-                                      '${v.luggageCapacity} ${_t(nl: 'koffers', en: 'bags', fr: 'bagages', es: 'maletas')}',
-                                      style: TextStyle(
-                                        color: _textPrimary,
-                                        fontSize: 11.4,
-                                        fontWeight: FontWeight.w600,
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                              const SizedBox(height: 8),
-                              Container(
-                                width: double.infinity,
-                                padding: const EdgeInsets.fromLTRB(
-                                  10,
-                                  8,
-                                  10,
-                                  8,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: _panelBg,
-                                  borderRadius: BorderRadius.circular(10),
-                                  border: Border.all(
-                                    color: _gold.withOpacity(0.22),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                _photoPreviewBox(
+                                  photoRef: v.primaryPhotoRef,
+                                  fallbackPhotoRef: v.publicPhotoUrl,
+                                  height: isCompactLandscape ? 110 : 176,
+                                  onTap: null,
+                                  placeholderText: _t(
+                                    nl: 'Geen voertuigfoto',
+                                    en: 'No vehicle photo',
+                                    fr: 'Pas de photo véhicule',
+                                    es: 'Sin foto del vehículo',
                                   ),
                                 ),
-                                child: Column(
+                                SizedBox(height: isCompactLandscape ? 6 : 9),
+                                Row(
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
-                                    Text(
-                                      _t(
-                                        nl: 'Chauffeur',
-                                        en: 'Driver',
-                                        fr: 'Chauffeur',
-                                        es: 'Conductor',
-                                      ),
-                                      style: TextStyle(
-                                        color: _gold.withOpacity(0.96),
-                                        fontWeight: FontWeight.w700,
-                                      ),
-                                    ),
-                                    const SizedBox(height: 6),
-                                    _driverInfoLine(
-                                      _t(
-                                        nl: 'Gekoppelde chauffeur',
-                                        en: 'Linked driver',
-                                        fr: 'Chauffeur lié',
-                                        es: 'Conductor vinculado',
-                                      ),
-                                      linkedDriver == null
-                                          ? '—'
-                                          : _displayDriverName(
-                                              linkedDriver.fullName,
-                                            ),
-                                      icon: Icons.person_outline,
-                                    ),
-                                    if (linkedDriver != null) ...[
-                                      const SizedBox(height: 4),
-                                      _driverInfoLine(
-                                        _t(
-                                          nl: 'Chauffeur-ID',
-                                          en: 'Driver ID',
-                                          fr: 'ID chauffeur',
-                                          es: 'ID conductor',
+                                    Expanded(
+                                      child: Text(
+                                        _displayVehicleName(v.vehicleName),
+                                        style: TextStyle(
+                                          fontWeight: FontWeight.w800,
+                                          fontSize: isCompactLandscape
+                                              ? 13.6
+                                              : 15.8,
+                                          color: _textPrimary,
                                         ),
-                                        linkedDriver.employeeNumber,
-                                        icon: Icons.badge_outlined,
-                                      ),
-                                      const SizedBox(height: 4),
-                                      _driverInfoLine(
-                                        _t(
-                                          nl: 'Telefoon',
-                                          en: 'Phone',
-                                          fr: 'Téléphone',
-                                          es: 'Teléfono',
-                                        ),
-                                        linkedDriver.phone,
-                                        icon: Icons.phone_outlined,
-                                      ),
-                                      const SizedBox(height: 4),
-                                      _driverInfoLine(
-                                        _t(
-                                          nl: 'Chauffeurskaartnummer',
-                                          en: 'Driver card number',
-                                          fr: 'N° carte chauffeur',
-                                          es: 'N.º tarjeta de conductor',
-                                        ),
-                                        linkedDriver.taxiDriverCardNumber,
-                                        icon: Icons.credit_card_outlined,
-                                      ),
-                                      const SizedBox(height: 4),
-                                      _driverInfoLine(
-                                        _t(
-                                          nl: 'Vervaldatum chauffeurskaart',
-                                          en: 'Driver card expiry',
-                                          fr: 'Expiration carte chauffeur',
-                                          es: 'Caducidad tarjeta de conductor',
-                                        ),
-                                        linkedDriver.taxiDriverCardExpiry,
-                                        icon: Icons.event_note_outlined,
-                                      ),
-                                    ],
-                                  ],
-                                ),
-                              ),
-                              const SizedBox(height: 8),
-                              Container(
-                                width: double.infinity,
-                                padding: const EdgeInsets.fromLTRB(
-                                  10,
-                                  8,
-                                  10,
-                                  8,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: _panelBg,
-                                  borderRadius: BorderRadius.circular(10),
-                                  border: Border.all(
-                                    color: _theme.border.withOpacity(0.8),
-                                  ),
-                                ),
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      _t(
-                                        nl: 'Vergunning & registratie',
-                                        en: 'Permit & registration',
-                                        fr: 'Permis et immatriculation',
-                                        es: 'Permiso y registro',
-                                      ),
-                                      style: TextStyle(
-                                        color: _textPrimary,
-                                        fontWeight: FontWeight.w700,
+                                        maxLines: isCompactLandscape ? 1 : 2,
+                                        overflow: TextOverflow.ellipsis,
                                       ),
                                     ),
-                                    const SizedBox(height: 6),
-                                    _driverInfoLine(
-                                      _t(
-                                        nl: 'Exploitatievergunning',
-                                        en: 'Operating license number',
-                                        fr: 'N° de licence d’exploitation',
-                                        es: 'N.º licencia de explotación',
+                                    const SizedBox(width: 8),
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 8,
+                                        vertical: 4,
                                       ),
-                                      v.exploitationLicenseNumber,
-                                      icon: Icons.verified_user_outlined,
-                                    ),
-                                    const SizedBox(height: 4),
-                                    _driverInfoLine(
-                                      _t(
-                                        nl: 'Inschrijving/VIN/chassis',
-                                        en: 'Registration/VIN/chassis',
-                                        fr: 'Immatriculation/VIN/châssis',
-                                        es: 'Matrícula/VIN/chasis',
+                                      decoration: BoxDecoration(
+                                        color: v.isActive
+                                            ? _success.withOpacity(0.16)
+                                            : _panelBg.withOpacity(0.5),
+                                        borderRadius: BorderRadius.circular(
+                                          999,
+                                        ),
+                                        border: Border.all(
+                                          color: v.isActive
+                                              ? _success.withOpacity(0.5)
+                                              : _theme.border.withOpacity(0.8),
+                                        ),
                                       ),
-                                      v.vehicleRegistrationNumber,
-                                      icon: Icons.numbers_outlined,
-                                    ),
-                                    const SizedBox(height: 4),
-                                    _driverInfoLine(
-                                      _t(
-                                        nl: 'Kleur',
-                                        en: 'Color',
-                                        fr: 'Couleur',
-                                        es: 'Color',
+                                      child: Text(
+                                        status,
+                                        style: TextStyle(
+                                          color: v.isActive
+                                              ? _success
+                                              : _textSecondary,
+                                          fontSize: 11.6,
+                                          fontWeight: FontWeight.w700,
+                                        ),
                                       ),
-                                      _displayColor(v.color),
-                                      icon: Icons.palette_outlined,
                                     ),
                                   ],
                                 ),
-                              ),
-                              const SizedBox(height: 6),
-                              if (v.galleryPhotoRefs.length > 1) ...[
-                                const SizedBox(height: 2),
+                                const SizedBox(height: 7),
                                 Text(
-                                  _t(
-                                    nl: '+${v.galleryPhotoRefs.length - 1} extra foto\'s',
-                                    en: '+${v.galleryPhotoRefs.length - 1} more photos',
-                                    fr: '+${v.galleryPhotoRefs.length - 1} photos supplémentaires',
-                                    es: '+${v.galleryPhotoRefs.length - 1} fotos adicionales',
+                                  v.brandModel.trim().isEmpty
+                                      ? '—'
+                                      : v.brandModel.trim(),
+                                  style: TextStyle(
+                                    color: _textPrimary,
+                                    fontWeight: FontWeight.w700,
                                   ),
+                                ),
+                                Text(
+                                  '${_t(nl: 'Nummerplaat', en: 'Plate', fr: 'Plaque', es: 'Matrícula')}: ${v.licensePlate.isEmpty ? '—' : v.licensePlate}',
                                   style: TextStyle(
                                     color: _textSecondary,
-                                    fontSize: 12,
+                                    fontWeight: FontWeight.w600,
                                   ),
                                 ),
-                              ],
-                              const SizedBox(height: 6),
-                              Text(
-                                '${_t(nl: 'Bedrijf (lokaal)', en: 'Company (local)', fr: 'Entreprise (locale)', es: 'Empresa (local)')}: '
-                                '${(v.companyId?.trim().isNotEmpty ?? false) ? v.companyId!.trim() : _t(nl: '(legacy)', en: '(legacy)', fr: '(ancien)', es: '(legacy)')}',
-                                style: TextStyle(
-                                  color: _textFaint,
-                                  fontSize: 10.8,
-                                ),
-                              ),
-                              const SizedBox(height: 8),
-                              Wrap(
-                                spacing: 8,
-                                runSpacing: 8,
-                                children: [
-                                  OutlinedButton.icon(
-                                    onPressed: () =>
-                                        _openVehicleEditor(existing: v),
-                                    icon: const Icon(
-                                      Icons.edit_outlined,
-                                      size: 16,
-                                    ),
-                                    style: OutlinedButton.styleFrom(
-                                      foregroundColor: _gold.withOpacity(0.95),
-                                      side: BorderSide(
-                                        color: _gold.withOpacity(0.42),
-                                      ),
-                                      backgroundColor: _panelBg,
+                                const SizedBox(height: 7),
+                                Wrap(
+                                  spacing: 6,
+                                  runSpacing: 6,
+                                  children: [
+                                    Container(
                                       padding: const EdgeInsets.symmetric(
-                                        horizontal: 10,
-                                        vertical: 8,
+                                        horizontal: 9,
+                                        vertical: 5,
                                       ),
-                                      shape: RoundedRectangleBorder(
+                                      decoration: BoxDecoration(
+                                        color: _gold.withOpacity(0.13),
                                         borderRadius: BorderRadius.circular(
                                           999,
                                         ),
+                                        border: Border.all(
+                                          color: _gold.withOpacity(0.42),
+                                        ),
                                       ),
-                                    ),
-                                    label: Text(
-                                      _t(
-                                        nl: 'Bewerken',
-                                        en: 'Edit',
-                                        fr: 'Modifier',
-                                        es: 'Editar',
-                                      ),
-                                      maxLines: 1,
-                                      softWrap: false,
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                  ),
-                                  OutlinedButton.icon(
-                                    onPressed: () async {
-                                      deleteVehicle(v.id);
-                                      await _syncFleetOrShowError();
-                                    },
-                                    icon: const Icon(
-                                      Icons.delete_outline,
-                                      size: 16,
-                                    ),
-                                    style: OutlinedButton.styleFrom(
-                                      foregroundColor: _danger,
-                                      side: BorderSide(
-                                        color: _danger.withOpacity(0.45),
-                                      ),
-                                      backgroundColor: _danger.withOpacity(
-                                        0.16,
-                                      ),
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 10,
-                                        vertical: 8,
-                                      ),
-                                      shape: RoundedRectangleBorder(
-                                        borderRadius: BorderRadius.circular(
-                                          999,
+                                      child: Text(
+                                        _tierLabel(v.tierId),
+                                        style: TextStyle(
+                                          color: _gold.withOpacity(0.98),
+                                          fontWeight: FontWeight.w700,
+                                          fontSize: 11.6,
                                         ),
                                       ),
                                     ),
-                                    label: Text(
-                                      _t(
-                                        nl: 'Verwijder',
-                                        en: 'Delete',
-                                        fr: 'Supprimer',
-                                        es: 'Eliminar',
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 9,
+                                        vertical: 5,
                                       ),
-                                      maxLines: 1,
-                                      softWrap: false,
-                                      overflow: TextOverflow.ellipsis,
+                                      decoration: BoxDecoration(
+                                        color: _panelBg.withOpacity(0.48),
+                                        borderRadius: BorderRadius.circular(
+                                          999,
+                                        ),
+                                        border: Border.all(
+                                          color: _theme.border.withOpacity(0.8),
+                                        ),
+                                      ),
+                                      child: Text(
+                                        '${v.passengerCapacity} ${_t(nl: 'passagiers', en: 'passengers', fr: 'passagers', es: 'pasajeros')}',
+                                        style: TextStyle(
+                                          color: _textPrimary,
+                                          fontSize: 11.4,
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
+                                    ),
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 9,
+                                        vertical: 5,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: _panelBg.withOpacity(0.48),
+                                        borderRadius: BorderRadius.circular(
+                                          999,
+                                        ),
+                                        border: Border.all(
+                                          color: _theme.border.withOpacity(0.8),
+                                        ),
+                                      ),
+                                      child: Text(
+                                        '${v.luggageCapacity} ${_t(nl: 'koffers', en: 'bags', fr: 'bagages', es: 'maletas')}',
+                                        style: TextStyle(
+                                          color: _textPrimary,
+                                          fontSize: 11.4,
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 8),
+                                Container(
+                                  width: double.infinity,
+                                  padding: const EdgeInsets.fromLTRB(
+                                    10,
+                                    8,
+                                    10,
+                                    8,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: _panelBg,
+                                    borderRadius: BorderRadius.circular(10),
+                                    border: Border.all(
+                                      color: _gold.withOpacity(0.22),
+                                    ),
+                                  ),
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        _t(
+                                          nl: 'Chauffeur',
+                                          en: 'Driver',
+                                          fr: 'Chauffeur',
+                                          es: 'Conductor',
+                                        ),
+                                        style: TextStyle(
+                                          color: _gold.withOpacity(0.96),
+                                          fontWeight: FontWeight.w700,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 6),
+                                      _driverInfoLine(
+                                        _t(
+                                          nl: 'Gekoppelde chauffeur',
+                                          en: 'Linked driver',
+                                          fr: 'Chauffeur lié',
+                                          es: 'Conductor vinculado',
+                                        ),
+                                        linkedDriver == null
+                                            ? '—'
+                                            : _displayDriverName(
+                                                linkedDriver.fullName,
+                                              ),
+                                        icon: Icons.person_outline,
+                                      ),
+                                      if (linkedDriver != null) ...[
+                                        const SizedBox(height: 4),
+                                        _driverInfoLine(
+                                          _t(
+                                            nl: 'Chauffeur-ID',
+                                            en: 'Driver ID',
+                                            fr: 'ID chauffeur',
+                                            es: 'ID conductor',
+                                          ),
+                                          linkedDriver.employeeNumber,
+                                          icon: Icons.badge_outlined,
+                                        ),
+                                        const SizedBox(height: 4),
+                                        _driverInfoLine(
+                                          _t(
+                                            nl: 'Telefoon',
+                                            en: 'Phone',
+                                            fr: 'Téléphone',
+                                            es: 'Teléfono',
+                                          ),
+                                          linkedDriver.phone,
+                                          icon: Icons.phone_outlined,
+                                        ),
+                                        const SizedBox(height: 4),
+                                        _driverInfoLine(
+                                          _t(
+                                            nl: 'Chauffeurskaartnummer',
+                                            en: 'Driver card number',
+                                            fr: 'N° carte chauffeur',
+                                            es: 'N.º tarjeta de conductor',
+                                          ),
+                                          linkedDriver.taxiDriverCardNumber,
+                                          icon: Icons.credit_card_outlined,
+                                        ),
+                                        const SizedBox(height: 4),
+                                        _driverInfoLine(
+                                          _t(
+                                            nl: 'Vervaldatum chauffeurskaart',
+                                            en: 'Driver card expiry',
+                                            fr: 'Expiration carte chauffeur',
+                                            es: 'Caducidad tarjeta de conductor',
+                                          ),
+                                          linkedDriver.taxiDriverCardExpiry,
+                                          icon: Icons.event_note_outlined,
+                                        ),
+                                      ],
+                                    ],
+                                  ),
+                                ),
+                                const SizedBox(height: 8),
+                                Container(
+                                  width: double.infinity,
+                                  padding: const EdgeInsets.fromLTRB(
+                                    10,
+                                    8,
+                                    10,
+                                    8,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: _panelBg,
+                                    borderRadius: BorderRadius.circular(10),
+                                    border: Border.all(
+                                      color: _theme.border.withOpacity(0.8),
+                                    ),
+                                  ),
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        _t(
+                                          nl: 'Vergunning & registratie',
+                                          en: 'Permit & registration',
+                                          fr: 'Permis et immatriculation',
+                                          es: 'Permiso y registro',
+                                        ),
+                                        style: TextStyle(
+                                          color: _textPrimary,
+                                          fontWeight: FontWeight.w700,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 6),
+                                      _driverInfoLine(
+                                        _t(
+                                          nl: 'Exploitatievergunning',
+                                          en: 'Operating license number',
+                                          fr: 'N° de licence d’exploitation',
+                                          es: 'N.º licencia de explotación',
+                                        ),
+                                        v.exploitationLicenseNumber,
+                                        icon: Icons.verified_user_outlined,
+                                      ),
+                                      const SizedBox(height: 4),
+                                      _driverInfoLine(
+                                        _t(
+                                          nl: 'Inschrijving/VIN/chassis',
+                                          en: 'Registration/VIN/chassis',
+                                          fr: 'Immatriculation/VIN/châssis',
+                                          es: 'Matrícula/VIN/chasis',
+                                        ),
+                                        v.vehicleRegistrationNumber,
+                                        icon: Icons.numbers_outlined,
+                                      ),
+                                      const SizedBox(height: 4),
+                                      _driverInfoLine(
+                                        _t(
+                                          nl: 'Kleur',
+                                          en: 'Color',
+                                          fr: 'Couleur',
+                                          es: 'Color',
+                                        ),
+                                        _displayColor(v.color),
+                                        icon: Icons.palette_outlined,
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                const SizedBox(height: 6),
+                                if (v.galleryPhotoRefs.length > 1) ...[
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    _t(
+                                      nl: '+${v.galleryPhotoRefs.length - 1} extra foto\'s',
+                                      en: '+${v.galleryPhotoRefs.length - 1} more photos',
+                                      fr: '+${v.galleryPhotoRefs.length - 1} photos supplémentaires',
+                                      es: '+${v.galleryPhotoRefs.length - 1} fotos adicionales',
+                                    ),
+                                    style: TextStyle(
+                                      color: _textSecondary,
+                                      fontSize: 12,
                                     ),
                                   ),
                                 ],
-                              ),
-                            ],
-                          ),
-                        );
-                      }, childCount: visible.length),
+                                const SizedBox(height: 6),
+                                Text(
+                                  '${_t(nl: 'Bedrijf (lokaal)', en: 'Company (local)', fr: 'Entreprise (locale)', es: 'Empresa (local)')}: '
+                                  '${(v.companyId?.trim().isNotEmpty ?? false) ? v.companyId!.trim() : _t(nl: '(legacy)', en: '(legacy)', fr: '(ancien)', es: '(legacy)')}',
+                                  style: TextStyle(
+                                    color: _textFaint,
+                                    fontSize: 10.8,
+                                  ),
+                                ),
+                                SizedBox(height: isCompactLandscape ? 6 : 8),
+                                Wrap(
+                                  spacing: isCompactLandscape ? 6 : 8,
+                                  runSpacing: isCompactLandscape ? 6 : 8,
+                                  children: [
+                                    OutlinedButton.icon(
+                                      onPressed: () =>
+                                          _openVehicleEditor(existing: v),
+                                      icon: Icon(
+                                        Icons.edit_outlined,
+                                        size: isCompactLandscape ? 14 : 16,
+                                      ),
+                                      style: OutlinedButton.styleFrom(
+                                        foregroundColor: _gold.withOpacity(
+                                          0.95,
+                                        ),
+                                        side: BorderSide(
+                                          color: _gold.withOpacity(0.42),
+                                        ),
+                                        backgroundColor: _panelBg,
+                                        padding: EdgeInsets.symmetric(
+                                          horizontal: isCompactLandscape
+                                              ? 9
+                                              : 10,
+                                          vertical: isCompactLandscape ? 6 : 8,
+                                        ),
+                                        minimumSize: isCompactLandscape
+                                            ? const Size(0, 32)
+                                            : null,
+                                        textStyle: isCompactLandscape
+                                            ? const TextStyle(fontSize: 11.6)
+                                            : null,
+                                        shape: RoundedRectangleBorder(
+                                          borderRadius: BorderRadius.circular(
+                                            999,
+                                          ),
+                                        ),
+                                      ),
+                                      label: Text(
+                                        _t(
+                                          nl: 'Bewerken',
+                                          en: 'Edit',
+                                          fr: 'Modifier',
+                                          es: 'Editar',
+                                        ),
+                                        maxLines: 1,
+                                        softWrap: false,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ),
+                                    OutlinedButton.icon(
+                                      onPressed: () async {
+                                        deleteVehicle(v.id);
+                                        await _syncFleetOrShowError();
+                                      },
+                                      icon: Icon(
+                                        Icons.delete_outline,
+                                        size: isCompactLandscape ? 14 : 16,
+                                      ),
+                                      style: OutlinedButton.styleFrom(
+                                        foregroundColor: _danger,
+                                        side: BorderSide(
+                                          color: _danger.withOpacity(0.45),
+                                        ),
+                                        backgroundColor: _danger.withOpacity(
+                                          0.16,
+                                        ),
+                                        padding: EdgeInsets.symmetric(
+                                          horizontal: isCompactLandscape
+                                              ? 9
+                                              : 10,
+                                          vertical: isCompactLandscape ? 6 : 8,
+                                        ),
+                                        minimumSize: isCompactLandscape
+                                            ? const Size(0, 32)
+                                            : null,
+                                        textStyle: isCompactLandscape
+                                            ? const TextStyle(fontSize: 11.6)
+                                            : null,
+                                        shape: RoundedRectangleBorder(
+                                          borderRadius: BorderRadius.circular(
+                                            999,
+                                          ),
+                                        ),
+                                      ),
+                                      label: Text(
+                                        _t(
+                                          nl: 'Verwijder',
+                                          en: 'Delete',
+                                          fr: 'Supprimer',
+                                          es: 'Eliminar',
+                                        ),
+                                        maxLines: 1,
+                                        softWrap: false,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ),
+                          );
+                        }, childCount: visible.length),
+                      ),
                     ),
-                  ),
-              ],
+                ],
+              ),
             );
           },
         ),
