@@ -10299,13 +10299,27 @@ class _DriverHomePageState extends State<DriverHomePage>
               ? _midnightBlueTextMuted().withOpacity(0.92)
               : Colors.white.withOpacity(0.62));
 
+    // `isScrollControlled: true` lifts the default 9/16-of-screen cap so the
+    // sheet can grow tall enough to fit every menu item plus the Android
+    // system navigation inset. `constraints` keep the top of the sheet below
+    // the status bar so it never looks fullscreen. The inner
+    // `SingleChildScrollView` is the actual overflow guarantee for very small
+    // phones (e.g. compact 5" devices in landscape); on regular phones it
+    // never scrolls because the column already fits.
+    final screenHeight = MediaQuery.of(context).size.height;
     showModalBottomSheet<void>(
       context: context,
       backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      constraints: BoxConstraints(maxHeight: screenHeight * 0.85),
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
       ),
       builder: (ctx) {
+        // `SafeArea(top: false, bottom: true)` is what pulls the last
+        // `ListTile` ("Terug naar startpagina") above the system nav bar.
+        // Without `isScrollControlled: true` above, the sheet was clipped
+        // before this padding could take effect.
         return SafeArea(
           top: false,
           child: Container(
@@ -10318,188 +10332,207 @@ class _DriverHomePageState extends State<DriverHomePage>
             ),
             child: Padding(
               padding: const EdgeInsets.fromLTRB(14, 10, 14, 14),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    _tr(nl: 'Meer', en: 'More', fr: 'Plus', es: 'Mas'),
-                    style: TextStyle(
-                      color: titleColor,
-                      fontSize: 16,
-                      fontWeight: FontWeight.w900,
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  ListTile(
-                    dense: true,
-                    contentPadding: EdgeInsets.zero,
-                    leading: Icon(Icons.calculate_rounded, color: iconAccent),
-                    title: Text(
-                      _tr(
-                        nl: 'Prijs berekenen',
-                        en: 'Fare calculator',
-                        fr: 'Calcul de tarif',
-                        es: 'Calcular tarifa',
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      _tr(nl: 'Meer', en: 'More', fr: 'Plus', es: 'Mas'),
+                      style: TextStyle(
+                        color: titleColor,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w900,
                       ),
-                      style: TextStyle(color: titleColor),
                     ),
-                    onTap: () {
-                      Navigator.of(ctx).pop();
-                      _openCalculatorFromDashboard();
-                    },
-                  ),
-                  ListTile(
-                    dense: true,
-                    contentPadding: EdgeInsets.zero,
-                    leading: Icon(
-                      Icons.receipt_long_outlined,
-                      color: iconAccent,
-                    ),
-                    title: Text(
-                      _tr(
-                        nl: 'Ritbonnen / bewijzen',
-                        en: 'Receipts / proofs',
-                        fr: 'Recus / preuves',
-                        es: 'Recibos / comprobantes',
-                      ),
-                      style: TextStyle(color: titleColor),
-                    ),
-                    subtitle: Text(
-                      _tr(
-                        nl: 'Via afgewerkte ritten in historiek',
-                        en: 'Via completed rides in history',
-                        fr: 'Via les courses terminees',
-                        es: 'Via viajes completados en historial',
-                      ),
-                      style: TextStyle(color: subtitleColor, fontSize: 11.5),
-                    ),
-                    onTap: () {
-                      Navigator.of(ctx).pop();
-                      _openTripHistoryFromDashboard();
-                    },
-                  ),
-                  ListTile(
-                    dense: true,
-                    contentPadding: EdgeInsets.zero,
-                    leading: Icon(Icons.toggle_on_outlined, color: iconAccent),
-                    title: Text(
-                      _tr(
-                        nl: 'Beschikbaarheid',
-                        en: 'Availability',
-                        fr: 'Disponibilite',
-                        es: 'Disponibilidad',
-                      ),
-                      style: TextStyle(color: titleColor),
-                    ),
-                    onTap: () {
-                      Navigator.of(ctx).pop();
-                      unawaited(_handleDriverStatusAction());
-                    },
-                  ),
-                  if (!widget.openedFromBusinessHome)
+                    const SizedBox(height: 10),
                     ListTile(
                       dense: true,
                       contentPadding: EdgeInsets.zero,
-                      leading: Icon(Icons.palette_outlined, color: iconAccent),
+                      leading: Icon(Icons.calculate_rounded, color: iconAccent),
                       title: Text(
-                        _tr(nl: 'Thema', en: 'Theme', fr: 'Theme', es: 'Tema'),
-                        style: TextStyle(color: titleColor),
-                      ),
-                      subtitle: Text(
                         _tr(
-                          nl: 'Kies je persoonlijke chauffeurweergave',
-                          en: 'Choose your personal driver theme',
-                          fr: 'Choisissez votre theme chauffeur personnel',
-                          es: 'Elige tu tema personal de conductor',
+                          nl: 'Prijs berekenen',
+                          en: 'Fare calculator',
+                          fr: 'Calcul de tarif',
+                          es: 'Calcular tarifa',
                         ),
-                        style: TextStyle(color: subtitleColor, fontSize: 11.5),
+                        style: TextStyle(color: titleColor),
                       ),
                       onTap: () {
                         Navigator.of(ctx).pop();
-                        unawaited(_showDriverAppThemeSelectorSheet());
+                        _openCalculatorFromDashboard();
                       },
                     ),
-                  if (_canSwitchCompanyDriversFromDashboard())
                     ListTile(
                       dense: true,
                       contentPadding: EdgeInsets.zero,
                       leading: Icon(
-                        Icons.switch_account_outlined,
+                        Icons.receipt_long_outlined,
                         color: iconAccent,
                       ),
                       title: Text(
                         _tr(
-                          nl: 'Chauffeur wisselen',
-                          en: 'Switch driver',
-                          fr: 'Changer de chauffeur',
-                          es: 'Cambiar conductor',
-                        ),
-                        style: TextStyle(color: titleColor),
-                      ),
-                      onTap: () {
-                        Navigator.of(ctx).pop();
-                        unawaited(_changeDriverViewFromDashboard());
-                      },
-                    ),
-                  if (!widget.openedFromBusinessHome)
-                    ListTile(
-                      dense: true,
-                      contentPadding: EdgeInsets.zero,
-                      leading: Icon(Icons.swap_horiz, color: iconAccent),
-                      title: Text(
-                        _tr(
-                          nl: 'Wissel chauffeur',
-                          en: 'Switch driver',
-                          fr: 'Changer de chauffeur',
-                          es: 'Cambiar conductor',
+                          nl: 'Ritbonnen / bewijzen',
+                          en: 'Receipts / proofs',
+                          fr: 'Recus / preuves',
+                          es: 'Recibos / comprobantes',
                         ),
                         style: TextStyle(color: titleColor),
                       ),
                       subtitle: Text(
                         _tr(
-                          nl: 'Meld een andere chauffeur aan',
-                          en: 'Log in another driver',
-                          fr: 'Connecter un autre chauffeur',
-                          es: 'Iniciar sesion con otro conductor',
+                          nl: 'Via afgewerkte ritten in historiek',
+                          en: 'Via completed rides in history',
+                          fr: 'Via les courses terminees',
+                          es: 'Via viajes completados en historial',
                         ),
                         style: TextStyle(color: subtitleColor, fontSize: 11.5),
                       ),
                       onTap: () {
                         Navigator.of(ctx).pop();
-                        unawaited(_handleStandaloneSwitchDriverRequest());
+                        _openTripHistoryFromDashboard();
                       },
                     ),
-                  ListTile(
-                    dense: true,
-                    contentPadding: EdgeInsets.zero,
-                    leading: Icon(Icons.home_outlined, color: iconAccent),
-                    title: Text(
-                      widget.openedFromBusinessHome
-                          ? _tr(
-                              nl: 'Terug naar bedrijfspagina',
-                              en: 'Back to business page',
-                              fr: 'Retour a la page entreprise',
-                              es: 'Volver a la pagina de empresa',
-                            )
-                          : _tr(
-                              nl: 'Terug naar startpagina',
-                              en: 'Back to start page',
-                              fr: "Retour a l'accueil",
-                              es: 'Volver al inicio',
-                            ),
-                      style: TextStyle(color: titleColor),
+                    ListTile(
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                      leading: Icon(
+                        Icons.toggle_on_outlined,
+                        color: iconAccent,
+                      ),
+                      title: Text(
+                        _tr(
+                          nl: 'Beschikbaarheid',
+                          en: 'Availability',
+                          fr: 'Disponibilite',
+                          es: 'Disponibilidad',
+                        ),
+                        style: TextStyle(color: titleColor),
+                      ),
+                      onTap: () {
+                        Navigator.of(ctx).pop();
+                        unawaited(_handleDriverStatusAction());
+                      },
                     ),
-                    onTap: () {
-                      Navigator.of(ctx).pop();
-                      if (widget.openedFromBusinessHome) {
-                        _goBackToBusinessPageFromDashboard();
-                        return;
-                      }
-                      _goBackToStartFromDashboard();
-                    },
-                  ),
-                ],
+                    if (!widget.openedFromBusinessHome)
+                      ListTile(
+                        dense: true,
+                        contentPadding: EdgeInsets.zero,
+                        leading: Icon(
+                          Icons.palette_outlined,
+                          color: iconAccent,
+                        ),
+                        title: Text(
+                          _tr(
+                            nl: 'Thema',
+                            en: 'Theme',
+                            fr: 'Theme',
+                            es: 'Tema',
+                          ),
+                          style: TextStyle(color: titleColor),
+                        ),
+                        subtitle: Text(
+                          _tr(
+                            nl: 'Kies je persoonlijke chauffeurweergave',
+                            en: 'Choose your personal driver theme',
+                            fr: 'Choisissez votre theme chauffeur personnel',
+                            es: 'Elige tu tema personal de conductor',
+                          ),
+                          style: TextStyle(
+                            color: subtitleColor,
+                            fontSize: 11.5,
+                          ),
+                        ),
+                        onTap: () {
+                          Navigator.of(ctx).pop();
+                          unawaited(_showDriverAppThemeSelectorSheet());
+                        },
+                      ),
+                    if (_canSwitchCompanyDriversFromDashboard())
+                      ListTile(
+                        dense: true,
+                        contentPadding: EdgeInsets.zero,
+                        leading: Icon(
+                          Icons.switch_account_outlined,
+                          color: iconAccent,
+                        ),
+                        title: Text(
+                          _tr(
+                            nl: 'Chauffeur wisselen',
+                            en: 'Switch driver',
+                            fr: 'Changer de chauffeur',
+                            es: 'Cambiar conductor',
+                          ),
+                          style: TextStyle(color: titleColor),
+                        ),
+                        onTap: () {
+                          Navigator.of(ctx).pop();
+                          unawaited(_changeDriverViewFromDashboard());
+                        },
+                      ),
+                    if (!widget.openedFromBusinessHome)
+                      ListTile(
+                        dense: true,
+                        contentPadding: EdgeInsets.zero,
+                        leading: Icon(Icons.swap_horiz, color: iconAccent),
+                        title: Text(
+                          _tr(
+                            nl: 'Wissel chauffeur',
+                            en: 'Switch driver',
+                            fr: 'Changer de chauffeur',
+                            es: 'Cambiar conductor',
+                          ),
+                          style: TextStyle(color: titleColor),
+                        ),
+                        subtitle: Text(
+                          _tr(
+                            nl: 'Meld een andere chauffeur aan',
+                            en: 'Log in another driver',
+                            fr: 'Connecter un autre chauffeur',
+                            es: 'Iniciar sesion con otro conductor',
+                          ),
+                          style: TextStyle(
+                            color: subtitleColor,
+                            fontSize: 11.5,
+                          ),
+                        ),
+                        onTap: () {
+                          Navigator.of(ctx).pop();
+                          unawaited(_handleStandaloneSwitchDriverRequest());
+                        },
+                      ),
+                    ListTile(
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                      leading: Icon(Icons.home_outlined, color: iconAccent),
+                      title: Text(
+                        widget.openedFromBusinessHome
+                            ? _tr(
+                                nl: 'Terug naar bedrijfspagina',
+                                en: 'Back to business page',
+                                fr: 'Retour a la page entreprise',
+                                es: 'Volver a la pagina de empresa',
+                              )
+                            : _tr(
+                                nl: 'Terug naar startpagina',
+                                en: 'Back to start page',
+                                fr: "Retour a l'accueil",
+                                es: 'Volver al inicio',
+                              ),
+                        style: TextStyle(color: titleColor),
+                      ),
+                      onTap: () {
+                        Navigator.of(ctx).pop();
+                        if (widget.openedFromBusinessHome) {
+                          _goBackToBusinessPageFromDashboard();
+                          return;
+                        }
+                        _goBackToStartFromDashboard();
+                      },
+                    ),
+                  ],
+                ),
               ),
             ),
           ),
