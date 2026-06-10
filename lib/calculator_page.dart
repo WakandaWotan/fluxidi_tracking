@@ -27,9 +27,11 @@ import 'package:fluxidi_tracking/customer_theme_palette.dart';
 import 'package:fluxidi_tracking/customer_theme_store.dart';
 import 'package:fluxidi_tracking/driver_theme_palette.dart';
 import 'package:fluxidi_tracking/driver_theme_store.dart';
+import 'package:fluxidi_tracking/company_session_store.dart';
 import 'package:fluxidi_tracking/customer_bookings_store.dart';
 import 'package:fluxidi_tracking/customer_profile_store.dart';
 import 'package:fluxidi_tracking/customer_session_store.dart';
+import 'package:fluxidi_tracking/driver_session_store.dart';
 import 'package:fluxidi_tracking/effective_tenant_company_scope.dart';
 import 'package:geolocator/geolocator.dart' as geo;
 import 'package:http/http.dart' as http;
@@ -247,12 +249,18 @@ class _CalculatorScopeSelection {
     required this.companyId,
     required this.source,
     required this.isMissing,
+    this.driverId,
+    this.assignedVehicleId,
   });
 
   final String tenantId;
   final String companyId;
   final String source;
   final bool isMissing;
+
+  /// Chauffeur ownership fields, only set for driver-entry scope selection.
+  final String? driverId;
+  final String? assignedVehicleId;
 }
 
 enum BookingEntryContext { customer, companyAdmin, driver }
@@ -365,9 +373,86 @@ _CalculatorVisualTheme _calculatorVisualThemeForContext(
   );
 }
 
+String _maskCalculatorScopeId(String value) {
+  final trimmed = value.trim();
+  if (trimmed.isEmpty) return '-';
+  if (trimmed.length <= 6) return '${trimmed.substring(0, 1)}…';
+  return '${trimmed.substring(0, 3)}…${trimmed.substring(trimmed.length - 3)}';
+}
+
+/// Fail-closed ownership scope for chauffeur-initiated Calculator bookings.
+///
+/// Standalone chauffeur entry must never inherit the last active business /
+/// company / partner context cached on this device. Ownership comes from the
+/// active driver session only; when tenant/company/driver is missing the
+/// scope is marked missing so quote/book is blocked.
+_CalculatorScopeSelection _selectDriverSessionCalculatorScope() {
+  final session = activeDriverSessionNotifier.value;
+  // Accept standalone chauffeur sessions only: driver_pairing_code,
+  // public_driver_login, standalone_driver (legacy sessions without a link
+  // method are treated as standalone, mirroring DriverSessionStore restore).
+  final isUsableStandaloneSession =
+      session != null &&
+      !session.isCompanyAdminDriverViewSession &&
+      (session.isStandaloneLoginSession ||
+          (session.linkMethod ?? '').trim().isEmpty);
+  final tenantId = isUsableStandaloneSession
+      ? (session.tenantId ?? '').trim()
+      : '';
+  final companyId = isUsableStandaloneSession
+      ? (session.companyId ?? '').trim()
+      : '';
+  final driverId = isUsableStandaloneSession ? session.driverId.trim() : '';
+  final assignedVehicleId = isUsableStandaloneSession
+      ? (session.assignedVehicleId ?? '').trim()
+      : '';
+
+  final activeCompanySessionId =
+      (activeCompanySessionNotifier.value?.companyId ?? '').trim();
+  final staleCompanyId = activeCompanySessionId.isNotEmpty
+      ? activeCompanySessionId
+      : (companyProfileNotifier.value?.companyId ?? '').trim();
+  if (staleCompanyId.isNotEmpty && staleCompanyId != companyId) {
+    debugPrint(
+      '[CALCULATOR][IGNORED_STALE_COMPANY_SCOPE] company=${_maskCalculatorScopeId(staleCompanyId)}',
+    );
+  }
+
+  if (tenantId.isEmpty || companyId.isEmpty || driverId.isEmpty) {
+    debugPrint(
+      '[CALCULATOR][DRIVER_SCOPE] source=driver_session_missing tenant=${_maskCalculatorScopeId(tenantId)} company=${_maskCalculatorScopeId(companyId)} driver=${_maskCalculatorScopeId(driverId)}',
+    );
+    return const _CalculatorScopeSelection(
+      tenantId: '',
+      companyId: '',
+      source: 'driver_session_missing',
+      isMissing: true,
+    );
+  }
+
+  debugPrint(
+    '[CALCULATOR][DRIVER_SCOPE] source=driver_session tenant=${_maskCalculatorScopeId(tenantId)} company=${_maskCalculatorScopeId(companyId)} driver=${_maskCalculatorScopeId(driverId)}',
+  );
+  return _CalculatorScopeSelection(
+    tenantId: tenantId,
+    companyId: companyId,
+    source: 'driver_session',
+    isMissing: false,
+    driverId: driverId,
+    assignedVehicleId: assignedVehicleId.isEmpty ? null : assignedVehicleId,
+  );
+}
+
 _CalculatorScopeSelection _selectCalculatorBookingScope({
   required String publicPartnerId,
+  required BookingEntryContext entryContext,
 }) {
+  // Driver entry is fail-closed on the active chauffeur session and must not
+  // use partner context, company session/profile, or default fallback scope.
+  if (entryContext == BookingEntryContext.driver) {
+    return _selectDriverSessionCalculatorScope();
+  }
+
   final partnerId = publicPartnerId.trim();
   if (partnerId.isNotEmpty) {
     debugPrint(
@@ -900,6 +985,7 @@ class _CalculatorPageState extends State<CalculatorPage> {
     final vat = _activeVatConfig;
     final selectedScope = _selectCalculatorBookingScope(
       publicPartnerId: _publicPartnerId,
+      entryContext: widget.entryContext,
     );
     final returnEnabled = _returnFeatureEnabled && _returnTrip;
     final returnDt =
@@ -981,7 +1067,20 @@ class _CalculatorPageState extends State<CalculatorPage> {
       "company_id": selectedScope.companyId,
       "tenantId": selectedScope.tenantId,
       "companyId": selectedScope.companyId,
-      if (_hasPublicPartnerContext) ...{
+      if ((selectedScope.driverId ?? '').trim().isNotEmpty) ...{
+        "driver_id": selectedScope.driverId,
+        "driverId": selectedScope.driverId,
+        "assigned_driver_id": selectedScope.driverId,
+        "assignedDriverId": selectedScope.driverId,
+      },
+      if ((selectedScope.assignedVehicleId ?? '').trim().isNotEmpty) ...{
+        "assigned_vehicle_id": selectedScope.assignedVehicleId,
+        "assignedVehicleId": selectedScope.assignedVehicleId,
+      },
+      // Partner routing keys must never accompany a driver-entry booking:
+      // the Worker re-routes tenant scope from public_partner_id.
+      if (_hasPublicPartnerContext &&
+          widget.entryContext != BookingEntryContext.driver) ...{
         "public_partner_id": _publicPartnerId,
         "publicPartnerId": _publicPartnerId,
         "partner_id": _publicPartnerId,
@@ -1530,6 +1629,13 @@ class _CalculatorPageState extends State<CalculatorPage> {
     });
   }
 
+  String _driverScopeMissingMessage() => _labelFor(
+    nl: 'Geen actieve chauffeurssessie gevonden. Log opnieuw in als chauffeur en probeer het nog eens.',
+    en: 'No active chauffeur session found. Log in again as chauffeur and retry.',
+    fr: 'Aucune session chauffeur active trouvée. Reconnectez-vous en tant que chauffeur et réessayez.',
+    es: 'No se encontró una sesión de chófer activa. Inicia sesión de nuevo como chófer e inténtalo otra vez.',
+  );
+
   // ---------- quote ----------
   Future<void> _calculate() async {
     FocusScope.of(context).unfocus();
@@ -1537,6 +1643,20 @@ class _CalculatorPageState extends State<CalculatorPage> {
     if (_fromCtrl.text.trim().isEmpty || _toCtrl.text.trim().isEmpty) {
       _toast(_s.calculatorFillFromToError.of(_lang));
       return;
+    }
+
+    // Driver entry is fail-closed: without a usable standalone chauffeur
+    // session scope, never quote (and thus never book) against a stale or
+    // default tenant/company.
+    if (widget.entryContext == BookingEntryContext.driver) {
+      final driverScope = _selectCalculatorBookingScope(
+        publicPartnerId: _publicPartnerId,
+        entryContext: widget.entryContext,
+      );
+      if (driverScope.isMissing) {
+        _toast(_driverScopeMissingMessage());
+        return;
+      }
     }
 
     final dt =
@@ -4379,6 +4499,7 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
     );
     final selectedScope = _selectCalculatorBookingScope(
       publicPartnerId: publicPartnerId,
+      entryContext: widget.entryContext,
     );
     final publicPartnerName = _calcBusinessText(
       widget.payload['public_partner_name'] ??
@@ -4394,6 +4515,17 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
       return;
     }
     if (selectedScope.isMissing) {
+      if (widget.entryContext == BookingEntryContext.driver) {
+        _showThemedSnackBar(
+          _localizedText(
+            nl: 'Geen actieve chauffeurssessie gevonden. Log opnieuw in als chauffeur en probeer het nog eens.',
+            en: 'No active chauffeur session found. Log in again as chauffeur and retry.',
+            fr: 'Aucune session chauffeur active trouvée. Reconnectez-vous en tant que chauffeur et réessayez.',
+            es: 'No se encontró una sesión de chófer activa. Inicia sesión de nuevo como chófer e inténtalo otra vez.',
+          ),
+        );
+        return;
+      }
       final chooseCompanyMessage = widget.language == AppLanguage.en
           ? 'Please choose a taxi company first to complete your booking.'
           : widget.language == AppLanguage.fr
@@ -4448,7 +4580,20 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
       'company_id': selectedScope.companyId,
       'tenantId': selectedScope.tenantId,
       'companyId': selectedScope.companyId,
-      if (publicPartnerId.isNotEmpty) ...{
+      if ((selectedScope.driverId ?? '').trim().isNotEmpty) ...{
+        'driver_id': selectedScope.driverId,
+        'driverId': selectedScope.driverId,
+        'assigned_driver_id': selectedScope.driverId,
+        'assignedDriverId': selectedScope.driverId,
+      },
+      if ((selectedScope.assignedVehicleId ?? '').trim().isNotEmpty) ...{
+        'assigned_vehicle_id': selectedScope.assignedVehicleId,
+        'assignedVehicleId': selectedScope.assignedVehicleId,
+      },
+      // Partner routing keys must never accompany a driver-entry booking:
+      // the Worker re-routes tenant scope from public_partner_id.
+      if (publicPartnerId.isNotEmpty &&
+          widget.entryContext != BookingEntryContext.driver) ...{
         'public_partner_id': publicPartnerId,
         'publicPartnerId': publicPartnerId,
         'partner_id': publicPartnerId,
