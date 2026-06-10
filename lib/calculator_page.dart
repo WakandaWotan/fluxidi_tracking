@@ -4026,13 +4026,23 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
     Duration timeout = const Duration(seconds: 20),
     String? customerSessionToken,
     String? driverSessionToken,
+    BookingEntryContext? entryContext,
   }) async {
     final url = Uri.parse('${widget.bookingBaseUrl}/book');
     final headers = <String, String>{'content-type': 'application/json'};
     final driverToken = (driverSessionToken ?? '').trim();
     final customerToken = (customerSessionToken ?? '').trim();
+    final bookEntryContext = entryContext ?? widget.entryContext;
     if (driverToken.isNotEmpty) {
       headers['Authorization'] = 'Bearer $driverToken';
+    } else if (bookEntryContext == BookingEntryContext.companyAdmin) {
+      final auth = await resolveCompanyOwnerAuthHeaders();
+      headers.addAll(auth.headers);
+      final companyIdForLog =
+          activeCompanySessionNotifier.value?.companyId.trim() ?? '';
+      debugPrint(
+        '[CALCULATOR][COMPANY_BOOK_AUTH] token_present=${auth.mode != CompanyOwnerAuthMode.none} mode=${auth.mode.name} company=${_maskCalculatorScopeId(companyIdForLog.isNotEmpty ? companyIdForLog : '-')}',
+      );
     } else if (customerToken.isNotEmpty) {
       headers['Authorization'] = 'Bearer $customerToken';
     }
@@ -4077,6 +4087,7 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
           timeout: const Duration(seconds: 15),
           customerSessionToken: customerSessionToken,
           driverSessionToken: driverSessionToken,
+          entryContext: widget.entryContext,
         );
         if (body != null && body.isNotEmpty) return body;
       } catch (_) {
@@ -4785,6 +4796,7 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
         payload,
         customerSessionToken: customerSessionToken,
         driverSessionToken: driverSessionTokenForBook,
+        entryContext: widget.entryContext,
       );
       if (body == null) {
         throw Exception('book_response_missing');

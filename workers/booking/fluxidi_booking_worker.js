@@ -5205,6 +5205,157 @@ function _readPayloadAssignedVehicleId(body) {
   return safeStr(body?.assigned_vehicle_id ?? body?.assignedVehicleId, 96);
 }
 
+function _readPayloadAssignedVehicleIdWide(body) {
+  return (
+    safeStr(body?.assigned_vehicle_id ?? body?.assignedVehicleId, 128) ||
+    safeStr(body?.vehicle_id ?? body?.vehicleId, 128) ||
+    null
+  );
+}
+
+function _stripClientBookingInternalTrustFields(body) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) return body;
+  const clean = { ...body };
+  delete clean.__explicit_assignment_trusted;
+  delete clean.__explicitAssignmentTrusted;
+  delete clean.__explicit_assignment_trust_source;
+  delete clean.__explicitAssignmentTrustSource;
+  return clean;
+}
+
+function _canHonorPayloadVehicleOverAllocator(allocatorVehicleId, payloadVehicleId) {
+  const allocatorId = safeStr(allocatorVehicleId, 128);
+  const payloadId = safeStr(payloadVehicleId, 128);
+  if (!allocatorId) return true;
+  if (!payloadId) return false;
+  return allocatorId === payloadId;
+}
+
+async function _resolveBookExplicitAssignmentTrust({
+  request,
+  url,
+  env,
+  tenantScope,
+  isDriverAppBooking = false,
+} = {}) {
+  if (isDriverAppBooking) {
+    return { trusted: true, source: "driver_app" };
+  }
+  if (hasValidAdminToken(request, url, env)) {
+    return { trusted: true, source: "admin_token" };
+  }
+  const companySession = await _loadCompanySessionFromRequest(request, env);
+  if (!companySession) {
+    return { trusted: false, source: "" };
+  }
+  if (tenantScope?.hasScope) {
+    if (
+      tenantScope.tenant_id !== companySession.tenant_id ||
+      tenantScope.company_id !== companySession.company_id
+    ) {
+      return { trusted: false, source: "" };
+    }
+  }
+  return { trusted: true, source: "company_session" };
+}
+
+function _assignedDriverSummaryFromDriverId(driverId) {
+  const normalized = safeStr(driverId, 96);
+  if (!normalized) return null;
+  return {
+    driver_id: normalized,
+    driverId: normalized,
+    id: normalized,
+  };
+}
+
+function _bookingAssignmentAliasFields(assignedDriver, assignedVehicleId) {
+  const vehicleId = safeStr(assignedVehicleId, 128) || null;
+  const driverId = safeStr(
+    assignedDriver?.driver_id ?? assignedDriver?.driverId ?? assignedDriver?.id,
+    96,
+  ) || null;
+  const fields = {};
+  if (vehicleId) {
+    fields.assigned_vehicle_id = vehicleId;
+    fields.assignedVehicleId = vehicleId;
+  }
+  if (driverId) {
+    fields.assigned_driver_id = driverId;
+    fields.assignedDriverId = driverId;
+  }
+  if (assignedDriver && typeof assignedDriver === "object") {
+    fields.assigned_driver = assignedDriver;
+    fields.assignedDriver = assignedDriver;
+  }
+  return fields;
+}
+
+async function _finalizeHandleBookingAssignment(env, {
+  payload,
+  fleetScope,
+  resolvedAssignedVehicleId,
+  resolvedAssignedDriver,
+  explicitAssignmentTrusted = false,
+  explicitAssignmentTrustSource = "",
+  allocatorAssignedVehicleId = null,
+} = {}) {
+  const honorExplicitAssignment = explicitAssignmentTrusted === true;
+  let vehicleId = safeStr(resolvedAssignedVehicleId, 128) || null;
+  let assignedDriver =
+    resolvedAssignedDriver && typeof resolvedAssignedDriver === "object"
+      ? resolvedAssignedDriver
+      : null;
+
+  const payloadVehicleId = _readPayloadAssignedVehicleIdWide(payload);
+  const payloadDriverId = _readPayloadDriverIdCandidates(payload)[0] || null;
+  const allocatorVehicleId = safeStr(allocatorAssignedVehicleId, 128) || null;
+
+  if (honorExplicitAssignment) {
+    if (
+      payloadVehicleId &&
+      _canHonorPayloadVehicleOverAllocator(allocatorVehicleId, payloadVehicleId)
+    ) {
+      vehicleId = payloadVehicleId;
+    }
+    if (payloadDriverId) {
+      const canHonorPayloadDriver =
+        !allocatorVehicleId ||
+        (payloadVehicleId && allocatorVehicleId === payloadVehicleId) ||
+        (!payloadVehicleId && vehicleId && vehicleId === allocatorVehicleId);
+      if (canHonorPayloadDriver) {
+        assignedDriver = _assignedDriverSummaryFromDriverId(payloadDriverId);
+      }
+    }
+  }
+
+  if (!assignedDriver && vehicleId) {
+    try {
+      const fromVehicle = await _driverSummaryForVehicleId(env, vehicleId, fleetScope);
+      if (fromVehicle && typeof fromVehicle === "object") {
+        assignedDriver = fromVehicle;
+      }
+    } catch (_) {
+      // Best-effort fleet link only.
+    }
+  }
+
+  if (!assignedDriver && honorExplicitAssignment && payloadDriverId && !allocatorVehicleId) {
+    assignedDriver = _assignedDriverSummaryFromDriverId(payloadDriverId);
+  }
+
+  if (honorExplicitAssignment && (vehicleId || payloadDriverId)) {
+    console.log(
+      `[BOOK][ASSIGNMENT_FINALIZE] source=${safeStr(explicitAssignmentTrustSource, 40) || "trusted"} driver=${payloadDriverId ? _maskPublicDriverLoginValue(payloadDriverId) : "-"} vehicle=${vehicleId ? _maskPublicDriverLoginValue(vehicleId) : "-"} allocator_vehicle=${allocatorVehicleId ? _maskPublicDriverLoginValue(allocatorVehicleId) : "-"} driver_present=${assignedDriver ? "true" : "false"}`,
+    );
+  }
+
+  return {
+    resolvedAssignedVehicleId: vehicleId || null,
+    resolvedAssignedDriver: assignedDriver || null,
+  };
+}
+
 async function validateDriverAppBookScope(request, env, body, requestScope) {
   const bookingSource = safeStr(
     body?.booking_source ?? body?.bookingSource,
@@ -18442,7 +18593,7 @@ GET /oauth/callback
 
       // BOOK
       if (url.pathname === "/book" && request.method === "POST") {
-        const body = await safeJson(request);
+        const body = _stripClientBookingInternalTrustFields(await safeJson(request));
         const requestedPublicPartnerId = _extractRequestedPublicPartnerId({
           url,
           body,
@@ -18493,6 +18644,13 @@ GET /oauth/callback
           requestScope = driverAppScope.requestScope;
         }
         const isDriverAppBooking = driverAppScope.enforced === true;
+        const explicitAssignmentTrust = await _resolveBookExplicitAssignmentTrust({
+          request,
+          url,
+          env,
+          tenantScope: requestScope,
+          isDriverAppBooking,
+        });
         const normalizedBody = {
           ...body,
           ...(driverAppScope.trustedFields || {}),
@@ -18516,6 +18674,8 @@ GET /oauth/callback
         };
         const out = await handleBooking(normalizedBody, env, request, {
           trustedPublicPartnerScope: isDriverAppBooking ? null : routedPublicPartner,
+          explicitAssignmentTrusted: explicitAssignmentTrust.trusted === true,
+          explicitAssignmentTrustSource: explicitAssignmentTrust.source || "",
         });
         // Build tag helps verify correct deployment
         if (out && typeof out === "object") out.build = "v15-2026-01-20-gcal-hardfix";
@@ -32647,6 +32807,11 @@ async function handleBooking(payload, env, request, options = {}) {
   let allocatorReleaseBookingId = "";
   let allocatorReleasePickupIso = "";
   let allocatorReleaseScope = null;
+  const explicitAssignmentTrusted = options?.explicitAssignmentTrusted === true;
+  const explicitAssignmentTrustSource = safeStr(
+    options?.explicitAssignmentTrustSource,
+    40,
+  );
   const releaseAllocatorReservationSafely = async () => {
     if (!allocatorReservationAcquired || bookingPersisted) {
       console.log(
@@ -32739,10 +32904,10 @@ async function handleBooking(payload, env, request, options = {}) {
     const service = normalizeService(payload?.service || "passenger");
     const stops = normalizeStops(payload);
     const wait_min = parseDurationMin(payload?.wait_min ?? payload?.wait_minutes ?? payload?.waiting_min ?? payload?.wait, 0);
-    const requestedAssignedVehicleId =
-      safeStr(payload?.assigned_vehicle_id || payload?.vehicle_id, 128) || null;
+    const requestedAssignedVehicleId = _readPayloadAssignedVehicleIdWide(payload);
     let resolvedAssignedVehicleId = requestedAssignedVehicleId;
     let resolvedAssignedDriver = null;
+    let allocatorAssignedVehicleId = null;
     const stop_count = stops.length;
     
 
@@ -33683,7 +33848,8 @@ async function handleBooking(payload, env, request, options = {}) {
             }
             allocatorReservationAcquired = true;
             if (alloc?.assigned_vehicle_id) {
-              resolvedAssignedVehicleId = String(alloc.assigned_vehicle_id);
+              allocatorAssignedVehicleId = String(alloc.assigned_vehicle_id);
+              resolvedAssignedVehicleId = allocatorAssignedVehicleId;
               resolvedAssignedDriver = alloc?.assigned_driver || null;
             }
           } else {
@@ -33728,6 +33894,19 @@ async function handleBooking(payload, env, request, options = {}) {
           }
         }
 
+        ({
+          resolvedAssignedVehicleId,
+          resolvedAssignedDriver,
+        } = await _finalizeHandleBookingAssignment(env, {
+          payload,
+          fleetScope,
+          resolvedAssignedVehicleId,
+          resolvedAssignedDriver,
+          explicitAssignmentTrusted,
+          explicitAssignmentTrustSource,
+          allocatorAssignedVehicleId,
+        }));
+
         // Business bookings must be paid before creating the authoritative
         // calendar event. Availability has been checked above; creation happens
         // only when Mollie has actually reported "paid".
@@ -33741,6 +33920,10 @@ async function handleBooking(payload, env, request, options = {}) {
               resolvedAssignedDriver?.id,
             96,
           ) || null;
+          const provisionalAssignmentFields = _bookingAssignmentAliasFields(
+            resolvedAssignedDriver,
+            resolvedAssignedVehicleId,
+          );
           const provisionalOperationalLegs = _buildOperationalLegsFoundation({
             parentBookingId: canonicalBookingId,
             service,
@@ -33855,6 +34038,7 @@ async function handleBooking(payload, env, request, options = {}) {
             duration_route_min,
             operational_legs: provisionalOperationalLegs,
             operationalLegs: provisionalOperationalLegs,
+            ...provisionalAssignmentFields,
             booking_source: tenantContext.booking_source,
             entry_channel: tenantContext.entry_channel,
             source_context: tenantContext.source_context,
@@ -33901,6 +34085,7 @@ async function handleBooking(payload, env, request, options = {}) {
               requiresPayment: true,
               payment_booking_id: null,
               paymentBookingId: null,
+              ...provisionalAssignmentFields,
               customer_name: customerContact.name,
               customer_phone: customerContact.phone,
               customer_email: customerContact.email,
@@ -34643,7 +34828,8 @@ Retour route: ${return_from || to} → ${return_to || from}`,
         }
         allocatorReservationAcquired = true;
         if (alloc?.assigned_vehicle_id) {
-          resolvedAssignedVehicleId = String(alloc.assigned_vehicle_id);
+          allocatorAssignedVehicleId = String(alloc.assigned_vehicle_id);
+          resolvedAssignedVehicleId = allocatorAssignedVehicleId;
           resolvedAssignedDriver = alloc?.assigned_driver || null;
         }
       } else {
@@ -34687,6 +34873,19 @@ Retour route: ${return_from || to} → ${return_to || from}`,
         );
       }
     }
+
+    ({
+      resolvedAssignedVehicleId,
+      resolvedAssignedDriver,
+    } = await _finalizeHandleBookingAssignment(env, {
+      payload,
+      fleetScope,
+      resolvedAssignedVehicleId,
+      resolvedAssignedDriver,
+      explicitAssignmentTrusted,
+      explicitAssignmentTrustSource,
+      allocatorAssignedVehicleId,
+    }));
 
     if ((!calendarConfigured || calendarSyncSuppressed) && requiresPayment && !molliePaidConfirmed && !calendarPaymentHandled) {
       await ensureBookingReferencesReserved();
@@ -34739,6 +34938,10 @@ Retour route: ${return_from || to} → ${return_to || from}`,
           resolvedAssignedDriver?.id,
         96,
       ) || null;
+      const provisionalAssignmentFields = _bookingAssignmentAliasFields(
+        resolvedAssignedDriver,
+        resolvedAssignedVehicleId,
+      );
       const provisionalOperationalLegs = _buildOperationalLegsFoundation({
         parentBookingId: canonicalBookingId,
         service,
@@ -34808,6 +35011,7 @@ Retour route: ${return_from || to} → ${return_to || from}`,
         planningReference: planningReference,
         operational_legs: provisionalOperationalLegs,
         operationalLegs: provisionalOperationalLegs,
+        ...provisionalAssignmentFields,
         tenant_id: tenantContext.tenant_id,
         company_id: tenantContext.company_id,
         tenantId: tenantContext.tenant_id,
@@ -34857,6 +35061,7 @@ Retour route: ${return_from || to} → ${return_to || from}`,
           requiresPayment: true,
           payment_booking_id: pay?.bookingId || null,
           paymentBookingId: pay?.bookingId || null,
+          ...provisionalAssignmentFields,
           customer_name: customerContact.name,
           customer_phone: customerContact.phone,
           customer_email: customerContact.email,
@@ -35102,6 +35307,10 @@ Retour route: ${return_from || to} → ${return_to || from}`,
         resolvedAssignedDriver?.id,
       96,
     ) || null;
+    const bookingAssignmentFields = _bookingAssignmentAliasFields(
+      resolvedAssignedDriver,
+      resolvedAssignedVehicleId,
+    );
     const bookingOperationalLegs = _buildOperationalLegsFoundation({
       parentBookingId: canonicalBookingId,
       service,
@@ -35183,8 +35392,7 @@ Retour route: ${return_from || to} → ${return_to || from}`,
       return_forced_by_wait: false,
       return_from,
       return_to,
-      assigned_vehicle_id: resolvedAssignedVehicleId,
-      assigned_driver: resolvedAssignedDriver,
+      ...bookingAssignmentFields,
       operational_legs: bookingOperationalLegs,
       operationalLegs: bookingOperationalLegs,
 
@@ -35266,8 +35474,7 @@ Retour route: ${return_from || to} → ${return_to || from}`,
       source_context: tenantContext.source_context,
       tenant_resolution_mode: tenantContext.tenant_resolution_mode,
       tenant_resolved_at: tenantContext.tenant_resolved_at,
-      assigned_vehicle_id: resolvedAssignedVehicleId,
-      assigned_driver: resolvedAssignedDriver,
+      ...bookingAssignmentFields,
       operational_legs: bookingOperationalLegs,
       operationalLegs: bookingOperationalLegs,
       calendar_auth_source: calendarAuthSource,
@@ -35337,8 +35544,7 @@ Retour route: ${return_from || to} → ${return_to || from}`,
         return_duration_min: Number(
           _pick(booking, ["return", "duration_min"], 0) ?? 0,
         ),
-        assigned_vehicle_id: resolvedAssignedVehicleId,
-        assigned_driver: resolvedAssignedDriver,
+        ...bookingAssignmentFields,
         operational_legs: Array.isArray(booking.operational_legs) ? booking.operational_legs : [],
         operationalLegs: Array.isArray(booking.operational_legs) ? booking.operational_legs : [],
         calendar_event_id,
