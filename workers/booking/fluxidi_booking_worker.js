@@ -5193,6 +5193,136 @@ async function _loadPublicDriverSessionFromRequest(request, env) {
   };
 }
 
+function _readPayloadDriverIdCandidates(body) {
+  const candidates = [
+    safeStr(body?.driver_id ?? body?.driverId, 96),
+    safeStr(body?.assigned_driver_id ?? body?.assignedDriverId, 96),
+  ].filter(Boolean);
+  return [...new Set(candidates)];
+}
+
+function _readPayloadAssignedVehicleId(body) {
+  return safeStr(body?.assigned_vehicle_id ?? body?.assignedVehicleId, 96);
+}
+
+async function validateDriverAppBookScope(request, env, body, requestScope) {
+  const bookingSource = safeStr(
+    body?.booking_source ?? body?.bookingSource,
+    64,
+  ).toLowerCase();
+  if (bookingSource !== "driver_app") {
+    return { ok: true, enforced: false };
+  }
+
+  const payloadTenant = safeStr(requestScope?.tenant_id ?? requestScope?.tenantId, 80);
+  const payloadCompany = safeStr(requestScope?.company_id ?? requestScope?.companyId, 80);
+  const payloadTenantMasked = _maskPublicDriverLoginValue(payloadTenant);
+  const payloadCompanyMasked = _maskPublicDriverLoginValue(payloadCompany);
+
+  const driverSession = await _loadPublicDriverSessionFromRequest(request, env);
+  if (!driverSession) {
+    console.log(
+      `[BOOK][DRIVER_SCOPE_AUTH] session=missing payload_tenant=${payloadTenantMasked} payload_company=${payloadCompanyMasked} session_tenant=- session_company=- session_driver=- result=no_session`,
+    );
+    console.log(
+      "[BOOK][DRIVER_SCOPE_REJECT] reason=no_session booking_source=driver_app",
+    );
+    return {
+      ok: false,
+      response: json({ ok: false, error: "driver_session_required" }, 401),
+    };
+  }
+
+  const sessionTenant = safeStr(driverSession.tenant_id, 80);
+  const sessionCompany = safeStr(driverSession.company_id, 80);
+  const sessionDriver = safeStr(driverSession.driver_id, 96);
+  const sessionVehicle = safeStr(driverSession.assigned_vehicle_id, 96);
+  const sessionTenantMasked = _maskPublicDriverLoginValue(sessionTenant);
+  const sessionCompanyMasked = _maskPublicDriverLoginValue(sessionCompany);
+  const sessionDriverMasked = _maskPublicDriverLoginValue(sessionDriver);
+
+  const logAuthResult = (result) => {
+    console.log(
+      `[BOOK][DRIVER_SCOPE_AUTH] session=present payload_tenant=${payloadTenantMasked} payload_company=${payloadCompanyMasked} session_tenant=${sessionTenantMasked} session_company=${sessionCompanyMasked} session_driver=${sessionDriverMasked} result=${result}`,
+    );
+  };
+
+  if (
+    payloadTenant !== sessionTenant ||
+    payloadCompany !== sessionCompany
+  ) {
+    logAuthResult("tenant_mismatch");
+    console.log(
+      "[BOOK][DRIVER_SCOPE_REJECT] reason=tenant_mismatch booking_source=driver_app",
+    );
+    return {
+      ok: false,
+      response: json({ ok: false, error: "driver_scope_mismatch" }, 403),
+    };
+  }
+
+  const payloadDriverIds = _readPayloadDriverIdCandidates(body);
+  for (const payloadDriverId of payloadDriverIds) {
+    if (payloadDriverId !== sessionDriver) {
+      logAuthResult("driver_mismatch");
+      console.log(
+        "[BOOK][DRIVER_SCOPE_REJECT] reason=driver_mismatch booking_source=driver_app",
+      );
+      return {
+        ok: false,
+        response: json({ ok: false, error: "driver_scope_mismatch" }, 403),
+      };
+    }
+  }
+
+  const payloadVehicleId = _readPayloadAssignedVehicleId(body);
+  if (
+    sessionVehicle &&
+    payloadVehicleId &&
+    payloadVehicleId !== sessionVehicle
+  ) {
+    logAuthResult("vehicle_mismatch");
+    console.log(
+      "[BOOK][DRIVER_SCOPE_REJECT] reason=vehicle_mismatch booking_source=driver_app",
+    );
+    return {
+      ok: false,
+      response: json({ ok: false, error: "driver_scope_mismatch" }, 403),
+    };
+  }
+
+  const trustedFields = {
+    tenant_id: sessionTenant,
+    tenantId: sessionTenant,
+    company_id: sessionCompany,
+    companyId: sessionCompany,
+    driver_id: sessionDriver,
+    driverId: sessionDriver,
+    assigned_driver_id: sessionDriver,
+    assignedDriverId: sessionDriver,
+  };
+  if (sessionVehicle) {
+    trustedFields.assigned_vehicle_id = sessionVehicle;
+    trustedFields.assignedVehicleId = sessionVehicle;
+  }
+
+  logAuthResult("ok");
+  console.log(
+    `[BOOK][DRIVER_SCOPE_INJECT] driver=${sessionDriverMasked} vehicle=${sessionVehicle ? _maskPublicDriverLoginValue(sessionVehicle) : "-"}`,
+  );
+
+  return {
+    ok: true,
+    enforced: true,
+    requestScope: {
+      tenant_id: sessionTenant,
+      company_id: sessionCompany,
+      hasScope: true,
+    },
+    trustedFields,
+  };
+}
+
 async function _loadCompanySessionFromRequest(request, env) {
   if (!env?.BOOKING_KV) return null;
   const token = _extractBearerToken(request);
@@ -18350,13 +18480,27 @@ GET /oauth/callback
             400,
           );
         }
+        const driverAppScope = await validateDriverAppBookScope(
+          request,
+          env,
+          body,
+          requestScope,
+        );
+        if (!driverAppScope.ok) {
+          return driverAppScope.response;
+        }
+        if (driverAppScope.requestScope?.hasScope) {
+          requestScope = driverAppScope.requestScope;
+        }
+        const isDriverAppBooking = driverAppScope.enforced === true;
         const normalizedBody = {
           ...body,
+          ...(driverAppScope.trustedFields || {}),
           tenant_id: requestScope.tenant_id,
           tenantId: requestScope.tenant_id,
           company_id: requestScope.company_id,
           companyId: requestScope.company_id,
-          ...(routedPublicPartner?.ok
+          ...(routedPublicPartner?.ok && !isDriverAppBooking
             ? {
                 __trusted_tenant_context: {
                   tenant_id: routedPublicPartner.tenant_id,
@@ -18371,7 +18515,7 @@ GET /oauth/callback
             : {}),
         };
         const out = await handleBooking(normalizedBody, env, request, {
-          trustedPublicPartnerScope: routedPublicPartner,
+          trustedPublicPartnerScope: isDriverAppBooking ? null : routedPublicPartner,
         });
         // Build tag helps verify correct deployment
         if (out && typeof out === "object") out.build = "v15-2026-01-20-gcal-hardfix";
