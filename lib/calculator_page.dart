@@ -3967,12 +3967,16 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
     Map<String, dynamic> payload, {
     Duration timeout = const Duration(seconds: 20),
     String? customerSessionToken,
+    String? driverSessionToken,
   }) async {
     final url = Uri.parse('${widget.bookingBaseUrl}/book');
     final headers = <String, String>{'content-type': 'application/json'};
-    final token = (customerSessionToken ?? '').trim();
-    if (token.isNotEmpty) {
-      headers['Authorization'] = 'Bearer $token';
+    final driverToken = (driverSessionToken ?? '').trim();
+    final customerToken = (customerSessionToken ?? '').trim();
+    if (driverToken.isNotEmpty) {
+      headers['Authorization'] = 'Bearer $driverToken';
+    } else if (customerToken.isNotEmpty) {
+      headers['Authorization'] = 'Bearer $customerToken';
     }
     final res = await http
         .post(url, headers: headers, body: jsonEncode(payload))
@@ -4003,6 +4007,7 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
   Future<Map<String, dynamic>?> _verifyBookAfterTransportError(
     Map<String, dynamic> payload, {
     String? customerSessionToken,
+    String? driverSessionToken,
   }) async {
     for (var attempt = 0; attempt < 2; attempt++) {
       try {
@@ -4013,6 +4018,7 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
           payload,
           timeout: const Duration(seconds: 15),
           customerSessionToken: customerSessionToken,
+          driverSessionToken: driverSessionToken,
         );
         if (body != null && body.isNotEmpty) return body;
       } catch (_) {
@@ -4536,6 +4542,28 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
       _showThemedSnackBar(chooseCompanyMessage);
       return;
     }
+
+    String? driverSessionTokenForBook;
+    if (widget.entryContext == BookingEntryContext.driver) {
+      final driverSession = activeDriverSessionNotifier.value;
+      driverSessionTokenForBook = (driverSession?.driverSessionToken ?? '')
+          .trim();
+      debugPrint(
+        '[CALCULATOR][DRIVER_BOOK_AUTH] token_present=${driverSessionTokenForBook.isNotEmpty} driver=${_maskCalculatorScopeId((driverSession?.driverId ?? '').trim())}',
+      );
+      if (driverSessionTokenForBook.isEmpty) {
+        _showThemedSnackBar(
+          _localizedText(
+            nl: 'Geen actieve chauffeurssessie gevonden. Log opnieuw in als chauffeur en probeer het nog eens.',
+            en: 'No active chauffeur session found. Log in again as chauffeur and retry.',
+            fr: 'Aucune session chauffeur active trouvée. Reconnectez-vous en tant que chauffeur et réessayez.',
+            es: 'No se encontró una sesión de chófer activa. Inicia sesión de nuevo como chófer e inténtalo otra vez.',
+          ),
+        );
+        return;
+      }
+    }
+
     final customerSession = _allowsCustomerSessionLink
         ? await CustomerSessionStore.instance.loadValidSession()
         : null;
@@ -4696,6 +4724,7 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
       final body = await _postBookAndDecode(
         payload,
         customerSessionToken: customerSessionToken,
+        driverSessionToken: driverSessionTokenForBook,
       );
       if (body == null) {
         throw Exception('book_response_missing');
@@ -4725,6 +4754,7 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
         final verified = await _verifyBookAfterTransportError(
           payload,
           customerSessionToken: customerSessionToken,
+          driverSessionToken: driverSessionTokenForBook,
         );
         if (!mounted) return;
         if (verified != null) {
