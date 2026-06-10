@@ -8,6 +8,7 @@ import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/company_session_store.dart';
 import 'package:fluxidi_tracking/driver_documents_store.dart';
+import 'package:fluxidi_tracking/driver_session_store.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:open_filex/open_filex.dart';
 
@@ -630,84 +631,162 @@ Future<void> showDriverDocumentEditorSheet(
                                   return '${text.substring(0, 2)}…${text.substring(text.length - 2)}';
                                 }
 
-                                final activeCompanyId = DriverDocumentsStore
-                                    .instance
-                                    .resolvedActiveCompanyIdForDocuments();
-                                final driverCompanyId =
-                                    driver.companyId?.trim() ?? '';
-                                if (activeCompanyId.isNotEmpty &&
-                                    driverCompanyId.isNotEmpty &&
-                                    driverCompanyId != activeCompanyId) {
-                                  if (ctx.mounted) {
-                                    ScaffoldMessenger.of(ctx).showSnackBar(
-                                      SnackBar(
-                                        content: Text(
-                                          t(
-                                            nl: 'Deze chauffeur hoort niet bij het actieve bedrijf.',
-                                            en: 'This driver does not belong to the active company.',
-                                            fr: 'Ce chauffeur n appartient pas a l entreprise active.',
-                                            es: 'Este conductor no pertenece a la empresa activa.',
+                                String tenant;
+                                String company;
+                                String driverIdForDoc;
+                                if (driverSelfService) {
+                                  final selfScope = DriverDocumentsStore
+                                      .instance
+                                      .strictActiveScopeForDriverSelfDoc();
+                                  if (selfScope == null) {
+                                    debugPrint(
+                                      '[DRIVER_DOCS_SELF][SAVE_RESULT] ok=false reason=missing_self_scope',
+                                    );
+                                    if (ctx.mounted) {
+                                      ScaffoldMessenger.of(ctx).showSnackBar(
+                                        SnackBar(
+                                          content: Text(
+                                            t(
+                                              nl: 'Geen actieve chauffeurssessie. Log opnieuw in.',
+                                              en: 'No active driver session. Please sign in again.',
+                                              fr: 'Aucune session chauffeur active. Reconnectez-vous.',
+                                              es: 'Sin sesión activa de conductor. Inicia sesión de nuevo.',
+                                            ),
                                           ),
                                         ),
-                                      ),
-                                    );
+                                      );
+                                    }
+                                    return;
                                   }
-                                  return;
-                                }
-                                if (existing != null &&
-                                    activeCompanyId.isNotEmpty &&
-                                    existing.companyId.trim() !=
-                                        activeCompanyId) {
-                                  if (ctx.mounted) {
-                                    ScaffoldMessenger.of(ctx).showSnackBar(
-                                      SnackBar(
-                                        content: Text(
-                                          t(
-                                            nl: 'Dit document hoort niet bij het actieve bedrijf.',
-                                            en: 'This document does not belong to the active company.',
-                                            fr: 'Ce document n appartient pas a l entreprise active.',
-                                            es: 'Este documento no pertenece a la empresa activa.',
+                                  tenant = selfScope.tenantId;
+                                  company = selfScope.companyId;
+                                  driverIdForDoc = selfScope.driverId;
+                                  if (driverIdForDoc != driver.id.trim()) {
+                                    debugPrint(
+                                      '[DRIVER_DOCS_SELF][SAVE_RESULT] ok=false reason=driver_id_mismatch',
+                                    );
+                                    if (ctx.mounted) {
+                                      ScaffoldMessenger.of(ctx).showSnackBar(
+                                        SnackBar(
+                                          content: Text(
+                                            t(
+                                              nl: 'Profiel komt niet overeen met de actieve sessie.',
+                                              en: 'Profile does not match the active session.',
+                                              fr: 'Le profil ne correspond pas à la session active.',
+                                              es: 'El perfil no coincide con la sesión activa.',
+                                            ),
                                           ),
                                         ),
-                                      ),
-                                    );
+                                      );
+                                    }
+                                    return;
                                   }
-                                  return;
-                                }
-                                final strictScope = DriverDocumentsStore
-                                    .instance
-                                    .strictActiveScopeForNewDoc();
-                                if (strictScope == null) {
-                                  debugPrint(
-                                    '[DRIVER_DOCUMENT_SCOPE][BLOCK] reason=missing_strict_company_scope action=create_driver_document',
-                                  );
-                                  if (ctx.mounted) {
-                                    ScaffoldMessenger.of(ctx).showSnackBar(
-                                      const SnackBar(
-                                        content: Text(
-                                          'Backend synchronisatie vereist een actieve bedrijfssessie. Herkoppel of herstel eerst uw bedrijf.',
+                                  if (existing != null &&
+                                      (existing.tenantId.trim() != tenant ||
+                                          existing.companyId.trim() !=
+                                              company ||
+                                          existing.driverId.trim() !=
+                                              driverIdForDoc)) {
+                                    debugPrint(
+                                      '[DRIVER_DOCS_SELF][SAVE_RESULT] ok=false reason=existing_scope_mismatch',
+                                    );
+                                    if (ctx.mounted) {
+                                      ScaffoldMessenger.of(ctx).showSnackBar(
+                                        SnackBar(
+                                          content: Text(
+                                            t(
+                                              nl: 'Dit document hoort bij een andere sessie.',
+                                              en: 'This document belongs to a different session.',
+                                              fr: 'Ce document appartient à une autre session.',
+                                              es: 'Este documento pertenece a otra sesión.',
+                                            ),
+                                          ),
                                         ),
-                                      ),
-                                    );
+                                      );
+                                    }
+                                    return;
                                   }
-                                  return;
-                                }
-                                final company = strictScope.companyId.trim();
-                                final tenant = strictScope.tenantId.trim();
-                                if (company.isEmpty || tenant.isEmpty) {
-                                  debugPrint(
-                                    '[DRIVER_DOCUMENT_SCOPE][BLOCK] reason=missing_strict_company_scope action=create_driver_document',
-                                  );
-                                  if (ctx.mounted) {
-                                    ScaffoldMessenger.of(ctx).showSnackBar(
-                                      const SnackBar(
-                                        content: Text(
-                                          'Backend synchronisatie vereist een actieve bedrijfssessie. Herkoppel of herstel eerst uw bedrijf.',
+                                } else {
+                                  final activeCompanyId = DriverDocumentsStore
+                                      .instance
+                                      .resolvedActiveCompanyIdForDocuments();
+                                  final driverCompanyId =
+                                      driver.companyId?.trim() ?? '';
+                                  if (activeCompanyId.isNotEmpty &&
+                                      driverCompanyId.isNotEmpty &&
+                                      driverCompanyId != activeCompanyId) {
+                                    if (ctx.mounted) {
+                                      ScaffoldMessenger.of(ctx).showSnackBar(
+                                        SnackBar(
+                                          content: Text(
+                                            t(
+                                              nl: 'Deze chauffeur hoort niet bij het actieve bedrijf.',
+                                              en: 'This driver does not belong to the active company.',
+                                              fr: 'Ce chauffeur n appartient pas a l entreprise active.',
+                                              es: 'Este conductor no pertenece a la empresa activa.',
+                                            ),
+                                          ),
                                         ),
-                                      ),
-                                    );
+                                      );
+                                    }
+                                    return;
                                   }
-                                  return;
+                                  if (existing != null &&
+                                      activeCompanyId.isNotEmpty &&
+                                      existing.companyId.trim() !=
+                                          activeCompanyId) {
+                                    if (ctx.mounted) {
+                                      ScaffoldMessenger.of(ctx).showSnackBar(
+                                        SnackBar(
+                                          content: Text(
+                                            t(
+                                              nl: 'Dit document hoort niet bij het actieve bedrijf.',
+                                              en: 'This document does not belong to the active company.',
+                                              fr: 'Ce document n appartient pas a l entreprise active.',
+                                              es: 'Este documento no pertenece a la empresa activa.',
+                                            ),
+                                          ),
+                                        ),
+                                      );
+                                    }
+                                    return;
+                                  }
+                                  final strictScope = DriverDocumentsStore
+                                      .instance
+                                      .strictActiveScopeForNewDoc();
+                                  if (strictScope == null) {
+                                    debugPrint(
+                                      '[DRIVER_DOCUMENT_SCOPE][BLOCK] reason=missing_strict_company_scope action=create_driver_document',
+                                    );
+                                    if (ctx.mounted) {
+                                      ScaffoldMessenger.of(ctx).showSnackBar(
+                                        const SnackBar(
+                                          content: Text(
+                                            'Backend synchronisatie vereist een actieve bedrijfssessie. Herkoppel of herstel eerst uw bedrijf.',
+                                          ),
+                                        ),
+                                      );
+                                    }
+                                    return;
+                                  }
+                                  company = strictScope.companyId.trim();
+                                  tenant = strictScope.tenantId.trim();
+                                  driverIdForDoc = driver.id.trim();
+                                  if (company.isEmpty || tenant.isEmpty) {
+                                    debugPrint(
+                                      '[DRIVER_DOCUMENT_SCOPE][BLOCK] reason=missing_strict_company_scope action=create_driver_document',
+                                    );
+                                    if (ctx.mounted) {
+                                      ScaffoldMessenger.of(ctx).showSnackBar(
+                                        const SnackBar(
+                                          content: Text(
+                                            'Backend synchronisatie vereist een actieve bedrijfssessie. Herkoppel of herstel eerst uw bedrijf.',
+                                          ),
+                                        ),
+                                      );
+                                    }
+                                    return;
+                                  }
                                 }
                                 final resolvedDocId =
                                     existing?.documentId ??
@@ -756,7 +835,7 @@ Future<void> showDriverDocumentEditorSheet(
                                         .persistPickedFileIfNeeded(
                                           sourcePath: path,
                                           documentId: resolvedDocId,
-                                          driverId: driver.id,
+                                          driverId: driverIdForDoc,
                                           companyId: company,
                                         );
                                     if (persisted != null) {
@@ -791,7 +870,7 @@ Future<void> showDriverDocumentEditorSheet(
                                 if (existing == null) {
                                   final doc = DriverDocumentsStore.buildNew(
                                     tenantId: tenant,
-                                    driverId: driver.id,
+                                    driverId: driverIdForDoc,
                                     documentType: selectedType,
                                     title: titleCtrl.text,
                                     filePath: path,
@@ -841,6 +920,64 @@ Future<void> showDriverDocumentEditorSheet(
                                 debugPrint(
                                   '[DRIVER_DOCS][UI_SYNC_AFTER_SAVE_START] hasScope=${targetDoc.tenantId.trim().isNotEmpty && targetDoc.companyId.trim().isNotEmpty && targetDoc.driverId.trim().isNotEmpty}',
                                 );
+                                if (targetDoc.tenantId.trim().isEmpty ||
+                                    targetDoc.companyId.trim().isEmpty ||
+                                    targetDoc.driverId.trim().isEmpty) {
+                                  debugPrint(
+                                    '[DRIVER_DOCS][UI_SYNC_AFTER_SAVE_SKIP] reason=missing_scope',
+                                  );
+                                  return;
+                                }
+                                if (driverSelfService) {
+                                  final driverSessionToken =
+                                      (activeDriverSessionNotifier
+                                                  .value
+                                                  ?.driverSessionToken ??
+                                              '')
+                                          .trim();
+                                  if (driverSessionToken.isEmpty) {
+                                    debugPrint(
+                                      '[DRIVER_DOCS_SELF][SAVE_TOKEN] source=missing reason=missing_driver_session_token',
+                                    );
+                                    debugPrint(
+                                      '[DRIVER_DOCS][UI_SYNC_AFTER_SAVE_SKIP] reason=missing_driver_session_token',
+                                    );
+                                    return;
+                                  }
+                                  unawaited(
+                                    DriverDocumentsStore.instance
+                                        .syncDriverSelfDocumentUpsertToBackend(
+                                          doc: targetDoc,
+                                          bookingBaseUrl:
+                                              appConfig.bookingBaseUrl,
+                                          driverSessionToken:
+                                              driverSessionToken,
+                                        )
+                                        .then((result) {
+                                          if (result != null) {
+                                            debugPrint(
+                                              '[DRIVER_DOCS][UI_SYNC_AFTER_SAVE_DONE] ok=true',
+                                            );
+                                            debugPrint(
+                                              '[DRIVER_DOC_EDIT][PROPAGATE] driver=$safeDriverRef doc=$safeDocRef updated=true',
+                                            );
+                                          } else {
+                                            debugPrint(
+                                              '[DRIVER_DOCS][UI_SYNC_AFTER_SAVE_DONE] ok=false',
+                                            );
+                                          }
+                                        })
+                                        .catchError((error) {
+                                          debugPrint(
+                                            '[DRIVER_DOCS][UI_SYNC_AFTER_SAVE_DONE] ok=false',
+                                          );
+                                          debugPrint(
+                                            '[DRIVER_DOC_EDIT][FAILED] driver=$safeDriverRef doc=$safeDocRef error=sync_failed',
+                                          );
+                                        }),
+                                  );
+                                  return;
+                                }
                                 final companySessionToken =
                                     (activeCompanySessionNotifier
                                                 .value
@@ -850,14 +987,6 @@ Future<void> showDriverDocumentEditorSheet(
                                 if (companySessionToken.isEmpty) {
                                   debugPrint(
                                     '[DRIVER_DOCS][UI_SYNC_AFTER_SAVE_SKIP] reason=missing_company_session_token',
-                                  );
-                                  return;
-                                }
-                                if (targetDoc.tenantId.trim().isEmpty ||
-                                    targetDoc.companyId.trim().isEmpty ||
-                                    targetDoc.driverId.trim().isEmpty) {
-                                  debugPrint(
-                                    '[DRIVER_DOCS][UI_SYNC_AFTER_SAVE_SKIP] reason=missing_scope',
                                   );
                                   return;
                                 }

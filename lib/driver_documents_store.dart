@@ -1665,7 +1665,6 @@ class DriverDocumentsStore {
     final companyId = doc.companyId.trim();
     final driverId = doc.driverId.trim();
     final documentId = doc.documentId.trim();
-    final path = doc.filePath.trim();
     final safeDriverRef = _shortRef(driverId);
     final safeDocRef = _shortRef(documentId);
     debugPrint(
@@ -1724,6 +1723,143 @@ class DriverDocumentsStore {
       );
       return null;
     }
+    return _performDriverDocumentUpsertHttp(
+      doc: doc,
+      target: target,
+      bookingBaseUrl: bookingBaseUrl,
+      bearerToken: companySessionToken,
+      nowIso: nowIso,
+      safeDriverRef: safeDriverRef,
+      safeDocRef: safeDocRef,
+    );
+  }
+
+  /// Standalone driver self-service upsert: validates the document against
+  /// the active driver session scope (tenant/company/driver) and uses the
+  /// driver session bearer instead of the company session token. This path
+  /// never touches the company strict-scope guard, so it works in mixed
+  /// contexts where the active business context belongs to a different
+  /// company than the standalone driver session.
+  Future<DriverDocument?> syncDriverSelfDocumentUpsertToBackend({
+    required DriverDocument doc,
+    required String bookingBaseUrl,
+    required String driverSessionToken,
+  }) async {
+    final tenantId = doc.tenantId.trim();
+    final companyId = doc.companyId.trim();
+    final driverId = doc.driverId.trim();
+    final documentId = doc.documentId.trim();
+    final safeDriverRef = _shortRef(driverId);
+    final safeDocRef = _shortRef(documentId);
+    final session = activeDriverSessionNotifier.value;
+    final selfTenant = (session?.tenantId ?? '').trim();
+    final selfCompany = (session?.companyId ?? '').trim();
+    final selfDriver = (session?.driverId ?? '').trim();
+    debugPrint(
+      '[DRIVER_DOCS_SELF][SAVE_SCOPE] has_tenant=${selfTenant.isNotEmpty} has_company=${selfCompany.isNotEmpty} has_driver=${selfDriver.isNotEmpty}',
+    );
+    debugPrint(
+      '[DRIVER_DOCS][BACKEND_UPLOAD_START] hasScope=${tenantId.isNotEmpty && companyId.isNotEmpty && driverId.isNotEmpty} hasDoc=${documentId.isNotEmpty}',
+    );
+    debugPrint(
+      '[DRIVER_DOC_EDIT][START] driver=$safeDriverRef doc=$safeDocRef',
+    );
+
+    DriverDocument target =
+        _findByDocumentScope(
+          tenantId: tenantId,
+          companyId: companyId,
+          driverId: driverId,
+          documentId: documentId,
+        ) ??
+        doc;
+    final nowIso = DateTime.now().toUtc().toIso8601String();
+    target = target.copyWith(
+      backendPendingUpload: true,
+      backendLastSyncAttemptAt: nowIso,
+      backendSyncAttemptCount: target.backendSyncAttemptCount + 1,
+    );
+    await _upsertDocumentAndPersist(target);
+
+    if (session == null ||
+        !session.isStandaloneLoginSession ||
+        selfTenant.isEmpty ||
+        selfCompany.isEmpty ||
+        selfDriver.isEmpty) {
+      final withError = target.copyWith(
+        backendPendingUpload: true,
+        backendSyncError: 'missing_driver_session_scope',
+      );
+      await _upsertDocumentAndPersist(withError);
+      debugPrint(
+        '[DRIVER_DOCS_SELF][SAVE_RESULT] ok=false reason=missing_driver_session_scope',
+      );
+      return null;
+    }
+    if (tenantId != selfTenant ||
+        companyId != selfCompany ||
+        driverId != selfDriver) {
+      final withError = target.copyWith(
+        backendPendingUpload: true,
+        backendSyncError: 'self_scope_mismatch',
+      );
+      await _upsertDocumentAndPersist(withError);
+      debugPrint(
+        '[DRIVER_DOCS_SELF][SAVE_RESULT] ok=false reason=self_scope_mismatch',
+      );
+      return null;
+    }
+    if (driverSessionToken.trim().isEmpty) {
+      final withError = target.copyWith(
+        backendPendingUpload: true,
+        backendSyncError: 'missing_driver_session_token',
+      );
+      await _upsertDocumentAndPersist(withError);
+      debugPrint(
+        '[DRIVER_DOCS_SELF][SAVE_RESULT] ok=false reason=missing_driver_session_token',
+      );
+      return null;
+    }
+    debugPrint('[DRIVER_DOCS_SELF][SAVE_TOKEN] source=driver_session');
+    final result = await _performDriverDocumentUpsertHttp(
+      doc: doc,
+      target: target,
+      bookingBaseUrl: bookingBaseUrl,
+      bearerToken: driverSessionToken,
+      nowIso: nowIso,
+      safeDriverRef: safeDriverRef,
+      safeDocRef: safeDocRef,
+    );
+    if (result != null) {
+      debugPrint('[DRIVER_DOCS_SELF][SAVE_RESULT] ok=true reason=persisted');
+    } else {
+      debugPrint(
+        '[DRIVER_DOCS_SELF][SAVE_RESULT] ok=false reason=upload_failed',
+      );
+    }
+    return result;
+  }
+
+  /// Shared body for company-admin and standalone driver self-service
+  /// document upserts. Performs the upload/update HTTP call, merges the
+  /// backend metadata, and persists the result. The caller must have
+  /// already validated scope and updated the local target with pending
+  /// state.
+  Future<DriverDocument?> _performDriverDocumentUpsertHttp({
+    required DriverDocument doc,
+    required DriverDocument target,
+    required String bookingBaseUrl,
+    required String bearerToken,
+    required String nowIso,
+    required String safeDriverRef,
+    required String safeDocRef,
+  }) async {
+    final tenantId = doc.tenantId.trim();
+    final companyId = doc.companyId.trim();
+    final driverId = doc.driverId.trim();
+    final documentId = doc.documentId.trim();
+    final path = doc.filePath.trim();
+
     if (tenantId.isEmpty ||
         companyId.isEmpty ||
         driverId.isEmpty ||
@@ -1756,7 +1892,7 @@ class DriverDocumentsStore {
         );
         response = await uploadAdminDriverDocument(
           bookingBaseUrl: bookingBaseUrl,
-          companySessionToken: companySessionToken,
+          companySessionToken: bearerToken,
           tenantId: tenantId,
           companyId: companyId,
           driverId: driverId,
@@ -1777,7 +1913,7 @@ class DriverDocumentsStore {
         );
         response = await updateAdminDriverDocumentMetadata(
           bookingBaseUrl: bookingBaseUrl,
-          companySessionToken: companySessionToken,
+          companySessionToken: bearerToken,
           tenantId: tenantId,
           companyId: companyId,
           driverId: driverId,
@@ -2287,6 +2423,88 @@ class DriverDocumentsStore {
     debugPrint('[DRIVER_DOCS][BACKEND_RETRY_DONE] ok=true');
   }
 
+  /// Self-service variant of [retryPendingDriverDocumentSync] for the
+  /// standalone chauffeur app. Uses the active driver session bearer for
+  /// uploads (via [syncDriverSelfDocumentUpsertToBackend]) and for
+  /// pending deletes (via [deleteDocumentInBackendThenLocal] which is
+  /// already token-agnostic on the wire). Scope must match the active
+  /// driver session exactly; mismatched docs are skipped.
+  Future<void> retryPendingDriverDocumentSyncSelfService({
+    required String bookingBaseUrl,
+    required String driverSessionToken,
+  }) async {
+    final selfScope = strictActiveScopeForDriverSelfDoc();
+    debugPrint(
+      '[DRIVER_DOCS][BACKEND_RETRY_START] hasScope=${selfScope != null}',
+    );
+    if (selfScope == null || driverSessionToken.trim().isEmpty) {
+      debugPrint(
+        '[DRIVER_DOCS][BACKEND_RETRY_SKIP] reason=missing_self_scope_or_token',
+      );
+      return;
+    }
+    final scopedTenant = selfScope.tenantId;
+    final scopedCompany = selfScope.companyId;
+    final scopedDriver = selfScope.driverId;
+    final scopedDocs = driverDocumentsNotifier.value
+        .where(
+          (doc) => _matchesExactScope(
+            doc,
+            tenantId: scopedTenant,
+            companyId: scopedCompany,
+            driverId: scopedDriver,
+          ),
+        )
+        .toList(growable: false);
+    for (final doc in scopedDocs) {
+      final hasSyncError = doc.backendSyncError.trim().isNotEmpty;
+      if (doc.backendPendingDelete) {
+        debugPrint('[DRIVER_DOCS][BACKEND_RETRY_DELETE] queued=true');
+        try {
+          await deleteDocumentInBackendThenLocal(
+            bookingBaseUrl: bookingBaseUrl,
+            companySessionToken: driverSessionToken,
+            tenantId: scopedTenant,
+            companyId: scopedCompany,
+            driverId: scopedDriver,
+            documentId: doc.documentId,
+          );
+        } catch (_) {
+          // Best-effort: leave local pending marker.
+        }
+        continue;
+      }
+      if (!doc.backendPendingUpload && !hasSyncError) continue;
+
+      final path = doc.filePath.trim();
+      final nowIso = DateTime.now().toUtc().toIso8601String();
+      if (path.isEmpty || !await File(path).exists()) {
+        final updated = doc.copyWith(
+          backendPendingUpload: true,
+          backendLastSyncAttemptAt: nowIso,
+          backendSyncAttemptCount: doc.backendSyncAttemptCount + 1,
+          backendSyncError: 'missing_local_file_for_retry',
+        );
+        await _upsertDocumentAndPersist(updated);
+        debugPrint(
+          '[DRIVER_DOCS][BACKEND_RETRY_SKIP] reason=missing_local_file_for_retry',
+        );
+        continue;
+      }
+      debugPrint('[DRIVER_DOCS][BACKEND_RETRY_UPLOAD] queued=true');
+      try {
+        await syncDriverSelfDocumentUpsertToBackend(
+          doc: doc,
+          bookingBaseUrl: bookingBaseUrl,
+          driverSessionToken: driverSessionToken,
+        );
+      } catch (_) {
+        // Best-effort: upload method persists failure state.
+      }
+    }
+    debugPrint('[DRIVER_DOCS][BACKEND_RETRY_DONE] ok=true');
+  }
+
   Future<bool> deleteDocumentInBackendThenLocal({
     required String bookingBaseUrl,
     required String companySessionToken,
@@ -2445,6 +2663,24 @@ class DriverDocumentsStore {
 
   ({String tenantId, String companyId})? strictActiveScopeForNewDoc() {
     return _strictActiveTenantCompanyScopeForDocuments();
+  }
+
+  /// Strict self-service scope for chauffeur-side document writes
+  /// (`Mijn documenten`). Resolves tenant/company/driver from the active
+  /// driver session only. Returns null when there is no standalone driver
+  /// session or when any of the three is missing. Never falls back to
+  /// the active company/business context, so a user who is logged into
+  /// company A while the standalone driver session belongs to company B
+  /// still gets the (B, B, B) scope here.
+  ({String tenantId, String companyId, String driverId})?
+  strictActiveScopeForDriverSelfDoc() {
+    final session = activeDriverSessionNotifier.value;
+    if (session == null || !session.isStandaloneLoginSession) return null;
+    final tenantId = (session.tenantId ?? '').trim();
+    final companyId = (session.companyId ?? '').trim();
+    final driverId = session.driverId.trim();
+    if (tenantId.isEmpty || companyId.isEmpty || driverId.isEmpty) return null;
+    return (tenantId: tenantId, companyId: companyId, driverId: driverId);
   }
 
   static DriverDocument buildNew({

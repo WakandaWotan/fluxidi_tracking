@@ -191,40 +191,46 @@ class _DriverMyDocumentsPageState extends State<DriverMyDocumentsPage> {
     final tenantId = (session.tenantId ?? '').trim();
     final companyId = (session.companyId ?? '').trim();
     final driverId = session.driverId.trim();
-    final companySessionToken =
-        (activeCompanySessionNotifier.value?.companySessionToken ?? '').trim();
-    if (companySessionToken.isEmpty) {
-      debugPrint(
-        '[DRIVER_DOCS][UI_REFRESH_SKIP] reason=missing_company_session_token',
-      );
-      debugPrint(
-        '[DRIVER_DOCS][UI_RETRY_SKIP] reason=missing_company_session_token',
-      );
-      return;
-    }
     if (tenantId.isEmpty || companyId.isEmpty || driverId.isEmpty) {
       debugPrint('[DRIVER_DOCS][UI_REFRESH_SKIP] reason=missing_scope');
       debugPrint('[DRIVER_DOCS][UI_RETRY_SKIP] reason=missing_scope');
       return;
     }
+    final bearerToken = _selfDriverDocsBearerToken(session);
+    if (bearerToken == null) {
+      debugPrint('[DRIVER_DOCS][UI_REFRESH_SKIP] reason=missing_self_token');
+      debugPrint('[DRIVER_DOCS][UI_RETRY_SKIP] reason=missing_self_token');
+      return;
+    }
+    final driverSessionToken = (session.driverSessionToken ?? '').trim();
+    final useSelfServiceRetry =
+        session.isStandaloneLoginSession &&
+        driverSessionToken.isNotEmpty &&
+        bearerToken == driverSessionToken;
     try {
       await DriverDocumentsStore.instance.refreshDriverDocumentsFromBackend(
         bookingBaseUrl: appConfig.bookingBaseUrl,
-        companySessionToken: companySessionToken,
+        companySessionToken: bearerToken,
         tenantId: tenantId,
         companyId: companyId,
         driverId: driverId,
       );
       debugPrint('[DRIVER_DOCS][UI_RETRY_START] source=driver_page_init');
-      unawaited(
-        DriverDocumentsStore.instance
-            .retryPendingDriverDocumentSync(
+      final Future<void> retryFuture = useSelfServiceRetry
+          ? DriverDocumentsStore.instance
+                .retryPendingDriverDocumentSyncSelfService(
+                  bookingBaseUrl: appConfig.bookingBaseUrl,
+                  driverSessionToken: driverSessionToken,
+                )
+          : DriverDocumentsStore.instance.retryPendingDriverDocumentSync(
               bookingBaseUrl: appConfig.bookingBaseUrl,
-              companySessionToken: companySessionToken,
+              companySessionToken: bearerToken,
               tenantId: tenantId,
               companyId: companyId,
               driverId: driverId,
-            )
+            );
+      unawaited(
+        retryFuture
             .then((_) {
               debugPrint('[DRIVER_DOCS][UI_RETRY_DONE] ok=true');
             })
@@ -237,6 +243,52 @@ class _DriverMyDocumentsPageState extends State<DriverMyDocumentsPage> {
       debugPrint('[DRIVER_DOCS][UI_RETRY_SKIP] reason=refresh_failed');
       debugPrint('[DRIVER_DOCS][UI_REFRESH_DONE] ok=false');
     }
+  }
+
+  /// Selects the bearer token to use for self-service driver-document
+  /// requests on this page. Returns the standalone driver session token
+  /// when available; otherwise falls back to the active company session
+  /// token only when its scope exactly matches the driver session
+  /// tenant/company. Returns null in mixed contexts where neither
+  /// option is safe (e.g. business=A while standalone driver=B), so the
+  /// caller skips the request rather than authenticating with the wrong
+  /// scope.
+  String? _selfDriverDocsBearerToken(ActiveDriverSession session) {
+    final tenantId = (session.tenantId ?? '').trim();
+    final companyId = (session.companyId ?? '').trim();
+    final driverId = session.driverId.trim();
+    final driverToken = (session.driverSessionToken ?? '').trim();
+    if (session.isStandaloneLoginSession &&
+        tenantId.isNotEmpty &&
+        companyId.isNotEmpty &&
+        driverId.isNotEmpty &&
+        driverToken.isNotEmpty) {
+      debugPrint(
+        '[DRIVER_DOCS_SELF][AUTH_TOKEN] source=driver_session reason=standalone_session',
+      );
+      return driverToken;
+    }
+    final companySession = activeCompanySessionNotifier.value;
+    final companyId2 = (companySession?.companyId ?? '').trim();
+    final companyToken = (companySession?.companySessionToken ?? '').trim();
+    if (companyToken.isNotEmpty &&
+        companyId2.isNotEmpty &&
+        tenantId.isNotEmpty &&
+        companyId.isNotEmpty &&
+        companyId2 == tenantId &&
+        companyId2 == companyId) {
+      debugPrint(
+        '[DRIVER_DOCS_SELF][AUTH_TOKEN] source=company_session_match reason=scope_matches_driver',
+      );
+      return companyToken;
+    }
+    final reason = driverToken.isEmpty
+        ? 'missing_driver_session_token'
+        : (companyToken.isEmpty
+              ? 'missing_company_session_token'
+              : 'scope_mismatch');
+    debugPrint('[DRIVER_DOCS_SELF][AUTH_TOKEN] source=missing reason=$reason');
+    return null;
   }
 
   AppLanguage get _lang => appConfig.currentLanguage;
@@ -469,18 +521,73 @@ class _DriverMyDocumentsPageState extends State<DriverMyDocumentsPage> {
     );
   }
 
+  bool _isDriverInNotifier(String driverId) {
+    final id = driverId.trim();
+    if (id.isEmpty) return false;
+    for (final d in driversNotifier.value) {
+      if (d.id.trim() == id) return true;
+    }
+    return false;
+  }
+
   DriverProfile? _driverForSession(ActiveDriverSession session) {
     final sessionDriverId = session.driverId.trim();
+    final sessionTenantField = session.tenantId;
     final sessionCompanyId = (session.companyId ?? '').trim();
-    for (final d in driversNotifier.value) {
-      if (d.id.trim() != sessionDriverId) continue;
-      final driverCompanyId = (d.companyId ?? '').trim();
-      if (sessionCompanyId.isNotEmpty && driverCompanyId.isNotEmpty) {
-        if (sessionCompanyId != driverCompanyId) continue;
+    final hasDriverId = sessionDriverId.isNotEmpty;
+    final hasTenant = (sessionTenantField ?? '').trim().isNotEmpty;
+    final hasCompany = sessionCompanyId.isNotEmpty;
+
+    if (hasDriverId) {
+      for (final d in driversNotifier.value) {
+        if (d.id.trim() != sessionDriverId) continue;
+        final driverCompanyId = (d.companyId ?? '').trim();
+        if (hasCompany && driverCompanyId.isNotEmpty) {
+          if (sessionCompanyId != driverCompanyId) continue;
+        }
+        debugPrint(
+          '[DRIVER_DOCS_SELF][PROFILE_RESOLVE] source=notifier '
+          'has_driver_id=$hasDriverId has_tenant=$hasTenant has_company=$hasCompany',
+        );
+        return d;
       }
-      return d;
     }
-    return null;
+
+    final fullName = session.fullName.trim();
+    final employeeNumber = session.employeeNumber.trim();
+    final tenantOk =
+        sessionTenantField == null || sessionTenantField.trim().isNotEmpty;
+    final canSynthesize =
+        hasDriverId &&
+        hasCompany &&
+        tenantOk &&
+        (fullName.isNotEmpty || employeeNumber.isNotEmpty);
+
+    if (!canSynthesize) {
+      debugPrint(
+        '[DRIVER_DOCS_SELF][PROFILE_RESOLVE] source=missing '
+        'has_driver_id=$hasDriverId has_tenant=$hasTenant has_company=$hasCompany',
+      );
+      return null;
+    }
+
+    final sessionPhotoUrl = (session.driverPhotoUrl ?? '').trim();
+    final synthesizedPortraitUrl = _isHttpUrl(sessionPhotoUrl)
+        ? sessionPhotoUrl
+        : null;
+    debugPrint(
+      '[DRIVER_DOCS_SELF][PROFILE_RESOLVE] source=standalone_session '
+      'has_driver_id=$hasDriverId has_tenant=$hasTenant has_company=$hasCompany',
+    );
+    return DriverProfile(
+      id: sessionDriverId,
+      fullName: fullName.isNotEmpty ? fullName : employeeNumber,
+      employeeNumber: employeeNumber,
+      phone: session.phone.trim(),
+      isActive: true,
+      companyId: sessionCompanyId,
+      publicPortraitUrl: synthesizedPortraitUrl,
+    );
   }
 
   bool _driverPhotoExists(String? path) {
@@ -677,18 +784,32 @@ class _DriverMyDocumentsPageState extends State<DriverMyDocumentsPage> {
       );
       final nextPath = (persisted ?? '').trim();
       if (nextPath.isEmpty) return;
-      updateDriver(driver.id, driver.copyWith(profilePhotoPath: nextPath));
+      final standaloneOnly = !_isDriverInNotifier(driver.id);
+      if (standaloneOnly) {
+        debugPrint(
+          '[DRIVER_DOCS_SELF][PHOTO_SAVE] mode=standalone_session_only inventory_sync=skipped',
+        );
+      } else {
+        updateDriver(driver.id, driver.copyWith(profilePhotoPath: nextPath));
+      }
       if (!mounted) return;
       setState(() {});
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            _tr(
-              nl: 'Pasfoto opgeslagen.',
-              en: 'Profile photo saved.',
-              fr: 'Photo de profil enregistrée.',
-              es: 'Foto de perfil guardada.',
-            ),
+            standaloneOnly
+                ? _tr(
+                    nl: 'Pasfoto opgeslagen op dit toestel.',
+                    en: 'Profile photo saved on this device.',
+                    fr: 'Photo de profil enregistrée sur cet appareil.',
+                    es: 'Foto de perfil guardada en este dispositivo.',
+                  )
+                : _tr(
+                    nl: 'Pasfoto opgeslagen.',
+                    en: 'Profile photo saved.',
+                    fr: 'Photo de profil enregistrée.',
+                    es: 'Foto de perfil guardada.',
+                  ),
           ),
         ),
       );
@@ -1244,6 +1365,121 @@ class _DriverMyDocumentsPageState extends State<DriverMyDocumentsPage> {
     );
   }
 
+  Future<void> _openSelfDriverDocument(
+    BuildContext context,
+    DriverDocument doc,
+  ) async {
+    final source = driverDocumentArtifactSource(doc);
+    debugPrint('[DRIVER_DOC_OPEN][SELF_SOURCE] source=$source');
+    if (source == 'missing') {
+      debugPrint('[DRIVER_DOC_OPEN][SELF_FAILED] reason=artifact_missing');
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _tr(
+              nl: 'Documentbestand niet beschikbaar.',
+              en: 'Document file not available.',
+              fr: 'Fichier indisponible.',
+              es: 'Archivo no disponible.',
+            ),
+          ),
+        ),
+      );
+      return;
+    }
+    if (source == 'local') {
+      await openDriverDocumentFile(context, doc.filePath, _lang);
+      return;
+    }
+
+    final session = activeDriverSessionNotifier.value;
+    final tenantId = doc.tenantId.trim();
+    final companyId = doc.companyId.trim();
+    final driverId = doc.driverId.trim();
+    final documentId = doc.documentId.trim();
+    final token = session == null ? null : _selfDriverDocsBearerToken(session);
+    if (token == null ||
+        tenantId.isEmpty ||
+        companyId.isEmpty ||
+        driverId.isEmpty ||
+        documentId.isEmpty) {
+      debugPrint(
+        '[DRIVER_DOC_OPEN][SELF_FAILED] reason=missing_scope_or_token',
+      );
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _tr(
+              nl: 'Cloud documenttoegang vereist een actieve bedrijfssessie.',
+              en: 'Cloud document access requires an active company session.',
+              fr: 'L’accès aux documents cloud nécessite une session entreprise active.',
+              es: 'El acceso a documentos en la nube requiere una sesión activa de empresa.',
+            ),
+          ),
+        ),
+      );
+      return;
+    }
+
+    debugPrint(
+      '[DRIVER_DOC_OPEN][SELF_REQUEST] endpoint=/admin/driver-documents/file',
+    );
+    try {
+      final downloaded = await downloadAdminDriverDocumentFile(
+        bookingBaseUrl: kBookingBaseUrl,
+        companySessionToken: token,
+        tenantId: tenantId,
+        companyId: companyId,
+        driverId: driverId,
+        documentId: documentId,
+      );
+      final saved =
+          downloaded.localPath.trim().isNotEmpty &&
+          await File(downloaded.localPath).exists();
+      if (!saved) {
+        debugPrint('[DRIVER_DOC_OPEN][SELF_FAILED] reason=cache_save_failed');
+        if (!context.mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              _tr(
+                nl: 'Kon document niet openen. Probeer opnieuw.',
+                en: 'Could not open document. Please try again.',
+                fr: 'Impossible d’ouvrir le document. Réessayez.',
+                es: 'No se pudo abrir el documento. Inténtalo de nuevo.',
+              ),
+            ),
+          ),
+        );
+        return;
+      }
+      if (!context.mounted) return;
+      await openDriverDocumentFile(context, downloaded.localPath, _lang);
+    } catch (e) {
+      final err = e.toString().toLowerCase();
+      var reason = 'download_failed';
+      if (err.contains('404')) reason = 'not_found';
+      if (err.contains('401') || err.contains('403')) reason = 'unauthorized';
+      if (err.contains('timeout')) reason = 'timeout';
+      debugPrint('[DRIVER_DOC_OPEN][SELF_FAILED] reason=$reason');
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _tr(
+              nl: 'Kon document niet openen. Probeer opnieuw.',
+              en: 'Could not open document. Please try again.',
+              fr: 'Impossible d’ouvrir le document. Réessayez.',
+              es: 'No se pudo abrir el documento. Inténtalo de nuevo.',
+            ),
+          ),
+        ),
+      );
+    }
+  }
+
   Widget _driverSelfDocTile(
     BuildContext context,
     DriverDocument doc,
@@ -1315,15 +1551,9 @@ class _DriverMyDocumentsPageState extends State<DriverMyDocumentsPage> {
       );
     }
 
-    bool canOpenLocal(DriverDocument d) {
-      final path = d.filePath.trim();
-      if (path.isEmpty || kIsWeb) return false;
-      try {
-        return File(path).existsSync();
-      } catch (_) {
-        return false;
-      }
-    }
+    final docArtifactSource = driverDocumentArtifactSource(doc);
+    final canOpenDocument =
+        docArtifactSource == 'local' || docArtifactSource == 'backend';
 
     final typeLabel = driverDocumentTypeLabel(doc.documentType, _lang);
     final expiredVisual =
@@ -1417,9 +1647,9 @@ class _DriverMyDocumentsPageState extends State<DriverMyDocumentsPage> {
                   borderRadius: BorderRadius.circular(999),
                 ),
               ),
-              onPressed: !canOpenLocal(doc)
+              onPressed: !canOpenDocument
                   ? null
-                  : () => openDriverDocumentFile(context, doc.filePath, _lang),
+                  : () => _openSelfDriverDocument(context, doc),
               child: Text(
                 _tr(nl: 'Openen', en: 'Open', fr: 'Ouvrir', es: 'Abrir'),
               ),

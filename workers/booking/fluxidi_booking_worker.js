@@ -4601,28 +4601,58 @@ async function _resolveDriverDocumentsAuthScope({ request, url, env, inputScope 
     };
   }
   const companySession = await _loadCompanySessionFromRequest(request, env);
-  if (!companySession) {
-    return { ok: false, response: _companyAuthFail() };
+  if (companySession) {
+    if (scoped.hasScope) {
+      if (
+        scoped.tenant_id !== companySession.tenant_id ||
+        scoped.company_id !== companySession.company_id
+      ) {
+        return { ok: false, response: json({ ok: false, error: "scope_forbidden" }, 403) };
+      }
+    }
+    if (!scoped.driver_id) {
+      return { ok: false, response: json({ ok: false, error: "driver_id is required" }, 400) };
+    }
+    return {
+      ok: true,
+      auth_mode: "company_session",
+      tenant_id: companySession.tenant_id,
+      company_id: companySession.company_id,
+      driver_id: scoped.driver_id,
+      company_session: companySession,
+    };
   }
-  if (scoped.hasScope) {
-    if (
-      scoped.tenant_id !== companySession.tenant_id ||
-      scoped.company_id !== companySession.company_id
-    ) {
+  // Fallback: standalone driver session may act on its own documents only.
+  // Strictly scoped to the driver's own tenant/company/driver triple.
+  const driverSession = await _loadPublicDriverSessionFromRequest(request, env);
+  if (driverSession) {
+    if (!scoped.hasScope) {
+      console.log("[DRIVER_DOCS_AUTH] mode=driver_session result=reject reason=missing_scope");
       return { ok: false, response: json({ ok: false, error: "scope_forbidden" }, 403) };
     }
+    if (!scoped.driver_id) {
+      console.log("[DRIVER_DOCS_AUTH] mode=driver_session result=reject reason=missing_driver_id");
+      return { ok: false, response: json({ ok: false, error: "scope_forbidden" }, 403) };
+    }
+    if (
+      scoped.tenant_id !== driverSession.tenant_id ||
+      scoped.company_id !== driverSession.company_id ||
+      scoped.driver_id !== driverSession.driver_id
+    ) {
+      console.log("[DRIVER_DOCS_AUTH] mode=driver_session result=reject reason=scope_mismatch");
+      return { ok: false, response: json({ ok: false, error: "scope_forbidden" }, 403) };
+    }
+    console.log("[DRIVER_DOCS_AUTH] mode=driver_session result=ok reason=self_scope");
+    return {
+      ok: true,
+      auth_mode: "driver_session",
+      tenant_id: driverSession.tenant_id,
+      company_id: driverSession.company_id,
+      driver_id: driverSession.driver_id,
+      driver_session: driverSession,
+    };
   }
-  if (!scoped.driver_id) {
-    return { ok: false, response: json({ ok: false, error: "driver_id is required" }, 400) };
-  }
-  return {
-    ok: true,
-    auth_mode: "company_session",
-    tenant_id: companySession.tenant_id,
-    company_id: companySession.company_id,
-    driver_id: scoped.driver_id,
-    company_session: companySession,
-  };
+  return { ok: false, response: _companyAuthFail() };
 }
 
 async function handleAdminDriverDocumentsUpload(request, url, env) {
