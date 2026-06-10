@@ -2814,7 +2814,12 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
     required String value,
     String? subtitle,
     bool compact = false,
+    // Phone-landscape KPI cards need to stay short, with smaller text and
+    // numbers that don't dominate the row. `dense` only takes effect when
+    // `compact == true` (tablet landscape compact path is unaffected).
+    bool dense = false,
   }) {
+    final bool denseCompact = compact && dense;
     final decoration = compact
         ? BoxDecoration(
             gradient: LinearGradient(
@@ -2824,7 +2829,7 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                   ? const [Color(0xFF090909), Color(0xFF101010)]
                   : [_subPanelBg, _panelBg],
             ),
-            borderRadius: BorderRadius.circular(14),
+            borderRadius: BorderRadius.circular(denseCompact ? 12 : 14),
             border: Border.all(
               color: _border.withOpacity(_isDark ? 0.42 : 0.92),
             ),
@@ -2836,28 +2841,69 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
               color: _border.withOpacity(_isDark ? 0.34 : 0.9),
             ),
           );
+    final double iconBoxSize = denseCompact
+        ? 34
+        : compact
+        ? 56
+        : 28;
+    final double iconGlyphSize = denseCompact
+        ? 18
+        : compact
+        ? 28
+        : 15;
+    final double horizontalPadding = denseCompact
+        ? 10
+        : compact
+        ? 14
+        : 10;
+    final double verticalPadding = denseCompact
+        ? 8
+        : compact
+        ? 12
+        : 8;
+    final double labelFontSize = denseCompact
+        ? 11.4
+        : compact
+        ? 14.8
+        : 10.8;
+    final double valueFontSize = denseCompact
+        ? 18.5
+        : compact
+        ? 29
+        : 16;
+    final double labelValueGap = denseCompact
+        ? 1
+        : compact
+        ? 3
+        : 2;
     return Container(
       padding: EdgeInsets.fromLTRB(
-        compact ? 14 : 10,
-        compact ? 12 : 8,
-        compact ? 14 : 10,
-        compact ? 12 : 8,
+        horizontalPadding,
+        verticalPadding,
+        horizontalPadding,
+        verticalPadding,
       ),
       decoration: decoration,
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           Container(
-            width: compact ? 56 : 28,
-            height: compact ? 56 : 28,
+            width: iconBoxSize,
+            height: iconBoxSize,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
               color: accent.withOpacity(0.15),
               border: Border.all(color: accent.withOpacity(0.52)),
             ),
-            child: Icon(icon, size: compact ? 28 : 15, color: accent),
+            child: Icon(icon, size: iconGlyphSize, color: accent),
           ),
-          SizedBox(width: compact ? 12 : 8),
+          SizedBox(
+            width: denseCompact
+                ? 8
+                : compact
+                ? 12
+                : 8,
+          ),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -2869,11 +2915,11 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
                     color: _textMuted.withOpacity(0.9),
-                    fontSize: compact ? 14.8 : 10.8,
+                    fontSize: labelFontSize,
                     fontWeight: FontWeight.w600,
                   ),
                 ),
-                SizedBox(height: compact ? 3 : 2),
+                SizedBox(height: labelValueGap),
                 Text(
                   value,
                   maxLines: 1,
@@ -2881,10 +2927,11 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                   style: TextStyle(
                     color: _textPrimary,
                     fontWeight: FontWeight.w900,
-                    fontSize: compact ? 29 : 16,
+                    fontSize: valueFontSize,
                   ),
                 ),
                 if (compact &&
+                    !denseCompact &&
                     subtitle != null &&
                     subtitle.trim().isNotEmpty) ...[
                   const SizedBox(height: 2),
@@ -4272,6 +4319,14 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                     media.size.height >= 700;
                 final isPortraitOperational =
                     media.size.width < media.size.height;
+                // Phone-class landscape with a short height: the page must
+                // pack header / KPIs / driver card more densely so the
+                // Documents section is reachable without scrolling far.
+                // Tablet landscape and portrait orientations are unchanged.
+                final isCompactLandscape =
+                    !isTabletLandscape &&
+                    media.size.width > media.size.height &&
+                    media.size.height < 500;
                 final visible = drivers
                     .where(
                       (d) =>
@@ -5606,168 +5661,117 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                         14,
                         math.max(16, media.padding.bottom + 8),
                       )
+                    : isCompactLandscape
+                    ? EdgeInsets.fromLTRB(
+                        12,
+                        6,
+                        12,
+                        math.max(10, media.padding.bottom + 6),
+                      )
                     : const EdgeInsets.fromLTRB(14, 12, 14, 16);
                 final introPadding = isTabletLandscape
                     ? const EdgeInsets.fromLTRB(14, 8, 14, 8)
+                    : isCompactLandscape
+                    ? const EdgeInsets.fromLTRB(12, 6, 12, 6)
                     : const EdgeInsets.fromLTRB(14, 12, 14, 12);
-                final introTitleFontSize = isTabletLandscape ? 15.6 : 16.0;
-                final introSubtitleFontSize = isTabletLandscape ? 11.8 : 12.4;
+                final introTitleFontSize = isTabletLandscape
+                    ? 15.6
+                    : isCompactLandscape
+                    ? 13.6
+                    : 16.0;
+                final introSubtitleFontSize = isTabletLandscape
+                    ? 11.8
+                    : isCompactLandscape
+                    ? 10.8
+                    : 12.4;
 
-                return ListView(
-                  padding: listPadding,
-                  children: [
-                    Container(
-                      padding: introPadding,
-                      decoration: BoxDecoration(
-                        color: _panelBg,
-                        borderRadius: BorderRadius.circular(14),
-                        border: Border.all(
-                          color: _border.withOpacity(_isDark ? 0.38 : 0.92),
-                        ),
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            _t(
-                              nl: 'Chauffeurs beheren',
-                              en: 'Manage drivers',
-                              fr: 'Gérer les chauffeurs',
-                              es: 'Gestionar conductores',
-                            ),
-                            style: TextStyle(
-                              color: _textPrimary,
-                              fontWeight: FontWeight.w900,
-                              fontSize: introTitleFontSize,
-                            ),
-                          ),
-                          SizedBox(height: isTabletLandscape ? 2 : 4),
-                          Text(
-                            _t(
-                              nl: 'Beheer chauffeurs, documenten en beschikbaarheid',
-                              en: 'Manage drivers, documents and availability',
-                              fr: 'Gérez les chauffeurs, documents et disponibilités',
-                              es: 'Gestiona conductores, documentos y disponibilidad',
-                            ),
-                            style: TextStyle(
-                              color: _textMuted.withOpacity(0.9),
-                              fontSize: introSubtitleFontSize,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                    if (isTabletLandscape)
-                      GridView.count(
-                        crossAxisCount: 4,
-                        crossAxisSpacing: 10,
-                        mainAxisSpacing: 10,
-                        childAspectRatio: 2.35,
-                        shrinkWrap: true,
-                        physics: const NeverScrollableScrollPhysics(),
-                        children: [
-                          _summaryMetric(
-                            icon: Icons.groups_rounded,
-                            accent: _gold,
-                            label: _t(
-                              nl: 'Totaal chauffeurs',
-                              en: 'Total drivers',
-                              fr: 'Total chauffeurs',
-                              es: 'Total conductores',
-                            ),
-                            value: '$totalDrivers',
-                            subtitle: _t(
-                              nl: 'Alle geregistreerde chauffeurs',
-                              en: 'All registered drivers',
-                              fr: 'Tous les chauffeurs inscrits',
-                              es: 'Todos los conductores registrados',
-                            ),
-                            compact: true,
-                          ),
-                          _summaryMetric(
-                            icon: Icons.verified_user_outlined,
-                            accent: Colors.greenAccent,
-                            label: _t(
-                              nl: 'Actief',
-                              en: 'Active',
-                              fr: 'Actifs',
-                              es: 'Activos',
-                            ),
-                            value: '$activeDrivers',
-                            subtitle: _t(
-                              nl: 'Momenteel actief',
-                              en: 'Currently active',
-                              fr: 'Actuellement actifs',
-                              es: 'Actualmente activos',
-                            ),
-                            compact: true,
-                          ),
-                          _summaryMetric(
-                            icon: Icons.warning_amber_rounded,
-                            accent: Colors.orangeAccent,
-                            label: _t(
-                              nl: 'Documenten actie vereist',
-                              en: 'Documents need action',
-                              fr: 'Documents: action requise',
-                              es: 'Documentos: acción requerida',
-                            ),
-                            value: '$gapDrivers',
-                            subtitle: _t(
-                              nl: 'Vereisen controle',
-                              en: 'Require attention',
-                              fr: 'Nécessitent une attention',
-                              es: 'Requieren atención',
-                            ),
-                            compact: true,
-                          ),
-                          _summaryMetric(
-                            icon: Icons.event_available_outlined,
-                            accent: Colors.lightBlueAccent,
-                            label: _t(
-                              nl: 'Binnenkort vervallen',
-                              en: 'Expiring soon',
-                              fr: 'Expiration proche',
-                              es: 'Caducan pronto',
-                            ),
-                            value: '$expiringSoon',
-                            subtitle: _t(
-                              nl: 'Binnen 30 dagen',
-                              en: 'Within 30 days',
-                              fr: 'Dans les 30 jours',
-                              es: 'Dentro de 30 días',
-                            ),
-                            compact: true,
-                          ),
-                        ],
-                      )
-                    else
+                return SafeArea(
+                  top: false,
+                  child: ListView(
+                    padding: listPadding,
+                    children: [
                       Container(
-                        padding: const EdgeInsets.all(10),
+                        padding: introPadding,
                         decoration: BoxDecoration(
-                          color: _subPanelBg,
+                          color: _panelBg,
                           borderRadius: BorderRadius.circular(14),
-                          border: Border.all(color: _gold.withOpacity(0.30)),
+                          border: Border.all(
+                            color: _border.withOpacity(_isDark ? 0.38 : 0.92),
+                          ),
                         ),
-                        child: GridView.count(
-                          crossAxisCount: 2,
-                          crossAxisSpacing: 8,
-                          mainAxisSpacing: 8,
-                          childAspectRatio: 2.3,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              _t(
+                                nl: 'Chauffeurs beheren',
+                                en: 'Manage drivers',
+                                fr: 'Gérer les chauffeurs',
+                                es: 'Gestionar conductores',
+                              ),
+                              style: TextStyle(
+                                color: _textPrimary,
+                                fontWeight: FontWeight.w900,
+                                fontSize: introTitleFontSize,
+                              ),
+                            ),
+                            SizedBox(
+                              height: isTabletLandscape || isCompactLandscape
+                                  ? 2
+                                  : 4,
+                            ),
+                            Text(
+                              _t(
+                                nl: 'Beheer chauffeurs, documenten en beschikbaarheid',
+                                en: 'Manage drivers, documents and availability',
+                                fr: 'Gérez les chauffeurs, documents et disponibilités',
+                                es: 'Gestiona conductores, documentos y disponibilidad',
+                              ),
+                              style: TextStyle(
+                                color: _textMuted.withOpacity(0.9),
+                                fontSize: introSubtitleFontSize,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      SizedBox(height: isCompactLandscape ? 6 : 10),
+                      if (isTabletLandscape || isCompactLandscape)
+                        GridView.count(
+                          crossAxisCount: 4,
+                          crossAxisSpacing: isCompactLandscape ? 6 : 10,
+                          mainAxisSpacing: isCompactLandscape ? 6 : 10,
+                          childAspectRatio: isCompactLandscape ? 2.7 : 2.35,
                           shrinkWrap: true,
                           physics: const NeverScrollableScrollPhysics(),
                           children: [
                             _summaryMetric(
                               icon: Icons.groups_rounded,
                               accent: _gold,
-                              label: _t(
-                                nl: 'Totaal chauffeurs',
-                                en: 'Total drivers',
-                                fr: 'Total chauffeurs',
-                                es: 'Total conductores',
-                              ),
+                              label: isCompactLandscape
+                                  ? _t(
+                                      nl: 'Totaal',
+                                      en: 'Total',
+                                      fr: 'Total',
+                                      es: 'Total',
+                                    )
+                                  : _t(
+                                      nl: 'Totaal chauffeurs',
+                                      en: 'Total drivers',
+                                      fr: 'Total chauffeurs',
+                                      es: 'Total conductores',
+                                    ),
                               value: '$totalDrivers',
-                              compact: false,
+                              subtitle: isCompactLandscape
+                                  ? null
+                                  : _t(
+                                      nl: 'Alle geregistreerde chauffeurs',
+                                      en: 'All registered drivers',
+                                      fr: 'Tous les chauffeurs inscrits',
+                                      es: 'Todos los conductores registrados',
+                                    ),
+                              compact: true,
+                              dense: isCompactLandscape,
                             ),
                             _summaryMetric(
                               icon: Icons.verified_user_outlined,
@@ -5779,605 +5783,813 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                                 es: 'Activos',
                               ),
                               value: '$activeDrivers',
-                              compact: false,
+                              subtitle: isCompactLandscape
+                                  ? null
+                                  : _t(
+                                      nl: 'Momenteel actief',
+                                      en: 'Currently active',
+                                      fr: 'Actuellement actifs',
+                                      es: 'Actualmente activos',
+                                    ),
+                              compact: true,
+                              dense: isCompactLandscape,
                             ),
                             _summaryMetric(
                               icon: Icons.warning_amber_rounded,
                               accent: Colors.orangeAccent,
-                              label: _t(
-                                nl: 'Documenten actie vereist',
-                                en: 'Documents need action',
-                                fr: 'Documents: action requise',
-                                es: 'Documentos: acción requerida',
-                              ),
+                              label: isCompactLandscape
+                                  ? _t(
+                                      nl: 'Docs',
+                                      en: 'Docs',
+                                      fr: 'Docs',
+                                      es: 'Docs',
+                                    )
+                                  : _t(
+                                      nl: 'Documenten actie vereist',
+                                      en: 'Documents need action',
+                                      fr: 'Documents: action requise',
+                                      es: 'Documentos: acción requerida',
+                                    ),
                               value: '$gapDrivers',
-                              compact: false,
+                              subtitle: isCompactLandscape
+                                  ? null
+                                  : _t(
+                                      nl: 'Vereisen controle',
+                                      en: 'Require attention',
+                                      fr: 'Nécessitent une attention',
+                                      es: 'Requieren atención',
+                                    ),
+                              compact: true,
+                              dense: isCompactLandscape,
                             ),
                             _summaryMetric(
                               icon: Icons.event_available_outlined,
                               accent: Colors.lightBlueAccent,
-                              label: _t(
-                                nl: 'Binnenkort vervallen',
-                                en: 'Expiring soon',
-                                fr: 'Expiration proche',
-                                es: 'Caducan pronto',
-                              ),
+                              label: isCompactLandscape
+                                  ? _t(
+                                      nl: 'Vervalt',
+                                      en: 'Expiring',
+                                      fr: 'Expire',
+                                      es: 'Expira',
+                                    )
+                                  : _t(
+                                      nl: 'Binnenkort vervallen',
+                                      en: 'Expiring soon',
+                                      fr: 'Expiration proche',
+                                      es: 'Caducan pronto',
+                                    ),
                               value: '$expiringSoon',
-                              compact: false,
+                              subtitle: isCompactLandscape
+                                  ? null
+                                  : _t(
+                                      nl: 'Binnen 30 dagen',
+                                      en: 'Within 30 days',
+                                      fr: 'Dans les 30 jours',
+                                      es: 'Dentro de 30 días',
+                                    ),
+                              compact: true,
+                              dense: isCompactLandscape,
                             ),
                           ],
-                        ),
-                      ),
-                    const SizedBox(height: 8),
-                    for (final d in visible) ...[
-                      Builder(
-                        builder: (context) {
-                          final status = d.isActive
-                              ? _t(
+                        )
+                      else
+                        Container(
+                          padding: const EdgeInsets.all(10),
+                          decoration: BoxDecoration(
+                            color: _subPanelBg,
+                            borderRadius: BorderRadius.circular(14),
+                            border: Border.all(color: _gold.withOpacity(0.30)),
+                          ),
+                          child: GridView.count(
+                            crossAxisCount: 2,
+                            crossAxisSpacing: 8,
+                            mainAxisSpacing: 8,
+                            childAspectRatio: 2.3,
+                            shrinkWrap: true,
+                            physics: const NeverScrollableScrollPhysics(),
+                            children: [
+                              _summaryMetric(
+                                icon: Icons.groups_rounded,
+                                accent: _gold,
+                                label: _t(
+                                  nl: 'Totaal chauffeurs',
+                                  en: 'Total drivers',
+                                  fr: 'Total chauffeurs',
+                                  es: 'Total conductores',
+                                ),
+                                value: '$totalDrivers',
+                                compact: false,
+                              ),
+                              _summaryMetric(
+                                icon: Icons.verified_user_outlined,
+                                accent: Colors.greenAccent,
+                                label: _t(
                                   nl: 'Actief',
                                   en: 'Active',
-                                  fr: 'Actif',
-                                  es: 'Activo',
-                                )
-                              : _t(
-                                  nl: 'Inactief',
-                                  en: 'Inactive',
-                                  fr: 'Inactif',
-                                  es: 'Inactivo',
-                                );
-                          final availabilityState =
-                              normalizeDriverAvailabilityState(
-                                d.availabilityStatus,
-                                fallback: 'available',
-                              );
-                          final operationalAvailabilityLabel = !d.isActive
-                              ? _t(
-                                  nl: 'Niet beschikbaar',
-                                  en: 'Not available',
-                                  fr: 'Indisponible',
-                                  es: 'No disponible',
-                                )
-                              : (availabilityState == 'paused'
-                                    ? _t(
-                                        nl: 'Pauze',
-                                        en: 'Paused',
-                                        fr: 'Pause',
-                                        es: 'Pausa',
-                                      )
-                                    : (availabilityState == 'busy'
-                                          ? _t(
-                                              nl: 'Bezet',
-                                              en: 'Busy',
-                                              fr: 'Occupé',
-                                              es: 'Ocupado',
-                                            )
-                                          : (availabilityState == 'offline'
-                                                ? _t(
-                                                    nl: 'Offline',
-                                                    en: 'Offline',
-                                                    fr: 'Hors ligne',
-                                                    es: 'Sin conexión',
-                                                  )
-                                                : '')));
-                          final docs =
-                              docsByDriverId[d.id.trim()] ??
-                              const <DriverDocument>[];
-                          final compliance =
-                              complianceByDriverId[d.id.trim()] ??
-                              docsStore.complianceSummaryForDocuments(docs);
-                          final refreshFailed = documentRefreshFailedDriverIds
-                              .contains(d.id.trim());
-                          final gap = compliance.needsAction || refreshFailed;
-                          final docsStatusText = refreshFailed
-                              ? _t(
-                                  nl: 'Documenten vereisen synchronisatie',
-                                  en: 'Documents require synchronization',
-                                  fr: 'Les documents nécessitent une synchronisation',
-                                  es: 'Los documentos requieren sincronización',
-                                )
-                              : _docsInOrderLabel(compliance);
-                          final docsStatusDetail = refreshFailed
-                              ? _t(
-                                  nl: 'Controleer documenten',
-                                  en: 'Check documents',
-                                  fr: 'Vérifier les documents',
-                                  es: 'Revise documentos',
-                                )
-                              : (compliance.hasAllRequiredDocuments &&
-                                        !compliance.needsAction
-                                    ? ''
-                                    : (compliance
-                                              .missingAttachmentRequiredTypeIds
-                                              .isNotEmpty
-                                          ? _attachmentMissingLabel()
-                                          : (compliance.uploadedRequiredCount ==
-                                                    0
-                                                ? _t(
-                                                    nl: 'Vereiste documenten ontbreken',
-                                                    en: 'Required documents are missing',
-                                                    fr: 'Documents requis manquants',
-                                                    es: 'Faltan documentos requeridos',
-                                                  )
-                                                : (compliance
-                                                          .missingRequiredTypeIds
-                                                          .isNotEmpty
-                                                      ? _missingRequiredLabel(
-                                                          compliance
-                                                              .missingRequiredTypeIds
-                                                              .length,
-                                                        )
-                                                      : _documentsNeedsActionLabel()))));
-                          if (isTabletLandscape) {
-                            return _driverLandscapeReferenceCard(
-                              context,
-                              driver: d,
-                              accountStatus: status,
-                              operationalAvailabilityLabel:
-                                  operationalAvailabilityLabel,
-                              docs: docs,
-                              compliance: compliance,
-                              refreshFailed: refreshFailed,
-                            );
-                          }
-                          return Container(
-                            margin: const EdgeInsets.only(bottom: 10),
-                            padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
-                            decoration: BoxDecoration(
-                              color: _panelBg,
-                              borderRadius: BorderRadius.circular(14),
-                              border: Border.all(
-                                color: _gold.withOpacity(0.28),
-                              ),
-                            ),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Row(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    _driverCardAvatar(d),
-                                    const SizedBox(width: 10),
-                                    Expanded(
-                                      child: Text(
-                                        d.fullName.trim().isEmpty
-                                            ? _t(
-                                                nl: 'Naamloze chauffeur',
-                                                en: 'Unnamed driver',
-                                                fr: 'Chauffeur sans nom',
-                                                es: 'Conductor sin nombre',
-                                              )
-                                            : _displayDriverName(d.fullName),
-                                        style: const TextStyle(
-                                          fontSize: 15.8,
-                                          fontWeight: FontWeight.w800,
-                                          color: Colors.white,
-                                        ),
-                                        maxLines: 2,
-                                        overflow: TextOverflow.ellipsis,
-                                      ),
-                                    ),
-                                    const SizedBox(width: 8),
-                                    Container(
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 8,
-                                        vertical: 4,
-                                      ),
-                                      decoration: BoxDecoration(
-                                        color: _driverStatusChipBg(d.isActive),
-                                        borderRadius: BorderRadius.circular(
-                                          999,
-                                        ),
-                                        border: Border.all(
-                                          color: _driverStatusChipBorder(
-                                            d.isActive,
-                                          ),
-                                        ),
-                                      ),
-                                      child: Text(
-                                        status,
-                                        style: TextStyle(
-                                          color: _driverStatusChipText(
-                                            d.isActive,
-                                          ),
-                                          fontSize: 11.6,
-                                          fontWeight: FontWeight.w700,
-                                        ),
-                                      ),
-                                    ),
-                                    IconButton(
-                                      onPressed: () =>
-                                          _confirmDeleteDriver(context, d),
-                                      tooltip: _t(
-                                        nl: 'Chauffeur verwijderen',
-                                        en: 'Remove driver',
-                                        fr: 'Supprimer le chauffeur',
-                                        es: 'Eliminar conductor',
-                                      ),
-                                      icon: Icon(
-                                        Icons.delete_outline,
-                                        size: 18,
-                                        color: Colors.redAccent.withOpacity(
-                                          0.92,
-                                        ),
-                                      ),
-                                      splashRadius: 20,
-                                      constraints: const BoxConstraints(
-                                        minWidth: 36,
-                                        minHeight: 36,
-                                      ),
-                                      padding: const EdgeInsets.all(6),
-                                      style: IconButton.styleFrom(
-                                        backgroundColor: const Color(
-                                          0xFF2A1518,
-                                        ),
-                                        side: BorderSide(
-                                          color: Colors.redAccent.withOpacity(
-                                            0.35,
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                  ],
+                                  fr: 'Actifs',
+                                  es: 'Activos',
                                 ),
-                                if (operationalAvailabilityLabel
-                                    .trim()
-                                    .isNotEmpty)
-                                  Padding(
-                                    padding: const EdgeInsets.only(top: 6),
-                                    child: Align(
-                                      alignment: Alignment.centerLeft,
-                                      child: Container(
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 8,
-                                          vertical: 3,
+                                value: '$activeDrivers',
+                                compact: false,
+                              ),
+                              _summaryMetric(
+                                icon: Icons.warning_amber_rounded,
+                                accent: Colors.orangeAccent,
+                                label: _t(
+                                  nl: 'Documenten actie vereist',
+                                  en: 'Documents need action',
+                                  fr: 'Documents: action requise',
+                                  es: 'Documentos: acción requerida',
+                                ),
+                                value: '$gapDrivers',
+                                compact: false,
+                              ),
+                              _summaryMetric(
+                                icon: Icons.event_available_outlined,
+                                accent: Colors.lightBlueAccent,
+                                label: _t(
+                                  nl: 'Binnenkort vervallen',
+                                  en: 'Expiring soon',
+                                  fr: 'Expiration proche',
+                                  es: 'Caducan pronto',
+                                ),
+                                value: '$expiringSoon',
+                                compact: false,
+                              ),
+                            ],
+                          ),
+                        ),
+                      SizedBox(height: isCompactLandscape ? 6 : 8),
+                      for (final d in visible) ...[
+                        Builder(
+                          builder: (context) {
+                            final status = d.isActive
+                                ? _t(
+                                    nl: 'Actief',
+                                    en: 'Active',
+                                    fr: 'Actif',
+                                    es: 'Activo',
+                                  )
+                                : _t(
+                                    nl: 'Inactief',
+                                    en: 'Inactive',
+                                    fr: 'Inactif',
+                                    es: 'Inactivo',
+                                  );
+                            final availabilityState =
+                                normalizeDriverAvailabilityState(
+                                  d.availabilityStatus,
+                                  fallback: 'available',
+                                );
+                            final operationalAvailabilityLabel = !d.isActive
+                                ? _t(
+                                    nl: 'Niet beschikbaar',
+                                    en: 'Not available',
+                                    fr: 'Indisponible',
+                                    es: 'No disponible',
+                                  )
+                                : (availabilityState == 'paused'
+                                      ? _t(
+                                          nl: 'Pauze',
+                                          en: 'Paused',
+                                          fr: 'Pause',
+                                          es: 'Pausa',
+                                        )
+                                      : (availabilityState == 'busy'
+                                            ? _t(
+                                                nl: 'Bezet',
+                                                en: 'Busy',
+                                                fr: 'Occupé',
+                                                es: 'Ocupado',
+                                              )
+                                            : (availabilityState == 'offline'
+                                                  ? _t(
+                                                      nl: 'Offline',
+                                                      en: 'Offline',
+                                                      fr: 'Hors ligne',
+                                                      es: 'Sin conexión',
+                                                    )
+                                                  : '')));
+                            final docs =
+                                docsByDriverId[d.id.trim()] ??
+                                const <DriverDocument>[];
+                            final compliance =
+                                complianceByDriverId[d.id.trim()] ??
+                                docsStore.complianceSummaryForDocuments(docs);
+                            final refreshFailed = documentRefreshFailedDriverIds
+                                .contains(d.id.trim());
+                            final gap = compliance.needsAction || refreshFailed;
+                            final docsStatusText = refreshFailed
+                                ? _t(
+                                    nl: 'Documenten vereisen synchronisatie',
+                                    en: 'Documents require synchronization',
+                                    fr: 'Les documents nécessitent une synchronisation',
+                                    es: 'Los documentos requieren sincronización',
+                                  )
+                                : _docsInOrderLabel(compliance);
+                            final docsStatusDetail = refreshFailed
+                                ? _t(
+                                    nl: 'Controleer documenten',
+                                    en: 'Check documents',
+                                    fr: 'Vérifier les documents',
+                                    es: 'Revise documentos',
+                                  )
+                                : (compliance.hasAllRequiredDocuments &&
+                                          !compliance.needsAction
+                                      ? ''
+                                      : (compliance
+                                                .missingAttachmentRequiredTypeIds
+                                                .isNotEmpty
+                                            ? _attachmentMissingLabel()
+                                            : (compliance.uploadedRequiredCount ==
+                                                      0
+                                                  ? _t(
+                                                      nl: 'Vereiste documenten ontbreken',
+                                                      en: 'Required documents are missing',
+                                                      fr: 'Documents requis manquants',
+                                                      es: 'Faltan documentos requeridos',
+                                                    )
+                                                  : (compliance
+                                                            .missingRequiredTypeIds
+                                                            .isNotEmpty
+                                                        ? _missingRequiredLabel(
+                                                            compliance
+                                                                .missingRequiredTypeIds
+                                                                .length,
+                                                          )
+                                                        : _documentsNeedsActionLabel()))));
+                            if (isTabletLandscape) {
+                              return _driverLandscapeReferenceCard(
+                                context,
+                                driver: d,
+                                accountStatus: status,
+                                operationalAvailabilityLabel:
+                                    operationalAvailabilityLabel,
+                                docs: docs,
+                                compliance: compliance,
+                                refreshFailed: refreshFailed,
+                              );
+                            }
+                            return Container(
+                              margin: EdgeInsets.only(
+                                bottom: isCompactLandscape ? 8 : 10,
+                              ),
+                              padding: isCompactLandscape
+                                  ? const EdgeInsets.fromLTRB(10, 8, 10, 8)
+                                  : const EdgeInsets.fromLTRB(12, 10, 12, 10),
+                              decoration: BoxDecoration(
+                                color: _panelBg,
+                                borderRadius: BorderRadius.circular(14),
+                                border: Border.all(
+                                  color: _gold.withOpacity(0.28),
+                                ),
+                              ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Row(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      _driverCardAvatar(d),
+                                      SizedBox(
+                                        width: isCompactLandscape ? 8 : 10,
+                                      ),
+                                      Expanded(
+                                        child: Text(
+                                          d.fullName.trim().isEmpty
+                                              ? _t(
+                                                  nl: 'Naamloze chauffeur',
+                                                  en: 'Unnamed driver',
+                                                  fr: 'Chauffeur sans nom',
+                                                  es: 'Conductor sin nombre',
+                                                )
+                                              : _displayDriverName(d.fullName),
+                                          style: TextStyle(
+                                            fontSize: isCompactLandscape
+                                                ? 13.0
+                                                : 15.8,
+                                            fontWeight: FontWeight.w800,
+                                            color: Colors.white,
+                                          ),
+                                          maxLines: isCompactLandscape ? 1 : 2,
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                      ),
+                                      SizedBox(
+                                        width: isCompactLandscape ? 6 : 8,
+                                      ),
+                                      Container(
+                                        padding: EdgeInsets.symmetric(
+                                          horizontal: isCompactLandscape
+                                              ? 6
+                                              : 8,
+                                          vertical: isCompactLandscape ? 3 : 4,
                                         ),
                                         decoration: BoxDecoration(
-                                          color: Colors.orange.withOpacity(
-                                            0.14,
+                                          color: _driverStatusChipBg(
+                                            d.isActive,
                                           ),
                                           borderRadius: BorderRadius.circular(
                                             999,
                                           ),
                                           border: Border.all(
-                                            color: Colors.orangeAccent
-                                                .withOpacity(0.42),
+                                            color: _driverStatusChipBorder(
+                                              d.isActive,
+                                            ),
                                           ),
                                         ),
                                         child: Text(
-                                          operationalAvailabilityLabel,
-                                          style: const TextStyle(
-                                            color: Colors.orangeAccent,
-                                            fontSize: 11.2,
+                                          status,
+                                          style: TextStyle(
+                                            color: _driverStatusChipText(
+                                              d.isActive,
+                                            ),
+                                            fontSize: isCompactLandscape
+                                                ? 10.4
+                                                : 11.6,
                                             fontWeight: FontWeight.w700,
                                           ),
                                         ),
                                       ),
-                                    ),
-                                  ),
-                                const SizedBox(height: 8),
-                                _line(
-                                  _t(
-                                    nl: 'Bedrijfscode',
-                                    en: 'Company ID',
-                                    fr: 'Code entreprise',
-                                    es: 'Código de empresa',
-                                  ),
-                                  _displayCompanyLoginCode(d),
-                                  icon: Icons.business_outlined,
-                                ),
-                                _line(
-                                  _t(
-                                    nl: 'Chauffeurcode',
-                                    en: 'Driver code',
-                                    fr: 'Code chauffeur',
-                                    es: 'Código de conductor',
-                                  ),
-                                  _driverCodeStatusLabel(d),
-                                  icon: Icons.badge_outlined,
-                                ),
-                                _line(
-                                  _t(
-                                    nl: 'Telefoon',
-                                    en: 'Phone',
-                                    fr: 'Téléphone',
-                                    es: 'Teléfono',
-                                  ),
-                                  d.phone,
-                                  icon: Icons.phone_outlined,
-                                ),
-                                _line(
-                                  _t(
-                                    nl: 'Chauffeurskaartnummer',
-                                    en: 'Driver card number',
-                                    fr: 'N° carte chauffeur',
-                                    es: 'N.º tarjeta de conductor',
-                                  ),
-                                  d.taxiDriverCardNumber,
-                                  icon: Icons.credit_card_outlined,
-                                ),
-                                _line(
-                                  _t(
-                                    nl: 'Vervaldatum chauffeurskaart',
-                                    en: 'Driver card expiry',
-                                    fr: 'Expiration carte chauffeur',
-                                    es: 'Caducidad tarjeta de conductor',
-                                  ),
-                                  d.taxiDriverCardExpiry,
-                                  icon: Icons.event_note_outlined,
-                                ),
-                                const SizedBox(height: 8),
-                                Container(
-                                  width: double.infinity,
-                                  padding: const EdgeInsets.all(10),
-                                  decoration: BoxDecoration(
-                                    color: _subPanelBg,
-                                    borderRadius: BorderRadius.circular(10),
-                                    border: Border.all(
-                                      color: gap
-                                          ? Colors.orange.withOpacity(0.52)
-                                          : _gold.withOpacity(0.30),
-                                    ),
-                                  ),
-                                  child: Text(
-                                    '$docsStatusText'
-                                    '${gap && docsStatusDetail.trim().isNotEmpty ? ' · $docsStatusDetail' : ''}',
-                                    style: TextStyle(
-                                      color: gap
-                                          ? Colors.orangeAccent
-                                          : _textMuted.withOpacity(0.9),
-                                      fontSize: 12,
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                  ),
-                                ),
-                                const SizedBox(height: 8),
-                                Container(
-                                  decoration: BoxDecoration(
-                                    color: _subPanelBg,
-                                    borderRadius: BorderRadius.circular(12),
-                                    border: Border.all(
-                                      color: _gold.withOpacity(0.20),
-                                    ),
-                                  ),
-                                  child: Theme(
-                                    data: Theme.of(context).copyWith(
-                                      dividerColor: Colors.transparent,
-                                    ),
-                                    child: ExpansionTile(
-                                      tilePadding: const EdgeInsets.symmetric(
-                                        horizontal: 10,
-                                        vertical: 2,
-                                      ),
-                                      childrenPadding:
-                                          const EdgeInsets.fromLTRB(
-                                            10,
-                                            0,
-                                            10,
-                                            8,
+                                      IconButton(
+                                        onPressed: () =>
+                                            _confirmDeleteDriver(context, d),
+                                        tooltip: _t(
+                                          nl: 'Chauffeur verwijderen',
+                                          en: 'Remove driver',
+                                          fr: 'Supprimer le chauffeur',
+                                          es: 'Eliminar conductor',
+                                        ),
+                                        icon: Icon(
+                                          Icons.delete_outline,
+                                          size: isCompactLandscape ? 16 : 18,
+                                          color: Colors.redAccent.withOpacity(
+                                            0.92,
                                           ),
-                                      title: Text(
-                                        _t(
-                                          nl: 'Documenten',
-                                          en: 'Documents',
-                                          fr: 'Documents',
-                                          es: 'Documentos',
                                         ),
-                                        style: const TextStyle(
-                                          fontWeight: FontWeight.w700,
-                                          fontSize: 13.5,
-                                          color: Colors.white,
+                                        splashRadius: 20,
+                                        constraints: BoxConstraints(
+                                          minWidth: isCompactLandscape
+                                              ? 32
+                                              : 36,
+                                          minHeight: isCompactLandscape
+                                              ? 32
+                                              : 36,
                                         ),
-                                      ),
-                                      subtitle: Text(
-                                        docs.isEmpty
-                                            ? _t(
-                                                nl: 'Nog geen documenten.',
-                                                en: 'No documents.',
-                                                fr: 'Aucun document.',
-                                                es: 'Sin documentos.',
-                                              )
-                                            : _t(
-                                                nl: 'Tik om te bekijken en beheren',
-                                                en: 'Tap to view and manage',
-                                                fr: 'Touchez pour voir et gerer',
-                                                es: 'Toca para ver y gestionar',
-                                              ),
-                                        style: TextStyle(
-                                          color: _textMuted.withOpacity(0.72),
-                                          fontSize: 12,
+                                        padding: EdgeInsets.all(
+                                          isCompactLandscape ? 4 : 6,
                                         ),
-                                      ),
-                                      children: [
-                                        if (docs.isEmpty)
-                                          Padding(
-                                            padding: const EdgeInsets.only(
-                                              bottom: 8,
+                                        style: IconButton.styleFrom(
+                                          backgroundColor: const Color(
+                                            0xFF2A1518,
+                                          ),
+                                          side: BorderSide(
+                                            color: Colors.redAccent.withOpacity(
+                                              0.35,
                                             ),
-                                            child: Text(
-                                              _t(
-                                                nl: 'Nog geen documenten.',
-                                                en: 'No documents.',
-                                                fr: 'Aucun document.',
-                                                es: 'Sin documentos.',
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  if (operationalAvailabilityLabel
+                                      .trim()
+                                      .isNotEmpty)
+                                    Padding(
+                                      padding: EdgeInsets.only(
+                                        top: isCompactLandscape ? 4 : 6,
+                                      ),
+                                      child: Align(
+                                        alignment: Alignment.centerLeft,
+                                        child: Container(
+                                          padding: EdgeInsets.symmetric(
+                                            horizontal: isCompactLandscape
+                                                ? 6
+                                                : 8,
+                                            vertical: isCompactLandscape
+                                                ? 2
+                                                : 3,
+                                          ),
+                                          decoration: BoxDecoration(
+                                            color: Colors.orange.withOpacity(
+                                              0.14,
+                                            ),
+                                            borderRadius: BorderRadius.circular(
+                                              999,
+                                            ),
+                                            border: Border.all(
+                                              color: Colors.orangeAccent
+                                                  .withOpacity(0.42),
+                                            ),
+                                          ),
+                                          child: Text(
+                                            operationalAvailabilityLabel,
+                                            style: TextStyle(
+                                              color: Colors.orangeAccent,
+                                              fontSize: isCompactLandscape
+                                                  ? 10.2
+                                                  : 11.2,
+                                              fontWeight: FontWeight.w700,
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  SizedBox(height: isCompactLandscape ? 6 : 8),
+                                  _line(
+                                    _t(
+                                      nl: 'Bedrijfscode',
+                                      en: 'Company ID',
+                                      fr: 'Code entreprise',
+                                      es: 'Código de empresa',
+                                    ),
+                                    _displayCompanyLoginCode(d),
+                                    icon: Icons.business_outlined,
+                                  ),
+                                  _line(
+                                    _t(
+                                      nl: 'Chauffeurcode',
+                                      en: 'Driver code',
+                                      fr: 'Code chauffeur',
+                                      es: 'Código de conductor',
+                                    ),
+                                    _driverCodeStatusLabel(d),
+                                    icon: Icons.badge_outlined,
+                                  ),
+                                  if (!isCompactLandscape) ...[
+                                    _line(
+                                      _t(
+                                        nl: 'Telefoon',
+                                        en: 'Phone',
+                                        fr: 'Téléphone',
+                                        es: 'Teléfono',
+                                      ),
+                                      d.phone,
+                                      icon: Icons.phone_outlined,
+                                    ),
+                                    _line(
+                                      _t(
+                                        nl: 'Chauffeurskaartnummer',
+                                        en: 'Driver card number',
+                                        fr: 'N° carte chauffeur',
+                                        es: 'N.º tarjeta de conductor',
+                                      ),
+                                      d.taxiDriverCardNumber,
+                                      icon: Icons.credit_card_outlined,
+                                    ),
+                                    _line(
+                                      _t(
+                                        nl: 'Vervaldatum chauffeurskaart',
+                                        en: 'Driver card expiry',
+                                        fr: 'Expiration carte chauffeur',
+                                        es: 'Caducidad tarjeta de conductor',
+                                      ),
+                                      d.taxiDriverCardExpiry,
+                                      icon: Icons.event_note_outlined,
+                                    ),
+                                  ],
+                                  SizedBox(height: isCompactLandscape ? 6 : 8),
+                                  Container(
+                                    width: double.infinity,
+                                    padding: isCompactLandscape
+                                        ? const EdgeInsets.symmetric(
+                                            horizontal: 8,
+                                            vertical: 6,
+                                          )
+                                        : const EdgeInsets.all(10),
+                                    decoration: BoxDecoration(
+                                      color: _subPanelBg,
+                                      borderRadius: BorderRadius.circular(10),
+                                      border: Border.all(
+                                        color: gap
+                                            ? Colors.orange.withOpacity(0.52)
+                                            : _gold.withOpacity(0.30),
+                                      ),
+                                    ),
+                                    child: Text(
+                                      '$docsStatusText'
+                                      '${gap && docsStatusDetail.trim().isNotEmpty ? ' · $docsStatusDetail' : ''}',
+                                      style: TextStyle(
+                                        color: gap
+                                            ? Colors.orangeAccent
+                                            : _textMuted.withOpacity(0.9),
+                                        fontSize: isCompactLandscape
+                                            ? 10.8
+                                            : 12,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                  ),
+                                  SizedBox(height: isCompactLandscape ? 6 : 8),
+                                  Container(
+                                    decoration: BoxDecoration(
+                                      color: _subPanelBg,
+                                      borderRadius: BorderRadius.circular(12),
+                                      border: Border.all(
+                                        color: _gold.withOpacity(0.20),
+                                      ),
+                                    ),
+                                    child: Theme(
+                                      data: Theme.of(context).copyWith(
+                                        dividerColor: Colors.transparent,
+                                      ),
+                                      child: ExpansionTile(
+                                        initiallyExpanded: isCompactLandscape,
+                                        tilePadding: EdgeInsets.symmetric(
+                                          horizontal: isCompactLandscape
+                                              ? 8
+                                              : 10,
+                                          vertical: 2,
+                                        ),
+                                        childrenPadding: EdgeInsets.fromLTRB(
+                                          isCompactLandscape ? 8 : 10,
+                                          0,
+                                          isCompactLandscape ? 8 : 10,
+                                          isCompactLandscape ? 6 : 8,
+                                        ),
+                                        title: Text(
+                                          _t(
+                                            nl: 'Documenten',
+                                            en: 'Documents',
+                                            fr: 'Documents',
+                                            es: 'Documentos',
+                                          ),
+                                          style: TextStyle(
+                                            fontWeight: FontWeight.w700,
+                                            fontSize: isCompactLandscape
+                                                ? 12.6
+                                                : 13.5,
+                                            color: Colors.white,
+                                          ),
+                                        ),
+                                        subtitle: Text(
+                                          docs.isEmpty
+                                              ? _t(
+                                                  nl: 'Nog geen documenten.',
+                                                  en: 'No documents.',
+                                                  fr: 'Aucun document.',
+                                                  es: 'Sin documentos.',
+                                                )
+                                              : _t(
+                                                  nl: 'Tik om te bekijken en beheren',
+                                                  en: 'Tap to view and manage',
+                                                  fr: 'Touchez pour voir et gerer',
+                                                  es: 'Toca para ver y gestionar',
+                                                ),
+                                          style: TextStyle(
+                                            color: _textMuted.withOpacity(0.72),
+                                            fontSize: isCompactLandscape
+                                                ? 11.2
+                                                : 12,
+                                          ),
+                                        ),
+                                        children: [
+                                          if (docs.isEmpty)
+                                            Padding(
+                                              padding: const EdgeInsets.only(
+                                                bottom: 8,
                                               ),
-                                              style: TextStyle(
-                                                color: _textMuted.withOpacity(
-                                                  0.72,
+                                              child: Text(
+                                                _t(
+                                                  nl: 'Nog geen documenten.',
+                                                  en: 'No documents.',
+                                                  fr: 'Aucun document.',
+                                                  es: 'Sin documentos.',
+                                                ),
+                                                style: TextStyle(
+                                                  color: _textMuted.withOpacity(
+                                                    0.72,
+                                                  ),
+                                                ),
+                                              ),
+                                            )
+                                          else
+                                            ...docs.map(
+                                              (doc) => _driverDocumentTile(
+                                                context,
+                                                d,
+                                                doc,
+                                              ),
+                                            ),
+                                          Align(
+                                            alignment: Alignment.centerLeft,
+                                            child: OutlinedButton.icon(
+                                              onPressed: () =>
+                                                  _openDocumentEditor(
+                                                    context,
+                                                    d,
+                                                  ),
+                                              style: OutlinedButton.styleFrom(
+                                                foregroundColor: _gold
+                                                    .withOpacity(0.96),
+                                                side: BorderSide(
+                                                  color: _gold.withOpacity(
+                                                    0.38,
+                                                  ),
+                                                ),
+                                                backgroundColor: _panelBg,
+                                                shape: RoundedRectangleBorder(
+                                                  borderRadius:
+                                                      BorderRadius.circular(
+                                                        999,
+                                                      ),
+                                                ),
+                                                padding:
+                                                    const EdgeInsets.symmetric(
+                                                      horizontal: 12,
+                                                      vertical: 8,
+                                                    ),
+                                              ),
+                                              icon: const Icon(
+                                                Icons.add,
+                                                size: 18,
+                                              ),
+                                              label: Text(
+                                                _t(
+                                                  nl: 'Document toevoegen',
+                                                  en: 'Add document',
+                                                  fr: 'Ajouter',
+                                                  es: 'Agregar',
                                                 ),
                                               ),
                                             ),
-                                          )
-                                        else
-                                          ...docs.map(
-                                            (doc) => _driverDocumentTile(
-                                              context,
-                                              d,
-                                              doc,
-                                            ),
                                           ),
-                                        Align(
-                                          alignment: Alignment.centerLeft,
-                                          child: OutlinedButton.icon(
-                                            onPressed: () =>
-                                                _openDocumentEditor(context, d),
-                                            style: OutlinedButton.styleFrom(
-                                              foregroundColor: _gold
-                                                  .withOpacity(0.96),
-                                              side: BorderSide(
-                                                color: _gold.withOpacity(0.38),
-                                              ),
-                                              backgroundColor: _panelBg,
-                                              shape: RoundedRectangleBorder(
-                                                borderRadius:
-                                                    BorderRadius.circular(999),
-                                              ),
-                                              padding:
-                                                  const EdgeInsets.symmetric(
-                                                    horizontal: 12,
-                                                    vertical: 8,
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                  SizedBox(height: isCompactLandscape ? 6 : 8),
+                                  Align(
+                                    alignment: Alignment.centerRight,
+                                    child: Wrap(
+                                      spacing: isCompactLandscape ? 6 : 8,
+                                      runSpacing: isCompactLandscape ? 6 : 8,
+                                      alignment: WrapAlignment.end,
+                                      children: [
+                                        OutlinedButton.icon(
+                                          onPressed: () =>
+                                              _rotateDriverCode(context, d),
+                                          style: OutlinedButton.styleFrom(
+                                            foregroundColor: _gold.withOpacity(
+                                              0.98,
+                                            ),
+                                            side: BorderSide(
+                                              color: _gold.withOpacity(0.34),
+                                            ),
+                                            backgroundColor: _subPanelBg,
+                                            shape: RoundedRectangleBorder(
+                                              borderRadius:
+                                                  BorderRadius.circular(999),
+                                            ),
+                                            padding: EdgeInsets.symmetric(
+                                              horizontal: isCompactLandscape
+                                                  ? 10
+                                                  : 12,
+                                              vertical: isCompactLandscape
+                                                  ? 6
+                                                  : 8,
+                                            ),
+                                            minimumSize: isCompactLandscape
+                                                ? const Size(0, 32)
+                                                : null,
+                                            textStyle: isCompactLandscape
+                                                ? const TextStyle(
+                                                    fontSize: 11.6,
+                                                  )
+                                                : null,
+                                          ),
+                                          icon: Icon(
+                                            Icons.key_outlined,
+                                            size: isCompactLandscape ? 14 : 16,
+                                          ),
+                                          label: Text(
+                                            isCompactLandscape
+                                                ? _t(
+                                                    nl: 'Nieuwe code',
+                                                    en: 'New code',
+                                                    fr: 'Nouveau code',
+                                                    es: 'Nuevo código',
+                                                  )
+                                                : _t(
+                                                    nl: 'Nieuwe chauffeurcode genereren',
+                                                    en: 'Generate new driver code',
+                                                    fr: 'Generer un nouveau code chauffeur',
+                                                    es: 'Generar nuevo codigo de conductor',
                                                   ),
-                                            ),
-                                            icon: const Icon(
-                                              Icons.add,
-                                              size: 18,
-                                            ),
-                                            label: Text(
-                                              _t(
-                                                nl: 'Document toevoegen',
-                                                en: 'Add document',
-                                                fr: 'Ajouter',
-                                                es: 'Agregar',
+                                          ),
+                                        ),
+                                        OutlinedButton.icon(
+                                          onPressed: () =>
+                                              _openTemporaryDriverLinkQr(
+                                                context,
+                                                d,
                                               ),
+                                          style: OutlinedButton.styleFrom(
+                                            foregroundColor: _gold.withOpacity(
+                                              0.98,
+                                            ),
+                                            side: BorderSide(
+                                              color: _gold.withOpacity(0.34),
+                                            ),
+                                            backgroundColor: _subPanelBg,
+                                            shape: RoundedRectangleBorder(
+                                              borderRadius:
+                                                  BorderRadius.circular(999),
+                                            ),
+                                            padding: EdgeInsets.symmetric(
+                                              horizontal: isCompactLandscape
+                                                  ? 10
+                                                  : 12,
+                                              vertical: isCompactLandscape
+                                                  ? 6
+                                                  : 8,
+                                            ),
+                                            minimumSize: isCompactLandscape
+                                                ? const Size(0, 32)
+                                                : null,
+                                            textStyle: isCompactLandscape
+                                                ? const TextStyle(
+                                                    fontSize: 11.6,
+                                                  )
+                                                : null,
+                                          ),
+                                          icon: Icon(
+                                            Icons.qr_code_2_outlined,
+                                            size: isCompactLandscape ? 14 : 16,
+                                          ),
+                                          label: Text(
+                                            isCompactLandscape
+                                                ? _t(
+                                                    nl: 'Koppel-QR',
+                                                    en: 'Pairing QR',
+                                                    fr: 'QR liaison',
+                                                    es: 'QR vinculación',
+                                                  )
+                                                : _t(
+                                                    nl: 'Tijdelijke koppel-QR',
+                                                    en: 'Temporary pairing QR',
+                                                    fr: 'QR de liaison temporaire',
+                                                    es: 'QR temporal de vinculación',
+                                                  ),
+                                          ),
+                                        ),
+                                        OutlinedButton.icon(
+                                          onPressed: () =>
+                                              _openEditDriverDialog(context, d),
+                                          style: OutlinedButton.styleFrom(
+                                            foregroundColor: Colors.white,
+                                            side: BorderSide(
+                                              color: Colors.white.withOpacity(
+                                                0.24,
+                                              ),
+                                            ),
+                                            backgroundColor: _panelBg,
+                                            shape: RoundedRectangleBorder(
+                                              borderRadius:
+                                                  BorderRadius.circular(999),
+                                            ),
+                                            padding: EdgeInsets.symmetric(
+                                              horizontal: isCompactLandscape
+                                                  ? 10
+                                                  : 12,
+                                              vertical: isCompactLandscape
+                                                  ? 6
+                                                  : 8,
+                                            ),
+                                            minimumSize: isCompactLandscape
+                                                ? const Size(0, 32)
+                                                : null,
+                                            textStyle: isCompactLandscape
+                                                ? const TextStyle(
+                                                    fontSize: 11.6,
+                                                  )
+                                                : null,
+                                          ),
+                                          icon: Icon(
+                                            Icons.edit_outlined,
+                                            size: isCompactLandscape ? 14 : 16,
+                                          ),
+                                          label: Text(
+                                            _t(
+                                              nl: 'Bewerken',
+                                              en: 'Edit',
+                                              fr: 'Modifier',
+                                              es: 'Editar',
                                             ),
                                           ),
                                         ),
                                       ],
                                     ),
                                   ),
-                                ),
-                                const SizedBox(height: 8),
-                                Align(
-                                  alignment: Alignment.centerRight,
-                                  child: Wrap(
-                                    spacing: 8,
-                                    runSpacing: 8,
-                                    alignment: WrapAlignment.end,
-                                    children: [
-                                      OutlinedButton.icon(
-                                        onPressed: () =>
-                                            _rotateDriverCode(context, d),
-                                        style: OutlinedButton.styleFrom(
-                                          foregroundColor: _gold.withOpacity(
-                                            0.98,
-                                          ),
-                                          side: BorderSide(
-                                            color: _gold.withOpacity(0.34),
-                                          ),
-                                          backgroundColor: _subPanelBg,
-                                          shape: RoundedRectangleBorder(
-                                            borderRadius: BorderRadius.circular(
-                                              999,
-                                            ),
-                                          ),
-                                          padding: const EdgeInsets.symmetric(
-                                            horizontal: 12,
-                                            vertical: 8,
-                                          ),
-                                        ),
-                                        icon: const Icon(
-                                          Icons.key_outlined,
-                                          size: 16,
-                                        ),
-                                        label: Text(
-                                          _t(
-                                            nl: 'Nieuwe chauffeurcode genereren',
-                                            en: 'Generate new driver code',
-                                            fr: 'Generer un nouveau code chauffeur',
-                                            es: 'Generar nuevo codigo de conductor',
-                                          ),
-                                        ),
-                                      ),
-                                      OutlinedButton.icon(
-                                        onPressed: () =>
-                                            _openTemporaryDriverLinkQr(
-                                              context,
-                                              d,
-                                            ),
-                                        style: OutlinedButton.styleFrom(
-                                          foregroundColor: _gold.withOpacity(
-                                            0.98,
-                                          ),
-                                          side: BorderSide(
-                                            color: _gold.withOpacity(0.34),
-                                          ),
-                                          backgroundColor: _subPanelBg,
-                                          shape: RoundedRectangleBorder(
-                                            borderRadius: BorderRadius.circular(
-                                              999,
-                                            ),
-                                          ),
-                                          padding: const EdgeInsets.symmetric(
-                                            horizontal: 12,
-                                            vertical: 8,
-                                          ),
-                                        ),
-                                        icon: const Icon(
-                                          Icons.qr_code_2_outlined,
-                                          size: 16,
-                                        ),
-                                        label: Text(
-                                          _t(
-                                            nl: 'Tijdelijke koppel-QR',
-                                            en: 'Temporary pairing QR',
-                                            fr: 'QR de liaison temporaire',
-                                            es: 'QR temporal de vinculación',
-                                          ),
-                                        ),
-                                      ),
-                                      OutlinedButton.icon(
-                                        onPressed: () =>
-                                            _openEditDriverDialog(context, d),
-                                        style: OutlinedButton.styleFrom(
-                                          foregroundColor: Colors.white,
-                                          side: BorderSide(
-                                            color: Colors.white.withOpacity(
-                                              0.24,
-                                            ),
-                                          ),
-                                          backgroundColor: _panelBg,
-                                          shape: RoundedRectangleBorder(
-                                            borderRadius: BorderRadius.circular(
-                                              999,
-                                            ),
-                                          ),
-                                          padding: const EdgeInsets.symmetric(
-                                            horizontal: 12,
-                                            vertical: 8,
-                                          ),
-                                        ),
-                                        icon: const Icon(
-                                          Icons.edit_outlined,
-                                          size: 16,
-                                        ),
-                                        label: Text(
-                                          _t(
-                                            nl: 'Bewerken',
-                                            en: 'Edit',
-                                            fr: 'Modifier',
-                                            es: 'Editar',
-                                          ),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ],
-                            ),
-                          );
-                        },
-                      ),
+                                ],
+                              ),
+                            );
+                          },
+                        ),
+                      ],
                     ],
-                  ],
+                  ),
                 );
               },
             ),
