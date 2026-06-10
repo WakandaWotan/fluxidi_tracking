@@ -443,9 +443,38 @@ _CalculatorScopeSelection _selectDriverSessionCalculatorScope() {
   );
 }
 
+_CalculatorScopeSelection _withPreviewAssignmentIfNeeded({
+  required _CalculatorScopeSelection scope,
+  required BookingEntryContext entryContext,
+  String? previewAssignedDriverId,
+  String? previewAssignedVehicleId,
+}) {
+  if (entryContext != BookingEntryContext.companyAdmin) {
+    return scope;
+  }
+  final driverId = (previewAssignedDriverId ?? '').trim();
+  if (driverId.isEmpty) {
+    return scope;
+  }
+  final vehicleId = (previewAssignedVehicleId ?? '').trim();
+  debugPrint(
+    '[CALCULATOR][PREVIEW_ASSIGNMENT] driver=${_maskCalculatorScopeId(driverId)} vehicle=${_maskCalculatorScopeId(vehicleId)}',
+  );
+  return _CalculatorScopeSelection(
+    tenantId: scope.tenantId,
+    companyId: scope.companyId,
+    source: scope.source,
+    isMissing: scope.isMissing,
+    driverId: driverId,
+    assignedVehicleId: vehicleId.isEmpty ? null : vehicleId,
+  );
+}
+
 _CalculatorScopeSelection _selectCalculatorBookingScope({
   required String publicPartnerId,
   required BookingEntryContext entryContext,
+  String? previewAssignedDriverId,
+  String? previewAssignedVehicleId,
 }) {
   // Driver entry is fail-closed on the active chauffeur session and must not
   // use partner context, company session/profile, or default fallback scope.
@@ -458,11 +487,16 @@ _CalculatorScopeSelection _selectCalculatorBookingScope({
     debugPrint(
       '[CALCULATOR][SCOPE_SELECTED] source=public_partner tenant=$partnerId company=$partnerId',
     );
-    return _CalculatorScopeSelection(
-      tenantId: partnerId,
-      companyId: partnerId,
-      source: 'public_partner',
-      isMissing: false,
+    return _withPreviewAssignmentIfNeeded(
+      scope: _CalculatorScopeSelection(
+        tenantId: partnerId,
+        companyId: partnerId,
+        source: 'public_partner',
+        isMissing: false,
+      ),
+      entryContext: entryContext,
+      previewAssignedDriverId: previewAssignedDriverId,
+      previewAssignedVehicleId: previewAssignedVehicleId,
     );
   }
 
@@ -485,22 +519,32 @@ _CalculatorScopeSelection _selectCalculatorBookingScope({
     debugPrint(
       '[CALCULATOR][SCOPE_SELECTED] source=missing tenant=$tenantId company=$companyId',
     );
-    return _CalculatorScopeSelection(
-      tenantId: tenantId,
-      companyId: companyId,
-      source: 'missing',
-      isMissing: true,
+    return _withPreviewAssignmentIfNeeded(
+      scope: _CalculatorScopeSelection(
+        tenantId: tenantId,
+        companyId: companyId,
+        source: 'missing',
+        isMissing: true,
+      ),
+      entryContext: entryContext,
+      previewAssignedDriverId: previewAssignedDriverId,
+      previewAssignedVehicleId: previewAssignedVehicleId,
     );
   }
 
   debugPrint(
     '[CALCULATOR][SCOPE_SELECTED] source=paired_context tenant=$tenantId company=$companyId',
   );
-  return _CalculatorScopeSelection(
-    tenantId: tenantId,
-    companyId: companyId,
-    source: 'paired_context',
-    isMissing: false,
+  return _withPreviewAssignmentIfNeeded(
+    scope: _CalculatorScopeSelection(
+      tenantId: tenantId,
+      companyId: companyId,
+      source: 'paired_context',
+      isMissing: false,
+    ),
+    entryContext: entryContext,
+    previewAssignedDriverId: previewAssignedDriverId,
+    previewAssignedVehicleId: previewAssignedVehicleId,
   );
 }
 
@@ -524,6 +568,8 @@ class CalculatorPage extends StatefulWidget {
     this.initialToLng,
     this.initialServiceId,
     this.driverThemeListenable,
+    this.previewAssignedDriverId,
+    this.previewAssignedVehicleId,
   });
 
   final String
@@ -544,6 +590,10 @@ class CalculatorPage extends StatefulWidget {
   final double? initialToLng;
   final String? initialServiceId;
   final ValueListenable<DriverThemeVariant>? driverThemeListenable;
+
+  /// Business/admin chauffeur preview assignment only (not standalone auth).
+  final String? previewAssignedDriverId;
+  final String? previewAssignedVehicleId;
 
   @override
   State<CalculatorPage> createState() => _CalculatorPageState();
@@ -986,6 +1036,8 @@ class _CalculatorPageState extends State<CalculatorPage> {
     final selectedScope = _selectCalculatorBookingScope(
       publicPartnerId: _publicPartnerId,
       entryContext: widget.entryContext,
+      previewAssignedDriverId: widget.previewAssignedDriverId,
+      previewAssignedVehicleId: widget.previewAssignedVehicleId,
     );
     final returnEnabled = _returnFeatureEnabled && _returnTrip;
     final returnDt =
@@ -1203,6 +1255,8 @@ class _CalculatorPageState extends State<CalculatorPage> {
           distanceUnitLabel: appConfig.distanceUnitLabel,
           durationUnitLabel: appConfig.durationUnitLabel,
           taxLabel: appConfig.taxDisplayLabel,
+          previewAssignedDriverId: widget.previewAssignedDriverId,
+          previewAssignedVehicleId: widget.previewAssignedVehicleId,
         ),
       ),
     );
@@ -3137,6 +3191,8 @@ class _BookingConfirmationPage extends StatefulWidget {
     required this.distanceUnitLabel,
     required this.durationUnitLabel,
     required this.taxLabel,
+    this.previewAssignedDriverId,
+    this.previewAssignedVehicleId,
   });
 
   final String bookingBaseUrl;
@@ -3152,6 +3208,8 @@ class _BookingConfirmationPage extends StatefulWidget {
   final String distanceUnitLabel;
   final String durationUnitLabel;
   final String taxLabel;
+  final String? previewAssignedDriverId;
+  final String? previewAssignedVehicleId;
 
   @override
   State<_BookingConfirmationPage> createState() =>
@@ -4506,6 +4564,8 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
     final selectedScope = _selectCalculatorBookingScope(
       publicPartnerId: publicPartnerId,
       entryContext: widget.entryContext,
+      previewAssignedDriverId: widget.previewAssignedDriverId,
+      previewAssignedVehicleId: widget.previewAssignedVehicleId,
     );
     final publicPartnerName = _calcBusinessText(
       widget.payload['public_partner_name'] ??

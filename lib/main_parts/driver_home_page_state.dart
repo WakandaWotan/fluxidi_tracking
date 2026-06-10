@@ -15839,14 +15839,23 @@ class _DriverHomePageState extends State<DriverHomePage>
       _denyRoleAccess();
       return;
     }
+    final isBusinessPreview = _isBusinessPreviewMode;
     final created = await Navigator.of(context).push<bool>(
       MaterialPageRoute(
         builder: (ctx) => CalculatorPage(
           bookingBaseUrl: kBookingBaseUrl,
           mapboxToken: kMapboxToken,
           persistToCustomerBookings: false,
-          entryContext: BookingEntryContext.driver,
+          entryContext: isBusinessPreview
+              ? BookingEntryContext.companyAdmin
+              : BookingEntryContext.driver,
           driverThemeListenable: _activeDriverThemeListenable,
+          previewAssignedDriverId: isBusinessPreview
+              ? _effectiveActiveDriverIdForRideScope()
+              : null,
+          previewAssignedVehicleId: isBusinessPreview
+              ? _effectiveActiveVehicleIdForRideScope()
+              : null,
         ),
       ),
     );
@@ -15864,14 +15873,23 @@ class _DriverHomePageState extends State<DriverHomePage>
     // Close drawer first for a clean transition.
     Navigator.pop(context);
 
+    final isBusinessPreview = _isBusinessPreviewMode;
     final created = await Navigator.of(context).push<bool>(
       MaterialPageRoute(
         builder: (ctx) => CalculatorPage(
           bookingBaseUrl: kBookingBaseUrl,
           mapboxToken: kMapboxToken,
           persistToCustomerBookings: false,
-          entryContext: BookingEntryContext.driver,
+          entryContext: isBusinessPreview
+              ? BookingEntryContext.companyAdmin
+              : BookingEntryContext.driver,
           driverThemeListenable: _activeDriverThemeListenable,
+          previewAssignedDriverId: isBusinessPreview
+              ? _effectiveActiveDriverIdForRideScope()
+              : null,
+          previewAssignedVehicleId: isBusinessPreview
+              ? _effectiveActiveVehicleIdForRideScope()
+              : null,
         ),
       ),
     );
