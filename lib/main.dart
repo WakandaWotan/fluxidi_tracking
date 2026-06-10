@@ -57,6 +57,7 @@ import 'package:fluxidi_tracking/company_onboarding_page.dart';
 import 'package:fluxidi_tracking/chiron_compliance_dashboard_page.dart';
 import 'package:fluxidi_tracking/compliance_ledger_reader.dart';
 import 'package:fluxidi_tracking/compliance_register_receipt_bridge.dart';
+import 'package:fluxidi_tracking/local_ride_assignment_cache.dart';
 import 'package:fluxidi_tracking/driver_documents_store.dart';
 import 'package:fluxidi_tracking/driver_document_sheet.dart';
 import 'package:fluxidi_tracking/driver_my_documents_page.dart';
@@ -1713,16 +1714,56 @@ Future<Map<String, dynamic>> _hydrateRegisterReceiptJson(
   final bookingId = entry.bookingId.trim();
   final maskedBooking = _maskScopeForLog(bookingId);
 
+  // Snapshot the compliance-derived paid state BEFORE any backend enrichment
+  // so the [PAYMENT_AUTHORITY] diagnostic can show what the local-register /
+  // ledger actually declared. The merge helpers in
+  // `compliance_register_receipt_bridge.dart` are responsible for ensuring
+  // this state can never be downgraded; this log just verifies the outcome.
+  final basePaid = baseTripHistoryJsonHasPaidStatus(baseJson);
+
   // Step 1: tracking worker `/trips/history` — authoritative for planned
   // chauffeur-stopped rides (route + booking_details).
   final afterTrip = await _hydrateRegisterReceiptFromTripsHistory(
     entry,
     baseJson,
   );
+  // `tripPaid` reflects whether the (protected) trip-history overlay carries
+  // a paid signal — same value as `basePaid` whenever compliance was already
+  // paid (since the protected merge preserves it). A `tripPaid=false`
+  // alongside `basePaid=true` would surface a regression in the trip merge.
+  final tripPaid = baseTripHistoryJsonHasPaidStatus(afterTrip);
+
+  void logPaymentAuthority({
+    required bool bookingPaid,
+    required bool finalPaid,
+    required String source,
+  }) {
+    debugPrint(
+      '[LOCAL_RIDE_REGISTER][PAYMENT_AUTHORITY] booking=$maskedBooking'
+      ' base_paid=$basePaid trip_paid=$tripPaid booking_paid=$bookingPaid'
+      ' final_paid=$finalPaid source=$source',
+    );
+  }
+
+  String authoritySource({required bool bookingPaid, required bool finalPaid}) {
+    if (!finalPaid) return 'none';
+    if (basePaid) return 'compliance';
+    // After this point base wasn't paid: only the trip or booking layers
+    // could have contributed the paid signal.
+    if (tripPaid && !bookingPaid) return 'trip';
+    if (bookingPaid) return 'booking';
+    return 'trip';
+  }
 
   if (bookingId.isEmpty) {
     debugPrint(
       '[LOCAL_RIDE_REGISTER][HYDRATE_BOOKING] booking=$maskedBooking ok=false status=- fields=0 source=register reason=no_booking_id',
+    );
+    final finalPaid = baseTripHistoryJsonHasPaidStatus(afterTrip);
+    logPaymentAuthority(
+      bookingPaid: false,
+      finalPaid: finalPaid,
+      source: authoritySource(bookingPaid: false, finalPaid: finalPaid),
     );
     return afterTrip;
   }
@@ -1732,6 +1773,12 @@ Future<Map<String, dynamic>> _hydrateRegisterReceiptJson(
         !headers.containsKey('x-admin-token')) {
       debugPrint(
         '[LOCAL_RIDE_REGISTER][HYDRATE_BOOKING] booking=$maskedBooking ok=false status=- fields=0 source=register reason=no_auth',
+      );
+      final finalPaid = baseTripHistoryJsonHasPaidStatus(afterTrip);
+      logPaymentAuthority(
+        bookingPaid: false,
+        finalPaid: finalPaid,
+        source: authoritySource(bookingPaid: false, finalPaid: finalPaid),
       );
       return afterTrip;
     }
@@ -1747,6 +1794,12 @@ Future<Map<String, dynamic>> _hydrateRegisterReceiptJson(
       debugPrint(
         '[LOCAL_RIDE_REGISTER][HYDRATE_BOOKING] booking=$maskedBooking ok=false status=$status fields=0 source=register',
       );
+      final finalPaid = baseTripHistoryJsonHasPaidStatus(afterTrip);
+      logPaymentAuthority(
+        bookingPaid: false,
+        finalPaid: finalPaid,
+        source: authoritySource(bookingPaid: false, finalPaid: finalPaid),
+      );
       return afterTrip;
     }
     final decoded = jsonDecode(utf8.decode(res.bodyBytes));
@@ -1754,21 +1807,51 @@ Future<Map<String, dynamic>> _hydrateRegisterReceiptJson(
       debugPrint(
         '[LOCAL_RIDE_REGISTER][HYDRATE_BOOKING] booking=$maskedBooking ok=false status=$status fields=0 source=register reason=invalid_body',
       );
+      final finalPaid = baseTripHistoryJsonHasPaidStatus(afterTrip);
+      logPaymentAuthority(
+        bookingPaid: false,
+        finalPaid: finalPaid,
+        source: authoritySource(bookingPaid: false, finalPaid: finalPaid),
+      );
       return afterTrip;
     }
+    final decodedMap = Map<String, dynamic>.from(decoded);
+    // Probe the raw booking-worker record's paid signal BEFORE the merge so
+    // the diagnostic shows what the booking record itself reported, not the
+    // already-protected merged result.
+    Map<String, dynamic> asMap(Object? value) =>
+        value is Map ? Map<String, dynamic>.from(value) : <String, dynamic>{};
+    final probeRoot = <String, dynamic>{
+      ...decodedMap,
+      'record': asMap(decodedMap['record']),
+      'booking': asMap(asMap(decodedMap['record'])['booking']),
+    };
+    final bookingPaid = baseTripHistoryJsonHasPaidStatus(probeRoot);
     final merged = mergeBookingRecordIntoTripHistoryJson(
       tripHistoryJson: afterTrip,
-      decodedResponse: Map<String, dynamic>.from(decoded),
+      decodedResponse: decodedMap,
     );
     final mergedDetails = merged['booking_details'];
     final fieldCount = mergedDetails is Map ? mergedDetails.length : 0;
     debugPrint(
       '[LOCAL_RIDE_REGISTER][HYDRATE_BOOKING] booking=$maskedBooking ok=true status=$status fields=$fieldCount source=register',
     );
+    final finalPaid = baseTripHistoryJsonHasPaidStatus(merged);
+    logPaymentAuthority(
+      bookingPaid: bookingPaid,
+      finalPaid: finalPaid,
+      source: authoritySource(bookingPaid: bookingPaid, finalPaid: finalPaid),
+    );
     return merged;
   } catch (err) {
     debugPrint(
       '[LOCAL_RIDE_REGISTER][HYDRATE_BOOKING] booking=$maskedBooking ok=false status=- fields=0 source=register reason=${_shortErrorForDiag(err)}',
+    );
+    final finalPaid = baseTripHistoryJsonHasPaidStatus(afterTrip);
+    logPaymentAuthority(
+      bookingPaid: false,
+      finalPaid: finalPaid,
+      source: authoritySource(bookingPaid: false, finalPaid: finalPaid),
     );
     return afterTrip;
   }
@@ -1784,6 +1867,25 @@ void _registerComplianceRegisterReceiptBridge() {
       entry,
       tripHistoryJsonFromLedgerEntry(entry),
     );
+    // Side-effect: cache the resolved driver/vehicle labels so the Local
+    // Ride Register dashboard cards can display them on subsequent renders.
+    // Receipt rendering itself is unaffected; this just exposes the same
+    // identifiers the receipt shows back to the card display layer.
+    final assignment = extractLocalRideAssignmentFromMergedJson(hydratedJson);
+    if (!assignment.isEmpty) {
+      recordLocalRideAssignment(
+        bookingId: entry.bookingId,
+        tripId: entry.tripId,
+        info: assignment,
+      );
+      debugPrint(
+        '[LOCAL_RIDE_REGISTER][ASSIGNMENT_CACHE]'
+        ' booking=${_maskScopeForLog(entry.bookingId)}'
+        ' trip=${_maskScopeForLog(entry.tripId)}'
+        ' driver_found=${assignment.driverLabel != null}'
+        ' vehicle_found=${assignment.vehicleLabel != null}',
+      );
+    }
     if (!context.mounted) return;
     final item = _TripHistoryItem.fromJson(hydratedJson);
     final key = ComplianceLedgerReader.groupKeyFor(entry);
@@ -1817,9 +1919,57 @@ void _registerComplianceRegisterReceiptBridge() {
   });
 }
 
+/// Background prewarm: when the Local Ride Register dashboard renders a card
+/// whose driver/vehicle could not be resolved from compliance / profile data,
+/// it fires `requestLocalRideAssignmentPrewarm(entry)`. That helper calls
+/// this handler, which runs the same hydration pipeline the receipt page
+/// uses and writes the resulting labels into the assignment cache. The cache
+/// notifier then wakes the dashboard so the visible card rebuilds with the
+/// resolved labels — no UI layout change, just label replacement.
+Future<void> _prewarmLocalRideAssignmentForEntry(
+  ComplianceLedgerEntry entry,
+) async {
+  final maskedBooking = _maskScopeForLog(entry.bookingId);
+  final maskedTrip = _maskScopeForLog(entry.tripId);
+  try {
+    final hydratedJson = await _hydrateRegisterReceiptJson(
+      entry,
+      tripHistoryJsonFromLedgerEntry(entry),
+    );
+    final assignment = extractLocalRideAssignmentFromMergedJson(hydratedJson);
+    if (assignment.isEmpty) {
+      debugPrint(
+        '[LOCAL_RIDE_REGISTER][ASSIGNMENT_PREWARM]'
+        ' booking=$maskedBooking trip=$maskedTrip'
+        ' driver_found=false vehicle_found=false',
+      );
+      return;
+    }
+    recordLocalRideAssignment(
+      bookingId: entry.bookingId,
+      tripId: entry.tripId,
+      info: assignment,
+    );
+    debugPrint(
+      '[LOCAL_RIDE_REGISTER][ASSIGNMENT_PREWARM]'
+      ' booking=$maskedBooking trip=$maskedTrip'
+      ' driver_found=${assignment.driverLabel != null}'
+      ' vehicle_found=${assignment.vehicleLabel != null}',
+    );
+  } catch (err) {
+    debugPrint(
+      '[LOCAL_RIDE_REGISTER][ASSIGNMENT_PREWARM]'
+      ' booking=$maskedBooking trip=$maskedTrip reason=${_shortErrorForDiag(err)}',
+    );
+  }
+}
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   _registerComplianceRegisterReceiptBridge();
+  registerLocalRideAssignmentPrewarmHandler(
+    _prewarmLocalRideAssignmentForEntry,
+  );
   await loadBusinessThemePreference();
   await loadBusinessHomeMobileLayoutPreference();
   await loadDriverHomeMobileLayoutPreference();

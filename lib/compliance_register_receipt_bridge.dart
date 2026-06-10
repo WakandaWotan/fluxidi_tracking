@@ -70,6 +70,89 @@ String? extractComplianceRouteScalar(Object? value) {
   return fallback;
 }
 
+/// Returns `true` when [value] indicates a confirmed paid state.
+///
+/// Used by the receipt-hydration merge helpers to ensure compliance / local
+/// ride register payment authority is preserved: once any of the layers
+/// (compliance, tracking trip, booking record) signals "paid", later layers
+/// must never downgrade it to unpaid/pending/unknown. Accepts the common
+/// string aliases the backends use plus the `paid: true` boolean form.
+bool isComplianceReceiptPaidStatus(Object? value) {
+  if (value == null) return false;
+  if (value is bool) return value;
+  final text = value.toString().trim().toLowerCase();
+  if (text.isEmpty) return false;
+  return text == 'paid' ||
+      text == 'settled' ||
+      text == 'confirmed' ||
+      text == 'completed' ||
+      text == 'success';
+}
+
+/// Aliases that carry a payment status. Used to detect / preserve a
+/// pre-existing paid state across merge layers.
+const List<String> _kCompliancePaymentStatusAliases = <String>[
+  'payment_status',
+  'paymentStatus',
+  'payment_state',
+  'paymentState',
+  'paid',
+  'is_paid',
+  'isPaid',
+];
+
+/// Aliases that carry payment metadata (method / source / provider / id /
+/// timestamp / amount). When the base layer already has these from
+/// compliance, downstream layers must not silently overwrite them.
+const List<String> _kCompliancePaymentMetadataKeys = <String>[
+  'payment_method',
+  'paymentMethod',
+  'payment_source',
+  'paymentSource',
+  'payment_provider',
+  'paymentProvider',
+  'payment_id',
+  'paymentId',
+  'paid_at',
+  'paidAt',
+  'payment_amount',
+  'paymentAmount',
+];
+
+/// Computes whether the base trip-history JSON (root + booking_details +
+/// booking + payment subtree) already carries a confirmed paid state. When
+/// `true`, subsequent enrichment from the tracking worker or booking worker
+/// must not overwrite payment status / method / source / provider with
+/// non-paid values.
+bool baseTripHistoryJsonHasPaidStatus(Map<String, dynamic> json) {
+  Map<String, dynamic> asMap(Object? value) => value is Map
+      ? Map<String, dynamic>.from(value)
+      : const <String, dynamic>{};
+  final bookingDetails = asMap(json['booking_details']);
+  final booking = asMap(json['booking']);
+  final record = asMap(json['record']);
+  final recordBooking = asMap(record['booking']);
+  final payment = asMap(json['payment']);
+  final bookingDetailsPayment = asMap(bookingDetails['payment']);
+  final scopes = <Map<String, dynamic>>[
+    json,
+    bookingDetails,
+    booking,
+    record,
+    recordBooking,
+    payment,
+    bookingDetailsPayment,
+  ];
+  for (final scope in scopes) {
+    if (scope.isEmpty) continue;
+    for (final alias in _kCompliancePaymentStatusAliases) {
+      if (!scope.containsKey(alias)) continue;
+      if (isComplianceReceiptPaidStatus(scope[alias])) return true;
+    }
+  }
+  return false;
+}
+
 typedef ComplianceRegisterReceiptHandler =
     Future<void> Function(
       BuildContext context,
@@ -190,6 +273,28 @@ Map<String, dynamic> tripHistoryJsonFromLedgerEntry(
     rawSanitized[entryKv.key] = entryKv.value;
   }
 
+  // Mirror compliance payment status / metadata to ROOT in addition to
+  // `booking_details`. This is the compliance ledger's authoritative payment
+  // signal for the Local Ride Register, and surfacing it at root lets the
+  // `overlayRoot` guard in `mergeBookingRecordIntoTripHistoryJson` (which
+  // skips overlay when `existing` is non-empty) preserve it instead of being
+  // silently downgraded by a booking-worker record that hasn't caught up to
+  // an in-vehicle cash payment. The empty-string filters keep the spread
+  // safe when compliance has no payment data.
+  final paymentStatusRoot = entry.paymentStatus.isNotEmpty
+      ? entry.paymentStatus
+      : (text(payment['status']).isEmpty ? null : text(payment['status']));
+  final paymentMethodRoot = entry.paymentMethod.isNotEmpty
+      ? entry.paymentMethod
+      : (text(payment['method']).isEmpty ? null : text(payment['method']));
+  final paymentSourceRoot = entry.paymentSource.isNotEmpty
+      ? entry.paymentSource
+      : (text(payment['source']).isEmpty ? null : text(payment['source']));
+  final paymentProviderRoot = entry.paymentProvider.isNotEmpty
+      ? entry.paymentProvider
+      : (text(payment['provider']).isEmpty ? null : text(payment['provider']));
+  final paidAtRoot = entry.paidAtUtc?.toUtc().toIso8601String();
+
   return <String, dynamic>{
     'trip_id': tripId,
     'kind': kind,
@@ -218,6 +323,15 @@ Map<String, dynamic> tripHistoryJsonFromLedgerEntry(
         : text(fare['currency']),
     'booking_details': bookingDetails,
     ...rawSanitized,
+    // Placed AFTER `...rawSanitized` so the compliance-derived payment
+    // authority always wins over any stale `payment_status` that might
+    // survive inside `entry.raw`.
+    if (paymentStatusRoot != null) 'payment_status': paymentStatusRoot,
+    if (paymentMethodRoot != null) 'payment_method': paymentMethodRoot,
+    if (paymentSourceRoot != null) 'payment_source': paymentSourceRoot,
+    if (paymentProviderRoot != null) 'payment_provider': paymentProviderRoot,
+    if (entry.paymentId.isNotEmpty) 'payment_id': entry.paymentId,
+    if (paidAtRoot != null) 'paid_at': paidAtRoot,
   };
 }
 
@@ -261,6 +375,15 @@ Map<String, dynamic> mergeBookingRecordIntoTripHistoryJson({
 
   final merged = Map<String, dynamic>.from(tripHistoryJson);
 
+  // Payment authority guard:
+  //   - The compliance ledger is authoritative for in-vehicle / cash / manual
+  //     payments (the booking worker may still show `pending` while the
+  //     driver-app marked the ride paid). Never downgrade a confirmed paid
+  //     base state to unpaid/pending/unknown.
+  //   - Booking-worker is allowed to UPGRADE unpaid → paid (e.g. Mollie
+  //     settlement landed on the record after the ledger row was written).
+  final basePaid = baseTripHistoryJsonHasPaidStatus(tripHistoryJson);
+
   // Expose the full authoritative subtrees so existing path-based lookups
   // (record.*, record.booking.*, booking.*) succeed without extra plumbing.
   merged['record'] = record;
@@ -276,8 +399,32 @@ Map<String, dynamic> mergeBookingRecordIntoTripHistoryJson({
     merged['booking'] = existingBooking;
   }
 
+  bool isPaymentStatusKey(String key) =>
+      _kCompliancePaymentStatusAliases.contains(key);
+  bool isPaymentMetadataKey(String key) =>
+      _kCompliancePaymentMetadataKeys.contains(key);
+
   void overlayRoot(String key, Object? value) {
     if (!nonEmpty(value)) return;
+
+    // Never downgrade a paid status. Allow upgrading unpaid → paid.
+    if (isPaymentStatusKey(key)) {
+      final existing = merged[key];
+      if (isComplianceReceiptPaidStatus(existing) &&
+          !isComplianceReceiptPaidStatus(value)) {
+        return;
+      }
+      merged[key] = value;
+      return;
+    }
+
+    // Preserve compliance payment metadata (method / source / provider /
+    // paid_at / amount) when the base layer is already paid. The compliance
+    // values are the truth for in-vehicle settlements.
+    if (isPaymentMetadataKey(key) && basePaid && nonEmpty(merged[key])) {
+      return;
+    }
+
     final existing = merged[key];
     if (!nonEmpty(existing)) {
       merged[key] = value;
@@ -342,11 +489,28 @@ Map<String, dynamic> mergeBookingRecordIntoTripHistoryJson({
 
   // Mirror authoritative fields into booking_details so the broadest
   // resolvers (`_detailAt(['customer_name'])`, `_detailAt(['from'])`, etc.)
-  // hit them without depending on rawSource Map fallbacks.
+  // hit them without depending on rawSource Map fallbacks. Same payment
+  // authority guard as `overlayRoot`: never downgrade paid → unpaid, and
+  // preserve compliance payment metadata when the base layer is paid.
   final bookingDetails = asMap(merged['booking_details']);
   for (final key in overlayKeys) {
     final v = source[key];
-    if (nonEmpty(v)) bookingDetails[key] = v;
+    if (!nonEmpty(v)) continue;
+    if (isPaymentStatusKey(key)) {
+      final existing = bookingDetails[key];
+      if (isComplianceReceiptPaidStatus(existing) &&
+          !isComplianceReceiptPaidStatus(v)) {
+        continue;
+      }
+      bookingDetails[key] = v;
+      continue;
+    }
+    if (isPaymentMetadataKey(key) &&
+        basePaid &&
+        nonEmpty(bookingDetails[key])) {
+      continue;
+    }
+    bookingDetails[key] = v;
   }
 
   // -------------------------------------------------------------------------
@@ -673,6 +837,19 @@ Map<String, dynamic> mergeTrackingTripIntoTripHistoryJson({
 
   final merged = Map<String, dynamic>.from(baseJson);
 
+  // Payment authority guard:
+  //   - For Local Ride Register hydration, the compliance ledger / base
+  //     payment fields are authoritative. The tracking worker's
+  //     `/trips/history` projection may still reflect a stale `pending` /
+  //     `unknown` while the driver-app already marked the ride paid via an
+  //     in-vehicle cash / Bancontact settlement. Treat trip payment fields
+  //     as fill-only: overlay only when the base has no value. Paid status
+  //     is additionally protected against downgrade.
+  bool isPaymentStatusKey(String key) =>
+      _kCompliancePaymentStatusAliases.contains(key);
+  bool isPaymentMetadataKey(String key) =>
+      _kCompliancePaymentMetadataKeys.contains(key);
+
   // ---------------------------------------------------------------------------
   // Route Maps (`origin`, `destination`).
   //
@@ -742,7 +919,29 @@ Map<String, dynamic> mergeTrackingTripIntoTripHistoryJson({
   ];
   for (final key in detailsKeys) {
     final v = incomingDetails[key];
-    if (nonEmpty(v)) mergedDetails[key] = v;
+    if (!nonEmpty(v)) continue;
+    if (isPaymentStatusKey(key)) {
+      // Never downgrade paid → unpaid.
+      final existing = mergedDetails[key];
+      if (isComplianceReceiptPaidStatus(existing) &&
+          !isComplianceReceiptPaidStatus(v)) {
+        continue;
+      }
+      // For tracking trips, even an "upgrade" to paid is suspect (tracking is
+      // typically the LEAST authoritative source for in-vehicle payments).
+      // Fill-only: keep base value when present, only fill missing.
+      if (nonEmpty(existing)) continue;
+      mergedDetails[key] = v;
+      continue;
+    }
+    if (isPaymentMetadataKey(key)) {
+      // Tracking trip payment metadata fills missing only — never replace
+      // compliance values that already wrote method / source / provider.
+      if (nonEmpty(mergedDetails[key])) continue;
+      mergedDetails[key] = v;
+      continue;
+    }
+    mergedDetails[key] = v;
   }
   if (mergedDetails.isNotEmpty) merged['booking_details'] = mergedDetails;
 
@@ -770,7 +969,23 @@ Map<String, dynamic> mergeTrackingTripIntoTripHistoryJson({
   ];
   for (final key in topLevelKeys) {
     final v = tripJson[key];
-    if (nonEmpty(v)) merged[key] = v;
+    if (!nonEmpty(v)) continue;
+    if (isPaymentStatusKey(key)) {
+      final existing = merged[key];
+      if (isComplianceReceiptPaidStatus(existing) &&
+          !isComplianceReceiptPaidStatus(v)) {
+        continue;
+      }
+      if (nonEmpty(existing)) continue;
+      merged[key] = v;
+      continue;
+    }
+    if (isPaymentMetadataKey(key)) {
+      if (nonEmpty(merged[key])) continue;
+      merged[key] = v;
+      continue;
+    }
+    merged[key] = v;
   }
 
   // ---------------------------------------------------------------------------

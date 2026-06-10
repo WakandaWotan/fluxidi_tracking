@@ -243,6 +243,97 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
     return _ReceiptPaymentStatus.pending;
   }
 
+  /// Returns `true` when [value] (string or bool) signals a confirmed paid
+  /// state. Mirrors `isComplianceReceiptPaidStatus` in
+  /// `compliance_register_receipt_bridge.dart` so the receipt UI's
+  /// "effective paid" detection agrees with the hydration merge guards.
+  bool _isPaidStatusValue(Object? value) {
+    if (value == null) return false;
+    if (value is bool) return value;
+    final text = value.toString().trim().toLowerCase();
+    if (text.isEmpty) return false;
+    return text == 'paid' ||
+        text == 'settled' ||
+        text == 'confirmed' ||
+        text == 'completed' ||
+        text == 'success';
+  }
+
+  /// Comprehensive paid-state detection for the receipt UI. Returns `true`
+  /// when ANY of the following carries a paid signal:
+  ///   - in-memory `_paymentStatus` is already paid
+  ///   - any `payment_status` / `paymentStatus` / `payment_state` alias under
+  ///     `booking_details`, `booking`, `record.*`, or root JSON
+  ///   - `payment.paid` / `paid` / `is_paid` boolean alias
+  ///   - `paid_at` non-empty
+  /// Used to hide payment action buttons (`Pay by QR`, `Cash received`,
+  /// `Paid by card terminal`) for compliance-paid Local Ride Register rows
+  /// and to defend `_resolveReceiptPaymentStatus` against being downgraded
+  /// by a still-`pending` booking-worker record.
+  bool _isEffectiveReceiptPaid() {
+    if (_paymentStatus == _ReceiptPaymentStatus.paid) return true;
+
+    const statusAliasPaths = <List<String>>[
+      ['payment_status'],
+      ['paymentStatus'],
+      ['payment_state'],
+      ['paymentState'],
+      ['paid'],
+      ['is_paid'],
+      ['isPaid'],
+      ['booking', 'payment_status'],
+      ['booking', 'paymentStatus'],
+      ['booking', 'payment_state'],
+      ['booking', 'paymentState'],
+      ['booking', 'paid'],
+      ['booking', 'is_paid'],
+      ['booking', 'isPaid'],
+      ['record', 'payment_status'],
+      ['record', 'paymentStatus'],
+      ['record', 'payment_state'],
+      ['record', 'paymentState'],
+      ['record', 'paid'],
+      ['record', 'is_paid'],
+      ['record', 'isPaid'],
+      ['record', 'booking', 'payment_status'],
+      ['record', 'booking', 'paymentStatus'],
+      ['record', 'booking', 'payment_state'],
+      ['record', 'booking', 'paymentState'],
+      ['record', 'booking', 'paid'],
+      ['record', 'booking', 'is_paid'],
+      ['record', 'booking', 'isPaid'],
+      ['payment', 'status'],
+      ['payment', 'paid'],
+      ['booking', 'payment', 'status'],
+      ['booking', 'payment', 'paid'],
+      ['record', 'payment', 'status'],
+      ['record', 'payment', 'paid'],
+      ['record', 'booking', 'payment', 'status'],
+      ['record', 'booking', 'payment', 'paid'],
+      ['mollie', 'status'],
+      ['record', 'mollie', 'status'],
+    ];
+    for (final path in statusAliasPaths) {
+      if (_isPaidStatusValue(_detailAt(path))) return true;
+    }
+
+    const paidAtPaths = <List<String>>[
+      ['paid_at'],
+      ['paidAt'],
+      ['booking', 'paid_at'],
+      ['booking', 'paidAt'],
+      ['record', 'paid_at'],
+      ['record', 'paidAt'],
+      ['record', 'booking', 'paid_at'],
+      ['record', 'booking', 'paidAt'],
+    ];
+    for (final path in paidAtPaths) {
+      final text = _cleanContactText(_detailAt(path));
+      if (text != null && text.isNotEmpty && text != '—') return true;
+    }
+    return false;
+  }
+
   String? _mapText(Map<String, dynamic> map, String key) {
     final value = map[key];
     final text = value?.toString().trim();
@@ -570,9 +661,21 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
         (sourceFromDetails == null ||
             sourceFromDetails.isEmpty ||
             sourceFromDetails == 'in_car');
+    // Payment authority guard:
+    //   If the compliance / local-register hydrated JSON already declares the
+    //   ride paid (via any alias surfaced by `_isEffectiveReceiptPaid`), we
+    //   MUST NOT downgrade it just because the booking-worker authoritative
+    //   record (or the trip-history projection) hasn't caught up to an
+    //   in-vehicle cash / Bancontact settlement yet. Upgrades from unpaid to
+    //   paid are still honored.
+    final basePaidBeforeAsync = _isEffectiveReceiptPaid();
     if (!mounted) return;
     setState(() {
       final fromStatus = _paymentStatusFromRaw(resolved);
+      if (basePaidBeforeAsync && fromStatus != _ReceiptPaymentStatus.paid) {
+        _paymentStatus = _ReceiptPaymentStatus.paid;
+        return;
+      }
       _paymentStatus =
           markAsPaidFromMethod && fromStatus != _ReceiptPaymentStatus.paid
           ? _ReceiptPaymentStatus.paid
@@ -1626,6 +1729,11 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
   }
 
   String _paymentStatusText() {
+    // Surface "Paid" whenever the hydrated JSON declares it — even if the
+    // in-memory enum hasn't been flipped yet (e.g. `_resolveReceiptPaymentStatus`
+    // hasn't completed, or the authoritative booking-worker record still says
+    // pending while compliance already marked the ride paid).
+    if (_isEffectiveReceiptPaid()) return _receiptText('paid');
     switch (_paymentStatus) {
       case _ReceiptPaymentStatus.pending:
         return _receiptText('unpaid');
@@ -3079,7 +3187,13 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
 
   Widget _paymentSection(BuildContext context) {
     final receiptTotal = _receiptTotalAmount();
-    final alreadyPaid = _paymentStatus == _ReceiptPaymentStatus.paid;
+    // Hide payment action buttons whenever ANY paid signal is present in the
+    // hydrated JSON, not just when the in-memory `_paymentStatus` enum was
+    // already flipped to paid. Prevents `Pay by QR / Cash received / Paid by
+    // card terminal` from appearing on Local Ride Register compliance-paid
+    // rows whose status got temporarily downgraded by a stale booking-worker
+    // record before `_resolveReceiptPaymentStatus` completed.
+    final alreadyPaid = _isEffectiveReceiptPaid();
     final canRequestPayment =
         !alreadyPaid && receiptTotal != null && receiptTotal > 0;
     return Container(

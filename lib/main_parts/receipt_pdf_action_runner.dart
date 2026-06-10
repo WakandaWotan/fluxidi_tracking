@@ -2008,6 +2008,77 @@ class _ReceiptPdfActionRunner {
   }
 
   static String _paymentStatusText(_TripHistoryItem item) {
+    // Authoritative paid detection mirrors `_isEffectiveReceiptPaid` in the
+    // on-screen receipt: when ANY payment-status alias, paid-boolean alias,
+    // or `paid_at` timestamp signals settlement, the PDF must show "Paid".
+    // Prevents the PDF from contradicting the compliance / local-register
+    // payment authority that the on-screen receipt now respects.
+    const paidStatusAliases = <List<String>>[
+      ['payment_status'],
+      ['paymentStatus'],
+      ['payment_state'],
+      ['paymentState'],
+      ['paid'],
+      ['is_paid'],
+      ['isPaid'],
+      ['booking', 'payment_status'],
+      ['booking', 'paymentStatus'],
+      ['booking', 'payment_state'],
+      ['booking', 'paymentState'],
+      ['booking', 'paid'],
+      ['booking', 'is_paid'],
+      ['booking', 'isPaid'],
+      ['record', 'payment_status'],
+      ['record', 'paymentStatus'],
+      ['record', 'payment_state'],
+      ['record', 'paymentState'],
+      ['record', 'paid'],
+      ['record', 'is_paid'],
+      ['record', 'isPaid'],
+      ['record', 'booking', 'payment_status'],
+      ['record', 'booking', 'paymentStatus'],
+      ['record', 'booking', 'payment_state'],
+      ['record', 'booking', 'paymentState'],
+      ['record', 'booking', 'paid'],
+      ['record', 'booking', 'is_paid'],
+      ['record', 'booking', 'isPaid'],
+      ['payment', 'status'],
+      ['payment', 'paid'],
+      ['booking', 'payment', 'status'],
+      ['booking', 'payment', 'paid'],
+      ['record', 'payment', 'status'],
+      ['record', 'payment', 'paid'],
+      ['record', 'booking', 'payment', 'status'],
+      ['record', 'booking', 'payment', 'paid'],
+      ['mollie', 'status'],
+      ['record', 'mollie', 'status'],
+    ];
+    for (final path in paidStatusAliases) {
+      final v = _firstPathText(item, [path])?.toLowerCase().trim();
+      if (v == null) continue;
+      if (v == 'paid' ||
+          v == 'settled' ||
+          v == 'confirmed' ||
+          v == 'completed' ||
+          v == 'success' ||
+          v == 'true') {
+        return _receiptText('paid');
+      }
+    }
+    const paidAtAliases = <List<String>>[
+      ['paid_at'],
+      ['paidAt'],
+      ['booking', 'paid_at'],
+      ['booking', 'paidAt'],
+      ['record', 'paid_at'],
+      ['record', 'paidAt'],
+      ['record', 'booking', 'paid_at'],
+      ['record', 'booking', 'paidAt'],
+    ];
+    for (final path in paidAtAliases) {
+      final t = _firstPathText(item, [path])?.trim();
+      if (t != null && t.isNotEmpty && t != '—') return _receiptText('paid');
+    }
     final raw = _firstPathText(item, const [
       ['payment_status'],
       ['paymentStatus'],
@@ -2020,9 +2091,6 @@ class _ReceiptPdfActionRunner {
       ['mollie', 'status'],
       ['record', 'mollie', 'status'],
     ])?.toLowerCase().trim();
-    if (raw == 'paid' || raw == 'settled' || raw == 'confirmed') {
-      return _receiptText('paid');
-    }
     if (raw == 'open' || raw == 'pending' || raw == 'authorized') {
       return _receiptText('paymentSent');
     }

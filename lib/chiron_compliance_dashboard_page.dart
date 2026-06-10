@@ -9,6 +9,7 @@ import 'package:fluxidi_tracking/business_theme_palette.dart';
 import 'package:fluxidi_tracking/business_theme_store.dart';
 import 'package:fluxidi_tracking/compliance_ledger_reader.dart';
 import 'package:fluxidi_tracking/compliance_register_receipt_bridge.dart';
+import 'package:fluxidi_tracking/local_ride_assignment_cache.dart';
 import 'package:fluxidi_tracking/company_session_store.dart';
 import 'package:fluxidi_tracking/customer_bookings_store.dart';
 import 'package:fluxidi_tracking/driver_documents_store.dart';
@@ -5613,47 +5614,124 @@ class _LocalComplianceLedgerSectionState
     return v;
   }
 
+  /// Resolves a human-readable driver label for one compliance ledger entry.
+  ///
+  /// Resolution order (display-quality names always beat IDs):
+  ///   1. Broad alias matrix in `entry.raw` (flat + nested driver / assigned_driver /
+  ///      driver_profile / chauffeur / booking.driver / booking_details / payload).
+  ///   2. Driver profile cache (`driversNotifier`) keyed by `entry.driverId` or
+  ///      any `driver_id` alias inside `entry.raw`.
+  ///   3. Local Ride Register hydration cache (populated whenever the receipt
+  ///      is opened — surfaces the same driver the receipt shows).
+  ///   4. `Driver profile not found` when a `driver_id` exists but no profile
+  ///      / hydration label is available.
+  ///   5. `Driver not linked` otherwise.
   String _driverDisplay(ComplianceLedgerEntry entry) {
+    final raw = entry.raw;
+    // 1) Broad alias matrix — expanded to also cover booking / booking_details /
+    // payload subtrees, assigned_driver flat keys, employee_number, and the
+    // existing driver_profile / chauffeur shapes.
     final candidates = <String?>[
-      _rawPathText(entry.raw, const ['driver', 'name']),
-      _rawPathText(entry.raw, const ['driver', 'fullName']),
-      _rawPathText(entry.raw, const ['driver', 'full_name']),
-      _rawPathText(entry.raw, const ['driver', 'display_name']),
-      _rawPathText(entry.raw, const ['driver', 'displayName']),
-      _rawPathText(entry.raw, const ['assigned_driver', 'name']),
-      _rawPathText(entry.raw, const ['assigned_driver', 'fullName']),
-      _rawPathText(entry.raw, const ['assigned_driver', 'full_name']),
-      _rawPathText(entry.raw, const ['assignedDriver', 'name']),
-      _rawPathText(entry.raw, const ['assignedDriver', 'fullName']),
-      _rawPathText(entry.raw, const ['driver_profile', 'name']),
-      _rawPathText(entry.raw, const ['driver_profile', 'fullName']),
-      _rawPathText(entry.raw, const ['driverProfile', 'name']),
-      _rawPathText(entry.raw, const ['driverProfile', 'fullName']),
-      _rawPathText(entry.raw, const ['chauffeur', 'name']),
-      _rawPathText(entry.raw, const ['chauffeur', 'fullName']),
-      _rawPathText(entry.raw, const ['driver_name']),
-      _rawPathText(entry.raw, const ['driverName']),
-      _rawPathText(entry.raw, const ['chauffeur_name']),
-      _rawPathText(entry.raw, const ['chauffeurName']),
-      _rawPathText(entry.raw, const ['paid_by_driver_name']),
-      _rawPathText(entry.raw, const ['paidByDriverName']),
-      _rawPathText(entry.raw, const ['driver_label']),
-      _rawPathText(entry.raw, const ['driverLabel']),
+      _rawPathText(raw, const ['driver', 'name']),
+      _rawPathText(raw, const ['driver', 'fullName']),
+      _rawPathText(raw, const ['driver', 'full_name']),
+      _rawPathText(raw, const ['driver', 'display_name']),
+      _rawPathText(raw, const ['driver', 'displayName']),
+      _rawPathText(raw, const ['driver', 'driver_name']),
+      _rawPathText(raw, const ['driver', 'driverName']),
+      _rawPathText(raw, const ['assigned_driver', 'name']),
+      _rawPathText(raw, const ['assigned_driver', 'fullName']),
+      _rawPathText(raw, const ['assigned_driver', 'full_name']),
+      _rawPathText(raw, const ['assigned_driver', 'display_name']),
+      _rawPathText(raw, const ['assigned_driver', 'driver_name']),
+      _rawPathText(raw, const ['assignedDriver', 'name']),
+      _rawPathText(raw, const ['assignedDriver', 'fullName']),
+      _rawPathText(raw, const ['assignedDriver', 'full_name']),
+      _rawPathText(raw, const ['assignedDriver', 'displayName']),
+      _rawPathText(raw, const ['assignedDriver', 'driverName']),
+      _rawPathText(raw, const ['driver_profile', 'name']),
+      _rawPathText(raw, const ['driver_profile', 'fullName']),
+      _rawPathText(raw, const ['driverProfile', 'name']),
+      _rawPathText(raw, const ['driverProfile', 'fullName']),
+      _rawPathText(raw, const ['chauffeur', 'name']),
+      _rawPathText(raw, const ['chauffeur', 'fullName']),
+      _rawPathText(raw, const ['driver_name']),
+      _rawPathText(raw, const ['driverName']),
+      _rawPathText(raw, const ['assigned_driver_name']),
+      _rawPathText(raw, const ['assignedDriverName']),
+      _rawPathText(raw, const ['chauffeur_name']),
+      _rawPathText(raw, const ['chauffeurName']),
+      _rawPathText(raw, const ['paid_by_driver_name']),
+      _rawPathText(raw, const ['paidByDriverName']),
+      _rawPathText(raw, const ['driver_label']),
+      _rawPathText(raw, const ['driverLabel']),
+      _rawPathText(raw, const ['employee_number']),
+      _rawPathText(raw, const ['employeeNumber']),
+      // Booking / booking_details / payload subtrees (present on hydrated /
+      // backend-restored compliance rows). These mirror what the receipt
+      // payload already surfaces.
+      _rawPathText(raw, const ['booking', 'driver_name']),
+      _rawPathText(raw, const ['booking', 'driverName']),
+      _rawPathText(raw, const ['booking', 'assigned_driver_name']),
+      _rawPathText(raw, const ['booking', 'assignedDriverName']),
+      _rawPathText(raw, const ['booking', 'driver', 'name']),
+      _rawPathText(raw, const ['booking', 'driver', 'fullName']),
+      _rawPathText(raw, const ['booking', 'assigned_driver', 'name']),
+      _rawPathText(raw, const ['booking', 'assignedDriver', 'name']),
+      _rawPathText(raw, const ['booking_details', 'driver_name']),
+      _rawPathText(raw, const ['booking_details', 'driverName']),
+      _rawPathText(raw, const ['booking_details', 'assigned_driver_name']),
+      _rawPathText(raw, const ['booking_details', 'assignedDriverName']),
+      _rawPathText(raw, const ['booking_details', 'employee_number']),
+      _rawPathText(raw, const ['booking_details', 'employeeNumber']),
+      _rawPathText(raw, const ['payload', 'driver_name']),
+      _rawPathText(raw, const ['payload', 'driverName']),
+      _rawPathText(raw, const ['record', 'driver_name']),
+      _rawPathText(raw, const ['record', 'driverName']),
+      _rawPathText(raw, const ['record', 'booking', 'driver_name']),
+      _rawPathText(raw, const ['record', 'booking', 'driverName']),
     ];
     for (final value in candidates) {
       final meaningful = _meaningfulDisplayToken(value);
       if (meaningful != null) return meaningful;
     }
+
+    // 2) Driver profile cache.
     final driverId = _meaningfulDisplayToken(
-      _rawPathText(entry.raw, const ['driver', 'driver_id']) ??
-          _rawPathText(entry.raw, const ['driver', 'id']) ??
-          _rawPathText(entry.raw, const ['assigned_driver', 'driver_id']) ??
-          _rawPathText(entry.raw, const ['assigned_driver', 'id']) ??
-          _rawPathText(entry.raw, const ['driver_id']) ??
+      _rawPathText(raw, const ['driver', 'driver_id']) ??
+          _rawPathText(raw, const ['driver', 'driverId']) ??
+          _rawPathText(raw, const ['driver', 'id']) ??
+          _rawPathText(raw, const ['assigned_driver', 'driver_id']) ??
+          _rawPathText(raw, const ['assigned_driver', 'driverId']) ??
+          _rawPathText(raw, const ['assigned_driver', 'id']) ??
+          _rawPathText(raw, const ['assignedDriver', 'driver_id']) ??
+          _rawPathText(raw, const ['assignedDriver', 'driverId']) ??
+          _rawPathText(raw, const ['assignedDriver', 'id']) ??
+          _rawPathText(raw, const ['driver_id']) ??
+          _rawPathText(raw, const ['driverId']) ??
+          _rawPathText(raw, const ['assigned_driver_id']) ??
+          _rawPathText(raw, const ['assignedDriverId']) ??
+          _rawPathText(raw, const ['booking', 'driver_id']) ??
+          _rawPathText(raw, const ['booking', 'driverId']) ??
+          _rawPathText(raw, const ['booking', 'assigned_driver_id']) ??
+          _rawPathText(raw, const ['booking', 'assignedDriverId']) ??
+          _rawPathText(raw, const ['booking_details', 'driver_id']) ??
+          _rawPathText(raw, const ['booking_details', 'driverId']) ??
           entry.driverId,
     );
     final profileDisplay = _lookupDriverProfileDisplay(driverId);
     if (profileDisplay != null) return profileDisplay;
+
+    // 3) Local Ride Register hydration cache (populated when the receipt
+    // was opened earlier in this session for the same booking / trip).
+    final cached = lookupLocalRideAssignment(
+      bookingId: entry.bookingId,
+      tripId: entry.tripId,
+    );
+    final cachedDriver = _meaningfulDisplayToken(cached?.driverLabel);
+    if (cachedDriver != null) return cachedDriver;
+
+    // 4) / 5) profile-not-found vs. not-linked.
     if (driverId != null) return _driverProfileNotFoundLabel();
     return _driverNotLinkedLabel();
   }
@@ -5667,31 +5745,82 @@ class _LocalComplianceLedgerSectionState
         profileMissing = true;
         continue;
       }
-      if (value != _driverNotLinkedLabel()) return value;
+      if (value != _driverNotLinkedLabel()) {
+        _logAssignmentResolve(
+          group: group,
+          driverFound: true,
+          driverSource: _resolveDriverSourceForEntry(entry),
+          vehicleFound: null,
+        );
+        return value;
+      }
     }
-    if (profileMissing) return _driverProfileNotFoundLabel();
-    return _driverNotLinkedLabel();
+    final fallback = profileMissing
+        ? _driverProfileNotFoundLabel()
+        : _driverNotLinkedLabel();
+    _logAssignmentResolve(
+      group: group,
+      driverFound: false,
+      driverSource: profileMissing ? 'profile_missing' : 'none',
+      vehicleFound: null,
+    );
+    return fallback;
   }
 
+  /// Resolves a human-readable vehicle label for one compliance ledger entry.
+  ///
+  /// Resolution order (display-quality labels always beat IDs):
+  ///   1. Broad alias matrix in `entry.raw` for license plate + display label
+  ///      across `vehicle` / `assigned_vehicle` / `assignedVehicle` /
+  ///      `vehicle_profile` / `booking.vehicle` / `booking_details` / `payload`
+  ///      subtrees. Composes "label · plate" when both exist.
+  ///   2. Vehicle profile cache (`vehiclesNotifier`) keyed by `entry.vehicleId`
+  ///      or any `vehicle_id` alias in `entry.raw`.
+  ///   3. Local Ride Register hydration cache (populated when the receipt
+  ///      was opened — same vehicle the receipt shows).
+  ///   4. `Vehicle profile not found` when a `vehicle_id` exists but no
+  ///      profile / hydration label is available.
+  ///   5. `Vehicle not linked` otherwise.
   String _vehicleDisplay(ComplianceLedgerEntry entry) {
+    final raw = entry.raw;
     final plateCandidates = <String?>[
-      _rawPathText(entry.raw, const ['vehicle', 'licensePlate']),
-      _rawPathText(entry.raw, const ['vehicle', 'license_plate']),
-      _rawPathText(entry.raw, const ['vehicle', 'plate']),
-      _rawPathText(entry.raw, const ['vehicle', 'registration']),
-      _rawPathText(entry.raw, const ['vehicle', 'registrationNumber']),
-      _rawPathText(entry.raw, const ['vehicle', 'registration_number']),
-      _rawPathText(entry.raw, const ['assigned_vehicle', 'licensePlate']),
-      _rawPathText(entry.raw, const ['assigned_vehicle', 'license_plate']),
-      _rawPathText(entry.raw, const ['assigned_vehicle', 'plate']),
-      _rawPathText(entry.raw, const ['assignedVehicle', 'licensePlate']),
-      _rawPathText(entry.raw, const ['vehicle_profile', 'licensePlate']),
-      _rawPathText(entry.raw, const ['vehicleProfile', 'licensePlate']),
-      _rawPathText(entry.raw, const ['license_plate']),
-      _rawPathText(entry.raw, const ['licensePlate']),
-      _rawPathText(entry.raw, const ['plate']),
-      _rawPathText(entry.raw, const ['registration_number']),
-      _rawPathText(entry.raw, const ['registrationNumber']),
+      _rawPathText(raw, const ['vehicle', 'licensePlate']),
+      _rawPathText(raw, const ['vehicle', 'license_plate']),
+      _rawPathText(raw, const ['vehicle', 'plate']),
+      _rawPathText(raw, const ['vehicle', 'registration']),
+      _rawPathText(raw, const ['vehicle', 'registrationNumber']),
+      _rawPathText(raw, const ['vehicle', 'registration_number']),
+      _rawPathText(raw, const ['assigned_vehicle', 'licensePlate']),
+      _rawPathText(raw, const ['assigned_vehicle', 'license_plate']),
+      _rawPathText(raw, const ['assigned_vehicle', 'plate']),
+      _rawPathText(raw, const ['assignedVehicle', 'licensePlate']),
+      _rawPathText(raw, const ['assignedVehicle', 'license_plate']),
+      _rawPathText(raw, const ['assignedVehicle', 'plate']),
+      _rawPathText(raw, const ['vehicle_profile', 'licensePlate']),
+      _rawPathText(raw, const ['vehicleProfile', 'licensePlate']),
+      _rawPathText(raw, const ['license_plate']),
+      _rawPathText(raw, const ['licensePlate']),
+      _rawPathText(raw, const ['plate']),
+      _rawPathText(raw, const ['registration_number']),
+      _rawPathText(raw, const ['registrationNumber']),
+      _rawPathText(raw, const ['booking', 'license_plate']),
+      _rawPathText(raw, const ['booking', 'licensePlate']),
+      _rawPathText(raw, const ['booking', 'plate']),
+      _rawPathText(raw, const ['booking', 'vehicle', 'licensePlate']),
+      _rawPathText(raw, const ['booking', 'vehicle', 'license_plate']),
+      _rawPathText(raw, const ['booking', 'vehicle', 'plate']),
+      _rawPathText(raw, const ['booking', 'assigned_vehicle', 'licensePlate']),
+      _rawPathText(raw, const ['booking', 'assigned_vehicle', 'license_plate']),
+      _rawPathText(raw, const ['booking', 'assignedVehicle', 'licensePlate']),
+      _rawPathText(raw, const ['booking_details', 'license_plate']),
+      _rawPathText(raw, const ['booking_details', 'licensePlate']),
+      _rawPathText(raw, const ['booking_details', 'plate']),
+      _rawPathText(raw, const ['payload', 'license_plate']),
+      _rawPathText(raw, const ['payload', 'licensePlate']),
+      _rawPathText(raw, const ['record', 'license_plate']),
+      _rawPathText(raw, const ['record', 'licensePlate']),
+      _rawPathText(raw, const ['record', 'booking', 'license_plate']),
+      _rawPathText(raw, const ['record', 'booking', 'licensePlate']),
     ];
     String? plate;
     for (final candidate in plateCandidates) {
@@ -5703,24 +5832,54 @@ class _LocalComplianceLedgerSectionState
     }
 
     final labelCandidates = <String?>[
-      _rawPathText(entry.raw, const ['vehicle', 'label']),
-      _rawPathText(entry.raw, const ['vehicle', 'name']),
-      _rawPathText(entry.raw, const ['vehicle', 'vehicleLabel']),
-      _rawPathText(entry.raw, const ['vehicle', 'vehicle_label']),
-      _rawPathText(entry.raw, const ['vehicle', 'display_label']),
-      _rawPathText(entry.raw, const ['vehicle', 'displayLabel']),
-      _rawPathText(entry.raw, const ['assigned_vehicle', 'label']),
-      _rawPathText(entry.raw, const ['assigned_vehicle', 'name']),
-      _rawPathText(entry.raw, const ['assignedVehicle', 'label']),
-      _rawPathText(entry.raw, const ['assignedVehicle', 'name']),
-      _rawPathText(entry.raw, const ['vehicle_profile', 'label']),
-      _rawPathText(entry.raw, const ['vehicle_profile', 'name']),
-      _rawPathText(entry.raw, const ['vehicleProfile', 'label']),
-      _rawPathText(entry.raw, const ['vehicleProfile', 'name']),
-      _rawPathText(entry.raw, const ['vehicle_label']),
-      _rawPathText(entry.raw, const ['vehicleLabel']),
-      _rawPathText(entry.raw, const ['vehicle_name']),
-      _rawPathText(entry.raw, const ['vehicleName']),
+      _rawPathText(raw, const ['vehicle', 'label']),
+      _rawPathText(raw, const ['vehicle', 'name']),
+      _rawPathText(raw, const ['vehicle', 'vehicleLabel']),
+      _rawPathText(raw, const ['vehicle', 'vehicle_label']),
+      _rawPathText(raw, const ['vehicle', 'display_label']),
+      _rawPathText(raw, const ['vehicle', 'displayLabel']),
+      _rawPathText(raw, const ['assigned_vehicle', 'label']),
+      _rawPathText(raw, const ['assigned_vehicle', 'name']),
+      _rawPathText(raw, const ['assigned_vehicle', 'display_label']),
+      _rawPathText(raw, const ['assigned_vehicle', 'displayLabel']),
+      _rawPathText(raw, const ['assignedVehicle', 'label']),
+      _rawPathText(raw, const ['assignedVehicle', 'name']),
+      _rawPathText(raw, const ['assignedVehicle', 'displayLabel']),
+      _rawPathText(raw, const ['vehicle_profile', 'label']),
+      _rawPathText(raw, const ['vehicle_profile', 'name']),
+      _rawPathText(raw, const ['vehicleProfile', 'label']),
+      _rawPathText(raw, const ['vehicleProfile', 'name']),
+      _rawPathText(raw, const ['vehicle_label']),
+      _rawPathText(raw, const ['vehicleLabel']),
+      _rawPathText(raw, const ['vehicle_name']),
+      _rawPathText(raw, const ['vehicleName']),
+      _rawPathText(raw, const ['assigned_vehicle_label']),
+      _rawPathText(raw, const ['assignedVehicleLabel']),
+      _rawPathText(raw, const ['assigned_vehicle_name']),
+      _rawPathText(raw, const ['assignedVehicleName']),
+      _rawPathText(raw, const ['booking', 'vehicle', 'label']),
+      _rawPathText(raw, const ['booking', 'vehicle', 'name']),
+      _rawPathText(raw, const ['booking', 'assigned_vehicle', 'label']),
+      _rawPathText(raw, const ['booking', 'assigned_vehicle', 'name']),
+      _rawPathText(raw, const ['booking', 'assignedVehicle', 'label']),
+      _rawPathText(raw, const ['booking', 'vehicle_label']),
+      _rawPathText(raw, const ['booking', 'vehicleLabel']),
+      _rawPathText(raw, const ['booking', 'vehicle_name']),
+      _rawPathText(raw, const ['booking', 'vehicleName']),
+      _rawPathText(raw, const ['booking', 'assigned_vehicle_name']),
+      _rawPathText(raw, const ['booking', 'assignedVehicleName']),
+      _rawPathText(raw, const ['booking_details', 'vehicle_label']),
+      _rawPathText(raw, const ['booking_details', 'vehicleLabel']),
+      _rawPathText(raw, const ['booking_details', 'vehicle_name']),
+      _rawPathText(raw, const ['booking_details', 'vehicleName']),
+      _rawPathText(raw, const ['payload', 'vehicle_label']),
+      _rawPathText(raw, const ['payload', 'vehicleLabel']),
+      _rawPathText(raw, const ['record', 'vehicle', 'label']),
+      _rawPathText(raw, const ['record', 'vehicle', 'name']),
+      _rawPathText(raw, const ['record', 'booking', 'vehicle', 'label']),
+      _rawPathText(raw, const ['record', 'booking', 'vehicle', 'name']),
+      _rawPathText(raw, const ['record', 'booking', 'vehicle_label']),
+      _rawPathText(raw, const ['record', 'booking', 'vehicleLabel']),
     ];
     String? vehicleLabel;
     for (final candidate in labelCandidates) {
@@ -5732,14 +5891,22 @@ class _LocalComplianceLedgerSectionState
     }
 
     final make = _meaningfulDisplayToken(
-      _rawPathText(entry.raw, const ['vehicle', 'make']) ??
-          _rawPathText(entry.raw, const ['vehicle', 'brand']),
+      _rawPathText(raw, const ['vehicle', 'make']) ??
+          _rawPathText(raw, const ['vehicle', 'brand']) ??
+          _rawPathText(raw, const ['assigned_vehicle', 'make']) ??
+          _rawPathText(raw, const ['assigned_vehicle', 'brand']) ??
+          _rawPathText(raw, const ['booking', 'vehicle', 'make']) ??
+          _rawPathText(raw, const ['booking', 'vehicle', 'brand']),
     );
     final model = _meaningfulDisplayToken(
-      _rawPathText(entry.raw, const ['vehicle', 'model']),
+      _rawPathText(raw, const ['vehicle', 'model']) ??
+          _rawPathText(raw, const ['assigned_vehicle', 'model']) ??
+          _rawPathText(raw, const ['booking', 'vehicle', 'model']),
     );
     final tierRaw = _meaningfulDisplayToken(
-      _rawPathText(entry.raw, const ['vehicle', 'tier']),
+      _rawPathText(raw, const ['vehicle', 'tier']) ??
+          _rawPathText(raw, const ['assigned_vehicle', 'tier']) ??
+          _rawPathText(raw, const ['booking', 'vehicle', 'tier']),
     );
     final tier = tierRaw == null ? null : _vehicleTierLabel(tierRaw);
 
@@ -5759,25 +5926,154 @@ class _LocalComplianceLedgerSectionState
     if (plate != null) return plate;
 
     final fallbackCandidates = <String?>[
-      _rawPathText(entry.raw, const ['vehicle_registration_number']),
-      _rawPathText(entry.raw, const ['vehicleRegistrationNumber']),
+      _rawPathText(raw, const ['vehicle_registration_number']),
+      _rawPathText(raw, const ['vehicleRegistrationNumber']),
     ];
     for (final value in fallbackCandidates) {
       final meaningful = _meaningfulDisplayToken(value);
       if (meaningful != null) return meaningful;
     }
     final vehicleId = _meaningfulDisplayToken(
-      _rawPathText(entry.raw, const ['vehicle', 'vehicle_id']) ??
-          _rawPathText(entry.raw, const ['vehicle', 'id']) ??
-          _rawPathText(entry.raw, const ['assigned_vehicle', 'vehicle_id']) ??
-          _rawPathText(entry.raw, const ['assigned_vehicle', 'id']) ??
-          _rawPathText(entry.raw, const ['vehicle_id']) ??
+      _rawPathText(raw, const ['vehicle', 'vehicle_id']) ??
+          _rawPathText(raw, const ['vehicle', 'vehicleId']) ??
+          _rawPathText(raw, const ['vehicle', 'id']) ??
+          _rawPathText(raw, const ['assigned_vehicle', 'vehicle_id']) ??
+          _rawPathText(raw, const ['assigned_vehicle', 'vehicleId']) ??
+          _rawPathText(raw, const ['assigned_vehicle', 'id']) ??
+          _rawPathText(raw, const ['assignedVehicle', 'vehicle_id']) ??
+          _rawPathText(raw, const ['assignedVehicle', 'vehicleId']) ??
+          _rawPathText(raw, const ['assignedVehicle', 'id']) ??
+          _rawPathText(raw, const ['vehicle_id']) ??
+          _rawPathText(raw, const ['vehicleId']) ??
+          _rawPathText(raw, const ['assigned_vehicle_id']) ??
+          _rawPathText(raw, const ['assignedVehicleId']) ??
+          _rawPathText(raw, const ['booking', 'vehicle_id']) ??
+          _rawPathText(raw, const ['booking', 'vehicleId']) ??
+          _rawPathText(raw, const ['booking', 'assigned_vehicle_id']) ??
+          _rawPathText(raw, const ['booking', 'assignedVehicleId']) ??
+          _rawPathText(raw, const ['booking_details', 'vehicle_id']) ??
+          _rawPathText(raw, const ['booking_details', 'vehicleId']) ??
           entry.vehicleId,
     );
     final profileDisplay = _lookupVehicleProfileDisplay(vehicleId);
     if (profileDisplay != null) return profileDisplay;
+
+    // Local Ride Register hydration cache (populated when the receipt was
+    // opened earlier in this session for the same booking / trip).
+    final cached = lookupLocalRideAssignment(
+      bookingId: entry.bookingId,
+      tripId: entry.tripId,
+    );
+    final cachedVehicle = _meaningfulDisplayToken(cached?.vehicleLabel);
+    if (cachedVehicle != null) return cachedVehicle;
+
+    // Vehicle profile assignment fallback.
+    //
+    // Many compliance ledger rows (especially payment_update events for
+    // direct taxi rides) carry only a `driver_id` — never a `vehicle_id` —
+    // because no vehicle was sent in the payment payload. The company
+    // bootstrap (`VEHICLE_ASSIGNMENT_BOOTSTRAP`) already knows which
+    // vehicle is assigned to each driver via `VehicleProfile.driverId`. We
+    // use that mapping as the final fallback so the dashboard card can show
+    // "Elanore · T-000-010" instead of "Vehicle not linked".
+    //
+    // Read-only: no notifier values are mutated.
+    final resolvedDriverId = _resolveDriverIdFromEntry(entry);
+    final cachedDriverLabel = _meaningfulDisplayToken(cached?.driverLabel);
+    final assignmentDisplay = _vehicleDisplayFromDriverAssignment(
+      driverId: resolvedDriverId,
+      driverLabel: cachedDriverLabel,
+    );
+    if (assignmentDisplay != null) return assignmentDisplay;
+
     if (vehicleId != null) return _vehicleProfileNotFoundLabel();
     return _vehicleNotLinkedLabel();
+  }
+
+  /// Extracts the most authoritative driver ID for [entry] across the same
+  /// alias matrix that `_driverDisplay` walks. Used by the vehicle-by-driver
+  /// fallback so it agrees with whatever `_driverDisplay` already resolved.
+  String? _resolveDriverIdFromEntry(ComplianceLedgerEntry entry) {
+    final raw = entry.raw;
+    return _meaningfulDisplayToken(
+      _rawPathText(raw, const ['driver', 'driver_id']) ??
+          _rawPathText(raw, const ['driver', 'driverId']) ??
+          _rawPathText(raw, const ['driver', 'id']) ??
+          _rawPathText(raw, const ['assigned_driver', 'driver_id']) ??
+          _rawPathText(raw, const ['assigned_driver', 'driverId']) ??
+          _rawPathText(raw, const ['assigned_driver', 'id']) ??
+          _rawPathText(raw, const ['assignedDriver', 'driver_id']) ??
+          _rawPathText(raw, const ['assignedDriver', 'driverId']) ??
+          _rawPathText(raw, const ['assignedDriver', 'id']) ??
+          _rawPathText(raw, const ['driver_id']) ??
+          _rawPathText(raw, const ['driverId']) ??
+          _rawPathText(raw, const ['assigned_driver_id']) ??
+          _rawPathText(raw, const ['assignedDriverId']) ??
+          _rawPathText(raw, const ['booking', 'driver_id']) ??
+          _rawPathText(raw, const ['booking', 'driverId']) ??
+          _rawPathText(raw, const ['booking', 'assigned_driver_id']) ??
+          _rawPathText(raw, const ['booking', 'assignedDriverId']) ??
+          _rawPathText(raw, const ['booking_details', 'driver_id']) ??
+          _rawPathText(raw, const ['booking_details', 'driverId']) ??
+          entry.driverId,
+    );
+  }
+
+  /// Resolves a display-quality vehicle label by looking up the company
+  /// vehicle profile assigned to [driverId] (or — only as a last cautious
+  /// resort — to a driver whose `fullName` matches [driverLabel]). Returns
+  /// `null` when no vehicle profile is assigned to the resolved driver, or
+  /// when the matched vehicle has no readable name / plate.
+  ///
+  /// Source category for the diagnostic: `vehicle_profile_assignment`.
+  String? _vehicleDisplayFromDriverAssignment({
+    required String? driverId,
+    required String? driverLabel,
+  }) {
+    var effectiveDriverId = (driverId ?? '').trim();
+    if (effectiveDriverId.isEmpty) {
+      final label = _meaningfulDisplayToken(driverLabel);
+      if (label == null) return null;
+      // Cautious label-based match: only resolve the driver_id when a single
+      // unique full-name match exists in the company driver list. Avoids
+      // mis-assigning when two drivers share a first name etc.
+      String? candidate;
+      var ambiguous = false;
+      final normalizedLabel = _ledgerToken(label);
+      for (final driver in driversNotifier.value) {
+        final fullName = _meaningfulDisplayToken(driver.fullName);
+        if (fullName == null) continue;
+        if (_ledgerToken(fullName) != normalizedLabel) continue;
+        if (candidate != null && candidate != driver.id.trim()) {
+          ambiguous = true;
+          break;
+        }
+        candidate = driver.id.trim();
+      }
+      if (ambiguous || candidate == null || candidate.isEmpty) return null;
+      effectiveDriverId = candidate;
+    }
+    if (effectiveDriverId.isEmpty) return null;
+
+    VehicleProfile? best;
+    for (final vehicle in vehiclesNotifier.value) {
+      final assigned = (vehicle.driverId ?? '').trim();
+      if (assigned.isEmpty) continue;
+      if (!_profileIdMatches(assigned, effectiveDriverId)) continue;
+      if (best == null) {
+        best = vehicle;
+        continue;
+      }
+      // Prefer the active vehicle when multiple link to the same driver.
+      if (vehicle.isActive && !best.isActive) best = vehicle;
+    }
+    if (best == null) return null;
+    final friendly = _friendlyVehicleProfileLabel(best);
+    if (friendly != null) return friendly;
+    // Final fallback: vehicle id (rare — VehicleProfile.id is the only
+    // remaining identifier and is still safer than "Vehicle not linked").
+    final idText = _meaningfulDisplayToken(best.id);
+    return idText;
   }
 
   String _vehicleDisplayForGroup(List<ComplianceLedgerEntry> group) {
@@ -5789,10 +6085,177 @@ class _LocalComplianceLedgerSectionState
         profileMissing = true;
         continue;
       }
-      if (value != _vehicleNotLinkedLabel()) return value;
+      if (value != _vehicleNotLinkedLabel()) {
+        _logAssignmentResolve(
+          group: group,
+          driverFound: null,
+          vehicleFound: true,
+          vehicleSource: _resolveVehicleSourceForEntry(entry),
+        );
+        return value;
+      }
     }
-    if (profileMissing) return _vehicleProfileNotFoundLabel();
-    return _vehicleNotLinkedLabel();
+    final fallback = profileMissing
+        ? _vehicleProfileNotFoundLabel()
+        : _vehicleNotLinkedLabel();
+    _logAssignmentResolve(
+      group: group,
+      driverFound: null,
+      vehicleFound: false,
+      vehicleSource: profileMissing ? 'profile_missing' : 'none',
+    );
+    return fallback;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Local Ride Register assignment resolve diagnostic.
+  //
+  // Logged whenever the dashboard resolves driver/vehicle labels for a card.
+  // Only emits safe identifiers (booking masked, source category). No PII.
+  // ---------------------------------------------------------------------------
+  String _resolveDriverSourceForEntry(ComplianceLedgerEntry entry) {
+    final raw = entry.raw;
+    if (_meaningfulDisplayToken(_rawPathText(raw, const ['driver', 'name'])) !=
+            null ||
+        _meaningfulDisplayToken(
+              _rawPathText(raw, const ['driver', 'full_name']),
+            ) !=
+            null ||
+        _meaningfulDisplayToken(_rawPathText(raw, const ['driver_name'])) !=
+            null) {
+      return 'raw_alias';
+    }
+    if (_meaningfulDisplayToken(
+          _rawPathText(raw, const ['assigned_driver', 'name']),
+        ) !=
+        null) {
+      return 'assigned_driver_alias';
+    }
+    if (_meaningfulDisplayToken(
+          _rawPathText(raw, const ['booking', 'driver_name']),
+        ) !=
+        null) {
+      return 'booking_alias';
+    }
+    if (_meaningfulDisplayToken(entry.driverId) != null &&
+        _lookupDriverProfileDisplay(entry.driverId) != null) {
+      return 'driver_profile';
+    }
+    final cached = lookupLocalRideAssignment(
+      bookingId: entry.bookingId,
+      tripId: entry.tripId,
+    );
+    if (cached?.driverLabel != null) return 'hydration_cache';
+    return 'unknown';
+  }
+
+  String _resolveVehicleSourceForEntry(ComplianceLedgerEntry entry) {
+    final raw = entry.raw;
+    if (_meaningfulDisplayToken(
+              _rawPathText(raw, const ['vehicle', 'license_plate']),
+            ) !=
+            null ||
+        _meaningfulDisplayToken(
+              _rawPathText(raw, const ['vehicle', 'licensePlate']),
+            ) !=
+            null ||
+        _meaningfulDisplayToken(_rawPathText(raw, const ['license_plate'])) !=
+            null) {
+      return 'raw_plate';
+    }
+    if (_meaningfulDisplayToken(
+              _rawPathText(raw, const ['vehicle', 'label']),
+            ) !=
+            null ||
+        _meaningfulDisplayToken(_rawPathText(raw, const ['vehicle_label'])) !=
+            null) {
+      return 'raw_label';
+    }
+    if (_meaningfulDisplayToken(
+          _rawPathText(raw, const ['assigned_vehicle', 'label']),
+        ) !=
+        null) {
+      return 'assigned_vehicle_alias';
+    }
+    if (_meaningfulDisplayToken(
+          _rawPathText(raw, const ['booking', 'vehicle', 'label']),
+        ) !=
+        null) {
+      return 'booking_alias';
+    }
+    if (_meaningfulDisplayToken(entry.vehicleId) != null &&
+        _lookupVehicleProfileDisplay(entry.vehicleId) != null) {
+      return 'vehicle_profile';
+    }
+    final cached = lookupLocalRideAssignment(
+      bookingId: entry.bookingId,
+      tripId: entry.tripId,
+    );
+    if (cached?.vehicleLabel != null) return 'hydration_cache';
+    // Same vehicle-by-driver fallback used inside `_vehicleDisplay`. Reported
+    // separately so [ASSIGNMENT_RESOLVE] logs can show when the dashboard
+    // surfaced a vehicle purely via `VehicleProfile.driverId` matching.
+    if (_vehicleDisplayFromDriverAssignment(
+          driverId: _resolveDriverIdFromEntry(entry),
+          driverLabel: cached?.driverLabel,
+        ) !=
+        null) {
+      return 'vehicle_profile_assignment';
+    }
+    return 'unknown';
+  }
+
+  /// Per-card diagnostic emitted at the actual `_groupCard` render site so
+  /// the log always reflects the labels the user sees. Distinct from
+  /// `[ASSIGNMENT_RESOLVE]` (which fires inside the For-Group helpers and
+  /// can be called multiple times). Safe payload only — masked booking /
+  /// trip IDs plus category sources; no names, plates, phone, email, or
+  /// addresses.
+  void _logCardAssignmentDisplay({
+    required List<ComplianceLedgerEntry> group,
+    required bool driverFound,
+    required bool vehicleFound,
+    required String driverSource,
+    required String vehicleSource,
+  }) {
+    if (group.isEmpty) return;
+    final entry = group.first;
+    final booking = _maskAssignmentLogValue(entry.bookingId);
+    final trip = _maskAssignmentLogValue(entry.tripId);
+    debugPrint(
+      '[LOCAL_RIDE_REGISTER][CARD_ASSIGNMENT_DISPLAY]'
+      ' booking=$booking trip=$trip'
+      ' driver_found=$driverFound driver_source=$driverSource'
+      ' vehicle_found=$vehicleFound vehicle_source=$vehicleSource',
+    );
+  }
+
+  void _logAssignmentResolve({
+    required List<ComplianceLedgerEntry> group,
+    required bool? driverFound,
+    required bool? vehicleFound,
+    String? driverSource,
+    String? vehicleSource,
+  }) {
+    if (group.isEmpty) return;
+    final entry = group.first;
+    final booking = entry.bookingId.trim();
+    final masked = _maskAssignmentLogValue(booking);
+    final fields = <String>[
+      'booking=$masked',
+      if (driverFound != null) 'driver_found=$driverFound',
+      if (vehicleFound != null) 'vehicle_found=$vehicleFound',
+      if (driverSource != null) 'driver_source=$driverSource',
+      if (vehicleSource != null) 'vehicle_source=$vehicleSource',
+    ];
+    debugPrint('[LOCAL_RIDE_REGISTER][ASSIGNMENT_RESOLVE] ${fields.join(' ')}');
+  }
+
+  String _maskAssignmentLogValue(String value) {
+    final trimmed = value.trim();
+    if (trimmed.isEmpty) return '-';
+    if (trimmed.length <= 4) return trimmed;
+    return '${trimmed.substring(0, 2)}…${trimmed.substring(trimmed.length - 2)}';
   }
 
   String _routeDisplay(ComplianceLedgerEntry entry) {
@@ -5951,6 +6414,46 @@ class _LocalComplianceLedgerSectionState
     final fare = _fareDisplay(effectivePayment) ?? _fareDisplay(summary);
     final sortedAudit = [...group]..sort(_compareLedgerEntries);
 
+    // Resolve driver / vehicle display ONCE per card so the visible labels,
+    // the [CARD_ASSIGNMENT_DISPLAY] diagnostic, and the prewarm decision
+    // all agree on the same outcome. The actual `_labelValue(...)` widgets
+    // below use these strings directly — no second resolution pass.
+    final driverDisplay = _driverDisplayForGroup(group);
+    final vehicleDisplay = _vehicleDisplayForGroup(group);
+    final driverResolved =
+        driverDisplay != _driverNotLinkedLabel() &&
+        driverDisplay != _driverProfileNotFoundLabel();
+    final vehicleResolved =
+        vehicleDisplay != _vehicleNotLinkedLabel() &&
+        vehicleDisplay != _vehicleProfileNotFoundLabel();
+    _logCardAssignmentDisplay(
+      group: group,
+      driverFound: driverResolved,
+      vehicleFound: vehicleResolved,
+      driverSource: driverResolved
+          ? _resolveDriverSourceForEntry(group.first)
+          : (driverDisplay == _driverProfileNotFoundLabel()
+                ? 'profile_missing'
+                : 'none'),
+      vehicleSource: vehicleResolved
+          ? _resolveVehicleSourceForEntry(group.first)
+          : (vehicleDisplay == _vehicleProfileNotFoundLabel()
+                ? 'profile_missing'
+                : 'none'),
+    );
+    // When either side is unresolved AND we have a booking_id or trip_id
+    // to query, schedule a non-blocking hydration. The cache notifier
+    // wakes this widget when the prewarm completes, so the card refreshes
+    // automatically without changing layout.
+    if (!driverResolved || !vehicleResolved) {
+      for (final entry in group) {
+        if (entry.bookingId.trim().isEmpty && entry.tripId.trim().isEmpty) {
+          continue;
+        }
+        requestLocalRideAssignmentPrewarm(entry);
+      }
+    }
+
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
       padding: const EdgeInsets.all(12),
@@ -6000,11 +6503,11 @@ class _LocalComplianceLedgerSectionState
           ),
           const SizedBox(height: 6),
           Text(
-            _labelValue(_driverLabel(), _driverDisplayForGroup(group)),
+            _labelValue(_driverLabel(), driverDisplay),
             style: TextStyle(color: _chironTextSecondary, fontSize: 12),
           ),
           Text(
-            _labelValue(_vehicleLabel(), _vehicleDisplayForGroup(group)),
+            _labelValue(_vehicleLabel(), vehicleDisplay),
             style: TextStyle(color: _chironTextSecondary, fontSize: 12),
           ),
           if (fare != null)
@@ -6461,7 +6964,22 @@ class _LocalComplianceLedgerSectionState
                           style: TextStyle(color: _chironWarning, fontSize: 11),
                         ),
                       ),
-                    ...groupedEntries.map(_groupCard),
+                    // Rebuilds the card list whenever the in-memory
+                    // assignment cache is updated (receipt opened or
+                    // background prewarm completed). Pure listener — does
+                    // not change layout; the children are the same cards
+                    // we'd build without the wrapper.
+                    ValueListenableBuilder<int>(
+                      valueListenable: localRideAssignmentCacheRevision,
+                      builder: (context, _, __) {
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: groupedEntries
+                              .map(_groupCard)
+                              .toList(growable: false),
+                        );
+                      },
+                    ),
                   ],
                 );
               },
