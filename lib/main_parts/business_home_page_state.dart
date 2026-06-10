@@ -354,22 +354,6 @@ class _BusinessHomePageState extends State<BusinessHomePage>
     }
   }
 
-  Future<void> _openCalculator(BuildContext context) async {
-    final created = await Navigator.of(context).push<bool>(
-      MaterialPageRoute(
-        builder: (_) => CalculatorPage(
-          bookingBaseUrl: kBookingBaseUrl,
-          mapboxToken: kMapboxToken,
-          persistToCustomerBookings: false,
-          entryContext: BookingEntryContext.companyAdmin,
-        ),
-      ),
-    );
-    if (created == true) {
-      await _refreshDashboardKpis(reason: 'calculator_created');
-    }
-  }
-
   String _normalizeBridgeText(String raw) {
     return raw.trim().toLowerCase().replaceAll(RegExp(r'\s+'), ' ');
   }
@@ -2341,120 +2325,6 @@ class _BusinessHomePageState extends State<BusinessHomePage>
     );
   }
 
-  Widget _primaryCta(BuildContext context, {bool compact = false}) {
-    final palette = _businessThemePalette;
-    final themeVariant = businessThemeNotifier.value;
-    final isExecutiveGold = themeVariant == BusinessThemeVariant.executiveGold;
-    final isCorporateBlue = themeVariant == BusinessThemeVariant.corporateBlue;
-    return InkWell(
-      borderRadius: BorderRadius.circular(16),
-      onTap: () => _openCalculator(context),
-      child: Container(
-        padding: EdgeInsets.symmetric(
-          horizontal: compact ? 10 : 12,
-          vertical: compact ? 8 : 10,
-        ),
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(
-            color: isExecutiveGold
-                ? kFluxidiYellow.withOpacity(0.48)
-                : palette.accent.withOpacity(isCorporateBlue ? 0.55 : 0.45),
-          ),
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: isCorporateBlue
-                ? const [Color(0xFF10213A), Color(0xFF0A1224)]
-                : isExecutiveGold
-                ? const [Color(0xFF15120A), Color(0xFF07080C)]
-                : <Color>[palette.surfaceAlt, palette.background],
-          ),
-          boxShadow: [
-            BoxShadow(
-              color: isExecutiveGold
-                  ? kFluxidiYellow.withOpacity(0.13)
-                  : palette.accent.withOpacity(isCorporateBlue ? 0.15 : 0.10),
-              blurRadius: 18,
-              spreadRadius: 0.8,
-            ),
-          ],
-        ),
-        child: Row(
-          children: [
-            Container(
-              width: compact ? 36 : 44,
-              height: compact ? 36 : 44,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                gradient: LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: [
-                    isCorporateBlue
-                        ? palette.accent.withOpacity(0.34)
-                        : isExecutiveGold
-                        ? kFluxidiYellow.withOpacity(0.35)
-                        : palette.accent.withOpacity(0.18),
-                    isCorporateBlue
-                        ? const Color(0xFF10213A)
-                        : isExecutiveGold
-                        ? const Color(0xFF15120A)
-                        : palette.surface,
-                  ],
-                ),
-                border: Border.all(
-                  color: isExecutiveGold
-                      ? kFluxidiYellow.withOpacity(0.55)
-                      : palette.accent.withOpacity(0.58),
-                ),
-              ),
-              child: Icon(
-                Icons.calculate_outlined,
-                color: isExecutiveGold
-                    ? const Color(0xFFE5B641)
-                    : (isCorporateBlue ? palette.textOnAccent : palette.accent),
-                size: 22,
-              ),
-            ),
-            SizedBox(width: compact ? 8 : 10),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    _t(
-                      nl: 'Bereken & boek je rit',
-                      en: 'Calculate & book your ride',
-                      fr: 'Calculez et réservez votre course',
-                      es: 'Calcula y reserva tu viaje',
-                    ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: isExecutiveGold || isCorporateBlue
-                          ? Colors.white
-                          : palette.textPrimary,
-                      fontSize: compact ? 14.0 : 15.3,
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            Icon(
-              Icons.arrow_forward_rounded,
-              color: isExecutiveGold
-                  ? kFluxidiYellow.withOpacity(0.98)
-                  : palette.accent.withOpacity(0.98),
-              size: compact ? 20 : 22,
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
   Widget _quickActionCard({
     required IconData icon,
     required String title,
@@ -3093,8 +2963,6 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                             ),
                           ),
                         ],
-                        SizedBox(height: businessSectionGap),
-                        _primaryCta(context, compact: isTabletLandscape),
                         SizedBox(height: businessSectionGap),
                         LayoutBuilder(
                           builder: (context, constraints) {
