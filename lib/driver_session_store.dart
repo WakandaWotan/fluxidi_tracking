@@ -276,6 +276,13 @@ String _maskIdForLog(String id) {
   return '${t.substring(0, 2)}…${t.substring(t.length - 2)}';
 }
 
+String _shortErrForDriverLog(Object error) {
+  final raw = error.toString();
+  final oneLine = raw.replaceAll('\r', ' ').replaceAll('\n', ' ').trim();
+  if (oneLine.length <= 160) return oneLine;
+  return '${oneLine.substring(0, 157)}...';
+}
+
 bool _isHttpPhotoUrl(String value) {
   final lower = value.trim().toLowerCase();
   return lower.startsWith('https://') || lower.startsWith('http://');
@@ -518,21 +525,38 @@ class DriverSessionStore {
   Future<StandaloneDriverScopePointer?> loadStandaloneScopePointer() async {
     try {
       final file = await _standalonePointerFile();
-      if (!await file.exists()) return null;
+      if (!await file.exists()) {
+        debugPrint(
+          '[DRIVER_SESSION][POINTER_MISSING] reason=file_not_found path=${file.path}',
+        );
+        return null;
+      }
       final raw = await file.readAsString();
-      if (raw.trim().isEmpty) return null;
+      if (raw.trim().isEmpty) {
+        debugPrint('[DRIVER_SESSION][POINTER_MISSING] reason=empty');
+        return null;
+      }
       final decoded = jsonDecode(raw);
-      if (decoded is! Map) return null;
+      if (decoded is! Map) {
+        debugPrint('[DRIVER_SESSION][POINTER_MISSING] reason=invalid_json');
+        return null;
+      }
       final pointer = StandaloneDriverScopePointer.fromJson(
         Map<String, dynamic>.from(decoded),
       );
       if (pointer.tenantId.isEmpty ||
           pointer.companyId.isEmpty ||
           pointer.driverId.isEmpty) {
+        debugPrint(
+          '[DRIVER_SESSION][POINTER_MISSING] reason=incomplete tenant=${_maskIdForLog(pointer.tenantId)} company=${_maskIdForLog(pointer.companyId)} driver=${_maskIdForLog(pointer.driverId)}',
+        );
         return null;
       }
       return pointer;
-    } catch (_) {
+    } catch (e) {
+      debugPrint(
+        '[DRIVER_SESSION][POINTER_LOAD_FAIL] reason=storage_read_exception err=${_shortErrForDriverLog(e)}',
+      );
       return null;
     }
   }
@@ -541,7 +565,11 @@ class DriverSessionStore {
     try {
       final file = await _standalonePointerFile();
       if (await file.exists()) await file.delete();
-    } catch (_) {}
+    } catch (e) {
+      debugPrint(
+        '[DRIVER_SESSION][POINTER_CLEAR_FAIL] err=${_shortErrForDriverLog(e)}',
+      );
+    }
   }
 
   Future<ActiveDriverSession?> _loadSessionAtScope({
@@ -781,7 +809,11 @@ class DriverSessionStore {
         _cache = null;
         _cacheScopeKey = '';
       }
-    } catch (_) {}
+    } catch (e) {
+      debugPrint(
+        '[DRIVER_SESSION][PERSIST_FAIL] op=clear_session_at_scope tenant=${_maskIdForLog(tenantId)} company=${_maskIdForLog(companyId)} err=${_shortErrForDriverLog(e)}',
+      );
+    }
   }
 
   /// Load parsed session without validation (may be stale).
@@ -902,7 +934,11 @@ class DriverSessionStore {
         scopedSession.isCompanyAdminDriverViewSession) {
       try {
         if (await scopedFile.exists()) await scopedFile.delete();
-      } catch (_) {}
+      } catch (e) {
+        debugPrint(
+          '[DRIVER_SESSION][PERSIST_FAIL] op=clear_business_view tenant=${_maskIdForLog(normalizedTenant)} company=${_maskIdForLog(normalizedCompany)} err=${_shortErrForDriverLog(e)}',
+        );
+      }
       debugPrint(
         '[DRIVER_SESSION][CLEAR_STALE] reason=business_view_on_company_entry tenant=${_maskIdForLog(normalizedTenant)} company=${_maskIdForLog(normalizedCompany)}',
       );
@@ -1132,9 +1168,10 @@ class DriverSessionStore {
 
       if (sessionForRestore.isVerifiedPairingSession) {
         final expiresAt = sessionForRestore.expiresAtUtc;
-        if (expiresAt != null && expiresAt.isBefore(DateTime.now().toUtc())) {
+        final nowUtc = DateTime.now().toUtc();
+        if (expiresAt != null && expiresAt.isBefore(nowUtc)) {
           debugPrint(
-            '[DRIVER_SESSION][INVALIDATE] reason=expired driver=${_maskIdForLog(sessionForRestore.driverId)}',
+            '[DRIVER_SESSION][INVALIDATE] reason=expired method=driver_pairing_code driver=${_maskIdForLog(sessionForRestore.driverId)} expires_at=${expiresAt.toIso8601String()} now=${nowUtc.toIso8601String()}',
           );
           return (
             ok: false,
@@ -1148,9 +1185,10 @@ class DriverSessionStore {
             .trim();
         if (expiresRaw.isNotEmpty) {
           final expiresAt = DateTime.tryParse(expiresRaw)?.toUtc();
-          if (expiresAt != null && expiresAt.isBefore(DateTime.now().toUtc())) {
+          final nowUtc = DateTime.now().toUtc();
+          if (expiresAt != null && expiresAt.isBefore(nowUtc)) {
             debugPrint(
-              '[DRIVER_SESSION][INVALIDATE] reason=expired driver=${_maskIdForLog(sessionForRestore.driverId)}',
+              '[DRIVER_SESSION][INVALIDATE] reason=expired method=public_driver_login driver=${_maskIdForLog(sessionForRestore.driverId)} expires_at=${expiresAt.toIso8601String()} now=${nowUtc.toIso8601String()}',
             );
             return (
               ok: false,
@@ -1160,14 +1198,18 @@ class DriverSessionStore {
           }
         }
         // Required identity must be present for backend session to be usable.
-        final hasIdentity =
-            sessionForRestore.driverId.trim().isNotEmpty &&
-            (sessionForRestore.driverSessionToken ?? '').trim().isNotEmpty &&
-            (sessionForRestore.tenantId ?? '').trim().isNotEmpty &&
-            (sessionForRestore.companyId ?? '').trim().isNotEmpty;
+        final hasDriverId = sessionForRestore.driverId.trim().isNotEmpty;
+        final hasToken = (sessionForRestore.driverSessionToken ?? '')
+            .trim()
+            .isNotEmpty;
+        final hasTenant = (sessionForRestore.tenantId ?? '').trim().isNotEmpty;
+        final hasCompany = (sessionForRestore.companyId ?? '')
+            .trim()
+            .isNotEmpty;
+        final hasIdentity = hasDriverId && hasToken && hasTenant && hasCompany;
         if (!hasIdentity) {
           debugPrint(
-            '[DRIVER_SESSION][RESTORE_BLOCKED_NON_DESTRUCTIVE] reason=missing_identity driver=${_maskIdForLog(sessionForRestore.driverId)}',
+            '[DRIVER_SESSION][RESTORE_BLOCKED_NON_DESTRUCTIVE] reason=missing_identity driver=${_maskIdForLog(sessionForRestore.driverId)} has_driverId=$hasDriverId has_token=$hasToken has_tenant=$hasTenant has_company=$hasCompany',
           );
           return (
             ok: false,
@@ -1500,6 +1542,9 @@ class DriverSessionStore {
     }
 
     if (candidate == null) {
+      debugPrint(
+        '[DRIVER_SESSION][RESTORE_NO_CANDIDATE] active_scope=${active != null} pointer=${pointer != null} standaloneOnly=$standaloneRestoreOnly useStandalonePointer=$useStandaloneScopePointer',
+      );
       activeDriverSessionNotifier.value = null;
       return;
     }
@@ -1579,34 +1624,76 @@ class DriverSessionStore {
     List<DriverProfile> drivers,
     ActiveDriverSession s,
   ) {
-    if (s.isCompanyAdminDriverViewSession) return false;
+    if (s.isCompanyAdminDriverViewSession) {
+      debugPrint(
+        '[DRIVER_SESSION][LOCAL_VALIDATE_FAIL] reason=company_admin_driver_view driver=${_maskIdForLog(s.driverId)}',
+      );
+      return false;
+    }
     if (s.isVerifiedPairingSession) {
       final expiresAt = s.expiresAtUtc;
       if (expiresAt != null && expiresAt.isBefore(DateTime.now().toUtc())) {
+        debugPrint(
+          '[DRIVER_SESSION][LOCAL_VALIDATE_FAIL] reason=pairing_expired driver=${_maskIdForLog(s.driverId)}',
+        );
         return false;
       }
-      return s.driverId.trim().isNotEmpty && s.employeeNumber.trim().isNotEmpty;
+      final hasDriverId = s.driverId.trim().isNotEmpty;
+      final hasEmployee = s.employeeNumber.trim().isNotEmpty;
+      if (!(hasDriverId && hasEmployee)) {
+        debugPrint(
+          '[DRIVER_SESSION][LOCAL_VALIDATE_FAIL] reason=pairing_identity_incomplete driver=${_maskIdForLog(s.driverId)} has_driverId=$hasDriverId has_employee=$hasEmployee',
+        );
+      }
+      return hasDriverId && hasEmployee;
     }
     if (s.isPublicDriverLoginSession) {
       final expiresRaw = (s.driverSessionExpiresAtUtc ?? '').trim();
       if (expiresRaw.isNotEmpty) {
         final expiresAt = DateTime.tryParse(expiresRaw)?.toUtc();
         if (expiresAt != null && expiresAt.isBefore(DateTime.now().toUtc())) {
+          debugPrint(
+            '[DRIVER_SESSION][LOCAL_VALIDATE_FAIL] reason=public_login_expired driver=${_maskIdForLog(s.driverId)}',
+          );
           return false;
         }
       }
-      return s.driverId.trim().isNotEmpty &&
-          (s.driverSessionToken ?? '').trim().isNotEmpty;
+      final hasDriverId = s.driverId.trim().isNotEmpty;
+      final hasToken = (s.driverSessionToken ?? '').trim().isNotEmpty;
+      if (!(hasDriverId && hasToken)) {
+        debugPrint(
+          '[DRIVER_SESSION][LOCAL_VALIDATE_FAIL] reason=public_login_identity_incomplete driver=${_maskIdForLog(s.driverId)} has_driverId=$hasDriverId has_token=$hasToken',
+        );
+      }
+      return hasDriverId && hasToken;
     }
     for (final d in drivers) {
       if (d.id != s.driverId) continue;
-      if (!d.isActive) return false;
+      if (!d.isActive) {
+        debugPrint(
+          '[DRIVER_SESSION][LOCAL_VALIDATE_FAIL] reason=driver_inactive driver=${_maskIdForLog(s.driverId)}',
+        );
+        return false;
+      }
       final de = d.employeeNumber.trim();
       final se = s.employeeNumber.trim();
-      if (de.isEmpty || se.isEmpty) return false;
-      if (de.toLowerCase() != se.toLowerCase()) return false;
+      if (de.isEmpty || se.isEmpty) {
+        debugPrint(
+          '[DRIVER_SESSION][LOCAL_VALIDATE_FAIL] reason=employee_empty driver=${_maskIdForLog(s.driverId)} fleet_empty=${de.isEmpty} session_empty=${se.isEmpty}',
+        );
+        return false;
+      }
+      if (de.toLowerCase() != se.toLowerCase()) {
+        debugPrint(
+          '[DRIVER_SESSION][LOCAL_VALIDATE_FAIL] reason=employee_mismatch driver=${_maskIdForLog(s.driverId)}',
+        );
+        return false;
+      }
       return true;
     }
+    debugPrint(
+      '[DRIVER_SESSION][LOCAL_VALIDATE_FAIL] reason=no_match_in_drivers driver=${_maskIdForLog(s.driverId)} drivers_total=${drivers.length}',
+    );
     return false;
   }
 
@@ -2022,7 +2109,11 @@ class DriverSessionStore {
           );
         }
       }
-    } catch (_) {}
+    } catch (e) {
+      debugPrint(
+        '[DRIVER_SESSION][PERSIST_FAIL] op=clear err=${_shortErrForDriverLog(e)}',
+      );
+    }
     _cache = null;
     _cacheScopeKey = '';
     activeDriverSessionNotifier.value = null;
@@ -2074,7 +2165,11 @@ class DriverSessionStore {
         companyId: record.companyId,
       );
       await file.writeAsString(jsonEncode(record.toJson()));
-    } catch (_) {}
+    } catch (e) {
+      debugPrint(
+        '[DRIVER_SESSION][PERSIST_FAIL] op=write_business_preview tenant=${_maskIdForLog(record.tenantId)} company=${_maskIdForLog(record.companyId)} err=${_shortErrForDriverLog(e)}',
+      );
+    }
   }
 
   Future<void> saveBusinessPreviewDriverSelection({
@@ -2143,7 +2238,10 @@ class DriverSessionStore {
         '[DRIVER_SESSION][BUSINESS_PREVIEW_PHOTO] driver=${_maskIdForLog(record.driverId)} photo=${_maskPhotoForLog(record.driverPhotoUrl)}',
       );
       return record;
-    } catch (_) {
+    } catch (e) {
+      debugPrint(
+        '[DRIVER_SESSION][BUSINESS_PREVIEW_LOAD_FAIL] tenant=${_maskIdForLog(normalizedTenantId)} company=${_maskIdForLog(normalizedCompanyId)} err=${_shortErrForDriverLog(e)}',
+      );
       return null;
     }
   }
@@ -2175,7 +2273,11 @@ class DriverSessionStore {
       if (await file.exists()) {
         await file.delete();
       }
-    } catch (_) {}
+    } catch (e) {
+      debugPrint(
+        '[DRIVER_SESSION][PERSIST_FAIL] op=clear_business_preview tenant=${_maskIdForLog(normalizedTenantId)} company=${_maskIdForLog(normalizedCompanyId)} err=${_shortErrForDriverLog(e)}',
+      );
+    }
   }
 
   DriverProfile? findDriverByEnteredId(

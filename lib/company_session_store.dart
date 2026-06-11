@@ -54,6 +54,59 @@ bool _isValidPublicCompanyCode(String code) {
 /// Fallback tenant id when no local company profile exists (aligned with Worker `tenant_id`).
 const String kFallbackCompanyId = kTenantId;
 
+String _maskCompanyIdForLog(String value) {
+  final text = value.trim();
+  if (text.isEmpty) return '—';
+  if (text.length <= 4) return '…${text.substring(text.length - 1)}';
+  return '${text.substring(0, 2)}…${text.substring(text.length - 2)}';
+}
+
+String _shortErrForCompanyLog(Object error) {
+  final raw = error.toString();
+  final oneLine = raw.replaceAll('\r', ' ').replaceAll('\n', ' ').trim();
+  if (oneLine.length <= 160) return oneLine;
+  return '${oneLine.substring(0, 157)}...';
+}
+
+void _logSessionWriteSummary(String op, ActiveCompanySession session) {
+  final hasToken = (session.companySessionToken ?? '').trim().isNotEmpty;
+  final expiresAt = (session.companySessionExpiresAtUtc ?? '').trim();
+  debugPrint(
+    '[COMPANY_SESSION][SESSION_WRITE_SUMMARY] op=$op hasToken=$hasToken expiresAt=${expiresAt.isEmpty ? '—' : expiresAt}',
+  );
+}
+
+/// Dev/QA-only shortcut to simulate overnight session expiry.
+///
+/// Activated by `--dart-define=COMPANY_SESSION_FORCE_EXPIRY_SECONDS=<n>` in
+/// debug or profile builds (e.g. `flutter run --profile`). Default 0 = no-op.
+/// Release builds ignore the value entirely because
+/// [_maybeClampSessionExpiryForDev] returns the server expiry as-is when
+/// [kReleaseMode] is true.
+const int _kCompanySessionForceExpirySeconds = int.fromEnvironment(
+  'COMPANY_SESSION_FORCE_EXPIRY_SECONDS',
+  defaultValue: 0,
+);
+
+/// Returns [serverExpiry] unchanged unless the dev/QA force-expiry shortcut is
+/// active. The shortcut may only **shorten** the expiry, never extend it.
+/// No-op in [kReleaseMode] and when the env var is unset / non-positive.
+DateTime? _maybeClampSessionExpiryForDev(DateTime? serverExpiry) {
+  if (_kCompanySessionForceExpirySeconds <= 0) return serverExpiry;
+  if (kReleaseMode) return serverExpiry;
+  final shortcut = DateTime.now().toUtc().add(
+    Duration(seconds: _kCompanySessionForceExpirySeconds),
+  );
+  final clamped = serverExpiry == null
+      ? shortcut
+      : (serverExpiry.isBefore(shortcut) ? serverExpiry : shortcut);
+  final didClamp = serverExpiry == null || !serverExpiry.isBefore(shortcut);
+  debugPrint(
+    '[COMPANY_SESSION][DEV_FORCE_EXPIRY] active=true seconds=$_kCompanySessionForceExpirySeconds clamped=$didClamp',
+  );
+  return clamped;
+}
+
 final ValueNotifier<ActiveCompanySession?> activeCompanySessionNotifier =
     ValueNotifier<ActiveCompanySession?>(null);
 
@@ -615,15 +668,22 @@ class CompanySessionStore {
   }) async {
     final preferredToken = (preferredSession?.companySessionToken ?? '').trim();
     if (preferredToken.isNotEmpty) {
+      debugPrint(
+        '[COMPANY_PAIRING][TOKEN_RESOLVE] source=notifier hasToken=true aliasMerged=false',
+      );
       return (token: preferredToken, source: 'notifier');
     }
 
     final loaded = await loadSession();
     final loadedToken = (loaded?.companySessionToken ?? '').trim();
     if (loadedToken.isNotEmpty) {
+      debugPrint(
+        '[COMPANY_PAIRING][TOKEN_RESOLVE] source=session hasToken=true aliasMerged=false',
+      );
       return (token: loadedToken, source: 'session');
     }
 
+    var aliasMerged = false;
     try {
       final scopedFile = await _sessionFileForKnownScope();
       if (scopedFile != null && await scopedFile.exists()) {
@@ -643,14 +703,30 @@ class CompanySessionStore {
                 activeCompanySessionNotifier.value = merged;
                 try {
                   await scopedFile.writeAsString(jsonEncode(merged.toJson()));
-                } catch (_) {}
+                  aliasMerged = true;
+                  _logSessionWriteSummary('alias_token_promote', merged);
+                } catch (e) {
+                  debugPrint(
+                    '[COMPANY_SESSION][PERSIST_FAIL] op=alias_token_promote err=${_shortErrForCompanyLog(e)}',
+                  );
+                }
               }
+              debugPrint(
+                '[COMPANY_PAIRING][TOKEN_RESOLVE] source=session_alias hasToken=true aliasMerged=$aliasMerged',
+              );
               return (token: aliasToken, source: 'session_alias');
             }
           }
         }
       }
-    } catch (_) {}
+    } catch (e) {
+      debugPrint(
+        '[COMPANY_SESSION][LOAD_SESSION_FAIL] reason=alias_resolve_exception err=${_shortErrForCompanyLog(e)}',
+      );
+    }
+    debugPrint(
+      '[COMPANY_PAIRING][TOKEN_RESOLVE] source=none hasToken=false aliasMerged=false',
+    );
     return (token: null, source: 'none');
   }
 
@@ -680,6 +756,9 @@ class CompanySessionStore {
     final sessionCompanyId = (session?.companyId ?? '').trim();
 
     if (profileCompanyId.isEmpty && sessionCompanyId.isEmpty) {
+      debugPrint(
+        '[COMPANY_SESSION][BACKEND_USABLE_CONTEXT] ok=false reason=missing_company_scope tokenSource=none companyId=—',
+      );
       return (
         ok: false,
         reason: 'missing_company_scope',
@@ -690,6 +769,9 @@ class CompanySessionStore {
     if (profileCompanyId.isNotEmpty &&
         sessionCompanyId.isNotEmpty &&
         profileCompanyId != sessionCompanyId) {
+      debugPrint(
+        '[COMPANY_SESSION][BACKEND_USABLE_CONTEXT] ok=false reason=profile_session_mismatch tokenSource=none profile=${_maskCompanyIdForLog(profileCompanyId)} session=${_maskCompanyIdForLog(sessionCompanyId)}',
+      );
       return (
         ok: false,
         reason: 'profile_session_mismatch',
@@ -702,6 +784,9 @@ class CompanySessionStore {
         ? sessionCompanyId
         : profileCompanyId;
     if (scopeCompanyId.isEmpty) {
+      debugPrint(
+        '[COMPANY_SESSION][BACKEND_USABLE_CONTEXT] ok=false reason=missing_company_scope tokenSource=none companyId=—',
+      );
       return (
         ok: false,
         reason: 'missing_company_scope',
@@ -716,6 +801,9 @@ class CompanySessionStore {
     final token = (resolved.token ?? '').trim();
     const acceptedSources = <String>{'notifier', 'session', 'session_alias'};
     if (token.isEmpty || !acceptedSources.contains(resolved.source)) {
+      debugPrint(
+        '[COMPANY_SESSION][BACKEND_USABLE_CONTEXT] ok=false reason=missing_token tokenSource=${resolved.source} companyId=${_maskCompanyIdForLog(scopeCompanyId)}',
+      );
       return (
         ok: false,
         reason: 'missing_token',
@@ -724,6 +812,9 @@ class CompanySessionStore {
       );
     }
 
+    debugPrint(
+      '[COMPANY_SESSION][BACKEND_USABLE_CONTEXT] ok=true reason=ok tokenSource=${resolved.source} companyId=${_maskCompanyIdForLog(scopeCompanyId)}',
+    );
     return (
       ok: true,
       reason: 'ok',
@@ -735,6 +826,7 @@ class CompanySessionStore {
   Future<CompanyProfile?> loadProfile() async {
     try {
       if (_profileMemory != null) return _profileMemory;
+      var scopedHit = false;
       final scopedFile = await _profileFileForKnownScope();
       if (scopedFile != null) {
         final scoped = await _readProfileFromFile(scopedFile);
@@ -742,9 +834,11 @@ class CompanySessionStore {
           _profileMemory = scoped;
           return scoped;
         }
+        scopedHit = await scopedFile.exists();
       }
 
       final legacyFile = await _legacyProfileFile();
+      final legacyExists = await legacyFile.exists();
       final legacy = await _readProfileFromFile(legacyFile);
       if (legacy == null) {
         final discovered = await _discoverLatestScopedProfile();
@@ -755,6 +849,9 @@ class CompanySessionStore {
           );
           return discovered;
         }
+        debugPrint(
+          '[COMPANY_SESSION][LOAD_PROFILE_MISS] scoped=$scopedHit legacy=$legacyExists discovered=false',
+        );
         return null;
       }
 
@@ -771,7 +868,10 @@ class CompanySessionStore {
       }
       _profileMemory = legacy;
       return legacy;
-    } catch (_) {
+    } catch (e) {
+      debugPrint(
+        '[COMPANY_SESSION][LOAD_PROFILE_FAIL] reason=storage_read_exception err=${_shortErrForCompanyLog(e)}',
+      );
       return null;
     }
   }
@@ -794,7 +894,10 @@ class CompanySessionStore {
           DateTime modifiedAt;
           try {
             modifiedAt = await profileFile.lastModified();
-          } catch (_) {
+          } catch (e) {
+            debugPrint(
+              '[COMPANY_SESSION][DISCOVER_FAIL] op=last_modified err=${_shortErrForCompanyLog(e)}',
+            );
             modifiedAt = DateTime.fromMillisecondsSinceEpoch(0);
           }
           if (latestModifiedAt == null ||
@@ -805,7 +908,10 @@ class CompanySessionStore {
         }
       }
       return latestProfile;
-    } catch (_) {
+    } catch (e) {
+      debugPrint(
+        '[COMPANY_SESSION][DISCOVER_FAIL] op=scan err=${_shortErrForCompanyLog(e)}',
+      );
       return null;
     }
   }
@@ -818,18 +924,36 @@ class CompanySessionStore {
         final scoped = await _readSessionFromFile(scopedFile);
         if (scoped != null) {
           if (_isExpiredTokenBackedSession(scoped)) {
+            final expiresIso = (scoped.companySessionExpiresAtUtc ?? '').trim();
+            final parsedExpiresAt = DateTime.tryParse(expiresIso)?.toUtc();
+            final nowUtc = DateTime.now().toUtc();
+            final ageOrDelta = parsedExpiresAt == null
+                ? '—'
+                : '${nowUtc.difference(parsedExpiresAt).inSeconds}s';
+            debugPrint(
+              '[COMPANY_SESSION][TOKEN_EXPIRY_DECISION] expired=true source=scoped company=${_maskCompanyIdForLog(scoped.companyId)} expiresAt=${expiresIso.isEmpty ? '—' : expiresIso} now=${nowUtc.toIso8601String()} ageOrDelta=$ageOrDelta',
+            );
             final restored = _restoreExpiredTokenSessionToLocalContext(scoped);
-            try {
-              await scopedFile.writeAsString(jsonEncode(restored.toJson()));
-            } catch (_) {}
+            // Option A: non-destructive on disk. We deliberately do NOT
+            // writeAsString the tokenless restored session back to
+            // active_company_session_v1.json. The on-disk token+expiry are
+            // left intact so subsequent backend calls can attempt the token
+            // (server is the source of truth for invalidation), and so a
+            // recovery flow can still resolve it via
+            // resolveCompanyBootstrapToken. _touchSessionLastUsed below
+            // preserves the stored token when memory is tokenless.
             _sessionMemory = restored;
             activeCompanySessionNotifier.value = restored;
+            final nowIso = nowUtc.toIso8601String();
             debugPrint(
-              '[COMPANY_PAIRING][TOKEN_EXPIRED_LOCAL_CONTEXT_RESTORED] company=${restored.companyId}',
+              '[COMPANY_PAIRING][TOKEN_EXPIRED_LOCAL_CONTEXT_RESTORED] company=${restored.companyId} expires_at=${expiresIso.isEmpty ? '—' : expiresIso} now=$nowIso',
             );
             return restored;
           }
           if (!_isSessionStillValid(scoped)) {
+            debugPrint(
+              '[COMPANY_SESSION][SESSION_INVALID_LOCAL] reason=stale_token_metadata source=scoped company=${_maskCompanyIdForLog(scoped.companyId)}',
+            );
             return null;
           }
           _sessionMemory = scoped;
@@ -841,22 +965,32 @@ class CompanySessionStore {
       final legacy = await _readSessionFromFile(legacyFile);
       if (legacy == null) return null;
       if (_isExpiredTokenBackedSession(legacy)) {
+        final expiresIso = (legacy.companySessionExpiresAtUtc ?? '').trim();
+        final parsedExpiresAt = DateTime.tryParse(expiresIso)?.toUtc();
+        final nowUtc = DateTime.now().toUtc();
+        final ageOrDelta = parsedExpiresAt == null
+            ? '—'
+            : '${nowUtc.difference(parsedExpiresAt).inSeconds}s';
+        debugPrint(
+          '[COMPANY_SESSION][TOKEN_EXPIRY_DECISION] expired=true source=legacy company=${_maskCompanyIdForLog(legacy.companyId)} expiresAt=${expiresIso.isEmpty ? '—' : expiresIso} now=${nowUtc.toIso8601String()} ageOrDelta=$ageOrDelta',
+        );
         final restored = _restoreExpiredTokenSessionToLocalContext(legacy);
-        try {
-          final scopedTarget = await _sessionFileForScope(
-            tenantId: restored.companyId,
-            companyId: restored.companyId,
-          );
-          await scopedTarget.writeAsString(jsonEncode(restored.toJson()));
-        } catch (_) {}
+        // Option A: non-destructive on disk. Deliberately do NOT write the
+        // tokenless restored session to the scoped target. The legacy file
+        // (and its token+expiry) are preserved as-is. The valid-session
+        // legacy->scoped migration below only runs for non-expired sessions.
         _sessionMemory = restored;
         activeCompanySessionNotifier.value = restored;
+        final nowIso = nowUtc.toIso8601String();
         debugPrint(
-          '[COMPANY_PAIRING][TOKEN_EXPIRED_LOCAL_CONTEXT_RESTORED] company=${restored.companyId}',
+          '[COMPANY_PAIRING][TOKEN_EXPIRED_LOCAL_CONTEXT_RESTORED] company=${restored.companyId} expires_at=${expiresIso.isEmpty ? '—' : expiresIso} now=$nowIso',
         );
         return restored;
       }
       if (!_isSessionStillValid(legacy)) {
+        debugPrint(
+          '[COMPANY_SESSION][SESSION_INVALID_LOCAL] reason=stale_token_metadata source=legacy company=${_maskCompanyIdForLog(legacy.companyId)}',
+        );
         return null;
       }
 
@@ -870,10 +1004,14 @@ class CompanySessionStore {
         debugPrint(
           '[COMPANY_SESSION][MIGRATE_LEGACY] target=session tenant=${legacy.companyId} company=${legacy.companyId} from=${legacyFile.path} to=${scopedTarget.path}',
         );
+        _logSessionWriteSummary('migrate_legacy_session', legacy);
       }
       _sessionMemory = legacy;
       return legacy;
-    } catch (_) {
+    } catch (e) {
+      debugPrint(
+        '[COMPANY_SESSION][LOAD_SESSION_FAIL] reason=storage_read_exception err=${_shortErrForCompanyLog(e)}',
+      );
       return null;
     }
   }
@@ -902,23 +1040,58 @@ class CompanySessionStore {
     CompanyProfile? p = await loadProfile();
     ActiveCompanySession? s = await loadSession();
 
-    if (p == null || !p.isActive || p.companyId.isEmpty) {
+    if (p == null) {
       debugPrint('[COMPANY_PAIRING][SESSION_MISSING] reason=profile_missing');
       await clearLocalCompanyState();
       return;
     }
-    companyProfileNotifier.value = p;
-    if (s == null || s.companyId != p.companyId) {
-      await _writeSessionForProfile(p);
+    if (p.companyId.isEmpty) {
       debugPrint(
-        '[COMPANY_PAIRING][SESSION_RESTORED] company=${p.companyId} source=profile_only',
+        '[COMPANY_PAIRING][SESSION_MISSING] reason=profile_company_empty',
+      );
+      await clearLocalCompanyState();
+      return;
+    }
+    if (!p.isActive) {
+      debugPrint(
+        '[COMPANY_PAIRING][SESSION_MISSING] reason=profile_inactive company=${_maskCompanyIdForLog(p.companyId)}',
+      );
+      await clearLocalCompanyState();
+      return;
+    }
+    companyProfileNotifier.value = p;
+    if (s == null) {
+      await _writeSessionForProfile(p);
+      final restored = activeCompanySessionNotifier.value;
+      final hasToken = (restored?.companySessionToken ?? '').trim().isNotEmpty;
+      final tokenExpiresAt = (restored?.companySessionExpiresAtUtc ?? '')
+          .trim();
+      debugPrint(
+        '[COMPANY_PAIRING][SESSION_RESTORED] company=${p.companyId} source=profile_only hasToken=$hasToken tokenExpiresAt=${tokenExpiresAt.isEmpty ? '—' : tokenExpiresAt}',
+      );
+      return;
+    }
+    if (s.companyId != p.companyId) {
+      debugPrint(
+        '[COMPANY_PAIRING][SESSION_MISSING] reason=session_company_mismatch profile=${_maskCompanyIdForLog(p.companyId)} session=${_maskCompanyIdForLog(s.companyId)}',
+      );
+      await _writeSessionForProfile(p);
+      final restored = activeCompanySessionNotifier.value;
+      final hasToken = (restored?.companySessionToken ?? '').trim().isNotEmpty;
+      final tokenExpiresAt = (restored?.companySessionExpiresAtUtc ?? '')
+          .trim();
+      debugPrint(
+        '[COMPANY_PAIRING][SESSION_RESTORED] company=${p.companyId} source=profile_only hasToken=$hasToken tokenExpiresAt=${tokenExpiresAt.isEmpty ? '—' : tokenExpiresAt}',
       );
       return;
     }
     activeCompanySessionNotifier.value = s;
     await _touchSessionLastUsed();
+    final restored = activeCompanySessionNotifier.value;
+    final hasToken = (restored?.companySessionToken ?? '').trim().isNotEmpty;
+    final tokenExpiresAt = (restored?.companySessionExpiresAtUtc ?? '').trim();
     debugPrint(
-      '[COMPANY_PAIRING][SESSION_RESTORED] company=${p.companyId} source=profile_session',
+      '[COMPANY_PAIRING][SESSION_RESTORED] company=${p.companyId} source=profile_session hasToken=$hasToken tokenExpiresAt=${tokenExpiresAt.isEmpty ? '—' : tokenExpiresAt}',
     );
   }
 
@@ -958,7 +1131,12 @@ class CompanySessionStore {
       debugPrint(
         '[COMPANY_SESSION][SAVE] target=session tenant=${p.tenantId} company=${p.companyId} path=${file.path}',
       );
-    } catch (_) {}
+      _logSessionWriteSummary('write_session_for_profile', session);
+    } catch (e) {
+      debugPrint(
+        '[COMPANY_SESSION][PERSIST_FAIL] op=write_session_for_profile company=${_maskCompanyIdForLog(p.companyId)} err=${_shortErrForCompanyLog(e)}',
+      );
+    }
   }
 
   Future<void> _touchSessionLastUsed() async {
@@ -986,7 +1164,12 @@ class CompanySessionStore {
       debugPrint(
         '[COMPANY_SESSION][SAVE] target=session tenant=${cur.companyId} company=${cur.companyId} path=${file.path}',
       );
-    } catch (_) {}
+      _logSessionWriteSummary('touch_last_used', next);
+    } catch (e) {
+      debugPrint(
+        '[COMPANY_SESSION][PERSIST_FAIL] op=touch_last_used company=${_maskCompanyIdForLog(cur.companyId)} err=${_shortErrForCompanyLog(e)}',
+      );
+    }
   }
 
   Future<void> updateActiveSessionCompanyCode(
@@ -1017,7 +1200,12 @@ class CompanySessionStore {
       _sessionMemory = next;
       activeCompanySessionNotifier.value = next;
       debugPrint('[COMPANY_CODE][HYDRATE] found=true source=$source');
-    } catch (_) {}
+      _logSessionWriteSummary('update_company_code', next);
+    } catch (e) {
+      debugPrint(
+        '[COMPANY_SESSION][PERSIST_FAIL] op=update_company_code source=$source err=${_shortErrForCompanyLog(e)}',
+      );
+    }
   }
 
   static String slugifyCompanyName(String raw) {
@@ -1171,13 +1359,16 @@ class CompanySessionStore {
     );
     await persistProfile(profile);
     final prev = await loadSession();
-    final resolvedExpiresAtUtc = () {
+    final serverResolvedExpiresAtUtc = () {
       if (expiresAt != null) return expiresAt.toUtc();
       if (expiresInSeconds != null && expiresInSeconds > 0) {
         return now.add(Duration(seconds: expiresInSeconds)).toUtc();
       }
       return null;
     }();
+    final resolvedExpiresAtUtc = _maybeClampSessionExpiryForDev(
+      serverResolvedExpiresAtUtc,
+    );
     final session = ActiveCompanySession(
       companyId: profile.companyId,
       role: 'companyAdmin',
@@ -1201,7 +1392,20 @@ class CompanySessionStore {
       debugPrint(
         '[COMPANY_SESSION][SAVE] target=session tenant=${profile.tenantId} company=${profile.companyId} path=${file.path}',
       );
-    } catch (_) {}
+      _logSessionWriteSummary('save_public_registration', session);
+      final hasTokenPersist = (session.companySessionToken ?? '')
+          .trim()
+          .isNotEmpty;
+      final expiresAtPersist = (session.companySessionExpiresAtUtc ?? '')
+          .trim();
+      debugPrint(
+        '[COMPANY_SESSION][TOKEN_PERSIST_CHECK] hasToken=$hasTokenPersist expiresAt=${expiresAtPersist.isEmpty ? '—' : expiresAtPersist} source=public_registration',
+      );
+    } catch (e) {
+      debugPrint(
+        '[COMPANY_SESSION][PERSIST_FAIL] op=save_public_registration company=${_maskCompanyIdForLog(profile.companyId)} err=${_shortErrForCompanyLog(e)}',
+      );
+    }
     companyProfileNotifier.value = profile;
     applyProfileToBusinessNotifier(profile);
   }
@@ -1261,7 +1465,7 @@ class CompanySessionStore {
     );
     await persistProfile(profile);
     final prev = await loadSession();
-    final resolvedExpiresAtUtc = () {
+    final serverResolvedExpiresAtUtc = () {
       if (expiresAtUtc != null) return expiresAtUtc.toUtc();
       if (expiresAt != null) return expiresAt.toUtc();
       if (expiresInSeconds != null && expiresInSeconds > 0) {
@@ -1269,6 +1473,9 @@ class CompanySessionStore {
       }
       return null;
     }();
+    final resolvedExpiresAtUtc = _maybeClampSessionExpiryForDev(
+      serverResolvedExpiresAtUtc,
+    );
     final normalizedToken = (companySessionToken ?? '').trim();
     final normalizedLinkMethod = (linkMethod ?? '').trim();
     final session = ActiveCompanySession(
@@ -1298,7 +1505,23 @@ class CompanySessionStore {
       debugPrint(
         '[COMPANY_SESSION][SAVE] target=session tenant=${profile.tenantId} company=${profile.companyId} path=${file.path}',
       );
-    } catch (_) {}
+      _logSessionWriteSummary('save_verified_pairing', session);
+      final hasTokenPersist = (session.companySessionToken ?? '')
+          .trim()
+          .isNotEmpty;
+      final expiresAtPersist = (session.companySessionExpiresAtUtc ?? '')
+          .trim();
+      final persistSourceLabel = (session.linkMethod ?? '').trim().isEmpty
+          ? 'verified_pairing'
+          : 'verified_pairing:${session.linkMethod}';
+      debugPrint(
+        '[COMPANY_SESSION][TOKEN_PERSIST_CHECK] hasToken=$hasTokenPersist expiresAt=${expiresAtPersist.isEmpty ? '—' : expiresAtPersist} source=$persistSourceLabel',
+      );
+    } catch (e) {
+      debugPrint(
+        '[COMPANY_SESSION][PERSIST_FAIL] op=save_verified_pairing company=${_maskCompanyIdForLog(profile.companyId)} err=${_shortErrForCompanyLog(e)}',
+      );
+    }
     companyProfileNotifier.value = profile;
     applyProfileToBusinessNotifier(profile);
     debugPrint(
@@ -1320,7 +1543,11 @@ class CompanySessionStore {
       debugPrint(
         '[COMPANY_SESSION][SAVE] target=profile tenant=${profile.tenantId} company=${profile.companyId} path=${file.path}',
       );
-    } catch (_) {}
+    } catch (e) {
+      debugPrint(
+        '[COMPANY_SESSION][PERSIST_FAIL] op=persist_profile company=${_maskCompanyIdForLog(profile.companyId)} err=${_shortErrForCompanyLog(e)}',
+      );
+    }
   }
 
   /// Merge into [businessSettingsNotifier] (pricing fields preserved).
@@ -1391,7 +1618,11 @@ class CompanySessionStore {
           '[COMPANY_SESSION][CLEAR] tenant=unknown company=unknown scoped_files_skipped=true',
         );
       }
-    } catch (_) {}
+    } catch (e) {
+      debugPrint(
+        '[COMPANY_SESSION][PERSIST_FAIL] op=clear_local_state err=${_shortErrForCompanyLog(e)}',
+      );
+    }
     _profileMemory = null;
     _sessionMemory = null;
     companyProfileNotifier.value = null;

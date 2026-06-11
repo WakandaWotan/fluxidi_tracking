@@ -1090,7 +1090,9 @@ Future<bool> _hasUsableCompanyBootstrapToken({
 }) async {
   final state = await _resolveCompanyBootstrapTokenState();
   if (!state.hasToken && logDegraded) {
-    debugPrint('[COMPANY_SESSION][DEGRADED_NO_TOKEN] reason=$reason');
+    debugPrint(
+      '[COMPANY_SESSION][DEGRADED_NO_TOKEN] reason=$reason source=${state.source}',
+    );
     debugPrint('[COMPANY_SESSION][RECOVERY_REQUIRED] reason=$reason');
   }
   return state.hasToken;
@@ -1978,14 +1980,29 @@ Future<void> main() async {
   await loadLocalTenantState();
   await CompanySessionStore.instance.bootstrap();
   var hasBootstrapToken = false;
+  var startupTokenSource = 'unchecked';
   var hasLocalCompanyContext =
       CompanySessionStore.instance.hasValidCompanyContext;
   if (hasLocalCompanyContext) {
-    hasBootstrapToken = await _hasUsableCompanyBootstrapToken(
-      reason: 'startup_restore',
-      logDegraded: true,
-    );
+    final startupTokenState = await _resolveCompanyBootstrapTokenState();
+    hasBootstrapToken = startupTokenState.hasToken;
+    startupTokenSource = startupTokenState.source;
+    if (!hasBootstrapToken) {
+      debugPrint(
+        '[COMPANY_SESSION][DEGRADED_NO_TOKEN] reason=startup_restore source=$startupTokenSource',
+      );
+      debugPrint('[COMPANY_SESSION][RECOVERY_REQUIRED] reason=startup_restore');
+    }
   }
+  final startupCompanyProfile = companyProfileNotifier.value;
+  final startupCompanySession = activeCompanySessionNotifier.value;
+  debugPrint(
+    '[STARTUP][COMPANY] hasProfile=${startupCompanyProfile != null}'
+    ' profileActive=${startupCompanyProfile?.isActive ?? false}'
+    ' hasSession=${startupCompanySession != null}'
+    ' hasToken=$hasBootstrapToken'
+    ' tokenSource=$startupTokenSource',
+  );
   hasLocalCompanyContext = CompanySessionStore.instance.hasValidCompanyContext;
   if (hasLocalCompanyContext) {
     if (hasBootstrapToken) {
@@ -2013,6 +2030,24 @@ Future<void> main() async {
     useStandaloneScopePointer: !_startInCompanyAdminHome,
   );
   final startupDriverSession = activeDriverSessionNotifier.value;
+  final startupDriverHasToken = (startupDriverSession?.driverSessionToken ?? '')
+      .trim()
+      .isNotEmpty;
+  final startupDriverMode = startupDriverSession?.sessionMode ?? 'none';
+  final startupDriverCompany = (startupDriverSession?.companyId ?? '').trim();
+  final startupCompanyId = (startupCompanyProfile?.companyId ?? '').trim();
+  final startupDriverCompanyMatch = startupDriverSession == null
+      ? false
+      : (startupDriverCompany.isNotEmpty &&
+            startupCompanyId.isNotEmpty &&
+            startupDriverCompany == startupCompanyId);
+  debugPrint(
+    '[STARTUP][DRIVER] hasSession=${startupDriverSession != null}'
+    ' mode=$startupDriverMode'
+    ' hasToken=$startupDriverHasToken'
+    ' companyMatch=$startupDriverCompanyMatch'
+    ' useStandalonePointer=${!_startInCompanyAdminHome}',
+  );
   if (!_startInCompanyAdminHome && startupDriverSession != null) {
     if (_isCompanyAdminDriverViewSession(startupDriverSession)) {
       debugPrint('[DRIVER_ADMIN_VIEW][IGNORE_FOR_NORMAL_LOGIN]');
