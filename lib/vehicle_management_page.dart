@@ -2171,27 +2171,40 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
     );
   }
 
-  // Compact two-line label/value cell used inside the phone-landscape
-  // 4-column vehicle card. Kept private and small so it can't be reused
-  // elsewhere by accident — phone portrait and tablet layouts continue to
-  // use _driverInfoLine / inline Text widgets unchanged.
-  Widget _compactCellLine(String label, String value, {IconData? icon}) {
+  // Compact two-line label/value cell used inside the landscape 4-column
+  // vehicle card. Kept private and small so it can't be reused elsewhere by
+  // accident — phone portrait and tablet portrait layouts continue to use
+  // _driverInfoLine / inline Text widgets unchanged.
+  //
+  // [tablet] scales paddings, icon and font sizes up for tablet landscape
+  // while leaving the approved phone-landscape look byte-identical when the
+  // default `tablet: false` is used.
+  Widget _compactCellLine(
+    String label,
+    String value, {
+    IconData? icon,
+    bool tablet = false,
+  }) {
     final shown = value.trim().isEmpty ? '—' : value.trim();
+    final iconSize = tablet ? 14.0 : 11.5;
+    final iconGap = tablet ? 6.0 : 4.0;
+    final bottomPad = tablet ? 3.0 : 2.0;
+    final fontSize = tablet ? 12.6 : 10.8;
     return Padding(
-      padding: const EdgeInsets.only(bottom: 2),
+      padding: EdgeInsets.only(bottom: bottomPad),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           if (icon != null) ...[
-            Icon(icon, size: 11.5, color: _gold.withOpacity(0.85)),
-            const SizedBox(width: 4),
+            Icon(icon, size: iconSize, color: _gold.withOpacity(0.85)),
+            SizedBox(width: iconGap),
           ],
           Expanded(
             child: RichText(
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               text: TextSpan(
-                style: TextStyle(color: _textPrimary, fontSize: 10.8),
+                style: TextStyle(color: _textPrimary, fontSize: fontSize),
                 children: [
                   TextSpan(
                     text: '$label: ',
@@ -2213,16 +2226,18 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
     );
   }
 
-  Widget _compactSectionHeading(String label) {
+  Widget _compactSectionHeading(String label, {bool tablet = false}) {
+    final bottomPad = tablet ? 5.0 : 3.0;
+    final fontSize = tablet ? 13.4 : 11.4;
     return Padding(
-      padding: const EdgeInsets.only(bottom: 3),
+      padding: EdgeInsets.only(bottom: bottomPad),
       child: Text(
         label,
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
         style: TextStyle(
           color: _gold.withOpacity(0.96),
-          fontSize: 11.4,
+          fontSize: fontSize,
           fontWeight: FontWeight.w800,
           letterSpacing: 0.2,
         ),
@@ -2234,10 +2249,45 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
     required VehicleProfile v,
     required DriverProfile? linkedDriver,
     required String status,
+    bool tablet = false,
   }) {
+    // Density tokens. With `tablet: false` every value below collapses to
+    // the previously-approved phone-landscape constants byte-for-byte. With
+    // `tablet: true` the same 4-column layout is used, but paddings, photo
+    // height, font sizes, chip and button touch targets are scaled up so it
+    // stays compact yet professional and readable on tablet landscape.
+    final cardPad = tablet ? 14.0 : 8.0;
+    final cardMarginBottom = tablet ? 12.0 : 8.0;
+    final colGap = tablet ? 12.0 : 8.0;
+    final photoHeight = tablet ? 168.0 : 130.0;
+    final statusOffset = tablet ? 8.0 : 6.0;
+    final statusPillH = tablet ? 10.0 : 7.0;
+    final statusPillV = tablet ? 4.0 : 2.0;
+    final statusFontSize = tablet ? 12.4 : 10.4;
+    final nameFontSize = tablet ? 16.4 : 13.2;
+    final brandFontSize = tablet ? 13.4 : 11.0;
+    final plateFontSize = tablet ? 12.4 : 10.4;
+    final chipSpacing = tablet ? 6.0 : 4.0;
+    final chipPadH = tablet ? 9.0 : 6.0;
+    final chipPadV = tablet ? 4.0 : 2.0;
+    final chipFontSize = tablet ? 12.0 : 10.2;
+    final companyLabelFontSize = tablet ? 12.0 : 10.2;
+    final companyIdFontSize = tablet ? 12.4 : 10.4;
+    final btnPadH = tablet ? 12.0 : 8.0;
+    final btnPadV = tablet ? 10.0 : 6.0;
+    final btnMinHeight = tablet ? 38.0 : 30.0;
+    final btnFontSize = tablet ? 13.0 : 11.4;
+    final btnIconSize = tablet ? 16.0 : 14.0;
+    final col2HeaderGap = tablet ? 4.0 : 2.0;
+    final col2ChipsGap = tablet ? 8.0 : 6.0;
+    final col3SectionGap = tablet ? 6.0 : 4.0;
+    final col4LabelGap = tablet ? 4.0 : 2.0;
+    final col4BeforeButtons = tablet ? 12.0 : 8.0;
+    final col4BetweenButtons = tablet ? 6.0 : 4.0;
+
     return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
+      margin: EdgeInsets.only(bottom: cardMarginBottom),
+      padding: EdgeInsets.fromLTRB(cardPad, cardPad, cardPad, cardPad),
       decoration: BoxDecoration(
         color: _cardBg,
         borderRadius: BorderRadius.circular(14),
@@ -2254,7 +2304,7 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                 _photoPreviewBox(
                   photoRef: v.primaryPhotoRef,
                   fallbackPhotoRef: v.publicPhotoUrl,
-                  height: 130,
+                  height: photoHeight,
                   onTap: null,
                   placeholderText: _t(
                     nl: 'Geen voertuigfoto',
@@ -2264,12 +2314,12 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                   ),
                 ),
                 Positioned(
-                  top: 6,
-                  left: 6,
+                  top: statusOffset,
+                  left: statusOffset,
                   child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 7,
-                      vertical: 2,
+                    padding: EdgeInsets.symmetric(
+                      horizontal: statusPillH,
+                      vertical: statusPillV,
                     ),
                     decoration: BoxDecoration(
                       color: v.isActive
@@ -2288,7 +2338,7 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
                         color: v.isActive ? Colors.white : _textPrimary,
-                        fontSize: 10.4,
+                        fontSize: statusFontSize,
                         fontWeight: FontWeight.w800,
                       ),
                     ),
@@ -2297,7 +2347,7 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
               ],
             ),
           ),
-          const SizedBox(width: 8),
+          SizedBox(width: colGap),
           // Column 2: vehicle identity + short specs (flex 24)
           Expanded(
             flex: 24,
@@ -2311,10 +2361,10 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                   style: TextStyle(
                     color: _textPrimary,
                     fontWeight: FontWeight.w800,
-                    fontSize: 13.2,
+                    fontSize: nameFontSize,
                   ),
                 ),
-                const SizedBox(height: 2),
+                SizedBox(height: col2HeaderGap),
                 Text(
                   v.brandModel.trim().isEmpty ? '—' : v.brandModel.trim(),
                   maxLines: 1,
@@ -2322,7 +2372,7 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                   style: TextStyle(
                     color: _textPrimary,
                     fontWeight: FontWeight.w700,
-                    fontSize: 11.0,
+                    fontSize: brandFontSize,
                   ),
                 ),
                 Text(
@@ -2332,18 +2382,18 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                   style: TextStyle(
                     color: _textSecondary,
                     fontWeight: FontWeight.w600,
-                    fontSize: 10.4,
+                    fontSize: plateFontSize,
                   ),
                 ),
-                const SizedBox(height: 6),
+                SizedBox(height: col2ChipsGap),
                 Wrap(
-                  spacing: 4,
-                  runSpacing: 4,
+                  spacing: chipSpacing,
+                  runSpacing: chipSpacing,
                   children: [
                     Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 6,
-                        vertical: 2,
+                      padding: EdgeInsets.symmetric(
+                        horizontal: chipPadH,
+                        vertical: chipPadV,
                       ),
                       decoration: BoxDecoration(
                         color: _gold.withOpacity(0.13),
@@ -2357,14 +2407,14 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                         style: TextStyle(
                           color: _gold.withOpacity(0.98),
                           fontWeight: FontWeight.w700,
-                          fontSize: 10.2,
+                          fontSize: chipFontSize,
                         ),
                       ),
                     ),
                     Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 6,
-                        vertical: 2,
+                      padding: EdgeInsets.symmetric(
+                        horizontal: chipPadH,
+                        vertical: chipPadV,
                       ),
                       decoration: BoxDecoration(
                         color: _panelBg.withOpacity(0.48),
@@ -2379,15 +2429,15 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
                           color: _textPrimary,
-                          fontSize: 10.2,
+                          fontSize: chipFontSize,
                           fontWeight: FontWeight.w600,
                         ),
                       ),
                     ),
                     Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 6,
-                        vertical: 2,
+                      padding: EdgeInsets.symmetric(
+                        horizontal: chipPadH,
+                        vertical: chipPadV,
                       ),
                       decoration: BoxDecoration(
                         color: _panelBg.withOpacity(0.48),
@@ -2402,7 +2452,7 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
                           color: _textPrimary,
-                          fontSize: 10.2,
+                          fontSize: chipFontSize,
                           fontWeight: FontWeight.w600,
                         ),
                       ),
@@ -2412,7 +2462,7 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
               ],
             ),
           ),
-          const SizedBox(width: 8),
+          SizedBox(width: colGap),
           // Column 3: driver + permit/registration (flex 28)
           Expanded(
             flex: 28,
@@ -2426,6 +2476,7 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                     fr: 'Chauffeur',
                     es: 'Conductor',
                   ),
+                  tablet: tablet,
                 ),
                 _compactCellLine(
                   _t(nl: 'Naam', en: 'Name', fr: 'Nom', es: 'Nombre'),
@@ -2433,20 +2484,23 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                       ? '—'
                       : _displayDriverName(linkedDriver.fullName),
                   icon: Icons.person_outline,
+                  tablet: tablet,
                 ),
                 if (linkedDriver != null) ...[
                   _compactCellLine(
                     _t(nl: 'ID', en: 'ID', fr: 'ID', es: 'ID'),
                     linkedDriver.employeeNumber,
                     icon: Icons.badge_outlined,
+                    tablet: tablet,
                   ),
                   _compactCellLine(
                     _t(nl: 'Tel.', en: 'Phone', fr: 'Tél.', es: 'Tel.'),
                     linkedDriver.phone,
                     icon: Icons.phone_outlined,
+                    tablet: tablet,
                   ),
                 ],
-                const SizedBox(height: 4),
+                SizedBox(height: col3SectionGap),
                 _compactSectionHeading(
                   _t(
                     nl: 'Vergunning',
@@ -2454,6 +2508,7 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                     fr: 'Permis',
                     es: 'Permiso',
                   ),
+                  tablet: tablet,
                 ),
                 _compactCellLine(
                   _t(
@@ -2464,6 +2519,7 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                   ),
                   v.exploitationLicenseNumber,
                   icon: Icons.verified_user_outlined,
+                  tablet: tablet,
                 ),
                 _compactCellLine(
                   _t(
@@ -2474,16 +2530,18 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                   ),
                   v.vehicleRegistrationNumber,
                   icon: Icons.numbers_outlined,
+                  tablet: tablet,
                 ),
                 _compactCellLine(
                   _t(nl: 'Kleur', en: 'Color', fr: 'Couleur', es: 'Color'),
                   _displayColor(v.color),
                   icon: Icons.palette_outlined,
+                  tablet: tablet,
                 ),
               ],
             ),
           ),
-          const SizedBox(width: 8),
+          SizedBox(width: colGap),
           // Column 4: company + actions (flex 16)
           Expanded(
             flex: 16,
@@ -2501,11 +2559,11 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
                     color: _textSecondary,
-                    fontSize: 10.2,
+                    fontSize: companyLabelFontSize,
                     fontWeight: FontWeight.w600,
                   ),
                 ),
-                const SizedBox(height: 2),
+                SizedBox(height: col4LabelGap),
                 Text(
                   (v.companyId?.trim().isNotEmpty ?? false)
                       ? v.companyId!.trim()
@@ -2520,26 +2578,26 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                   softWrap: true,
                   style: TextStyle(
                     color: _textFaint,
-                    fontSize: 10.4,
+                    fontSize: companyIdFontSize,
                     fontWeight: FontWeight.w700,
                   ),
                 ),
-                const SizedBox(height: 8),
+                SizedBox(height: col4BeforeButtons),
                 SizedBox(
                   width: double.infinity,
                   child: OutlinedButton.icon(
                     onPressed: () => _openVehicleEditor(existing: v),
-                    icon: const Icon(Icons.edit_outlined, size: 14),
+                    icon: Icon(Icons.edit_outlined, size: btnIconSize),
                     style: OutlinedButton.styleFrom(
                       foregroundColor: _gold.withOpacity(0.95),
                       side: BorderSide(color: _gold.withOpacity(0.42)),
                       backgroundColor: _panelBg,
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 6,
+                      padding: EdgeInsets.symmetric(
+                        horizontal: btnPadH,
+                        vertical: btnPadV,
                       ),
-                      minimumSize: const Size(0, 30),
-                      textStyle: const TextStyle(fontSize: 11.4),
+                      minimumSize: Size(0, btnMinHeight),
+                      textStyle: TextStyle(fontSize: btnFontSize),
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(999),
                       ),
@@ -2557,7 +2615,7 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                     ),
                   ),
                 ),
-                const SizedBox(height: 4),
+                SizedBox(height: col4BetweenButtons),
                 SizedBox(
                   width: double.infinity,
                   child: OutlinedButton.icon(
@@ -2565,17 +2623,17 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                       deleteVehicle(v.id);
                       await _syncFleetOrShowError();
                     },
-                    icon: const Icon(Icons.delete_outline, size: 14),
+                    icon: Icon(Icons.delete_outline, size: btnIconSize),
                     style: OutlinedButton.styleFrom(
                       foregroundColor: _danger,
                       side: BorderSide(color: _danger.withOpacity(0.45)),
                       backgroundColor: _danger.withOpacity(0.16),
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 6,
+                      padding: EdgeInsets.symmetric(
+                        horizontal: btnPadH,
+                        vertical: btnPadV,
                       ),
-                      minimumSize: const Size(0, 30),
-                      textStyle: const TextStyle(fontSize: 11.4),
+                      minimumSize: Size(0, btnMinHeight),
+                      textStyle: TextStyle(fontSize: btnFontSize),
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(999),
                       ),
@@ -2611,35 +2669,55 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
     // mode. `dense` only takes effect when `compact == true`, so phone
     // portrait and tablet layouts are unaffected.
     bool dense = false,
+    // Tablet landscape uses a third density tier between [dense] (phone
+    // landscape) and the original [compact] values. It keeps numbers and
+    // labels readable but trims the oversized icon bubble and value font
+    // that previously made the tablet-landscape KPI band too tall. Only
+    // takes effect when [compact] is true and [dense] is false. Phone
+    // portrait and tablet portrait are unaffected.
+    bool tabletLandscape = false,
   }) {
     final bool denseCompact = compact && dense;
+    final bool tabletCompact = compact && !dense && tabletLandscape;
     final tilePadding = denseCompact
         ? const EdgeInsets.fromLTRB(8, 4, 8, 4)
+        : tabletCompact
+        ? const EdgeInsets.fromLTRB(12, 6, 12, 6)
         : compact
         ? const EdgeInsets.fromLTRB(12, 8, 12, 8)
         : const EdgeInsets.fromLTRB(12, 9, 12, 9);
     final iconBubble = denseCompact
         ? 28.0
+        : tabletCompact
+        ? 40.0
         : compact
         ? 58.0
         : 46.0;
     final iconSize = denseCompact
         ? 15.0
+        : tabletCompact
+        ? 22.0
         : compact
         ? 34.0
         : 28.0;
     final gap = denseCompact
         ? 6.0
+        : tabletCompact
+        ? 12.0
         : compact
         ? 16.0
         : 12.0;
     final labelFontSize = denseCompact
         ? 10.4
+        : tabletCompact
+        ? 12.4
         : compact
         ? 14.0
         : 12.5;
     final valueFontSize = denseCompact
         ? 15.6
+        : tabletCompact
+        ? 20.0
         : compact
         ? 30.0
         : 23.0;
@@ -2755,7 +2833,7 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
             final summaryAspectRatio = isCompactLandscape
                 ? 3.6
                 : isTabletLandscape
-                ? 2.7
+                ? 3.6
                 : 2.05;
             return SafeArea(
               top: false,
@@ -2765,6 +2843,8 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                     child: Padding(
                       padding: isCompactLandscape
                           ? const EdgeInsets.fromLTRB(12, 4, 12, 4)
+                          : isTabletLandscape
+                          ? const EdgeInsets.fromLTRB(12, 8, 12, 6)
                           : const EdgeInsets.fromLTRB(12, 12, 12, 10),
                       child: Column(
                         children: [
@@ -2772,6 +2852,8 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                             width: double.infinity,
                             padding: isCompactLandscape
                                 ? const EdgeInsets.fromLTRB(12, 4, 12, 4)
+                                : isTabletLandscape
+                                ? const EdgeInsets.fromLTRB(12, 8, 12, 8)
                                 : const EdgeInsets.fromLTRB(12, 10, 12, 12),
                             decoration: BoxDecoration(
                               color: _cardBg,
@@ -2857,11 +2939,19 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                                     ],
                                   ),
                           ),
-                          SizedBox(height: isCompactLandscape ? 4 : 10),
+                          SizedBox(
+                            height: isCompactLandscape
+                                ? 4
+                                : isTabletLandscape
+                                ? 6
+                                : 10,
+                          ),
                           Container(
                             width: double.infinity,
                             padding: isCompactLandscape
                                 ? const EdgeInsets.all(4)
+                                : isTabletLandscape
+                                ? const EdgeInsets.fromLTRB(8, 6, 8, 6)
                                 : const EdgeInsets.all(10),
                             decoration: BoxDecoration(
                               color: _panelBg,
@@ -2891,6 +2981,7 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                                   compact:
                                       isTabletLandscape || isCompactLandscape,
                                   dense: isCompactLandscape,
+                                  tabletLandscape: isTabletLandscape,
                                 ),
                                 _summaryTile(
                                   label: _t(
@@ -2905,6 +2996,7 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                                   compact:
                                       isTabletLandscape || isCompactLandscape,
                                   dense: isCompactLandscape,
+                                  tabletLandscape: isTabletLandscape,
                                 ),
                                 _summaryTile(
                                   label: _t(
@@ -2919,6 +3011,7 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                                   compact:
                                       isTabletLandscape || isCompactLandscape,
                                   dense: isCompactLandscape,
+                                  tabletLandscape: isTabletLandscape,
                                 ),
                               ],
                             ),
@@ -2984,6 +3077,20 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                               v: v,
                               linkedDriver: linkedDriver,
                               status: status,
+                            );
+                          }
+                          // Tablet landscape reuses the same 4-column model as
+                          // phone landscape, but with tablet-scaled paddings,
+                          // photo height, font sizes and button targets so the
+                          // card stays compact yet professional and readable.
+                          // Phone portrait, phone landscape, and tablet
+                          // portrait paths fall through to the existing card.
+                          if (isTabletLandscape) {
+                            return _vehicleCompactLandscapeCard(
+                              v: v,
+                              linkedDriver: linkedDriver,
+                              status: status,
+                              tablet: true,
                             );
                           }
                           return Container(
