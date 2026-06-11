@@ -91,6 +91,44 @@ class _BusinessOrientationFlowPageState
   /// the video is decorative, never essential.
   bool _bgVideoFailed = false;
 
+  /// Silent, looping background video for Card 1 in tablet landscape.
+  /// Mirrors [_bgVideoController] but bound to the dedicated
+  /// landscape MP4 so the orientation can keep playing the right
+  /// asset across device rotations without re-initialisation
+  /// hitches.
+  late final VideoPlayerController _bgLandscapeVideoController =
+      VideoPlayerController.asset(_card1WelcomeTabletLandscapeVideoAsset);
+
+  /// True once [_initBgLandscapeVideo] successfully initialised the
+  /// landscape video and kicked off looping silent playback. Until
+  /// then we render the landscape PNG poster instead.
+  bool _bgLandscapeVideoReady = false;
+
+  /// True if [_initBgLandscapeVideo] caught an error. Once latched,
+  /// we stick with the landscape PNG fallback for the rest of the
+  /// flow's lifetime — the video is decorative, never essential.
+  bool _bgLandscapeVideoFailed = false;
+
+  /// One-shot latch for the `[ORIENTATION_FLOW][LANDSCAPE_LAYOUT]`
+  /// diagnostic line. Logged the first build the full-viewport
+  /// landscape hero is rendered with the video controller already
+  /// initialised, so QA can confirm the viewport / media sizing in
+  /// real-device runs without spamming logs on every frame.
+  bool _landscapeLayoutLogged = false;
+
+  /// Which Card 1 tablet-hero video lane is currently supposed to
+  /// be playing. [none] means both controllers stay paused (Cards
+  /// 2-7, phone layouts, or welcome on a phone). Updated by
+  /// [_syncHeroVideoPlayback] whenever the active page or tablet
+  /// orientation changes.
+  _HeroVideoLane _syncedHeroVideoLane = _HeroVideoLane.none;
+
+  /// Guards lazy initialisation so each orientation's MP4 is only
+  /// decoded when that lane is actually needed — avoids paying for
+  /// two simultaneous platform decoders on tablet open.
+  bool _portraitVideoInitStarted = false;
+  bool _landscapeVideoInitStarted = false;
+
   int _index = 0;
 
   /// Premium navy / gold palette — matches the dark-navy/gold styling
@@ -128,6 +166,31 @@ class _BusinessOrientationFlowPageState
   /// [AspectRatio] so the video and PNG poster fill the panel
   /// edge-to-edge with no distortion or letterboxing.
   static const double _card1WelcomeMediaAspectRatio = 1244 / 1660;
+
+  /// Silent, looping landscape MP4 (1586 × 992, 5 s) used as the
+  /// Card 1 tablet landscape hero background. The 1.5988 aspect
+  /// ratio matches the target tablet's logical landscape viewport
+  /// (≈1408 × 880 → 1.6) almost perfectly, so the hero fills most
+  /// of the slot with only a thin sliver of the dark hero canvas
+  /// peeking through at the edges. Audio is muted at runtime via
+  /// [VideoPlayerController.setVolume].
+  static const String _card1WelcomeTabletLandscapeVideoAsset =
+      'assets/fluxidi/onboarding/card1_welcome_tablet_landscape_bg.mp4';
+
+  /// Same-aspect PNG poster (1586 × 992) used as the immediate
+  /// fallback while the landscape MP4 initialises and as the
+  /// permanent fallback if MP4 init fails.
+  static const String _card1WelcomeTabletLandscapeFallbackAsset =
+      'assets/fluxidi/onboarding/card1_welcome_tablet_landscape_bg.png';
+
+  /// Intrinsic aspect ratio (width / height) of the landscape MP4
+  /// frame (1586 / 992 ≈ 1.5988). The new asset's ratio matches the
+  /// target tablet's logical landscape viewport (≈1.6) almost
+  /// perfectly, so a full-viewport [BoxFit.cover] in
+  /// [_buildWelcomeTabletLandscapeFullViewportHero] crops a
+  /// negligible amount of pixels — visually a perfect fit, with
+  /// zero black bands.
+  static const double _card1WelcomeTabletLandscapeMediaAspectRatio = 1586 / 992;
 
   static const List<_OrientationCardData> _cards = <_OrientationCardData>[
     _OrientationCardData(
@@ -250,10 +313,10 @@ class _BusinessOrientationFlowPageState
     debugPrint('[ORIENTATION_FLOW][OPEN] totalPages=${_cards.length}');
     _logCurrentPage();
     _entranceController.forward();
-    // Fire-and-forget: video init is purely decorative for Card 1
-    // tablet portrait; failures are handled inside [_initBgVideo] by
-    // latching [_bgVideoFailed] and falling back to the PNG poster.
-    unawaited(_initBgVideo());
+    // Card 1 tablet-hero videos are initialised lazily and only one
+    // lane plays at a time — see [_syncHeroVideoPlayback]. The first
+    // [build] post-frame callback kicks off the lane that matches
+    // the opening orientation so we never decode both MP4s at once.
   }
 
   @override
@@ -262,15 +325,17 @@ class _BusinessOrientationFlowPageState
     _entranceController.dispose();
     _accentController.dispose();
     _bgVideoController.dispose();
+    _bgLandscapeVideoController.dispose();
     super.dispose();
   }
 
-  /// Initialise the Card 1 tablet-portrait background video, mute it,
-  /// loop it, and start playback. We deliberately swallow all errors:
-  /// the video is decorative, the PNG poster covers the same panel,
-  /// and a partially-onboarded operator must never see a broken hero.
-  /// Exactly one success and one failure log are emitted to keep the
-  /// orientation flow's logs focused.
+  /// Initialise the Card 1 tablet-portrait background video and mute
+  /// it. Playback is owned by [_applyHeroVideoLane] so the landscape
+  /// lane can stay paused while portrait is active. We deliberately
+  /// swallow all errors: the video is decorative, the PNG poster
+  /// covers the same panel, and a partially-onboarded operator must
+  /// never see a broken hero. Exactly one success and one failure log
+  /// are emitted to keep the orientation flow's logs focused.
   Future<void> _initBgVideo() async {
     try {
       await _bgVideoController.initialize();
@@ -279,16 +344,121 @@ class _BusinessOrientationFlowPageState
       // The bundled MP4 has an audio track; the orientation flow is
       // visual only, so we silence playback before [play] is called.
       await _bgVideoController.setVolume(0);
-      await _bgVideoController.play();
       if (!mounted) return;
       setState(() => _bgVideoReady = true);
       debugPrint('[ORIENTATION_FLOW][BG_VIDEO_OK] looping silent');
+      // Play only if portrait is still the active lane — landscape
+      // may have won the race if the operator rotated mid-init.
+      await _applyHeroVideoLane(_syncedHeroVideoLane);
     } catch (error, stackTrace) {
       debugPrint(
         '[ORIENTATION_FLOW][BG_VIDEO_FAIL] error=$error stack=$stackTrace',
       );
       if (!mounted) return;
       setState(() => _bgVideoFailed = true);
+    }
+  }
+
+  /// Initialise the Card 1 tablet-landscape background video and
+  /// mute it. Playback is owned by [_applyHeroVideoLane] so the
+  /// portrait lane can stay paused while landscape is active.
+  /// Mirrors [_initBgVideo] otherwise: errors are swallowed, the
+  /// landscape PNG poster covers the same panel, and at most one
+  /// success / one failure log is emitted. The distinct
+  /// `BG_LANDSCAPE_VIDEO_*` log tags make it obvious in QA logs
+  /// which controller emitted which event.
+  Future<void> _initBgLandscapeVideo() async {
+    try {
+      await _bgLandscapeVideoController.initialize();
+      if (!mounted) return;
+      await _bgLandscapeVideoController.setLooping(true);
+      await _bgLandscapeVideoController.setVolume(0);
+      if (!mounted) return;
+      setState(() => _bgLandscapeVideoReady = true);
+      debugPrint('[ORIENTATION_FLOW][BG_LANDSCAPE_VIDEO_OK] looping silent');
+      await _applyHeroVideoLane(_syncedHeroVideoLane);
+    } catch (error, stackTrace) {
+      debugPrint(
+        '[ORIENTATION_FLOW][BG_LANDSCAPE_VIDEO_FAIL] '
+        'error=$error stack=$stackTrace',
+      );
+      if (!mounted) return;
+      setState(() => _bgLandscapeVideoFailed = true);
+    }
+  }
+
+  /// Starts portrait MP4 initialisation if not already in flight.
+  void _ensurePortraitVideoInit() {
+    if (_portraitVideoInitStarted || _bgVideoFailed) return;
+    _portraitVideoInitStarted = true;
+    unawaited(_initBgVideo());
+  }
+
+  /// Starts landscape MP4 initialisation if not already in flight.
+  void _ensureLandscapeVideoInit() {
+    if (_landscapeVideoInitStarted || _bgLandscapeVideoFailed) return;
+    _landscapeVideoInitStarted = true;
+    unawaited(_initBgLandscapeVideo());
+  }
+
+  /// Reconciles which Card 1 tablet-hero video should be playing
+  /// after a page change or orientation change. Lazy-inits only the
+  /// lane that is actually visible and pauses the other so we never
+  /// keep two platform decoders running in parallel.
+  void _syncHeroVideoPlayback({
+    required bool isWelcome,
+    required bool isTabletPortrait,
+    required bool isTabletLandscape,
+  }) {
+    final _HeroVideoLane target;
+    if (!isWelcome) {
+      target = _HeroVideoLane.none;
+    } else if (isTabletLandscape) {
+      target = _HeroVideoLane.landscape;
+    } else if (isTabletPortrait) {
+      target = _HeroVideoLane.portrait;
+    } else {
+      target = _HeroVideoLane.none;
+    }
+    if (target == _syncedHeroVideoLane) return;
+    _syncedHeroVideoLane = target;
+    if (target == _HeroVideoLane.portrait) {
+      _ensurePortraitVideoInit();
+    } else if (target == _HeroVideoLane.landscape) {
+      _ensureLandscapeVideoInit();
+    }
+    unawaited(_applyHeroVideoLane(target));
+  }
+
+  /// Applies play / pause to match [lane]. The inactive controller
+  /// is always paused; the active lane plays only once its init
+  /// helper has latched `*Ready` and not `*Failed` (PNG fallback
+  /// otherwise). Errors are swallowed — the video is decorative.
+  Future<void> _applyHeroVideoLane(_HeroVideoLane lane) async {
+    try {
+      if (_bgVideoController.value.isInitialized &&
+          lane != _HeroVideoLane.portrait) {
+        await _bgVideoController.pause();
+      }
+      if (_bgLandscapeVideoController.value.isInitialized &&
+          lane != _HeroVideoLane.landscape) {
+        await _bgLandscapeVideoController.pause();
+      }
+      if (lane == _HeroVideoLane.portrait &&
+          _bgVideoReady &&
+          !_bgVideoFailed &&
+          !_bgVideoController.value.isPlaying) {
+        await _bgVideoController.play();
+      }
+      if (lane == _HeroVideoLane.landscape &&
+          _bgLandscapeVideoReady &&
+          !_bgLandscapeVideoFailed &&
+          !_bgLandscapeVideoController.value.isPlaying) {
+        await _bgLandscapeVideoController.play();
+      }
+    } catch (_) {
+      // Decorative hero — a pause/play hiccup during rotation must
+      // never surface to the operator; PNG fallback covers the gap.
     }
   }
 
@@ -320,6 +490,15 @@ class _BusinessOrientationFlowPageState
     // fade + slide-up. Using forward(from: 0) is safe here regardless
     // of the controller's previous status.
     _entranceController.forward(from: 0);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final size = MediaQuery.sizeOf(context);
+      _syncHeroVideoPlayback(
+        isWelcome: next == 0,
+        isTabletPortrait: size.width < size.height && size.shortestSide >= 600,
+        isTabletLandscape: size.width > size.height && size.shortestSide >= 600,
+      );
+    });
   }
 
   Future<void> _goNext() async {
@@ -384,71 +563,126 @@ class _BusinessOrientationFlowPageState
         // the generic icon + title + body composition.
         final bool isTabletPortrait =
             size.width < size.height && size.shortestSide >= 600;
+        // Companion detection for the new Card 1 tablet-landscape
+        // video hero. Same shortestSide >= 600 minimum-tablet bar,
+        // mirrored to width > height. Phones (any orientation) and
+        // Cards 2-7 ignore this flag and stay on the generic
+        // icon + title + body composition.
+        final bool isTabletLandscape =
+            size.width > size.height && size.shortestSide >= 600;
 
         // Switch the Scaffold (and therefore the SafeArea cutouts +
         // page-chrome margins around the hero) to a near-black canvas
-        // ONLY while Card 1 is the active page in tablet portrait, so
-        // the immersive video hero stops reading as a card floating
-        // on navy. All other states use the regular navy palette,
-        // exactly as before. The change snaps on page settle (driven
-        // by [_index]); this is acceptable because the PageView's
-        // own swipe transition already pulls the user's eye to the
-        // moving page content.
-        final bool isWelcomeTabletPortrait = _index == 0 && isTabletPortrait;
-        final Color scaffoldBackground = isWelcomeTabletPortrait
-            ? _heroBg
-            : _bg;
+        // ONLY while Card 1 is the active page on a tablet (portrait
+        // or landscape), so the immersive video hero stops reading
+        // as a card floating on navy. All other states use the
+        // regular navy palette, exactly as before. The change snaps
+        // on page settle (driven by [_index]); this is acceptable
+        // because the PageView's own swipe transition already pulls
+        // the user's eye to the moving page content.
+        final bool isWelcomeTabletHero =
+            _index == 0 && (isTabletPortrait || isTabletLandscape);
+        final Color scaffoldBackground = isWelcomeTabletHero ? _heroBg : _bg;
+
+        // Card 1 tablet landscape uses a FULL-VIEWPORT background
+        // hero rendered behind the SafeArea + Column, instead of a
+        // slot-bound panel. The page-counter / Skip row and the
+        // dots / Previous / Next row float on top of the video, so
+        // the hero is no longer cramped between two horizontal
+        // bars. Card 1 tablet portrait keeps its in-slot rounded
+        // panel hero (approved + committed); Cards 2-7 and phone
+        // layouts are unchanged.
+        final bool useLandscapeFullHero = _index == 0 && isTabletLandscape;
+
+        // Keep only one Card 1 tablet-hero decoder active. Runs
+        // post-frame so [MediaQuery] is stable and we do not call
+        // play/pause synchronously inside [build].
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          _syncHeroVideoPlayback(
+            isWelcome: _index == 0,
+            isTabletPortrait: isTabletPortrait,
+            isTabletLandscape: isTabletLandscape,
+          );
+        });
 
         return Scaffold(
           backgroundColor: scaffoldBackground,
-          body: SafeArea(
-            child: Column(
-              children: <Widget>[
-                _buildTopBar(isCompactHeight),
-                Expanded(
-                  child: PageView.builder(
-                    controller: _pageController,
-                    onPageChanged: _onPageChanged,
-                    itemCount: _cards.length,
-                    itemBuilder: (ctx, i) {
-                      final _OrientationCardData card = _cards[i];
-                      // Card 1 in tablet portrait runs the immersive
-                      // video hero. We bypass the generic 640 px card
-                      // cap so the hero uses most of the tablet width,
-                      // and anchor it to the top of the slot
-                      // ([Alignment.topCenter]) so the artwork's hero
-                      // region sits high on the screen instead of
-                      // floating in the middle with large empty space
-                      // above. Every other card and layout keeps the
-                      // existing centred, capped behaviour.
-                      final bool useFullWidthHero =
-                          card.id == 'welcome' && isTabletPortrait;
-                      return Align(
-                        alignment: useFullWidthHero
-                            ? Alignment.topCenter
-                            : Alignment.center,
-                        child: ConstrainedBox(
-                          constraints: BoxConstraints(
-                            maxWidth: useFullWidthHero
-                                ? double.infinity
-                                : maxCardWidth,
-                          ),
-                          child: _buildCard(
-                            card,
-                            isCompactHeight,
-                            isTabletPortrait: isTabletPortrait,
-                          ),
-                        ),
-                      );
-                    },
-                  ),
+          body: Stack(
+            children: <Widget>[
+              // Background layer — full-viewport landscape hero,
+              // only when Card 1 is the active page in tablet
+              // landscape. Sits behind the SafeArea + Column so the
+              // existing topbar / bottom controls float on top of
+              // the video.
+              if (useLandscapeFullHero)
+                Positioned.fill(
+                  child: _buildWelcomeTabletLandscapeFullViewportHero(size),
                 ),
-                _buildBottomBar(
-                  isCompactHeight,
-                  isLast: _index == _cards.length - 1,
+              // Foreground layer — the existing chrome + PageView
+              // composition. Identical to the pre-refactor layout
+              // for portrait, phones, and Cards 2-7. For Card 1 in
+              // tablet landscape, the PageView slot is intentionally
+              // transparent so the background hero remains fully
+              // visible underneath.
+              SafeArea(
+                child: Column(
+                  children: <Widget>[
+                    _buildTopBar(isCompactHeight),
+                    Expanded(
+                      child: PageView.builder(
+                        controller: _pageController,
+                        onPageChanged: _onPageChanged,
+                        itemCount: _cards.length,
+                        itemBuilder: (ctx, i) {
+                          final _OrientationCardData card = _cards[i];
+                          // Card 1 tablet landscape: empty
+                          // transparent slot. The dedicated full-
+                          // viewport hero behind this Stack is what
+                          // the user sees here. PageView still
+                          // owns the swipe gesture, so swiping
+                          // forward to Card 2 keeps working.
+                          if (card.id == 'welcome' && isTabletLandscape) {
+                            return const SizedBox.expand();
+                          }
+                          // Card 1 tablet portrait keeps the in-slot
+                          // immersive video hero — bypass the 640 px
+                          // generic card cap and anchor top-centre so
+                          // the artwork's hero region sits high on
+                          // the screen with the taller portrait
+                          // artwork. Every other card / layout keeps
+                          // the existing centred, capped behaviour.
+                          final bool useFullWidthHeroPortrait =
+                              card.id == 'welcome' && isTabletPortrait;
+                          return Align(
+                            alignment: useFullWidthHeroPortrait
+                                ? Alignment.topCenter
+                                : Alignment.center,
+                            child: ConstrainedBox(
+                              constraints: BoxConstraints(
+                                maxWidth: useFullWidthHeroPortrait
+                                    ? double.infinity
+                                    : maxCardWidth,
+                              ),
+                              child: _buildCard(
+                                card,
+                                isCompactHeight,
+                                isTabletPortrait: isTabletPortrait,
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                    _buildBottomBar(
+                      isCompactHeight,
+                      isLast: _index == _cards.length - 1,
+                      landscapeFullHero: useLandscapeFullHero,
+                    ),
+                  ],
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
         );
       },
@@ -501,14 +735,31 @@ class _BusinessOrientationFlowPageState
     );
   }
 
-  Widget _buildBottomBar(bool compact, {required bool isLast}) {
-    final double verticalButtonPadding = compact ? 10 : 14;
-    return Padding(
-      padding: EdgeInsets.fromLTRB(20, compact ? 6 : 10, 20, compact ? 10 : 16),
+  Widget _buildBottomBar(
+    bool compact, {
+    required bool isLast,
+    bool landscapeFullHero = false,
+  }) {
+    // Card 1 tablet-landscape full-hero mode uses a tighter bottom
+    // bar so the dots / Previous / Next row collides less with the
+    // artwork's bottom panels and the overlaid "Bookings / Drivers /
+    // Link" captions. Portrait and Cards 2-7 keep the original
+    // spacing exactly as approved.
+    final double verticalButtonPadding = landscapeFullHero
+        ? 10
+        : (compact ? 10 : 14);
+    final Widget barContent = Padding(
+      padding: EdgeInsets.fromLTRB(
+        20,
+        landscapeFullHero ? 4 : (compact ? 6 : 10),
+        20,
+        landscapeFullHero ? 8 : (compact ? 10 : 16),
+      ),
       child: Column(
+        mainAxisSize: MainAxisSize.min,
         children: <Widget>[
           _buildDots(),
-          SizedBox(height: compact ? 8 : 14),
+          SizedBox(height: landscapeFullHero ? 6 : (compact ? 8 : 14)),
           Row(
             children: <Widget>[
               Expanded(
@@ -585,6 +836,22 @@ class _BusinessOrientationFlowPageState
         ],
       ),
     );
+    if (!landscapeFullHero) return barContent;
+    // Subtle bottom scrim so dots / buttons stay legible over the
+    // full-bleed video without extending so high that it covers the
+    // "Bookings / Drivers / Link" captions anchored ~74 % up the
+    // viewport. The gradient is confined to this bottom-bar column.
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: <Color>[Colors.transparent, _heroBg.withOpacity(0.88)],
+          stops: const <double>[0.0, 0.72],
+        ),
+      ),
+      child: barContent,
+    );
   }
 
   Widget _buildDots() {
@@ -615,17 +882,21 @@ class _BusinessOrientationFlowPageState
     final double iconBoxSize = compact ? 44 : 64;
 
     // Card 1 tablet portrait gets the premium video hero background.
-    // No Flutter text/badges/tiles are layered yet; this pass is
-    // video-background-only so we can confirm asset playback and
-    // sizing on real tablets before adding the foreground layer.
+    // The Flutter text/badges/callout/labels overlay is layered on
+    // top of the looping silent MP4 inside
+    // [_buildWelcomeTabletPortraitVideoHero].
+    //
+    // Card 1 tablet landscape is intentionally NOT routed here — its
+    // PageView slot is short-circuited to a transparent
+    // [SizedBox.expand] in [build] so the dedicated full-viewport
+    // hero behind the Stack remains fully visible.
     if (data.id == 'welcome' && isTabletPortrait) {
       return _buildWelcomeTabletPortraitVideoHero();
     }
 
     // Stable baseline composition shared by all other cards (welcome
-    // on phones / tablet-landscape, plus Cards 2-7). The only
-    // difference between cards is the [data] they bind — icon, title,
-    // body.
+    // on phones, plus Cards 2-7). The only difference between cards
+    // is the [data] they bind — icon, title, body.
     return Padding(
       padding: EdgeInsets.symmetric(horizontal: 20, vertical: compact ? 6 : 16),
       child: SingleChildScrollView(
@@ -950,8 +1221,11 @@ class _BusinessOrientationFlowPageState
 
   /// Hero title: large white bold text with a subtle drop-shadow
   /// so it remains legible even over the warmer regions of the
-  /// MP4's golden-trail animation.
-  Widget _buildHeroTitle() {
+  /// MP4's golden-trail animation. [fontSize] defaults to the
+  /// approved 38 px portrait headline; landscape passes a smaller
+  /// value so the headline + accent + body trio fits the shorter
+  /// landscape panel.
+  Widget _buildHeroTitle({double fontSize = 38}) {
     return Text(
       _t(
         const _Tr(
@@ -962,13 +1236,13 @@ class _BusinessOrientationFlowPageState
         ),
       ),
       textAlign: TextAlign.center,
-      style: const TextStyle(
+      style: TextStyle(
         color: Colors.white,
-        fontSize: 38,
+        fontSize: fontSize,
         fontWeight: FontWeight.w800,
         height: 1.1,
         letterSpacing: 0.2,
-        shadows: <Shadow>[
+        shadows: const <Shadow>[
           Shadow(
             color: Color(0xCC000000),
             blurRadius: 16,
@@ -1000,9 +1274,16 @@ class _BusinessOrientationFlowPageState
   /// orientation tour. Uses the new "business setup is ready"
   /// message rather than the generic [_OrientationCardData.body]
   /// because the layered hero needs short, action-oriented copy
-  /// while the generic icon-card path on phones / tablet-landscape
-  /// still wants the broader product positioning sentence.
-  Widget _buildHeroBody() {
+  /// while the generic icon-card path on phones still wants the
+  /// broader product positioning sentence.
+  ///
+  /// [fontSize] defaults to the approved 15 px portrait body size;
+  /// [maxLines] is null by default (so portrait keeps its current
+  /// natural-wrap behaviour). Landscape passes a smaller font and
+  /// `maxLines: 3` as a safety net so a particularly long
+  /// localisation trims gracefully rather than blowing the height
+  /// budget.
+  Widget _buildHeroBody({double fontSize = 15, int? maxLines}) {
     return Text(
       _t(
         const _Tr(
@@ -1013,9 +1294,11 @@ class _BusinessOrientationFlowPageState
         ),
       ),
       textAlign: TextAlign.center,
+      maxLines: maxLines,
+      overflow: maxLines == null ? TextOverflow.clip : TextOverflow.ellipsis,
       style: TextStyle(
         color: Colors.white.withOpacity(0.88),
-        fontSize: 15,
+        fontSize: fontSize,
         height: 1.5,
         shadows: const <Shadow>[
           Shadow(
@@ -1040,7 +1323,7 @@ class _BusinessOrientationFlowPageState
   /// phrase reads in gold while the surrounding text stays white.
   /// Subtle drop-shadows keep readability stable across the MP4's
   /// brighter golden-trail frames and the PNG fallback.
-  Widget _buildHeroCallout() {
+  Widget _buildHeroCallout({double fontSize = 15}) {
     final (String lead, String gold) = switch (appLanguageNotifier.value) {
       AppLanguage.nl => ('Alles begint vanuit je ', 'Fluxidi-cockpit'),
       AppLanguage.en => ('Everything starts from your ', 'Fluxidi cockpit'),
@@ -1066,7 +1349,7 @@ class _BusinessOrientationFlowPageState
             TextSpan(
               style: TextStyle(
                 color: Colors.white.withOpacity(0.95),
-                fontSize: 15,
+                fontSize: fontSize,
                 fontWeight: FontWeight.w600,
                 height: 1.3,
                 shadows: textShadows,
@@ -1096,16 +1379,27 @@ class _BusinessOrientationFlowPageState
   /// [TextOverflow.ellipsis]) so a particularly long localisation
   /// (FR "Lien de réservation") trims gracefully rather than
   /// blowing up the row height.
-  Widget _buildHeroBottomLabels() {
+  ///
+  /// [leftTranslateX] and [rightTranslateX] default to the approved
+  /// portrait values (+46 / -46). Landscape passes wider nudges
+  /// because its 4:3 panel spreads the artwork's bottom-thirds
+  /// further from the row centre.
+  Widget _buildHeroBottomLabels({
+    double leftTranslateX = 46,
+    double rightTranslateX = -46,
+    double fontSize = 15,
+  }) {
     // Slightly smaller than the title row so the labels read as
     // captions for the artwork's bottom panels rather than
-    // competing with the main headline.
-    final TextStyle labelStyle = const TextStyle(
+    // competing with the main headline. [fontSize] defaults to
+    // the approved 15 px portrait caption size; landscape passes
+    // a smaller value so the row fits the shallow bottom band.
+    final TextStyle labelStyle = TextStyle(
       color: Colors.white,
-      fontSize: 15,
+      fontSize: fontSize,
       fontWeight: FontWeight.w700,
       letterSpacing: 0.2,
-      shadows: <Shadow>[
+      shadows: const <Shadow>[
         Shadow(color: Color(0xCC000000), blurRadius: 10, offset: Offset(0, 1)),
       ],
     );
@@ -1143,7 +1437,7 @@ class _BusinessOrientationFlowPageState
           ),
           // Nudge rightward so "Bookings" lands above the centre
           // of the artwork's left panel rather than its left edge.
-          translateX: 46,
+          translateX: leftTranslateX,
         ),
         label(
           const _Tr(
@@ -1162,8 +1456,237 @@ class _BusinessOrientationFlowPageState
           const _Tr(nl: 'Link', en: 'Link', fr: 'Lien', es: 'Enlace'),
           // Nudge leftward so "Link" lands above the centre of the
           // artwork's right panel rather than its right edge.
-          translateX: -46,
+          translateX: rightTranslateX,
         ),
+      ],
+    );
+  }
+
+  /// Card 1 tablet-landscape hero, full-viewport variant.
+  ///
+  /// Renders the dedicated landscape MP4 (with PNG poster fallback)
+  /// edge-to-edge across the entire scaffold body, so the page-
+  /// counter / Skip row at the top and the dots / Previous / Next
+  /// row at the bottom float on top of the video instead of
+  /// squeezing it into the PageView's content slot.
+  ///
+  /// The new landscape asset's 1.5988 ratio matches the target
+  /// tablet's logical landscape viewport (≈1408 × 880 → 1.6)
+  /// almost perfectly, so a [BoxFit.cover] full-bleed crops a
+  /// negligible amount of pixels (≈0.1 %) off the right/left edges
+  /// — visually indistinguishable from a perfect fit — while
+  /// guaranteeing the video fills the screen with zero black
+  /// bands. The chrome is overlaid by the SafeArea + Column
+  /// rendered as a sibling on top of this hero in [build], so the
+  /// counter / Skip / dots / Previous / Next remain visible and
+  /// tappable.
+  ///
+  /// We deliberately do NOT use [ClipRRect] here: the hero is
+  /// supposed to feel near-fullscreen, and rounded corners that
+  /// hide partly behind the chrome would read as a card cutout
+  /// rather than a premium full-bleed background.
+  Widget _buildWelcomeTabletLandscapeFullViewportHero(Size viewport) {
+    // One-shot diagnostic so QA can confirm the actual viewport
+    // and decoded media size on a real device. Only fires the
+    // first build the video controller is initialised, so logs
+    // stay focused. Mutating the latch from inside [build] is
+    // safe: it's a debug-only side effect that does NOT trigger
+    // a rebuild.
+    if (!_landscapeLayoutLogged && _bgLandscapeVideoReady) {
+      _landscapeLayoutLogged = true;
+      final Size mediaSize = _bgLandscapeVideoController.value.size;
+      debugPrint(
+        '[ORIENTATION_FLOW][LANDSCAPE_LAYOUT] '
+        'viewport=${viewport.width.toStringAsFixed(0)}x'
+        '${viewport.height.toStringAsFixed(0)} '
+        'media=${mediaSize.width.toStringAsFixed(0)}x'
+        '${mediaSize.height.toStringAsFixed(0)} '
+        'media_ratio='
+        '${_card1WelcomeTabletLandscapeMediaAspectRatio.toStringAsFixed(4)}',
+      );
+    }
+    // Video plays only when the [VideoPlayerController] has
+    // finished initialising AND the controller has not latched
+    // an init / decode failure. The PNG poster covers both the
+    // pre-init window and any post-failure state, so the operator
+    // never sees a blank background.
+    final bool showVideo = _bgLandscapeVideoReady && !_bgLandscapeVideoFailed;
+    return Stack(
+      fit: StackFit.expand,
+      children: <Widget>[
+        // Video, full-bleed via [FittedBox]. [VideoPlayer] does
+        // not accept a [BoxFit] directly, so we wrap it in a
+        // FittedBox sized to the controller's intrinsic frame
+        // dimensions and let FittedBox cover the full viewport.
+        // The asset's near-perfect 1.5988 ratio against the
+        // ≈1.6 viewport means cover crops <1 % — visually a
+        // perfect fit, with zero black bands.
+        if (showVideo)
+          FittedBox(
+            fit: BoxFit.cover,
+            child: SizedBox(
+              width: _bgLandscapeVideoController.value.size.width,
+              height: _bgLandscapeVideoController.value.size.height,
+              child: VideoPlayer(_bgLandscapeVideoController),
+            ),
+          ),
+        // PNG poster, full-bleed. [BoxFit.cover] mirrors the
+        // video's full-bleed behaviour above so the swap from
+        // poster to video is visually invisible.
+        if (!showVideo)
+          Image.asset(
+            _card1WelcomeTabletLandscapeFallbackAsset,
+            fit: BoxFit.cover,
+            errorBuilder: (ctx, error, stackTrace) {
+              debugPrint(
+                '[ORIENTATION_FLOW][BG_LANDSCAPE_PNG_FAIL] error=$error',
+              );
+              return _buildWelcomeMediaUltimateFallback();
+            },
+          ),
+        // Subtle dark vertical gradient overlay. Slightly dims
+        // the very top and the lowest strip of the video so the
+        // page-counter / Skip text and the bottom chrome stay
+        // legible, while leaving the hero text / callout / label
+        // band (≈25–76 % height) vivid. The bottom stop is pulled
+        // up to 0.68 so we do not darken the "Bookings / Drivers /
+        // Link" captions above the button row.
+        DecoratedBox(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: <Color>[
+                _bg.withOpacity(0.32),
+                Colors.transparent,
+                Colors.transparent,
+                _bg.withOpacity(0.28),
+              ],
+              stops: const <double>[0.0, 0.14, 0.68, 1.0],
+            ),
+          ),
+        ),
+        // Localised Flutter text overlay (badge / title / accent
+        // / body / callout / bottom labels). Wrapped in
+        // [IgnorePointer] so the overlay never blocks PageView
+        // swipes, Skip / Previous / Next, or the page-counter
+        // row above. The artwork paints the Fluxidi F-mark and
+        // the bottom decorative panels, so we deliberately do
+        // NOT layer a Flutter F-mark or any panel decorations
+        // here — only the localised text that the video cannot
+        // bake in without losing translation support.
+        Positioned.fill(
+          child: IgnorePointer(
+            child: _buildWelcomeTabletLandscapeOverlay(viewport),
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// Maps a normalised viewport height fraction [f] (0 = top edge,
+  /// 1 = bottom edge) to an [Align] y-axis value. Used exclusively
+  /// by the landscape full-viewport overlay so each element can be
+  /// positioned as a percentage of screen height without reusing
+  /// the portrait panel's alignment fractions.
+  double _landscapeOverlayAlignY(double heightFraction) =>
+      2 * heightFraction - 1;
+
+  /// Localised text overlay layered on top of the Card 1
+  /// tablet-landscape full-viewport hero. Uses landscape-specific
+  /// height fractions tuned against the 16:10 asset on a ≈1408 ×
+  /// 880 logical viewport — deliberately NOT the portrait overlay
+  /// fractions, which were sized for a shorter in-slot panel.
+  ///
+  /// Vertical anchors (fraction of full viewport height):
+  ///   setup badge ≈ 31 %  (between Fluxidi wordmark and title)
+  ///   title       ≈ 36 %
+  ///   accent line ≈ 43 %
+  ///   body        ≈ 47 %  (approved — do not move)
+  ///   callout     ≈ 59 %  (vertically centred in callout frame)
+  ///   bottom caps ≈ 75 %  (between panel icon and horizontal line)
+  ///
+  /// The bottom "Bookings / Drivers / Link" row is shown only when
+  /// the gap between its anchor and the estimated bottom-chrome top
+  /// is at least 24 logical px; otherwise it is hidden rather than
+  /// letting captions sit under the Previous / Next buttons.
+  ///
+  /// We deliberately do NOT render the Flutter F-mark or any frame
+  /// / capsule decorations here — the artwork supplies those.
+  Widget _buildWelcomeTabletLandscapeOverlay(Size viewport) {
+    final double w = viewport.width;
+    final double h = viewport.height;
+    // Per-element max widths — tighter than portrait so long
+    // localised copy (NL/FR/ES) does not sprawl across the wide
+    // full-bleed panel.
+    final double titleMaxWidth = w * 0.68;
+    final double bodyMaxWidth = w * 0.48;
+    final double calloutMaxWidth = w * 0.44;
+    final double labelsMaxWidth = w * 0.90;
+    // Compact landscape bottom bar reserve (dots + buttons +
+    // padding) used to decide whether the bottom captions fit.
+    const double landscapeBottomChromeReserve = 76.0;
+    const double labelHeightFraction = 0.75;
+    final double labelAnchorY = h * labelHeightFraction;
+    final double chromeTopY = h - landscapeBottomChromeReserve;
+    final bool showBottomLabels = (chromeTopY - labelAnchorY) >= 20;
+    return Stack(
+      children: <Widget>[
+        // Setup-complete badge — green capsule centred between the
+        // artwork's "FLUXIDI" wordmark and the welcome title (~31 %).
+        Align(
+          alignment: Alignment(0, _landscapeOverlayAlignY(0.31)),
+          child: _buildHeroSetupBadge(),
+        ),
+        // Large white title (~36 %).
+        Align(
+          alignment: Alignment(0, _landscapeOverlayAlignY(0.36)),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(maxWidth: titleMaxWidth),
+            child: _buildHeroTitle(fontSize: 28),
+          ),
+        ),
+        // Thin gold accent line under the title (~43 %).
+        Align(
+          alignment: Alignment(0, _landscapeOverlayAlignY(0.43)),
+          child: _buildHeroAccentLine(w),
+        ),
+        // Body paragraph (~47 %). Pulled up from 52 % so the copy
+        // sits cleanly between the accent line and the empty callout
+        // frame. [maxLines: 2] keeps it compact on landscape.
+        Align(
+          alignment: Alignment(0, _landscapeOverlayAlignY(0.47)),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(maxWidth: bodyMaxWidth),
+            child: _buildHeroBody(fontSize: 13, maxLines: 2),
+          ),
+        ),
+        // Callout text — vertically centred inside the empty callout
+        // frame painted into the MP4 (~59 %). Horizontal position
+        // is approved; tiny downward nudge from 58 %.
+        Align(
+          alignment: Alignment(0, _landscapeOverlayAlignY(0.59)),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(maxWidth: calloutMaxWidth),
+            child: _buildHeroCallout(fontSize: 13),
+          ),
+        ),
+        // Three short captions between each panel's icon and its
+        // horizontal rule (~75 %). Nudged up from 77 % so the row
+        // clears the rule. "Drivers" stays centred; "Bookings" and
+        // "Link" nudged outward via translateX; "Drivers" stays at 0.
+        if (showBottomLabels)
+          Align(
+            alignment: Alignment(0, _landscapeOverlayAlignY(0.75)),
+            child: SizedBox(
+              width: labelsMaxWidth,
+              child: _buildHeroBottomLabels(
+                leftTranslateX: 154,
+                rightTranslateX: -154,
+                fontSize: 13,
+              ),
+            ),
+          ),
       ],
     );
   }
@@ -1207,6 +1730,9 @@ class _BusinessOrientationFlowPageState
     );
   }
 }
+
+/// Which Card 1 tablet-hero background video lane should be active.
+enum _HeroVideoLane { none, portrait, landscape }
 
 class _OrientationCardData {
   const _OrientationCardData({
