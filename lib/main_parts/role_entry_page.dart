@@ -26,6 +26,17 @@ class RoleEntryPage extends StatelessWidget {
     return isTabletLike && size.width > size.height && size.height >= 700;
   }
 
+  // Compact phone landscape: orientation is landscape AND viewport height is
+  // small enough that the cockpit-style portrait carousel cannot fit. This is
+  // height-based on purpose: most modern phones in landscape have widths
+  // above 768 px, which `FluxidiBreakpoints.classifyWidth` already classifies
+  // as tablet, so a width-based gate would never activate on a real phone.
+  // Tablet landscape always has height >= 700, so the < 600 ceiling cleanly
+  // excludes it.
+  bool _isCompactPhoneLandscape(Size size) {
+    return size.width > size.height && size.height < 600;
+  }
+
   String _backgroundAssetForSize(Size size) {
     if (size.height > size.width && size.width < 600) {
       return 'assets/fluxidi/background_sign_in_page_phone.png';
@@ -36,6 +47,23 @@ class RoleEntryPage extends StatelessWidget {
   List<String> _carouselAssetsForSize(Size size) {
     final isTabletPortrait = _isTabletPortrait(size);
     final isTabletLandscape = _isTabletLandscape(size);
+    // Compact phone landscape uses a single static landscape-oriented
+    // background instead of the rotating per-role carousel. The carousel
+    // index (0..3) still cycles for the role-card highlight ring, but
+    // returning the same asset for every slot prevents disorienting
+    // crossfades on the very limited landscape height. No new assets are
+    // generated; this reuses the dedicated phone-landscape image already
+    // present in `assets/fluxidi/`.
+    if (_isCompactPhoneLandscape(size)) {
+      const phoneLandscapeAsset =
+          'assets/fluxidi/background_sign_in_page_landscape_gsm.png';
+      return const <String>[
+        phoneLandscapeAsset,
+        phoneLandscapeAsset,
+        phoneLandscapeAsset,
+        phoneLandscapeAsset,
+      ];
+    }
     final customerRoleAsset = isTabletPortrait
         ? 'assets/fluxidi/role_customer_bg_tablet_portrait.png'
         : isTabletLandscape
@@ -71,6 +99,7 @@ class RoleEntryPage extends StatelessWidget {
     required List<String> assets,
     required int activeBackgroundIndex,
     required bool isTabletPortrait,
+    required bool isPhoneLandscape,
   }) {
     final activeAsset = assets[activeBackgroundIndex];
     return AnimatedSwitcher(
@@ -83,7 +112,14 @@ class RoleEntryPage extends StatelessWidget {
         width: double.infinity,
         height: double.infinity,
         fit: BoxFit.cover,
-        alignment: isTabletPortrait ? Alignment.center : Alignment.topCenter,
+        // Compact phone landscape: align center so the dedicated landscape
+        // gsm background fills the viewport edge-to-edge without aggressive
+        // top-cropping. Tablet portrait already used center; phones in
+        // portrait keep the existing top-center alignment for the
+        // portrait-oriented hero asset.
+        alignment: (isTabletPortrait || isPhoneLandscape)
+            ? Alignment.center
+            : Alignment.topCenter,
         filterQuality: FilterQuality.high,
         gaplessPlayback: true,
         errorBuilder: (_, __, ___) => const DecoratedBox(
@@ -158,6 +194,10 @@ class RoleEntryPage extends StatelessWidget {
     required IconData icon,
     required double height,
     bool highlighted = false,
+    // Compact form used by phone landscape (3 cards side-by-side). Reduces
+    // icon, fonts and inner padding so each card fits comfortably in
+    // ~200 px width without affecting portrait or tablet layouts.
+    bool compact = false,
   }) {
     const double normalFillOpacity = 0.09;
     const double activeFillOpacity = 0.14;
@@ -170,6 +210,15 @@ class RoleEntryPage extends StatelessWidget {
         ? activeBorderOpacity
         : normalBorderOpacity;
     final glowOpacity = highlighted ? activeGlowOpacity : normalGlowOpacity;
+    final double iconCircleSize = compact ? 48.0 : 74.0;
+    final double iconGlyphSize = compact ? 26.0 : 40.0;
+    final double iconRowGap = compact ? 8.0 : 10.0;
+    final double horizontalPadding = compact ? 9.0 : 12.0;
+    final double verticalPadding = compact ? 6.0 : 8.0;
+    final double titleFontSize = compact ? 14.0 : 18.2;
+    final double subtitleFontSize = compact ? 9.6 : 10.8;
+    final double chevronSize = compact ? 16.0 : 21.0;
+    final double chevronGap = compact ? 2.0 : 4.0;
 
     return SizedBox(
       height: height,
@@ -214,12 +263,15 @@ class RoleEntryPage extends StatelessWidget {
               ],
             ),
             child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              padding: EdgeInsets.symmetric(
+                horizontal: horizontalPadding,
+                vertical: verticalPadding,
+              ),
               child: Row(
                 children: [
                   Container(
-                    width: 74,
-                    height: 74,
+                    width: iconCircleSize,
+                    height: iconCircleSize,
                     decoration: BoxDecoration(
                       color: const Color(0xFF111827).withOpacity(0.08),
                       shape: BoxShape.circle,
@@ -227,9 +279,13 @@ class RoleEntryPage extends StatelessWidget {
                         color: kFluxidiYellow.withOpacity(0.64),
                       ),
                     ),
-                    child: Icon(icon, color: kFluxidiYellow, size: 40),
+                    child: Icon(
+                      icon,
+                      color: kFluxidiYellow,
+                      size: iconGlyphSize,
+                    ),
                   ),
-                  const SizedBox(width: 10),
+                  SizedBox(width: iconRowGap),
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -238,12 +294,13 @@ class RoleEntryPage extends StatelessWidget {
                         Text(
                           title,
                           maxLines: 1,
-                          style: const TextStyle(
-                            color: Color(0xFFFDFDFD),
-                            fontSize: 18.2,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: const Color(0xFFFDFDFD),
+                            fontSize: titleFontSize,
                             fontWeight: FontWeight.w800,
                             letterSpacing: 0.15,
-                            shadows: [
+                            shadows: const [
                               Shadow(
                                 color: Color(0x8A000000),
                                 blurRadius: 6,
@@ -259,7 +316,7 @@ class RoleEntryPage extends StatelessWidget {
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
                             color: Colors.white.withOpacity(0.9),
-                            fontSize: 10.8,
+                            fontSize: subtitleFontSize,
                             fontWeight: FontWeight.w600,
                             height: 1.14,
                             shadows: const [
@@ -274,11 +331,11 @@ class RoleEntryPage extends StatelessWidget {
                       ],
                     ),
                   ),
-                  const SizedBox(width: 4),
+                  SizedBox(width: chevronGap),
                   Icon(
                     Icons.chevron_right_rounded,
                     color: kFluxidiYellow.withOpacity(0.98),
-                    size: 21,
+                    size: chevronSize,
                   ),
                 ],
               ),
@@ -2139,6 +2196,11 @@ class RoleEntryPage extends StatelessWidget {
   }) {
     final viewportSize = MediaQuery.sizeOf(context);
     final isTabletPortrait = _isTabletPortrait(viewportSize);
+    // Height-based detection so it activates on real phones in landscape
+    // even when the viewport width (typically 800-960 px) crosses the
+    // tablet width breakpoint. Tablet landscape always has height >= 700,
+    // so this < 600 ceiling cannot match a tablet.
+    final isScaffoldPhoneLandscape = _isCompactPhoneLandscape(viewportSize);
     return Scaffold(
       backgroundColor: kFluxidiBlack,
       body: SafeArea(
@@ -2150,6 +2212,7 @@ class RoleEntryPage extends StatelessWidget {
                 assets: assets,
                 activeBackgroundIndex: activeBackgroundIndex,
                 isTabletPortrait: isTabletPortrait,
+                isPhoneLandscape: isScaffoldPhoneLandscape,
               ),
             ),
             Positioned.fill(
@@ -2189,8 +2252,21 @@ class RoleEntryPage extends StatelessWidget {
                     isTabletLike && !isLandscape && H >= 900;
                 final isTabletLandscape =
                     isTabletLike && isLandscape && H >= 700;
+                // Compact phone landscape: detected purely from height so
+                // that real phones in landscape (which often classify as
+                // "tablet" by width because viewport width is 800-960 px)
+                // still hit this branch. Tablet landscape always has
+                // H >= 700 so the < 600 ceiling cannot accidentally match
+                // a tablet. Used ONLY by this start page to swap to a
+                // compact 3-column role card row, smaller header and a
+                // top-right language pill so all 3 roles + language stay
+                // visible/tappable above the gesture bar. Phone portrait,
+                // tablet portrait and tablet landscape stay byte-identical.
+                final isPhoneLandscape = isLandscape && H < 600;
                 final contentHorizontalPadding = narrow ? 14.0 : 18.0;
                 final logoTop = isTabletLandscape
+                    ? 6.0
+                    : isPhoneLandscape
                     ? 6.0
                     : (veryCompact ? 16.0 : 24.0);
                 final languageTop = veryCompact ? 4.0 : 6.0;
@@ -2198,17 +2274,32 @@ class RoleEntryPage extends StatelessWidget {
                     constraints.maxWidth -
                     (contentHorizontalPadding * 2) -
                     84.0;
-                final logoWidth = math.max(
-                  170.0,
-                  math.min(
-                    logoMaxBySpace,
-                    constraints.maxWidth * (narrow ? 0.62 : 0.55),
-                  ),
-                );
+                // Phone landscape uses a smaller logo so it sits cleanly
+                // next to the language pill in the very limited top band.
+                final logoWidth = isPhoneLandscape
+                    ? clampDouble(constraints.maxWidth * 0.22, 110.0, 140.0)
+                    : math.max(
+                        170.0,
+                        math.min(
+                          logoMaxBySpace,
+                          constraints.maxWidth * (narrow ? 0.62 : 0.55),
+                        ),
+                      );
                 final logoLeft = isTabletLandscape
                     ? -clampDouble(logoWidth * 0.16, 64.0, 96.0)
                     : 0.0;
                 const contentMaxWidth = 470.0;
+                // Phone landscape gets a wider content column so the 3
+                // compact role cards plus inter-card gaps share the row
+                // comfortably without clipping the right-most card.
+                final phoneLandscapeMaxWidth = clampDouble(
+                  W - 24.0,
+                  480.0,
+                  720.0,
+                );
+                final effectiveMaxContentWidth = isPhoneLandscape
+                    ? phoneLandscapeMaxWidth
+                    : contentMaxWidth;
                 final languageRight = isTabletLandscape
                     ? -clampDouble(
                         ((W - contentMaxWidth) / 2.0) - 36.0,
@@ -2224,33 +2315,51 @@ class RoleEntryPage extends StatelessWidget {
                     : 0.0;
                 final resolvedLanguageTop = isTabletPortrait
                     ? math.max(20.0, languageTop + 14.0)
+                    : isPhoneLandscape
+                    ? 8.0
                     : languageTop;
                 final basePhoneContentTop = veryCompact ? 112.0 : 136.0;
                 final contentTop = isTabletLandscape
                     ? clampDouble(H * 0.40, 330.0, 365.0)
                     : isTabletPortrait
                     ? clampDouble(H * 0.35, 360.0, 500.0)
+                    : isPhoneLandscape
+                    // Phone landscape: tuck content close under the small
+                    // logo so the 3 cards + reassurance fit above the
+                    // gesture bar without scrolling on common ~360 px tall
+                    // landscape phones.
+                    ? clampDouble(H * 0.18, 50.0, 78.0)
                     : basePhoneContentTop;
 
                 final roleCardHeight = isTabletLandscape
                     ? 88.0
                     : isTabletPortrait
                     ? 98.0
+                    : isPhoneLandscape
+                    ? 72.0
                     : (veryCompact ? 92.0 : 98.0);
                 final cardGap = isTabletLandscape
                     ? 4.0
                     : isTabletPortrait
                     ? 6.0
+                    : isPhoneLandscape
+                    // Used as horizontal spacing between the 3 cards in
+                    // the phone-landscape Row.
+                    ? 8.0
                     : (veryCompact ? 5.0 : 6.0);
                 final sectionGap = isTabletLandscape
                     ? 6.0
                     : isTabletPortrait
                     ? 8.0
+                    : isPhoneLandscape
+                    ? 6.0
                     : (veryCompact ? 7.0 : 8.0);
                 final scrollBottomPadding = isTabletLandscape
                     ? 92.0
                     : isTabletPortrait
                     ? 148.0
+                    : isPhoneLandscape
+                    ? 18.0
                     : (veryCompact ? 118.0 : 136.0);
                 final startPrompt = _t(
                   nl: 'Hoe wil je starten?',
@@ -2262,13 +2371,23 @@ class RoleEntryPage extends StatelessWidget {
                   392.0,
                   constraints.maxWidth * (narrow ? 0.85 : 0.8),
                 );
-                final reassuranceWidth = math.min(
-                  280.0,
-                  constraints.maxWidth * (narrow ? 0.78 : 0.66),
-                );
+                final reassuranceWidth = isPhoneLandscape
+                    ? math.min(280.0, constraints.maxWidth * 0.42)
+                    : math.min(
+                        280.0,
+                        constraints.maxWidth * (narrow ? 0.78 : 0.66),
+                      );
+                // Phone landscape lifts the pill out of the centered
+                // content column so it sits at the screen's top-right
+                // corner (inside SafeArea), exactly where the user
+                // expects the language switcher in landscape.
                 final useTopLevelLanguagePill =
-                    isTabletPortrait || isTabletLandscape;
-                final topLevelLanguageRight = isTabletLandscape ? 54.0 : 44.0;
+                    isTabletPortrait || isTabletLandscape || isPhoneLandscape;
+                final topLevelLanguageRight = isTabletLandscape
+                    ? 54.0
+                    : isPhoneLandscape
+                    ? 14.0
+                    : 44.0;
 
                 return Stack(
                   children: [
@@ -2280,7 +2399,13 @@ class RoleEntryPage extends StatelessWidget {
                       ),
                     Center(
                       child: ConstrainedBox(
-                        constraints: const BoxConstraints(maxWidth: 470),
+                        // Phone landscape widens the inner content column
+                        // so the 3 compact role cards fit comfortably in
+                        // a single row. Portrait/tablet keep the 470 px
+                        // ceiling untouched.
+                        constraints: BoxConstraints(
+                          maxWidth: effectiveMaxContentWidth,
+                        ),
                         child: Padding(
                           padding: EdgeInsets.symmetric(
                             horizontal: contentHorizontalPadding,
@@ -2422,81 +2547,172 @@ class RoleEntryPage extends StatelessWidget {
                                         ],
                                       ),
                                       const SizedBox(height: 6),
-                                      Center(
-                                        child: SizedBox(
-                                          width: roleCardWidth,
-                                          child: _roleCard(
-                                            title: _t(
-                                              nl: 'Klant',
-                                              en: 'Customer',
-                                              fr: 'Client',
-                                              es: 'Cliente',
+                                      if (isPhoneLandscape)
+                                        // Phone landscape: 3 compact role
+                                        // cards on a single row so all
+                                        // three labels stay visible above
+                                        // the gesture bar without
+                                        // scrolling on common ~360 px tall
+                                        // landscape phones.
+                                        Row(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.center,
+                                          children: [
+                                            Expanded(
+                                              child: _roleCard(
+                                                title: _t(
+                                                  nl: 'Klant',
+                                                  en: 'Customer',
+                                                  fr: 'Client',
+                                                  es: 'Cliente',
+                                                ),
+                                                subtitle: _t(
+                                                  nl: 'Boek je rit.',
+                                                  en: 'Book your ride.',
+                                                  fr: 'Réservez votre course.',
+                                                  es: 'Reserva tu viaje.',
+                                                ),
+                                                icon: Icons
+                                                    .person_outline_rounded,
+                                                height: roleCardHeight,
+                                                compact: true,
+                                                highlighted:
+                                                    activeBackgroundIndex == 1,
+                                                onTap: () =>
+                                                    _goCustomer(context),
+                                              ),
                                             ),
-                                            subtitle: _t(
-                                              nl: 'Boek je rit.',
-                                              en: 'Book your ride.',
-                                              fr: 'Réservez votre course.',
-                                              es: 'Reserva tu viaje.',
+                                            SizedBox(width: cardGap),
+                                            Expanded(
+                                              child: _roleCard(
+                                                title: _t(
+                                                  nl: 'Bedrijf',
+                                                  en: 'Business',
+                                                  fr: 'Entreprise',
+                                                  es: 'Empresa',
+                                                ),
+                                                subtitle: _t(
+                                                  nl: 'Beheer je vloot.',
+                                                  en: 'Manage your fleet.',
+                                                  fr: 'Gérez votre flotte.',
+                                                  es: 'Gestiona tu flota.',
+                                                ),
+                                                icon: Icons
+                                                    .business_center_rounded,
+                                                height: roleCardHeight,
+                                                compact: true,
+                                                highlighted:
+                                                    activeBackgroundIndex == 2,
+                                                onTap: () => unawaited(
+                                                  _goBusiness(context),
+                                                ),
+                                              ),
                                             ),
-                                            icon: Icons.person_outline_rounded,
-                                            height: roleCardHeight,
-                                            highlighted:
-                                                activeBackgroundIndex == 1,
-                                            onTap: () => _goCustomer(context),
+                                            SizedBox(width: cardGap),
+                                            Expanded(
+                                              child: _roleCard(
+                                                title: _t(
+                                                  nl: 'Chauffeur',
+                                                  en: 'Driver',
+                                                  fr: 'Chauffeur',
+                                                  es: 'Conductor',
+                                                ),
+                                                subtitle: _t(
+                                                  nl: 'Start en rij ritten.',
+                                                  en: 'Start and drive rides.',
+                                                  fr: 'Démarrez et roulez.',
+                                                  es: 'Inicia y conduce viajes.',
+                                                ),
+                                                icon: Icons.local_taxi_rounded,
+                                                height: roleCardHeight,
+                                                compact: true,
+                                                highlighted:
+                                                    activeBackgroundIndex == 3,
+                                                onTap: () => _goDriver(context),
+                                              ),
+                                            ),
+                                          ],
+                                        )
+                                      else ...[
+                                        Center(
+                                          child: SizedBox(
+                                            width: roleCardWidth,
+                                            child: _roleCard(
+                                              title: _t(
+                                                nl: 'Klant',
+                                                en: 'Customer',
+                                                fr: 'Client',
+                                                es: 'Cliente',
+                                              ),
+                                              subtitle: _t(
+                                                nl: 'Boek je rit.',
+                                                en: 'Book your ride.',
+                                                fr: 'Réservez votre course.',
+                                                es: 'Reserva tu viaje.',
+                                              ),
+                                              icon:
+                                                  Icons.person_outline_rounded,
+                                              height: roleCardHeight,
+                                              highlighted:
+                                                  activeBackgroundIndex == 1,
+                                              onTap: () => _goCustomer(context),
+                                            ),
                                           ),
                                         ),
-                                      ),
-                                      SizedBox(height: cardGap),
-                                      Center(
-                                        child: SizedBox(
-                                          width: roleCardWidth,
-                                          child: _roleCard(
-                                            title: _t(
-                                              nl: 'Bedrijf',
-                                              en: 'Business',
-                                              fr: 'Entreprise',
-                                              es: 'Empresa',
+                                        SizedBox(height: cardGap),
+                                        Center(
+                                          child: SizedBox(
+                                            width: roleCardWidth,
+                                            child: _roleCard(
+                                              title: _t(
+                                                nl: 'Bedrijf',
+                                                en: 'Business',
+                                                fr: 'Entreprise',
+                                                es: 'Empresa',
+                                              ),
+                                              subtitle: _t(
+                                                nl: 'Beheer je vloot.',
+                                                en: 'Manage your fleet.',
+                                                fr: 'Gérez votre flotte.',
+                                                es: 'Gestiona tu flota.',
+                                              ),
+                                              icon:
+                                                  Icons.business_center_rounded,
+                                              height: roleCardHeight,
+                                              highlighted:
+                                                  activeBackgroundIndex == 2,
+                                              onTap: () => unawaited(
+                                                _goBusiness(context),
+                                              ),
                                             ),
-                                            subtitle: _t(
-                                              nl: 'Beheer je vloot.',
-                                              en: 'Manage your fleet.',
-                                              fr: 'Gérez votre flotte.',
-                                              es: 'Gestiona tu flota.',
-                                            ),
-                                            icon: Icons.business_center_rounded,
-                                            height: roleCardHeight,
-                                            highlighted:
-                                                activeBackgroundIndex == 2,
-                                            onTap: () =>
-                                                unawaited(_goBusiness(context)),
                                           ),
                                         ),
-                                      ),
-                                      SizedBox(height: cardGap),
-                                      Center(
-                                        child: SizedBox(
-                                          width: roleCardWidth,
-                                          child: _roleCard(
-                                            title: _t(
-                                              nl: 'Chauffeur',
-                                              en: 'Driver',
-                                              fr: 'Chauffeur',
-                                              es: 'Conductor',
+                                        SizedBox(height: cardGap),
+                                        Center(
+                                          child: SizedBox(
+                                            width: roleCardWidth,
+                                            child: _roleCard(
+                                              title: _t(
+                                                nl: 'Chauffeur',
+                                                en: 'Driver',
+                                                fr: 'Chauffeur',
+                                                es: 'Conductor',
+                                              ),
+                                              subtitle: _t(
+                                                nl: 'Start en rij ritten.',
+                                                en: 'Start and drive rides.',
+                                                fr: 'Démarrez et roulez.',
+                                                es: 'Inicia y conduce viajes.',
+                                              ),
+                                              icon: Icons.local_taxi_rounded,
+                                              height: roleCardHeight,
+                                              highlighted:
+                                                  activeBackgroundIndex == 3,
+                                              onTap: () => _goDriver(context),
                                             ),
-                                            subtitle: _t(
-                                              nl: 'Start en rij ritten.',
-                                              en: 'Start and drive rides.',
-                                              fr: 'Démarrez et roulez.',
-                                              es: 'Inicia y conduce viajes.',
-                                            ),
-                                            icon: Icons.local_taxi_rounded,
-                                            height: roleCardHeight,
-                                            highlighted:
-                                                activeBackgroundIndex == 3,
-                                            onTap: () => _goDriver(context),
                                           ),
                                         ),
-                                      ),
+                                      ],
                                       SizedBox(height: sectionGap),
                                       Center(
                                         child: SizedBox(
