@@ -48,6 +48,7 @@ flutter:
 
   assets:
     - assets/fluxidi/
+    - assets/fluxidi/onboarding/
     - assets/Midday Gold Chauffeur/
     - assets/Midnight Bleu Chauffeur/
     - assets/Corporate BLEU Compagny/
