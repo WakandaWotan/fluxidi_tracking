@@ -1,6 +1,10 @@
+import 'dart:async';
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
+import 'package:video_player/video_player.dart';
 
 /// First-version Fluxidi business orientation / product-tour flow.
 ///
@@ -16,10 +20,13 @@ import 'package:fluxidi_tracking/app_strings.dart';
 /// * does NOT touch any backend / Chiron / booking / pricing / payment
 ///   / driver / customer / airport / hotel / event / public-booking
 ///   logic,
-/// * does NOT add image assets — uses Material icons + gradient/glow
-///   only,
-/// * does NOT autoplay — manual nav via swipe + Previous / Next / Skip
-///   / final "Go to cockpit" CTA,
+/// * uses a silent looping MP4 + same-aspect PNG poster as the Card 1
+///   tablet portrait hero background ONLY; every other card and every
+///   other layout still relies on Material icons + gradient/glow,
+/// * does NOT autoplay the *carousel* — manual nav via swipe +
+///   Previous / Next / Skip / final "Go to cockpit" CTA (the welcome
+///   hero video does loop silently in the background, but it never
+///   advances the page),
 /// * does NOT keep its own persistent state (one-shot orientation).
 class BusinessOrientationFlowPage extends StatefulWidget {
   const BusinessOrientationFlowPage({
@@ -66,6 +73,24 @@ class _BusinessOrientationFlowPageState
     duration: const Duration(milliseconds: 1800),
   )..repeat(reverse: true);
 
+  /// Silent, looping background video for Card 1 in tablet portrait.
+  /// Built lazily from the bundled asset; the actual platform
+  /// resources are only allocated by [VideoPlayerController.initialize]
+  /// inside [_initBgVideo].
+  late final VideoPlayerController _bgVideoController =
+      VideoPlayerController.asset(_card1WelcomeTabletPortraitVideoAsset);
+
+  /// True once [_initBgVideo] successfully initialised the video and
+  /// kicked off looping silent playback. Until then we render the PNG
+  /// poster instead.
+  bool _bgVideoReady = false;
+
+  /// True if [_initBgVideo] caught an error during initialisation,
+  /// `setLooping`, `setVolume`, or `play`. Once latched, we stick
+  /// with the PNG fallback for the rest of the flow's lifetime —
+  /// the video is decorative, never essential.
+  bool _bgVideoFailed = false;
+
   int _index = 0;
 
   /// Premium navy / gold palette — matches the dark-navy/gold styling
@@ -77,6 +102,32 @@ class _BusinessOrientationFlowPageState
   static const Color _panelTop = Color(0xFF121A2E);
   static const Color _panelBottom = Color(0xFF0F1726);
   static const Color _gold = Color(0xFFE5B641);
+
+  /// Near-black canvas applied to the Scaffold ONLY while Card 1 is
+  /// the active page in tablet portrait, so the immersive video hero
+  /// reads as a full-screen black/gold premium experience rather
+  /// than a video card floating on the navy app palette. Every other
+  /// card / layout keeps [_bg] for visual continuity with the rest of
+  /// the post-onboarding journey.
+  static const Color _heroBg = Color(0xFF050505);
+
+  /// Silent, looping portrait MP4 (1244 × 1660, 5 s, 24 fps) used as
+  /// the Card 1 tablet portrait hero background. Audio track is muted
+  /// at runtime via [VideoPlayerController.setVolume].
+  static const String _card1WelcomeTabletPortraitVideoAsset =
+      'assets/fluxidi/onboarding/card1_welcome_tablet_portrait_bg.mp4';
+
+  /// Same-aspect PNG poster (1086 × 1448) used as the immediate
+  /// fallback while the MP4 initialises and as the permanent
+  /// fallback if MP4 init fails.
+  static const String _card1WelcomeTabletPortraitFallbackAsset =
+      'assets/fluxidi/onboarding/card1_welcome_tablet_portrait_bg.png';
+
+  /// Intrinsic aspect ratio (width / height) of the MP4 frame. The
+  /// rounded hero panel is sized to this exact ratio via
+  /// [AspectRatio] so the video and PNG poster fill the panel
+  /// edge-to-edge with no distortion or letterboxing.
+  static const double _card1WelcomeMediaAspectRatio = 1244 / 1660;
 
   static const List<_OrientationCardData> _cards = <_OrientationCardData>[
     _OrientationCardData(
@@ -199,6 +250,10 @@ class _BusinessOrientationFlowPageState
     debugPrint('[ORIENTATION_FLOW][OPEN] totalPages=${_cards.length}');
     _logCurrentPage();
     _entranceController.forward();
+    // Fire-and-forget: video init is purely decorative for Card 1
+    // tablet portrait; failures are handled inside [_initBgVideo] by
+    // latching [_bgVideoFailed] and falling back to the PNG poster.
+    unawaited(_initBgVideo());
   }
 
   @override
@@ -206,7 +261,35 @@ class _BusinessOrientationFlowPageState
     _pageController.dispose();
     _entranceController.dispose();
     _accentController.dispose();
+    _bgVideoController.dispose();
     super.dispose();
+  }
+
+  /// Initialise the Card 1 tablet-portrait background video, mute it,
+  /// loop it, and start playback. We deliberately swallow all errors:
+  /// the video is decorative, the PNG poster covers the same panel,
+  /// and a partially-onboarded operator must never see a broken hero.
+  /// Exactly one success and one failure log are emitted to keep the
+  /// orientation flow's logs focused.
+  Future<void> _initBgVideo() async {
+    try {
+      await _bgVideoController.initialize();
+      if (!mounted) return;
+      await _bgVideoController.setLooping(true);
+      // The bundled MP4 has an audio track; the orientation flow is
+      // visual only, so we silence playback before [play] is called.
+      await _bgVideoController.setVolume(0);
+      await _bgVideoController.play();
+      if (!mounted) return;
+      setState(() => _bgVideoReady = true);
+      debugPrint('[ORIENTATION_FLOW][BG_VIDEO_OK] looping silent');
+    } catch (error, stackTrace) {
+      debugPrint(
+        '[ORIENTATION_FLOW][BG_VIDEO_FAIL] error=$error stack=$stackTrace',
+      );
+      if (!mounted) return;
+      setState(() => _bgVideoFailed = true);
+    }
   }
 
   String _t(_Tr tr) {
@@ -295,9 +378,29 @@ class _BusinessOrientationFlowPageState
         // full width of the parent constraint.
         final bool isTablet = size.shortestSide >= 600;
         final double maxCardWidth = isTablet ? 640 : double.infinity;
+        // Minimum-safe tablet-portrait detection used ONLY by the
+        // welcome card to opt into its video-background hero. Phones,
+        // tablet-landscape, and Cards 2-7 ignore this flag and stay on
+        // the generic icon + title + body composition.
+        final bool isTabletPortrait =
+            size.width < size.height && size.shortestSide >= 600;
+
+        // Switch the Scaffold (and therefore the SafeArea cutouts +
+        // page-chrome margins around the hero) to a near-black canvas
+        // ONLY while Card 1 is the active page in tablet portrait, so
+        // the immersive video hero stops reading as a card floating
+        // on navy. All other states use the regular navy palette,
+        // exactly as before. The change snaps on page settle (driven
+        // by [_index]); this is acceptable because the PageView's
+        // own swipe transition already pulls the user's eye to the
+        // moving page content.
+        final bool isWelcomeTabletPortrait = _index == 0 && isTabletPortrait;
+        final Color scaffoldBackground = isWelcomeTabletPortrait
+            ? _heroBg
+            : _bg;
 
         return Scaffold(
-          backgroundColor: _bg,
+          backgroundColor: scaffoldBackground,
           body: SafeArea(
             child: Column(
               children: <Widget>[
@@ -308,10 +411,33 @@ class _BusinessOrientationFlowPageState
                     onPageChanged: _onPageChanged,
                     itemCount: _cards.length,
                     itemBuilder: (ctx, i) {
-                      return Center(
+                      final _OrientationCardData card = _cards[i];
+                      // Card 1 in tablet portrait runs the immersive
+                      // video hero. We bypass the generic 640 px card
+                      // cap so the hero uses most of the tablet width,
+                      // and anchor it to the top of the slot
+                      // ([Alignment.topCenter]) so the artwork's hero
+                      // region sits high on the screen instead of
+                      // floating in the middle with large empty space
+                      // above. Every other card and layout keeps the
+                      // existing centred, capped behaviour.
+                      final bool useFullWidthHero =
+                          card.id == 'welcome' && isTabletPortrait;
+                      return Align(
+                        alignment: useFullWidthHero
+                            ? Alignment.topCenter
+                            : Alignment.center,
                         child: ConstrainedBox(
-                          constraints: BoxConstraints(maxWidth: maxCardWidth),
-                          child: _buildCard(_cards[i], isCompactHeight),
+                          constraints: BoxConstraints(
+                            maxWidth: useFullWidthHero
+                                ? double.infinity
+                                : maxCardWidth,
+                          ),
+                          child: _buildCard(
+                            card,
+                            isCompactHeight,
+                            isTabletPortrait: isTabletPortrait,
+                          ),
                         ),
                       );
                     },
@@ -481,15 +607,25 @@ class _BusinessOrientationFlowPageState
     );
   }
 
-  Widget _buildCard(_OrientationCardData data, bool compact) {
+  Widget _buildCard(
+    _OrientationCardData data,
+    bool compact, {
+    required bool isTabletPortrait,
+  }) {
     final double iconBoxSize = compact ? 44 : 64;
 
-    // Stable baseline composition shared by all 7 cards (welcome
-    // through "ready to start"). The only difference between cards
-    // is the [data] they bind — icon, title, body. A future pass
-    // may re-introduce a richer welcome layout, but for now Card 1
-    // intentionally renders through this same path so we have a
-    // known-good visual baseline before any redesign.
+    // Card 1 tablet portrait gets the premium video hero background.
+    // No Flutter text/badges/tiles are layered yet; this pass is
+    // video-background-only so we can confirm asset playback and
+    // sizing on real tablets before adding the foreground layer.
+    if (data.id == 'welcome' && isTabletPortrait) {
+      return _buildWelcomeTabletPortraitVideoHero();
+    }
+
+    // Stable baseline composition shared by all other cards (welcome
+    // on phones / tablet-landscape, plus Cards 2-7). The only
+    // difference between cards is the [data] they bind — icon, title,
+    // body.
     return Padding(
       padding: EdgeInsets.symmetric(horizontal: 20, vertical: compact ? 6 : 16),
       child: SingleChildScrollView(
@@ -581,6 +717,493 @@ class _BusinessOrientationFlowPageState
           ),
         ),
       ),
+    );
+  }
+
+  /// Card 1 tablet-portrait hero: a rounded full-aspect-ratio panel
+  /// playing the bundled MP4 silently on loop, with the same-aspect
+  /// PNG poster as fallback while the video initialises and as the
+  /// permanent fallback on init failure. The panel is sized via
+  /// [AspectRatio] using [_card1WelcomeMediaAspectRatio] so video
+  /// and PNG fill the rounded clip without distortion or letterboxing.
+  ///
+  /// Foreground content (setup badge, title, body, callout, mini
+  /// tiles, Flutter F-mark) is intentionally NOT rendered here yet —
+  /// this pass is video-background-only.
+  Widget _buildWelcomeTabletPortraitVideoHero() {
+    // Outer padding: 24 px each side horizontally so the hero uses
+    // most of the tablet width without bleeding into the PageView's
+    // gesture margin. 12 px top pulls the hero tight against the
+    // page-counter / Skip row, and 16 px bottom keeps a small
+    // breathing gap before the dots + Previous/Next row.
+    //
+    // We deliberately omit any inner [Center] here: combined with
+    // the [Alignment.topCenter] applied by the outer
+    // PageView itemBuilder for this layout, [AspectRatio] then
+    // shrink-wraps to its computed size and Padding shrink-wraps to
+    // the [AspectRatio] + insets. Result: the hero panel sits high
+    // in the slot with deterministic 12 px / 16 px margins instead
+    // of floating in the middle with a large empty band above.
+    // Video plays only when the [VideoPlayerController] has
+    // finished initialising AND the controller has not latched
+    // an init / decode failure. The PNG poster covers both the
+    // pre-init window and any post-failure state, so the operator
+    // never sees a blank panel.
+    final bool showVideo = _bgVideoReady && !_bgVideoFailed;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(24, 12, 24, 16),
+      child: AspectRatio(
+        aspectRatio: _card1WelcomeMediaAspectRatio,
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(24),
+          child: Stack(
+            fit: StackFit.expand,
+            children: <Widget>[
+              // Video, only when fully initialised AND not failed.
+              // The panel matches the video aspect exactly, so a
+              // direct [VideoPlayer] (no FittedBox) renders the
+              // frame edge-to-edge without distortion.
+              if (showVideo) VideoPlayer(_bgVideoController),
+              // PNG poster while the video loads, and permanently
+              // when the video initialisation latched as failed.
+              if (!showVideo)
+                Image.asset(
+                  _card1WelcomeTabletPortraitFallbackAsset,
+                  fit: BoxFit.cover,
+                  errorBuilder: (ctx, error, stackTrace) {
+                    debugPrint('[ORIENTATION_FLOW][BG_PNG_FAIL] error=$error');
+                    return _buildWelcomeMediaUltimateFallback();
+                  },
+                ),
+              // Subtle dark vertical gradient overlay. Transparent
+              // at the top so the artwork's hero region stays
+              // vivid, ramping into ~30% navy at the bottom so
+              // the text layer below stays readable.
+              DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: <Color>[Colors.transparent, _bg.withOpacity(0.30)],
+                  ),
+                ),
+              ),
+              // Localised Flutter text overlay (badge / title /
+              // accent / body / callout / bottom labels). Sized to
+              // the panel via [Positioned.fill] and wrapped in
+              // [IgnorePointer] so the overlay never blocks
+              // PageView swipes, the Skip / Previous / Next
+              // buttons, or the page-counter row above the panel.
+              // The artwork already paints the Fluxidi F-mark and
+              // the three decorative panels, so we deliberately do
+              // NOT layer a Flutter F-mark or any panel decorations
+              // here — only the localised text that the video
+              // cannot bake in without losing translation support.
+              Positioned.fill(
+                child: IgnorePointer(
+                  child: _buildWelcomeTabletPortraitOverlay(),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Localised text overlay layered on top of the Card 1
+  /// tablet-portrait video hero. Layout uses [LayoutBuilder] +
+  /// [Align] with normalised vertical fractions so each element
+  /// keeps its relative position across whatever exact pixel size
+  /// the [AspectRatio] above happened to compute. We deliberately
+  /// avoid a generic [Column] here so the overlay never reflows the
+  /// hero panel itself — the artwork's F-mark and decorative panels
+  /// stay visible underneath.
+  Widget _buildWelcomeTabletPortraitOverlay() {
+    return LayoutBuilder(
+      builder: (ctx, constraints) {
+        final double w = constraints.maxWidth;
+        // Per-element max widths so long localised copy (NL/FR/ES)
+        // doesn't sprawl edge-to-edge of the hero panel.
+        final double titleMaxWidth = w * 0.86;
+        final double bodyMaxWidth = w * 0.82;
+        // Keep the callout text inside the empty callout frame
+        // already painted into the MP4 — that frame spans roughly
+        // ~60% of the hero width, so cap to w * 0.60 so the text
+        // wraps inside the existing artwork frame instead of
+        // bleeding past it.
+        final double calloutMaxWidth = w * 0.60;
+        final double labelsMaxWidth = w * 0.94;
+        return Stack(
+          children: <Widget>[
+            // Setup-complete badge — green capsule centred under
+            // the artwork's "FLUXIDI" wordmark (~32% of hero
+            // height). The y-alignment formula maps a target
+            // fractional height [f] to Align's y axis: y = 2f - 1.
+            Align(
+              alignment: const Alignment(0, -0.36),
+              child: _buildHeroSetupBadge(),
+            ),
+            // Large white title — anchored at ~39% of hero height.
+            Align(
+              alignment: const Alignment(0, -0.22),
+              child: ConstrainedBox(
+                constraints: BoxConstraints(maxWidth: titleMaxWidth),
+                child: _buildHeroTitle(),
+              ),
+            ),
+            // Thin gold accent line under the title (~44%).
+            Align(
+              alignment: const Alignment(0, -0.12),
+              child: _buildHeroAccentLine(w),
+            ),
+            // Body paragraph (~50%).
+            Align(
+              alignment: Alignment.center,
+              child: ConstrainedBox(
+                constraints: BoxConstraints(maxWidth: bodyMaxWidth),
+                child: _buildHeroBody(),
+              ),
+            ),
+            // Callout text — centred inside the empty callout
+            // frame already painted into the MP4 (~65% of hero
+            // height). We deliberately do NOT render our own
+            // capsule background / border here; the artwork
+            // already supplies the frame, and stacking a Flutter
+            // capsule on top would create a visible double-frame.
+            //
+            // The artwork's empty frame is biased a few pixels
+            // right of the panel's geometric centre, so we apply
+            // a paint-only [Transform.translate] of +10 px on top
+            // of the [Align(0, 0.305)] anchor. Keeping this as a
+            // pixel translation rather than a non-zero
+            // [Alignment.x] makes the offset stable across
+            // tablet widths (which would otherwise scale with the
+            // alignment slack).
+            Align(
+              alignment: const Alignment(0, 0.305),
+              child: Transform.translate(
+                offset: const Offset(10, 0),
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(maxWidth: calloutMaxWidth),
+                  child: _buildHeroCallout(),
+                ),
+              ),
+            ),
+            // Three short labels centred over the artwork's bottom
+            // decorative panels (~79% of hero height). The
+            // artwork's panels are laid out at left/centre/right
+            // thirds, so an [Expanded]-divided [Row] with centred
+            // text aligns visually without depending on pixel
+            // positions of the video frame.
+            Align(
+              alignment: const Alignment(0, 0.58),
+              child: SizedBox(
+                width: labelsMaxWidth,
+                child: _buildHeroBottomLabels(),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  /// Setup-complete capsule — emerald tint + check icon. Localised
+  /// to celebrate that the wizard step that just preceded this flow
+  /// has indeed wired up the operator's business profile.
+  Widget _buildHeroSetupBadge() {
+    const Color successFill = Color(0x3322C55E); // ~20% emerald
+    const Color successText = Color(0xFF7DE2A4);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+      decoration: BoxDecoration(
+        color: successFill,
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: successText.withOpacity(0.48)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          const Icon(Icons.check_circle, size: 16, color: successText),
+          const SizedBox(width: 7),
+          Text(
+            _t(
+              const _Tr(
+                nl: 'Setup voltooid',
+                en: 'Setup complete',
+                fr: 'Configuration terminée',
+                es: 'Configuración completada',
+              ),
+            ),
+            style: const TextStyle(
+              color: successText,
+              fontSize: 13,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0.3,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Hero title: large white bold text with a subtle drop-shadow
+  /// so it remains legible even over the warmer regions of the
+  /// MP4's golden-trail animation.
+  Widget _buildHeroTitle() {
+    return Text(
+      _t(
+        const _Tr(
+          nl: 'Welkom bij Fluxidi',
+          en: 'Welcome to Fluxidi',
+          fr: 'Bienvenue chez Fluxidi',
+          es: 'Bienvenido a Fluxidi',
+        ),
+      ),
+      textAlign: TextAlign.center,
+      style: const TextStyle(
+        color: Colors.white,
+        fontSize: 38,
+        fontWeight: FontWeight.w800,
+        height: 1.1,
+        letterSpacing: 0.2,
+        shadows: <Shadow>[
+          Shadow(
+            color: Color(0xCC000000),
+            blurRadius: 16,
+            offset: Offset(0, 2),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Thin gold accent strip rendered between the title and body —
+  /// width scales with the panel so the line keeps a consistent
+  /// visual weight across tablet sizes (clamped to a sensible
+  /// range so it never stretches absurdly wide or shrinks to a
+  /// dot).
+  Widget _buildHeroAccentLine(double panelWidth) {
+    final double width = (panelWidth * 0.16).clamp(80.0, 160.0);
+    return Container(
+      height: 2,
+      width: width,
+      decoration: BoxDecoration(
+        color: _gold.withOpacity(0.85),
+        borderRadius: BorderRadius.circular(2),
+      ),
+    );
+  }
+
+  /// Hero body paragraph — 3-4 line localised copy describing the
+  /// orientation tour. Uses the new "business setup is ready"
+  /// message rather than the generic [_OrientationCardData.body]
+  /// because the layered hero needs short, action-oriented copy
+  /// while the generic icon-card path on phones / tablet-landscape
+  /// still wants the broader product positioning sentence.
+  Widget _buildHeroBody() {
+    return Text(
+      _t(
+        const _Tr(
+          nl: 'Je bedrijfsbasis is ingesteld. In deze korte rondleiding ontdek je hoe je boekingen, chauffeurs, voertuigen en klanten beheert.',
+          en: "Your business setup is ready. In this short tour, you'll discover how to manage bookings, drivers, vehicles and customers.",
+          fr: 'La base de votre entreprise est configurée. Dans cette courte visite, découvrez comment gérer les réservations, chauffeurs, véhicules et clients.',
+          es: 'La base de tu empresa está configurada. En este breve recorrido descubrirás cómo gestionar reservas, conductores, vehículos y clientes.',
+        ),
+      ),
+      textAlign: TextAlign.center,
+      style: TextStyle(
+        color: Colors.white.withOpacity(0.88),
+        fontSize: 15,
+        height: 1.5,
+        shadows: const <Shadow>[
+          Shadow(
+            color: Color(0x99000000),
+            blurRadius: 10,
+            offset: Offset(0, 1),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Callout content (sparkle icon + localised sentence) layered
+  /// INSIDE the empty callout frame already painted into the
+  /// Card 1 tablet-portrait MP4. We deliberately do NOT wrap this
+  /// in a Container with a background / border — the artwork
+  /// supplies the capsule; an additional Flutter capsule would
+  /// create a visible double-frame.
+  ///
+  /// The sentence is split into [lead] / [gold] / "." spans so the
+  /// "Fluxidi-cockpit" / "Fluxidi cockpit" / "cockpit Fluxidi"
+  /// phrase reads in gold while the surrounding text stays white.
+  /// Subtle drop-shadows keep readability stable across the MP4's
+  /// brighter golden-trail frames and the PNG fallback.
+  Widget _buildHeroCallout() {
+    final (String lead, String gold) = switch (appLanguageNotifier.value) {
+      AppLanguage.nl => ('Alles begint vanuit je ', 'Fluxidi-cockpit'),
+      AppLanguage.en => ('Everything starts from your ', 'Fluxidi cockpit'),
+      AppLanguage.fr => ('Tout commence depuis votre ', 'cockpit Fluxidi'),
+      AppLanguage.es => ('Todo empieza desde tu ', 'cockpit Fluxidi'),
+    };
+    const List<Shadow> textShadows = <Shadow>[
+      Shadow(color: Color(0xCC000000), blurRadius: 10, offset: Offset(0, 1)),
+    ];
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: <Widget>[
+        Icon(
+          Icons.auto_awesome_outlined,
+          color: _gold,
+          size: 18,
+          shadows: textShadows,
+        ),
+        const SizedBox(width: 10),
+        Flexible(
+          child: Text.rich(
+            TextSpan(
+              style: TextStyle(
+                color: Colors.white.withOpacity(0.95),
+                fontSize: 15,
+                fontWeight: FontWeight.w600,
+                height: 1.3,
+                shadows: textShadows,
+              ),
+              children: <InlineSpan>[
+                TextSpan(text: lead),
+                TextSpan(
+                  text: gold,
+                  style: TextStyle(color: _gold, fontWeight: FontWeight.w700),
+                ),
+                const TextSpan(text: '.'),
+              ],
+            ),
+            textAlign: TextAlign.center,
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// Three short localised labels (Bookings / Drivers / Booking
+  /// link) overlaid above the artwork's bottom decorative panels.
+  /// Each label gets a third of the row via [Expanded] so the
+  /// labels track the artwork's left-/centre-/right-thirds layout
+  /// without depending on pixel positions of the video frame.
+  /// Labels stay strictly single-line ([maxLines: 1] +
+  /// [TextOverflow.ellipsis]) so a particularly long localisation
+  /// (FR "Lien de réservation") trims gracefully rather than
+  /// blowing up the row height.
+  Widget _buildHeroBottomLabels() {
+    // Slightly smaller than the title row so the labels read as
+    // captions for the artwork's bottom panels rather than
+    // competing with the main headline.
+    final TextStyle labelStyle = const TextStyle(
+      color: Colors.white,
+      fontSize: 15,
+      fontWeight: FontWeight.w700,
+      letterSpacing: 0.2,
+      shadows: <Shadow>[
+        Shadow(color: Color(0xCC000000), blurRadius: 10, offset: Offset(0, 1)),
+      ],
+    );
+    // [translateX] is a paint-only nudge applied via
+    // [Transform.translate] AFTER layout — the underlying
+    // [Expanded] thirds keep the same width, so the
+    // [maxLines: 1] + ellipsis behaviour is unchanged. Only the
+    // left + right labels are shifted; the centre ("Drivers")
+    // stays at translateX: 0 because the artwork's middle panel
+    // already lines up with the row's central third. Positive
+    // values shift the rendered text rightward; negative leftward.
+    Widget label(_Tr tr, {double translateX = 0}) {
+      return Expanded(
+        child: Transform.translate(
+          offset: Offset(translateX, 0),
+          child: Text(
+            _t(tr),
+            textAlign: TextAlign.center,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: labelStyle,
+          ),
+        ),
+      );
+    }
+
+    return Row(
+      children: <Widget>[
+        label(
+          const _Tr(
+            nl: 'Boekingen',
+            en: 'Bookings',
+            fr: 'Réservations',
+            es: 'Reservas',
+          ),
+          // Nudge rightward so "Bookings" lands above the centre
+          // of the artwork's left panel rather than its left edge.
+          translateX: 46,
+        ),
+        label(
+          const _Tr(
+            nl: 'Chauffeurs',
+            en: 'Drivers',
+            fr: 'Chauffeurs',
+            es: 'Conductores',
+          ),
+        ),
+        label(
+          // Compact localisation for the right panel — the
+          // artwork already shows a QR + link icon, so the caption
+          // can be a single word. Keeps FR/ES from being clipped
+          // by the [maxLines: 1] + ellipsis at narrow widths,
+          // while NL/EN keep parity by also using the short form.
+          const _Tr(nl: 'Link', en: 'Link', fr: 'Lien', es: 'Enlace'),
+          // Nudge leftward so "Link" lands above the centre of the
+          // artwork's right panel rather than its right edge.
+          translateX: -46,
+        ),
+      ],
+    );
+  }
+
+  /// Last-resort fallback when BOTH the MP4 fails to initialise AND
+  /// the PNG poster fails to decode. Renders a navy/gold gradient
+  /// matching the rest of the orientation page so the operator never
+  /// sees a broken or blank hero. In debug builds we surface a tiny
+  /// muted-gold corner label so QA can spot the asset chain failed,
+  /// but the user's eye is drawn to the gradient, not the diagnostic.
+  Widget _buildWelcomeMediaUltimateFallback() {
+    final Widget gradient = DecoratedBox(
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: <Color>[_panelTop, _panelBottom],
+        ),
+      ),
+    );
+    if (!kDebugMode) return gradient;
+    return Stack(
+      fit: StackFit.expand,
+      children: <Widget>[
+        gradient,
+        Padding(
+          padding: const EdgeInsets.all(12),
+          child: Align(
+            alignment: Alignment.bottomLeft,
+            child: Text(
+              'media unavailable',
+              style: TextStyle(
+                color: _gold.withOpacity(0.55),
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 }

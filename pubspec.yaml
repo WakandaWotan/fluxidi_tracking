@@ -37,6 +37,10 @@ dependencies:
   flutter_secure_storage: ^10.1.0
   crypto: ^3.0.7
   speech_to_text: ^7.4.0
+  # Used by the orientation flow to render the Card 1 tablet portrait
+  # MP4 hero background silently and looped, with a same-aspect PNG
+  # poster as fallback. Not used anywhere else in the app yet.
+  video_player: ^2.9.1
 
 dev_dependencies:
   flutter_test:
