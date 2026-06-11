@@ -349,8 +349,14 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
     await showDialog<void>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        backgroundColor: const Color(0xFF141B2F),
+        backgroundColor: _dialogBg,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        titleTextStyle: TextStyle(
+          color: _textPrimary,
+          fontWeight: FontWeight.w800,
+          fontSize: 16,
+        ),
+        contentTextStyle: TextStyle(color: _textSecondary, fontSize: 12.8),
         title: Text(
           _t(
             nl: 'Nieuwe chauffeurcode',
@@ -371,7 +377,7 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                 es: 'Guarda este codigo ahora. No se mostrara de nuevo.',
               ),
               style: TextStyle(
-                color: Colors.orangeAccent.withOpacity(0.95),
+                color: Colors.orangeAccent.withOpacity(_isDark ? 0.95 : 1.0),
                 fontSize: 12.2,
                 fontWeight: FontWeight.w700,
               ),
@@ -387,7 +393,7 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                     )
                   : _displayDriverName(driverName),
               style: TextStyle(
-                color: Colors.white.withOpacity(0.86),
+                color: _textSecondary,
                 fontSize: 12.8,
                 fontWeight: FontWeight.w600,
               ),
@@ -397,14 +403,16 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
               width: double.infinity,
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
               decoration: BoxDecoration(
-                color: const Color(0xFF0F1322),
+                color: _inputFill,
                 borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: _gold.withOpacity(0.38)),
+                border: Border.all(
+                  color: _gold.withOpacity(_isDark ? 0.38 : 0.7),
+                ),
               ),
               child: SelectableText(
                 trimmedCode,
-                style: const TextStyle(
-                  color: Colors.white,
+                style: TextStyle(
+                  color: _textPrimary,
                   fontWeight: FontWeight.w800,
                   fontSize: 16,
                   letterSpacing: 0.4,
@@ -420,11 +428,7 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                 fr: 'Pour le couplage QR, créez un QR de liaison temporaire.',
                 es: 'Para vinculación por QR, crea un QR temporal de vinculación.',
               ),
-              style: TextStyle(
-                color: Colors.white.withOpacity(0.72),
-                fontSize: 11.8,
-                height: 1.3,
-              ),
+              style: TextStyle(color: _textMuted, fontSize: 11.8, height: 1.3),
             ),
           ],
         ),
@@ -446,6 +450,10 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                 ),
               );
             },
+            style: OutlinedButton.styleFrom(
+              foregroundColor: _textPrimary,
+              side: BorderSide(color: _inputBorderColor),
+            ),
             icon: const Icon(Icons.copy_outlined, size: 16),
             label: Text(
               _t(nl: 'Kopieren', en: 'Copy', fr: 'Copier', es: 'Copiar'),
@@ -456,6 +464,10 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
               Navigator.of(dialogContext).pop();
               await onCreateTemporaryQr();
             },
+            style: OutlinedButton.styleFrom(
+              foregroundColor: _textPrimary,
+              side: BorderSide(color: _inputBorderColor),
+            ),
             icon: const Icon(Icons.qr_code_2_outlined, size: 16),
             label: Text(
               _t(
@@ -468,6 +480,10 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
           ),
           FilledButton(
             onPressed: () => Navigator.of(dialogContext).pop(),
+            style: FilledButton.styleFrom(
+              backgroundColor: _gold,
+              foregroundColor: _textOnAccent,
+            ),
             child: Text(
               _t(nl: 'Sluiten', en: 'Close', fr: 'Fermer', es: 'Cerrar'),
             ),
@@ -1580,12 +1596,12 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                 children: [
                   TextSpan(
                     text: '$label: ',
-                    style: TextStyle(color: Colors.white.withOpacity(0.62)),
+                    style: TextStyle(color: _textMuted),
                   ),
                   TextSpan(
                     text: shown,
-                    style: const TextStyle(
-                      color: Colors.white,
+                    style: TextStyle(
+                      color: _textPrimary,
                       fontWeight: FontWeight.w600,
                     ),
                   ),
@@ -1695,130 +1711,218 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
         'fluxidi://driver-link?company_code=${Uri.encodeComponent(companyCode)}&pairing_code=${Uri.encodeComponent(pairingCode)}&challenge_id=${Uri.encodeComponent(challengeId)}&v=1';
     await showDialog<void>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        backgroundColor: const Color(0xFF141B2F),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: Text(
-          _t(
-            nl: 'Tijdelijke koppel-QR',
-            en: 'Temporary pairing QR',
-            fr: 'QR de liaison temporaire',
-            es: 'QR temporal de vinculación',
+      builder: (dialogContext) {
+        // Responsive layout: in phone-class landscape the dialog is very
+        // short (~360 px tall) so the legacy vertical Column would push the
+        // pairing-code container and AlertDialog actions into the QR area.
+        // Detect that case and render the body as a horizontal Row (text on
+        // the left, QR on the right). Tablet/portrait keep the original
+        // vertical Column.
+        final mq = MediaQuery.of(dialogContext);
+        final screen = mq.size;
+        final isCompactLandscape =
+            screen.width > screen.height && screen.height < 500;
+        // Clamp QR size between a minimum that stays scannable and a
+        // maximum that fits the available dialog height. Tablet/portrait
+        // keep the larger 200 px QR.
+        final double qrSize = isCompactLandscape
+            ? (screen.height * 0.5).clamp(140.0, 180.0)
+            : 200.0;
+
+        final driverNameWidget = Text(
+          driverName.trim().isEmpty
+              ? _t(
+                  nl: 'Chauffeur',
+                  en: 'Driver',
+                  fr: 'Chauffeur',
+                  es: 'Conductor',
+                )
+              : _displayDriverName(driverName),
+          style: TextStyle(
+            color: _textSecondary,
+            fontSize: 12.8,
+            fontWeight: FontWeight.w600,
           ),
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              driverName.trim().isEmpty
-                  ? _t(
-                      nl: 'Chauffeur',
-                      en: 'Driver',
-                      fr: 'Chauffeur',
-                      es: 'Conductor',
-                    )
-                  : _displayDriverName(driverName),
-              style: TextStyle(
-                color: Colors.white.withOpacity(0.86),
-                fontSize: 12.8,
-                fontWeight: FontWeight.w600,
-              ),
+        );
+        final oneTimeWarning = Text(
+          _t(
+            nl: 'Deze QR is éénmalig bruikbaar.',
+            en: 'This QR is one-time use.',
+            fr: 'Ce QR est à usage unique.',
+            es: 'Este QR es de un solo uso.',
+          ),
+          style: TextStyle(
+            color: Colors.orangeAccent.withOpacity(_isDark ? 0.95 : 1.0),
+            fontSize: 12.2,
+            fontWeight: FontWeight.w700,
+          ),
+        );
+        final expiryWidget = Text(
+          _temporaryDriverLinkExpiryLabel(
+            expiresAt: expiresAt,
+            expiresInSeconds: expiresInSeconds,
+          ),
+          style: TextStyle(color: _textMuted, fontSize: 11.8),
+        );
+        final qrCard = Container(
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            // QR inner background must remain white for scannability on
+            // every theme.
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+              color: _border.withOpacity(_isDark ? 0.0 : 0.55),
             ),
-            const SizedBox(height: 10),
-            Text(
-              _t(
-                nl: 'Deze QR is éénmalig bruikbaar.',
-                en: 'This QR is one-time use.',
-                fr: 'Ce QR est à usage unique.',
-                es: 'Este QR es de un solo uso.',
-              ),
-              style: TextStyle(
-                color: Colors.orangeAccent.withOpacity(0.95),
-                fontSize: 12.2,
-                fontWeight: FontWeight.w700,
-              ),
+          ),
+          child: QrImageView(
+            data: payload,
+            version: QrVersions.auto,
+            size: qrSize,
+            backgroundColor: Colors.white,
+          ),
+        );
+        final pairingCodeContainer = Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          decoration: BoxDecoration(
+            color: _inputFill,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: _gold.withOpacity(_isDark ? 0.38 : 0.7)),
+          ),
+          child: SelectableText(
+            pairingCode,
+            style: TextStyle(
+              color: _textPrimary,
+              fontWeight: FontWeight.w800,
+              fontSize: 16,
+              letterSpacing: 0.4,
+              fontFamily: 'monospace',
             ),
-            const SizedBox(height: 8),
-            Text(
-              _temporaryDriverLinkExpiryLabel(
-                expiresAt: expiresAt,
-                expiresInSeconds: expiresInSeconds,
-              ),
-              style: TextStyle(
-                color: Colors.white.withOpacity(0.74),
-                fontSize: 11.8,
-              ),
-            ),
-            const SizedBox(height: 10),
-            Center(
-              child: Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(10),
+          ),
+        );
+
+        final Widget contentBody;
+        if (isCompactLandscape) {
+          contentBody = Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    driverNameWidget,
+                    const SizedBox(height: 8),
+                    oneTimeWarning,
+                    const SizedBox(height: 6),
+                    expiryWidget,
+                    const SizedBox(height: 10),
+                    pairingCodeContainer,
+                  ],
                 ),
-                child: QrImageView(
-                  data: payload,
-                  version: QrVersions.auto,
-                  size: 160,
-                  backgroundColor: Colors.white,
-                ),
+              ),
+              const SizedBox(width: 14),
+              qrCard,
+            ],
+          );
+        } else {
+          contentBody = Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              driverNameWidget,
+              const SizedBox(height: 10),
+              oneTimeWarning,
+              const SizedBox(height: 8),
+              expiryWidget,
+              const SizedBox(height: 10),
+              Center(child: qrCard),
+              const SizedBox(height: 10),
+              pairingCodeContainer,
+            ],
+          );
+        }
+
+        return AlertDialog(
+          backgroundColor: _dialogBg,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+          // scrollable: true wraps title+content+actions in a scroll view so
+          // that on very short heights the actions row is pushed below the
+          // content instead of being pinned over the QR.
+          scrollable: true,
+          // Tighten the dialog inset so we have more horizontal room for the
+          // two-column layout in phone landscape, while staying within the
+          // safe area on every form factor.
+          insetPadding: EdgeInsets.symmetric(
+            horizontal: isCompactLandscape ? 24 : 40,
+            vertical: 24,
+          ),
+          titleTextStyle: TextStyle(
+            color: _textPrimary,
+            fontWeight: FontWeight.w800,
+            fontSize: 16,
+          ),
+          contentTextStyle: TextStyle(color: _textSecondary, fontSize: 12.8),
+          title: Text(
+            _t(
+              nl: 'Tijdelijke koppel-QR',
+              en: 'Temporary pairing QR',
+              fr: 'QR de liaison temporaire',
+              es: 'QR temporal de vinculación',
+            ),
+          ),
+          content: ConstrainedBox(
+            constraints: BoxConstraints(
+              // Cap content width so that on tablet landscape the dialog
+              // does not stretch oddly, and on phone landscape the Row has
+              // enough room without forcing horizontal scroll.
+              maxWidth: isCompactLandscape ? 560 : 360,
+            ),
+            child: contentBody,
+          ),
+          actions: [
+            OutlinedButton.icon(
+              onPressed: () async {
+                await Clipboard.setData(ClipboardData(text: pairingCode));
+                if (!dialogContext.mounted) return;
+                ScaffoldMessenger.of(dialogContext).showSnackBar(
+                  SnackBar(
+                    content: Text(
+                      _t(
+                        nl: 'Tijdelijke koppelcode gekopieerd.',
+                        en: 'Temporary pairing code copied.',
+                        fr: 'Code de liaison temporaire copié.',
+                        es: 'Código temporal de vinculación copiado.',
+                      ),
+                    ),
+                  ),
+                );
+              },
+              style: OutlinedButton.styleFrom(
+                foregroundColor: _textPrimary,
+                side: BorderSide(color: _inputBorderColor),
+              ),
+              icon: const Icon(Icons.copy_outlined, size: 16),
+              label: Text(
+                _t(nl: 'Kopieren', en: 'Copy', fr: 'Copier', es: 'Copiar'),
               ),
             ),
-            const SizedBox(height: 10),
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-              decoration: BoxDecoration(
-                color: const Color(0xFF0F1322),
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: _gold.withOpacity(0.38)),
+            FilledButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              style: FilledButton.styleFrom(
+                backgroundColor: _gold,
+                foregroundColor: _textOnAccent,
               ),
-              child: SelectableText(
-                pairingCode,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.w800,
-                  fontSize: 16,
-                  letterSpacing: 0.4,
-                  fontFamily: 'monospace',
-                ),
+              child: Text(
+                _t(nl: 'Sluiten', en: 'Close', fr: 'Fermer', es: 'Cerrar'),
               ),
             ),
           ],
-        ),
-        actions: [
-          OutlinedButton.icon(
-            onPressed: () async {
-              await Clipboard.setData(ClipboardData(text: pairingCode));
-              if (!dialogContext.mounted) return;
-              ScaffoldMessenger.of(dialogContext).showSnackBar(
-                SnackBar(
-                  content: Text(
-                    _t(
-                      nl: 'Tijdelijke koppelcode gekopieerd.',
-                      en: 'Temporary pairing code copied.',
-                      fr: 'Code de liaison temporaire copié.',
-                      es: 'Código temporal de vinculación copiado.',
-                    ),
-                  ),
-                ),
-              );
-            },
-            icon: const Icon(Icons.copy_outlined, size: 16),
-            label: Text(
-              _t(nl: 'Kopieren', en: 'Copy', fr: 'Copier', es: 'Copiar'),
-            ),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(dialogContext).pop(),
-            child: Text(
-              _t(nl: 'Sluiten', en: 'Close', fr: 'Fermer', es: 'Cerrar'),
-            ),
-          ),
-        ],
-      ),
+        );
+      },
     );
   }
 
@@ -2174,8 +2278,14 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xFF141B2F),
+        backgroundColor: _dialogBg,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        titleTextStyle: TextStyle(
+          color: _textPrimary,
+          fontWeight: FontWeight.w800,
+          fontSize: 16,
+        ),
+        contentTextStyle: TextStyle(color: _textSecondary, fontSize: 13),
         title: Text(
           _t(
             nl: 'Chauffeur verwijderen?',
@@ -2195,12 +2305,17 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
+            style: TextButton.styleFrom(foregroundColor: _textSecondary),
             child: Text(
               _t(nl: 'Annuleren', en: 'Cancel', fr: 'Annuler', es: 'Cancelar'),
             ),
           ),
           FilledButton(
             onPressed: () => Navigator.pop(ctx, true),
+            style: FilledButton.styleFrom(
+              backgroundColor: Colors.redAccent,
+              foregroundColor: Colors.white,
+            ),
             child: Text(
               _t(
                 nl: 'Verwijderen',
@@ -2305,8 +2420,8 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
     return Center(
       child: Text(
         _driverCardInitials(driver),
-        style: const TextStyle(
-          color: Colors.white,
+        style: TextStyle(
+          color: _textPrimary,
           fontWeight: FontWeight.w800,
           fontSize: 13,
         ),
@@ -2376,7 +2491,14 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xFF141B2F),
+        backgroundColor: _dialogBg,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        titleTextStyle: TextStyle(
+          color: _textPrimary,
+          fontWeight: FontWeight.w800,
+          fontSize: 16,
+        ),
+        contentTextStyle: TextStyle(color: _textSecondary, fontSize: 13),
         title: Text(
           _t(
             nl: 'Document verwijderen?',
@@ -2396,12 +2518,17 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
+            style: TextButton.styleFrom(foregroundColor: _textSecondary),
             child: Text(
               _t(nl: 'Annuleren', en: 'Cancel', fr: 'Annuler', es: 'Cancelar'),
             ),
           ),
           FilledButton(
             onPressed: () => Navigator.pop(ctx, true),
+            style: FilledButton.styleFrom(
+              backgroundColor: Colors.redAccent,
+              foregroundColor: Colors.white,
+            ),
             child: Text(
               _t(
                 nl: 'Verwijderen',
@@ -2494,6 +2621,21 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
       context,
       driver: driver,
       existing: existing,
+      style: DriverDocumentSheetStyle(
+        sheetBg: _dialogBg,
+        textPrimary: _textPrimary,
+        textSecondary: _textSecondary,
+        textMuted: _textMuted,
+        inputFill: _inputFill,
+        inputBorder: _inputBorderColor,
+        dropdownBg: _isDark ? _panelBg : _subPanelBg,
+        isDark: _isDark,
+        // Premium gold in dark themes; high-contrast dark text in light theme
+        // (Clean Professional). Both keep the icon + label readable on the
+        // pale sheet surface in light theme without losing the gold accent
+        // in Night Gold / Corporate Blue.
+        attachmentButtonForeground: _isDark ? _gold : _textPrimary,
+      ),
     );
     final refreshReason = existing == null
         ? 'drivers_doc_add_or_edit'
@@ -2642,10 +2784,7 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
           if (doc.title.trim().isNotEmpty)
             Text(
               doc.title,
-              style: TextStyle(
-                fontSize: 12,
-                color: Colors.white.withOpacity(0.84),
-              ),
+              style: TextStyle(fontSize: 12, color: _textSecondary),
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
             ),
@@ -2654,9 +2793,7 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
             '${_t(nl: 'Status', en: 'Status', fr: 'Statut', es: 'Estado')}: $statusLabel'
             '${doc.isExpiredByDate && doc.status != DriverDocumentStatuses.expired ? ' (${_t(nl: 'datum verlopen', en: 'date expired', fr: 'date expiree', es: 'fecha caducada')})' : ''}',
             style: TextStyle(
-              color: expiredVisual
-                  ? Colors.orangeAccent
-                  : _textMuted.withOpacity(0.9),
+              color: expiredVisual ? Colors.orangeAccent : _textSecondary,
               fontSize: 12,
             ),
             maxLines: 3,
@@ -2744,8 +2881,10 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                   ),
                   minimumSize: Size.zero,
                   tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  foregroundColor: Colors.white.withOpacity(0.86),
-                  side: BorderSide(color: Colors.white.withOpacity(0.22)),
+                  foregroundColor: _textPrimary,
+                  side: BorderSide(
+                    color: _border.withOpacity(_isDark ? 0.45 : 0.92),
+                  ),
                   backgroundColor: _panelBg,
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(999),
@@ -3232,8 +3371,8 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                                         es: 'Conductor sin nombre',
                                       )
                                     : _displayDriverName(driver.fullName),
-                                style: const TextStyle(
-                                  color: Colors.white,
+                                style: TextStyle(
+                                  color: _textPrimary,
                                   fontWeight: FontWeight.w800,
                                   fontSize: 22,
                                 ),
@@ -3354,7 +3493,10 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                 ),
               ),
             ),
-            Container(width: 1, color: Colors.white.withOpacity(0.09)),
+            Container(
+              width: 1,
+              color: _border.withOpacity(_isDark ? 0.18 : 0.55),
+            ),
             Expanded(
               flex: 27,
               child: Padding(
@@ -3369,8 +3511,8 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                         fr: 'Documents',
                         es: 'Documentos',
                       ),
-                      style: const TextStyle(
-                        color: Colors.white,
+                      style: TextStyle(
+                        color: _textPrimary,
                         fontWeight: FontWeight.w800,
                         fontSize: 20,
                       ),
@@ -3430,8 +3572,8 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                             children: [
                               Text(
                                 docsStatus,
-                                style: const TextStyle(
-                                  color: Colors.white,
+                                style: TextStyle(
+                                  color: _textPrimary,
                                   fontWeight: FontWeight.w700,
                                   fontSize: 15.2,
                                   height: 1.2,
@@ -3443,7 +3585,7 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                               Text(
                                 docsSubStatus,
                                 style: TextStyle(
-                                  color: _textMuted.withOpacity(0.8),
+                                  color: _textSecondary,
                                   fontSize: 13,
                                   height: 1.22,
                                 ),
@@ -3494,7 +3636,10 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                 ),
               ),
             ),
-            Container(width: 1, color: Colors.white.withOpacity(0.09)),
+            Container(
+              width: 1,
+              color: _border.withOpacity(_isDark ? 0.18 : 0.55),
+            ),
             Expanded(
               flex: 25,
               child: Padding(
@@ -4169,8 +4314,8 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                   fr: 'Vérifier les documents',
                   es: 'Revisar documentos',
                 ),
-                style: const TextStyle(
-                  color: Colors.white,
+                style: TextStyle(
+                  color: _textPrimary,
                   fontWeight: FontWeight.w800,
                 ),
               ),
@@ -4181,7 +4326,7 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                   contentPadding: EdgeInsets.zero,
                   title: Text(
                     _displayDriverName(driver.fullName),
-                    style: const TextStyle(color: Colors.white),
+                    style: TextStyle(color: _textPrimary),
                   ),
                   subtitle: Text(
                     _docsInOrderLabel(
@@ -4191,7 +4336,7 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                                 const <DriverDocument>[],
                               ),
                     ),
-                    style: TextStyle(color: Colors.white.withOpacity(0.62)),
+                    style: TextStyle(color: _textSecondary),
                   ),
                   trailing: Icon(
                     Icons.chevron_right,
@@ -5136,10 +5281,7 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                                                               )
                                                             : plate,
                                                         style: TextStyle(
-                                                          color: Colors.white
-                                                              .withOpacity(
-                                                                0.67,
-                                                              ),
+                                                          color: _textSecondary,
                                                           fontSize: 15.5,
                                                         ),
                                                         maxLines: 1,
@@ -6070,7 +6212,7 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                                                 ? 13.0
                                                 : 15.8,
                                             fontWeight: FontWeight.w800,
-                                            color: Colors.white,
+                                            color: _textPrimary,
                                           ),
                                           maxLines: isCompactLandscape ? 1 : 2,
                                           overflow: TextOverflow.ellipsis,
@@ -6320,7 +6462,7 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                                             fontSize: isCompactLandscape
                                                 ? 12.6
                                                 : 13.5,
-                                            color: Colors.white,
+                                            color: _textPrimary,
                                           ),
                                         ),
                                         subtitle: Text(
@@ -6338,7 +6480,7 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                                                   es: 'Toca para ver y gestionar',
                                                 ),
                                           style: TextStyle(
-                                            color: _textMuted.withOpacity(0.72),
+                                            color: _textSecondary,
                                             fontSize: isCompactLandscape
                                                 ? 11.2
                                                 : 12,
@@ -6358,9 +6500,7 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                                                   es: 'Sin documentos.',
                                                 ),
                                                 style: TextStyle(
-                                                  color: _textMuted.withOpacity(
-                                                    0.72,
-                                                  ),
+                                                  color: _textSecondary,
                                                 ),
                                               ),
                                             )
@@ -6538,10 +6678,10 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                                           onPressed: () =>
                                               _openEditDriverDialog(context, d),
                                           style: OutlinedButton.styleFrom(
-                                            foregroundColor: Colors.white,
+                                            foregroundColor: _textPrimary,
                                             side: BorderSide(
-                                              color: Colors.white.withOpacity(
-                                                0.24,
+                                              color: _border.withOpacity(
+                                                _isDark ? 0.45 : 0.92,
                                               ),
                                             ),
                                             backgroundColor: _panelBg,

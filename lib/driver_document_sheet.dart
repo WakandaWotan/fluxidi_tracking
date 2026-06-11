@@ -217,29 +217,79 @@ Future<void> openDriverDocumentFile(
   }
 }
 
+/// Optional palette wiring for the shared driver document editor sheet.
+///
+/// When provided, [showDriverDocumentEditorSheet] uses these colors instead
+/// of its legacy hardcoded dark navy values. This is how the company-side
+/// Manage Drivers page makes the sheet adapt to Clean Professional / other
+/// business themes without changing the driver self-service caller.
+class DriverDocumentSheetStyle {
+  const DriverDocumentSheetStyle({
+    required this.sheetBg,
+    required this.textPrimary,
+    required this.textSecondary,
+    required this.textMuted,
+    required this.inputFill,
+    required this.inputBorder,
+    required this.dropdownBg,
+    required this.isDark,
+    required this.attachmentButtonForeground,
+  });
+
+  final Color sheetBg;
+  final Color textPrimary;
+  final Color textSecondary;
+  final Color textMuted;
+  final Color inputFill;
+  final Color inputBorder;
+  final Color dropdownBg;
+  final bool isDark;
+
+  /// Foreground (icon + label) color for the attachment buttons:
+  /// "Take photo", "Choose from gallery", "Choose file/PDF".
+  /// Caller chooses an accent (gold) for dark themes and a high-contrast
+  /// dark color for light themes; the legacy default keeps the historical
+  /// white-ish look for the driver self-service page.
+  final Color attachmentButtonForeground;
+}
+
+const DriverDocumentSheetStyle _kLegacyDarkSheetStyle =
+    DriverDocumentSheetStyle(
+      sheetBg: Color(0xFF141B2F),
+      textPrimary: Colors.white,
+      textSecondary: Color(0xB3FFFFFF),
+      textMuted: Color(0x99FFFFFF),
+      inputFill: Color(0xFF0B0B0B),
+      inputBorder: Color(0x22FFFFFF),
+      dropdownBg: Color(0xFF111111),
+      isDark: true,
+      attachmentButtonForeground: Colors.white,
+    );
+
 Widget _sheetField(
   TextEditingController ctrl,
   String label, {
   VoidCallback? onChanged,
+  required DriverDocumentSheetStyle style,
 }) {
   return Padding(
     padding: const EdgeInsets.only(bottom: 8),
     child: TextField(
       controller: ctrl,
       onChanged: onChanged == null ? null : (_) => onChanged(),
-      style: const TextStyle(color: Colors.white),
+      style: TextStyle(color: style.textPrimary),
       decoration: InputDecoration(
         labelText: label,
-        labelStyle: const TextStyle(color: Colors.white70),
+        labelStyle: TextStyle(color: style.textSecondary),
         filled: true,
-        fillColor: const Color(0xFF0B0B0B),
+        fillColor: style.inputFill,
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(10),
-          borderSide: const BorderSide(color: Color(0x22FFFFFF)),
+          borderSide: BorderSide(color: style.inputBorder),
         ),
         enabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(10),
-          borderSide: const BorderSide(color: Color(0x22FFFFFF)),
+          borderSide: BorderSide(color: style.inputBorder),
         ),
       ),
     ),
@@ -318,8 +368,10 @@ Future<void> showDriverDocumentEditorSheet(
   DriverDocument? existing,
   bool driverSelfService = false,
   String? initialDocumentType,
+  DriverDocumentSheetStyle? style,
 }) async {
   final picker = ImagePicker();
+  final s = style ?? _kLegacyDarkSheetStyle;
   final preferredType = initialDocumentType?.trim() ?? '';
   var selectedType =
       existing?.documentType ??
@@ -339,7 +391,7 @@ Future<void> showDriverDocumentEditorSheet(
   await showModalBottomSheet<void>(
     context: context,
     isScrollControlled: true,
-    backgroundColor: const Color(0xFF141B2F),
+    backgroundColor: s.sheetBg,
     builder: (ctx) {
       return ValueListenableBuilder<AppLanguage>(
         valueListenable: appLanguageNotifier,
@@ -353,12 +405,16 @@ Future<void> showDriverDocumentEditorSheet(
                 required String es,
               }) => _ddT(lang, nl: nl, en: en, fr: fr, es: es);
 
+              final mq = MediaQuery.of(ctx);
               return Padding(
                 padding: EdgeInsets.only(
                   left: 12,
                   right: 12,
                   top: 12,
-                  bottom: MediaQuery.of(ctx).viewInsets.bottom + 14,
+                  // Reserve space for both the soft keyboard (viewInsets) and
+                  // the system bottom inset / gesture nav (viewPadding) so
+                  // Cancel/Save are always tappable in tablet landscape.
+                  bottom: mq.viewInsets.bottom + mq.viewPadding.bottom + 14,
                 ),
                 child: SingleChildScrollView(
                   child: Column(
@@ -379,7 +435,8 @@ Future<void> showDriverDocumentEditorSheet(
                                 fr: 'Modifier document',
                                 es: 'Editar documento',
                               ),
-                        style: const TextStyle(
+                        style: TextStyle(
+                          color: s.textPrimary,
                           fontWeight: FontWeight.w800,
                           fontSize: 16,
                         ),
@@ -388,6 +445,8 @@ Future<void> showDriverDocumentEditorSheet(
                       DropdownButtonFormField<String>(
                         value: selectedType,
                         isExpanded: true,
+                        style: TextStyle(color: s.textPrimary, fontSize: 14),
+                        iconEnabledColor: s.textSecondary,
                         items: DriverDocumentTypes.all
                             .map(
                               (ty) => DropdownMenuItem(
@@ -395,6 +454,7 @@ Future<void> showDriverDocumentEditorSheet(
                                 child: Text(
                                   driverDocumentTypeLabel(ty, lang),
                                   overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(color: s.textPrimary),
                                 ),
                               ),
                             )
@@ -410,15 +470,25 @@ Future<void> showDriverDocumentEditorSheet(
                             fr: 'Type',
                             es: 'Tipo',
                           ),
+                          labelStyle: TextStyle(color: s.textSecondary),
                           filled: true,
-                          fillColor: const Color(0xFF0B0B0B),
+                          fillColor: s.inputFill,
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(10),
+                            borderSide: BorderSide(color: s.inputBorder),
+                          ),
+                          enabledBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(10),
+                            borderSide: BorderSide(color: s.inputBorder),
+                          ),
                         ),
-                        dropdownColor: const Color(0xFF111111),
+                        dropdownColor: s.dropdownBg,
                       ),
                       const SizedBox(height: 8),
                       _sheetField(
                         titleCtrl,
                         t(nl: 'Titel', en: 'Title', fr: 'Titre', es: 'Titulo'),
+                        style: s,
                       ),
                       Text(
                         t(
@@ -428,7 +498,7 @@ Future<void> showDriverDocumentEditorSheet(
                           es: 'Adjunto',
                         ),
                         style: TextStyle(
-                          color: Colors.white.withOpacity(0.88),
+                          color: s.textSecondary,
                           fontWeight: FontWeight.w600,
                           fontSize: 13,
                         ),
@@ -442,19 +512,28 @@ Future<void> showDriverDocumentEditorSheet(
                                   _pickCamera(picker, ctx, setLocal, (path) {
                                     selectedAttachmentPath = path.trim();
                                   }),
+                              style: OutlinedButton.styleFrom(
+                                foregroundColor: s.attachmentButtonForeground,
+                                side: BorderSide(color: s.inputBorder),
+                              ),
                               icon: const Icon(
                                 Icons.photo_camera_outlined,
                                 size: 18,
                               ),
-                              label: Text(
-                                t(
-                                  nl: 'Foto nemen',
-                                  en: 'Take photo',
-                                  fr: 'Prendre une photo',
-                                  es: 'Tomar foto',
+                              label: FittedBox(
+                                fit: BoxFit.scaleDown,
+                                child: Text(
+                                  t(
+                                    nl: 'Foto nemen',
+                                    en: 'Take photo',
+                                    fr: 'Prendre une photo',
+                                    es: 'Tomar foto',
+                                  ),
+                                  maxLines: 1,
+                                  softWrap: false,
+                                  style: const TextStyle(fontSize: 11),
+                                  textAlign: TextAlign.center,
                                 ),
-                                style: const TextStyle(fontSize: 11),
-                                textAlign: TextAlign.center,
                               ),
                             ),
                           ),
@@ -465,19 +544,28 @@ Future<void> showDriverDocumentEditorSheet(
                                   _pickGallery(picker, ctx, setLocal, (path) {
                                     selectedAttachmentPath = path.trim();
                                   }),
+                              style: OutlinedButton.styleFrom(
+                                foregroundColor: s.attachmentButtonForeground,
+                                side: BorderSide(color: s.inputBorder),
+                              ),
                               icon: const Icon(
                                 Icons.photo_library_outlined,
                                 size: 18,
                               ),
-                              label: Text(
-                                t(
-                                  nl: 'Kies uit galerij',
-                                  en: 'Choose from gallery',
-                                  fr: 'Choisir dans la galerie',
-                                  es: 'Elegir de galeria',
+                              label: FittedBox(
+                                fit: BoxFit.scaleDown,
+                                child: Text(
+                                  t(
+                                    nl: 'Kies uit galerij',
+                                    en: 'Choose from gallery',
+                                    fr: 'Choisir dans la galerie',
+                                    es: 'Elegir de galeria',
+                                  ),
+                                  maxLines: 1,
+                                  softWrap: false,
+                                  style: const TextStyle(fontSize: 11),
+                                  textAlign: TextAlign.center,
                                 ),
-                                style: const TextStyle(fontSize: 11),
-                                textAlign: TextAlign.center,
                               ),
                             ),
                           ),
@@ -490,15 +578,24 @@ Future<void> showDriverDocumentEditorSheet(
                           onPressed: () => _pickFile(ctx, setLocal, (path) {
                             selectedAttachmentPath = path.trim();
                           }),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: s.attachmentButtonForeground,
+                            side: BorderSide(color: s.inputBorder),
+                          ),
                           icon: const Icon(Icons.attach_file, size: 18),
-                          label: Text(
-                            t(
-                              nl: 'Bestand/PDF kiezen',
-                              en: 'Choose file/PDF',
-                              fr: 'Choisir fichier/PDF',
-                              es: 'Elegir archivo/PDF',
+                          label: FittedBox(
+                            fit: BoxFit.scaleDown,
+                            child: Text(
+                              t(
+                                nl: 'Bestand/PDF kiezen',
+                                en: 'Choose file/PDF',
+                                fr: 'Choisir fichier/PDF',
+                                es: 'Elegir archivo/PDF',
+                              ),
+                              maxLines: 1,
+                              softWrap: false,
+                              style: const TextStyle(fontSize: 12),
                             ),
-                            style: const TextStyle(fontSize: 12),
                           ),
                         ),
                       ),
@@ -520,6 +617,7 @@ Future<void> showDriverDocumentEditorSheet(
                           es: 'Ruta manual (opcional)',
                         ),
                         onChanged: () => setLocal(() {}),
+                        style: s,
                       ),
                       const SizedBox(height: 8),
                       Row(
@@ -533,6 +631,7 @@ Future<void> showDriverDocumentEditorSheet(
                                 fr: 'Expiration',
                                 es: 'Caducidad',
                               ),
+                              style: s,
                             ),
                           ),
                           IconButton(
@@ -542,6 +641,7 @@ Future<void> showDriverDocumentEditorSheet(
                               fr: 'Date',
                               es: 'Fecha',
                             ),
+                            color: s.textSecondary,
                             onPressed: () async {
                               final now = DateTime.now();
                               final d = await showDatePicker(
@@ -565,12 +665,18 @@ Future<void> showDriverDocumentEditorSheet(
                         DropdownButtonFormField<String>(
                           value: selectedStatus,
                           isExpanded: true,
+                          style: TextStyle(color: s.textPrimary, fontSize: 14),
+                          iconEnabledColor: s.textSecondary,
                           items: DriverDocumentStatuses.all
                               .map(
-                                (s) => DropdownMenuItem(
-                                  value: s,
+                                (statusValue) => DropdownMenuItem(
+                                  value: statusValue,
                                   child: Text(
-                                    driverDocumentStatusLabel(s, lang),
+                                    driverDocumentStatusLabel(
+                                      statusValue,
+                                      lang,
+                                    ),
+                                    style: TextStyle(color: s.textPrimary),
                                   ),
                                 ),
                               )
@@ -586,10 +692,19 @@ Future<void> showDriverDocumentEditorSheet(
                               fr: 'Statut',
                               es: 'Estado',
                             ),
+                            labelStyle: TextStyle(color: s.textSecondary),
                             filled: true,
-                            fillColor: const Color(0xFF0B0B0B),
+                            fillColor: s.inputFill,
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(10),
+                              borderSide: BorderSide(color: s.inputBorder),
+                            ),
+                            enabledBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(10),
+                              borderSide: BorderSide(color: s.inputBorder),
+                            ),
                           ),
-                          dropdownColor: const Color(0xFF111111),
+                          dropdownColor: s.dropdownBg,
                         ),
                       if (!driverSelfService) const SizedBox(height: 8),
                       _sheetField(
@@ -600,6 +715,7 @@ Future<void> showDriverDocumentEditorSheet(
                           fr: 'Notes',
                           es: 'Notas',
                         ),
+                        style: s,
                       ),
                       const SizedBox(height: 14),
                       Row(
