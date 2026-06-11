@@ -2017,9 +2017,92 @@ class RoleEntryPage extends StatelessWidget {
               }
               return;
             }
-            await _navigateToBusinessHomeWithBootstrapHydration(
-              ctx,
-              reason: 'onboarding_complete',
+            // After a fresh public-company registration succeeded and the
+            // bootstrap token is usable, push the first-run setup choice
+            // page so the operator can pick between:
+            //   - the deterministic step-by-step wizard
+            //     (BusinessFirstRunWizardPage),
+            //   - the full settings cockpit (const BusinessSettingsPage()),
+            //   - or skipping straight to BusinessHomePage.
+            // Each path eventually flows through the same existing
+            // _navigateToBusinessHomeWithBootstrapHydration call so token
+            // hydration, role flagging, and inventory backfill stay
+            // identical to the pre-wizard behavior. Existing companies
+            // with a valid session enter via [_goBusiness] and never reach
+            // this branch, so they are NOT pushed into this flow.
+            if (!ctx.mounted) return;
+            debugPrint('[FIRST_RUN_WIZARD][CHOICE_OPEN]');
+            Navigator.of(ctx).pushReplacement(
+              MaterialPageRoute<void>(
+                builder: (choiceCtx) => BusinessFirstRunSetupChoicePage(
+                  onStartStepWizard: () {
+                    if (!choiceCtx.mounted) return;
+                    debugPrint('[FIRST_RUN_WIZARD][CHOICE_STEP_BY_STEP]');
+                    Navigator.of(choiceCtx).pushReplacement(
+                      MaterialPageRoute<void>(
+                        builder: (wizardCtx) => BusinessFirstRunWizardPage(
+                          onFinished: () {
+                            if (!wizardCtx.mounted) return;
+                            unawaited(
+                              _navigateToBusinessHomeWithBootstrapHydration(
+                                wizardCtx,
+                                reason: 'first_run_wizard_complete',
+                              ),
+                            );
+                          },
+                          onSkipped: () {
+                            if (!wizardCtx.mounted) return;
+                            unawaited(
+                              _navigateToBusinessHomeWithBootstrapHydration(
+                                wizardCtx,
+                                reason: 'first_run_wizard_skipped',
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                    );
+                  },
+                  onOpenFullSettings: () {
+                    if (!choiceCtx.mounted) return;
+                    debugPrint('[FIRST_RUN_WIZARD][OPEN_FULL_SETTINGS]');
+                    // Capture the navigator BEFORE the await: the
+                    // bootstrap-hydration call ends with a pushReplacement
+                    // that disposes the choice page, so choiceCtx becomes
+                    // unmounted. The NavigatorState itself stays alive
+                    // (it's the MaterialApp's navigator).
+                    final navigator = Navigator.of(choiceCtx);
+                    unawaited(() async {
+                      await _navigateToBusinessHomeWithBootstrapHydration(
+                        choiceCtx,
+                        reason: 'first_run_open_full_settings',
+                      );
+                      if (!navigator.mounted) return;
+                      // Push the normal full-cockpit settings page on top
+                      // of BusinessHomePage so the system back button
+                      // returns the operator to BusinessHomePage. No
+                      // wizard, no stepMode — `const BusinessSettingsPage()`
+                      // is byte-identical to the existing Settings quick
+                      // action.
+                      navigator.push(
+                        MaterialPageRoute<void>(
+                          builder: (_) => const BusinessSettingsPage(),
+                        ),
+                      );
+                    }());
+                  },
+                  onSkip: () {
+                    if (!choiceCtx.mounted) return;
+                    debugPrint('[FIRST_RUN_WIZARD][CHOICE_LATER]');
+                    unawaited(
+                      _navigateToBusinessHomeWithBootstrapHydration(
+                        choiceCtx,
+                        reason: 'first_run_choice_later',
+                      ),
+                    );
+                  },
+                ),
+              ),
             );
           },
         ),

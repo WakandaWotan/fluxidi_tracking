@@ -44,6 +44,14 @@ class BusinessSettingsPage extends StatefulWidget {
     this.initialFocus,
     this.stepMode = false,
     this.onStepSaved,
+    this.stepTitle,
+    this.stepSubtitle,
+    this.stepIndex,
+    this.stepTotal,
+    this.onSkipStep,
+    this.skipStepLabel,
+    this.onExitWizard,
+    this.exitWizardLabel,
   });
 
   /// When [stepMode] is true and [initialFocus] matches one of the focusable
@@ -67,15 +75,50 @@ class BusinessSettingsPage extends StatefulWidget {
   /// to the next step. Has no effect outside [stepMode].
   final VoidCallback? onStepSaved;
 
+  /// Optional pre-localized chrome shown when active step mode is on:
+  /// [stepTitle] replaces the AppBar title, [stepSubtitle] is rendered as
+  /// supporting copy in the AppBar progress strip, [stepIndex]/[stepTotal]
+  /// drive a "Stap X van Y" label and a thin LinearProgressIndicator, and
+  /// [onSkipStep] (if non-null) renders a leading-side "Later instellen"
+  /// action so the wizard host can let the user defer setup. All five
+  /// fields default to `null` and have no effect outside step mode, so
+  /// existing `const BusinessSettingsPage()` call sites are unaffected.
+  final String? stepTitle;
+  final String? stepSubtitle;
+  final int? stepIndex;
+  final int? stepTotal;
+  final VoidCallback? onSkipStep;
+
+  /// Optional override for the AppBar per-step skip-action label in
+  /// active step mode. Defaults to `null` → the localized
+  /// "Deze stap overslaan / Skip this step" label is used so users
+  /// cannot accidentally abandon the whole wizard by tapping the
+  /// top-right action. Has no effect outside step mode.
+  final String? skipStepLabel;
+
+  /// Optional whole-wizard exit callback in active step mode. When
+  /// non-null, the AppBar renders a separate "more options" overflow
+  /// menu (3-dot icon) whose single item invokes this callback. Use
+  /// this for "Finish setup later" — distinct from [onSkipStep], which
+  /// only advances one step. Has no effect outside step mode.
+  final VoidCallback? onExitWizard;
+
+  /// Optional override for the overflow menu item label that triggers
+  /// [onExitWizard]. Defaults to localized "Setup later afmaken /
+  /// Finish setup later". Has no effect outside step mode.
+  final String? exitWizardLabel;
+
   @override
   State<BusinessSettingsPage> createState() => _BusinessSettingsPageState();
 }
 
 /// Section ids that may be rendered in isolation via
 /// [BusinessSettingsPage.initialFocus] when [BusinessSettingsPage.stepMode]
-/// is true. Limited to the 6 sections that drive first-run setup; other
-/// settings sections (Google Calendar, payment ownership, cancellation
-/// policy, airport fixed fares, public partner profile, local company)
+/// is true. Includes the 5 required first-run settings sections plus the
+/// optional integrations (Google Calendar, Airport fixed fares — both
+/// skippable, both reuse their existing settings cards, neither blocks
+/// reaching BusinessHomePage). Other settings sections (payment
+/// ownership, cancellation policy, public partner profile, local company)
 /// remain reachable only via the full settings page.
 const Set<String> _kStepFocusableSectionIds = <String>{
   'official_company_details',
@@ -83,6 +126,8 @@ const Set<String> _kStepFocusableSectionIds = <String>{
   'service_setup',
   'pricing_engine',
   'branding_support',
+  'google_calendar',
+  'airport_fixed_fares',
   'public_booking_link',
 };
 
@@ -354,6 +399,25 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
   bool _shouldShowSection(String id) {
     if (!_isActiveStepMode) return true;
     return id == widget.initialFocus;
+  }
+
+  /// Localizes the "Step X of Y" progress label rendered in the AppBar
+  /// strip when active step mode is on. Returns an empty string when
+  /// either index or total is missing so the strip can hide cleanly.
+  String _stepProgressLabel() {
+    final i = widget.stepIndex;
+    final t = widget.stepTotal;
+    if (i == null || t == null || t <= 0) return '';
+    switch (_lang) {
+      case AppLanguage.nl:
+        return 'Stap $i van $t';
+      case AppLanguage.en:
+        return 'Step $i of $t';
+      case AppLanguage.fr:
+        return 'Étape $i sur $t';
+      case AppLanguage.es:
+        return 'Paso $i de $t';
+    }
   }
 
   /// Step-mode wrapper around [_save]. Reuses the existing orchestrator
@@ -6676,13 +6740,146 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
           appBar: AppBar(
             backgroundColor: _pageBg,
             title: Text(
-              _t(
-                nl: 'Bedrijfsinstellingen',
-                en: 'Business settings',
-                fr: 'Parametres entreprise',
-                es: 'Configuracion de empresa',
-              ),
+              (_isActiveStepMode &&
+                      widget.stepTitle != null &&
+                      widget.stepTitle!.trim().isNotEmpty)
+                  ? widget.stepTitle!
+                  : _t(
+                      nl: 'Bedrijfsinstellingen',
+                      en: 'Business settings',
+                      fr: 'Parametres entreprise',
+                      es: 'Configuracion de empresa',
+                    ),
             ),
+            actions:
+                (_isActiveStepMode &&
+                    (widget.onSkipStep != null || widget.onExitWizard != null))
+                ? <Widget>[
+                    // Top-right primary action: per-step skip. Always
+                    // labelled "Deze stap overslaan / Skip this step" so
+                    // users cannot mistake it for a whole-wizard exit.
+                    // The wizard host wires this to a handler that
+                    // advances ONE step.
+                    if (widget.onSkipStep != null)
+                      Padding(
+                        padding: const EdgeInsets.only(right: 4),
+                        child: TextButton(
+                          onPressed: widget.onSkipStep,
+                          style: TextButton.styleFrom(
+                            foregroundColor: _textSecondary,
+                          ),
+                          child: Text(
+                            widget.skipStepLabel ??
+                                _t(
+                                  nl: 'Deze stap overslaan',
+                                  en: 'Skip this step',
+                                  fr: 'Ignorer cette étape',
+                                  es: 'Omitir este paso',
+                                ),
+                          ),
+                        ),
+                      ),
+                    // Secondary, less-prominent action: whole-wizard
+                    // exit ("Finish setup later"). Hidden behind a
+                    // standard 3-dot overflow menu so it cannot be hit
+                    // accidentally while skipping a single step.
+                    if (widget.onExitWizard != null)
+                      PopupMenuButton<String>(
+                        icon: Icon(Icons.more_vert, color: _textSecondary),
+                        tooltip: _t(
+                          nl: 'Meer opties',
+                          en: 'More options',
+                          fr: "Plus d'options",
+                          es: 'Más opciones',
+                        ),
+                        onSelected: (value) {
+                          if (value == 'exit_wizard') {
+                            widget.onExitWizard?.call();
+                          }
+                        },
+                        itemBuilder: (popupCtx) => <PopupMenuEntry<String>>[
+                          PopupMenuItem<String>(
+                            value: 'exit_wizard',
+                            child: Text(
+                              widget.exitWizardLabel ??
+                                  _t(
+                                    nl: 'Setup later afmaken',
+                                    en: 'Finish setup later',
+                                    fr: 'Terminer plus tard',
+                                    es: 'Terminar más tarde',
+                                  ),
+                            ),
+                          ),
+                        ],
+                      ),
+                  ]
+                : null,
+            bottom:
+                (_isActiveStepMode &&
+                    widget.stepIndex != null &&
+                    widget.stepTotal != null &&
+                    widget.stepTotal! > 0)
+                ? PreferredSize(
+                    preferredSize: const Size.fromHeight(54),
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Text(
+                                _stepProgressLabel(),
+                                style: TextStyle(
+                                  color: _textMuted,
+                                  fontSize: 11.5,
+                                  fontWeight: FontWeight.w600,
+                                  letterSpacing: 0.2,
+                                ),
+                              ),
+                              if (widget.stepSubtitle != null &&
+                                  widget.stepSubtitle!.trim().isNotEmpty) ...[
+                                Text(
+                                  '  •  ',
+                                  style: TextStyle(
+                                    color: _textMuted,
+                                    fontSize: 11.5,
+                                  ),
+                                ),
+                                Expanded(
+                                  child: Text(
+                                    widget.stepSubtitle!,
+                                    style: TextStyle(
+                                      color: _textSecondary,
+                                      fontSize: 11.5,
+                                    ),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                              ],
+                            ],
+                          ),
+                          const SizedBox(height: 6),
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(4),
+                            child: LinearProgressIndicator(
+                              value: widget.stepIndex! / widget.stepTotal!,
+                              minHeight: 4,
+                              backgroundColor: _border.withOpacity(
+                                _isDark ? 0.45 : 0.7,
+                              ),
+                              valueColor: AlwaysStoppedAnimation<Color>(
+                                _accent,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  )
+                : null,
           ),
           body: ListView(
             padding: const EdgeInsets.all(12),
@@ -7430,52 +7627,60 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                         ),
                         maxLines: 3,
                       ),
-                      const SizedBox(height: 8),
-                      Align(
-                        alignment: Alignment.centerRight,
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.end,
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            FilledButton.icon(
-                              onPressed: _backendBusinessSaving
-                                  ? null
-                                  : _saveBackendBusinessProfile,
-                              icon: _backendBusinessSaving
-                                  ? const SizedBox(
-                                      width: 16,
-                                      height: 16,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2,
-                                      ),
-                                    )
-                                  : const Icon(Icons.cloud_upload_outlined),
-                              label: Text(
-                                _t(
-                                  nl: 'Bedrijfsgegevens opslaan',
-                                  en: 'Save company details',
-                                  fr: 'Enregistrer les informations',
-                                  es: 'Guardar datos de empresa',
+                      // Section-local "Save company details" button. Hidden
+                      // in active step mode so the wizard's bottom
+                      // "Opslaan en verder" button is the single primary
+                      // step action; in normal full-settings mode this
+                      // button stays visible and behaves exactly like
+                      // before.
+                      if (!_isActiveStepMode) ...[
+                        const SizedBox(height: 8),
+                        Align(
+                          alignment: Alignment.centerRight,
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.end,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              FilledButton.icon(
+                                onPressed: _backendBusinessSaving
+                                    ? null
+                                    : _saveBackendBusinessProfile,
+                                icon: _backendBusinessSaving
+                                    ? const SizedBox(
+                                        width: 16,
+                                        height: 16,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                        ),
+                                      )
+                                    : const Icon(Icons.cloud_upload_outlined),
+                                label: Text(
+                                  _t(
+                                    nl: 'Bedrijfsgegevens opslaan',
+                                    en: 'Save company details',
+                                    fr: 'Enregistrer les informations',
+                                    es: 'Guardar datos de empresa',
+                                  ),
                                 ),
                               ),
-                            ),
-                            const SizedBox(height: 6),
-                            Text(
-                              _t(
-                                nl: 'Slaat alleen de officiële bedrijfsgegevens op.',
-                                en: 'Saves only the official company details.',
-                                fr: 'Enregistre uniquement les informations officielles de l’entreprise.',
-                                es: 'Guarda solo los datos oficiales de la empresa.',
+                              const SizedBox(height: 6),
+                              Text(
+                                _t(
+                                  nl: 'Slaat alleen de officiële bedrijfsgegevens op.',
+                                  en: 'Saves only the official company details.',
+                                  fr: 'Enregistre uniquement les informations officielles de l’entreprise.',
+                                  es: 'Guarda solo los datos oficiales de la empresa.',
+                                ),
+                                style: const TextStyle(
+                                  color: Colors.white54,
+                                  fontSize: 11,
+                                ),
+                                textAlign: TextAlign.right,
                               ),
-                              style: const TextStyle(
-                                color: Colors.white54,
-                                fontSize: 11,
-                              ),
-                              textAlign: TextAlign.right,
-                            ),
-                          ],
+                            ],
+                          ),
                         ),
-                      ),
+                      ],
                     ],
                   ),
                 ),
@@ -7571,49 +7776,60 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                         ),
                         dropdownColor: _subPanelBg,
                       ),
-                      const SizedBox(height: 8),
-                      Align(
-                        alignment: Alignment.centerRight,
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.end,
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            FilledButton.icon(
-                              onPressed: _backendTaxSaving
-                                  ? null
-                                  : _saveBackendTaxProfile,
-                              icon: _backendTaxSaving
-                                  ? const SizedBox(
-                                      width: 16,
-                                      height: 16,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2,
-                                      ),
-                                    )
-                                  : const Icon(Icons.cloud_upload_outlined),
-                              label: Text(
-                                _t(
-                                  nl: 'BTW-instellingen opslaan',
-                                  en: 'Save VAT settings',
-                                  fr: 'Enregistrer TVA',
-                                  es: 'Guardar IVA',
+                      // Section-local "Save VAT settings" button. Hidden
+                      // in active step mode so the wizard's bottom
+                      // "Opslaan en verder" button is the single primary
+                      // step action; in normal full-settings mode this
+                      // button stays visible and behaves exactly like
+                      // before.
+                      if (!_isActiveStepMode) ...[
+                        const SizedBox(height: 8),
+                        Align(
+                          alignment: Alignment.centerRight,
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.end,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              FilledButton.icon(
+                                onPressed: _backendTaxSaving
+                                    ? null
+                                    : _saveBackendTaxProfile,
+                                icon: _backendTaxSaving
+                                    ? const SizedBox(
+                                        width: 16,
+                                        height: 16,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                        ),
+                                      )
+                                    : const Icon(Icons.cloud_upload_outlined),
+                                label: Text(
+                                  _t(
+                                    nl: 'BTW-instellingen opslaan',
+                                    en: 'Save VAT settings',
+                                    fr: 'Enregistrer TVA',
+                                    es: 'Guardar IVA',
+                                  ),
                                 ),
                               ),
-                            ),
-                            const SizedBox(height: 6),
-                            Text(
-                              _t(
-                                nl: 'Slaat alleen de BTW-instellingen op.',
-                                en: 'Saves only the VAT settings.',
-                                fr: 'Enregistre uniquement les paramètres TVA.',
-                                es: 'Guarda solo la configuración de IVA.',
+                              const SizedBox(height: 6),
+                              Text(
+                                _t(
+                                  nl: 'Slaat alleen de BTW-instellingen op.',
+                                  en: 'Saves only the VAT settings.',
+                                  fr: 'Enregistre uniquement les paramètres TVA.',
+                                  es: 'Guarda solo la configuración de IVA.',
+                                ),
+                                style: TextStyle(
+                                  color: _textMuted,
+                                  fontSize: 11,
+                                ),
+                                textAlign: TextAlign.right,
                               ),
-                              style: TextStyle(color: _textMuted, fontSize: 11),
-                              textAlign: TextAlign.right,
-                            ),
-                          ],
+                            ],
+                          ),
                         ),
-                      ),
+                      ],
                     ],
                   ),
                 ),
@@ -8607,21 +8823,34 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                 _airportFixedFareCard(),
               const SizedBox(height: 4),
               if (_isActiveStepMode)
-                FilledButton.icon(
-                  onPressed: _saveAllBusy ? null : _saveAndContinue,
-                  icon: _saveAllBusy
-                      ? const SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.save_outlined),
-                  label: Text(
-                    _t(
-                      nl: 'Opslaan en verder',
-                      en: 'Save and continue',
-                      fr: 'Enregistrer et continuer',
-                      es: 'Guardar y continuar',
+                // SafeArea ensures the wizard's primary "Save and
+                // continue" button is never clipped by Android's gesture
+                // bar / 3-button nav: the button is padded by at least
+                // MediaQuery.padding.bottom (system inset) AND a 12-pixel
+                // minimum so even on devices without a system inset there
+                // is a visible gap. Top is disabled because the AppBar
+                // already handles the top inset. This wrapper is gated on
+                // `_isActiveStepMode` so normal full-settings layout is
+                // unchanged.
+                SafeArea(
+                  top: false,
+                  minimum: const EdgeInsets.only(bottom: 12),
+                  child: FilledButton.icon(
+                    onPressed: _saveAllBusy ? null : _saveAndContinue,
+                    icon: _saveAllBusy
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.save_outlined),
+                    label: Text(
+                      _t(
+                        nl: 'Opslaan en verder',
+                        en: 'Save and continue',
+                        fr: 'Enregistrer et continuer',
+                        es: 'Guardar y continuar',
+                      ),
                     ),
                   ),
                 )
