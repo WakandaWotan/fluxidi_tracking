@@ -2799,7 +2799,11 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                 );
                 final visualMobileCardSpacing = 10.0;
                 final businessHeaderHeight = isTabletLandscape
-                    ? clampDouble(H * 0.17, 110.0, 150.0)
+                    // Slightly taller hero banner so tablet landscape no
+                    // longer leaves a wide empty band at the bottom of the
+                    // page. Phone portrait/landscape and tablet portrait
+                    // branches are unchanged.
+                    ? clampDouble(H * 0.22, 140.0, 200.0)
                     : isTabletPortrait
                     ? clampDouble(H * 0.23, 300.0, 360.0)
                     : null;
@@ -2816,7 +2820,13 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                       'assets/🥇 Fluxidi Neon Rush/company_header_fleet_neon_rush.png',
                 );
                 final businessQuickActionCardHeight = isTabletLandscape
-                    ? clampDouble(H * 0.21, 150.0, 188.0)
+                    // Proportionally taller quick action cards in tablet
+                    // landscape so the 5-column row takes a larger share of
+                    // the available vertical space and pushes Back to start
+                    // page closer to the safe-area bottom. Phone landscape
+                    // (5x2 cockpit) keeps its existing 96–116 px clamp
+                    // below.
+                    ? clampDouble(H * 0.27, 175.0, 230.0)
                     : isTabletPortrait
                     ? clampDouble(H * 0.105, 132.0, 148.0)
                     : isPhoneLandscape
@@ -2839,7 +2849,10 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                     ? visualMobileCardSpacing
                     : 12.0;
                 final businessBackButtonGap = isTabletLandscape
-                    ? clampDouble(H * 0.025, 10.0, 22.0)
+                    // Slightly larger gap above Back to start page so the
+                    // button sits cleanly under the taller quick-action row
+                    // instead of being glued to it.
+                    ? clampDouble(H * 0.04, 14.0, 36.0)
                     : isTabletPortrait
                     ? 10.0
                     : 14.0;
@@ -2848,14 +2861,21 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                     : isTabletPortrait
                     ? 12.0
                     : 20.0;
-                final businessSectionGap = isTabletLandscape ? 6.0 : 10.0;
+                // Section / sub-section vertical gaps. Tablet landscape now
+                // scales these with H so the page breathes proportionally
+                // on 600 / 768 / 800 / 900+ tablet heights. Phone branches
+                // (incl. phone landscape 5x2 cockpit) keep their fixed
+                // values so that layout stays byte-identical.
+                final businessSectionGap = isTabletLandscape
+                    ? clampDouble(H * 0.018, 8.0, 16.0)
+                    : 10.0;
                 final businessQuickActionsTitleGap = isTabletLandscape
-                    ? 8.0
+                    ? clampDouble(H * 0.022, 10.0, 20.0)
                     : isPhoneLandscape
                     ? 8.0
                     : 14.0;
                 final businessQuickActionsGridTopGap = isTabletLandscape
-                    ? 8.0
+                    ? clampDouble(H * 0.018, 8.0, 16.0)
                     : isPhoneLandscape
                     ? 8.0
                     : 10.0;
