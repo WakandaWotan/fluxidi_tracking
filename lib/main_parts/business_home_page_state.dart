@@ -9,6 +9,38 @@ class _BusinessHomePageState extends State<BusinessHomePage>
     required String es,
   }) => _tr(nl: nl, en: en, fr: fr, es: es);
 
+  // Time-aware greeting for the Business Home header. Uses the local
+  // device time only; no backend involved. Hour ranges:
+  //   05:00–11:59 → morning
+  //   12:00–17:59 → afternoon
+  //   18:00–04:59 → evening
+  // Keeps the existing waving-hand emoji and translation style.
+  String _timeAwareGreeting() {
+    final hour = DateTime.now().hour;
+    if (hour >= 5 && hour < 12) {
+      return _t(
+        nl: 'Goedemorgen! 👋',
+        en: 'Good morning! 👋',
+        fr: 'Bonjour ! 👋',
+        es: '¡Buenos días! 👋',
+      );
+    }
+    if (hour >= 12 && hour < 18) {
+      return _t(
+        nl: 'Goedemiddag! 👋',
+        en: 'Good afternoon! 👋',
+        fr: 'Bon après-midi ! 👋',
+        es: '¡Buenas tardes! 👋',
+      );
+    }
+    return _t(
+      nl: 'Goedenavond! 👋',
+      en: 'Good evening! 👋',
+      fr: 'Bonsoir ! 👋',
+      es: '¡Buenas noches! 👋',
+    );
+  }
+
   int? _openBookingsCount;
   int? _completedRidesCount;
   int? _unpaidCompletedRidesCount;
@@ -2730,6 +2762,19 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                         screenClass == FluxidiScreenClass.desktop) &&
                     W > H &&
                     W >= 900;
+                // Phone landscape: any landscape orientation that did not
+                // qualify as tablet/desktop landscape. Used ONLY by the
+                // Quick actions section to render a 5x2 cockpit grid; the
+                // top KPI/summary section continues to use the existing
+                // sizing and remains byte-identical for phones.
+                final isPhoneLandscape =
+                    !isTabletLandscape && !isTabletPortrait && W > H;
+                // Shared compact-card flag for quick-action cards that
+                // applies to both tablet landscape (existing) and phone
+                // landscape (new). The 8 KPI/metric cards above keep
+                // their own `compact: isTabletLandscape` flag unchanged.
+                final compactQuickAction =
+                    isTabletLandscape || isPhoneLandscape;
                 final useTabletVisualMode =
                     isTabletPortrait || isTabletLandscape;
                 final usesTabletHeader = useTabletVisualMode;
@@ -2774,6 +2819,13 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                     ? clampDouble(H * 0.21, 150.0, 188.0)
                     : isTabletPortrait
                     ? clampDouble(H * 0.105, 132.0, 148.0)
+                    : isPhoneLandscape
+                    // Phone landscape: 2 rows × 5 columns. Card height is
+                    // clamped to 96–116 px so two rows + spacing + the back
+                    // button fit comfortably without overflow on narrow
+                    // landscape phones, while leaving room for the icon
+                    // bubble, ellipsised title and subtitle, and chevron.
+                    ? clampDouble(H * 0.27, 96.0, 116.0)
                     : useVisualMobileMode
                     ? visualMobileCardHeight
                     : 132.0;
@@ -2781,6 +2833,8 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                     ? 8.0
                     : isTabletPortrait
                     ? 14.0
+                    : isPhoneLandscape
+                    ? 8.0
                     : useVisualMobileMode
                     ? visualMobileCardSpacing
                     : 12.0;
@@ -2797,8 +2851,12 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                 final businessSectionGap = isTabletLandscape ? 6.0 : 10.0;
                 final businessQuickActionsTitleGap = isTabletLandscape
                     ? 8.0
+                    : isPhoneLandscape
+                    ? 8.0
                     : 14.0;
                 final businessQuickActionsGridTopGap = isTabletLandscape
+                    ? 8.0
+                    : isPhoneLandscape
                     ? 8.0
                     : 10.0;
                 final headerTitleFontSize = isTabletLandscape ? 15.0 : 19.0;
@@ -2888,12 +2946,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                         ),
                                         const Spacer(),
                                         Text(
-                                          _t(
-                                            nl: 'Goedemorgen! 👋',
-                                            en: 'Good morning! 👋',
-                                            fr: 'Bonjour ! 👋',
-                                            es: '¡Buenos días! 👋',
-                                          ),
+                                          _timeAwareGreeting(),
                                           style: TextStyle(
                                             color: Colors.white,
                                             fontWeight: FontWeight.w800,
@@ -2934,12 +2987,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Text(
-                                  _t(
-                                    nl: 'Goedemorgen! 👋',
-                                    en: 'Good morning! 👋',
-                                    fr: 'Bonjour ! 👋',
-                                    es: '¡Buenos días! 👋',
-                                  ),
+                                  _timeAwareGreeting(),
                                   style: TextStyle(
                                     color: _businessThemePalette.textPrimary,
                                     fontWeight: FontWeight.w800,
@@ -3225,6 +3273,16 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                           builder: (context, constraints) {
                             final quickActionColumns = isTabletLandscape
                                 ? 5
+                                : isPhoneLandscape
+                                // Phone landscape: 2 rows × 5 cards.
+                                // Row 1: Settings, Plan, Vehicles, Chiron,
+                                // Drivers. Row 2: Driver view, Demand,
+                                // Share booking link, Bookings, AI
+                                // Dispatch. Wrap order matches because the
+                                // tablet-landscape-only Bookings card is
+                                // skipped while the !isTabletLandscape
+                                // Bookings card is included.
+                                ? 5
                                 : useVisualMobileMode
                                 ? 1
                                 : 2;
@@ -3281,7 +3339,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                     useImageBackground:
                                         useTabletVisualMode ||
                                         useVisualMobileMode,
-                                    compact: isTabletLandscape,
+                                    compact: compactQuickAction,
                                   ),
                                 ),
                                 if (isTabletLandscape)
@@ -3321,7 +3379,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                       useImageBackground:
                                           useTabletVisualMode ||
                                           useVisualMobileMode,
-                                      compact: isTabletLandscape,
+                                      compact: compactQuickAction,
                                     ),
                                   ),
                                 SizedBox(
@@ -3364,7 +3422,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                     useImageBackground:
                                         useTabletVisualMode ||
                                         useVisualMobileMode,
-                                    compact: isTabletLandscape,
+                                    compact: compactQuickAction,
                                   ),
                                 ),
                                 SizedBox(
@@ -3407,7 +3465,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                     useImageBackground:
                                         useTabletVisualMode ||
                                         useVisualMobileMode,
-                                    compact: isTabletLandscape,
+                                    compact: compactQuickAction,
                                   ),
                                 ),
                                 SizedBox(
@@ -3445,7 +3503,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                     useImageBackground:
                                         useTabletVisualMode ||
                                         useVisualMobileMode,
-                                    compact: isTabletLandscape,
+                                    compact: compactQuickAction,
                                   ),
                                 ),
                                 SizedBox(
@@ -3515,7 +3573,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                     useImageBackground:
                                         useTabletVisualMode ||
                                         useVisualMobileMode,
-                                    compact: isTabletLandscape,
+                                    compact: compactQuickAction,
                                   ),
                                 ),
                                 SizedBox(
@@ -3552,7 +3610,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                     useImageBackground:
                                         useTabletVisualMode ||
                                         useVisualMobileMode,
-                                    compact: isTabletLandscape,
+                                    compact: compactQuickAction,
                                   ),
                                 ),
                                 SizedBox(
@@ -3595,7 +3653,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                     useImageBackground:
                                         useTabletVisualMode ||
                                         useVisualMobileMode,
-                                    compact: isTabletLandscape,
+                                    compact: compactQuickAction,
                                   ),
                                 ),
                                 SizedBox(
@@ -3634,7 +3692,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                     useImageBackground:
                                         useTabletVisualMode ||
                                         useVisualMobileMode,
-                                    compact: isTabletLandscape,
+                                    compact: compactQuickAction,
                                   ),
                                 ),
                                 if (!isTabletLandscape)
@@ -3674,7 +3732,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                       useImageBackground:
                                           useTabletVisualMode ||
                                           useVisualMobileMode,
-                                      compact: isTabletLandscape,
+                                      compact: compactQuickAction,
                                     ),
                                   ),
                                 SizedBox(
@@ -3716,7 +3774,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                     useImageBackground:
                                         useTabletVisualMode ||
                                         useVisualMobileMode,
-                                    compact: isTabletLandscape,
+                                    compact: compactQuickAction,
                                   ),
                                 ),
                               ],
