@@ -202,6 +202,32 @@ class _BusinessOrientationFlowPageState
   static const String _card2WelcomeTabletLandscapeAsset =
       'assets/fluxidi/onboarding/card2_welcome_tablet_landscape_bg.png';
 
+  /// Card 3 tablet PNGs — present on disk and covered by the
+  /// `assets/fluxidi/onboarding/` folder already declared in
+  /// pubspec. Reserved for the not-yet-designed "Bookings,
+  /// cancellations & history" card and stored in the central model
+  /// now so the future bespoke layout can pick them up without
+  /// touching navigation. The current placeholder layout is
+  /// text-only and never renders these, so there is no asset risk
+  /// yet — the paths simply travel with the card data.
+  static const String _card3TabletPortraitAsset =
+      'assets/fluxidi/onboarding/card3_welcome_tablet_portrait_bg.png';
+  static const String _card3TabletLandscapeAsset =
+      'assets/fluxidi/onboarding/card3_welcome_tablet_landscape_bg.png';
+
+  /// Shared body copy for not-yet-designed product-tour stops. Kept
+  /// deliberately generic — the real per-card explanations land when
+  /// each card graduates from [_OrientationCardLayout.placeholder] to
+  /// its bespoke layout. This is never a "final" string; it only
+  /// keeps placeholder cards readable and translated during
+  /// development.
+  static const _Tr _placeholderBody = _Tr(
+    nl: 'Dit onderdeel van de rondleiding wordt binnenkort toegevoegd.',
+    en: 'This part of the tour is coming soon.',
+    fr: 'Cette partie de la visite arrive bientôt.',
+    es: 'Esta parte del recorrido estará disponible pronto.',
+  );
+
   /// Shared localized title for the Company Cockpit slide (all layouts).
   static const _Tr _card2CompanyCockpitTitle = _Tr(
     nl: 'Bedrijfscockpit',
@@ -372,9 +398,24 @@ class _BusinessOrientationFlowPageState
   /// Card 2 tablet landscape — right explanation column button order.
   static const List<int> _card2LandscapeCol2Indices = <int>[1, 3, 5, 7, 9];
 
+  /// Central, dynamic product-tour definition. Page count, the page
+  /// indicator, Previous / Next logic and the final-page CTA all
+  /// derive from [_cards].length — nothing is hardcoded — so the tour
+  /// can grow card-by-card without touching navigation.
+  ///
+  /// The first two entries (welcome, central_cockpit) are the
+  /// already-approved cards and are intentionally left untouched
+  /// visually: their bespoke heroes are routed via
+  /// [_OrientationCardLayout]. Every later entry is a safe
+  /// [_OrientationCardLayout.placeholder] stop for the planned
+  /// 15-card tour; each carries a real localised topic title so the
+  /// flow already reads correctly, while bodies stay intentionally
+  /// generic until that card graduates to its bespoke layout.
   static const List<_OrientationCardData> _cards = <_OrientationCardData>[
+    // 1 — Welcome (approved; bespoke video hero on tablet).
     _OrientationCardData(
       id: 'welcome',
+      layout: _OrientationCardLayout.welcome,
       icon: Icons.celebration_outlined,
       title: _Tr(
         nl: 'Welkom bij Fluxidi',
@@ -389,91 +430,191 @@ class _BusinessOrientationFlowPageState
         es: 'La plataforma premium para tu empresa de taxis. Te mostraremos en pocos pasos cómo gestionarlo todo.',
       ),
     ),
+    // 2 — Company Cockpit (approved; bespoke PNG + overlay hero on
+    // tablet). Bullets and artwork are now carried by the central
+    // model; the bespoke overlay renders identically to before.
     _OrientationCardData(
       id: 'central_cockpit',
+      layout: _OrientationCardLayout.companyCockpit,
       icon: Icons.dashboard_outlined,
       title: _card2CompanyCockpitTitle,
       body: _card2CompanyCockpitSubtitle,
+      bullets: _companyCockpitBulletItems,
+      portraitAsset: _card2WelcomeTabletPortraitAsset,
+      landscapeAsset: _card2WelcomeTabletLandscapeAsset,
     ),
+    // 3 — Bookings, cancellations & history. Card 3 artwork already
+    // exists on disk and is carried here for the future bespoke
+    // layout; the placeholder layout does not render it yet.
     _OrientationCardData(
-      id: 'manage_bookings',
+      id: 'bookings_history',
+      layout: _OrientationCardLayout.placeholder,
       icon: Icons.event_available_outlined,
       title: _Tr(
-        nl: 'Beheer boekingen centraal',
-        en: 'Manage bookings centrally',
-        fr: 'Gérez vos réservations en un seul endroit',
-        es: 'Gestiona tus reservas centralmente',
+        nl: 'Boekingen, annuleringen & geschiedenis',
+        en: 'Bookings, cancellations & history',
+        fr: 'Réservations, annulations et historique',
+        es: 'Reservas, cancelaciones e historial',
       ),
-      body: _Tr(
-        nl: 'Bekijk al uw ritten in één overzicht. Bevestig, wijs toe of pas aan zonder van scherm te wisselen.',
-        en: 'See all your rides in one overview. Confirm, assign or adjust without switching screens.',
-        fr: "Visualisez toutes vos courses dans une seule vue. Confirmez, attribuez ou ajustez sans changer d'écran.",
-        es: 'Visualiza todos tus viajes en una sola vista. Confirma, asigna o ajusta sin cambiar de pantalla.',
-      ),
+      body: _placeholderBody,
+      portraitAsset: _card3TabletPortraitAsset,
+      landscapeAsset: _card3TabletLandscapeAsset,
     ),
+    // 4 — Settings & company profile.
     _OrientationCardData(
-      id: 'manage_drivers_vehicles',
-      icon: Icons.local_taxi_outlined,
+      id: 'settings_profile',
+      layout: _OrientationCardLayout.placeholder,
+      icon: Icons.settings_outlined,
       title: _Tr(
-        nl: 'Beheer chauffeurs en voertuigen',
-        en: 'Manage drivers and vehicles',
-        fr: 'Gérez chauffeurs et véhicules',
-        es: 'Gestiona conductores y vehículos',
+        nl: 'Instellingen & bedrijfsprofiel',
+        en: 'Settings & company profile',
+        fr: 'Paramètres et profil d\u2019entreprise',
+        es: 'Ajustes y perfil de empresa',
       ),
-      body: _Tr(
-        nl: 'Voeg chauffeurs toe, koppel voertuigen en houd documenten up-to-date — vanaf uw telefoon of tablet.',
-        en: 'Add drivers, link vehicles and keep documents up to date — from your phone or tablet.',
-        fr: 'Ajoutez vos chauffeurs, associez les véhicules et gardez les documents à jour — depuis votre téléphone ou tablette.',
-        es: 'Añade conductores, vincula vehículos y mantén los documentos al día — desde tu móvil o tablet.',
-      ),
+      body: _placeholderBody,
     ),
+    // 5 — Subscription & account status.
+    _OrientationCardData(
+      id: 'subscription_status',
+      layout: _OrientationCardLayout.placeholder,
+      icon: Icons.workspace_premium_outlined,
+      title: _Tr(
+        nl: 'Abonnement & accountstatus',
+        en: 'Subscription & account status',
+        fr: 'Abonnement et statut du compte',
+        es: 'Suscripción y estado de la cuenta',
+      ),
+      body: _placeholderBody,
+    ),
+    // 6 — Vehicles.
+    _OrientationCardData(
+      id: 'vehicles',
+      layout: _OrientationCardLayout.placeholder,
+      icon: Icons.directions_car_outlined,
+      title: _Tr(
+        nl: 'Voertuigen',
+        en: 'Vehicles',
+        fr: 'Véhicules',
+        es: 'Vehículos',
+      ),
+      body: _placeholderBody,
+    ),
+    // 7 — Drivers.
+    _OrientationCardData(
+      id: 'drivers',
+      layout: _OrientationCardLayout.placeholder,
+      icon: Icons.people_outline,
+      title: _Tr(
+        nl: 'Chauffeurs',
+        en: 'Drivers',
+        fr: 'Chauffeurs',
+        es: 'Conductores',
+      ),
+      body: _placeholderBody,
+    ),
+    // 8 — Chiron & document control.
+    _OrientationCardData(
+      id: 'chiron_documents',
+      layout: _OrientationCardLayout.placeholder,
+      icon: Icons.verified_user_outlined,
+      title: _Tr(
+        nl: 'Chiron & documentbeheer',
+        en: 'Chiron & document control',
+        fr: 'Chiron et contrôle des documents',
+        es: 'Chiron y control de documentos',
+      ),
+      body: _placeholderBody,
+    ),
+    // 9 — Demand radar / demand insight.
+    _OrientationCardData(
+      id: 'demand_radar',
+      layout: _OrientationCardLayout.placeholder,
+      icon: Icons.radar,
+      title: _Tr(
+        nl: 'Demand radar & inzicht',
+        en: 'Demand radar & insight',
+        fr: 'Radar de demande et analyse',
+        es: 'Radar de demanda e información',
+      ),
+      body: _placeholderBody,
+    ),
+    // 10 — Public booking link.
     _OrientationCardData(
       id: 'public_booking_link',
-      icon: Icons.share_outlined,
+      layout: _OrientationCardLayout.placeholder,
+      icon: Icons.link_outlined,
       title: _Tr(
-        nl: 'Deel uw publieke boekingslink',
-        en: 'Share your public booking link',
-        fr: 'Partagez votre lien de réservation public',
-        es: 'Comparte tu enlace público de reserva',
+        nl: 'Publieke boekingslink',
+        en: 'Public booking link',
+        fr: 'Lien de réservation public',
+        es: 'Enlace público de reserva',
       ),
-      body: _Tr(
-        nl: 'Met uw eigen Fluxidi-link kunnen klanten direct online boeken — zonder telefoontje. Plaats hem op uw site, social media of QR-flyers.',
-        en: 'Your own Fluxidi link lets customers book online directly — no phone call required. Add it to your site, socials or QR flyers.',
-        fr: 'Votre lien Fluxidi permet à vos clients de réserver en ligne directement — sans appel. Ajoutez-le à votre site, vos réseaux sociaux ou vos flyers QR.',
-        es: 'Tu enlace Fluxidi permite a los clientes reservar en línea — sin llamadas. Ponlo en tu web, redes sociales o folletos QR.',
-      ),
+      body: _placeholderBody,
     ),
+    // 11 — AI Dispatch.
     _OrientationCardData(
-      id: 'customer_app',
-      icon: Icons.smartphone_outlined,
+      id: 'ai_dispatch',
+      layout: _OrientationCardLayout.placeholder,
+      icon: Icons.auto_awesome_outlined,
       title: _Tr(
-        nl: 'Stimuleer klanten om de Fluxidi-app te gebruiken',
-        en: 'Encourage customers to use the Fluxidi app',
-        fr: "Incitez vos clients à utiliser l'application Fluxidi",
-        es: 'Anima a tus clientes a usar la app Fluxidi',
+        nl: 'AI Dispatch',
+        en: 'AI Dispatch',
+        fr: 'Dispatch IA',
+        es: 'Despacho IA',
       ),
-      body: _Tr(
-        nl: 'Tevreden klanten boeken sneller en vaker via de Fluxidi-app. Deel het downloadlink-icoon vanuit uw cockpit.',
-        en: 'Happy customers book faster and more often via the Fluxidi app. Share the download link icon straight from your cockpit.',
-        fr: "Les clients satisfaits réservent plus vite et plus souvent via l'application Fluxidi. Partagez le lien de téléchargement depuis votre cockpit.",
-        es: 'Los clientes satisfechos reservan más rápido y con más frecuencia desde la app Fluxidi. Comparte el icono del enlace de descarga desde tu cabina.',
-      ),
+      body: _placeholderBody,
     ),
+    // 12 — Driver view.
     _OrientationCardData(
-      id: 'ready_to_start',
-      icon: Icons.rocket_launch_outlined,
+      id: 'driver_view',
+      layout: _OrientationCardLayout.placeholder,
+      icon: Icons.drive_eta_outlined,
       title: _Tr(
-        nl: 'Klaar om te beginnen',
-        en: 'Ready to start',
-        fr: 'Prêt à démarrer',
-        es: 'Listo para empezar',
+        nl: 'Chauffeursweergave',
+        en: 'Driver view',
+        fr: 'Vue chauffeur',
+        es: 'Vista del conductor',
       ),
-      body: _Tr(
-        nl: 'Alles is opgezet. U kunt nu uw cockpit openen en uw eerste rit ontvangen.',
-        en: 'Everything is set up. You can now open your cockpit and take your first ride.',
-        fr: 'Tout est prêt. Vous pouvez maintenant ouvrir votre cockpit et recevoir votre première course.',
-        es: 'Todo está listo. Ahora puedes abrir tu cabina y recibir tu primer viaje.',
+      body: _placeholderBody,
+    ),
+    // 13 — Calculator, Streetride & driver rides.
+    _OrientationCardData(
+      id: 'calculator_streetride',
+      layout: _OrientationCardLayout.placeholder,
+      icon: Icons.calculate_outlined,
+      title: _Tr(
+        nl: 'Calculator, Streetride & chauffeursritten',
+        en: 'Calculator, Streetride & driver rides',
+        fr: 'Calculateur, Streetride et courses chauffeur',
+        es: 'Calculadora, Streetride y viajes del conductor',
       ),
+      body: _placeholderBody,
+    ),
+    // 14 — Ride receipts, history & documents.
+    _OrientationCardData(
+      id: 'ride_receipts',
+      layout: _OrientationCardLayout.placeholder,
+      icon: Icons.receipt_long_outlined,
+      title: _Tr(
+        nl: 'Ritbonnen, geschiedenis & documenten',
+        en: 'Ride receipts, history & documents',
+        fr: 'Reçus de course, historique et documents',
+        es: 'Recibos de viaje, historial y documentos',
+      ),
+      body: _placeholderBody,
+    ),
+    // 15 — Activate your customers / share your link.
+    _OrientationCardData(
+      id: 'activate_customers',
+      layout: _OrientationCardLayout.placeholder,
+      icon: Icons.campaign_outlined,
+      title: _Tr(
+        nl: 'Activeer je klanten',
+        en: 'Activate your customers',
+        fr: 'Activez vos clients',
+        es: 'Activa a tus clientes',
+      ),
+      body: _placeholderBody,
     ),
   ];
 
@@ -645,6 +786,18 @@ class _BusinessOrientationFlowPageState
     }
   }
 
+  /// Central accessor for the product-tour cards. Everything that
+  /// needs the tour length or a specific card (page indicator,
+  /// Previous / Next, final-page CTA, the PageView builder) reads
+  /// through this so the flow stays driven by a single source of
+  /// truth. Returns the const [_cards] list as-is today; kept as a
+  /// method so a future dynamic/filtered tour can slot in without
+  /// touching call sites.
+  List<_OrientationCardData> _orientationCards() => _cards;
+
+  /// Convenience: the card currently shown, derived from [_index].
+  _OrientationCardData get _currentCard => _orientationCards()[_index];
+
   /// Shared localized bullet list for the Company Cockpit slide.
   List<_OrientationBulletItem> _companyCockpitItems() =>
       _companyCockpitBulletItems;
@@ -668,7 +821,7 @@ class _BusinessOrientationFlowPageState
       if (!mounted) return;
       final size = MediaQuery.sizeOf(context);
       _syncHeroVideoPlayback(
-        isWelcome: next == 0,
+        isWelcome: _cards[next].layout == _OrientationCardLayout.welcome,
         isTabletPortrait: size.width < size.height && size.shortestSide >= 600,
         isTabletLandscape: size.width > size.height && size.shortestSide >= 600,
       );
@@ -754,12 +907,20 @@ class _BusinessOrientationFlowPageState
         // on page settle (driven by [_index]); this is acceptable
         // because the PageView's own swipe transition already pulls
         // the user's eye to the moving page content.
+        // Route the bespoke heroes off the central card's layout type
+        // rather than a hardcoded index, so adding/removing earlier
+        // cards never silently re-points a hero at the wrong slide.
+        final _OrientationCardData currentCard = _currentCard;
+        final bool isWelcomeCard =
+            currentCard.layout == _OrientationCardLayout.welcome;
+        final bool isCompanyCockpitCard =
+            currentCard.layout == _OrientationCardLayout.companyCockpit;
         final bool isWelcomeTabletHero =
-            _index == 0 && (isTabletPortrait || isTabletLandscape);
+            isWelcomeCard && (isTabletPortrait || isTabletLandscape);
         final bool isCentralCockpitTabletPortraitHero =
-            _index == 1 && isTabletPortrait;
+            isCompanyCockpitCard && isTabletPortrait;
         final bool isCentralCockpitTabletLandscapeHero =
-            _index == 1 && isTabletLandscape;
+            isCompanyCockpitCard && isTabletLandscape;
         final Color scaffoldBackground =
             (isWelcomeTabletHero ||
                 isCentralCockpitTabletPortraitHero ||
@@ -775,11 +936,11 @@ class _BusinessOrientationFlowPageState
         // bars. Card 1 tablet portrait keeps its in-slot rounded
         // panel hero (approved + committed); Cards 3-7 and phone
         // layouts are unchanged.
-        final bool useLandscapeFullHero = _index == 0 && isTabletLandscape;
+        final bool useLandscapeFullHero = isWelcomeCard && isTabletLandscape;
         final bool useCentralCockpitPortraitFullHero =
-            _index == 1 && isTabletPortrait;
+            isCompanyCockpitCard && isTabletPortrait;
         final bool useCentralCockpitLandscapeFullHero =
-            _index == 1 && isTabletLandscape;
+            isCompanyCockpitCard && isTabletLandscape;
 
         // Keep only one Card 1 tablet-hero decoder active. Runs
         // post-frame so [MediaQuery] is stable and we do not call
@@ -787,7 +948,7 @@ class _BusinessOrientationFlowPageState
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (!mounted) return;
           _syncHeroVideoPlayback(
-            isWelcome: _index == 0,
+            isWelcome: isWelcomeCard,
             isTabletPortrait: isTabletPortrait,
             isTabletLandscape: isTabletLandscape,
           );
@@ -840,14 +1001,17 @@ class _BusinessOrientationFlowPageState
                           // the user sees here. PageView still
                           // owns the swipe gesture, so swiping
                           // forward to Card 2 keeps working.
-                          if (card.id == 'welcome' && isTabletLandscape) {
+                          if (card.layout == _OrientationCardLayout.welcome &&
+                              isTabletLandscape) {
                             return const SizedBox.expand();
                           }
-                          if (card.id == 'central_cockpit' &&
+                          if (card.layout ==
+                                  _OrientationCardLayout.companyCockpit &&
                               isTabletPortrait) {
                             return const SizedBox.expand();
                           }
-                          if (card.id == 'central_cockpit' &&
+                          if (card.layout ==
+                                  _OrientationCardLayout.companyCockpit &&
                               isTabletLandscape) {
                             return const SizedBox.expand();
                           }
@@ -859,7 +1023,8 @@ class _BusinessOrientationFlowPageState
                           // artwork. Every other card / layout keeps
                           // the existing centred, capped behaviour.
                           final bool useFullWidthHeroPortrait =
-                              card.id == 'welcome' && isTabletPortrait;
+                              card.layout == _OrientationCardLayout.welcome &&
+                              isTabletPortrait;
                           return Align(
                             alignment: useFullWidthHeroPortrait
                                 ? Alignment.topCenter
@@ -1108,34 +1273,52 @@ class _BusinessOrientationFlowPageState
     );
   }
 
+  /// Per-card dispatcher: routes each card to its builder based on
+  /// the central [_OrientationCardLayout]. Adding a new product-tour
+  /// stop is therefore a data-only change in [_cards] — navigation,
+  /// the page indicator, and this dispatcher all adapt automatically.
+  ///
+  /// Tablet portrait/landscape heroes for the welcome and company-
+  /// cockpit cards are short-circuited to a transparent
+  /// [SizedBox.expand] in [build] (the full-viewport hero sits behind
+  /// the Stack), so those branches here only need to cover the phone
+  /// fallback — the stable icon composition.
   Widget _buildCard(
     _OrientationCardData data,
     bool compact, {
     required bool isTabletPortrait,
   }) {
-    final double iconBoxSize = compact ? 44 : 64;
-
-    // Card 1 tablet portrait gets the premium video hero background.
-    // The Flutter text/badges/callout/labels overlay is layered on
-    // top of the looping silent MP4 inside
-    // [_buildWelcomeTabletPortraitVideoHero].
-    //
-    // Card 1 tablet landscape is intentionally NOT routed here — its
-    // PageView slot is short-circuited to a transparent
-    // [SizedBox.expand] in [build] so the dedicated full-viewport
-    // hero behind the Stack remains fully visible.
-    if (data.id == 'welcome' && isTabletPortrait) {
-      return _buildWelcomeTabletPortraitVideoHero();
+    switch (data.layout) {
+      case _OrientationCardLayout.welcome:
+        // Tablet portrait → the premium in-slot video hero. Phones
+        // (and any non-tablet-portrait state that still reaches here)
+        // fall back to the stable icon composition.
+        if (isTabletPortrait) {
+          return _buildWelcomeTabletPortraitVideoHero();
+        }
+        return _buildOrientationCard(data, compact);
+      case _OrientationCardLayout.companyCockpit:
+        // Tablet portrait/landscape are short-circuited in [build];
+        // phones use the stable icon composition.
+        return _buildOrientationCard(data, compact);
+      case _OrientationCardLayout.iconCard:
+        return _buildOrientationCard(data, compact);
+      case _OrientationCardLayout.placeholder:
+        return _buildPlaceholderOrientationCard(data, compact);
     }
+  }
 
-    // Card 2 tablet portrait is intentionally NOT routed here — its
-    // PageView slot is short-circuited to a transparent
-    // [SizedBox.expand] in [build] so the dedicated full-viewport
-    // PNG hero behind the Stack remains fully visible.
-
-    // Stable baseline composition shared by all other cards (welcome
-    // on phones, plus Cards 3-7). The only difference between cards
-    // is the [data] they bind — icon, title, body.
+  /// Stable baseline composition shared by the icon-card layouts
+  /// (welcome on phones, company cockpit on phones, and any future
+  /// [_OrientationCardLayout.iconCard] stop). The only difference
+  /// between cards is the [data] they bind — icon, title, body.
+  ///
+  /// Wrapped in a [SingleChildScrollView] so long localised bodies
+  /// can never overflow; the body [Text] intentionally has no
+  /// [maxLines] / [TextOverflow.ellipsis] so translations wrap in
+  /// full instead of being clipped.
+  Widget _buildOrientationCard(_OrientationCardData data, bool compact) {
+    final double iconBoxSize = compact ? 44 : 64;
     return Padding(
       padding: EdgeInsets.symmetric(horizontal: 20, vertical: compact ? 6 : 16),
       child: SingleChildScrollView(
@@ -1226,6 +1409,116 @@ class _BusinessOrientationFlowPageState
             },
           ),
         ),
+      ),
+    );
+  }
+
+  /// Safe, centred placeholder for product-tour stops that are not
+  /// yet designed ([_OrientationCardLayout.placeholder]).
+  ///
+  /// Deliberately overflow-proof and asset-free:
+  /// * wrapped in a [SingleChildScrollView] + [Center] so it can
+  ///   never produce a yellow/black overflow band, even with the
+  ///   longest localisation and the smallest phone-landscape height;
+  /// * renders NO image — it never touches [data.portraitAsset] /
+  ///   [data.landscapeAsset], so it cannot raise asset-not-found
+  ///   errors while artwork is still being produced;
+  /// * the title wraps in full (gold, larger than the body) and the
+  ///   body wraps in full (white/light grey) — no [maxLines] and no
+  ///   [TextOverflow.ellipsis] on the explanatory text.
+  ///
+  /// A small "coming next" chip is shown ONLY in debug builds so the
+  /// development scaffold is obvious while iterating; it is tree-
+  /// shaken out of release/profile bundles via [kDebugMode].
+  Widget _buildPlaceholderOrientationCard(
+    _OrientationCardData data,
+    bool compact,
+  ) {
+    final double iconBoxSize = compact ? 40 : 56;
+    return Padding(
+      padding: EdgeInsets.symmetric(horizontal: 24, vertical: compact ? 8 : 20),
+      child: SingleChildScrollView(
+        physics: const ClampingScrollPhysics(),
+        child: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              Container(
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: _gold.withOpacity(0.10),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: _gold.withOpacity(0.22)),
+                ),
+                child: Icon(data.icon, color: _gold, size: iconBoxSize),
+              ),
+              SizedBox(height: compact ? 14 : 22),
+              Text(
+                _t(data.title),
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: _gold,
+                  fontSize: compact ? 20 : 26,
+                  fontWeight: FontWeight.w800,
+                  height: 1.2,
+                  letterSpacing: 0.1,
+                ),
+              ),
+              SizedBox(height: compact ? 8 : 12),
+              Text(
+                _t(data.body),
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: Colors.white.withOpacity(0.78),
+                  fontSize: compact ? 13 : 15,
+                  height: 1.5,
+                ),
+              ),
+              if (kDebugMode) ...<Widget>[
+                SizedBox(height: compact ? 14 : 20),
+                _buildPlaceholderDevChip(),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Debug-only "coming next" chip surfaced on placeholder cards so
+  /// it is obvious during development which tour stops still need a
+  /// bespoke layout. Removed from release/profile builds by the
+  /// [kDebugMode] guard at the call site.
+  Widget _buildPlaceholderDevChip() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+      decoration: BoxDecoration(
+        color: _gold.withOpacity(0.08),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: _gold.withOpacity(0.32)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          Icon(Icons.auto_awesome_outlined, size: 14, color: _gold),
+          const SizedBox(width: 7),
+          Text(
+            _t(
+              const _Tr(
+                nl: 'Binnenkort',
+                en: 'Coming next',
+                fr: 'Bientôt',
+                es: 'Próximamente',
+              ),
+            ),
+            style: TextStyle(
+              color: _gold,
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0.3,
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -2300,21 +2593,60 @@ class _BusinessOrientationFlowPageState
 /// Which Card 1 tablet-hero background video lane should be active.
 enum _HeroVideoLane { none, portrait, landscape }
 
+/// Layout / template type that drives how a card in [_cards] is
+/// rendered. This is the single switch the orientation flow uses to
+/// decide which builder a card routes to, so the product tour can
+/// grow card-by-card without rewriting navigation each time.
+///
+/// * [welcome] — bespoke Card 1 hero (silent looping MP4 + PNG poster
+///   on tablet portrait/landscape; the generic icon card on phones).
+/// * [companyCockpit] — bespoke Card 2 hero (PNG background + a
+///   localised overlay on tablet portrait/landscape; the generic icon
+///   card on phones).
+/// * [iconCard] — the stable baseline icon + title + body composition.
+/// * [placeholder] — a safe, centred, scroll-friendly "coming next"
+///   card for product-tour stops that are not yet designed. Never
+///   loads an image, so it cannot raise asset-not-found errors and
+///   cannot overflow.
+enum _OrientationCardLayout { welcome, companyCockpit, iconCard, placeholder }
+
 class _OrientationCardData {
   const _OrientationCardData({
     required this.id,
+    required this.layout,
     required this.icon,
     required this.title,
     required this.body,
+    this.bullets = const <_OrientationBulletItem>[],
+    this.portraitAsset,
+    this.landscapeAsset,
   });
 
   /// Stable identifier used in `[ORIENTATION_FLOW][PAGE/SKIP]` logs so
   /// QA can grep for a specific card regardless of its position in the
-  /// deterministic 7-card sequence.
+  /// (dynamic, [_cards] driven) product-tour sequence.
   final String id;
+
+  /// Which builder this card routes to. See [_OrientationCardLayout].
+  final _OrientationCardLayout layout;
+
   final IconData icon;
   final _Tr title;
   final _Tr body;
+
+  /// Localised bullet / highlight items. Empty for cards that don't
+  /// use a bullet list (welcome, plain icon cards, placeholders).
+  final List<_OrientationBulletItem> bullets;
+
+  /// Optional tablet-portrait artwork path. `null` for cards without
+  /// dedicated portrait artwork. Only rendered by the bespoke
+  /// per-card heroes — the placeholder layout never reads it.
+  final String? portraitAsset;
+
+  /// Optional tablet-landscape artwork path. `null` for cards without
+  /// dedicated landscape artwork. Only rendered by the bespoke
+  /// per-card heroes — the placeholder layout never reads it.
+  final String? landscapeAsset;
 }
 
 class _OrientationBulletItem {
