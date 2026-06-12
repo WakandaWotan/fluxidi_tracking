@@ -131,6 +131,15 @@ class _BusinessOrientationFlowPageState
 
   int _index = 0;
 
+  /// Card 3's reassurance note is intentionally NOT rendered on the
+  /// tablet full-viewport subscription layouts for now — it crowded
+  /// the page indicator / Previous-Next chrome. The localized string
+  /// stays in the central model and [_buildSubscriptionBottomNote]
+  /// stays wired behind this flag, so the note can be re-enabled
+  /// later without re-plumbing. Kept as a non-const instance field on
+  /// purpose so the guarded branch is never flagged as dead code.
+  final bool _showSubscriptionBottomNoteOnTablet = false;
+
   /// Premium navy / gold palette — matches the dark-navy/gold styling
   /// already used by [CompanyOnboardingPage] and
   /// [BusinessFirstRunSetupChoicePage] so the post-onboarding journey
@@ -226,6 +235,160 @@ class _BusinessOrientationFlowPageState
     en: 'This part of the tour is coming soon.',
     fr: 'Cette partie de la visite arrive bientôt.',
     es: 'Esta parte del recorrido estará disponible pronto.',
+  );
+
+  // ---------------------------------------------------------------
+  // Card 3 — Subscription & scalability. All copy lives here in the
+  // central model so the bespoke overlay simply binds it; no pricing
+  // value is ever hardcoded (current prices stay on the website).
+  // ---------------------------------------------------------------
+
+  static const _Tr _card3SubscriptionTitle = _Tr(
+    nl: 'Abonnement & schaalbaarheid',
+    en: 'Subscription & scalability',
+    fr: 'Abonnement & évolutivité',
+    es: 'Suscripción y escalabilidad',
+  );
+
+  static const _Tr _card3SubscriptionBody = _Tr(
+    nl:
+        'Fluxidi groeit mee met je bedrijf. Je betaalt maandelijks voor '
+        'software, automatisatie en opvolging — niet per rit. Jij behoudt '
+        'je tarieven, klantenrelatie en bedrijfswerking.',
+    en:
+        'Fluxidi grows with your business. You pay monthly for software, '
+        'automation and follow-up — not per ride. You keep your tariffs, '
+        'customer relationship and business operation.',
+    fr:
+        'Fluxidi évolue avec votre entreprise. Vous payez chaque mois pour '
+        'le logiciel, l\u2019automatisation et le suivi — pas par course. '
+        'Vous gardez vos tarifs, votre relation client et votre '
+        'fonctionnement.',
+    es:
+        'Fluxidi crece con tu empresa. Pagas mensualmente por software, '
+        'automatización y seguimiento — no por viaje. Mantienes tus '
+        'tarifas, la relación con tus clientes y tu forma de trabajar.',
+  );
+
+  static const _Tr _card3LeftCardTitle = _Tr(
+    nl: 'Geen commissie per rit',
+    en: 'No commission per ride',
+    fr: 'Pas de commission par course',
+    es: 'Sin comisión por viaje',
+  );
+
+  static const _Tr _card3LeftCardBody = _Tr(
+    nl:
+        'Fluxidi is geen ritcommissieplatform. Jij bepaalt je prijzen, '
+        'klantenrelatie en werking. Fluxidi automatiseert wat tijd kost.',
+    en:
+        'Fluxidi is not a ride-commission platform. You define your prices, '
+        'customer relationship and operation. Fluxidi automates what costs '
+        'time.',
+    fr:
+        'Fluxidi n\u2019est pas une plateforme à commission par course. Vous '
+        'définissez vos prix, votre relation client et votre fonctionnement. '
+        'Fluxidi automatise ce qui prend du temps.',
+    es:
+        'Fluxidi no es una plataforma con comisión por viaje. Tú defines tus '
+        'precios, la relación con tus clientes y tu operativa. Fluxidi '
+        'automatiza lo que consume tiempo.',
+  );
+
+  static const List<_Tr> _card3LeftCardBullets = <_Tr>[
+    _Tr(
+      nl: 'Eigen tarieven',
+      en: 'Own tariffs',
+      fr: 'Vos propres tarifs',
+      es: 'Tus propias tarifas',
+    ),
+    _Tr(
+      nl: 'Eigen klantenrelatie',
+      en: 'Own customer relationship',
+      fr: 'Votre relation client',
+      es: 'Tu relación con clientes',
+    ),
+    _Tr(
+      nl: 'Geen percentage per rit',
+      en: 'No percentage per ride',
+      fr: 'Aucun pourcentage par course',
+      es: 'Sin porcentaje por viaje',
+    ),
+    _Tr(
+      nl: 'Automatisatie en opvolging',
+      en: 'Automation and follow-up',
+      fr: 'Automatisation et suivi',
+      es: 'Automatización y seguimiento',
+    ),
+  ];
+
+  static const _Tr _card3RightCardTitle = _Tr(
+    nl: 'Schaalbaar uitbreiden',
+    en: 'Scale as you grow',
+    fr: 'Évoluez avec votre activité',
+    es: 'Escala con tu empresa',
+  );
+
+  static const _Tr _card3RightCardBody = _Tr(
+    nl:
+        'Start met de platformbasis en breid later uit met extra voertuigen, '
+        'chauffeurs en documentbundels wanneer je bedrijf groeit.',
+    en:
+        'Start with the platform base and expand later with extra vehicles, '
+        'drivers and document bundles as your business grows.',
+    fr:
+        'Commencez avec la base du platforme et ajoutez ensuite des '
+        'véhicules, chauffeurs et packs de documents lorsque votre activité '
+        'grandit.',
+    es:
+        'Empieza con la base de la plataforma y amplía después con '
+        'vehículos, conductores y paquetes de documentos a medida que tu '
+        'empresa crece.',
+  );
+
+  static const List<_Tr> _card3RightCardBullets = <_Tr>[
+    _Tr(
+      nl: 'Platformbasis',
+      en: 'Platform base',
+      fr: 'Base de plateforme',
+      es: 'Base de plataforma',
+    ),
+    _Tr(
+      nl: 'Extra voertuigen',
+      en: 'Extra vehicles',
+      fr: 'Véhicules supplémentaires',
+      es: 'Vehículos extra',
+    ),
+    _Tr(
+      nl: 'Extra chauffeurs',
+      en: 'Extra drivers',
+      fr: 'Chauffeurs supplémentaires',
+      es: 'Conductores extra',
+    ),
+    _Tr(
+      nl: 'Documenten en PDF-volume',
+      en: 'Documents and PDF volume',
+      fr: 'Documents et volume PDF',
+      es: 'Documentos y volumen PDF',
+    ),
+  ];
+
+  static const _Tr _card3BottomStrip = _Tr(
+    nl: 'Bekijk actuele plannen online',
+    en: 'View current plans online',
+    fr: 'Voir les formules actuelles en ligne',
+    es: 'Ver planes actuales online',
+  );
+
+  static const _Tr _card3BottomNote = _Tr(
+    nl: 'Actuele prijzen en proefperiodes blijven zichtbaar op de website.',
+    en: 'Current prices and trial periods remain visible on the website.',
+    fr:
+        'Les prix et périodes d\u2019essai actuels restent visibles sur le '
+        'site web.',
+    es:
+        'Los precios y periodos de prueba actuales están disponibles en el '
+        'sitio web.',
   );
 
   /// Shared localized title for the Company Cockpit slide (all layouts).
@@ -443,20 +606,16 @@ class _BusinessOrientationFlowPageState
       portraitAsset: _card2WelcomeTabletPortraitAsset,
       landscapeAsset: _card2WelcomeTabletLandscapeAsset,
     ),
-    // 3 — Bookings, cancellations & history. Card 3 artwork already
-    // exists on disk and is carried here for the future bespoke
-    // layout; the placeholder layout does not render it yet.
+    // 3 — Subscription & scalability (approved; bespoke PNG + overlay
+    // hero on tablet). title/body feed both the bespoke overlay and
+    // the phone icon-card fallback; the two info cards + bottom strip
+    // bind their own central-model copy in the bespoke builders.
     _OrientationCardData(
-      id: 'bookings_history',
-      layout: _OrientationCardLayout.placeholder,
-      icon: Icons.event_available_outlined,
-      title: _Tr(
-        nl: 'Boekingen, annuleringen & geschiedenis',
-        en: 'Bookings, cancellations & history',
-        fr: 'Réservations, annulations et historique',
-        es: 'Reservas, cancelaciones e historial',
-      ),
-      body: _placeholderBody,
+      id: 'subscription_scalability',
+      layout: _OrientationCardLayout.subscription,
+      icon: Icons.workspace_premium_outlined,
+      title: _card3SubscriptionTitle,
+      body: _card3SubscriptionBody,
       portraitAsset: _card3TabletPortraitAsset,
       landscapeAsset: _card3TabletLandscapeAsset,
     ),
@@ -915,16 +1074,23 @@ class _BusinessOrientationFlowPageState
             currentCard.layout == _OrientationCardLayout.welcome;
         final bool isCompanyCockpitCard =
             currentCard.layout == _OrientationCardLayout.companyCockpit;
+        final bool isSubscriptionCard =
+            currentCard.layout == _OrientationCardLayout.subscription;
         final bool isWelcomeTabletHero =
             isWelcomeCard && (isTabletPortrait || isTabletLandscape);
         final bool isCentralCockpitTabletPortraitHero =
             isCompanyCockpitCard && isTabletPortrait;
         final bool isCentralCockpitTabletLandscapeHero =
             isCompanyCockpitCard && isTabletLandscape;
+        // Card 3 artwork is on a near-black canvas like Card 2, so it
+        // gets the same immersive [_heroBg] scaffold on tablet.
+        final bool isSubscriptionTabletHero =
+            isSubscriptionCard && (isTabletPortrait || isTabletLandscape);
         final Color scaffoldBackground =
             (isWelcomeTabletHero ||
                 isCentralCockpitTabletPortraitHero ||
-                isCentralCockpitTabletLandscapeHero)
+                isCentralCockpitTabletLandscapeHero ||
+                isSubscriptionTabletHero)
             ? _heroBg
             : _bg;
 
@@ -941,6 +1107,14 @@ class _BusinessOrientationFlowPageState
             isCompanyCockpitCard && isTabletPortrait;
         final bool useCentralCockpitLandscapeFullHero =
             isCompanyCockpitCard && isTabletLandscape;
+        // Card 3 uses the same full-viewport hero approach as Card 2:
+        // a PNG background behind the Stack with a localised overlay,
+        // while the PageView slot is short-circuited to a transparent
+        // box so the chrome floats on top.
+        final bool useSubscriptionPortraitFullHero =
+            isSubscriptionCard && isTabletPortrait;
+        final bool useSubscriptionLandscapeFullHero =
+            isSubscriptionCard && isTabletLandscape;
 
         // Keep only one Card 1 tablet-hero decoder active. Runs
         // post-frame so [MediaQuery] is stable and we do not call
@@ -975,6 +1149,14 @@ class _BusinessOrientationFlowPageState
                 Positioned.fill(
                   child: _buildCentralCockpitTabletLandscapeFullViewportHero(),
                 ),
+              if (useSubscriptionPortraitFullHero)
+                Positioned.fill(
+                  child: _buildSubscriptionTabletPortraitFullViewportHero(),
+                ),
+              if (useSubscriptionLandscapeFullHero)
+                Positioned.fill(
+                  child: _buildSubscriptionTabletLandscapeFullViewportHero(),
+                ),
               // Foreground layer — the existing chrome + PageView
               // composition. Identical to the pre-refactor layout
               // for portrait, phones, and Cards 2-7. For Card 1 in
@@ -986,7 +1168,9 @@ class _BusinessOrientationFlowPageState
                   children: <Widget>[
                     _buildTopBar(
                       isCompactHeight,
-                      elevatedSkip: useCentralCockpitLandscapeFullHero,
+                      elevatedSkip:
+                          useCentralCockpitLandscapeFullHero ||
+                          useSubscriptionLandscapeFullHero,
                     ),
                     Expanded(
                       child: PageView.builder(
@@ -1013,6 +1197,16 @@ class _BusinessOrientationFlowPageState
                           if (card.layout ==
                                   _OrientationCardLayout.companyCockpit &&
                               isTabletLandscape) {
+                            return const SizedBox.expand();
+                          }
+                          // Card 3 tablet portrait/landscape: empty
+                          // transparent slot. The dedicated full-
+                          // viewport PNG hero behind this Stack is
+                          // what the user sees; PageView keeps the
+                          // swipe gesture.
+                          if (card.layout ==
+                                  _OrientationCardLayout.subscription &&
+                              (isTabletPortrait || isTabletLandscape)) {
                             return const SizedBox.expand();
                           }
                           // Card 1 tablet portrait keeps the in-slot
@@ -1051,7 +1245,9 @@ class _BusinessOrientationFlowPageState
                       landscapeFullHero:
                           useLandscapeFullHero ||
                           useCentralCockpitPortraitFullHero ||
-                          useCentralCockpitLandscapeFullHero,
+                          useCentralCockpitLandscapeFullHero ||
+                          useSubscriptionPortraitFullHero ||
+                          useSubscriptionLandscapeFullHero,
                     ),
                   ],
                 ),
@@ -1300,6 +1496,11 @@ class _BusinessOrientationFlowPageState
       case _OrientationCardLayout.companyCockpit:
         // Tablet portrait/landscape are short-circuited in [build];
         // phones use the stable icon composition.
+        return _buildOrientationCard(data, compact);
+      case _OrientationCardLayout.subscription:
+        // Tablet portrait/landscape are short-circuited in [build]
+        // (bespoke PNG hero behind the Stack); phones fall back to the
+        // stable icon composition with the card's title + body.
         return _buildOrientationCard(data, compact);
       case _OrientationCardLayout.iconCard:
         return _buildOrientationCard(data, compact);
@@ -1846,6 +2047,725 @@ class _BusinessOrientationFlowPageState
             spreadRadius: 1,
           ),
         ],
+      ),
+    );
+  }
+
+  // =================================================================
+  // Card 3 — Subscription & scalability (bespoke tablet heroes).
+  //
+  // Both orientations paint the dedicated card3 PNG full-bleed
+  // ([BoxFit.cover]) behind the Stack and overlay the localised copy
+  // with Flutter — the artwork supplies only the FLUXIDI wordmark and
+  // the empty gold card / strip frames, never baked-in text.
+  //
+  // Every text block is overflow-proof: zone-sized copy is wrapped in
+  // a [FittedBox] with [BoxFit.scaleDown] as a final safety net (on
+  // top of responsive, per-breakpoint, language-aware font sizes), so
+  // the longest NL/FR/ES strings shrink-to-fit rather than ever
+  // raising a yellow/black overflow band. No important explanatory
+  // text uses [TextOverflow.ellipsis]; all bodies wrap in full.
+  // =================================================================
+
+  /// Slightly trims the Card 3 base font sizes for the longer FR/ES
+  /// copy so the responsive sizes already land smaller before the
+  /// [FittedBox] safety net ever has to engage.
+  double _card3LangFontScale() {
+    switch (appLanguageNotifier.value) {
+      case AppLanguage.fr:
+      case AppLanguage.es:
+        return 0.92;
+      case AppLanguage.nl:
+      case AppLanguage.en:
+        return 1.0;
+    }
+  }
+
+  Widget _buildSubscriptionTabletLandscapeFullViewportHero() {
+    return Stack(
+      fit: StackFit.expand,
+      children: <Widget>[
+        Image.asset(
+          _card3TabletLandscapeAsset,
+          fit: BoxFit.fill,
+          alignment: Alignment.center,
+          errorBuilder: (ctx, error, stackTrace) {
+            debugPrint(
+              '[ORIENTATION_FLOW][CARD3_LANDSCAPE_PNG_FAIL] error=$error',
+            );
+            return _buildWelcomeMediaUltimateFallback();
+          },
+        ),
+        IgnorePointer(child: _buildSubscriptionTabletLandscapeOverlay()),
+      ],
+    );
+  }
+
+  Widget _buildSubscriptionTabletLandscapeOverlay() {
+    return LayoutBuilder(
+      builder: (ctx, constraints) {
+        final double w = constraints.maxWidth;
+        final double h = constraints.maxHeight;
+        // The full hero is only mounted by [build] on tablets
+        // (shortestSide >= 600) in landscape, so a simple orientation
+        // guard here keeps the overlay in lock-step with the hero and
+        // never suppresses the copy on smaller 600-class tablets.
+        if (w <= h) {
+          return const SizedBox.shrink();
+        }
+        final double scale = _card3LangFontScale().clamp(0.90, 1.0).toDouble();
+        final double titleSize = 34 * scale;
+        final double bodySize = 17 * scale;
+        final double cardTitleSize = 21 * scale;
+        final double cardBodySize = 14 * scale;
+        final double bulletSize = 13.6 * scale;
+        final double stripSize = (w * 0.017 * scale).clamp(16.0, 22.0);
+        final double noteSize = (w * 0.011 * scale).clamp(12.0, 15.0);
+        // Internal padding so each info block starts inset from the
+        // top-left of its artwork card shape rather than hugging the
+        // edge. Applied OUTSIDE the FittedBox so the inset is not
+        // scaled away by the safety-net shrink.
+        const EdgeInsets landscapeCardPadding = EdgeInsets.fromLTRB(
+          52,
+          4,
+          36,
+          68,
+        );
+        return Stack(
+          children: <Widget>[
+            Positioned(
+              left: w * 0.315,
+              top: h * 0.070,
+              width: w * 0.48,
+              height: h * 0.190,
+              child: _buildSubscriptionTitleZone(
+                zoneWidth: w * 0.48,
+                titleSize: titleSize,
+                bodySize: bodySize,
+              ),
+            ),
+            Positioned(
+              left: w * 0.019,
+              top: h * 0.376,
+              width: w * 0.464,
+              height: h * 0.426,
+              child: _buildSubscriptionInfoCard(
+                zoneWidth: w * 0.464,
+                padding: landscapeCardPadding,
+                title: _card3LeftCardTitle,
+                body: _card3LeftCardBody,
+                bullets: _card3LeftCardBullets,
+                titleSize: cardTitleSize,
+                bodySize: cardBodySize,
+                bulletSize: bulletSize,
+                titleBodyGap: 6,
+                bodyBulletsGap: 9,
+                bulletGap: 4,
+                bodyLineHeight: 1.13,
+                bulletLineHeight: 1.10,
+              ),
+            ),
+            Positioned(
+              left: w * 0.518,
+              top: h * 0.376,
+              width: w * 0.464,
+              height: h * 0.426,
+              child: _buildSubscriptionInfoCard(
+                zoneWidth: w * 0.464,
+                padding: landscapeCardPadding,
+                title: _card3RightCardTitle,
+                body: _card3RightCardBody,
+                bullets: _card3RightCardBullets,
+                titleSize: cardTitleSize,
+                bodySize: cardBodySize,
+                bulletSize: bulletSize,
+                titleBodyGap: 6,
+                bodyBulletsGap: 9,
+                bulletGap: 4,
+                bodyLineHeight: 1.13,
+                bulletLineHeight: 1.10,
+              ),
+            ),
+            Positioned(
+              left: w * 0.019,
+              top: h * 0.765,
+              width: w * 0.963,
+              height: h * 0.111,
+              child: _buildSubscriptionBottomStrip(
+                fontSize: stripSize,
+                isPortrait: false,
+              ),
+            ),
+            if (_showSubscriptionBottomNoteOnTablet)
+              Positioned(
+                left: w * 0.08,
+                top: h * 0.90,
+                width: w * 0.84,
+                height: h * 0.08,
+                child: _buildSubscriptionBottomNote(
+                  zoneWidth: w * 0.84,
+                  fontSize: noteSize,
+                ),
+              ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildSubscriptionTabletPortraitFullViewportHero() {
+    return Stack(
+      fit: StackFit.expand,
+      children: <Widget>[
+        Image.asset(
+          _card3TabletPortraitAsset,
+          fit: BoxFit.fill,
+          alignment: Alignment.center,
+          errorBuilder: (ctx, error, stackTrace) {
+            debugPrint(
+              '[ORIENTATION_FLOW][CARD3_PORTRAIT_PNG_FAIL] error=$error',
+            );
+            return _buildWelcomeMediaUltimateFallback();
+          },
+        ),
+        IgnorePointer(child: _buildSubscriptionTabletPortraitOverlay()),
+      ],
+    );
+  }
+
+  Widget _buildSubscriptionTabletPortraitOverlay() {
+    return LayoutBuilder(
+      builder: (ctx, constraints) {
+        final double w = constraints.maxWidth;
+        final double h = constraints.maxHeight;
+        // Mirror of the landscape guard: the hero is only mounted on
+        // tablet portrait, so a plain orientation check keeps the
+        // overlay aligned with the hero across tablet sizes.
+        if (h <= w) {
+          return const SizedBox.shrink();
+        }
+        final double scale = _card3LangFontScale().clamp(0.90, 1.0).toDouble();
+        final double titleSize = 29 * scale;
+        final double bodySize = 15.5 * scale;
+        final double cardTitleSize = 24 * scale;
+        final double cardBodySize = 15 * scale;
+        final double bulletSize = 14.5 * scale;
+        final double stripSize = (w * 0.020 * scale).clamp(16.0, 22.0);
+        final double noteSize = (w * 0.013 * scale).clamp(12.0, 15.0);
+        // Internal padding so each stacked info block starts inset
+        // from the top-left of its artwork card shape. Applied OUTSIDE
+        // the FittedBox (see landscape) so the inset survives the
+        // scale-down safety net.
+        const EdgeInsets topCardPadding = EdgeInsets.fromLTRB(43, 35, 35, 26);
+        const EdgeInsets bottomCardPadding = EdgeInsets.fromLTRB(
+          43,
+          21,
+          35,
+          26,
+        );
+        return Stack(
+          children: <Widget>[
+            Positioned(
+              left: w * 0.42,
+              top: h * 0.055,
+              width: w * 0.50,
+              height: h * 0.150,
+              child: _buildSubscriptionTitleZone(
+                zoneWidth: w * 0.50,
+                titleSize: titleSize,
+                bodySize: bodySize,
+              ),
+            ),
+            Positioned(
+              left: w * 0.053,
+              top: h * 0.221,
+              width: w * 0.893,
+              height: h * 0.272,
+              child: _buildSubscriptionInfoCard(
+                zoneWidth: w * 0.893,
+                padding: topCardPadding,
+                title: _card3LeftCardTitle,
+                body: _card3LeftCardBody,
+                bullets: _card3LeftCardBullets,
+                titleSize: cardTitleSize,
+                bodySize: cardBodySize,
+                bulletSize: bulletSize,
+                titleBodyGap: 7,
+                bodyBulletsGap: 10,
+                bulletGap: 5,
+                bodyLineHeight: 1.14,
+                bulletLineHeight: 1.10,
+              ),
+            ),
+            Positioned(
+              left: w * 0.053,
+              top: h * 0.521,
+              width: w * 0.893,
+              height: h * 0.254,
+              child: _buildSubscriptionInfoCard(
+                zoneWidth: w * 0.893,
+                padding: bottomCardPadding,
+                title: _card3RightCardTitle,
+                body: _card3RightCardBody,
+                bullets: _card3RightCardBullets,
+                titleSize: cardTitleSize,
+                bodySize: cardBodySize,
+                bulletSize: bulletSize,
+                titleBodyGap: 7,
+                bodyBulletsGap: 10,
+                bulletGap: 5,
+                bodyLineHeight: 1.14,
+                bulletLineHeight: 1.10,
+              ),
+            ),
+            Positioned(
+              left: w * 0.030,
+              top: h * 0.836,
+              width: w * 0.940,
+              height: h * 0.058,
+              child: _buildSubscriptionBottomStrip(
+                fontSize: stripSize,
+                isPortrait: true,
+              ),
+            ),
+            if (_showSubscriptionBottomNoteOnTablet)
+              Positioned(
+                left: w * 0.08,
+                top: h * 0.965,
+                width: w * 0.84,
+                height: h * 0.035,
+                child: _buildSubscriptionBottomNote(
+                  zoneWidth: w * 0.84,
+                  fontSize: noteSize,
+                ),
+              ),
+          ],
+        );
+      },
+    );
+  }
+
+  /// Top title + body zone shared by both Card 3 orientations. Gold
+  /// title is always larger than the white body. The whole column is
+  /// scale-down-fitted to the zone so the longest copy can never
+  /// overflow, while shorter copy keeps its full responsive size and
+  /// stays anchored top-left.
+  Widget _buildSubscriptionTitleZone({
+    required double zoneWidth,
+    required double titleSize,
+    required double bodySize,
+  }) {
+    return FittedBox(
+      fit: BoxFit.scaleDown,
+      alignment: Alignment.topLeft,
+      child: SizedBox(
+        width: zoneWidth,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Text(
+              _t(_card3SubscriptionTitle),
+              softWrap: true,
+              overflow: TextOverflow.visible,
+              style: TextStyle(
+                color: _gold,
+                fontSize: titleSize,
+                fontWeight: FontWeight.w900,
+                height: 1.06,
+                letterSpacing: 0.15,
+                shadows: <Shadow>[
+                  Shadow(color: _gold.withOpacity(0.40), blurRadius: 14),
+                  Shadow(
+                    color: Colors.black.withOpacity(0.75),
+                    blurRadius: 8,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 10),
+            Text(
+              _t(_card3SubscriptionBody),
+              softWrap: true,
+              overflow: TextOverflow.visible,
+              style: TextStyle(
+                color: Colors.white.withOpacity(0.90),
+                fontSize: bodySize,
+                height: 1.30,
+                shadows: const <Shadow>[
+                  Shadow(
+                    color: Color(0xCC000000),
+                    blurRadius: 8,
+                    offset: Offset(0, 1),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// One info card (left or right) overlaid inside an artwork frame:
+  /// gold title (larger), white body, then a gold-dot bullet list.
+  /// The whole text column is scale-down-fitted to the artwork frame
+  /// so long FR/ES copy never clips and never overflows.
+  Widget _buildSubscriptionInfoCard({
+    required double zoneWidth,
+    required EdgeInsets padding,
+    required _Tr title,
+    required _Tr body,
+    required List<_Tr> bullets,
+    required double titleSize,
+    required double bodySize,
+    required double bulletSize,
+    required double titleBodyGap,
+    required double bodyBulletsGap,
+    required double bulletGap,
+    required double bodyLineHeight,
+    required double bulletLineHeight,
+  }) {
+    return Padding(
+      padding: padding,
+      child: Align(
+        alignment: Alignment.centerLeft,
+        child: _buildScaleCappedSubscriptionColumn(
+          scale: 1,
+          minScale: 0.90,
+          title: title,
+          body: body,
+          bullets: bullets,
+          titleSize: titleSize,
+          bodySize: bodySize,
+          bulletSize: bulletSize,
+          titleBodyGap: titleBodyGap,
+          bodyBulletsGap: bodyBulletsGap,
+          bulletGap: bulletGap,
+          bodyLineHeight: bodyLineHeight,
+          bulletLineHeight: bulletLineHeight,
+        ),
+      ),
+    );
+  }
+
+  /// Builds the Card 3 info-column with a conservative retry that can
+  /// reduce font/gap sizes down to 90% if the measured translated copy
+  /// still exceeds the bounded Canva safe zone. This avoids the
+  /// aggressive tiny-text behavior of a generic [FittedBox] while
+  /// preventing RenderFlex overflow bands in the longest locales.
+  Widget _buildScaleCappedSubscriptionColumn({
+    required double scale,
+    required double minScale,
+    required _Tr title,
+    required _Tr body,
+    required List<_Tr> bullets,
+    required double titleSize,
+    required double bodySize,
+    required double bulletSize,
+    required double titleBodyGap,
+    required double bodyBulletsGap,
+    required double bulletGap,
+    required double bodyLineHeight,
+    required double bulletLineHeight,
+  }) {
+    return LayoutBuilder(
+      builder: (ctx, constraints) {
+        final Widget column = _buildSubscriptionInfoColumn(
+          scale: scale,
+          title: title,
+          body: body,
+          bullets: bullets,
+          titleSize: titleSize,
+          bodySize: bodySize,
+          bulletSize: bulletSize,
+          titleBodyGap: titleBodyGap,
+          bodyBulletsGap: bodyBulletsGap,
+          bulletGap: bulletGap,
+          bodyLineHeight: bodyLineHeight,
+          bulletLineHeight: bulletLineHeight,
+        );
+        final TextPainter probe = TextPainter(
+          textDirection: Directionality.of(ctx),
+          maxLines: 1,
+        );
+
+        double textHeight(String value, TextStyle style, {int? maxLines}) {
+          probe
+            ..text = TextSpan(text: value, style: style)
+            ..maxLines = maxLines
+            ..layout(maxWidth: constraints.maxWidth);
+          return probe.height;
+        }
+
+        final TextStyle titleStyle = _subscriptionInfoTitleStyle(
+          titleSize * scale,
+        );
+        final TextStyle bodyStyle = _subscriptionInfoBodyStyle(
+          bodySize * scale,
+          bodyLineHeight,
+        );
+        final TextStyle bulletStyle = _subscriptionInfoBulletStyle(
+          bulletSize * scale,
+          bulletLineHeight,
+        );
+        final double estimatedHeight =
+            textHeight(_t(title), titleStyle) +
+            titleBodyGap * scale +
+            textHeight(_t(body), bodyStyle, maxLines: 3) +
+            bodyBulletsGap * scale +
+            bullets.fold<double>(
+              0,
+              (sum, bullet) =>
+                  sum +
+                  bulletGap * scale +
+                  textHeight(_t(bullet), bulletStyle, maxLines: 1),
+            );
+        final bool exceedsHeight = estimatedHeight > constraints.maxHeight;
+        if (!exceedsHeight || scale <= minScale) return column;
+        final double nextScale = (constraints.maxHeight / estimatedHeight)
+            .clamp(minScale, scale)
+            .toDouble();
+        return _buildScaleCappedSubscriptionColumn(
+          scale: nextScale,
+          minScale: minScale,
+          title: title,
+          body: body,
+          bullets: bullets,
+          titleSize: titleSize,
+          bodySize: bodySize,
+          bulletSize: bulletSize,
+          titleBodyGap: titleBodyGap,
+          bodyBulletsGap: bodyBulletsGap,
+          bulletGap: bulletGap,
+          bodyLineHeight: bodyLineHeight,
+          bulletLineHeight: bulletLineHeight,
+        );
+      },
+    );
+  }
+
+  Widget _buildSubscriptionInfoColumn({
+    required double scale,
+    required _Tr title,
+    required _Tr body,
+    required List<_Tr> bullets,
+    required double titleSize,
+    required double bodySize,
+    required double bulletSize,
+    required double titleBodyGap,
+    required double bodyBulletsGap,
+    required double bulletGap,
+    required double bodyLineHeight,
+    required double bulletLineHeight,
+  }) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        Text(
+          _t(title),
+          softWrap: true,
+          overflow: TextOverflow.visible,
+          style: _subscriptionInfoTitleStyle(titleSize * scale),
+        ),
+        SizedBox(height: titleBodyGap * scale),
+        Text(
+          _t(body),
+          maxLines: 3,
+          softWrap: true,
+          overflow: TextOverflow.visible,
+          style: _subscriptionInfoBodyStyle(bodySize * scale, bodyLineHeight),
+        ),
+        SizedBox(height: bodyBulletsGap * scale),
+        for (final _Tr bullet in bullets)
+          _buildSubscriptionBullet(
+            bullet,
+            bulletSize * scale,
+            gap: bulletGap * scale,
+            lineHeight: bulletLineHeight,
+          ),
+      ],
+    );
+  }
+
+  TextStyle _subscriptionInfoTitleStyle(double fontSize) {
+    return TextStyle(
+      color: _gold,
+      fontSize: fontSize,
+      fontWeight: FontWeight.w800,
+      height: 1.10,
+      letterSpacing: 0.1,
+      shadows: <Shadow>[
+        Shadow(
+          color: Colors.black.withOpacity(0.70),
+          blurRadius: 8,
+          offset: const Offset(0, 1),
+        ),
+      ],
+    );
+  }
+
+  TextStyle _subscriptionInfoBodyStyle(double fontSize, double lineHeight) {
+    return TextStyle(
+      color: Colors.white.withOpacity(0.90),
+      fontSize: fontSize,
+      fontWeight: FontWeight.w500,
+      height: lineHeight,
+      shadows: const <Shadow>[
+        Shadow(color: Color(0xCC000000), blurRadius: 7, offset: Offset(0, 1)),
+      ],
+    );
+  }
+
+  TextStyle _subscriptionInfoBulletStyle(double fontSize, double lineHeight) {
+    return TextStyle(
+      color: Colors.white.withOpacity(0.92),
+      fontSize: fontSize,
+      fontWeight: FontWeight.w600,
+      height: lineHeight,
+      shadows: const <Shadow>[
+        Shadow(color: Color(0xCC000000), blurRadius: 6, offset: Offset(0, 1)),
+      ],
+    );
+  }
+
+  Widget _buildSubscriptionBullet(
+    _Tr text,
+    double fontSize, {
+    required double gap,
+    required double lineHeight,
+  }) {
+    return Padding(
+      padding: EdgeInsets.only(top: gap),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Container(
+            width: 6,
+            height: 6,
+            margin: const EdgeInsets.only(top: 7),
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: _gold,
+              boxShadow: <BoxShadow>[
+                BoxShadow(
+                  color: _gold.withOpacity(0.55),
+                  blurRadius: 10,
+                  spreadRadius: 1,
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              _t(text),
+              maxLines: 1,
+              softWrap: true,
+              overflow: TextOverflow.visible,
+              style: TextStyle(
+                color: Colors.white.withOpacity(0.92),
+                fontSize: fontSize,
+                fontWeight: FontWeight.w600,
+                height: lineHeight,
+                shadows: const <Shadow>[
+                  Shadow(
+                    color: Color(0xCC000000),
+                    blurRadius: 6,
+                    offset: Offset(0, 1),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Bottom "view current plans online" strip overlaid on the
+  /// artwork's gold bar. Dark, bold text (the bar is bright gold) plus
+  /// an open-in-new glyph reads as a button without re-drawing one.
+  ///
+  /// TODO: Wire to current Fluxidi plans/pricing URL.
+  /// This overlay is wrapped in [IgnorePointer] (so it never blocks
+  /// PageView swipes or the Skip / Previous / Next controls) and this
+  /// file imports no URL-launch helper, so the CTA is intentionally a
+  /// non-clickable visual guide for now. No pricing value is shown —
+  /// current prices stay on the website.
+  Widget _buildSubscriptionBottomStrip({
+    required double fontSize,
+    required bool isPortrait,
+  }) {
+    final double subscriptionCtaDy = isPortrait ? 18 : -28;
+    debugPrint(
+      '[SUBSCRIPTION_CTA] isPortrait=$isPortrait dy=$subscriptionCtaDy',
+    );
+    return Center(
+      child: FittedBox(
+        fit: BoxFit.scaleDown,
+        alignment: Alignment.center,
+        child: Transform.translate(
+          offset: Offset(0, subscriptionCtaDy),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: <Widget>[
+              Text(
+                _t(_card3BottomStrip),
+                softWrap: false,
+                overflow: TextOverflow.visible,
+                style: TextStyle(
+                  color: _bg,
+                  fontSize: fontSize,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 0.2,
+                  shadows: const <Shadow>[
+                    Shadow(color: Color(0x40FFFFFF), blurRadius: 6),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              Icon(Icons.open_in_new, color: _bg, size: fontSize + 2),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Small reassurance note under the strip (on the black canvas).
+  /// White/light-grey, wraps in full, scale-down-fitted so it can
+  /// never overflow its thin zone.
+  Widget _buildSubscriptionBottomNote({
+    required double zoneWidth,
+    required double fontSize,
+  }) {
+    return FittedBox(
+      fit: BoxFit.scaleDown,
+      alignment: Alignment.center,
+      child: SizedBox(
+        width: zoneWidth,
+        child: Text(
+          _t(_card3BottomNote),
+          textAlign: TextAlign.center,
+          softWrap: true,
+          overflow: TextOverflow.visible,
+          style: TextStyle(
+            color: Colors.white.withOpacity(0.72),
+            fontSize: fontSize,
+            height: 1.25,
+            shadows: const <Shadow>[
+              Shadow(
+                color: Color(0xCC000000),
+                blurRadius: 6,
+                offset: Offset(0, 1),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -2603,12 +3523,22 @@ enum _HeroVideoLane { none, portrait, landscape }
 /// * [companyCockpit] — bespoke Card 2 hero (PNG background + a
 ///   localised overlay on tablet portrait/landscape; the generic icon
 ///   card on phones).
+/// * [subscription] — bespoke Card 3 hero (PNG background + a
+///   localised overlay: title/body zone, two info cards, and a
+///   bottom plans strip) on tablet portrait/landscape; the generic
+///   icon card on phones.
 /// * [iconCard] — the stable baseline icon + title + body composition.
 /// * [placeholder] — a safe, centred, scroll-friendly "coming next"
 ///   card for product-tour stops that are not yet designed. Never
 ///   loads an image, so it cannot raise asset-not-found errors and
 ///   cannot overflow.
-enum _OrientationCardLayout { welcome, companyCockpit, iconCard, placeholder }
+enum _OrientationCardLayout {
+  welcome,
+  companyCockpit,
+  subscription,
+  iconCard,
+  placeholder,
+}
 
 class _OrientationCardData {
   const _OrientationCardData({
