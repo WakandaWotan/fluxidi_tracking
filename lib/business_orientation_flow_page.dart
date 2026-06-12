@@ -192,6 +192,186 @@ class _BusinessOrientationFlowPageState
   /// zero black bands.
   static const double _card1WelcomeTabletLandscapeMediaAspectRatio = 1586 / 992;
 
+  /// Card 2 tablet-portrait PNG (1320 × 2112) — cockpit visual for the
+  /// orientation flow's second card.
+  static const String _card2WelcomeTabletPortraitAsset =
+      'assets/fluxidi/onboarding/card2_welcome_tablet_portrait_bg.png';
+
+  /// Card 2 tablet-landscape PNG — cockpit visual for the orientation
+  /// flow's second card in landscape only.
+  static const String _card2WelcomeTabletLandscapeAsset =
+      'assets/fluxidi/onboarding/card2_welcome_tablet_landscape_bg.png';
+
+  /// Shared localized title for the Company Cockpit slide (all layouts).
+  static const _Tr _card2CompanyCockpitTitle = _Tr(
+    nl: 'Bedrijfscockpit',
+    en: 'Company Cockpit',
+    fr: 'Cockpit d\u2019entreprise',
+    es: 'Panel de empresa',
+  );
+
+  /// Shared localized subtitle for the Company Cockpit slide (all layouts).
+  static const _Tr _card2CompanyCockpitSubtitle = _Tr(
+    nl:
+        'Je cockpit brengt je belangrijkste tools samen. '
+        'Beheer ritten, team, voertuigen en vraag.',
+    en:
+        'Your cockpit brings your key tools together. '
+        'Manage rides, team, vehicles and demand.',
+    fr:
+        'Votre cockpit regroupe vos outils essentiels. '
+        'Gérez les courses, l\u2019équipe, les véhicules et la demande.',
+    es:
+        'Tu panel reúne tus herramientas clave. '
+        'Gestiona viajes, equipo, vehículos y demanda.',
+  );
+
+  /// Shared localized bullet items for the Company Cockpit slide (all layouts).
+  static const List<_OrientationBulletItem> _companyCockpitBulletItems =
+      <_OrientationBulletItem>[
+        _OrientationBulletItem(
+          title: _Tr(
+            nl: 'Instellingen',
+            en: 'Settings',
+            fr: 'Paramètres',
+            es: 'Ajustes',
+          ),
+          description: _Tr(
+            nl: 'Profiel, branding en bedrijfsgegevens.',
+            en: 'Profile, branding and company details.',
+            fr: 'Profil, image de marque et données d\u2019entreprise.',
+            es: 'Perfil, marca y datos de empresa.',
+          ),
+        ),
+        _OrientationBulletItem(
+          title: _Tr(
+            nl: 'Abonnement',
+            en: 'Plan',
+            fr: 'Abonnement',
+            es: 'Plan',
+          ),
+          description: _Tr(
+            nl: 'Abonnement, facturatie en accountstatus.',
+            en: 'Subscription, billing and account status.',
+            fr: 'Abonnement, facturation et statut du compte.',
+            es: 'Suscripción, facturación y estado de cuenta.',
+          ),
+        ),
+        _OrientationBulletItem(
+          title: _Tr(
+            nl: 'Voertuigen',
+            en: 'Vehicles',
+            fr: 'Véhicules',
+            es: 'Vehículos',
+          ),
+          description: _Tr(
+            nl: 'Beheer en koppel voertuigen.',
+            en: 'Manage and link vehicles.',
+            fr: 'Gérez et associez les véhicules.',
+            es: 'Gestiona y vincula vehículos.',
+          ),
+        ),
+        _OrientationBulletItem(
+          title: _Tr(nl: 'Chiron', en: 'Chiron', fr: 'Chiron', es: 'Chiron'),
+          description: _Tr(
+            nl: 'Compliance, documenten en controle.',
+            en: 'Compliance, documents and control.',
+            fr: 'Conformité, documents et contrôle.',
+            es: 'Cumplimiento, documentos y control.',
+          ),
+        ),
+        _OrientationBulletItem(
+          title: _Tr(
+            nl: 'Chauffeurs',
+            en: 'Drivers',
+            fr: 'Chauffeurs',
+            es: 'Conductores',
+          ),
+          description: _Tr(
+            nl: 'Chauffeurs, codes en documenten.',
+            en: 'Drivers, codes and documents.',
+            fr: 'Chauffeurs, codes et documents.',
+            es: 'Conductores, códigos y documentos.',
+          ),
+        ),
+        _OrientationBulletItem(
+          title: _Tr(
+            nl: 'Chauffeursweergave',
+            en: 'Driver view',
+            fr: 'Vue chauffeur',
+            es: 'Vista del conductor',
+          ),
+          description: _Tr(
+            nl: 'Open de chauffeurcockpit.',
+            en: 'Open the driver cockpit.',
+            fr: 'Ouvrez le cockpit chauffeur.',
+            es: 'Abre el panel del conductor.',
+          ),
+        ),
+        _OrientationBulletItem(
+          title: _Tr(
+            nl: 'Demand radar',
+            en: 'Demand radar',
+            fr: 'Radar de demande',
+            es: 'Radar de demanda',
+          ),
+          description: _Tr(
+            nl: 'Bekijk de vraag in je regio.',
+            en: 'See demand in your region.',
+            fr: 'Consultez la demande dans votre région.',
+            es: 'Consulta la demanda en tu región.',
+          ),
+        ),
+        _OrientationBulletItem(
+          title: _Tr(
+            nl: 'Boekingslink delen',
+            en: 'Share booking link',
+            fr: 'Partager le lien de réservation',
+            es: 'Compartir enlace de reserva',
+          ),
+          description: _Tr(
+            nl: 'Deel je link of QR-code.',
+            en: 'Share your link or QR code.',
+            fr: 'Partagez votre lien ou code QR.',
+            es: 'Comparte tu enlace o código QR.',
+          ),
+        ),
+        _OrientationBulletItem(
+          title: _Tr(
+            nl: 'Boekingen',
+            en: 'Bookings',
+            fr: 'Réservations',
+            es: 'Reservas',
+          ),
+          description: _Tr(
+            nl: 'Planning, ritstatus en opvolging.',
+            en: 'Planning, ride status and follow-up.',
+            fr: 'Planning, statut des courses et suivi.',
+            es: 'Planificación, estado del viaje y seguimiento.',
+          ),
+        ),
+        _OrientationBulletItem(
+          title: _Tr(
+            nl: 'AI Dispatch',
+            en: 'AI Dispatch',
+            fr: 'Dispatch IA',
+            es: 'Despacho IA',
+          ),
+          description: _Tr(
+            nl: 'Slimme dispatching voor je ritten.',
+            en: 'Smart dispatching for your rides.',
+            fr: 'Dispatching intelligent pour vos courses.',
+            es: 'Despacho inteligente para tus viajes.',
+          ),
+        ),
+      ];
+
+  /// Card 2 tablet landscape — left explanation column button order.
+  static const List<int> _card2LandscapeCol1Indices = <int>[0, 2, 4, 6, 8];
+
+  /// Card 2 tablet landscape — right explanation column button order.
+  static const List<int> _card2LandscapeCol2Indices = <int>[1, 3, 5, 7, 9];
+
   static const List<_OrientationCardData> _cards = <_OrientationCardData>[
     _OrientationCardData(
       id: 'welcome',
@@ -212,18 +392,8 @@ class _BusinessOrientationFlowPageState
     _OrientationCardData(
       id: 'central_cockpit',
       icon: Icons.dashboard_outlined,
-      title: _Tr(
-        nl: 'Uw centrale cockpit',
-        en: 'Your central cockpit',
-        fr: 'Votre cockpit central',
-        es: 'Tu cabina central',
-      ),
-      body: _Tr(
-        nl: 'Vanaf uw hoofdscherm beheert u boekingen, chauffeurs, prijzen en meer — alles op één plek.',
-        en: 'From your home screen you manage bookings, drivers, pricing and more — all in one place.',
-        fr: 'Depuis votre tableau de bord, gérez réservations, chauffeurs, tarifs et plus encore — au même endroit.',
-        es: 'Desde tu pantalla principal gestionas reservas, conductores, tarifas y más — todo en un solo lugar.',
-      ),
+      title: _card2CompanyCockpitTitle,
+      body: _card2CompanyCockpitSubtitle,
     ),
     _OrientationCardData(
       id: 'manage_bookings',
@@ -475,6 +645,10 @@ class _BusinessOrientationFlowPageState
     }
   }
 
+  /// Shared localized bullet list for the Company Cockpit slide.
+  List<_OrientationBulletItem> _companyCockpitItems() =>
+      _companyCockpitBulletItems;
+
   void _logCurrentPage() {
     debugPrint(
       '[ORIENTATION_FLOW][PAGE] index=${_index + 1}/${_cards.length} '
@@ -582,7 +756,16 @@ class _BusinessOrientationFlowPageState
         // the user's eye to the moving page content.
         final bool isWelcomeTabletHero =
             _index == 0 && (isTabletPortrait || isTabletLandscape);
-        final Color scaffoldBackground = isWelcomeTabletHero ? _heroBg : _bg;
+        final bool isCentralCockpitTabletPortraitHero =
+            _index == 1 && isTabletPortrait;
+        final bool isCentralCockpitTabletLandscapeHero =
+            _index == 1 && isTabletLandscape;
+        final Color scaffoldBackground =
+            (isWelcomeTabletHero ||
+                isCentralCockpitTabletPortraitHero ||
+                isCentralCockpitTabletLandscapeHero)
+            ? _heroBg
+            : _bg;
 
         // Card 1 tablet landscape uses a FULL-VIEWPORT background
         // hero rendered behind the SafeArea + Column, instead of a
@@ -590,9 +773,13 @@ class _BusinessOrientationFlowPageState
         // dots / Previous / Next row float on top of the video, so
         // the hero is no longer cramped between two horizontal
         // bars. Card 1 tablet portrait keeps its in-slot rounded
-        // panel hero (approved + committed); Cards 2-7 and phone
+        // panel hero (approved + committed); Cards 3-7 and phone
         // layouts are unchanged.
         final bool useLandscapeFullHero = _index == 0 && isTabletLandscape;
+        final bool useCentralCockpitPortraitFullHero =
+            _index == 1 && isTabletPortrait;
+        final bool useCentralCockpitLandscapeFullHero =
+            _index == 1 && isTabletLandscape;
 
         // Keep only one Card 1 tablet-hero decoder active. Runs
         // post-frame so [MediaQuery] is stable and we do not call
@@ -619,6 +806,14 @@ class _BusinessOrientationFlowPageState
                 Positioned.fill(
                   child: _buildWelcomeTabletLandscapeFullViewportHero(size),
                 ),
+              if (useCentralCockpitPortraitFullHero)
+                Positioned.fill(
+                  child: _buildCentralCockpitTabletPortraitFullViewportHero(),
+                ),
+              if (useCentralCockpitLandscapeFullHero)
+                Positioned.fill(
+                  child: _buildCentralCockpitTabletLandscapeFullViewportHero(),
+                ),
               // Foreground layer — the existing chrome + PageView
               // composition. Identical to the pre-refactor layout
               // for portrait, phones, and Cards 2-7. For Card 1 in
@@ -628,7 +823,10 @@ class _BusinessOrientationFlowPageState
               SafeArea(
                 child: Column(
                   children: <Widget>[
-                    _buildTopBar(isCompactHeight),
+                    _buildTopBar(
+                      isCompactHeight,
+                      elevatedSkip: useCentralCockpitLandscapeFullHero,
+                    ),
                     Expanded(
                       child: PageView.builder(
                         controller: _pageController,
@@ -643,6 +841,14 @@ class _BusinessOrientationFlowPageState
                           // owns the swipe gesture, so swiping
                           // forward to Card 2 keeps working.
                           if (card.id == 'welcome' && isTabletLandscape) {
+                            return const SizedBox.expand();
+                          }
+                          if (card.id == 'central_cockpit' &&
+                              isTabletPortrait) {
+                            return const SizedBox.expand();
+                          }
+                          if (card.id == 'central_cockpit' &&
+                              isTabletLandscape) {
                             return const SizedBox.expand();
                           }
                           // Card 1 tablet portrait keeps the in-slot
@@ -677,7 +883,10 @@ class _BusinessOrientationFlowPageState
                     _buildBottomBar(
                       isCompactHeight,
                       isLast: _index == _cards.length - 1,
-                      landscapeFullHero: useLandscapeFullHero,
+                      landscapeFullHero:
+                          useLandscapeFullHero ||
+                          useCentralCockpitPortraitFullHero ||
+                          useCentralCockpitLandscapeFullHero,
                     ),
                   ],
                 ),
@@ -689,10 +898,15 @@ class _BusinessOrientationFlowPageState
     );
   }
 
-  Widget _buildTopBar(bool compact) {
+  Widget _buildTopBar(bool compact, {bool elevatedSkip = false}) {
     final isLast = _index == _cards.length - 1;
     return Padding(
-      padding: EdgeInsets.fromLTRB(20, compact ? 4 : 10, 12, compact ? 2 : 4),
+      padding: EdgeInsets.fromLTRB(
+        20,
+        compact ? 4 : 10,
+        elevatedSkip ? 24 : 12,
+        compact ? 2 : 4,
+      ),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: <Widget>[
@@ -712,7 +926,23 @@ class _BusinessOrientationFlowPageState
           if (!isLast)
             TextButton(
               onPressed: _skip,
-              style: TextButton.styleFrom(foregroundColor: Colors.white70),
+              style: TextButton.styleFrom(
+                foregroundColor: elevatedSkip ? Colors.white : Colors.white70,
+                backgroundColor: elevatedSkip
+                    ? Colors.black.withOpacity(0.62)
+                    : null,
+                padding: EdgeInsets.symmetric(
+                  horizontal: elevatedSkip ? 18 : 12,
+                  vertical: elevatedSkip ? 10 : 4,
+                ),
+                minimumSize: Size(elevatedSkip ? 104 : 48, 40),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(22),
+                  side: elevatedSkip
+                      ? BorderSide(color: _gold.withOpacity(0.38))
+                      : BorderSide.none,
+                ),
+              ),
               child: Text(
                 _t(
                   const _Tr(
@@ -721,6 +951,10 @@ class _BusinessOrientationFlowPageState
                     fr: 'Ignorer',
                     es: 'Omitir',
                   ),
+                ),
+                style: TextStyle(
+                  fontWeight: elevatedSkip ? FontWeight.w700 : FontWeight.w500,
+                  letterSpacing: elevatedSkip ? 0.2 : 0,
                 ),
               ),
             )
@@ -894,8 +1128,13 @@ class _BusinessOrientationFlowPageState
       return _buildWelcomeTabletPortraitVideoHero();
     }
 
+    // Card 2 tablet portrait is intentionally NOT routed here — its
+    // PageView slot is short-circuited to a transparent
+    // [SizedBox.expand] in [build] so the dedicated full-viewport
+    // PNG hero behind the Stack remains fully visible.
+
     // Stable baseline composition shared by all other cards (welcome
-    // on phones, plus Cards 2-7). The only difference between cards
+    // on phones, plus Cards 3-7). The only difference between cards
     // is the [data] they bind — icon, title, body.
     return Padding(
       padding: EdgeInsets.symmetric(horizontal: 20, vertical: compact ? 6 : 16),
@@ -987,6 +1226,333 @@ class _BusinessOrientationFlowPageState
             },
           ),
         ),
+      ),
+    );
+  }
+
+  /// Card 2 tablet-landscape full-viewport hero: PNG background plus a
+  /// localised overlay on the free black left area (card 2 landscape only).
+  Widget _buildCentralCockpitTabletLandscapeFullViewportHero() {
+    return Stack(
+      fit: StackFit.expand,
+      children: <Widget>[
+        Image.asset(
+          _card2WelcomeTabletLandscapeAsset,
+          fit: BoxFit.cover,
+          alignment: Alignment.center,
+          errorBuilder: (ctx, error, stackTrace) {
+            debugPrint(
+              '[ORIENTATION_FLOW][CARD2_LANDSCAPE_PNG_FAIL] error=$error',
+            );
+            return _buildWelcomeMediaUltimateFallback();
+          },
+        ),
+        IgnorePointer(child: _buildCentralCockpitTabletLandscapeOverlay()),
+      ],
+    );
+  }
+
+  Widget _buildCentralCockpitTabletLandscapeOverlay() {
+    return LayoutBuilder(
+      builder: (ctx, constraints) {
+        final double w = constraints.maxWidth;
+        final double h = constraints.maxHeight;
+        final bool isTabletLandscape = w >= 900 && h >= 600 && w > h;
+        if (!isTabletLandscape) {
+          return const SizedBox.shrink();
+        }
+        // Reserve bottom chrome (dots + Previous/Next) so text stays above it.
+        const double bottomChromeReserve = 90.0;
+        final double usableH = h - bottomChromeReserve;
+        final double titleSize = (w * 0.036).clamp(36.0, 40.0);
+        final double introSize = (w * 0.019).clamp(18.0, 20.0);
+        final double bulletGridHeight = usableH * 0.38;
+        return Stack(
+          children: <Widget>[
+            // Top text zone — empty black area between logo and cockpit.
+            Positioned(
+              left: w * 0.29,
+              top: usableH * 0.095,
+              width: w * 0.36,
+              height: usableH * 0.24,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: <Widget>[
+                  Text(
+                    _t(_card2CompanyCockpitTitle),
+                    maxLines: 2,
+                    softWrap: true,
+                    overflow: TextOverflow.visible,
+                    style: TextStyle(
+                      color: _gold,
+                      fontSize: titleSize,
+                      fontWeight: FontWeight.w900,
+                      height: 1.05,
+                      letterSpacing: 0.15,
+                      shadows: <Shadow>[
+                        Shadow(color: _gold.withOpacity(0.45), blurRadius: 14),
+                        Shadow(
+                          color: Colors.black.withOpacity(0.75),
+                          blurRadius: 8,
+                          offset: const Offset(0, 2),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  Text(
+                    _t(_card2CompanyCockpitSubtitle),
+                    maxLines: 3,
+                    softWrap: true,
+                    overflow: TextOverflow.visible,
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.88),
+                      fontSize: introSize,
+                      height: 1.26,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            // Bullet grid — two columns, below logo wordmark, left of cockpit.
+            Positioned(
+              left: w * 0.065,
+              top: usableH * 0.455,
+              width: w * 0.55,
+              height: bulletGridHeight,
+              child: _buildCard2TabletLandscapeBulletGrid(),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildCard2TabletLandscapeBulletGrid() {
+    final List<_OrientationBulletItem> items = _companyCockpitItems();
+    final List<_OrientationBulletItem> leftItems = <_OrientationBulletItem>[
+      for (final int i in _card2LandscapeCol1Indices) items[i],
+    ];
+    final List<_OrientationBulletItem> rightItems = <_OrientationBulletItem>[
+      for (final int i in _card2LandscapeCol2Indices) items[i],
+    ];
+
+    Widget buildColumn(List<_OrientationBulletItem> columnItems) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          for (int i = 0; i < columnItems.length; i++) ...<Widget>[
+            _buildCompanyCockpitBulletItem(
+              columnItems[i],
+              titleFontSize: 16.5,
+              descriptionFontSize: 14.2,
+              compactBullet: true,
+            ),
+            if (i != columnItems.length - 1) const SizedBox(height: 13),
+          ],
+        ],
+      );
+    }
+
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        Expanded(child: buildColumn(leftItems)),
+        const SizedBox(width: 48),
+        Expanded(child: buildColumn(rightItems)),
+      ],
+    );
+  }
+
+  Widget _buildCompanyCockpitBulletItem(
+    _OrientationBulletItem item, {
+    required double titleFontSize,
+    required double descriptionFontSize,
+    bool compactBullet = false,
+  }) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        compactBullet
+            ? _buildCard2LandscapeOverlayBullet()
+            : _buildCard2OverlayBullet(),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              Text(
+                _t(item.title),
+                maxLines: 1,
+                softWrap: false,
+                overflow: TextOverflow.fade,
+                style: TextStyle(
+                  color: _gold,
+                  fontSize: titleFontSize,
+                  fontWeight: FontWeight.w800,
+                  height: 1.08,
+                  letterSpacing: compactBullet ? 0.1 : 0,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                _t(item.description),
+                maxLines: 2,
+                softWrap: true,
+                overflow: TextOverflow.visible,
+                style: TextStyle(
+                  color: Colors.white.withOpacity(0.82),
+                  fontSize: descriptionFontSize,
+                  fontWeight: FontWeight.w500,
+                  height: 1.15,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildCard2LandscapeOverlayBullet() {
+    return Container(
+      width: 6,
+      height: 6,
+      margin: const EdgeInsets.only(top: 7),
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: _gold,
+        boxShadow: <BoxShadow>[
+          BoxShadow(
+            color: _gold.withOpacity(0.55),
+            blurRadius: 12,
+            spreadRadius: 1,
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Card 2 tablet-portrait full-viewport hero: PNG background plus a
+  /// localised overlay on the free black left area and title zone.
+  Widget _buildCentralCockpitTabletPortraitFullViewportHero() {
+    return Stack(
+      fit: StackFit.expand,
+      children: <Widget>[
+        Image.asset(
+          _card2WelcomeTabletPortraitAsset,
+          fit: BoxFit.cover,
+          alignment: Alignment.center,
+          errorBuilder: (ctx, error, stackTrace) {
+            debugPrint('[ORIENTATION_FLOW][CARD2_PNG_FAIL] error=$error');
+            return _buildWelcomeMediaUltimateFallback();
+          },
+        ),
+        IgnorePointer(child: _buildCentralCockpitTabletPortraitOverlay()),
+      ],
+    );
+  }
+
+  Widget _buildCentralCockpitTabletPortraitOverlay() {
+    return LayoutBuilder(
+      builder: (ctx, constraints) {
+        final double w = constraints.maxWidth;
+        final double h = constraints.maxHeight;
+        // Logo reserved: x 0.00–0.36, y 0.00–0.23 — no Flutter text.
+        final double titleLeft = w * 0.43;
+        final double titleTop = h * 0.045;
+        final double titleWidth = w * 0.48;
+        final double explainLeft = w * 0.055;
+        final double explainTop = h * 0.295;
+        final double explainWidth = w * 0.300;
+        final double explainHeight = h * 0.585;
+        return Stack(
+          children: <Widget>[
+            Positioned(
+              left: titleLeft,
+              top: titleTop,
+              width: titleWidth,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: <Widget>[
+                  Text(
+                    _t(_card2CompanyCockpitTitle),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: _gold,
+                      fontSize: 38,
+                      fontWeight: FontWeight.w900,
+                      height: 1.05,
+                      letterSpacing: 0.15,
+                      shadows: <Shadow>[
+                        Shadow(color: _gold.withOpacity(0.45), blurRadius: 14),
+                        Shadow(
+                          color: Colors.black.withOpacity(0.75),
+                          blurRadius: 8,
+                          offset: const Offset(0, 2),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    _t(_card2CompanyCockpitSubtitle),
+                    maxLines: 3,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.86),
+                      fontSize: 16.5,
+                      height: 1.30,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Positioned(
+              left: explainLeft,
+              top: explainTop,
+              width: explainWidth,
+              height: explainHeight,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: <Widget>[
+                  for (final _OrientationBulletItem item
+                      in _companyCockpitItems())
+                    _buildCompanyCockpitBulletItem(
+                      item,
+                      titleFontSize: 19,
+                      descriptionFontSize: 14.5,
+                    ),
+                ],
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildCard2OverlayBullet() {
+    return Container(
+      width: 7,
+      height: 7,
+      margin: const EdgeInsets.only(top: 7),
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: _gold,
+        boxShadow: <BoxShadow>[
+          BoxShadow(
+            color: _gold.withOpacity(0.55),
+            blurRadius: 12,
+            spreadRadius: 1,
+          ),
+        ],
       ),
     );
   }
@@ -1749,6 +2315,16 @@ class _OrientationCardData {
   final IconData icon;
   final _Tr title;
   final _Tr body;
+}
+
+class _OrientationBulletItem {
+  const _OrientationBulletItem({
+    required this.title,
+    required this.description,
+  });
+
+  final _Tr title;
+  final _Tr description;
 }
 
 class _Tr {
