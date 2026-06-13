@@ -131,6 +131,14 @@ class _BusinessOrientationFlowPageState
 
   int _index = 0;
 
+  /// Currently selected preview in the Card 5 (themes & branding)
+  /// interactive Theme Showroom. Plain integer state — no nested
+  /// PageView, no swipe carousel. The left/right arrows inside the
+  /// tablet mockup decrement/increment this with wrap-around, and the
+  /// whole orientation page rebuilds via [setState] so the preview's
+  /// [AnimatedSwitcher] cross-fades to the new screenshot.
+  int _themeShowroomIndex = 0;
+
   /// Card 3's reassurance note is intentionally NOT rendered on the
   /// tablet full-viewport subscription layouts for now — it crowded
   /// the page indicator / Previous-Next chrome. The localized string
@@ -233,6 +241,435 @@ class _BusinessOrientationFlowPageState
       'assets/fluxidi/onboarding/card4_welcome_tablet_portrait_bg.png';
   static const String _card4VehiclesFleetTabletLandscapeAsset =
       'assets/fluxidi/onboarding/card4_welcome_tablet_landscape_bg.png';
+
+  // ---------------------------------------------------------------
+  // Slide 4 — Settings & company profile (the Fluxidi "settings
+  // engine" / business control center). Uses the dedicated card14
+  // settings/cockpit artwork and overlays ALL localized copy in the
+  // measured safe frames — the panels are the only painted chrome.
+  //
+  // NOTE: these assets are named `card14` but are intentionally used
+  // for the `settings_profile` page 4/15 for now. This does NOT touch
+  // Ride Receipts (card 14) logic, which keeps its own card12 assets.
+  // ---------------------------------------------------------------
+
+  static const String _settingsProfileTabletPortraitAsset =
+      'assets/fluxidi/onboarding/card14_welcome_tablet_portrait_bg.png';
+  static const String _settingsProfileTabletLandscapeAsset =
+      'assets/fluxidi/onboarding/card14_welcome_tablet_landscape_bg.png';
+
+  static const _Tr _settingsProfileTopTitle = _Tr(
+    nl: 'Je bedrijfsklare cockpit',
+    en: 'Your business-ready cockpit',
+    fr: 'Votre cockpit prêt pour l’activité',
+    es: 'Tu cockpit listo para operar',
+  );
+
+  static const _Tr _settingsProfileTopIntro = _Tr(
+    nl:
+        'Beheer de volledige white-label motor van je taxi- of vervoersbedrijf: '
+        'identiteit, tarieven, betalingen, diensten en publicatie.',
+    en:
+        'Manage the full white-label engine of your taxi or mobility company: '
+        'identity, pricing, payments, services and publishing.',
+    fr:
+        'Gérez le moteur white-label complet de votre société de taxi ou '
+        'mobilité : identité, prix, paiements, services et publication.',
+    es:
+        'Gestiona el motor white-label completo de tu empresa de taxi o '
+        'movilidad: identidad, precios, pagos, servicios y publicación.',
+  );
+
+  static const _Tr _settingsProfileLabel = _Tr(
+    nl: 'SETTINGS ENGINE',
+    en: 'SETTINGS ENGINE',
+    fr: 'MOTEUR DE PARAMÈTRES',
+    es: 'MOTOR DE AJUSTES',
+  );
+
+  static const _Tr _settingsProfileMainTitle = _Tr(
+    nl: 'Configureer je bedrijf alsof het een professionele centrale is.',
+    en: 'Configure your company like a professional dispatch center.',
+    fr: 'Configurez votre entreprise comme une centrale professionnelle.',
+    es: 'Configura tu empresa como una central profesional.',
+  );
+
+  static const _Tr _settingsProfileBody = _Tr(
+    nl:
+        'Fluxidi bundelt alle cruciale bedrijfsinstellingen in één cockpit. Je '
+        'ziet meteen wat compleet is, wat aandacht vraagt en wat klaar is om '
+        'veilig online te publiceren.',
+    en:
+        'Fluxidi brings all critical business settings into one cockpit. You '
+        'instantly see what is complete, what needs attention and what is ready '
+        'to publish safely.',
+    fr:
+        'Fluxidi regroupe tous les paramètres essentiels dans un seul cockpit. '
+        'Vous voyez immédiatement ce qui est complet, ce qui demande attention '
+        'et ce qui peut être publié en sécurité.',
+    es:
+        'Fluxidi reúne todos los ajustes críticos en un solo cockpit. Ves al '
+        'instante qué está completo, qué necesita atención y qué está listo '
+        'para publicarse con seguridad.',
+  );
+
+  static const List<_SettingsProfileFeature>
+  _settingsProfileFeatures = <_SettingsProfileFeature>[
+    _SettingsProfileFeature(
+      icon: Icons.apartment_outlined,
+      title: _Tr(
+        nl: 'Bedrijfsfundament',
+        en: 'Business foundation',
+        fr: 'Base d’entreprise',
+        es: 'Base de empresa',
+      ),
+      description: _Tr(
+        nl:
+            'Naam, adres, BTW, facturatie, logo, support en publieke '
+            'partnerpagina.',
+        en:
+            'Name, address, VAT, billing, logo, support and public partner '
+            'profile.',
+        fr:
+            'Nom, adresse, TVA, facturation, logo, support et profil '
+            'partenaire public.',
+        es:
+            'Nombre, dirección, IVA, facturación, logo, soporte y perfil '
+            'público de partner.',
+      ),
+    ),
+    _SettingsProfileFeature(
+      icon: Icons.qr_code_2_outlined,
+      title: _Tr(
+        nl: 'Boekingsmotor',
+        en: 'Booking engine',
+        fr: 'Moteur de réservation',
+        es: 'Motor de reservas',
+      ),
+      description: _Tr(
+        nl:
+            'Publieke link, QR-flow, kalenderkoppeling, diensten, tiers en '
+            'luchthavenregels.',
+        en:
+            'Public link, QR flow, calendar connection, services, tiers and '
+            'airport rules.',
+        fr:
+            'Lien public, QR, calendrier, services, niveaux et règles '
+            'aéroport.',
+        es:
+            'Enlace público, QR, calendario, servicios, niveles y reglas de '
+            'aeropuerto.',
+      ),
+    ),
+    _SettingsProfileFeature(
+      icon: Icons.payments_outlined,
+      title: _Tr(
+        nl: 'Commerciële regels',
+        en: 'Commercial rules',
+        fr: 'Règles commerciales',
+        es: 'Reglas comerciales',
+      ),
+      description: _Tr(
+        nl:
+            'Tarieven, toeslagen, annulatiebeleid, betaalmethodes en vaste '
+            'luchthavenprijzen.',
+        en:
+            'Fares, surcharges, cancellation policy, payment methods and '
+            'fixed airport prices.',
+        fr:
+            'Tarifs, suppléments, annulation, moyens de paiement et prix '
+            'fixes aéroport.',
+        es:
+            'Tarifas, recargos, cancelación, métodos de pago y precios fijos '
+            'de aeropuerto.',
+      ),
+    ),
+    _SettingsProfileFeature(
+      icon: Icons.verified_outlined,
+      title: _Tr(
+        nl: 'Publicatiecontrole',
+        en: 'Publishing control',
+        fr: 'Contrôle de publication',
+        es: 'Control de publicación',
+      ),
+      description: _Tr(
+        nl:
+            'Statusbadges tonen wat klaar is, wat ontbreekt en wat actie '
+            'vraagt.',
+        en:
+            'Status badges show what is ready, what is missing and what '
+            'needs action.',
+        fr:
+            'Les statuts montrent ce qui est prêt, ce qui manque et ce qui '
+            'demande action.',
+        es:
+            'Los estados muestran qué está listo, qué falta y qué requiere '
+            'acción.',
+      ),
+    ),
+  ];
+
+  static const _Tr _settingsProfileFooter = _Tr(
+    nl:
+        'Minder losse tools. Meer controle. Klaar om te groeien per regio, '
+        'bedrijf en chauffeur.',
+    en:
+        'Fewer scattered tools. More control. Ready to grow by region, company '
+        'and driver.',
+    fr:
+        'Moins d’outils dispersés. Plus de contrôle. Prêt à grandir par région, '
+        'entreprise et chauffeur.',
+    es:
+        'Menos herramientas sueltas. Más control. Listo para crecer por región, '
+        'empresa y conductor.',
+  );
+
+  // ---------------------------------------------------------------
+  // Slide 5 — Themes & branding: the interactive Fluxidi Theme
+  // Showroom. A fixed tablet/mockup preview cycles through real
+  // Fluxidi screenshots via in-preview left/right arrows (plain
+  // integer state, no nested PageView / swipe carousel). Two coherent
+  // dark-glass panels (title + explanation) frame the hero preview.
+  //
+  // The preview assets live in a dedicated TOP-LEVEL folder
+  // (assets_card5_themes/) that is kept OUTSIDE the assets/fluxidi/
+  // parent asset tree. The reason: in this Flutter version the parent
+  // `- assets/fluxidi/` entry recursively bundles subfolders, so adding
+  // an explicit child entry for the same files double-copies and throws
+  // PathExistsException — while removing the child means the assets
+  // aren't reliably found at runtime. Hosting card 5 assets under their
+  // own top-level folder sidesteps both edge cases with exactly one
+  // explicit registration in pubspec.yaml and never collides with any
+  // other parent entry.
+  // ---------------------------------------------------------------
+
+  static const String _card5ThemesAssetDir = 'assets_card5_themes/';
+
+  /// Cinematic background painted behind the vertical tablet preview in
+  /// the hero zone of Card 5. The interactive tablet still floats on top
+  /// — this asset is a backdrop only and is never used as the preview
+  /// itself.
+  static const String _themesShowroomHeroBgAsset =
+      '${_card5ThemesAssetDir}card5_theme_showroom_hero_bg.png';
+
+  static const _Tr _themesCategoryBusiness = _Tr(
+    nl: 'Bedrijfscockpit',
+    en: 'Business cockpit',
+    fr: 'Cockpit business',
+    es: 'Cockpit business',
+  );
+
+  static const _Tr _themesCategoryDriver = _Tr(
+    nl: 'Chauffeursweergave',
+    en: 'Driver view',
+    fr: 'Vue chauffeur',
+    es: 'Vista conductor',
+  );
+
+  static const _Tr _themesCategoryConfig = _Tr(
+    nl: 'Configuratie',
+    en: 'Configuration',
+    fr: 'Configuration',
+    es: 'Configuración',
+  );
+
+  /// The 10 Theme Showroom previews. Titles are brand names (kept the
+  /// same across languages); the category localizes. Accent / secondary
+  /// colors drive the tablet frame's border + glow per preview.
+  static const List<_ThemeShowroomItem>
+  _themeShowroomItems = <_ThemeShowroomItem>[
+    _ThemeShowroomItem(
+      title: 'Executive Gold',
+      category: _themesCategoryBusiness,
+      assetPath:
+          '${_card5ThemesAssetDir}card5_theme_01_business_executive_gold.jpg',
+      accentColor: Color(0xFFE5B641),
+      secondaryColor: Color(0xFF7A5C12),
+    ),
+    _ThemeShowroomItem(
+      title: 'Corporate Blue',
+      category: _themesCategoryBusiness,
+      assetPath:
+          '${_card5ThemesAssetDir}card5_theme_02_business_corporate_blue.jpg',
+      accentColor: Color(0xFF3B82F6),
+      secondaryColor: Color(0xFF1E3A8A),
+    ),
+    _ThemeShowroomItem(
+      title: 'Clean Professional',
+      category: _themesCategoryBusiness,
+      assetPath:
+          '${_card5ThemesAssetDir}card5_theme_03_business_clean_professional.jpg',
+      accentColor: Color(0xFF94A3B8),
+      secondaryColor: Color(0xFF475569),
+    ),
+    _ThemeShowroomItem(
+      title: 'Emerald Ivory',
+      category: _themesCategoryBusiness,
+      assetPath:
+          '${_card5ThemesAssetDir}card5_theme_04_business_emerald_ivory.jpg',
+      accentColor: Color(0xFF10B981),
+      secondaryColor: Color(0xFF065F46),
+    ),
+    _ThemeShowroomItem(
+      title: 'Fluxidi Neon Rush',
+      category: _themesCategoryBusiness,
+      assetPath: '${_card5ThemesAssetDir}card5_theme_05_business_neon_rush.jpg',
+      accentColor: Color(0xFFEC4899),
+      secondaryColor: Color(0xFF7C3AED),
+    ),
+    _ThemeShowroomItem(
+      title: 'Night Gold',
+      category: _themesCategoryDriver,
+      assetPath: '${_card5ThemesAssetDir}card5_theme_06_driver_night_gold.jpg',
+      accentColor: Color(0xFFE5B641),
+      secondaryColor: Color(0xFF1F2937),
+    ),
+    _ThemeShowroomItem(
+      title: 'Midnight Blue',
+      category: _themesCategoryDriver,
+      assetPath:
+          '${_card5ThemesAssetDir}card5_theme_07_driver_midnight_blue.jpg',
+      accentColor: Color(0xFF2563EB),
+      secondaryColor: Color(0xFF0F172A),
+    ),
+    _ThemeShowroomItem(
+      title: 'Midday Gold',
+      category: _themesCategoryDriver,
+      assetPath: '${_card5ThemesAssetDir}card5_theme_08_driver_midday_gold.jpg',
+      accentColor: Color(0xFFF59E0B),
+      secondaryColor: Color(0xFFB45309),
+    ),
+    _ThemeShowroomItem(
+      title: 'Theme settings',
+      category: _themesCategoryConfig,
+      assetPath: '${_card5ThemesAssetDir}card5_theme_09_theme_settings_top.jpg',
+      accentColor: Color(0xFFE5B641),
+      secondaryColor: Color(0xFF334155),
+    ),
+    _ThemeShowroomItem(
+      title: 'Theme options',
+      category: _themesCategoryConfig,
+      assetPath:
+          '${_card5ThemesAssetDir}card5_theme_10_theme_settings_options.jpg',
+      accentColor: Color(0xFFE5B641),
+      secondaryColor: Color(0xFF334155),
+    ),
+  ];
+
+  static const _Tr _themesTitle = _Tr(
+    nl: 'Thema’s & uitstraling',
+    en: 'Themes & branding',
+    fr: 'Thèmes & image',
+    es: 'Temas e imagen',
+  );
+
+  static const _Tr _themesIntro = _Tr(
+    nl:
+        'Laat Fluxidi aansluiten bij je merk. Kies een stijl voor je '
+        'bedrijfscockpit, chauffeursweergave en mobiele ervaring.',
+    en:
+        'Make Fluxidi match your brand. Choose a style for your business '
+        'cockpit, driver view and mobile experience.',
+    fr:
+        'Adaptez Fluxidi à votre marque. Choisissez un style pour le cockpit, '
+        'la vue chauffeur et l’expérience mobile.',
+    es:
+        'Haz que Fluxidi encaje con tu marca. Elige un estilo para el cockpit, '
+        'la vista del conductor y la experiencia móvil.',
+  );
+
+  static const _Tr _themesLabel = _Tr(
+    nl: 'THEME SHOWROOM',
+    en: 'THEME SHOWROOM',
+    fr: 'SHOWROOM DES THÈMES',
+    es: 'SHOWROOM DE TEMAS',
+  );
+
+  static const _Tr _themesMainTitle = _Tr(
+    nl: 'Toon je bedrijf in je eigen stijl.',
+    en: 'Show your company in your own style.',
+    fr: 'Présentez votre entreprise dans votre propre style.',
+    es: 'Muestra tu empresa con tu propio estilo.',
+  );
+
+  static const _Tr _themesBody = _Tr(
+    nl:
+        'Blader door echte Fluxidi-thema’s en zie hoe kleur, sfeer en layout de '
+        'ervaring veranderen voor bedrijf, chauffeur en klant.',
+    en:
+        'Browse real Fluxidi themes and see how color, mood and layout change '
+        'the experience for the company, driver and customer.',
+    fr:
+        'Parcourez de vrais thèmes Fluxidi et voyez comment les couleurs, '
+        'l’ambiance et la mise en page transforment l’expérience.',
+    es:
+        'Explora temas reales de Fluxidi y descubre cómo color, ambiente y '
+        'diseño transforman la experiencia.',
+  );
+
+  static const List<_SettingsProfileFeature> _themesFeatures =
+      <_SettingsProfileFeature>[
+        _SettingsProfileFeature(
+          icon: Icons.dashboard_customize_outlined,
+          title: _Tr(
+            nl: 'Business cockpit',
+            en: 'Business cockpit',
+            fr: 'Cockpit business',
+            es: 'Cockpit business',
+          ),
+          description: _Tr(
+            nl:
+                'Executive Gold, Corporate Blue, Clean Professional, Emerald '
+                'Ivory en Neon Rush.',
+            en:
+                'Executive Gold, Corporate Blue, Clean Professional, Emerald '
+                'Ivory and Neon Rush.',
+            fr:
+                'Executive Gold, Corporate Blue, Clean Professional, Emerald '
+                'Ivory et Neon Rush.',
+            es:
+                'Executive Gold, Corporate Blue, Clean Professional, Emerald '
+                'Ivory y Neon Rush.',
+          ),
+        ),
+        _SettingsProfileFeature(
+          icon: Icons.drive_eta_outlined,
+          title: _Tr(
+            nl: 'Chauffeursweergave',
+            en: 'Driver view',
+            fr: 'Vue chauffeur',
+            es: 'Vista conductor',
+          ),
+          description: _Tr(
+            nl: 'Night Gold, Midnight Blue en Midday Gold voor onderweg.',
+            en: 'Night Gold, Midnight Blue and Midday Gold for the road.',
+            fr: 'Night Gold, Midnight Blue et Midday Gold pour la route.',
+            es: 'Night Gold, Midnight Blue y Midday Gold para la carretera.',
+          ),
+        ),
+        _SettingsProfileFeature(
+          icon: Icons.view_quilt_outlined,
+          title: _Tr(
+            nl: 'Layout & herkenbaarheid',
+            en: 'Layout & recognition',
+            fr: 'Layout & reconnaissance',
+            es: 'Layout y reconocimiento',
+          ),
+          description: _Tr(
+            nl: 'Compact of visueel, met een uitstraling die past bij je merk.',
+            en: 'Compact or visual, with a look that matches your brand.',
+            fr: 'Compact ou visuel, avec une image adaptée à votre marque.',
+            es: 'Compacto o visual, con una imagen adaptada a tu marca.',
+          ),
+        ),
+      ];
+
+  static const _Tr _themesFooter = _Tr(
+    nl: 'White-label gevoel zonder ingewikkelde designsoftware.',
+    en: 'A white-label feel without complex design software.',
+    fr: 'Un rendu white-label sans logiciel de design complexe.',
+    es: 'Sensación white-label sin software de diseño complejo.',
+  );
 
   // ---------------------------------------------------------------
   // Card 4 — Vehicles & fleet management. First controlled step:
@@ -1618,19 +2055,6 @@ class _BusinessOrientationFlowPageState
     es: 'Tu servicio. Más movilidad. Más clientes que vuelven.',
   );
 
-  /// Shared body copy for not-yet-designed product-tour stops. Kept
-  /// deliberately generic — the real per-card explanations land when
-  /// each card graduates from [_OrientationCardLayout.placeholder] to
-  /// its bespoke layout. This is never a "final" string; it only
-  /// keeps placeholder cards readable and translated during
-  /// development.
-  static const _Tr _placeholderBody = _Tr(
-    nl: 'Dit onderdeel van de rondleiding wordt binnenkort toegevoegd.',
-    en: 'This part of the tour is coming soon.',
-    fr: 'Cette partie de la visite arrive bientôt.',
-    es: 'Esta parte del recorrido estará disponible pronto.',
-  );
-
   // ---------------------------------------------------------------
   // Card 3 — Subscription & scalability. All copy lives here in the
   // central model so the bespoke overlay simply binds it; no pricing
@@ -2016,28 +2440,22 @@ class _BusinessOrientationFlowPageState
     // 4 — Settings & company profile.
     _OrientationCardData(
       id: 'settings_profile',
-      layout: _OrientationCardLayout.placeholder,
+      layout: _OrientationCardLayout.settingsProfileRich,
       icon: Icons.settings_outlined,
-      title: _Tr(
-        nl: 'Instellingen & bedrijfsprofiel',
-        en: 'Settings & company profile',
-        fr: 'Paramètres et profil d\u2019entreprise',
-        es: 'Ajustes y perfil de empresa',
-      ),
-      body: _placeholderBody,
+      title: _settingsProfileTopTitle,
+      body: _settingsProfileTopIntro,
+      portraitAsset: _settingsProfileTabletPortraitAsset,
+      landscapeAsset: _settingsProfileTabletLandscapeAsset,
     ),
-    // 5 — Subscription & account status.
+    // 5 — Themes & branding (interactive Theme Showroom). Foreground
+    // interactive card (NOT a full-viewport hero) so the in-preview
+    // left/right arrows receive taps. Stays at index 4.
     _OrientationCardData(
-      id: 'subscription_status',
-      layout: _OrientationCardLayout.placeholder,
-      icon: Icons.workspace_premium_outlined,
-      title: _Tr(
-        nl: 'Abonnement & accountstatus',
-        en: 'Subscription & account status',
-        fr: 'Abonnement et statut du compte',
-        es: 'Suscripción y estado de la cuenta',
-      ),
-      body: _placeholderBody,
+      id: 'themes_branding',
+      layout: _OrientationCardLayout.themesBrandingRich,
+      icon: Icons.palette_outlined,
+      title: _themesTitle,
+      body: _themesIntro,
     ),
     // 6 — Vehicles & fleet management (bespoke PNG + title/intro overlay
     // hero on tablet). title/body feed both the bespoke overlay and the
@@ -2389,6 +2807,27 @@ class _BusinessOrientationFlowPageState
     (widget.onSkip ?? widget.onFinish).call();
   }
 
+  /// Card 5 Theme Showroom: select the previous preview (wraps to the
+  /// last). Pure local state — never touches the orientation
+  /// PageController, so it cannot interfere with Previous/Next.
+  void _themeShowroomPrev() {
+    if (!mounted) return;
+    final int count = _themeShowroomItems.length;
+    setState(() {
+      _themeShowroomIndex = (_themeShowroomIndex - 1 + count) % count;
+    });
+  }
+
+  /// Card 5 Theme Showroom: select the next preview (wraps to the
+  /// first).
+  void _themeShowroomNext() {
+    if (!mounted) return;
+    final int count = _themeShowroomItems.length;
+    setState(() {
+      _themeShowroomIndex = (_themeShowroomIndex + 1) % count;
+    });
+  }
+
   void _finish() {
     if (!mounted) return;
     debugPrint(
@@ -2448,6 +2887,8 @@ class _BusinessOrientationFlowPageState
             currentCard.layout == _OrientationCardLayout.companyCockpit;
         final bool isSubscriptionCard =
             currentCard.layout == _OrientationCardLayout.subscription;
+        final bool isSettingsProfileCard =
+            currentCard.layout == _OrientationCardLayout.settingsProfileRich;
         final bool isVehiclesFleetCard =
             currentCard.layout == _OrientationCardLayout.vehiclesFleet;
         final bool isDriverManagementCard =
@@ -2468,6 +2909,11 @@ class _BusinessOrientationFlowPageState
             currentCard.layout == _OrientationCardLayout.driverReceiptsRich;
         final bool isActivateCustomersCard =
             currentCard.layout == _OrientationCardLayout.activateCustomersRich;
+        // Card 5 Theme Showroom is composed entirely in Flutter (no
+        // baked artwork), so it owns a pure-black premium canvas on
+        // every form factor rather than the shared navy palette.
+        final bool isThemesBrandingCard =
+            currentCard.layout == _OrientationCardLayout.themesBrandingRich;
         final bool isWelcomeTabletHero =
             isWelcomeCard && (isTabletPortrait || isTabletLandscape);
         final bool isCentralCockpitTabletPortraitHero =
@@ -2478,6 +2924,8 @@ class _BusinessOrientationFlowPageState
         // gets the same immersive [_heroBg] scaffold on tablet.
         final bool isSubscriptionTabletHero =
             isSubscriptionCard && (isTabletPortrait || isTabletLandscape);
+        final bool isSettingsProfileTabletHero =
+            isSettingsProfileCard && (isTabletPortrait || isTabletLandscape);
         // Card 4 artwork is on a near-black canvas like Cards 2 & 3, so
         // it gets the same immersive [_heroBg] scaffold on tablet.
         final bool isVehiclesFleetTabletHero =
@@ -2500,21 +2948,23 @@ class _BusinessOrientationFlowPageState
             isDriverReceiptsCard && (isTabletPortrait || isTabletLandscape);
         final bool isActivateCustomersTabletHero =
             isActivateCustomersCard && (isTabletPortrait || isTabletLandscape);
-        final Color scaffoldBackground =
-            (isWelcomeTabletHero ||
-                isCentralCockpitTabletPortraitHero ||
-                isCentralCockpitTabletLandscapeHero ||
-                isSubscriptionTabletHero ||
-                isVehiclesFleetTabletHero ||
-                isDriverManagementTabletHero ||
-                isChironDocumentsTabletHero ||
-                isRegionRadarTabletHero ||
-                isPublicBookingLinkTabletHero ||
-                isAiDispatchTabletHero ||
-                isDriverViewTabletHero ||
-                isCalculatorTabletHero ||
-                isDriverReceiptsTabletHero ||
-                isActivateCustomersTabletHero)
+        final Color scaffoldBackground = isThemesBrandingCard
+            ? const Color(0xFF000000)
+            : (isWelcomeTabletHero ||
+                  isCentralCockpitTabletPortraitHero ||
+                  isCentralCockpitTabletLandscapeHero ||
+                  isSubscriptionTabletHero ||
+                  isSettingsProfileTabletHero ||
+                  isVehiclesFleetTabletHero ||
+                  isDriverManagementTabletHero ||
+                  isChironDocumentsTabletHero ||
+                  isRegionRadarTabletHero ||
+                  isPublicBookingLinkTabletHero ||
+                  isAiDispatchTabletHero ||
+                  isDriverViewTabletHero ||
+                  isCalculatorTabletHero ||
+                  isDriverReceiptsTabletHero ||
+                  isActivateCustomersTabletHero)
             ? _heroBg
             : _bg;
 
@@ -2539,6 +2989,10 @@ class _BusinessOrientationFlowPageState
             isSubscriptionCard && isTabletPortrait;
         final bool useSubscriptionLandscapeFullHero =
             isSubscriptionCard && isTabletLandscape;
+        final bool useSettingsProfilePortraitFullHero =
+            isSettingsProfileCard && isTabletPortrait;
+        final bool useSettingsProfileLandscapeFullHero =
+            isSettingsProfileCard && isTabletLandscape;
         // Card 4 uses the same full-viewport hero approach as Cards 2 & 3:
         // a PNG background behind the Stack with a localised overlay,
         // while the PageView slot is short-circuited to a transparent box
@@ -2624,6 +3078,14 @@ class _BusinessOrientationFlowPageState
               if (useSubscriptionLandscapeFullHero)
                 Positioned.fill(
                   child: _buildSubscriptionTabletLandscapeFullViewportHero(),
+                ),
+              if (useSettingsProfilePortraitFullHero)
+                Positioned.fill(
+                  child: _buildSettingsProfileTabletPortraitFullViewportHero(),
+                ),
+              if (useSettingsProfileLandscapeFullHero)
+                Positioned.fill(
+                  child: _buildSettingsProfileTabletLandscapeFullViewportHero(),
                 ),
               if (useVehiclesFleetPortraitFullHero)
                 Positioned.fill(
@@ -2724,6 +3186,7 @@ class _BusinessOrientationFlowPageState
                       elevatedSkip:
                           useCentralCockpitLandscapeFullHero ||
                           useSubscriptionLandscapeFullHero ||
+                          useSettingsProfileLandscapeFullHero ||
                           useVehiclesFleetLandscapeFullHero ||
                           useChironDocumentsLandscapeFullHero,
                     ),
@@ -2761,6 +3224,11 @@ class _BusinessOrientationFlowPageState
                           // swipe gesture.
                           if (card.layout ==
                                   _OrientationCardLayout.subscription &&
+                              (isTabletPortrait || isTabletLandscape)) {
+                            return const SizedBox.expand();
+                          }
+                          if (card.layout ==
+                                  _OrientationCardLayout.settingsProfileRich &&
                               (isTabletPortrait || isTabletLandscape)) {
                             return const SizedBox.expand();
                           }
@@ -2831,13 +3299,23 @@ class _BusinessOrientationFlowPageState
                           final bool useFullWidthHeroPortrait =
                               card.layout == _OrientationCardLayout.welcome &&
                               isTabletPortrait;
+                          // Card 5 Theme Showroom is an interactive
+                          // foreground card (not a full-viewport hero),
+                          // so it renders here and needs the full tablet
+                          // width to host the large mockup preview.
+                          final bool useFullWidthThemes =
+                              card.layout ==
+                                  _OrientationCardLayout.themesBrandingRich &&
+                              (isTabletPortrait || isTabletLandscape);
                           return Align(
                             alignment: useFullWidthHeroPortrait
                                 ? Alignment.topCenter
                                 : Alignment.center,
                             child: ConstrainedBox(
                               constraints: BoxConstraints(
-                                maxWidth: useFullWidthHeroPortrait
+                                maxWidth:
+                                    (useFullWidthHeroPortrait ||
+                                        useFullWidthThemes)
                                     ? double.infinity
                                     : maxCardWidth,
                               ),
@@ -2845,6 +3323,7 @@ class _BusinessOrientationFlowPageState
                                 card,
                                 isCompactHeight,
                                 isTabletPortrait: isTabletPortrait,
+                                isTabletLandscape: isTabletLandscape,
                               ),
                             ),
                           );
@@ -2860,6 +3339,8 @@ class _BusinessOrientationFlowPageState
                           useCentralCockpitLandscapeFullHero ||
                           useSubscriptionPortraitFullHero ||
                           useSubscriptionLandscapeFullHero ||
+                          useSettingsProfilePortraitFullHero ||
+                          useSettingsProfileLandscapeFullHero ||
                           useVehiclesFleetPortraitFullHero ||
                           useVehiclesFleetLandscapeFullHero ||
                           useChironDocumentsPortraitFullHero ||
@@ -3111,6 +3592,7 @@ class _BusinessOrientationFlowPageState
     _OrientationCardData data,
     bool compact, {
     required bool isTabletPortrait,
+    bool isTabletLandscape = false,
   }) {
     switch (data.layout) {
       case _OrientationCardLayout.welcome:
@@ -3130,6 +3612,22 @@ class _BusinessOrientationFlowPageState
         // (bespoke PNG hero behind the Stack); phones fall back to the
         // stable icon composition with the card's title + body.
         return _buildOrientationCard(data, compact);
+      case _OrientationCardLayout.settingsProfileRich:
+        // Tablet portrait/landscape are short-circuited in [build]
+        // (bespoke PNG hero behind the Stack); phones fall back to the
+        // stable icon composition with the card's title + intro.
+        return _buildOrientationCard(data, compact);
+      case _OrientationCardLayout.themesBrandingRich:
+        // Interactive Theme Showroom — rendered here in the foreground
+        // (NOT a full-viewport hero) so the in-preview arrows receive
+        // taps. Tablet portrait/landscape get the bespoke showroom;
+        // phones fall back to a compact scrollable showroom.
+        return _buildThemesBrandingCard(
+          data,
+          compact,
+          isTabletPortrait: isTabletPortrait,
+          isTabletLandscape: isTabletLandscape,
+        );
       case _OrientationCardLayout.vehiclesFleet:
         // Tablet portrait/landscape are short-circuited in [build]
         // (bespoke PNG hero behind the Stack); phones fall back to the
@@ -8120,6 +8618,1214 @@ class _BusinessOrientationFlowPageState
   }
 
   // =================================================================
+  // Slide 4 — Settings & company profile: the Fluxidi "settings
+  // engine" / business control center (bespoke tablet heroes).
+  //
+  // The card14 settings/cockpit artwork is rendered full-bleed and ALL
+  // copy is overlaid by Flutter inside the measured safe zones. Two
+  // coherent dark-glass panels (title + explanation) are the only
+  // painted chrome; each panel uses exactly one whole-block
+  // FittedBox(scaleDown) as its overflow safety net.
+  //
+  // PORTRAIT title frame (frozen):
+  //   left 0.3653, top 0.0244, width 0.6112, height 0.1519
+  // PORTRAIT explanation frame (frozen):
+  //   left 0.0117, top 0.2012, width 0.9742, height 0.3179
+  // LANDSCAPE title frame (frozen):
+  //   left 0.3638, top 0.0422, width 0.6035, height 0.1920
+  // LANDSCAPE explanation frame (frozen):
+  //   left 0.0107, top 0.3646, width 0.3457, height 0.5488
+  // =================================================================
+
+  double _settingsProfileLangScale() {
+    switch (appLanguageNotifier.value) {
+      case AppLanguage.fr:
+      case AppLanguage.es:
+        return 0.90;
+      case AppLanguage.nl:
+        return 0.95;
+      case AppLanguage.en:
+        return 1.0;
+    }
+  }
+
+  /// One whole-block scale-down safety net for a settings panel. The
+  /// inner [SizedBox] fixes only the width to the available zone width
+  /// so the natural (min-height) column can grow taller than the zone
+  /// and the single [FittedBox] scales the WHOLE block down — never
+  /// per-line, never per-sentence. Vertically centred so the balanced
+  /// block fills the frame instead of hugging the top edge.
+  Widget _settingsProfileWholeBlockScaleDown({
+    required double zoneWidth,
+    required Widget child,
+  }) {
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: FittedBox(
+        fit: BoxFit.scaleDown,
+        alignment: Alignment.centerLeft,
+        child: SizedBox(width: zoneWidth, child: child),
+      ),
+    );
+  }
+
+  Widget _buildSettingsProfileTabletPortraitFullViewportHero() {
+    return Stack(
+      fit: StackFit.expand,
+      children: <Widget>[
+        Image.asset(
+          _settingsProfileTabletPortraitAsset,
+          fit: BoxFit.fill,
+          alignment: Alignment.center,
+          errorBuilder: (ctx, error, stackTrace) {
+            debugPrint(
+              '[ORIENTATION_FLOW][SETTINGS_PROFILE_PORTRAIT_PNG_FAIL] '
+              'error=$error',
+            );
+            return _buildWelcomeMediaUltimateFallback();
+          },
+        ),
+        IgnorePointer(
+          child: _buildSettingsProfileTabletOverlay(isPortrait: true),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildSettingsProfileTabletLandscapeFullViewportHero() {
+    return Stack(
+      fit: StackFit.expand,
+      children: <Widget>[
+        Image.asset(
+          _settingsProfileTabletLandscapeAsset,
+          fit: BoxFit.fill,
+          alignment: Alignment.center,
+          errorBuilder: (ctx, error, stackTrace) {
+            debugPrint(
+              '[ORIENTATION_FLOW][SETTINGS_PROFILE_LANDSCAPE_PNG_FAIL] '
+              'error=$error',
+            );
+            return _buildWelcomeMediaUltimateFallback();
+          },
+        ),
+        IgnorePointer(
+          child: _buildSettingsProfileTabletOverlay(isPortrait: false),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildSettingsProfileTabletOverlay({required bool isPortrait}) {
+    return LayoutBuilder(
+      builder: (ctx, constraints) {
+        final double w = constraints.maxWidth;
+        final double h = constraints.maxHeight;
+        if (isPortrait ? h <= w : w <= h) {
+          return const SizedBox.shrink();
+        }
+
+        // Frozen, measured safe frames (fractions of the full viewport
+        // so they line up exactly with the full-bleed card14 artwork).
+        final double titleLeft = isPortrait ? 0.3653 : 0.3638;
+        final double titleTop = isPortrait ? 0.0244 : 0.0422;
+        final double titleWidth = isPortrait ? 0.6112 : 0.6035;
+        final double titleHeight = isPortrait ? 0.1519 : 0.1920;
+        final double explainLeft = isPortrait ? 0.0117 : 0.0107;
+        final double explainTop = isPortrait ? 0.2012 : 0.3646;
+        final double explainWidth = isPortrait ? 0.9742 : 0.3457;
+        final double explainHeight = isPortrait ? 0.3179 : 0.5488;
+
+        return Stack(
+          children: <Widget>[
+            Positioned(
+              left: w * titleLeft,
+              top: h * titleTop,
+              width: w * titleWidth,
+              height: h * titleHeight,
+              child: _buildSettingsProfileTitlePanel(isPortrait: isPortrait),
+            ),
+            Positioned(
+              left: w * explainLeft,
+              top: h * explainTop,
+              width: w * explainWidth,
+              height: h * explainHeight,
+              child: _buildSettingsProfileExplanationPanel(
+                isPortrait: isPortrait,
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  BoxDecoration _settingsProfilePanelDecoration({required bool prominent}) {
+    return BoxDecoration(
+      gradient: LinearGradient(
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+        colors: <Color>[
+          Colors.black.withOpacity(prominent ? 0.60 : 0.52),
+          Colors.black.withOpacity(prominent ? 0.46 : 0.40),
+        ],
+      ),
+      borderRadius: BorderRadius.circular(prominent ? 18 : 16),
+      border: Border.all(color: _gold.withOpacity(prominent ? 0.30 : 0.24)),
+      boxShadow: <BoxShadow>[
+        BoxShadow(
+          color: Colors.black.withOpacity(0.36),
+          blurRadius: 18,
+          offset: const Offset(0, 5),
+        ),
+        BoxShadow(
+          color: _gold.withOpacity(0.06),
+          blurRadius: 24,
+          spreadRadius: 1,
+        ),
+      ],
+    );
+  }
+
+  Widget _buildSettingsProfileTitlePanel({required bool isPortrait}) {
+    final double scale = _settingsProfileLangScale();
+    final EdgeInsets padding = isPortrait
+        ? const EdgeInsets.fromLTRB(26, 18, 26, 18)
+        : const EdgeInsets.fromLTRB(26, 16, 26, 16);
+    final double titleSize = (isPortrait ? 33.0 : 38.0) * scale;
+    final double introSize = (isPortrait ? 17.5 : 19.5) * scale;
+
+    return DecoratedBox(
+      decoration: _settingsProfilePanelDecoration(prominent: false),
+      child: Padding(
+        padding: padding,
+        child: LayoutBuilder(
+          builder: (ctx, constraints) {
+            return _settingsProfileWholeBlockScaleDown(
+              zoneWidth: constraints.maxWidth,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  Text(
+                    _t(_settingsProfileTopTitle),
+                    softWrap: true,
+                    overflow: TextOverflow.visible,
+                    style: TextStyle(
+                      color: _gold,
+                      fontSize: titleSize,
+                      fontWeight: FontWeight.w900,
+                      height: 1.04,
+                      letterSpacing: 0.12,
+                      shadows: <Shadow>[
+                        Shadow(color: _gold.withOpacity(0.36), blurRadius: 14),
+                        Shadow(
+                          color: Colors.black.withOpacity(0.78),
+                          blurRadius: 8,
+                          offset: const Offset(0, 2),
+                        ),
+                      ],
+                    ),
+                  ),
+                  SizedBox(height: isPortrait ? 9 : 10),
+                  Text(
+                    _t(_settingsProfileTopIntro),
+                    softWrap: true,
+                    overflow: TextOverflow.visible,
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.92),
+                      fontSize: introSize,
+                      fontWeight: FontWeight.w500,
+                      height: 1.20,
+                      shadows: const <Shadow>[
+                        Shadow(
+                          color: Color(0xCC000000),
+                          blurRadius: 8,
+                          offset: Offset(0, 1),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSettingsProfileExplanationPanel({required bool isPortrait}) {
+    final double scale = _settingsProfileLangScale();
+    final EdgeInsets padding = isPortrait
+        ? const EdgeInsets.fromLTRB(28, 24, 28, 24)
+        : const EdgeInsets.fromLTRB(24, 22, 24, 22);
+    final double labelSize = (isPortrait ? 11.5 : 11.0) * scale;
+    final double titleSize = (isPortrait ? 27.0 : 25.0) * scale;
+    final double bodySize = (isPortrait ? 16.0 : 16.0) * scale;
+    final double featureTitleSize = (isPortrait ? 15.5 : 15.0) * scale;
+    final double featureBodySize = (isPortrait ? 13.8 : 13.5) * scale;
+    final double iconSize = (isPortrait ? 21.0 : 20.0) * scale;
+    final double footerSize = (isPortrait ? 15.0 : 14.5) * scale;
+
+    return DecoratedBox(
+      decoration: _settingsProfilePanelDecoration(prominent: true),
+      child: Padding(
+        padding: padding,
+        child: LayoutBuilder(
+          builder: (ctx, constraints) {
+            final double innerWidth = constraints.maxWidth;
+            return _settingsProfileWholeBlockScaleDown(
+              zoneWidth: innerWidth,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  _buildSettingsProfileLabel(labelSize),
+                  SizedBox(height: isPortrait ? 12 : 12),
+                  _buildSettingsProfileMainTitle(titleSize),
+                  SizedBox(height: isPortrait ? 10 : 10),
+                  _buildSettingsProfileBody(bodySize),
+                  SizedBox(height: isPortrait ? 16 : 16),
+                  isPortrait
+                      ? _buildSettingsProfileFeatureGrid(
+                          innerWidth: innerWidth,
+                          titleSize: featureTitleSize,
+                          bodySize: featureBodySize,
+                          iconSize: iconSize,
+                        )
+                      : _buildSettingsProfileFeatureList(
+                          titleSize: featureTitleSize,
+                          bodySize: featureBodySize,
+                          iconSize: iconSize,
+                        ),
+                  SizedBox(height: isPortrait ? 16 : 16),
+                  Container(height: 1, color: _gold.withOpacity(0.20)),
+                  SizedBox(height: isPortrait ? 12 : 12),
+                  _buildSettingsProfileFooter(footerSize),
+                ],
+              ),
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  /// Landscape: vertical list of 4 compact feature rows (the
+  /// explanation frame is narrow and tall).
+  Widget _buildSettingsProfileFeatureList({
+    required double titleSize,
+    required double bodySize,
+    required double iconSize,
+  }) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        for (int i = 0; i < _settingsProfileFeatures.length; i++)
+          Padding(
+            padding: EdgeInsets.only(top: i == 0 ? 0 : 14),
+            child: _buildSettingsProfileFeatureCell(
+              _settingsProfileFeatures[i],
+              titleSize: titleSize,
+              bodySize: bodySize,
+              iconSize: iconSize,
+            ),
+          ),
+      ],
+    );
+  }
+
+  /// Portrait: compact 2x2 feature grid (the explanation frame is wide
+  /// and short).
+  Widget _buildSettingsProfileFeatureGrid({
+    required double innerWidth,
+    required double titleSize,
+    required double bodySize,
+    required double iconSize,
+  }) {
+    const double columnGap = 22;
+    const double rowGap = 16;
+    final double cellWidth = (innerWidth - columnGap) / 2;
+    Widget cell(int index) => _buildSettingsProfileFeatureCell(
+      _settingsProfileFeatures[index],
+      titleSize: titleSize,
+      bodySize: bodySize,
+      iconSize: iconSize,
+      width: cellWidth,
+    );
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            cell(0),
+            const SizedBox(width: columnGap),
+            cell(1),
+          ],
+        ),
+        const SizedBox(height: rowGap),
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            cell(2),
+            const SizedBox(width: columnGap),
+            cell(3),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildSettingsProfileFeatureCell(
+    _SettingsProfileFeature feature, {
+    required double titleSize,
+    required double bodySize,
+    required double iconSize,
+    double? width,
+  }) {
+    final Widget content = Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        Container(
+          padding: EdgeInsets.all(iconSize * 0.32),
+          decoration: BoxDecoration(
+            color: _gold.withOpacity(0.12),
+            borderRadius: BorderRadius.circular(9),
+            border: Border.all(color: _gold.withOpacity(0.30)),
+          ),
+          child: Icon(feature.icon, size: iconSize, color: _gold),
+        ),
+        SizedBox(width: iconSize * 0.6),
+        Expanded(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              Text(
+                _t(feature.title),
+                softWrap: true,
+                overflow: TextOverflow.visible,
+                style: TextStyle(
+                  color: _gold,
+                  fontSize: titleSize,
+                  fontWeight: FontWeight.w800,
+                  height: 1.08,
+                  shadows: const <Shadow>[
+                    Shadow(
+                      color: Color(0xCC000000),
+                      blurRadius: 6,
+                      offset: Offset(0, 1),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 3),
+              Text(
+                _t(feature.description),
+                softWrap: true,
+                overflow: TextOverflow.visible,
+                style: TextStyle(
+                  color: Colors.white.withOpacity(0.88),
+                  fontSize: bodySize,
+                  fontWeight: FontWeight.w500,
+                  height: 1.14,
+                  shadows: const <Shadow>[
+                    Shadow(
+                      color: Color(0xCC000000),
+                      blurRadius: 6,
+                      offset: Offset(0, 1),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+    if (width == null) {
+      return content;
+    }
+    return SizedBox(width: width, child: content);
+  }
+
+  Widget _buildSettingsProfileLabel(double fontSize) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      decoration: BoxDecoration(
+        color: _gold.withOpacity(0.12),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: _gold.withOpacity(0.30)),
+      ),
+      child: Text(
+        _t(_settingsProfileLabel),
+        softWrap: true,
+        overflow: TextOverflow.visible,
+        style: TextStyle(
+          color: _gold,
+          fontSize: fontSize,
+          fontWeight: FontWeight.w800,
+          height: 1.0,
+          letterSpacing: 1.0,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSettingsProfileMainTitle(double fontSize) {
+    return Text(
+      _t(_settingsProfileMainTitle),
+      softWrap: true,
+      overflow: TextOverflow.visible,
+      style: TextStyle(
+        color: _gold,
+        fontSize: fontSize,
+        fontWeight: FontWeight.w900,
+        height: 1.08,
+        shadows: <Shadow>[
+          Shadow(color: _gold.withOpacity(0.28), blurRadius: 12),
+          const Shadow(
+            color: Color(0xCC000000),
+            blurRadius: 7,
+            offset: Offset(0, 1),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSettingsProfileBody(double fontSize) {
+    return Text(
+      _t(_settingsProfileBody),
+      softWrap: true,
+      overflow: TextOverflow.visible,
+      style: TextStyle(
+        color: Colors.white.withOpacity(0.90),
+        fontSize: fontSize,
+        fontWeight: FontWeight.w500,
+        height: 1.22,
+        shadows: const <Shadow>[
+          Shadow(color: Color(0xCC000000), blurRadius: 7, offset: Offset(0, 1)),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSettingsProfileFooter(double fontSize) {
+    return Text(
+      _t(_settingsProfileFooter),
+      softWrap: true,
+      overflow: TextOverflow.visible,
+      style: TextStyle(
+        color: _gold,
+        fontSize: fontSize,
+        fontWeight: FontWeight.w800,
+        height: 1.16,
+        letterSpacing: 0.05,
+        shadows: const <Shadow>[
+          Shadow(color: Color(0xCC000000), blurRadius: 7, offset: Offset(0, 1)),
+        ],
+      ),
+    );
+  }
+
+  // =================================================================
+  // Slide 5 — Themes & branding: interactive Fluxidi Theme Showroom.
+  //
+  // A foreground (NOT full-viewport-hero) interactive card so the
+  // in-preview left/right arrows receive taps. The tablet mockup is the
+  // hero element; left/right arrows + dots cycle [_themeShowroomIndex]
+  // (plain int state, no nested PageView / swipe carousel) and the
+  // preview cross-fades via [AnimatedSwitcher]. Two coherent dark-glass
+  // panels (title + explanation) accompany the preview.
+  // =================================================================
+
+  double _themesLangScale() {
+    switch (appLanguageNotifier.value) {
+      case AppLanguage.fr:
+      case AppLanguage.es:
+        return 0.92;
+      case AppLanguage.nl:
+        return 0.96;
+      case AppLanguage.en:
+        return 1.0;
+    }
+  }
+
+  Widget _buildThemesBrandingCard(
+    _OrientationCardData data,
+    bool compact, {
+    required bool isTabletPortrait,
+    required bool isTabletLandscape,
+  }) {
+    if (isTabletLandscape) {
+      return _buildThemesShowroomTabletLandscape();
+    }
+    if (isTabletPortrait) {
+      return _buildThemesShowroomTabletPortrait();
+    }
+    return _buildThemesShowroomPhone(compact);
+  }
+
+  Widget _buildThemesShowroomTabletLandscape() {
+    return SizedBox.expand(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(24, 14, 24, 14),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: <Widget>[
+            Expanded(
+              flex: 44,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: <Widget>[
+                  _buildThemesTitlePanel(isPortrait: false),
+                  const SizedBox(height: 14),
+                  Expanded(
+                    child: _buildThemesExplanationPanel(isPortrait: false),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 22),
+            Expanded(
+              flex: 56,
+              child: _buildThemesHeroPreviewArea(
+                buildPreview: (BoxConstraints constraints) =>
+                    _buildThemesPreview(
+                      maxWidth: constraints.maxWidth,
+                      maxHeight: constraints.maxHeight,
+                    ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildThemesShowroomTabletPortrait() {
+    return SizedBox.expand(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(22, 14, 22, 16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: <Widget>[
+            _buildThemesTitlePanel(isPortrait: true),
+            const SizedBox(height: 14),
+            Expanded(
+              child: _buildThemesHeroPreviewArea(
+                buildPreview: (BoxConstraints constraints) =>
+                    _buildThemesPreview(
+                      maxWidth: constraints.maxWidth,
+                      maxHeight: constraints.maxHeight,
+                    ),
+              ),
+            ),
+            const SizedBox(height: 14),
+            _buildThemesExplanationPanel(isPortrait: true),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildThemesShowroomPhone(bool compact) {
+    return SingleChildScrollView(
+      physics: const ClampingScrollPhysics(),
+      padding: EdgeInsets.fromLTRB(18, compact ? 8 : 14, 18, 18),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          _buildThemesTitlePanel(isPortrait: true),
+          const SizedBox(height: 14),
+          SizedBox(
+            height: compact ? 360 : 480,
+            child: _buildThemesHeroPreviewArea(
+              buildPreview: (BoxConstraints constraints) => _buildThemesPreview(
+                maxWidth: constraints.maxWidth,
+                maxHeight: constraints.maxHeight,
+              ),
+            ),
+          ),
+          const SizedBox(height: 14),
+          _buildThemesExplanationPanel(isPortrait: true),
+        ],
+      ),
+    );
+  }
+
+  /// Cinematic hero zone behind the interactive tablet preview on Card
+  /// 5. Layers, bottom → top:
+  ///   1. [_themesShowroomHeroBgAsset] — full-bleed [BoxFit.cover]
+  ///      backdrop, centered. A silent [errorBuilder] keeps the area
+  ///      black if the asset is missing rather than throwing.
+  ///   2. A soft top→bottom dark wash so the floating tablet stays
+  ///      legible regardless of the underlying artwork.
+  ///   3. The existing vertical Samsung-style tablet preview produced by
+  ///      [buildPreview], centered. The preview itself is unchanged —
+  ///      same arrows, dots, caption, [AnimatedSwitcher], and
+  ///      [_themeShowroomIndex] state.
+  Widget _buildThemesHeroPreviewArea({
+    required Widget Function(BoxConstraints constraints) buildPreview,
+  }) {
+    return Stack(
+      fit: StackFit.expand,
+      children: <Widget>[
+        Image.asset(
+          _themesShowroomHeroBgAsset,
+          fit: BoxFit.cover,
+          alignment: Alignment.center,
+          filterQuality: FilterQuality.medium,
+          errorBuilder:
+              (BuildContext context, Object error, StackTrace? stackTrace) {
+                debugPrint(
+                  '[ORIENTATION_FLOW][THEME_HERO_BG_FAIL] '
+                  'asset=$_themesShowroomHeroBgAsset error=$error',
+                );
+                return const SizedBox.shrink();
+              },
+        ),
+        DecoratedBox(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: <Color>[
+                Colors.black.withOpacity(0.18),
+                Colors.black.withOpacity(0.52),
+              ],
+            ),
+          ),
+        ),
+        LayoutBuilder(
+          builder: (BuildContext ctx, BoxConstraints constraints) {
+            return Center(child: buildPreview(constraints));
+          },
+        ),
+      ],
+    );
+  }
+
+  /// Real Samsung-tablet portrait screenshot proportions (1752 × 2800).
+  /// The mockup frame is sized to this ratio so vertical screenshots are
+  /// never stretched into a landscape box.
+  static const double _themesTabletAspect = 1752.0 / 2800.0;
+
+  /// The fixed, vertical (portrait) tablet/mockup preview — the hero of
+  /// Card 5. Sizes a tall device frame from [_themesTabletAspect] inside
+  /// the available [maxWidth] × [maxHeight] box, paints a black bezel
+  /// with an accent-tinted border + glow, and renders the active
+  /// screenshot with a direct [Image.asset] ([BoxFit.contain], so the
+  /// real screenshot is always visible and never cropped). A visible
+  /// "Missing theme asset" panel replaces silent black if an asset fails
+  /// to load. Left/right arrows + caption/dots overlay the frame.
+  Widget _buildThemesPreview({
+    required double maxWidth,
+    required double maxHeight,
+  }) {
+    final _ThemeShowroomItem item = _themeShowroomItems[_themeShowroomIndex];
+    final Color accent = item.accentColor;
+
+    // Height-first: make the vertical tablet as tall as the box allows,
+    // then clamp by width so it never overflows horizontally.
+    double frameH = maxHeight;
+    double frameW = frameH * _themesTabletAspect;
+    if (frameW > maxWidth) {
+      frameW = maxWidth;
+      frameH = frameW / _themesTabletAspect;
+    }
+
+    return SizedBox(
+      width: frameW,
+      height: frameH,
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: <Widget>[
+          // Bezel + accent glow (back layer).
+          Positioned.fill(
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 320),
+              curve: Curves.easeOut,
+              decoration: BoxDecoration(
+                color: const Color(0xFF050505),
+                borderRadius: BorderRadius.circular(28),
+                border: Border.all(color: accent.withOpacity(0.60), width: 2),
+                boxShadow: <BoxShadow>[
+                  BoxShadow(
+                    color: accent.withOpacity(0.34),
+                    blurRadius: 40,
+                    spreadRadius: 2,
+                  ),
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.50),
+                    blurRadius: 22,
+                    offset: const Offset(0, 10),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          // Screen — direct Image.asset so the screenshot always renders.
+          Positioned.fill(
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: Colors.black,
+                  borderRadius: BorderRadius.circular(18),
+                ),
+                child: AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 350),
+                  switchInCurve: Curves.easeOut,
+                  switchOutCurve: Curves.easeIn,
+                  child: Image.asset(
+                    item.assetPath,
+                    key: ValueKey<String>(item.assetPath),
+                    fit: BoxFit.contain,
+                    filterQuality: FilterQuality.medium,
+                    errorBuilder:
+                        (
+                          BuildContext context,
+                          Object error,
+                          StackTrace? stackTrace,
+                        ) {
+                          debugPrint(
+                            '[ORIENTATION_FLOW][THEME_PREVIEW_FAIL] '
+                            'asset=${item.assetPath} error=$error',
+                          );
+                          return _buildThemesPreviewMissing(item, accent);
+                        },
+                  ),
+                ),
+              ),
+            ),
+          ),
+          // Left / right arrows — update _themeShowroomIndex only.
+          Positioned(
+            left: 8,
+            top: 0,
+            bottom: 0,
+            child: Center(
+              child: _buildThemesArrow(
+                Icons.chevron_left,
+                _themeShowroomPrev,
+                accent,
+              ),
+            ),
+          ),
+          Positioned(
+            right: 8,
+            top: 0,
+            bottom: 0,
+            child: Center(
+              child: _buildThemesArrow(
+                Icons.chevron_right,
+                _themeShowroomNext,
+                accent,
+              ),
+            ),
+          ),
+          // Caption pill + dots inside the bottom of the frame.
+          Positioned(
+            left: 14,
+            right: 14,
+            bottom: 14,
+            child: _buildThemesPreviewCaption(item, accent),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Visible fallback shown inside the tablet screen when a theme
+  /// screenshot fails to load — never leaves the preview silently black.
+  Widget _buildThemesPreviewMissing(_ThemeShowroomItem item, Color accent) {
+    return Container(
+      key: ValueKey<String>('missing-${item.assetPath}'),
+      alignment: Alignment.center,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1A1206),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: accent.withOpacity(0.45)),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          const Icon(Icons.broken_image_outlined, color: _gold, size: 34),
+          const SizedBox(height: 10),
+          const Text(
+            'Missing theme asset',
+            textAlign: TextAlign.center,
+            softWrap: true,
+            style: TextStyle(
+              color: _gold,
+              fontSize: 14,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            item.assetPath,
+            textAlign: TextAlign.center,
+            softWrap: true,
+            style: TextStyle(
+              color: Colors.white.withOpacity(0.70),
+              fontSize: 11,
+              height: 1.25,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildThemesArrow(IconData icon, VoidCallback onTap, Color accent) {
+    return Material(
+      color: Colors.transparent,
+      shape: const CircleBorder(),
+      child: InkWell(
+        customBorder: const CircleBorder(),
+        onTap: onTap,
+        child: Container(
+          width: 46,
+          height: 46,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: Colors.black.withOpacity(0.55),
+            border: Border.all(color: accent.withOpacity(0.70), width: 1.5),
+            boxShadow: <BoxShadow>[
+              BoxShadow(color: Colors.black.withOpacity(0.50), blurRadius: 10),
+            ],
+          ),
+          child: Icon(icon, color: Colors.white, size: 26),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildThemesPreviewCaption(_ThemeShowroomItem item, Color accent) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+      decoration: BoxDecoration(
+        color: Colors.black.withOpacity(0.60),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: accent.withOpacity(0.45)),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: <Widget>[
+              Container(
+                width: 8,
+                height: 8,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: accent,
+                  boxShadow: <BoxShadow>[
+                    BoxShadow(
+                      color: accent.withOpacity(0.6),
+                      blurRadius: 8,
+                      spreadRadius: 1,
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              Flexible(
+                child: RichText(
+                  textAlign: TextAlign.center,
+                  softWrap: true,
+                  overflow: TextOverflow.visible,
+                  text: TextSpan(
+                    children: <InlineSpan>[
+                      TextSpan(
+                        text: item.title,
+                        style: const TextStyle(
+                          color: _gold,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w800,
+                          height: 1.1,
+                        ),
+                      ),
+                      TextSpan(
+                        text: '  ·  ${_t(item.category)}',
+                        style: TextStyle(
+                          color: Colors.white.withOpacity(0.90),
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                          height: 1.1,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          _buildThemesDots(accent),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildThemesDots(Color accent) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      mainAxisSize: MainAxisSize.min,
+      children: <Widget>[
+        for (int i = 0; i < _themeShowroomItems.length; i++)
+          AnimatedContainer(
+            duration: const Duration(milliseconds: 220),
+            curve: Curves.easeOut,
+            margin: const EdgeInsets.symmetric(horizontal: 3),
+            width: i == _themeShowroomIndex ? 16 : 6,
+            height: 6,
+            decoration: BoxDecoration(
+              color: i == _themeShowroomIndex
+                  ? accent
+                  : Colors.white.withOpacity(0.28),
+              borderRadius: BorderRadius.circular(3),
+            ),
+          ),
+      ],
+    );
+  }
+
+  BoxDecoration _themesPanelDecoration({required bool prominent}) {
+    return BoxDecoration(
+      gradient: LinearGradient(
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+        colors: <Color>[
+          Colors.black.withOpacity(prominent ? 0.60 : 0.52),
+          Colors.black.withOpacity(prominent ? 0.46 : 0.40),
+        ],
+      ),
+      borderRadius: BorderRadius.circular(prominent ? 18 : 16),
+      border: Border.all(color: _gold.withOpacity(prominent ? 0.30 : 0.24)),
+      boxShadow: <BoxShadow>[
+        BoxShadow(
+          color: Colors.black.withOpacity(0.36),
+          blurRadius: 18,
+          offset: const Offset(0, 5),
+        ),
+        BoxShadow(
+          color: _gold.withOpacity(0.06),
+          blurRadius: 24,
+          spreadRadius: 1,
+        ),
+      ],
+    );
+  }
+
+  Widget _buildThemesTitlePanel({required bool isPortrait}) {
+    final double scale = _themesLangScale();
+    final EdgeInsets padding = isPortrait
+        ? const EdgeInsets.fromLTRB(24, 18, 24, 18)
+        : const EdgeInsets.fromLTRB(22, 16, 22, 16);
+    final double titleSize = (isPortrait ? 31.0 : 27.0) * scale;
+    final double introSize = (isPortrait ? 16.5 : 15.5) * scale;
+
+    return DecoratedBox(
+      decoration: _themesPanelDecoration(prominent: false),
+      child: Padding(
+        padding: padding,
+        child: LayoutBuilder(
+          builder: (ctx, constraints) {
+            return _settingsProfileWholeBlockScaleDown(
+              zoneWidth: constraints.maxWidth,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  Text(
+                    _t(_themesTitle),
+                    softWrap: true,
+                    overflow: TextOverflow.visible,
+                    style: TextStyle(
+                      color: _gold,
+                      fontSize: titleSize,
+                      fontWeight: FontWeight.w900,
+                      height: 1.04,
+                      letterSpacing: 0.12,
+                      shadows: <Shadow>[
+                        Shadow(color: _gold.withOpacity(0.36), blurRadius: 14),
+                        Shadow(
+                          color: Colors.black.withOpacity(0.78),
+                          blurRadius: 8,
+                          offset: const Offset(0, 2),
+                        ),
+                      ],
+                    ),
+                  ),
+                  SizedBox(height: isPortrait ? 9 : 8),
+                  Text(
+                    _t(_themesIntro),
+                    softWrap: true,
+                    overflow: TextOverflow.visible,
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.92),
+                      fontSize: introSize,
+                      fontWeight: FontWeight.w500,
+                      height: 1.20,
+                      shadows: const <Shadow>[
+                        Shadow(
+                          color: Color(0xCC000000),
+                          blurRadius: 8,
+                          offset: Offset(0, 1),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  Widget _buildThemesExplanationPanel({required bool isPortrait}) {
+    final double scale = _themesLangScale();
+    final EdgeInsets padding = isPortrait
+        ? const EdgeInsets.fromLTRB(24, 20, 24, 20)
+        : const EdgeInsets.fromLTRB(20, 18, 20, 18);
+    final double labelSize = (isPortrait ? 11.5 : 11.0) * scale;
+    final double titleSize = (isPortrait ? 24.0 : 21.0) * scale;
+    final double bodySize = (isPortrait ? 15.5 : 14.5) * scale;
+    final double featureTitleSize = (isPortrait ? 15.0 : 14.5) * scale;
+    final double featureBodySize = (isPortrait ? 13.5 : 13.0) * scale;
+    final double iconSize = (isPortrait ? 20.0 : 19.0) * scale;
+    final double footerSize = (isPortrait ? 14.5 : 14.0) * scale;
+
+    return DecoratedBox(
+      decoration: _themesPanelDecoration(prominent: true),
+      child: Padding(
+        padding: padding,
+        child: LayoutBuilder(
+          builder: (ctx, constraints) {
+            return _settingsProfileWholeBlockScaleDown(
+              zoneWidth: constraints.maxWidth,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  _buildThemesLabelPill(labelSize),
+                  const SizedBox(height: 12),
+                  Text(
+                    _t(_themesMainTitle),
+                    softWrap: true,
+                    overflow: TextOverflow.visible,
+                    style: TextStyle(
+                      color: _gold,
+                      fontSize: titleSize,
+                      fontWeight: FontWeight.w900,
+                      height: 1.08,
+                      shadows: <Shadow>[
+                        Shadow(color: _gold.withOpacity(0.28), blurRadius: 12),
+                        const Shadow(
+                          color: Color(0xCC000000),
+                          blurRadius: 7,
+                          offset: Offset(0, 1),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  Text(
+                    _t(_themesBody),
+                    softWrap: true,
+                    overflow: TextOverflow.visible,
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.90),
+                      fontSize: bodySize,
+                      fontWeight: FontWeight.w500,
+                      height: 1.22,
+                      shadows: const <Shadow>[
+                        Shadow(
+                          color: Color(0xCC000000),
+                          blurRadius: 7,
+                          offset: Offset(0, 1),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  for (int i = 0; i < _themesFeatures.length; i++)
+                    Padding(
+                      padding: EdgeInsets.only(top: i == 0 ? 0 : 12),
+                      child: _buildSettingsProfileFeatureCell(
+                        _themesFeatures[i],
+                        titleSize: featureTitleSize,
+                        bodySize: featureBodySize,
+                        iconSize: iconSize,
+                      ),
+                    ),
+                  const SizedBox(height: 16),
+                  Container(height: 1, color: _gold.withOpacity(0.20)),
+                  const SizedBox(height: 12),
+                  Text(
+                    _t(_themesFooter),
+                    softWrap: true,
+                    overflow: TextOverflow.visible,
+                    style: TextStyle(
+                      color: _gold,
+                      fontSize: footerSize,
+                      fontWeight: FontWeight.w800,
+                      height: 1.16,
+                      letterSpacing: 0.05,
+                      shadows: const <Shadow>[
+                        Shadow(
+                          color: Color(0xCC000000),
+                          blurRadius: 7,
+                          offset: Offset(0, 1),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  Widget _buildThemesLabelPill(double fontSize) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      decoration: BoxDecoration(
+        color: _gold.withOpacity(0.12),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: _gold.withOpacity(0.30)),
+      ),
+      child: Text(
+        _t(_themesLabel),
+        softWrap: true,
+        overflow: TextOverflow.visible,
+        style: TextStyle(
+          color: _gold,
+          fontSize: fontSize,
+          fontWeight: FontWeight.w800,
+          height: 1.0,
+          letterSpacing: 1.0,
+        ),
+      ),
+    );
+  }
+
+  // =================================================================
   // Card 4 — Vehicles & fleet management (bespoke tablet heroes).
   //
   // Both orientations paint the dedicated card4 PNG full-bleed
@@ -10351,6 +12057,8 @@ enum _OrientationCardLayout {
   welcome,
   companyCockpit,
   subscription,
+  settingsProfileRich,
+  themesBrandingRich,
   vehiclesFleet,
   driverManagementRich,
   chironDocumentsRich,
@@ -10412,6 +12120,42 @@ class _OrientationBulletItem {
 
   final _Tr title;
   final _Tr description;
+}
+
+/// A single feature for the Settings & company profile card: a small
+/// gold icon plus localized title + short description. Distinct from
+/// [_OrientationBulletItem] because the settings engine card uses
+/// compact icon chips rather than plain gold bullet dots.
+class _SettingsProfileFeature {
+  const _SettingsProfileFeature({
+    required this.icon,
+    required this.title,
+    required this.description,
+  });
+
+  final IconData icon;
+  final _Tr title;
+  final _Tr description;
+}
+
+/// A single preview in the Card 5 (themes & branding) Theme Showroom.
+/// [title] is a brand name (kept identical across languages); [category]
+/// localizes. [accentColor]/[secondaryColor] drive the tablet frame's
+/// border + glow so each theme reads with its own signature color.
+class _ThemeShowroomItem {
+  const _ThemeShowroomItem({
+    required this.title,
+    required this.category,
+    required this.assetPath,
+    required this.accentColor,
+    this.secondaryColor,
+  });
+
+  final String title;
+  final _Tr category;
+  final String assetPath;
+  final Color accentColor;
+  final Color? secondaryColor;
 }
 
 class _Tr {

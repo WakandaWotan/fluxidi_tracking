@@ -97,6 +97,37 @@ class _BusinessHomePageState extends State<BusinessHomePage>
     );
   }
 
+  /// Frame-safe setter for [businessShellFrameActiveNotifier]. The flag is
+  /// read by a [ValueListenableBuilder] higher in the tree, so mutating it
+  /// during build (e.g. from [initState]) throws "setState()/markNeedsBuild()
+  /// called during build". Deferring to the next frame preserves the original
+  /// timing while staying build-safe; the equality guard avoids a redundant
+  /// notification.
+  void _setBusinessShellFrameActiveAfterFirstFrame(bool value) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (businessShellFrameActiveNotifier.value == value) return;
+      businessShellFrameActiveNotifier.value = value;
+    });
+  }
+
+  /// Dispose-time companion of [_setBusinessShellFrameActiveAfterFirstFrame].
+  /// Called from [dispose] to flip the shell flag back to `false` AFTER the
+  /// widget-tree-locked teardown frame finishes — assigning synchronously
+  /// inside [dispose] notifies the [ValueListenableBuilder] higher in the
+  /// tree and throws "setState()/markNeedsBuild() called when widget tree
+  /// was locked". Crucially this helper does NOT guard on [mounted]: by the
+  /// time the post-frame callback runs the state is already disposed, but
+  /// the closure only touches the top-level notifier, never `this`, so the
+  /// deferred update is still safe. The equality check avoids a redundant
+  /// notification when the flag is already `false`.
+  void _setBusinessShellFrameInactiveAfterUnmount() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (businessShellFrameActiveNotifier.value == false) return;
+      businessShellFrameActiveNotifier.value = false;
+    });
+  }
+
   @override
   void initState() {
     super.initState();
@@ -106,7 +137,12 @@ class _BusinessHomePageState extends State<BusinessHomePage>
     // active BusinessThemeVariant accent. Cleared on dispose so non-business
     // shells (PIN/unlock, login, customer, standalone driver) keep the brand
     // default accent.
-    businessShellFrameActiveNotifier.value = true;
+    //
+    // Deferred to after the first frame: this notifier is observed by a
+    // ValueListenableBuilder higher in the tree (the app-lock gate), so a
+    // synchronous mutation here would mark that listener dirty during build
+    // and throw "setState() or markNeedsBuild() called during build".
+    _setBusinessShellFrameActiveAfterFirstFrame(true);
     // Rebuild when the user toggles between Compact and Visual mobile layout
     // from the theme page. Only affects phone-portrait rendering; tablet and
     // phone-landscape gates remain unchanged.
@@ -149,7 +185,12 @@ class _BusinessHomePageState extends State<BusinessHomePage>
     // screen (role entry, login, customer, driver standalone) renders with
     // the brand default frame accent instead of inheriting Neon Rush /
     // Emerald Ivory / Corporate Blue / Clean Professional.
-    businessShellFrameActiveNotifier.value = false;
+    //
+    // Deferred past the current teardown frame: assigning synchronously
+    // here would notify the ValueListenableBuilder higher in the tree while
+    // the framework is unmounting and throws "setState()/markNeedsBuild()
+    // called when widget tree was locked".
+    _setBusinessShellFrameInactiveAfterUnmount();
     super.dispose();
   }
 
