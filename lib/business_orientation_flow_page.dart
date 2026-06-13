@@ -405,6 +405,14 @@ class _BusinessOrientationFlowPageState
   static const String _card7RegionRadarTabletLandscapeAsset =
       'assets/fluxidi/onboarding/card7_welcome_tablet_landscape_bg.png';
 
+  /// Card 9 tablet PNGs — Public booking link / Scan to Book. The QR
+  /// booking visual is baked into the artwork; Flutter overlays one
+  /// bounded premium panel in measured dark safe zones.
+  static const String _card9PublicBookingLinkTabletPortraitAsset =
+      'assets/fluxidi/onboarding/card9_welcome_tablet_portrait_bg.png';
+  static const String _card9PublicBookingLinkTabletLandscapeAsset =
+      'assets/fluxidi/onboarding/card9_welcome_tablet_landscape_bg.png';
+
   static const _Tr _chironDocumentsTitle = _Tr(
     nl: 'Chiron & rittenregister',
     en: 'Chiron & ride register',
@@ -772,6 +780,132 @@ class _BusinessOrientationFlowPageState
     en: 'Less guesswork. Better coverage. More focused growth.',
     fr: 'Moins d’intuition. Plus de couverture. Une croissance plus ciblée.',
     es: 'Menos suposiciones. Mejor cobertura. Crecimiento más enfocado.',
+  );
+
+  // ---------------------------------------------------------------
+  // Card 10 — Public booking link / Scan to Book.
+  // ---------------------------------------------------------------
+
+  static const _Tr _publicBookingLinkTitle = _Tr(
+    nl: 'Publieke boekinglink',
+    en: 'Public booking link',
+    fr: 'Lien de réservation public',
+    es: 'Enlace público de reserva',
+  );
+
+  static const _Tr _publicBookingLinkIntro = _Tr(
+    nl:
+        'Laat klanten rechtstreeks boeken via QR-code, link of je '
+        'publieke partnerprofiel.',
+    en:
+        'Let customers book directly through a QR code, link or public '
+        'partner profile.',
+    fr:
+        'Permettez aux clients de réserver via QR code, lien ou profil '
+        'partenaire public.',
+    es:
+        'Permita que los clientes reserven mediante QR, enlace o perfil '
+        'público de socio.',
+  );
+
+  static const _Tr _publicBookingLinkExplanationEyebrow = _Tr(
+    nl: 'DIRECT BOEKEN',
+    en: 'DIRECT BOOKING',
+    fr: 'RÉSERVATION DIRECTE',
+    es: 'RESERVA DIRECTA',
+  );
+
+  static const _Tr _publicBookingLinkExplanationHeading = _Tr(
+    nl: 'Maak boeken eenvoudig voor elke klant.',
+    en: 'Make booking easy for every customer.',
+    fr: 'Simplifiez la réservation pour chaque client.',
+    es: 'Haga que reservar sea fácil para cada cliente.',
+  );
+
+  static const _Tr _publicBookingLinkExplanationIntro = _Tr(
+    nl:
+        'Deel één publieke boekinglink of QR-code en laat klanten meteen '
+        'een rit aanvragen zonder extra uitleg.',
+    en:
+        'Share one public booking link or QR code and let customers '
+        'request a ride instantly.',
+    fr:
+        'Partagez un lien public ou un QR code et laissez les clients '
+        'demander une course immédiatement.',
+    es:
+        'Comparta un enlace público o código QR y permita que los '
+        'clientes pidan un viaje al instante.',
+  );
+
+  static const List<_OrientationBulletItem>
+  _publicBookingLinkExplanationFeatures = <_OrientationBulletItem>[
+    _OrientationBulletItem(
+      title: _Tr(
+        nl: 'QR & link delen',
+        en: 'Share QR & link',
+        fr: 'Partager QR & lien',
+        es: 'Compartir QR y enlace',
+      ),
+      description: _Tr(
+        nl: 'Plaats je QR-code op kaartjes, balie, website of voertuig.',
+        en: 'Use your QR code on cards, counters, websites or vehicles.',
+        fr:
+            'Utilisez le QR code sur cartes, comptoirs, site web ou '
+            'véhicule.',
+        es: 'Use el QR en tarjetas, mostradores, web o vehículo.',
+      ),
+    ),
+    _OrientationBulletItem(
+      title: _Tr(
+        nl: 'Sneller reserveren',
+        en: 'Faster reservations',
+        fr: 'Réservation plus rapide',
+        es: 'Reservas más rápidas',
+      ),
+      description: _Tr(
+        nl:
+            'Klanten openen direct je boekingsflow en vullen hun '
+            'ritgegevens in.',
+        en:
+            'Customers open your booking flow and enter their ride '
+            'details directly.',
+        fr: 'Les clients ouvrent directement votre flux de réservation.',
+        es:
+            'Los clientes abren el flujo de reserva e introducen los '
+            'datos del viaje.',
+      ),
+    ),
+    _OrientationBulletItem(
+      title: _Tr(
+        nl: 'Meer aanvragen',
+        en: 'More requests',
+        fr: 'Plus de demandes',
+        es: 'Más solicitudes',
+      ),
+      description: _Tr(
+        nl:
+            'Verlaag de drempel en maak van elk contactmoment een '
+            'boekingskans.',
+        en:
+            'Lower the barrier and turn every contact moment into a '
+            'booking opportunity.',
+        fr:
+            'Réduisez les étapes et transformez chaque contact en '
+            'opportunité de réservation.',
+        es:
+            'Reduzca pasos y convierta cada contacto en una oportunidad '
+            'de reserva.',
+      ),
+    ),
+  ];
+
+  static const _Tr _publicBookingLinkExplanationClosing = _Tr(
+    nl: 'Minder stappen. Meer boekingen. Professioneler contact.',
+    en: 'Fewer steps. More bookings. A more professional first contact.',
+    fr:
+        'Moins d’étapes. Plus de réservations. Un contact plus '
+        'professionnel.',
+    es: 'Menos pasos. Más reservas. Un contacto más profesional.',
   );
 
   /// Shared body copy for not-yet-designed product-tour stops. Kept
@@ -1245,15 +1379,12 @@ class _BusinessOrientationFlowPageState
     // 10 — Public booking link.
     _OrientationCardData(
       id: 'public_booking_link',
-      layout: _OrientationCardLayout.placeholder,
+      layout: _OrientationCardLayout.publicBookingLinkRich,
       icon: Icons.link_outlined,
-      title: _Tr(
-        nl: 'Publieke boekingslink',
-        en: 'Public booking link',
-        fr: 'Lien de réservation public',
-        es: 'Enlace público de reserva',
-      ),
-      body: _placeholderBody,
+      title: _publicBookingLinkTitle,
+      body: _publicBookingLinkIntro,
+      portraitAsset: _card9PublicBookingLinkTabletPortraitAsset,
+      landscapeAsset: _card9PublicBookingLinkTabletLandscapeAsset,
     ),
     // 11 — AI Dispatch.
     _OrientationCardData(
@@ -1629,6 +1760,8 @@ class _BusinessOrientationFlowPageState
             currentCard.layout == _OrientationCardLayout.chironDocumentsRich;
         final bool isRegionRadarCard =
             currentCard.layout == _OrientationCardLayout.regionRadarRich;
+        final bool isPublicBookingLinkCard =
+            currentCard.layout == _OrientationCardLayout.publicBookingLinkRich;
         final bool isWelcomeTabletHero =
             isWelcomeCard && (isTabletPortrait || isTabletLandscape);
         final bool isCentralCockpitTabletPortraitHero =
@@ -1649,6 +1782,8 @@ class _BusinessOrientationFlowPageState
             isChironDocumentsCard && (isTabletPortrait || isTabletLandscape);
         final bool isRegionRadarTabletHero =
             isRegionRadarCard && (isTabletPortrait || isTabletLandscape);
+        final bool isPublicBookingLinkTabletHero =
+            isPublicBookingLinkCard && (isTabletPortrait || isTabletLandscape);
         final Color scaffoldBackground =
             (isWelcomeTabletHero ||
                 isCentralCockpitTabletPortraitHero ||
@@ -1657,7 +1792,8 @@ class _BusinessOrientationFlowPageState
                 isVehiclesFleetTabletHero ||
                 isDriverManagementTabletHero ||
                 isChironDocumentsTabletHero ||
-                isRegionRadarTabletHero)
+                isRegionRadarTabletHero ||
+                isPublicBookingLinkTabletHero)
             ? _heroBg
             : _bg;
 
@@ -1702,6 +1838,10 @@ class _BusinessOrientationFlowPageState
             isRegionRadarCard && isTabletPortrait;
         final bool useRegionRadarLandscapeFullHero =
             isRegionRadarCard && isTabletLandscape;
+        final bool usePublicBookingLinkPortraitFullHero =
+            isPublicBookingLinkCard && isTabletPortrait;
+        final bool usePublicBookingLinkLandscapeFullHero =
+            isPublicBookingLinkCard && isTabletLandscape;
 
         // Keep only one Card 1 tablet-hero decoder active. Runs
         // post-frame so [MediaQuery] is stable and we do not call
@@ -1776,6 +1916,16 @@ class _BusinessOrientationFlowPageState
               if (useRegionRadarLandscapeFullHero)
                 Positioned.fill(
                   child: _buildRegionRadarTabletLandscapeFullViewportHero(),
+                ),
+              if (usePublicBookingLinkPortraitFullHero)
+                Positioned.fill(
+                  child:
+                      _buildPublicBookingLinkTabletPortraitFullViewportHero(),
+                ),
+              if (usePublicBookingLinkLandscapeFullHero)
+                Positioned.fill(
+                  child:
+                      _buildPublicBookingLinkTabletLandscapeFullViewportHero(),
                 ),
               // Foreground layer — the existing chrome + PageView
               // composition. Identical to the pre-refactor layout
@@ -1856,6 +2006,12 @@ class _BusinessOrientationFlowPageState
                               (isTabletPortrait || isTabletLandscape)) {
                             return const SizedBox.expand();
                           }
+                          if (card.layout ==
+                                  _OrientationCardLayout
+                                      .publicBookingLinkRich &&
+                              (isTabletPortrait || isTabletLandscape)) {
+                            return const SizedBox.expand();
+                          }
                           // Card 1 tablet portrait keeps the in-slot
                           // immersive video hero — bypass the 640 px
                           // generic card cap and anchor top-centre so
@@ -1900,7 +2056,9 @@ class _BusinessOrientationFlowPageState
                           useChironDocumentsPortraitFullHero ||
                           useChironDocumentsLandscapeFullHero ||
                           useRegionRadarPortraitFullHero ||
-                          useRegionRadarLandscapeFullHero,
+                          useRegionRadarLandscapeFullHero ||
+                          usePublicBookingLinkPortraitFullHero ||
+                          usePublicBookingLinkLandscapeFullHero,
                     ),
                   ],
                 ),
@@ -2171,6 +2329,11 @@ class _BusinessOrientationFlowPageState
         // stable icon composition with the card's title + intro.
         return _buildOrientationCard(data, compact);
       case _OrientationCardLayout.regionRadarRich:
+        // Tablet portrait/landscape are short-circuited in [build]
+        // (bespoke PNG hero behind the Stack); phones fall back to the
+        // stable icon composition with the card's title + intro.
+        return _buildOrientationCard(data, compact);
+      case _OrientationCardLayout.publicBookingLinkRich:
         // Tablet portrait/landscape are short-circuited in [build]
         // (bespoke PNG hero behind the Stack); phones fall back to the
         // stable icon composition with the card's title + intro.
@@ -3744,6 +3907,506 @@ class _BusinessOrientationFlowPageState
               ),
             ),
             const SizedBox(width: 8),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: <Widget>[
+                  Text(
+                    _t(feature.title),
+                    softWrap: true,
+                    overflow: TextOverflow.visible,
+                    style: TextStyle(
+                      color: _gold,
+                      fontSize: titleSize,
+                      fontWeight: FontWeight.w800,
+                      height: 1.06,
+                      shadows: const <Shadow>[
+                        Shadow(
+                          color: Color(0xCC000000),
+                          blurRadius: 6,
+                          offset: Offset(0, 1),
+                        ),
+                      ],
+                    ),
+                  ),
+                  SizedBox(height: compact ? 2 : 3),
+                  Text(
+                    _t(feature.description),
+                    softWrap: true,
+                    overflow: TextOverflow.visible,
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.86),
+                      fontSize: bodySize,
+                      fontWeight: FontWeight.w500,
+                      height: 1.10,
+                      shadows: const <Shadow>[
+                        Shadow(
+                          color: Color(0xCC000000),
+                          blurRadius: 6,
+                          offset: Offset(0, 1),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  // =================================================================
+  // Card 10 — Public booking link / Scan to Book (bespoke tablet
+  // heroes). Card9 artwork carries the QR visual; Flutter overlays
+  // one premium parent panel inside measured safe zones.
+  //
+  // PORTRAIT content frame (frozen):
+  //   left 0.381, top 0.023, width 0.587, height 0.261
+  // LANDSCAPE content frame (frozen):
+  //   left 0.009, top 0.377, width 0.356, height 0.446
+  // =================================================================
+
+  double _publicBookingLinkLangScale() {
+    switch (appLanguageNotifier.value) {
+      case AppLanguage.fr:
+      case AppLanguage.es:
+        return 0.92;
+      case AppLanguage.nl:
+      case AppLanguage.en:
+        return 1.0;
+    }
+  }
+
+  /// Whole-block scale-down safety for Public booking link only.
+  Widget _publicBookingLinkWholeBlockScaleDown({
+    required double maxWidth,
+    required Widget child,
+    Alignment alignment = Alignment.topLeft,
+  }) {
+    return Align(
+      alignment: alignment,
+      child: FittedBox(
+        fit: BoxFit.scaleDown,
+        alignment: alignment,
+        child: SizedBox(width: maxWidth, child: child),
+      ),
+    );
+  }
+
+  Widget _buildPublicBookingLinkTabletPortraitFullViewportHero() {
+    return Stack(
+      fit: StackFit.expand,
+      children: <Widget>[
+        Image.asset(
+          _card9PublicBookingLinkTabletPortraitAsset,
+          fit: BoxFit.fill,
+          alignment: Alignment.center,
+          errorBuilder: (ctx, error, stackTrace) {
+            debugPrint(
+              '[ORIENTATION_FLOW][PUBLIC_BOOKING_PORTRAIT_PNG_FAIL] '
+              'error=$error',
+            );
+            return _buildWelcomeMediaUltimateFallback();
+          },
+        ),
+        IgnorePointer(child: _buildPublicBookingLinkTabletPortraitOverlay()),
+      ],
+    );
+  }
+
+  Widget _buildPublicBookingLinkTabletLandscapeFullViewportHero() {
+    return Stack(
+      fit: StackFit.expand,
+      children: <Widget>[
+        Image.asset(
+          _card9PublicBookingLinkTabletLandscapeAsset,
+          fit: BoxFit.fill,
+          alignment: Alignment.center,
+          errorBuilder: (ctx, error, stackTrace) {
+            debugPrint(
+              '[ORIENTATION_FLOW][PUBLIC_BOOKING_LANDSCAPE_PNG_FAIL] '
+              'error=$error',
+            );
+            return _buildWelcomeMediaUltimateFallback();
+          },
+        ),
+        IgnorePointer(child: _buildPublicBookingLinkTabletLandscapeOverlay()),
+      ],
+    );
+  }
+
+  Widget _buildPublicBookingLinkTabletPortraitOverlay() {
+    return LayoutBuilder(
+      builder: (ctx, constraints) {
+        final double w = constraints.maxWidth;
+        final double h = constraints.maxHeight;
+        if (h <= w) {
+          return const SizedBox.shrink();
+        }
+
+        const double contentLeft = 0.381;
+        const double contentTop = 0.023;
+        const double contentWidth = 0.587;
+        const double contentHeight = 0.261;
+
+        return Stack(
+          children: <Widget>[
+            Positioned(
+              left: w * contentLeft,
+              top: h * contentTop,
+              width: w * contentWidth,
+              height: h * contentHeight,
+              child: _buildPublicBookingLinkExplanationPanel(
+                zoneWidth: w * contentWidth,
+                zoneHeight: h * contentHeight,
+                isPortrait: true,
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildPublicBookingLinkTabletLandscapeOverlay() {
+    return LayoutBuilder(
+      builder: (ctx, constraints) {
+        final double w = constraints.maxWidth;
+        final double h = constraints.maxHeight;
+        if (w <= h) {
+          return const SizedBox.shrink();
+        }
+
+        const double contentLeft = 0.009;
+        const double contentTop = 0.377;
+        const double contentWidth = 0.356;
+        const double contentHeight = 0.446;
+
+        return Stack(
+          children: <Widget>[
+            Positioned(
+              left: w * contentLeft,
+              top: h * contentTop,
+              width: w * contentWidth,
+              height: h * contentHeight,
+              child: _buildPublicBookingLinkExplanationPanel(
+                zoneWidth: w * contentWidth,
+                zoneHeight: h * contentHeight,
+                isPortrait: false,
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildPublicBookingLinkExplanationPanel({
+    required double zoneWidth,
+    required double zoneHeight,
+    required bool isPortrait,
+  }) {
+    final double langScale = _publicBookingLinkLangScale();
+    final EdgeInsets padding = isPortrait
+        ? const EdgeInsets.fromLTRB(12, 9, 12, 8)
+        : const EdgeInsets.fromLTRB(11, 10, 11, 8);
+    final double titleSize = (isPortrait ? 22.0 : 20.0) * langScale;
+    final double cardIntroSize = (isPortrait ? 13.5 : 12.5) * langScale;
+    final double eyebrowSize = (isPortrait ? 9.5 : 9.5) * langScale;
+    final double headingSize = (isPortrait ? 18.0 : 17.0) * langScale;
+    final double introSize = (isPortrait ? 13.5 : 12.5) * langScale;
+    final double rowTitleSize = (isPortrait ? 15.5 : 14.5) * langScale;
+    final double rowBodySize = (isPortrait ? 13.5 : 12.5) * langScale;
+    final double closingSize = (isPortrait ? 13.0 : 12.0) * langScale;
+
+    final Widget title = Text(
+      _t(_publicBookingLinkTitle),
+      softWrap: true,
+      overflow: TextOverflow.visible,
+      style: TextStyle(
+        color: _gold,
+        fontSize: titleSize,
+        fontWeight: FontWeight.w900,
+        height: 1.06,
+        letterSpacing: 0.1,
+        shadows: <Shadow>[
+          Shadow(color: _gold.withOpacity(0.36), blurRadius: 10),
+          Shadow(
+            color: Colors.black.withOpacity(0.75),
+            blurRadius: 6,
+            offset: const Offset(0, 1),
+          ),
+        ],
+      ),
+    );
+
+    final Widget cardIntro = Text(
+      _t(_publicBookingLinkIntro),
+      softWrap: true,
+      overflow: TextOverflow.visible,
+      style: TextStyle(
+        color: Colors.white.withOpacity(0.88),
+        fontSize: cardIntroSize,
+        fontWeight: FontWeight.w500,
+        height: 1.12,
+        shadows: const <Shadow>[
+          Shadow(color: Color(0xCC000000), blurRadius: 6, offset: Offset(0, 1)),
+        ],
+      ),
+    );
+
+    final Widget eyebrow = Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: _gold.withOpacity(0.10),
+        borderRadius: BorderRadius.circular(4),
+        border: Border.all(color: _gold.withOpacity(0.26)),
+      ),
+      child: Text(
+        _t(_publicBookingLinkExplanationEyebrow),
+        softWrap: true,
+        overflow: TextOverflow.visible,
+        style: TextStyle(
+          color: _gold,
+          fontSize: eyebrowSize,
+          fontWeight: FontWeight.w700,
+          letterSpacing: 0.6,
+          height: 1.12,
+        ),
+      ),
+    );
+
+    final Widget heading = Text(
+      _t(_publicBookingLinkExplanationHeading),
+      softWrap: true,
+      overflow: TextOverflow.visible,
+      style: TextStyle(
+        color: _gold,
+        fontSize: headingSize,
+        fontWeight: FontWeight.w900,
+        height: 1.08,
+        shadows: const <Shadow>[
+          Shadow(color: Color(0xCC000000), blurRadius: 6, offset: Offset(0, 1)),
+        ],
+      ),
+    );
+
+    final Widget intro = Text(
+      _t(_publicBookingLinkExplanationIntro),
+      softWrap: true,
+      overflow: TextOverflow.visible,
+      style: TextStyle(
+        color: Colors.white.withOpacity(0.88),
+        fontSize: introSize,
+        fontWeight: FontWeight.w500,
+        height: 1.12,
+        shadows: const <Shadow>[
+          Shadow(color: Color(0xCC000000), blurRadius: 6, offset: Offset(0, 1)),
+        ],
+      ),
+    );
+
+    final Widget closing = Text(
+      _t(_publicBookingLinkExplanationClosing),
+      softWrap: true,
+      overflow: TextOverflow.visible,
+      style: TextStyle(
+        color: _gold.withOpacity(0.88),
+        fontSize: closingSize,
+        fontWeight: FontWeight.w700,
+        height: 1.10,
+        shadows: const <Shadow>[
+          Shadow(color: Color(0xCC000000), blurRadius: 6, offset: Offset(0, 1)),
+        ],
+      ),
+    );
+
+    final List<Widget> featureRows = <Widget>[
+      for (int i = 0; i < _publicBookingLinkExplanationFeatures.length; i++)
+        _buildPublicBookingLinkExplanationFeatureRow(
+          _publicBookingLinkExplanationFeatures[i],
+          titleSize: rowTitleSize,
+          bodySize: rowBodySize,
+          showDivider: i > 0,
+          compact: !isPortrait,
+        ),
+    ];
+
+    return SizedBox(
+      width: zoneWidth,
+      height: zoneHeight,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: Colors.black.withOpacity(0.54),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: _gold.withOpacity(0.22)),
+          boxShadow: <BoxShadow>[
+            BoxShadow(
+              color: Colors.black.withOpacity(0.32),
+              blurRadius: 12,
+              offset: const Offset(0, 3),
+            ),
+          ],
+        ),
+        child: Padding(
+          padding: padding,
+          child: isPortrait
+              ? _buildPublicBookingLinkExplanationPortraitBody(
+                  title: title,
+                  cardIntro: cardIntro,
+                  eyebrow: eyebrow,
+                  heading: heading,
+                  intro: intro,
+                  closing: closing,
+                  featureRows: featureRows,
+                )
+              : _buildPublicBookingLinkExplanationLandscapeBody(
+                  title: title,
+                  cardIntro: cardIntro,
+                  eyebrow: eyebrow,
+                  heading: heading,
+                  intro: intro,
+                  closing: closing,
+                  featureRows: featureRows,
+                ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPublicBookingLinkExplanationPortraitBody({
+    required Widget title,
+    required Widget cardIntro,
+    required Widget eyebrow,
+    required Widget heading,
+    required Widget intro,
+    required Widget closing,
+    required List<Widget> featureRows,
+  }) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: <Widget>[
+        Expanded(
+          flex: 44,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              title,
+              const SizedBox(height: 4),
+              cardIntro,
+              const SizedBox(height: 6),
+              eyebrow,
+              const SizedBox(height: 5),
+              heading,
+              const SizedBox(height: 5),
+              intro,
+              const Spacer(flex: 2),
+              closing,
+            ],
+          ),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          flex: 56,
+          child: Column(
+            children: <Widget>[
+              for (int i = 0; i < featureRows.length; i++)
+                Expanded(
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: featureRows[i],
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildPublicBookingLinkExplanationLandscapeBody({
+    required Widget title,
+    required Widget cardIntro,
+    required Widget eyebrow,
+    required Widget heading,
+    required Widget intro,
+    required Widget closing,
+    required List<Widget> featureRows,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        title,
+        const SizedBox(height: 4),
+        cardIntro,
+        const SizedBox(height: 6),
+        eyebrow,
+        const SizedBox(height: 5),
+        heading,
+        const SizedBox(height: 5),
+        intro,
+        const SizedBox(height: 6),
+        Expanded(
+          child: Column(
+            children: <Widget>[
+              for (int i = 0; i < featureRows.length; i++)
+                Expanded(
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: featureRows[i],
+                  ),
+                ),
+            ],
+          ),
+        ),
+        closing,
+      ],
+    );
+  }
+
+  Widget _buildPublicBookingLinkExplanationFeatureRow(
+    _OrientationBulletItem feature, {
+    required double titleSize,
+    required double bodySize,
+    required bool showDivider,
+    required bool compact,
+  }) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: <Widget>[
+        if (showDivider)
+          Padding(
+            padding: EdgeInsets.only(bottom: compact ? 4 : 5),
+            child: Divider(
+              color: _gold.withOpacity(0.14),
+              height: 1,
+              thickness: 1,
+            ),
+          ),
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Container(
+              width: compact ? 6.0 : 6.5,
+              height: compact ? 6.0 : 6.5,
+              margin: EdgeInsets.only(top: titleSize * 0.34),
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: _gold,
+                boxShadow: <BoxShadow>[
+                  BoxShadow(
+                    color: _gold.withOpacity(0.45),
+                    blurRadius: 8,
+                    spreadRadius: 1,
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 7),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -6030,6 +6693,9 @@ enum _HeroVideoLane { none, portrait, landscape }
 /// * [regionRadarRich] — bespoke Region Radar card using card7 PNG
 ///   artwork with one bounded text panel on tablet; the generic icon
 ///   card on phones.
+/// * [publicBookingLinkRich] — bespoke Scan to Book card using card9
+///   PNG artwork with one bounded premium panel on tablet; the generic
+///   icon card on phones.
 /// * [iconCard] — the stable baseline icon + title + body composition.
 /// * [placeholder] — a safe, centred, scroll-friendly "coming next"
 ///   card for product-tour stops that are not yet designed. Never
@@ -6043,6 +6709,7 @@ enum _OrientationCardLayout {
   driverManagementRich,
   chironDocumentsRich,
   regionRadarRich,
+  publicBookingLinkRich,
   iconCard,
   placeholder,
 }
