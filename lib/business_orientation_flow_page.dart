@@ -7808,9 +7808,9 @@ class _BusinessOrientationFlowPageState
         final bool isPortrait = h > w;
 
         final double frameLeft = isPortrait ? 0.020 : 0.012;
-        final double frameTop = isPortrait ? 0.202 : 0.365;
+        final double frameTop = isPortrait ? 0.202 : 0.360;
         final double frameWidth = isPortrait ? 0.333 : 0.414;
-        final double frameHeight = isPortrait ? 0.706 : 0.528;
+        final double frameHeight = isPortrait ? 0.706 : 0.455;
 
         return Stack(
           children: <Widget>[
@@ -7839,18 +7839,18 @@ class _BusinessOrientationFlowPageState
     final double langScale = _activateCustomersLangScale();
     final EdgeInsets padding = isPortrait
         ? const EdgeInsets.fromLTRB(14, 16, 14, 16)
-        : const EdgeInsets.fromLTRB(15, 14, 15, 14);
+        : const EdgeInsets.fromLTRB(15, 10, 15, 10);
     final double eyebrowSize = (isPortrait ? 10.0 : 10.5) * langScale;
     final double titleSize = (isPortrait ? 23.0 : 25.0) * langScale;
     final double introSize = (isPortrait ? 13.0 : 13.5) * langScale;
     final double rowTitleSize = (isPortrait ? 13.4 : 14.0) * langScale;
     final double rowBodySize = (isPortrait ? 11.6 : 12.1) * langScale;
     final double closingSize = (isPortrait ? 12.1 : 12.6) * langScale;
-    final double eyebrowToTitleGap = isPortrait ? 9.0 : 9.0;
-    final double titleToIntroGap = isPortrait ? 9.0 : 8.0;
-    final double introToRowsGap = isPortrait ? 15.0 : 13.0;
-    final double rowGap = isPortrait ? 9.0 : 8.0;
-    final double rowsToClosingGap = isPortrait ? 15.0 : 13.0;
+    final double eyebrowToTitleGap = isPortrait ? 9.0 : 7.0;
+    final double titleToIntroGap = isPortrait ? 9.0 : 6.0;
+    final double introToRowsGap = isPortrait ? 15.0 : 9.0;
+    final double rowGap = isPortrait ? 9.0 : 6.0;
+    final double rowsToClosingGap = isPortrait ? 15.0 : 9.0;
 
     final Widget eyebrow = Align(
       alignment: Alignment.topLeft,
@@ -8010,7 +8010,7 @@ class _BusinessOrientationFlowPageState
     return Container(
       padding: EdgeInsets.symmetric(
         horizontal: compact ? 8 : 9,
-        vertical: compact ? 7 : 7,
+        vertical: compact ? 7 : 5,
       ),
       decoration: BoxDecoration(
         color: _gold.withOpacity(0.06),
