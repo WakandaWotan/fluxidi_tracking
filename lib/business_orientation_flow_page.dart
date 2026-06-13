@@ -445,6 +445,14 @@ class _BusinessOrientationFlowPageState
   static const String _card12DriverReceiptsTabletLandscapeAsset =
       'assets/fluxidi/onboarding/card12_welcome_tablet_landscape_bg.png';
 
+  /// Card 13 tablet PNGs — Activate customers. The final customer-app
+  /// visual is baked into the artwork; Flutter overlays one measured
+  /// premium panel in the dark safe zone.
+  static const String _card13ActivateCustomersTabletPortraitAsset =
+      'assets/fluxidi/onboarding/card13_welcome_tablet_portrait_bg.png';
+  static const String _card13ActivateCustomersTabletLandscapeAsset =
+      'assets/fluxidi/onboarding/card13_welcome_tablet_landscape_bg.png';
+
   static const _Tr _chironDocumentsTitle = _Tr(
     nl: 'Chiron & rittenregister',
     en: 'Chiron & ride register',
@@ -1480,6 +1488,136 @@ class _BusinessOrientationFlowPageState
     es: 'Menos búsqueda. Seguimiento más rápido. Más calma en ruta.',
   );
 
+  // ---------------------------------------------------------------
+  // Card 15 — Activate customers / customer app adoption.
+  // ---------------------------------------------------------------
+
+  static const _Tr _activateCustomersTitle = _Tr(
+    nl: 'Laat klanten de app gebruiken.',
+    en: 'Let customers use the app.',
+    fr: 'Invitez vos clients à utiliser l’app.',
+    es: 'Haz que tus clientes usen la app.',
+  );
+
+  static const _Tr _activateCustomersIntro = _Tr(
+    nl:
+        'Moedig klanten aan om Fluxidi te downloaden. Zo wordt je service '
+        'niet alleen geboekt, maar ook opnieuw gevonden.',
+    en:
+        'Encourage customers to download Fluxidi. Your service becomes easier '
+        'to book, rediscover and reuse.',
+    fr:
+        'Encouragez vos clients à télécharger Fluxidi. Votre service devient '
+        'plus facile à réserver, retrouver et réutiliser.',
+    es:
+        'Anima a tus clientes a descargar Fluxidi. Tu servicio será más fácil '
+        'de reservar, reencontrar y volver a usar.',
+  );
+
+  static const _Tr _activateCustomersEyebrow = _Tr(
+    nl: 'KLANTEN ACTIVEREN',
+    en: 'ACTIVATE CUSTOMERS',
+    fr: 'ACTIVER LES CLIENTS',
+    es: 'ACTIVAR CLIENTES',
+  );
+
+  static const List<_OrientationBulletItem>
+  _activateCustomersBenefits = <_OrientationBulletItem>[
+    _OrientationBulletItem(
+      title: _Tr(
+        nl: 'Meer dan taxi',
+        en: 'More than taxi',
+        fr: 'Plus qu’un taxi',
+        es: 'Más que taxi',
+      ),
+      description: _Tr(
+        nl:
+            'Ritten, luchthavenvervoer, hotels, events en '
+            'business-mobiliteit in één klantapp.',
+        en:
+            'Rides, airport transfers, hotels, events and business '
+            'mobility in one customer app.',
+        fr:
+            'Courses, aéroports, hôtels, événements et mobilité business '
+            'dans une seule app client.',
+        es:
+            'Viajes, aeropuertos, hoteles, eventos y movilidad business '
+            'en una sola app cliente.',
+      ),
+    ),
+    _OrientationBulletItem(
+      title: _Tr(
+        nl: 'Jouw klantrelatie',
+        en: 'Your customer relation',
+        fr: 'Votre relation client',
+        es: 'Tu relación con el cliente',
+      ),
+      description: _Tr(
+        nl: 'Klanten ervaren jouw service, niet zomaar een anoniem platform.',
+        en:
+            'Customers experience your service, not just an anonymous '
+            'platform.',
+        fr:
+            'Les clients vivent votre service, pas une plateforme '
+            'anonyme.',
+        es:
+            'Los clientes viven tu servicio, no solo una plataforma '
+            'anónima.',
+      ),
+    ),
+    _OrientationBulletItem(
+      title: _Tr(
+        nl: 'Meer herhaalritten',
+        en: 'More repeat rides',
+        fr: 'Plus de trajets répétés',
+        es: 'Más viajes repetidos',
+      ),
+      description: _Tr(
+        nl:
+            'Favorieten, ritgeschiedenis en snelle acties maken opnieuw '
+            'boeken eenvoudiger.',
+        en:
+            'Favorites, ride history and quick actions make booking again '
+            'easier.',
+        fr:
+            'Favoris, historique et actions rapides facilitent les '
+            'nouvelles réservations.',
+        es:
+            'Favoritos, historial y acciones rápidas facilitan volver a '
+            'reservar.',
+      ),
+    ),
+    _OrientationBulletItem(
+      title: _Tr(
+        nl: 'Over grenzen heen',
+        en: 'Across countries',
+        fr: 'Au-delà des frontières',
+        es: 'Entre países',
+      ),
+      description: _Tr(
+        nl:
+            'Groei mee in de landen waar Fluxidi actief wordt en bereik '
+            'klanten onderweg.',
+        en:
+            'Grow with the countries where Fluxidi becomes active and '
+            'reach customers on the move.',
+        fr:
+            'Grandissez avec les pays où Fluxidi devient actif et touchez '
+            'les clients en déplacement.',
+        es:
+            'Crece con los países donde Fluxidi esté activo y llega a '
+            'clientes en movimiento.',
+      ),
+    ),
+  ];
+
+  static const _Tr _activateCustomersClosing = _Tr(
+    nl: 'Jouw service. Meer mobiliteit. Meer terugkerende klanten.',
+    en: 'Your service. More mobility. More returning customers.',
+    fr: 'Votre service. Plus de mobilité. Plus de clients qui reviennent.',
+    es: 'Tu servicio. Más movilidad. Más clientes que vuelven.',
+  );
+
   /// Shared body copy for not-yet-designed product-tour stops. Kept
   /// deliberately generic — the real per-card explanations land when
   /// each card graduates from [_OrientationCardLayout.placeholder] to
@@ -2002,15 +2140,12 @@ class _BusinessOrientationFlowPageState
     // 15 — Activate your customers / share your link.
     _OrientationCardData(
       id: 'activate_customers',
-      layout: _OrientationCardLayout.placeholder,
+      layout: _OrientationCardLayout.activateCustomersRich,
       icon: Icons.campaign_outlined,
-      title: _Tr(
-        nl: 'Activeer je klanten',
-        en: 'Activate your customers',
-        fr: 'Activez vos clients',
-        es: 'Activa a tus clientes',
-      ),
-      body: _placeholderBody,
+      title: _activateCustomersTitle,
+      body: _activateCustomersIntro,
+      portraitAsset: _card13ActivateCustomersTabletPortraitAsset,
+      landscapeAsset: _card13ActivateCustomersTabletLandscapeAsset,
     ),
   ];
 
@@ -2331,6 +2466,8 @@ class _BusinessOrientationFlowPageState
             currentCard.layout == _OrientationCardLayout.calculatorRich;
         final bool isDriverReceiptsCard =
             currentCard.layout == _OrientationCardLayout.driverReceiptsRich;
+        final bool isActivateCustomersCard =
+            currentCard.layout == _OrientationCardLayout.activateCustomersRich;
         final bool isWelcomeTabletHero =
             isWelcomeCard && (isTabletPortrait || isTabletLandscape);
         final bool isCentralCockpitTabletPortraitHero =
@@ -2361,6 +2498,8 @@ class _BusinessOrientationFlowPageState
             isCalculatorCard && (isTabletPortrait || isTabletLandscape);
         final bool isDriverReceiptsTabletHero =
             isDriverReceiptsCard && (isTabletPortrait || isTabletLandscape);
+        final bool isActivateCustomersTabletHero =
+            isActivateCustomersCard && (isTabletPortrait || isTabletLandscape);
         final Color scaffoldBackground =
             (isWelcomeTabletHero ||
                 isCentralCockpitTabletPortraitHero ||
@@ -2374,7 +2513,8 @@ class _BusinessOrientationFlowPageState
                 isAiDispatchTabletHero ||
                 isDriverViewTabletHero ||
                 isCalculatorTabletHero ||
-                isDriverReceiptsTabletHero)
+                isDriverReceiptsTabletHero ||
+                isActivateCustomersTabletHero)
             ? _heroBg
             : _bg;
 
@@ -2439,6 +2579,10 @@ class _BusinessOrientationFlowPageState
             isDriverReceiptsCard && isTabletPortrait;
         final bool useDriverReceiptsLandscapeFullHero =
             isDriverReceiptsCard && isTabletLandscape;
+        final bool useActivateCustomersPortraitFullHero =
+            isActivateCustomersCard && isTabletPortrait;
+        final bool useActivateCustomersLandscapeFullHero =
+            isActivateCustomersCard && isTabletLandscape;
 
         // Keep only one Card 1 tablet-hero decoder active. Runs
         // post-frame so [MediaQuery] is stable and we do not call
@@ -2556,6 +2700,16 @@ class _BusinessOrientationFlowPageState
                 Positioned.fill(
                   child: _buildDriverReceiptsTabletLandscapeFullViewportHero(),
                 ),
+              if (useActivateCustomersPortraitFullHero)
+                Positioned.fill(
+                  child:
+                      _buildActivateCustomersTabletPortraitFullViewportHero(),
+                ),
+              if (useActivateCustomersLandscapeFullHero)
+                Positioned.fill(
+                  child:
+                      _buildActivateCustomersTabletLandscapeFullViewportHero(),
+                ),
               // Foreground layer — the existing chrome + PageView
               // composition. Identical to the pre-refactor layout
               // for portrait, phones, and Cards 2-7. For Card 1 in
@@ -2661,6 +2815,12 @@ class _BusinessOrientationFlowPageState
                               (isTabletPortrait || isTabletLandscape)) {
                             return const SizedBox.expand();
                           }
+                          if (card.layout ==
+                                  _OrientationCardLayout
+                                      .activateCustomersRich &&
+                              (isTabletPortrait || isTabletLandscape)) {
+                            return const SizedBox.expand();
+                          }
                           // Card 1 tablet portrait keeps the in-slot
                           // immersive video hero — bypass the 640 px
                           // generic card cap and anchor top-centre so
@@ -2713,7 +2873,9 @@ class _BusinessOrientationFlowPageState
                           useDriverViewPortraitFullHero ||
                           useDriverViewLandscapeFullHero ||
                           useCalculatorPortraitFullHero ||
-                          useCalculatorLandscapeFullHero,
+                          useCalculatorLandscapeFullHero ||
+                          useActivateCustomersPortraitFullHero ||
+                          useActivateCustomersLandscapeFullHero,
                     ),
                   ],
                 ),
@@ -3009,6 +3171,11 @@ class _BusinessOrientationFlowPageState
         // stable icon composition with the card's title + intro.
         return _buildOrientationCard(data, compact);
       case _OrientationCardLayout.driverReceiptsRich:
+        // Tablet portrait/landscape are short-circuited in [build]
+        // (bespoke PNG hero behind the Stack); phones fall back to the
+        // stable icon composition with the card's title + intro.
+        return _buildOrientationCard(data, compact);
+      case _OrientationCardLayout.activateCustomersRich:
         // Tablet portrait/landscape are short-circuited in [build]
         // (bespoke PNG hero behind the Stack); phones fall back to the
         // stable icon composition with the card's title + intro.
@@ -7538,6 +7705,391 @@ class _BusinessOrientationFlowPageState
   }
 
   // =================================================================
+  // Card 15 — Activate customers (bespoke tablet heroes).
+  //
+  // Card13 artwork carries the customer-app visual; Flutter overlays
+  // one measured premium content block in the dark safe frame only.
+  // The logo/tablet areas are intentionally left to the asset.
+  //
+  // LANDSCAPE text frame:
+  //   left 0.012, top 0.365, width 0.414, height 0.528
+  // PORTRAIT text frame:
+  //   left 0.020, top 0.202, width 0.333, height 0.706
+  // =================================================================
+
+  double _activateCustomersLangScale() {
+    switch (appLanguageNotifier.value) {
+      case AppLanguage.fr:
+      case AppLanguage.es:
+        return 0.92;
+      case AppLanguage.nl:
+      case AppLanguage.en:
+        return 1.0;
+    }
+  }
+
+  Widget _activateCustomersWholeBlockScaleDown({
+    required double maxWidth,
+    required Widget child,
+    Alignment alignment = Alignment.centerLeft,
+  }) {
+    return Align(
+      alignment: alignment,
+      child: FittedBox(
+        fit: BoxFit.scaleDown,
+        alignment: alignment,
+        child: SizedBox(width: maxWidth, child: child),
+      ),
+    );
+  }
+
+  BoxDecoration _activateCustomersPanelDecoration() {
+    return BoxDecoration(
+      color: Colors.black.withOpacity(0.56),
+      borderRadius: BorderRadius.circular(14),
+      border: Border.all(color: _gold.withOpacity(0.24)),
+      boxShadow: <BoxShadow>[
+        BoxShadow(
+          color: Colors.black.withOpacity(0.34),
+          blurRadius: 14,
+          offset: const Offset(0, 4),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildActivateCustomersTabletPortraitFullViewportHero() {
+    return Stack(
+      fit: StackFit.expand,
+      children: <Widget>[
+        Image.asset(
+          _card13ActivateCustomersTabletPortraitAsset,
+          fit: BoxFit.fill,
+          alignment: Alignment.center,
+          errorBuilder: (ctx, error, stackTrace) {
+            debugPrint(
+              '[ORIENTATION_FLOW][ACTIVATE_CUSTOMERS_PORTRAIT_PNG_FAIL] '
+              'error=$error',
+            );
+            return _buildWelcomeMediaUltimateFallback();
+          },
+        ),
+        IgnorePointer(child: _buildActivateCustomersTabletOverlay()),
+      ],
+    );
+  }
+
+  Widget _buildActivateCustomersTabletLandscapeFullViewportHero() {
+    return Stack(
+      fit: StackFit.expand,
+      children: <Widget>[
+        Image.asset(
+          _card13ActivateCustomersTabletLandscapeAsset,
+          fit: BoxFit.fill,
+          alignment: Alignment.center,
+          errorBuilder: (ctx, error, stackTrace) {
+            debugPrint(
+              '[ORIENTATION_FLOW][ACTIVATE_CUSTOMERS_LANDSCAPE_PNG_FAIL] '
+              'error=$error',
+            );
+            return _buildWelcomeMediaUltimateFallback();
+          },
+        ),
+        IgnorePointer(child: _buildActivateCustomersTabletOverlay()),
+      ],
+    );
+  }
+
+  Widget _buildActivateCustomersTabletOverlay() {
+    return LayoutBuilder(
+      builder: (ctx, constraints) {
+        final double w = constraints.maxWidth;
+        final double h = constraints.maxHeight;
+        final bool isPortrait = h > w;
+
+        final double frameLeft = isPortrait ? 0.020 : 0.012;
+        final double frameTop = isPortrait ? 0.202 : 0.365;
+        final double frameWidth = isPortrait ? 0.333 : 0.414;
+        final double frameHeight = isPortrait ? 0.706 : 0.528;
+
+        return Stack(
+          children: <Widget>[
+            Positioned(
+              left: w * frameLeft,
+              top: h * frameTop,
+              width: w * frameWidth,
+              height: h * frameHeight,
+              child: _buildActivateCustomersPanel(
+                zoneWidth: w * frameWidth,
+                zoneHeight: h * frameHeight,
+                isPortrait: isPortrait,
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildActivateCustomersPanel({
+    required double zoneWidth,
+    required double zoneHeight,
+    required bool isPortrait,
+  }) {
+    final double langScale = _activateCustomersLangScale();
+    final EdgeInsets padding = isPortrait
+        ? const EdgeInsets.fromLTRB(14, 16, 14, 16)
+        : const EdgeInsets.fromLTRB(15, 14, 15, 14);
+    final double eyebrowSize = (isPortrait ? 10.0 : 10.5) * langScale;
+    final double titleSize = (isPortrait ? 23.0 : 25.0) * langScale;
+    final double introSize = (isPortrait ? 13.0 : 13.5) * langScale;
+    final double rowTitleSize = (isPortrait ? 13.4 : 14.0) * langScale;
+    final double rowBodySize = (isPortrait ? 11.6 : 12.1) * langScale;
+    final double closingSize = (isPortrait ? 12.1 : 12.6) * langScale;
+    final double eyebrowToTitleGap = isPortrait ? 9.0 : 9.0;
+    final double titleToIntroGap = isPortrait ? 9.0 : 8.0;
+    final double introToRowsGap = isPortrait ? 15.0 : 13.0;
+    final double rowGap = isPortrait ? 9.0 : 8.0;
+    final double rowsToClosingGap = isPortrait ? 15.0 : 13.0;
+
+    final Widget eyebrow = Align(
+      alignment: Alignment.topLeft,
+      child: Container(
+        padding: EdgeInsets.symmetric(
+          horizontal: isPortrait ? 8 : 9,
+          vertical: isPortrait ? 4 : 5,
+        ),
+        decoration: BoxDecoration(
+          color: _gold.withOpacity(0.10),
+          borderRadius: BorderRadius.circular(4),
+          border: Border.all(color: _gold.withOpacity(0.26)),
+        ),
+        child: Text(
+          _t(_activateCustomersEyebrow),
+          softWrap: true,
+          overflow: TextOverflow.visible,
+          style: TextStyle(
+            color: _gold,
+            fontSize: eyebrowSize,
+            fontWeight: FontWeight.w700,
+            letterSpacing: 0.55,
+            height: 1.12,
+          ),
+        ),
+      ),
+    );
+
+    final Widget title = Text(
+      _t(_activateCustomersTitle),
+      softWrap: true,
+      overflow: TextOverflow.visible,
+      style: TextStyle(
+        color: _gold,
+        fontSize: titleSize,
+        fontWeight: FontWeight.w900,
+        height: 1.08,
+        letterSpacing: 0.08,
+        shadows: <Shadow>[
+          Shadow(color: _gold.withOpacity(0.30), blurRadius: 12),
+          const Shadow(
+            color: Color(0xCC000000),
+            blurRadius: 7,
+            offset: Offset(0, 1),
+          ),
+        ],
+      ),
+    );
+
+    final Widget intro = Text(
+      _t(_activateCustomersIntro),
+      softWrap: true,
+      overflow: TextOverflow.visible,
+      style: TextStyle(
+        color: Colors.white.withOpacity(0.88),
+        fontSize: introSize,
+        fontWeight: FontWeight.w500,
+        height: 1.18,
+        shadows: const <Shadow>[
+          Shadow(color: Color(0xCC000000), blurRadius: 6, offset: Offset(0, 1)),
+        ],
+      ),
+    );
+
+    final Widget closing = Text(
+      _t(_activateCustomersClosing),
+      softWrap: true,
+      overflow: TextOverflow.visible,
+      style: TextStyle(
+        color: _gold.withOpacity(0.90),
+        fontSize: closingSize,
+        fontWeight: FontWeight.w800,
+        height: 1.15,
+        letterSpacing: 0.08,
+        shadows: const <Shadow>[
+          Shadow(color: Color(0xCC000000), blurRadius: 6, offset: Offset(0, 1)),
+        ],
+      ),
+    );
+
+    const List<IconData> benefitIcons = <IconData>[
+      Icons.explore_rounded,
+      Icons.verified_user_rounded,
+      Icons.replay_rounded,
+      Icons.public_rounded,
+    ];
+
+    final List<Widget> benefitRows = <Widget>[
+      for (int i = 0; i < _activateCustomersBenefits.length; i++)
+        _buildActivateCustomersBenefitRow(
+          _activateCustomersBenefits[i],
+          icon: benefitIcons[i % benefitIcons.length],
+          titleSize: rowTitleSize,
+          bodySize: rowBodySize,
+          compact: isPortrait,
+        ),
+    ];
+
+    return SizedBox(
+      width: zoneWidth,
+      height: zoneHeight,
+      child: DecoratedBox(
+        decoration: _activateCustomersPanelDecoration(),
+        child: Padding(
+          padding: padding,
+          child: LayoutBuilder(
+            builder: (BuildContext context, BoxConstraints constraints) {
+              final List<Widget> spacedBenefitRows = <Widget>[];
+              for (int i = 0; i < benefitRows.length; i++) {
+                if (i > 0) {
+                  spacedBenefitRows.add(SizedBox(height: rowGap));
+                }
+                spacedBenefitRows.add(benefitRows[i]);
+              }
+
+              final Widget composedPanel = Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: <Widget>[
+                  eyebrow,
+                  SizedBox(height: eyebrowToTitleGap),
+                  title,
+                  SizedBox(height: titleToIntroGap),
+                  intro,
+                  SizedBox(height: introToRowsGap),
+                  ...spacedBenefitRows,
+                  SizedBox(height: rowsToClosingGap),
+                  closing,
+                ],
+              );
+
+              return SizedBox(
+                width: constraints.maxWidth,
+                height: constraints.maxHeight,
+                child: _activateCustomersWholeBlockScaleDown(
+                  maxWidth: constraints.maxWidth,
+                  alignment: Alignment.centerLeft,
+                  child: composedPanel,
+                ),
+              );
+            },
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildActivateCustomersBenefitRow(
+    _OrientationBulletItem benefit, {
+    required IconData icon,
+    required double titleSize,
+    required double bodySize,
+    required bool compact,
+  }) {
+    final double iconBox = compact ? 28.0 : 30.0;
+    final double iconSize = compact ? 15.0 : 17.0;
+    return Container(
+      padding: EdgeInsets.symmetric(
+        horizontal: compact ? 8 : 9,
+        vertical: compact ? 7 : 7,
+      ),
+      decoration: BoxDecoration(
+        color: _gold.withOpacity(0.06),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: _gold.withOpacity(0.20)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: <Widget>[
+          Container(
+            width: iconBox,
+            height: iconBox,
+            decoration: BoxDecoration(
+              color: _gold.withOpacity(0.14),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: _gold.withOpacity(0.36)),
+              boxShadow: <BoxShadow>[
+                BoxShadow(
+                  color: _gold.withOpacity(0.20),
+                  blurRadius: 8,
+                  spreadRadius: 0.5,
+                ),
+              ],
+            ),
+            alignment: Alignment.center,
+            child: Icon(icon, color: _gold, size: iconSize),
+          ),
+          SizedBox(width: compact ? 8 : 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                Text(
+                  _t(benefit.title),
+                  softWrap: true,
+                  overflow: TextOverflow.visible,
+                  style: TextStyle(
+                    color: _gold,
+                    fontSize: titleSize,
+                    fontWeight: FontWeight.w800,
+                    height: 1.06,
+                    shadows: const <Shadow>[
+                      Shadow(
+                        color: Color(0xCC000000),
+                        blurRadius: 6,
+                        offset: Offset(0, 1),
+                      ),
+                    ],
+                  ),
+                ),
+                SizedBox(height: compact ? 2 : 3),
+                Text(
+                  _t(benefit.description),
+                  softWrap: true,
+                  overflow: TextOverflow.visible,
+                  style: TextStyle(
+                    color: Colors.white.withOpacity(0.86),
+                    fontSize: bodySize,
+                    fontWeight: FontWeight.w500,
+                    height: 1.12,
+                    shadows: const <Shadow>[
+                      Shadow(
+                        color: Color(0xCC000000),
+                        blurRadius: 6,
+                        offset: Offset(0, 1),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // =================================================================
   // Card 3 — Subscription & scalability (bespoke tablet heroes).
   //
   // Both orientations paint the dedicated card3 PNG full-bleed
@@ -9787,6 +10339,9 @@ enum _HeroVideoLane { none, portrait, landscape }
 /// * [driverReceiptsRich] — bespoke Ride receipts / history / documents
 ///   card using card12 PNG artwork with measured premium panels on
 ///   tablet; the generic icon card on phones.
+/// * [activateCustomersRich] — bespoke final Activate customers card
+///   using card13 PNG artwork with one measured premium panel on tablet;
+///   the generic icon card on phones.
 /// * [iconCard] — the stable baseline icon + title + body composition.
 /// * [placeholder] — a safe, centred, scroll-friendly "coming next"
 ///   card for product-tour stops that are not yet designed. Never
@@ -9805,6 +10360,7 @@ enum _OrientationCardLayout {
   driverViewRich,
   calculatorRich,
   driverReceiptsRich,
+  activateCustomersRich,
   iconCard,
   placeholder,
 }
