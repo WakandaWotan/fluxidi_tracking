@@ -388,6 +388,15 @@ class _BusinessOrientationFlowPageState
   static const String _card5ChironDocumentsTabletLandscapeAsset =
       'assets/fluxidi/onboarding/card5_welcome_tablet_landscape_bg.png';
 
+  /// Card 6 tablet PNGs — Drivers & documents. The driver management
+  /// screenshots are baked into the artwork; Flutter overlays only the
+  /// localised title/intro and the feature panel in measured safe
+  /// zones (never over driver faces or important controls).
+  static const String _card6DriverManagementTabletPortraitAsset =
+      'assets/fluxidi/onboarding/card6_welcome_tablet_portrait_bg.png';
+  static const String _card6DriverManagementTabletLandscapeAsset =
+      'assets/fluxidi/onboarding/card6_welcome_tablet_landscape_bg.png';
+
   static const _Tr _chironDocumentsTitle = _Tr(
     nl: 'Chiron & rittenregister',
     en: 'Chiron & ride register',
@@ -512,6 +521,147 @@ class _BusinessOrientationFlowPageState
     fr: 'Pour contrôles, administration et confiance',
     es: 'Para inspecciones, administración y confianza',
   );
+
+  // ---------------------------------------------------------------
+  // Card 6 (slide 7) — Drivers & documents. Bespoke tablet hero:
+  // localised title + intro plus a responsive framed feature panel
+  // of stacked gold-dot mini-cards, overlaid on the baked-in driver
+  // management artwork in measured safe zones.
+  // ---------------------------------------------------------------
+
+  static const _Tr _driverManagementTitle = _Tr(
+    nl: 'Chauffeurs & documenten',
+    en: 'Drivers & documents',
+    fr: 'Chauffeurs & documents',
+    es: 'Conductores y documentos',
+  );
+
+  static const _Tr _driverManagementIntro = _Tr(
+    nl:
+        'Beheer chauffeurs, documenten, codes, voertuigkoppelingen en '
+        'beschikbaarheid vanuit één centrale cockpit.',
+    en:
+        'Manage drivers, documents, codes, vehicle links and availability '
+        'from one central cockpit.',
+    fr:
+        'Gérez chauffeurs, documents, codes, liens véhicules et disponibilité '
+        'depuis un cockpit central.',
+    es:
+        'Gestiona conductores, documentos, códigos, vehículos y disponibilidad '
+        'desde un cockpit central.',
+  );
+
+  static const List<_OrientationBulletItem>
+  _driverManagementFeatures = <_OrientationBulletItem>[
+    _OrientationBulletItem(
+      title: _Tr(
+        nl: 'Chauffeurprofielen',
+        en: 'Driver profiles',
+        fr: 'Profils chauffeur',
+        es: 'Perfiles de conductor',
+      ),
+      description: _Tr(
+        nl:
+            'Voeg telefoon, status, voertuigkoppeling, bedrijfskoppeling en '
+            'chauffeursfoto toe.',
+        en: 'Add phone, status, vehicle link, company link and driver photo.',
+        fr:
+            'Ajoutez téléphone, statut, véhicule, entreprise et photo '
+            'chauffeur.',
+        es: 'Añade teléfono, estado, vehículo, empresa y foto del conductor.',
+      ),
+    ),
+    _OrientationBulletItem(
+      title: _Tr(
+        nl: 'Codes & QR-koppeling',
+        en: 'Codes & QR pairing',
+        fr: 'Codes & QR',
+        es: 'Códigos y QR',
+      ),
+      description: _Tr(
+        nl: 'Genereer een nieuwe chauffeurcode of tijdelijke koppel-QR.',
+        en: 'Generate a new driver code or temporary pairing QR.',
+        fr: 'Générez un nouveau code chauffeur ou un QR de liaison temporaire.',
+        es: 'Genera un nuevo código de conductor o QR temporal de vinculación.',
+      ),
+    ),
+    _OrientationBulletItem(
+      title: _Tr(
+        nl: 'Documentcontrole',
+        en: 'Document control',
+        fr: 'Contrôle documents',
+        es: 'Control documental',
+      ),
+      description: _Tr(
+        nl:
+            'Volg rijbewijs, bestuurderpas, chauffeurkaart, medische keuringen '
+            'en vergunningen op.',
+        en:
+            'Track licence, driver pass, driver card, medical checks and '
+            'permits.',
+        fr:
+            'Suivez permis, carte chauffeur, visite médicale et '
+            'autorisations.',
+        es: 'Sigue licencia, tarjeta, revisión médica y permisos.',
+      ),
+    ),
+    _OrientationBulletItem(
+      title: _Tr(
+        nl: 'Nakijken & goedkeuren',
+        en: 'Review & approvals',
+        fr: 'Vérifier & approuver',
+        es: 'Revisión y aprobación',
+      ),
+      description: _Tr(
+        nl:
+            'Chauffeurs kunnen documenten uploaden; de bedrijfsleider kan ze '
+            'nakijken en goedkeuren.',
+        en:
+            'Drivers can upload documents; the business owner can review and '
+            'approve them.',
+        fr:
+            'Les chauffeurs peuvent importer des documents; l’entreprise les '
+            'valide.',
+        es:
+            'Los conductores suben documentos; la empresa los revisa y '
+            'aprueba.',
+      ),
+    ),
+    _OrientationBulletItem(
+      title: _Tr(
+        nl: 'Status & beschikbaarheid',
+        en: 'Status & availability',
+        fr: 'Statut & disponibilité',
+        es: 'Estado y disponibilidad',
+      ),
+      description: _Tr(
+        nl:
+            'Zie actieve, inactieve, gepauzeerde en beschikbare chauffeurs in '
+            'één oogopslag.',
+        en: 'See active, inactive, paused and available drivers at a glance.',
+        fr:
+            'Voyez actifs, inactifs, en pause et disponibles en un coup '
+            'd’œil.',
+        es: 'Ve activos, inactivos, en pausa y disponibles de un vistazo.',
+      ),
+    ),
+    _OrientationBulletItem(
+      title: _Tr(
+        nl: 'Publieke partnerfoto',
+        en: 'Public partner photo',
+        fr: 'Photo partenaire',
+        es: 'Foto pública',
+      ),
+      description: _Tr(
+        nl:
+            'Publiceer een chauffeursportret dat zichtbaar kan zijn in de '
+            'klantenapp.',
+        en: 'Publish a driver portrait that can appear in the customer app.',
+        fr: 'Publiez un portrait chauffeur visible dans l’app client.',
+        es: 'Publica un retrato del conductor visible en la app cliente.',
+      ),
+    ),
+  ];
 
   /// Shared body copy for not-yet-designed product-tour stops. Kept
   /// deliberately generic — the real per-card explanations land when
@@ -946,19 +1096,18 @@ class _BusinessOrientationFlowPageState
       portraitAsset: _card4VehiclesFleetTabletPortraitAsset,
       landscapeAsset: _card4VehiclesFleetTabletLandscapeAsset,
     ),
-    // 7 — Drivers & documents. Placeholder until dedicated driver
-    // management assets are ready.
+    // 7 — Drivers & documents (bespoke PNG + measured text overlay on
+    // tablet). The card6 artwork carries the driver management
+    // screenshots; Flutter overlays title/intro and a framed feature
+    // panel in measured safe zones.
     _OrientationCardData(
       id: 'driver_management',
-      layout: _OrientationCardLayout.placeholder,
+      layout: _OrientationCardLayout.driverManagementRich,
       icon: Icons.people_outline,
-      title: _Tr(
-        nl: 'Chauffeurs & documenten',
-        en: 'Drivers & documents',
-        fr: 'Chauffeurs & documents',
-        es: 'Conductores y documentos',
-      ),
-      body: _placeholderBody,
+      title: _driverManagementTitle,
+      body: _driverManagementIntro,
+      portraitAsset: _card6DriverManagementTabletPortraitAsset,
+      landscapeAsset: _card6DriverManagementTabletLandscapeAsset,
     ),
     // 8 — Chiron & ride register (bespoke PNG + measured text overlay
     // on tablet). The card5 artwork contains the receipt/audit/local
@@ -1366,6 +1515,8 @@ class _BusinessOrientationFlowPageState
             currentCard.layout == _OrientationCardLayout.subscription;
         final bool isVehiclesFleetCard =
             currentCard.layout == _OrientationCardLayout.vehiclesFleet;
+        final bool isDriverManagementCard =
+            currentCard.layout == _OrientationCardLayout.driverManagementRich;
         final bool isChironDocumentsCard =
             currentCard.layout == _OrientationCardLayout.chironDocumentsRich;
         final bool isWelcomeTabletHero =
@@ -1382,6 +1533,8 @@ class _BusinessOrientationFlowPageState
         // it gets the same immersive [_heroBg] scaffold on tablet.
         final bool isVehiclesFleetTabletHero =
             isVehiclesFleetCard && (isTabletPortrait || isTabletLandscape);
+        final bool isDriverManagementTabletHero =
+            isDriverManagementCard && (isTabletPortrait || isTabletLandscape);
         final bool isChironDocumentsTabletHero =
             isChironDocumentsCard && (isTabletPortrait || isTabletLandscape);
         final Color scaffoldBackground =
@@ -1390,6 +1543,7 @@ class _BusinessOrientationFlowPageState
                 isCentralCockpitTabletLandscapeHero ||
                 isSubscriptionTabletHero ||
                 isVehiclesFleetTabletHero ||
+                isDriverManagementTabletHero ||
                 isChironDocumentsTabletHero)
             ? _heroBg
             : _bg;
@@ -1423,6 +1577,10 @@ class _BusinessOrientationFlowPageState
             isVehiclesFleetCard && isTabletPortrait;
         final bool useVehiclesFleetLandscapeFullHero =
             isVehiclesFleetCard && isTabletLandscape;
+        final bool useDriverManagementPortraitFullHero =
+            isDriverManagementCard && isTabletPortrait;
+        final bool useDriverManagementLandscapeFullHero =
+            isDriverManagementCard && isTabletLandscape;
         final bool useChironDocumentsPortraitFullHero =
             isChironDocumentsCard && isTabletPortrait;
         final bool useChironDocumentsLandscapeFullHero =
@@ -1476,6 +1634,15 @@ class _BusinessOrientationFlowPageState
               if (useVehiclesFleetLandscapeFullHero)
                 Positioned.fill(
                   child: _buildVehiclesFleetTabletLandscapeFullViewportHero(),
+                ),
+              if (useDriverManagementPortraitFullHero)
+                Positioned.fill(
+                  child: _buildDriverManagementTabletPortraitFullViewportHero(),
+                ),
+              if (useDriverManagementLandscapeFullHero)
+                Positioned.fill(
+                  child:
+                      _buildDriverManagementTabletLandscapeFullViewportHero(),
                 ),
               if (useChironDocumentsPortraitFullHero)
                 Positioned.fill(
@@ -1546,6 +1713,11 @@ class _BusinessOrientationFlowPageState
                           // gesture.
                           if (card.layout ==
                                   _OrientationCardLayout.vehiclesFleet &&
+                              (isTabletPortrait || isTabletLandscape)) {
+                            return const SizedBox.expand();
+                          }
+                          if (card.layout ==
+                                  _OrientationCardLayout.driverManagementRich &&
                               (isTabletPortrait || isTabletLandscape)) {
                             return const SizedBox.expand();
                           }
@@ -1852,6 +2024,11 @@ class _BusinessOrientationFlowPageState
         // stable icon composition with the card's title + body.
         return _buildOrientationCard(data, compact);
       case _OrientationCardLayout.vehiclesFleet:
+        // Tablet portrait/landscape are short-circuited in [build]
+        // (bespoke PNG hero behind the Stack); phones fall back to the
+        // stable icon composition with the card's title + intro.
+        return _buildOrientationCard(data, compact);
+      case _OrientationCardLayout.driverManagementRich:
         // Tablet portrait/landscape are short-circuited in [build]
         // (bespoke PNG hero behind the Stack); phones fall back to the
         // stable icon composition with the card's title + intro.
@@ -3280,6 +3457,355 @@ class _BusinessOrientationFlowPageState
         shadows: const <Shadow>[
           Shadow(color: Color(0xCC000000), blurRadius: 7, offset: Offset(0, 1)),
         ],
+      ),
+    );
+  }
+
+  // =================================================================
+  // Card 6 (slide 7) — Drivers & documents bespoke tablet hero.
+  //
+  // The card6 artwork carries the driver management screenshots and
+  // Fluxidi wordmark. Flutter overlays only the localised title/intro
+  // (hero block) and a responsive framed feature panel of stacked
+  // gold-dot mini-cards, in measured per-orientation safe zones that
+  // avoid the driver faces, document controls and screenshots.
+  //
+  // Portrait and landscape use separate measured panel builders.
+  // Every text block wraps in a [FittedBox] scale-down safety net so
+  // the longest NL/FR/ES copy can never raise a yellow/black overflow
+  // band; EN/NL render at the requested fixed sizes.
+  // =================================================================
+
+  /// Per-language down-scale for the longer FR/ES Card 6 copy so the
+  /// fixed sizes already land slightly smaller before the [FittedBox]
+  /// safety net ever has to engage. EN/NL stay at 1.0.
+  double _driverManagementLangScale() {
+    switch (appLanguageNotifier.value) {
+      case AppLanguage.fr:
+      case AppLanguage.es:
+        return 0.92;
+      case AppLanguage.nl:
+      case AppLanguage.en:
+        return 1.0;
+    }
+  }
+
+  Widget _buildDriverManagementTabletLandscapeFullViewportHero() {
+    return Stack(
+      fit: StackFit.expand,
+      children: <Widget>[
+        Image.asset(
+          _card6DriverManagementTabletLandscapeAsset,
+          fit: BoxFit.fill,
+          alignment: Alignment.center,
+          errorBuilder: (ctx, error, stackTrace) {
+            debugPrint(
+              '[ORIENTATION_FLOW][CARD6_LANDSCAPE_PNG_FAIL] error=$error',
+            );
+            return _buildWelcomeMediaUltimateFallback();
+          },
+        ),
+        IgnorePointer(
+          child: _buildDriverManagementTabletOverlay(isPortrait: false),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildDriverManagementTabletPortraitFullViewportHero() {
+    return Stack(
+      fit: StackFit.expand,
+      children: <Widget>[
+        Image.asset(
+          _card6DriverManagementTabletPortraitAsset,
+          fit: BoxFit.fill,
+          alignment: Alignment.center,
+          errorBuilder: (ctx, error, stackTrace) {
+            debugPrint(
+              '[ORIENTATION_FLOW][CARD6_PORTRAIT_PNG_FAIL] error=$error',
+            );
+            return _buildWelcomeMediaUltimateFallback();
+          },
+        ),
+        IgnorePointer(
+          child: _buildDriverManagementTabletOverlay(isPortrait: true),
+        ),
+      ],
+    );
+  }
+
+  /// Title/intro hero block + framed feature panel for Card 7,
+  /// positioned in measured safe zones relative to the FULL viewport
+  /// so the fractions line up with the full-bleed background asset.
+  Widget _buildDriverManagementTabletOverlay({required bool isPortrait}) {
+    return LayoutBuilder(
+      builder: (ctx, constraints) {
+        final double w = constraints.maxWidth;
+        final double h = constraints.maxHeight;
+        if (isPortrait ? h <= w : w <= h) {
+          return const SizedBox.shrink();
+        }
+
+        final double titleLeft = isPortrait ? 0.455 : 0.445;
+        final double titleTop = isPortrait ? 0.060 : 0.070;
+        final double titleWidth = isPortrait ? 0.500 : 0.460;
+        final double titleHeight = isPortrait ? 0.150 : 0.150;
+        // Feature-panel safe zones: lower-left portrait free zone and
+        // left-side landscape zone on the fixed driver artwork targets
+        // (portrait 1752x2800, landscape 2800x1752). All six rows and
+        // the footer live in ONE bounded rectangle away from screenshots.
+        final double panelLeft = isPortrait ? 0.040 : 0.018;
+        final double panelTop = isPortrait ? 0.515 : 0.385;
+        final double panelWidth = isPortrait ? 0.365 : 0.320;
+        final double panelHeight = isPortrait ? 0.345 : 0.430;
+
+        final double scale = _driverManagementLangScale()
+            .clamp(0.90, 1.0)
+            .toDouble();
+        final double titleSize = (isPortrait ? 33.0 : 42.0) * scale;
+        final double introSize = (isPortrait ? 15.5 : 18.0) * scale;
+
+        return Stack(
+          children: <Widget>[
+            Positioned(
+              left: w * titleLeft,
+              top: h * titleTop,
+              width: w * titleWidth,
+              height: h * titleHeight,
+              child: Padding(
+                padding: isPortrait
+                    ? const EdgeInsets.symmetric(horizontal: 4, vertical: 6)
+                    : const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    alignment: Alignment.centerLeft,
+                    child: SizedBox(
+                      width: w * titleWidth,
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: <Widget>[
+                          _buildDriverManagementTitle(titleSize),
+                          SizedBox(height: isPortrait ? 8.0 : 10.0),
+                          _buildDriverManagementIntro(
+                            introSize,
+                            isPortrait ? 1.20 : 1.22,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            Positioned(
+              left: w * panelLeft,
+              top: h * panelTop,
+              width: w * panelWidth,
+              height: h * panelHeight,
+              child: _buildDriverManagementFeatureList(
+                zoneWidth: w * panelWidth,
+                zoneHeight: h * panelHeight,
+                isPortrait: isPortrait,
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildDriverManagementTitle(double fontSize) {
+    return Text(
+      _t(_driverManagementTitle),
+      softWrap: true,
+      overflow: TextOverflow.visible,
+      style: TextStyle(
+        color: _gold,
+        fontSize: fontSize,
+        fontWeight: FontWeight.w900,
+        height: 1.06,
+        letterSpacing: 0.15,
+        shadows: <Shadow>[
+          Shadow(color: _gold.withOpacity(0.40), blurRadius: 14),
+          Shadow(
+            color: Colors.black.withOpacity(0.75),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDriverManagementIntro(double fontSize, double lineHeight) {
+    return Text(
+      _t(_driverManagementIntro),
+      softWrap: true,
+      overflow: TextOverflow.visible,
+      style: TextStyle(
+        color: Colors.white.withOpacity(0.90),
+        fontSize: fontSize,
+        fontWeight: FontWeight.w500,
+        height: lineHeight,
+        shadows: const <Shadow>[
+          Shadow(color: Color(0xCC000000), blurRadius: 8, offset: Offset(0, 1)),
+        ],
+      ),
+    );
+  }
+
+  /// Feature panel for Card 7 — one bounded lower-left safe rectangle.
+  /// All six framed rows share a single [Column] inside
+  /// [SingleChildScrollView] (emergency fallback for long translations).
+  /// No per-row [Positioned] widgets and no per-row [FittedBox] shrinkers.
+  Widget _buildDriverManagementFeatureList({
+    required double zoneWidth,
+    required double zoneHeight,
+    required bool isPortrait,
+  }) {
+    // Fixed readable sizes — same rhythm as the approved Vehicles card.
+    final double titleSize = isPortrait ? 18.0 : 16.0;
+    final double bodySize = isPortrait ? 14.0 : 12.5;
+    final double rowPaddingH = isPortrait ? 9.0 : 7.0;
+    final double rowPaddingV = isPortrait ? 5.0 : 4.0;
+    final double dotSize = isPortrait ? 6.5 : 6.0;
+
+    Widget buildRow(int index) {
+      return _buildDriverManagementFeatureRow(
+        _driverManagementFeatures[index],
+        titleSize: titleSize,
+        bodySize: bodySize,
+        dotSize: dotSize,
+        rowPaddingH: rowPaddingH,
+        rowPaddingV: rowPaddingV,
+      );
+    }
+
+    return SizedBox(
+      width: zoneWidth,
+      height: zoneHeight,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          // Compact controlled gaps; scroll only if content exceeds zone.
+          final double rowGap = isPortrait ? 6.0 : 4.5;
+
+          final List<Widget> children = <Widget>[];
+          for (int i = 0; i < _driverManagementFeatures.length; i++) {
+            if (i > 0) {
+              children.add(SizedBox(height: rowGap));
+            }
+            children.add(buildRow(i));
+          }
+
+          return SingleChildScrollView(
+            physics: const ClampingScrollPhysics(),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: children,
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  /// Single stacked mini-card: gold dot + gold feature title on the
+  /// first line, soft white body text below. Shared by both
+  /// orientations; the panels supply the orientation-specific sizing.
+  Widget _buildDriverManagementFeatureRow(
+    _OrientationBulletItem feature, {
+    required double titleSize,
+    required double bodySize,
+    required double dotSize,
+    required double rowPaddingH,
+    required double rowPaddingV,
+  }) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: Colors.black.withOpacity(0.18),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: _gold.withOpacity(0.12)),
+      ),
+      child: Padding(
+        padding: EdgeInsets.symmetric(
+          horizontal: rowPaddingH,
+          vertical: rowPaddingV,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                Container(
+                  width: dotSize,
+                  height: dotSize,
+                  margin: EdgeInsets.only(top: titleSize * 0.34),
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: _gold,
+                    boxShadow: <BoxShadow>[
+                      BoxShadow(
+                        color: _gold.withOpacity(0.45),
+                        blurRadius: 8,
+                        spreadRadius: 1,
+                      ),
+                    ],
+                  ),
+                ),
+                SizedBox(width: rowPaddingH * 0.72),
+                Flexible(
+                  child: Text(
+                    _t(feature.title),
+                    softWrap: true,
+                    overflow: TextOverflow.visible,
+                    style: TextStyle(
+                      color: _gold,
+                      fontSize: titleSize,
+                      fontWeight: FontWeight.w800,
+                      height: 1.06,
+                      shadows: const <Shadow>[
+                        Shadow(
+                          color: Color(0xCC000000),
+                          blurRadius: 6,
+                          offset: Offset(0, 1),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            SizedBox(height: 1.0),
+            Padding(
+              padding: EdgeInsets.only(left: dotSize + rowPaddingH * 0.72),
+              child: Text(
+                _t(feature.description),
+                softWrap: true,
+                overflow: TextOverflow.visible,
+                style: TextStyle(
+                  color: Colors.white.withOpacity(0.86),
+                  fontSize: bodySize,
+                  fontWeight: FontWeight.w500,
+                  height: 1.08,
+                  shadows: const <Shadow>[
+                    Shadow(
+                      color: Color(0xCC000000),
+                      blurRadius: 6,
+                      offset: Offset(0, 1),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -4740,6 +5266,7 @@ enum _OrientationCardLayout {
   companyCockpit,
   subscription,
   vehiclesFleet,
+  driverManagementRich,
   chironDocumentsRich,
   iconCard,
   placeholder,
