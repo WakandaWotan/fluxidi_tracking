@@ -413,6 +413,14 @@ class _BusinessOrientationFlowPageState
   static const String _card9PublicBookingLinkTabletLandscapeAsset =
       'assets/fluxidi/onboarding/card9_welcome_tablet_landscape_bg.png';
 
+  /// Card 10 tablet PNGs — AI Dispatch. The dispatch cockpit visual is
+  /// baked into the artwork; Flutter overlays measured premium panels
+  /// in dark safe zones.
+  static const String _card10AiDispatchTabletPortraitAsset =
+      'assets/fluxidi/onboarding/card10_welcome_tablet_portrait_bg.png';
+  static const String _card10AiDispatchTabletLandscapeAsset =
+      'assets/fluxidi/onboarding/card10_welcome_tablet_landscape_bg.png';
+
   static const _Tr _chironDocumentsTitle = _Tr(
     nl: 'Chiron & rittenregister',
     en: 'Chiron & ride register',
@@ -787,7 +795,7 @@ class _BusinessOrientationFlowPageState
   // ---------------------------------------------------------------
 
   static const _Tr _publicBookingLinkTitle = _Tr(
-    nl: 'Publieke boekinglink',
+    nl: 'Publieke boekingslink',
     en: 'Public booking link',
     fr: 'Lien de réservation public',
     es: 'Enlace público de reserva',
@@ -906,6 +914,136 @@ class _BusinessOrientationFlowPageState
         'Moins d’étapes. Plus de réservations. Un contact plus '
         'professionnel.',
     es: 'Menos pasos. Más reservas. Un contacto más profesional.',
+  );
+
+  // ---------------------------------------------------------------
+  // Card 11 — AI Dispatch.
+  // ---------------------------------------------------------------
+
+  static const _Tr _aiDispatchTitle = _Tr(
+    nl: 'AI Dispatch',
+    en: 'AI Dispatch',
+    fr: 'AI Dispatch',
+    es: 'AI Dispatch',
+  );
+
+  static const _Tr _aiDispatchSubtitle = _Tr(
+    nl:
+        'Laat slimme planning ritten, chauffeurs en voertuigen sneller '
+        'samenbrengen.',
+    en: 'Let smart planning connect rides, drivers and vehicles faster.',
+    fr:
+        'Reliez plus vite courses, chauffeurs et véhicules grâce à une '
+        'planification intelligente.',
+    es:
+        'Conecte viajes, conductores y vehículos más rápido con '
+        'planificación inteligente.',
+  );
+
+  static const _Tr _aiDispatchExplanationEyebrow = _Tr(
+    nl: 'SLIMME RITPLANNING',
+    en: 'SMART RIDE PLANNING',
+    fr: 'PLANIFICATION INTELLIGENTE',
+    es: 'PLANIFICACIÓN INTELIGENTE',
+  );
+
+  static const _Tr _aiDispatchExplanationHeading = _Tr(
+    nl: 'Vind sneller de juiste chauffeur voor elke rit.',
+    en: 'Find the right driver faster for every ride.',
+    fr: 'Trouvez plus vite le bon chauffeur pour chaque course.',
+    es: 'Encuentre antes el conductor adecuado para cada viaje.',
+  );
+
+  static const _Tr _aiDispatchExplanationIntro = _Tr(
+    nl:
+        'AI Dispatch helpt ritaanvragen, beschikbaarheid, afstand en '
+        'voertuigcapaciteit samen bekijken zodat je minder handmatig '
+        'hoeft te puzzelen.',
+    en:
+        'AI Dispatch helps compare ride requests, availability, distance '
+        'and vehicle capacity so you spend less time planning manually.',
+    fr:
+        'AI Dispatch aide à comparer demandes, disponibilités, distances '
+        'et capacité véhicule pour réduire la planification manuelle.',
+    es:
+        'AI Dispatch ayuda a comparar solicitudes, disponibilidad, '
+        'distancia y capacidad del vehículo para reducir la planificación '
+        'manual.',
+  );
+
+  static const List<_OrientationBulletItem>
+  _aiDispatchExplanationFeatures = <_OrientationBulletItem>[
+    _OrientationBulletItem(
+      title: _Tr(
+        nl: 'Slimme toewijzing',
+        en: 'Smart assignment',
+        fr: 'Attribution intelligente',
+        es: 'Asignación inteligente',
+      ),
+      description: _Tr(
+        nl:
+            'Combineer locatie, beschikbaarheid en voertuigcapaciteit bij '
+            'elke nieuwe rit.',
+        en:
+            'Combine location, availability and vehicle capacity for every '
+            'new ride.',
+        fr:
+            'Combinez position, disponibilité et capacité véhicule pour '
+            'chaque nouvelle course.',
+        es:
+            'Combine ubicación, disponibilidad y capacidad del vehículo para '
+            'cada nuevo viaje.',
+      ),
+    ),
+    _OrientationBulletItem(
+      title: _Tr(
+        nl: 'Minder wachttijd',
+        en: 'Less waiting time',
+        fr: 'Moins d’attente',
+        es: 'Menos espera',
+      ),
+      description: _Tr(
+        nl:
+            'Zie sneller welke chauffeur of wagen het best past bij de '
+            'aanvraag.',
+        en: 'See faster which driver or vehicle fits the request best.',
+        fr:
+            'Voyez plus vite quel chauffeur ou véhicule correspond le mieux '
+            'à la demande.',
+        es:
+            'Vea antes qué conductor o vehículo encaja mejor con la '
+            'solicitud.',
+      ),
+    ),
+    _OrientationBulletItem(
+      title: _Tr(
+        nl: 'Live cockpit',
+        en: 'Live cockpit',
+        fr: 'Cockpit en direct',
+        es: 'Cockpit en vivo',
+      ),
+      description: _Tr(
+        nl:
+            'Volg actieve ritten, drukte en planning vanuit één centrale '
+            'cockpit.',
+        en:
+            'Track active rides, demand and planning from one central '
+            'cockpit.',
+        fr:
+            'Suivez courses actives, demande et planning depuis un cockpit '
+            'central.',
+        es:
+            'Siga viajes activos, demanda y planificación desde un cockpit '
+            'central.',
+      ),
+    ),
+  ];
+
+  static const _Tr _aiDispatchExplanationClosing = _Tr(
+    nl: 'Minder puzzelen. Sneller plannen. Meer controle.',
+    en: 'Less manual work. Faster planning. More control.',
+    fr: 'Moins de travail manuel. Plus vite planifié. Plus de contrôle.',
+    es: 'Menos trabajo manual. Planificación más rápida. Más control.',
   );
 
   /// Shared body copy for not-yet-designed product-tour stops. Kept
@@ -1386,18 +1524,15 @@ class _BusinessOrientationFlowPageState
       portraitAsset: _card9PublicBookingLinkTabletPortraitAsset,
       landscapeAsset: _card9PublicBookingLinkTabletLandscapeAsset,
     ),
-    // 11 — AI Dispatch.
+    // 11 — AI Dispatch (bespoke PNG + measured premium panels on tablet).
     _OrientationCardData(
       id: 'ai_dispatch',
-      layout: _OrientationCardLayout.placeholder,
+      layout: _OrientationCardLayout.aiDispatchRich,
       icon: Icons.auto_awesome_outlined,
-      title: _Tr(
-        nl: 'AI Dispatch',
-        en: 'AI Dispatch',
-        fr: 'Dispatch IA',
-        es: 'Despacho IA',
-      ),
-      body: _placeholderBody,
+      title: _aiDispatchTitle,
+      body: _aiDispatchSubtitle,
+      portraitAsset: _card10AiDispatchTabletPortraitAsset,
+      landscapeAsset: _card10AiDispatchTabletLandscapeAsset,
     ),
     // 12 — Driver view.
     _OrientationCardData(
@@ -1762,6 +1897,8 @@ class _BusinessOrientationFlowPageState
             currentCard.layout == _OrientationCardLayout.regionRadarRich;
         final bool isPublicBookingLinkCard =
             currentCard.layout == _OrientationCardLayout.publicBookingLinkRich;
+        final bool isAiDispatchCard =
+            currentCard.layout == _OrientationCardLayout.aiDispatchRich;
         final bool isWelcomeTabletHero =
             isWelcomeCard && (isTabletPortrait || isTabletLandscape);
         final bool isCentralCockpitTabletPortraitHero =
@@ -1784,6 +1921,8 @@ class _BusinessOrientationFlowPageState
             isRegionRadarCard && (isTabletPortrait || isTabletLandscape);
         final bool isPublicBookingLinkTabletHero =
             isPublicBookingLinkCard && (isTabletPortrait || isTabletLandscape);
+        final bool isAiDispatchTabletHero =
+            isAiDispatchCard && (isTabletPortrait || isTabletLandscape);
         final Color scaffoldBackground =
             (isWelcomeTabletHero ||
                 isCentralCockpitTabletPortraitHero ||
@@ -1793,7 +1932,8 @@ class _BusinessOrientationFlowPageState
                 isDriverManagementTabletHero ||
                 isChironDocumentsTabletHero ||
                 isRegionRadarTabletHero ||
-                isPublicBookingLinkTabletHero)
+                isPublicBookingLinkTabletHero ||
+                isAiDispatchTabletHero)
             ? _heroBg
             : _bg;
 
@@ -1842,6 +1982,10 @@ class _BusinessOrientationFlowPageState
             isPublicBookingLinkCard && isTabletPortrait;
         final bool usePublicBookingLinkLandscapeFullHero =
             isPublicBookingLinkCard && isTabletLandscape;
+        final bool useAiDispatchPortraitFullHero =
+            isAiDispatchCard && isTabletPortrait;
+        final bool useAiDispatchLandscapeFullHero =
+            isAiDispatchCard && isTabletLandscape;
 
         // Keep only one Card 1 tablet-hero decoder active. Runs
         // post-frame so [MediaQuery] is stable and we do not call
@@ -1926,6 +2070,14 @@ class _BusinessOrientationFlowPageState
                 Positioned.fill(
                   child:
                       _buildPublicBookingLinkTabletLandscapeFullViewportHero(),
+                ),
+              if (useAiDispatchPortraitFullHero)
+                Positioned.fill(
+                  child: _buildAiDispatchTabletPortraitFullViewportHero(),
+                ),
+              if (useAiDispatchLandscapeFullHero)
+                Positioned.fill(
+                  child: _buildAiDispatchTabletLandscapeFullViewportHero(),
                 ),
               // Foreground layer — the existing chrome + PageView
               // composition. Identical to the pre-refactor layout
@@ -2012,6 +2164,11 @@ class _BusinessOrientationFlowPageState
                               (isTabletPortrait || isTabletLandscape)) {
                             return const SizedBox.expand();
                           }
+                          if (card.layout ==
+                                  _OrientationCardLayout.aiDispatchRich &&
+                              (isTabletPortrait || isTabletLandscape)) {
+                            return const SizedBox.expand();
+                          }
                           // Card 1 tablet portrait keeps the in-slot
                           // immersive video hero — bypass the 640 px
                           // generic card cap and anchor top-centre so
@@ -2058,7 +2215,9 @@ class _BusinessOrientationFlowPageState
                           useRegionRadarPortraitFullHero ||
                           useRegionRadarLandscapeFullHero ||
                           usePublicBookingLinkPortraitFullHero ||
-                          usePublicBookingLinkLandscapeFullHero,
+                          usePublicBookingLinkLandscapeFullHero ||
+                          useAiDispatchPortraitFullHero ||
+                          useAiDispatchLandscapeFullHero,
                     ),
                   ],
                 ),
@@ -2334,6 +2493,11 @@ class _BusinessOrientationFlowPageState
         // stable icon composition with the card's title + intro.
         return _buildOrientationCard(data, compact);
       case _OrientationCardLayout.publicBookingLinkRich:
+        // Tablet portrait/landscape are short-circuited in [build]
+        // (bespoke PNG hero behind the Stack); phones fall back to the
+        // stable icon composition with the card's title + intro.
+        return _buildOrientationCard(data, compact);
+      case _OrientationCardLayout.aiDispatchRich:
         // Tablet portrait/landscape are short-circuited in [build]
         // (bespoke PNG hero behind the Stack); phones fall back to the
         // stable icon composition with the card's title + intro.
@@ -4111,7 +4275,7 @@ class _BusinessOrientationFlowPageState
   }) {
     final double langScale = _publicBookingLinkLangScale();
     final EdgeInsets padding = isPortrait
-        ? const EdgeInsets.fromLTRB(12, 9, 12, 8)
+        ? const EdgeInsets.fromLTRB(12, 8, 12, 7)
         : const EdgeInsets.fromLTRB(11, 10, 11, 8);
     final double titleSize = (isPortrait ? 22.0 : 20.0) * langScale;
     final double cardIntroSize = (isPortrait ? 13.5 : 12.5) * langScale;
@@ -4254,14 +4418,25 @@ class _BusinessOrientationFlowPageState
         child: Padding(
           padding: padding,
           child: isPortrait
-              ? _buildPublicBookingLinkExplanationPortraitBody(
-                  title: title,
-                  cardIntro: cardIntro,
-                  eyebrow: eyebrow,
-                  heading: heading,
-                  intro: intro,
-                  closing: closing,
-                  featureRows: featureRows,
+              ? LayoutBuilder(
+                  builder: (BuildContext context, BoxConstraints constraints) {
+                    return SizedBox(
+                      width: constraints.maxWidth,
+                      height: constraints.maxHeight,
+                      child: _publicBookingLinkWholeBlockScaleDown(
+                        maxWidth: constraints.maxWidth,
+                        child: _buildPublicBookingLinkExplanationPortraitBody(
+                          title: title,
+                          cardIntro: cardIntro,
+                          eyebrow: eyebrow,
+                          heading: heading,
+                          intro: intro,
+                          closing: closing,
+                          featureRows: featureRows,
+                        ),
+                      ),
+                    );
+                  },
                 )
               : _buildPublicBookingLinkExplanationLandscapeBody(
                   title: title,
@@ -4286,24 +4461,33 @@ class _BusinessOrientationFlowPageState
     required Widget closing,
     required List<Widget> featureRows,
   }) {
+    final List<Widget> spacedFeatureRows = <Widget>[];
+    for (int i = 0; i < featureRows.length; i++) {
+      if (i > 0) {
+        spacedFeatureRows.add(const SizedBox(height: 6));
+      }
+      spacedFeatureRows.add(featureRows[i]);
+    }
+
     return Row(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
         Expanded(
           flex: 44,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
             children: <Widget>[
               title,
-              const SizedBox(height: 4),
+              const SizedBox(height: 3),
               cardIntro,
-              const SizedBox(height: 6),
+              const SizedBox(height: 5),
               eyebrow,
-              const SizedBox(height: 5),
+              const SizedBox(height: 4),
               heading,
-              const SizedBox(height: 5),
+              const SizedBox(height: 4),
               intro,
-              const Spacer(flex: 2),
+              const SizedBox(height: 7),
               closing,
             ],
           ),
@@ -4312,15 +4496,9 @@ class _BusinessOrientationFlowPageState
         Expanded(
           flex: 56,
           child: Column(
-            children: <Widget>[
-              for (int i = 0; i < featureRows.length; i++)
-                Expanded(
-                  child: Align(
-                    alignment: Alignment.centerLeft,
-                    child: featureRows[i],
-                  ),
-                ),
-            ],
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            mainAxisSize: MainAxisSize.min,
+            children: spacedFeatureRows,
           ),
         ),
       ],
@@ -4407,6 +4585,724 @@ class _BusinessOrientationFlowPageState
               ),
             ),
             const SizedBox(width: 7),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: <Widget>[
+                  Text(
+                    _t(feature.title),
+                    softWrap: true,
+                    overflow: TextOverflow.visible,
+                    style: TextStyle(
+                      color: _gold,
+                      fontSize: titleSize,
+                      fontWeight: FontWeight.w800,
+                      height: 1.06,
+                      shadows: const <Shadow>[
+                        Shadow(
+                          color: Color(0xCC000000),
+                          blurRadius: 6,
+                          offset: Offset(0, 1),
+                        ),
+                      ],
+                    ),
+                  ),
+                  SizedBox(height: compact ? 2 : 3),
+                  Text(
+                    _t(feature.description),
+                    softWrap: true,
+                    overflow: TextOverflow.visible,
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.86),
+                      fontSize: bodySize,
+                      fontWeight: FontWeight.w500,
+                      height: 1.10,
+                      shadows: const <Shadow>[
+                        Shadow(
+                          color: Color(0xCC000000),
+                          blurRadius: 6,
+                          offset: Offset(0, 1),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  // =================================================================
+  // Card 11 — AI Dispatch (bespoke tablet heroes). Card10 artwork
+  // carries the dispatch cockpit visual; Flutter overlays measured
+  // premium panels in dark safe zones.
+  //
+  // PORTRAIT title frame (frozen):
+  //   left 0.377, top 0.028, width 0.584, height 0.169
+  // PORTRAIT explanation frame (frozen):
+  //   left 0.022, top 0.205, width 0.944, height 0.399
+  // LANDSCAPE title frame (frozen):
+  //   left 0.305, top 0.048, width 0.678, height 0.219
+  // LANDSCAPE explanation frame (frozen):
+  //   left 0.011, top 0.375, width 0.240, height 0.546
+  // =================================================================
+
+  double _aiDispatchLangScale() {
+    switch (appLanguageNotifier.value) {
+      case AppLanguage.fr:
+      case AppLanguage.es:
+        return 0.92;
+      case AppLanguage.nl:
+      case AppLanguage.en:
+        return 1.0;
+    }
+  }
+
+  /// Whole-block scale-down safety for AI Dispatch only.
+  Widget _aiDispatchWholeBlockScaleDown({
+    required double maxWidth,
+    required Widget child,
+    Alignment alignment = Alignment.topLeft,
+  }) {
+    return Align(
+      alignment: alignment,
+      child: FittedBox(
+        fit: BoxFit.scaleDown,
+        alignment: alignment,
+        child: SizedBox(width: maxWidth, child: child),
+      ),
+    );
+  }
+
+  Widget _buildAiDispatchTabletPortraitFullViewportHero() {
+    return Stack(
+      fit: StackFit.expand,
+      children: <Widget>[
+        Image.asset(
+          _card10AiDispatchTabletPortraitAsset,
+          fit: BoxFit.fill,
+          alignment: Alignment.center,
+          errorBuilder: (ctx, error, stackTrace) {
+            debugPrint(
+              '[ORIENTATION_FLOW][AI_DISPATCH_PORTRAIT_PNG_FAIL] '
+              'error=$error',
+            );
+            return _buildWelcomeMediaUltimateFallback();
+          },
+        ),
+        IgnorePointer(child: _buildAiDispatchTabletPortraitOverlay()),
+      ],
+    );
+  }
+
+  Widget _buildAiDispatchTabletLandscapeFullViewportHero() {
+    return Stack(
+      fit: StackFit.expand,
+      children: <Widget>[
+        Image.asset(
+          _card10AiDispatchTabletLandscapeAsset,
+          fit: BoxFit.fill,
+          alignment: Alignment.center,
+          errorBuilder: (ctx, error, stackTrace) {
+            debugPrint(
+              '[ORIENTATION_FLOW][AI_DISPATCH_LANDSCAPE_PNG_FAIL] '
+              'error=$error',
+            );
+            return _buildWelcomeMediaUltimateFallback();
+          },
+        ),
+        IgnorePointer(child: _buildAiDispatchTabletLandscapeOverlay()),
+      ],
+    );
+  }
+
+  Widget _buildAiDispatchTabletPortraitOverlay() {
+    return LayoutBuilder(
+      builder: (ctx, constraints) {
+        final double w = constraints.maxWidth;
+        final double h = constraints.maxHeight;
+        if (h <= w) {
+          return const SizedBox.shrink();
+        }
+
+        const double titleLeft = 0.377;
+        const double titleTop = 0.028;
+        const double titleWidth = 0.584;
+        const double titleHeight = 0.169;
+        const double explainLeft = 0.022;
+        const double explainTop = 0.205;
+        const double explainWidth = 0.944;
+        const double explainHeight = 0.399;
+
+        return Stack(
+          children: <Widget>[
+            Positioned(
+              left: w * titleLeft,
+              top: h * titleTop,
+              width: w * titleWidth,
+              height: h * titleHeight,
+              child: _buildAiDispatchPortraitTitlePanel(
+                zoneWidth: w * titleWidth,
+                zoneHeight: h * titleHeight,
+              ),
+            ),
+            Positioned(
+              left: w * explainLeft,
+              top: h * explainTop,
+              width: w * explainWidth,
+              height: h * explainHeight,
+              child: _buildAiDispatchPortraitExplanationPanel(
+                zoneWidth: w * explainWidth,
+                zoneHeight: h * explainHeight,
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildAiDispatchTabletLandscapeOverlay() {
+    return LayoutBuilder(
+      builder: (ctx, constraints) {
+        final double w = constraints.maxWidth;
+        final double h = constraints.maxHeight;
+        if (w <= h) {
+          return const SizedBox.shrink();
+        }
+
+        const double titleLeft = 0.305;
+        const double titleTop = 0.048;
+        const double titleWidth = 0.678;
+        const double titleHeight = 0.219;
+        const double explainLeft = 0.011;
+        const double explainTop = 0.375;
+        const double explainWidth = 0.240;
+        const double explainHeight = 0.546;
+
+        return Stack(
+          children: <Widget>[
+            Positioned(
+              left: w * titleLeft,
+              top: h * titleTop,
+              width: w * titleWidth,
+              height: h * titleHeight,
+              child: _buildAiDispatchLandscapeTitlePanel(
+                zoneWidth: w * titleWidth,
+                zoneHeight: h * titleHeight,
+              ),
+            ),
+            Positioned(
+              left: w * explainLeft,
+              top: h * explainTop,
+              width: w * explainWidth,
+              height: h * explainHeight,
+              child: _buildAiDispatchLandscapeExplanationPanel(
+                zoneWidth: w * explainWidth,
+                zoneHeight: h * explainHeight,
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  BoxDecoration _aiDispatchPanelDecoration() {
+    return BoxDecoration(
+      color: Colors.black.withOpacity(0.54),
+      borderRadius: BorderRadius.circular(14),
+      border: Border.all(color: _gold.withOpacity(0.22)),
+      boxShadow: <BoxShadow>[
+        BoxShadow(
+          color: Colors.black.withOpacity(0.32),
+          blurRadius: 12,
+          offset: const Offset(0, 3),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildAiDispatchPortraitTitlePanel({
+    required double zoneWidth,
+    required double zoneHeight,
+  }) {
+    final double langScale = _aiDispatchLangScale();
+    final EdgeInsets padding = const EdgeInsets.symmetric(
+      horizontal: 16,
+      vertical: 8,
+    );
+    final double titleSize = 30.0 * langScale;
+    final double subtitleSize = 14.5 * langScale;
+
+    final Widget copy = Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        Text(
+          _t(_aiDispatchTitle),
+          softWrap: true,
+          overflow: TextOverflow.visible,
+          style: TextStyle(
+            color: _gold,
+            fontSize: titleSize,
+            fontWeight: FontWeight.w900,
+            height: 1.06,
+            letterSpacing: 0.12,
+            shadows: <Shadow>[
+              Shadow(color: _gold.withOpacity(0.36), blurRadius: 14),
+              Shadow(
+                color: Colors.black.withOpacity(0.78),
+                blurRadius: 8,
+                offset: const Offset(0, 2),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          _t(_aiDispatchSubtitle),
+          softWrap: true,
+          overflow: TextOverflow.visible,
+          style: TextStyle(
+            color: Colors.white.withOpacity(0.90),
+            fontSize: subtitleSize,
+            fontWeight: FontWeight.w500,
+            height: 1.12,
+            shadows: const <Shadow>[
+              Shadow(
+                color: Color(0xCC000000),
+                blurRadius: 8,
+                offset: Offset(0, 1),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+
+    return SizedBox(
+      width: zoneWidth,
+      height: zoneHeight,
+      child: DecoratedBox(
+        decoration: _aiDispatchPanelDecoration(),
+        child: Padding(
+          padding: padding,
+          child: LayoutBuilder(
+            builder: (BuildContext context, BoxConstraints constraints) {
+              return SizedBox(
+                width: constraints.maxWidth,
+                height: constraints.maxHeight,
+                child: _aiDispatchWholeBlockScaleDown(
+                  maxWidth: constraints.maxWidth,
+                  alignment: Alignment.centerLeft,
+                  child: copy,
+                ),
+              );
+            },
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAiDispatchPortraitExplanationPanel({
+    required double zoneWidth,
+    required double zoneHeight,
+  }) {
+    final double langScale = _aiDispatchLangScale();
+    final EdgeInsets padding = const EdgeInsets.fromLTRB(13, 10, 13, 8);
+    final double eyebrowSize = 10.0 * langScale;
+    final double headingSize = 20.0 * langScale;
+    final double introSize = 14.0 * langScale;
+    final double rowTitleSize = 15.0 * langScale;
+    final double rowBodySize = 13.5 * langScale;
+    final double closingSize = 13.0 * langScale;
+
+    final Widget eyebrow = Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: _gold.withOpacity(0.10),
+        borderRadius: BorderRadius.circular(4),
+        border: Border.all(color: _gold.withOpacity(0.26)),
+      ),
+      child: Text(
+        _t(_aiDispatchExplanationEyebrow),
+        softWrap: true,
+        overflow: TextOverflow.visible,
+        style: TextStyle(
+          color: _gold,
+          fontSize: eyebrowSize,
+          fontWeight: FontWeight.w700,
+          letterSpacing: 0.55,
+          height: 1.12,
+        ),
+      ),
+    );
+
+    final Widget heading = Text(
+      _t(_aiDispatchExplanationHeading),
+      softWrap: true,
+      overflow: TextOverflow.visible,
+      style: TextStyle(
+        color: _gold,
+        fontSize: headingSize,
+        fontWeight: FontWeight.w900,
+        height: 1.08,
+        letterSpacing: 0.06,
+        shadows: const <Shadow>[
+          Shadow(color: Color(0xCC000000), blurRadius: 6, offset: Offset(0, 1)),
+        ],
+      ),
+    );
+
+    final Widget intro = Text(
+      _t(_aiDispatchExplanationIntro),
+      softWrap: true,
+      overflow: TextOverflow.visible,
+      style: TextStyle(
+        color: Colors.white.withOpacity(0.88),
+        fontSize: introSize,
+        fontWeight: FontWeight.w500,
+        height: 1.12,
+        shadows: const <Shadow>[
+          Shadow(color: Color(0xCC000000), blurRadius: 6, offset: Offset(0, 1)),
+        ],
+      ),
+    );
+
+    final Widget closing = Text(
+      _t(_aiDispatchExplanationClosing),
+      softWrap: true,
+      overflow: TextOverflow.visible,
+      style: TextStyle(
+        color: _gold.withOpacity(0.88),
+        fontSize: closingSize,
+        fontWeight: FontWeight.w700,
+        height: 1.08,
+        letterSpacing: 0.08,
+        shadows: const <Shadow>[
+          Shadow(color: Color(0xCC000000), blurRadius: 6, offset: Offset(0, 1)),
+        ],
+      ),
+    );
+
+    final List<Widget> featureRows = <Widget>[
+      for (int i = 0; i < _aiDispatchExplanationFeatures.length; i++)
+        _buildAiDispatchExplanationFeatureRow(
+          _aiDispatchExplanationFeatures[i],
+          titleSize: rowTitleSize,
+          bodySize: rowBodySize,
+          showDivider: i > 0,
+          compact: true,
+        ),
+    ];
+
+    return SizedBox(
+      width: zoneWidth,
+      height: zoneHeight,
+      child: DecoratedBox(
+        decoration: _aiDispatchPanelDecoration(),
+        child: Padding(
+          padding: padding,
+          child: LayoutBuilder(
+            builder: (BuildContext context, BoxConstraints constraints) {
+              return SizedBox(
+                width: constraints.maxWidth,
+                height: constraints.maxHeight,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: <Widget>[
+                    eyebrow,
+                    const SizedBox(height: 4),
+                    heading,
+                    const SizedBox(height: 5),
+                    intro,
+                    Expanded(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: featureRows,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    closing,
+                  ],
+                ),
+              );
+            },
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAiDispatchLandscapeTitlePanel({
+    required double zoneWidth,
+    required double zoneHeight,
+  }) {
+    final double langScale = _aiDispatchLangScale();
+    final EdgeInsets padding = const EdgeInsets.symmetric(
+      horizontal: 22,
+      vertical: 14,
+    );
+    final double titleSize = 33.0 * langScale;
+    final double subtitleSize = 15.0 * langScale;
+
+    final Widget copy = Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        Text(
+          _t(_aiDispatchTitle),
+          softWrap: true,
+          overflow: TextOverflow.visible,
+          style: TextStyle(
+            color: _gold,
+            fontSize: titleSize,
+            fontWeight: FontWeight.w900,
+            height: 1.06,
+            letterSpacing: 0.12,
+            shadows: <Shadow>[
+              Shadow(color: _gold.withOpacity(0.36), blurRadius: 14),
+              Shadow(
+                color: Colors.black.withOpacity(0.78),
+                blurRadius: 8,
+                offset: const Offset(0, 2),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 5),
+        Text(
+          _t(_aiDispatchSubtitle),
+          softWrap: true,
+          overflow: TextOverflow.visible,
+          style: TextStyle(
+            color: Colors.white.withOpacity(0.90),
+            fontSize: subtitleSize,
+            fontWeight: FontWeight.w500,
+            height: 1.12,
+            shadows: const <Shadow>[
+              Shadow(
+                color: Color(0xCC000000),
+                blurRadius: 8,
+                offset: Offset(0, 1),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+
+    return SizedBox(
+      width: zoneWidth,
+      height: zoneHeight,
+      child: DecoratedBox(
+        decoration: _aiDispatchPanelDecoration(),
+        child: Padding(
+          padding: padding,
+          child: LayoutBuilder(
+            builder: (BuildContext context, BoxConstraints constraints) {
+              return SizedBox(
+                width: constraints.maxWidth,
+                height: constraints.maxHeight,
+                child: _aiDispatchWholeBlockScaleDown(
+                  maxWidth: constraints.maxWidth,
+                  alignment: Alignment.centerLeft,
+                  child: copy,
+                ),
+              );
+            },
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAiDispatchLandscapeExplanationPanel({
+    required double zoneWidth,
+    required double zoneHeight,
+  }) {
+    final double langScale = _aiDispatchLangScale();
+    final EdgeInsets padding = const EdgeInsets.fromLTRB(11, 9, 11, 7);
+    final double eyebrowSize = 10.0 * langScale;
+    final double headingSize = 21.0 * langScale;
+    final double introSize = 13.5 * langScale;
+    final double rowTitleSize = 14.5 * langScale;
+    final double rowBodySize = 13.0 * langScale;
+    final double closingSize = 13.5 * langScale;
+
+    final Widget eyebrow = Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: _gold.withOpacity(0.10),
+        borderRadius: BorderRadius.circular(4),
+        border: Border.all(color: _gold.withOpacity(0.26)),
+      ),
+      child: Text(
+        _t(_aiDispatchExplanationEyebrow),
+        softWrap: true,
+        overflow: TextOverflow.visible,
+        style: TextStyle(
+          color: _gold,
+          fontSize: eyebrowSize,
+          fontWeight: FontWeight.w700,
+          letterSpacing: 0.55,
+          height: 1.12,
+        ),
+      ),
+    );
+
+    final Widget heading = Text(
+      _t(_aiDispatchExplanationHeading),
+      softWrap: true,
+      overflow: TextOverflow.visible,
+      style: TextStyle(
+        color: _gold,
+        fontSize: headingSize,
+        fontWeight: FontWeight.w900,
+        height: 1.08,
+        shadows: const <Shadow>[
+          Shadow(color: Color(0xCC000000), blurRadius: 6, offset: Offset(0, 1)),
+        ],
+      ),
+    );
+
+    final Widget intro = Text(
+      _t(_aiDispatchExplanationIntro),
+      softWrap: true,
+      overflow: TextOverflow.visible,
+      style: TextStyle(
+        color: Colors.white.withOpacity(0.88),
+        fontSize: introSize,
+        fontWeight: FontWeight.w500,
+        height: 1.12,
+        shadows: const <Shadow>[
+          Shadow(color: Color(0xCC000000), blurRadius: 6, offset: Offset(0, 1)),
+        ],
+      ),
+    );
+
+    final Widget closing = Text(
+      _t(_aiDispatchExplanationClosing),
+      softWrap: true,
+      overflow: TextOverflow.visible,
+      style: TextStyle(
+        color: _gold.withOpacity(0.88),
+        fontSize: closingSize,
+        fontWeight: FontWeight.w700,
+        height: 1.10,
+        shadows: const <Shadow>[
+          Shadow(color: Color(0xCC000000), blurRadius: 6, offset: Offset(0, 1)),
+        ],
+      ),
+    );
+
+    final List<Widget> featureRows = <Widget>[
+      for (int i = 0; i < _aiDispatchExplanationFeatures.length; i++)
+        _buildAiDispatchExplanationFeatureRow(
+          _aiDispatchExplanationFeatures[i],
+          titleSize: rowTitleSize,
+          bodySize: rowBodySize,
+          showDivider: i > 0,
+          compact: true,
+        ),
+    ];
+
+    final List<Widget> spacedFeatureRows = <Widget>[];
+    for (int i = 0; i < featureRows.length; i++) {
+      if (i > 0) {
+        spacedFeatureRows.add(const SizedBox(height: 5));
+      }
+      spacedFeatureRows.add(featureRows[i]);
+    }
+
+    return SizedBox(
+      width: zoneWidth,
+      height: zoneHeight,
+      child: DecoratedBox(
+        decoration: _aiDispatchPanelDecoration(),
+        child: Padding(
+          padding: padding,
+          child: LayoutBuilder(
+            builder: (BuildContext context, BoxConstraints constraints) {
+              final Widget contentBlock = Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                mainAxisSize: MainAxisSize.min,
+                children: <Widget>[
+                  eyebrow,
+                  const SizedBox(height: 5),
+                  heading,
+                  const SizedBox(height: 5),
+                  intro,
+                  const SizedBox(height: 7),
+                  ...spacedFeatureRows,
+                  const SizedBox(height: 6),
+                  closing,
+                ],
+              );
+
+              return SizedBox(
+                width: constraints.maxWidth,
+                height: constraints.maxHeight,
+                child: _aiDispatchWholeBlockScaleDown(
+                  maxWidth: constraints.maxWidth,
+                  alignment: Alignment.topLeft,
+                  child: contentBlock,
+                ),
+              );
+            },
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAiDispatchExplanationFeatureRow(
+    _OrientationBulletItem feature, {
+    required double titleSize,
+    required double bodySize,
+    required bool showDivider,
+    required bool compact,
+  }) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: <Widget>[
+        if (showDivider)
+          Padding(
+            padding: EdgeInsets.only(bottom: compact ? 4 : 5),
+            child: Divider(
+              color: _gold.withOpacity(0.14),
+              height: 1,
+              thickness: 1,
+            ),
+          ),
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Container(
+              width: compact ? 6.5 : 7,
+              height: compact ? 6.5 : 7,
+              margin: EdgeInsets.only(top: titleSize * 0.34),
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: _gold,
+                boxShadow: <BoxShadow>[
+                  BoxShadow(
+                    color: _gold.withOpacity(0.45),
+                    blurRadius: 8,
+                    spreadRadius: 1,
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -6696,6 +7592,9 @@ enum _HeroVideoLane { none, portrait, landscape }
 /// * [publicBookingLinkRich] — bespoke Scan to Book card using card9
 ///   PNG artwork with one bounded premium panel on tablet; the generic
 ///   icon card on phones.
+/// * [aiDispatchRich] — bespoke AI Dispatch card using card10 PNG
+///   artwork with measured premium panels on tablet; the generic icon
+///   card on phones.
 /// * [iconCard] — the stable baseline icon + title + body composition.
 /// * [placeholder] — a safe, centred, scroll-friendly "coming next"
 ///   card for product-tour stops that are not yet designed. Never
@@ -6710,6 +7609,7 @@ enum _OrientationCardLayout {
   chironDocumentsRich,
   regionRadarRich,
   publicBookingLinkRich,
+  aiDispatchRich,
   iconCard,
   placeholder,
 }
