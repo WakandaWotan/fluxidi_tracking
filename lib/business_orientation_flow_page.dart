@@ -224,6 +224,295 @@ class _BusinessOrientationFlowPageState
   static const String _card3TabletLandscapeAsset =
       'assets/fluxidi/onboarding/card3_welcome_tablet_landscape_bg.png';
 
+  /// Card 4 tablet PNGs — vehicles & fleet management. The vehicle
+  /// screenshot is baked into the artwork; Flutter overlays only the
+  /// localised title + intro in the empty background area ABOVE the
+  /// screenshot. Rendered full-viewport so overlay fractions line up
+  /// with the visible asset.
+  static const String _card4VehiclesFleetTabletPortraitAsset =
+      'assets/fluxidi/onboarding/card4_welcome_tablet_portrait_bg.png';
+  static const String _card4VehiclesFleetTabletLandscapeAsset =
+      'assets/fluxidi/onboarding/card4_welcome_tablet_landscape_bg.png';
+
+  // ---------------------------------------------------------------
+  // Card 4 — Vehicles & fleet management. First controlled step:
+  // title + intro overlay only (no bullets / feature list yet). Both
+  // strings feed the bespoke tablet overlay and the phone icon-card
+  // fallback.
+  // ---------------------------------------------------------------
+
+  static const _Tr _card4VehiclesFleetTitle = _Tr(
+    nl: 'Voertuigen & vlootbeheer',
+    en: 'Vehicles & fleet management',
+    fr: 'Véhicules & gestion de flotte',
+    es: 'Vehículos y gestión de flota',
+  );
+
+  static const _Tr _card4VehiclesFleetIntro = _Tr(
+    nl:
+        'Beheer elk voertuig centraal: status, chauffeurkoppeling, documenten, '
+        'capaciteit, categorie en publieke profielweergave.',
+    en:
+        'Manage every vehicle centrally: status, driver links, documents, '
+        'capacity, category and public profile visibility.',
+    fr:
+        'Gérez chaque véhicule au même endroit : statut, chauffeur, documents, '
+        'capacité, catégorie et visibilité publique.',
+    es:
+        'Gestiona cada vehículo desde un solo lugar: estado, conductor, '
+        'documentos, capacidad, categoría y perfil público.',
+  );
+
+  static const List<_OrientationBulletItem>
+  _card4VehiclesFleetFeatures = <_OrientationBulletItem>[
+    _OrientationBulletItem(
+      title: _Tr(
+        nl: 'Vlootoverzicht',
+        en: 'Fleet overview',
+        fr: 'Vue de flotte',
+        es: 'Vista de flota',
+      ),
+      description: _Tr(
+        nl:
+            'Zie hoeveel voertuigen je bedrijf heeft, welke actief zijn '
+            'en welke al aan een chauffeur gekoppeld zijn.',
+        en:
+            'See how many vehicles your company has, which are active and '
+            'which are already linked to a driver.',
+        fr:
+            'Voyez vos véhicules, ceux qui sont actifs et ceux déjà liés à '
+            'un chauffeur.',
+        es:
+            'Consulta tus vehículos, cuáles están activos y cuáles ya '
+            'tienen conductor vinculado.',
+      ),
+    ),
+    _OrientationBulletItem(
+      title: _Tr(
+        nl: 'Voertuiggegevens',
+        en: 'Vehicle details',
+        fr: 'Données véhicule',
+        es: 'Datos del vehículo',
+      ),
+      description: _Tr(
+        nl:
+            'Voeg naam, nummerplaat, vergunning, registratie, '
+            'VIN/chassisnummer en kleur toe.',
+        en:
+            'Add name, plate, operating licence, registration, VIN/chassis '
+            'number and colour.',
+        fr:
+            'Ajoutez nom, plaque, licence, immatriculation, VIN/châssis '
+            'et couleur.',
+        es:
+            'Añade nombre, matrícula, licencia, registro, VIN/chasis y '
+            'color.',
+      ),
+    ),
+    _OrientationBulletItem(
+      title: _Tr(
+        nl: 'Capaciteit & categorie',
+        en: 'Capacity & category',
+        fr: 'Capacité & catégorie',
+        es: 'Capacidad & categoría',
+      ),
+      description: _Tr(
+        nl:
+            'Stel passagiers, bagage, bagagecapaciteit en categorie zoals '
+            'comfort, private of premium in.',
+        en:
+            'Set passengers, baggage, luggage capacity and category such '
+            'as comfort, private or premium.',
+        fr:
+            'Définissez passagers, bagages, capacité et catégorie : '
+            'confort, privé ou premium.',
+        es:
+            'Define pasajeros, equipaje, capacidad y categoría: comfort, '
+            'private o premium.',
+      ),
+    ),
+    _OrientationBulletItem(
+      title: _Tr(
+        nl: 'Chauffeur & status',
+        en: 'Driver & status',
+        fr: 'Chauffeur & statut',
+        es: 'Conductor & estado',
+      ),
+      description: _Tr(
+        nl:
+            'Koppel een chauffeur en zet voertuigen eenvoudig actief of '
+            'inactief.',
+        en:
+            'Link a driver and set vehicles active or inactive with one '
+            'clear workflow.',
+        fr:
+            'Associez un chauffeur et activez ou désactivez vos véhicules '
+            'facilement.',
+        es:
+            'Vincula un conductor y activa o desactiva vehículos de forma '
+            'clara.',
+      ),
+    ),
+    _OrientationBulletItem(
+      title: _Tr(
+        nl: 'Publiek profiel',
+        en: 'Public profile',
+        fr: 'Profil public',
+        es: 'Perfil público',
+      ),
+      description: _Tr(
+        nl:
+            'Voeg voertuigfoto’s toe die zichtbaar kunnen worden op je '
+            'publieke partnerprofiel.',
+        en:
+            'Add vehicle photos that can appear on your public partner '
+            'profile.',
+        fr: 'Ajoutez des photos visibles sur votre profil partenaire public.',
+        es: 'Añade fotos visibles en tu perfil público de partner.',
+      ),
+    ),
+  ];
+
+  static const _Tr _card4VehiclesFleetFooter = _Tr(
+    nl: '+ Nieuw voertuig toevoegen',
+    en: '+ Add new vehicle',
+    fr: '+ Ajouter un véhicule',
+    es: '+ Añadir vehículo',
+  );
+
+  /// Card 5 tablet PNGs — Chiron / audit / ride register. The receipt
+  /// and register screenshots are baked into the artwork; Flutter
+  /// overlays only localised copy in measured safe zones.
+  static const String _card5ChironDocumentsTabletPortraitAsset =
+      'assets/fluxidi/onboarding/card5_welcome_tablet_portrait_bg.png';
+  static const String _card5ChironDocumentsTabletLandscapeAsset =
+      'assets/fluxidi/onboarding/card5_welcome_tablet_landscape_bg.png';
+
+  static const _Tr _chironDocumentsTitle = _Tr(
+    nl: 'Chiron & rittenregister',
+    en: 'Chiron & ride register',
+    fr: 'Chiron & registre des courses',
+    es: 'Chiron y registro de viajes',
+  );
+
+  static const _Tr _chironDocumentsIntro = _Tr(
+    nl:
+        'Hou ritten, betalingen, ritbonnen en compliancegegevens centraal bij '
+        'voor Chiron en controles.',
+    en:
+        'Keep rides, payments, receipts and compliance records centralized for '
+        'Chiron and inspections.',
+    fr:
+        'Centralisez courses, paiements, reçus et données de conformité pour '
+        'Chiron et les contrôles.',
+    es:
+        'Centraliza viajes, pagos, recibos y datos de cumplimiento para Chiron '
+        'e inspecciones.',
+  );
+
+  static const List<_OrientationBulletItem>
+  _chironDocumentsFeatures = <_OrientationBulletItem>[
+    _OrientationBulletItem(
+      title: _Tr(
+        nl: 'Chiron-checklist',
+        en: 'Chiron checklist',
+        fr: 'Checklist Chiron',
+        es: 'Checklist Chiron',
+      ),
+      description: _Tr(
+        nl: 'Voeg de nodige documenten toe voor Vlaamse taxi-compliance.',
+        en: 'Add the required documents for Flemish taxi compliance.',
+        fr:
+            'Ajoutez les documents requis pour la conformité taxi '
+            'flamande.',
+        es:
+            'Añade los documentos requeridos para cumplimiento taxi '
+            'flamenco.',
+      ),
+    ),
+    _OrientationBulletItem(
+      title: _Tr(
+        nl: 'Backend audit',
+        en: 'Backend audit',
+        fr: 'Audit backend',
+        es: 'Auditoría backend',
+      ),
+      description: _Tr(
+        nl:
+            'Elke rit wordt geregistreerd met status, betaling, methode, '
+            'bron en provider.',
+        en:
+            'Every ride is logged with status, payment, method, source and '
+            'provider.',
+        fr:
+            'Chaque course garde statut, paiement, méthode, source et '
+            'provider.',
+        es: 'Cada viaje guarda estado, pago, método, origen y proveedor.',
+      ),
+    ),
+    _OrientationBulletItem(
+      title: _Tr(
+        nl: 'Niet verwijderbaar',
+        en: 'Immutable history',
+        fr: 'Historique protégé',
+        es: 'Historial protegido',
+      ),
+      description: _Tr(
+        nl:
+            'Compliance-events blijven bewaard als betrouwbare '
+            'auditgeschiedenis.',
+        en: 'Compliance events remain stored as reliable audit history.',
+        fr:
+            'Les événements de conformité restent conservés comme preuve '
+            'fiable.',
+        es:
+            'Los eventos de cumplimiento quedan guardados como historial '
+            'fiable.',
+      ),
+    ),
+    _OrientationBulletItem(
+      title: _Tr(
+        nl: 'Lokaal rittenregister',
+        en: 'Local ride register',
+        fr: 'Registre local',
+        es: 'Registro local',
+      ),
+      description: _Tr(
+        nl:
+            'Bekijk ritten per chauffeur, voertuig, datum, boekingscode en '
+            'betaling.',
+        en: 'Review rides by driver, vehicle, date, booking code and payment.',
+        fr:
+            'Consultez les courses par chauffeur, véhicule, date, code et '
+            'paiement.',
+        es:
+            'Consulta viajes por conductor, vehículo, fecha, código y '
+            'pago.',
+      ),
+    ),
+    _OrientationBulletItem(
+      title: _Tr(
+        nl: 'Ritbon & delen',
+        en: 'Receipt & sharing',
+        fr: 'Reçu & partage',
+        es: 'Recibo y envío',
+      ),
+      description: _Tr(
+        nl: 'Bekijk de ritbon-PDF en deel die met klant of overheid.',
+        en: 'View the PDF receipt and share it with the customer or authority.',
+        fr: 'Consultez le PDF et partagez-le avec client ou autorité.',
+        es: 'Consulta el PDF y compártelo con cliente o autoridad.',
+      ),
+    ),
+  ];
+
+  static const _Tr _chironDocumentsFooter = _Tr(
+    nl: 'Voor controle, administratie en vertrouwen',
+    en: 'Built for inspections, admin and trust',
+    fr: 'Pour contrôles, administration et confiance',
+    es: 'Para inspecciones, administración y confianza',
+  );
+
   /// Shared body copy for not-yet-designed product-tour stops. Kept
   /// deliberately generic — the real per-card explanations land when
   /// each card graduates from [_OrientationCardLayout.placeholder] to
@@ -645,44 +934,43 @@ class _BusinessOrientationFlowPageState
       ),
       body: _placeholderBody,
     ),
-    // 6 — Vehicles.
+    // 6 — Vehicles & fleet management (bespoke PNG + title/intro overlay
+    // hero on tablet). title/body feed both the bespoke overlay and the
+    // phone icon-card fallback.
     _OrientationCardData(
-      id: 'vehicles',
-      layout: _OrientationCardLayout.placeholder,
+      id: 'vehicles_fleet_management',
+      layout: _OrientationCardLayout.vehiclesFleet,
       icon: Icons.directions_car_outlined,
-      title: _Tr(
-        nl: 'Voertuigen',
-        en: 'Vehicles',
-        fr: 'Véhicules',
-        es: 'Vehículos',
-      ),
-      body: _placeholderBody,
+      title: _card4VehiclesFleetTitle,
+      body: _card4VehiclesFleetIntro,
+      portraitAsset: _card4VehiclesFleetTabletPortraitAsset,
+      landscapeAsset: _card4VehiclesFleetTabletLandscapeAsset,
     ),
-    // 7 — Drivers.
+    // 7 — Drivers & documents. Placeholder until dedicated driver
+    // management assets are ready.
     _OrientationCardData(
-      id: 'drivers',
+      id: 'driver_management',
       layout: _OrientationCardLayout.placeholder,
       icon: Icons.people_outline,
       title: _Tr(
-        nl: 'Chauffeurs',
-        en: 'Drivers',
-        fr: 'Chauffeurs',
-        es: 'Conductores',
+        nl: 'Chauffeurs & documenten',
+        en: 'Drivers & documents',
+        fr: 'Chauffeurs & documents',
+        es: 'Conductores y documentos',
       ),
       body: _placeholderBody,
     ),
-    // 8 — Chiron & document control.
+    // 8 — Chiron & ride register (bespoke PNG + measured text overlay
+    // on tablet). The card5 artwork contains the receipt/audit/local
+    // ride register visuals.
     _OrientationCardData(
       id: 'chiron_documents',
-      layout: _OrientationCardLayout.placeholder,
+      layout: _OrientationCardLayout.chironDocumentsRich,
       icon: Icons.verified_user_outlined,
-      title: _Tr(
-        nl: 'Chiron & documentbeheer',
-        en: 'Chiron & document control',
-        fr: 'Chiron et contrôle des documents',
-        es: 'Chiron y control de documentos',
-      ),
-      body: _placeholderBody,
+      title: _chironDocumentsTitle,
+      body: _chironDocumentsIntro,
+      portraitAsset: _card5ChironDocumentsTabletPortraitAsset,
+      landscapeAsset: _card5ChironDocumentsTabletLandscapeAsset,
     ),
     // 9 — Demand radar / demand insight.
     _OrientationCardData(
@@ -1076,6 +1364,10 @@ class _BusinessOrientationFlowPageState
             currentCard.layout == _OrientationCardLayout.companyCockpit;
         final bool isSubscriptionCard =
             currentCard.layout == _OrientationCardLayout.subscription;
+        final bool isVehiclesFleetCard =
+            currentCard.layout == _OrientationCardLayout.vehiclesFleet;
+        final bool isChironDocumentsCard =
+            currentCard.layout == _OrientationCardLayout.chironDocumentsRich;
         final bool isWelcomeTabletHero =
             isWelcomeCard && (isTabletPortrait || isTabletLandscape);
         final bool isCentralCockpitTabletPortraitHero =
@@ -1086,11 +1378,19 @@ class _BusinessOrientationFlowPageState
         // gets the same immersive [_heroBg] scaffold on tablet.
         final bool isSubscriptionTabletHero =
             isSubscriptionCard && (isTabletPortrait || isTabletLandscape);
+        // Card 4 artwork is on a near-black canvas like Cards 2 & 3, so
+        // it gets the same immersive [_heroBg] scaffold on tablet.
+        final bool isVehiclesFleetTabletHero =
+            isVehiclesFleetCard && (isTabletPortrait || isTabletLandscape);
+        final bool isChironDocumentsTabletHero =
+            isChironDocumentsCard && (isTabletPortrait || isTabletLandscape);
         final Color scaffoldBackground =
             (isWelcomeTabletHero ||
                 isCentralCockpitTabletPortraitHero ||
                 isCentralCockpitTabletLandscapeHero ||
-                isSubscriptionTabletHero)
+                isSubscriptionTabletHero ||
+                isVehiclesFleetTabletHero ||
+                isChironDocumentsTabletHero)
             ? _heroBg
             : _bg;
 
@@ -1115,6 +1415,18 @@ class _BusinessOrientationFlowPageState
             isSubscriptionCard && isTabletPortrait;
         final bool useSubscriptionLandscapeFullHero =
             isSubscriptionCard && isTabletLandscape;
+        // Card 4 uses the same full-viewport hero approach as Cards 2 & 3:
+        // a PNG background behind the Stack with a localised overlay,
+        // while the PageView slot is short-circuited to a transparent box
+        // so the chrome floats on top.
+        final bool useVehiclesFleetPortraitFullHero =
+            isVehiclesFleetCard && isTabletPortrait;
+        final bool useVehiclesFleetLandscapeFullHero =
+            isVehiclesFleetCard && isTabletLandscape;
+        final bool useChironDocumentsPortraitFullHero =
+            isChironDocumentsCard && isTabletPortrait;
+        final bool useChironDocumentsLandscapeFullHero =
+            isChironDocumentsCard && isTabletLandscape;
 
         // Keep only one Card 1 tablet-hero decoder active. Runs
         // post-frame so [MediaQuery] is stable and we do not call
@@ -1157,6 +1469,22 @@ class _BusinessOrientationFlowPageState
                 Positioned.fill(
                   child: _buildSubscriptionTabletLandscapeFullViewportHero(),
                 ),
+              if (useVehiclesFleetPortraitFullHero)
+                Positioned.fill(
+                  child: _buildVehiclesFleetTabletPortraitFullViewportHero(),
+                ),
+              if (useVehiclesFleetLandscapeFullHero)
+                Positioned.fill(
+                  child: _buildVehiclesFleetTabletLandscapeFullViewportHero(),
+                ),
+              if (useChironDocumentsPortraitFullHero)
+                Positioned.fill(
+                  child: _buildChironDocumentsTabletPortraitFullViewportHero(),
+                ),
+              if (useChironDocumentsLandscapeFullHero)
+                Positioned.fill(
+                  child: _buildChironDocumentsTabletLandscapeFullViewportHero(),
+                ),
               // Foreground layer — the existing chrome + PageView
               // composition. Identical to the pre-refactor layout
               // for portrait, phones, and Cards 2-7. For Card 1 in
@@ -1170,7 +1498,9 @@ class _BusinessOrientationFlowPageState
                       isCompactHeight,
                       elevatedSkip:
                           useCentralCockpitLandscapeFullHero ||
-                          useSubscriptionLandscapeFullHero,
+                          useSubscriptionLandscapeFullHero ||
+                          useVehiclesFleetLandscapeFullHero ||
+                          useChironDocumentsLandscapeFullHero,
                     ),
                     Expanded(
                       child: PageView.builder(
@@ -1206,6 +1536,21 @@ class _BusinessOrientationFlowPageState
                           // swipe gesture.
                           if (card.layout ==
                                   _OrientationCardLayout.subscription &&
+                              (isTabletPortrait || isTabletLandscape)) {
+                            return const SizedBox.expand();
+                          }
+                          // Card 4 tablet portrait/landscape: empty
+                          // transparent slot. The dedicated full-
+                          // viewport PNG hero behind this Stack is what
+                          // the user sees; PageView keeps the swipe
+                          // gesture.
+                          if (card.layout ==
+                                  _OrientationCardLayout.vehiclesFleet &&
+                              (isTabletPortrait || isTabletLandscape)) {
+                            return const SizedBox.expand();
+                          }
+                          if (card.layout ==
+                                  _OrientationCardLayout.chironDocumentsRich &&
                               (isTabletPortrait || isTabletLandscape)) {
                             return const SizedBox.expand();
                           }
@@ -1247,7 +1592,11 @@ class _BusinessOrientationFlowPageState
                           useCentralCockpitPortraitFullHero ||
                           useCentralCockpitLandscapeFullHero ||
                           useSubscriptionPortraitFullHero ||
-                          useSubscriptionLandscapeFullHero,
+                          useSubscriptionLandscapeFullHero ||
+                          useVehiclesFleetPortraitFullHero ||
+                          useVehiclesFleetLandscapeFullHero ||
+                          useChironDocumentsPortraitFullHero ||
+                          useChironDocumentsLandscapeFullHero,
                     ),
                   ],
                 ),
@@ -1501,6 +1850,16 @@ class _BusinessOrientationFlowPageState
         // Tablet portrait/landscape are short-circuited in [build]
         // (bespoke PNG hero behind the Stack); phones fall back to the
         // stable icon composition with the card's title + body.
+        return _buildOrientationCard(data, compact);
+      case _OrientationCardLayout.vehiclesFleet:
+        // Tablet portrait/landscape are short-circuited in [build]
+        // (bespoke PNG hero behind the Stack); phones fall back to the
+        // stable icon composition with the card's title + intro.
+        return _buildOrientationCard(data, compact);
+      case _OrientationCardLayout.chironDocumentsRich:
+        // Tablet portrait/landscape are short-circuited in [build]
+        // (bespoke PNG hero behind the Stack); phones fall back to the
+        // stable icon composition with the card's title + intro.
         return _buildOrientationCard(data, compact);
       case _OrientationCardLayout.iconCard:
         return _buildOrientationCard(data, compact);
@@ -2052,6 +2411,483 @@ class _BusinessOrientationFlowPageState
   }
 
   // =================================================================
+  // Chiron documents — bespoke tablet hero (PNG + measured text).
+  //
+  // The card5 artwork contains receipt/audit/local ride register
+  // screenshots. Flutter overlays only localised title, intro, and
+  // compact feature rows in measured safe zones.
+  // =================================================================
+
+  double _chironDocumentsLangScale() {
+    switch (appLanguageNotifier.value) {
+      case AppLanguage.fr:
+      case AppLanguage.es:
+        return 0.92;
+      case AppLanguage.nl:
+      case AppLanguage.en:
+        return 1.0;
+    }
+  }
+
+  Widget _buildChironDocumentsTabletPortraitFullViewportHero() {
+    return Stack(
+      fit: StackFit.expand,
+      children: <Widget>[
+        Image.asset(
+          _card5ChironDocumentsTabletPortraitAsset,
+          fit: BoxFit.fill,
+          alignment: Alignment.center,
+          errorBuilder: (ctx, error, stackTrace) {
+            debugPrint(
+              '[ORIENTATION_FLOW][CHIRON_PORTRAIT_PNG_FAIL] error=$error',
+            );
+            return _buildWelcomeMediaUltimateFallback();
+          },
+        ),
+        IgnorePointer(
+          child: _buildChironDocumentsTabletOverlay(isPortrait: true),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildChironDocumentsTabletLandscapeFullViewportHero() {
+    return Stack(
+      fit: StackFit.expand,
+      children: <Widget>[
+        Image.asset(
+          _card5ChironDocumentsTabletLandscapeAsset,
+          fit: BoxFit.fill,
+          alignment: Alignment.center,
+          errorBuilder: (ctx, error, stackTrace) {
+            debugPrint(
+              '[ORIENTATION_FLOW][CHIRON_LANDSCAPE_PNG_FAIL] error=$error',
+            );
+            return _buildWelcomeMediaUltimateFallback();
+          },
+        ),
+        IgnorePointer(
+          child: _buildChironDocumentsTabletOverlay(isPortrait: false),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildChironDocumentsTabletOverlay({required bool isPortrait}) {
+    return LayoutBuilder(
+      builder: (ctx, constraints) {
+        final double w = constraints.maxWidth;
+        final double h = constraints.maxHeight;
+        if (isPortrait ? h <= w : w <= h) {
+          return const SizedBox.shrink();
+        }
+
+        final double heroLeft = isPortrait ? 0.44 : 0.37;
+        final double heroTop = isPortrait ? 0.078 : 0.068;
+        final double heroWidth = isPortrait ? 0.49 : 0.58;
+        final double heroHeight = isPortrait ? 0.150 : 0.135;
+        final double panelLeft = isPortrait ? 0.055 : 0.045;
+        final double panelTop = isPortrait ? 0.220 : 0.430;
+        final double panelWidth = isPortrait ? 0.800 : 0.390;
+        final double panelHeight = isPortrait ? 0.205 : 0.300;
+        final double heroW = w * heroWidth;
+        final double heroH = h * heroHeight;
+        final double textScale = MediaQuery.textScaleFactorOf(
+          ctx,
+        ).clamp(1.0, 1.12).toDouble();
+        final double langScale = _chironDocumentsLangScale()
+            .clamp(0.90, 1.0)
+            .toDouble();
+        final double scale = langScale / textScale;
+
+        return Stack(
+          children: <Widget>[
+            Positioned(
+              left: w * heroLeft,
+              top: h * heroTop,
+              width: heroW,
+              height: heroH,
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  alignment: Alignment.centerLeft,
+                  child: SizedBox(
+                    width: heroW,
+                    height: heroH,
+                    child: _buildChironDocumentsHeroTextBlock(
+                      scale: scale,
+                      isPortrait: isPortrait,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            Positioned(
+              left: w * panelLeft,
+              top: h * panelTop,
+              width: w * panelWidth,
+              height: h * panelHeight,
+              child: isPortrait
+                  ? _buildChironDocumentsPortraitFeaturePanel(
+                      zoneWidth: w * panelWidth,
+                      titleSize: 20.0 * scale,
+                      bodySize: 16.0 * scale,
+                      footerSize: 16.0 * scale,
+                    )
+                  : _buildChironDocumentsLandscapeFeaturePanel(
+                      zoneWidth: w * panelWidth,
+                      titleSize: 18.0 * scale,
+                      bodySize: 14.0 * scale,
+                    ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildChironDocumentsHeroTextBlock({
+    required double scale,
+    required bool isPortrait,
+  }) {
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          _buildChironDocumentsTitle((isPortrait ? 32.0 : 38.0) * scale),
+          SizedBox(height: 8 * scale),
+          _buildChironDocumentsIntro(
+            (isPortrait ? 15.0 : 16.5) * scale,
+            isPortrait ? 1.16 : 1.13,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildChironDocumentsTitle(double fontSize) {
+    return Text(
+      _t(_chironDocumentsTitle),
+      softWrap: true,
+      overflow: TextOverflow.visible,
+      style: TextStyle(
+        color: _gold,
+        fontSize: fontSize,
+        fontWeight: FontWeight.w900,
+        height: 1.06,
+        letterSpacing: 0.12,
+        shadows: <Shadow>[
+          Shadow(color: _gold.withOpacity(0.36), blurRadius: 14),
+          Shadow(
+            color: Colors.black.withOpacity(0.78),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildChironDocumentsIntro(double fontSize, double lineHeight) {
+    return Text(
+      _t(_chironDocumentsIntro),
+      softWrap: true,
+      overflow: TextOverflow.visible,
+      style: TextStyle(
+        color: Colors.white.withOpacity(0.90),
+        fontSize: fontSize,
+        fontWeight: FontWeight.w500,
+        height: lineHeight,
+        shadows: const <Shadow>[
+          Shadow(color: Color(0xCC000000), blurRadius: 8, offset: Offset(0, 1)),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildChironDocumentsPortraitFeaturePanel({
+    required double zoneWidth,
+    required double titleSize,
+    required double bodySize,
+    required double footerSize,
+  }) {
+    final double scale = _chironDocumentsLangScale()
+        .clamp(0.90, 1.0)
+        .toDouble();
+    final double rowGap = 10.0 * scale;
+    final double rowPaddingH = 11.0 * scale;
+    final double rowPaddingV = 8.0 * scale;
+    return FittedBox(
+      fit: BoxFit.scaleDown,
+      alignment: Alignment.topLeft,
+      child: SizedBox(
+        width: zoneWidth,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            for (int i = 0; i < _chironDocumentsFeatures.length; i++)
+              Padding(
+                padding: EdgeInsets.only(top: i == 0 ? 0 : rowGap),
+                child: _buildChironDocumentsPortraitFeatureRow(
+                  _chironDocumentsFeatures[i],
+                  titleSize: titleSize,
+                  bodySize: bodySize,
+                  dotSize: 7.0 * scale,
+                  rowPaddingH: rowPaddingH,
+                  rowPaddingV: rowPaddingV,
+                ),
+              ),
+            if (appLanguageNotifier.value != AppLanguage.fr) ...<Widget>[
+              SizedBox(height: 6.0 * scale),
+              _buildChironDocumentsFeatureFooter(footerSize),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildChironDocumentsLandscapeFeaturePanel({
+    required double zoneWidth,
+    required double titleSize,
+    required double bodySize,
+  }) {
+    final double scale = _chironDocumentsLangScale()
+        .clamp(0.90, 1.0)
+        .toDouble();
+    final double rowGap = 8.0 * scale;
+    final double rowPaddingH = 9.0 * scale;
+    final double rowPaddingV = 7.0 * scale;
+    return FittedBox(
+      fit: BoxFit.scaleDown,
+      alignment: Alignment.topLeft,
+      child: SizedBox(
+        width: zoneWidth,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            for (int i = 0; i < _chironDocumentsFeatures.length; i++)
+              Padding(
+                padding: EdgeInsets.only(top: i == 0 ? 0 : rowGap),
+                child: _buildChironDocumentsLandscapeFeatureRow(
+                  _chironDocumentsFeatures[i],
+                  titleSize: titleSize,
+                  bodySize: bodySize,
+                  dotSize: 6.6 * scale,
+                  rowPaddingH: rowPaddingH,
+                  rowPaddingV: rowPaddingV,
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildChironDocumentsPortraitFeatureRow(
+    _OrientationBulletItem feature, {
+    required double titleSize,
+    required double bodySize,
+    required double dotSize,
+    required double rowPaddingH,
+    required double rowPaddingV,
+  }) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: Colors.black.withOpacity(0.18),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: _gold.withOpacity(0.12)),
+      ),
+      child: Padding(
+        padding: EdgeInsets.symmetric(
+          horizontal: rowPaddingH,
+          vertical: rowPaddingV,
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Container(
+              width: dotSize,
+              height: dotSize,
+              margin: EdgeInsets.only(top: titleSize * 0.34),
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: _gold,
+                boxShadow: <BoxShadow>[
+                  BoxShadow(
+                    color: _gold.withOpacity(0.48),
+                    blurRadius: 8,
+                    spreadRadius: 1,
+                  ),
+                ],
+              ),
+            ),
+            SizedBox(width: rowPaddingH * 0.72),
+            Expanded(
+              child: RichText(
+                softWrap: true,
+                overflow: TextOverflow.visible,
+                text: TextSpan(
+                  children: <InlineSpan>[
+                    TextSpan(
+                      text: '${_t(feature.title)}: ',
+                      style: TextStyle(
+                        color: _gold,
+                        fontSize: titleSize,
+                        fontWeight: FontWeight.w800,
+                        height: 1.10,
+                        shadows: const <Shadow>[
+                          Shadow(
+                            color: Color(0xCC000000),
+                            blurRadius: 6,
+                            offset: Offset(0, 1),
+                          ),
+                        ],
+                      ),
+                    ),
+                    TextSpan(
+                      text: _t(feature.description),
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.88),
+                        fontSize: bodySize,
+                        fontWeight: FontWeight.w500,
+                        height: 1.10,
+                        shadows: const <Shadow>[
+                          Shadow(
+                            color: Color(0xCC000000),
+                            blurRadius: 6,
+                            offset: Offset(0, 1),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildChironDocumentsLandscapeFeatureRow(
+    _OrientationBulletItem feature, {
+    required double titleSize,
+    required double bodySize,
+    required double dotSize,
+    required double rowPaddingH,
+    required double rowPaddingV,
+  }) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: Colors.black.withOpacity(0.18),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: _gold.withOpacity(0.12)),
+      ),
+      child: Padding(
+        padding: EdgeInsets.symmetric(
+          horizontal: rowPaddingH,
+          vertical: rowPaddingV,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                Container(
+                  width: dotSize,
+                  height: dotSize,
+                  margin: EdgeInsets.only(top: titleSize * 0.34),
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: _gold,
+                    boxShadow: <BoxShadow>[
+                      BoxShadow(
+                        color: _gold.withOpacity(0.48),
+                        blurRadius: 8,
+                        spreadRadius: 1,
+                      ),
+                    ],
+                  ),
+                ),
+                SizedBox(width: rowPaddingH * 0.72),
+                Flexible(
+                  child: Text(
+                    _t(feature.title),
+                    softWrap: true,
+                    overflow: TextOverflow.visible,
+                    style: TextStyle(
+                      color: _gold,
+                      fontSize: titleSize,
+                      fontWeight: FontWeight.w800,
+                      height: 1.05,
+                      shadows: const <Shadow>[
+                        Shadow(
+                          color: Color(0xCC000000),
+                          blurRadius: 6,
+                          offset: Offset(0, 1),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            SizedBox(height: 1.5 * _chironDocumentsLangScale()),
+            Padding(
+              padding: EdgeInsets.only(left: dotSize + rowPaddingH * 0.72),
+              child: Text(
+                _t(feature.description),
+                softWrap: true,
+                overflow: TextOverflow.visible,
+                style: TextStyle(
+                  color: Colors.white.withOpacity(0.88),
+                  fontSize: bodySize,
+                  fontWeight: FontWeight.w500,
+                  height: 1.08,
+                  shadows: const <Shadow>[
+                    Shadow(
+                      color: Color(0xCC000000),
+                      blurRadius: 6,
+                      offset: Offset(0, 1),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildChironDocumentsFeatureFooter(double fontSize) {
+    return Text(
+      _t(_chironDocumentsFooter),
+      softWrap: true,
+      overflow: TextOverflow.visible,
+      style: TextStyle(
+        color: _gold,
+        fontSize: fontSize,
+        fontWeight: FontWeight.w800,
+        height: 1.08,
+        shadows: const <Shadow>[
+          Shadow(color: Color(0xCC000000), blurRadius: 7, offset: Offset(0, 1)),
+        ],
+      ),
+    );
+  }
+
+  // =================================================================
   // Card 3 — Subscription & scalability (bespoke tablet heroes).
   //
   // Both orientations paint the dedicated card3 PNG full-bleed
@@ -2079,6 +2915,373 @@ class _BusinessOrientationFlowPageState
       case AppLanguage.en:
         return 1.0;
     }
+  }
+
+  // =================================================================
+  // Card 4 — Vehicles & fleet management (bespoke tablet heroes).
+  //
+  // Both orientations paint the dedicated card4 PNG full-bleed
+  // ([BoxFit.fill], matching Card 3) behind the Stack and overlay only
+  // the localised title + intro with Flutter — the vehicle screenshot
+  // is baked into the artwork, never re-rendered here.
+  //
+  // First controlled step: title + intro ONLY (no bullets / feature
+  // list yet). The title + intro sit in the empty background area
+  // ABOVE the screenshot; the whole column is wrapped in a
+  // [FittedBox] scale-down safety net so the longest NL/FR/ES copy
+  // can never raise a yellow/black overflow band.
+  // =================================================================
+
+  /// Per-language down-scale for the longer FR/ES Card 4 copy so the
+  /// responsive sizes already land smaller before the [FittedBox]
+  /// safety net ever has to engage.
+  double _card4LangFontScale() {
+    switch (appLanguageNotifier.value) {
+      case AppLanguage.fr:
+      case AppLanguage.es:
+        return 0.92;
+      case AppLanguage.nl:
+      case AppLanguage.en:
+        return 1.0;
+    }
+  }
+
+  Widget _buildVehiclesFleetTabletLandscapeFullViewportHero() {
+    return Stack(
+      fit: StackFit.expand,
+      children: <Widget>[
+        Image.asset(
+          _card4VehiclesFleetTabletLandscapeAsset,
+          fit: BoxFit.fill,
+          alignment: Alignment.center,
+          errorBuilder: (ctx, error, stackTrace) {
+            debugPrint(
+              '[ORIENTATION_FLOW][CARD4_LANDSCAPE_PNG_FAIL] error=$error',
+            );
+            return _buildWelcomeMediaUltimateFallback();
+          },
+        ),
+        IgnorePointer(
+          child: _buildVehiclesFleetTabletOverlay(isPortrait: false),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildVehiclesFleetTabletPortraitFullViewportHero() {
+    return Stack(
+      fit: StackFit.expand,
+      children: <Widget>[
+        Image.asset(
+          _card4VehiclesFleetTabletPortraitAsset,
+          fit: BoxFit.fill,
+          alignment: Alignment.center,
+          errorBuilder: (ctx, error, stackTrace) {
+            debugPrint(
+              '[ORIENTATION_FLOW][CARD4_PORTRAIT_PNG_FAIL] error=$error',
+            );
+            return _buildWelcomeMediaUltimateFallback();
+          },
+        ),
+        IgnorePointer(
+          child: _buildVehiclesFleetTabletOverlay(isPortrait: true),
+        ),
+      ],
+    );
+  }
+
+  /// Title + intro overlay for Card 4, positioned in the empty
+  /// background area ABOVE the baked-in vehicle screenshot. Zones are
+  /// expressed as fractions of the FULL viewport so they line up with
+  /// the full-bleed background asset.
+  Widget _buildVehiclesFleetTabletOverlay({required bool isPortrait}) {
+    return LayoutBuilder(
+      builder: (ctx, constraints) {
+        final double w = constraints.maxWidth;
+        final double h = constraints.maxHeight;
+        // The hero is only mounted by [build] on tablets in the
+        // matching orientation, so a plain orientation guard keeps the
+        // overlay in lock-step with the hero across tablet sizes.
+        if (isPortrait ? h <= w : w <= h) {
+          return const SizedBox.shrink();
+        }
+
+        // Title + intro zone — a strong hero block in the empty
+        // black/gold background space ABOVE the baked-in vehicle
+        // screenshot. Easy to tweak per orientation as named local
+        // constants.
+        final double titleLeft = isPortrait ? 0.365 : 0.405;
+        final double titleTop = isPortrait ? 0.050 : 0.031;
+        final double titleWidth = isPortrait ? 0.585 : 0.520;
+        final double titleHeight = isPortrait ? 0.125 : 0.150;
+        final double panelLeft = isPortrait ? 0.025 : 0.030;
+        final double panelTop = isPortrait ? 0.280 : 0.405;
+        final double panelWidth = isPortrait ? 0.250 : 0.255;
+        final double panelHeight = isPortrait ? 0.655 : 0.405;
+
+        final double scale = _card4LangFontScale().clamp(0.90, 1.0).toDouble();
+        final double titleSize = (isPortrait ? 33.0 : 42.0) * scale;
+        final double introSize = (isPortrait ? 15.5 : 18.0) * scale;
+        final double titleIntroGap = isPortrait ? 8.0 : 10.0;
+        final double panelTitleSize = (isPortrait ? 18.0 : 16.0) * scale;
+        final double panelBodySize = (isPortrait ? 14.0 : 12.5) * scale;
+        final double panelFooterSize = (isPortrait ? 14.5 : 13.0) * scale;
+
+        return Stack(
+          children: <Widget>[
+            Positioned(
+              left: w * titleLeft,
+              top: h * titleTop,
+              width: w * titleWidth,
+              height: h * titleHeight,
+              child: Padding(
+                padding: isPortrait
+                    ? const EdgeInsets.symmetric(horizontal: 4, vertical: 6)
+                    : const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    alignment: Alignment.centerLeft,
+                    child: SizedBox(
+                      width: w * titleWidth,
+                      child: _buildVehiclesFleetHeroTextBlock(
+                        titleSize: titleSize,
+                        introSize: introSize,
+                        introLineHeight: isPortrait ? 1.20 : 1.22,
+                        titleIntroGap: titleIntroGap,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            Positioned(
+              left: w * panelLeft,
+              top: h * panelTop,
+              width: w * panelWidth,
+              height: h * panelHeight,
+              child: _buildVehiclesFleetFeaturePanel(
+                zoneWidth: w * panelWidth,
+                titleSize: panelTitleSize,
+                bodySize: panelBodySize,
+                footerSize: panelFooterSize,
+                isPortrait: isPortrait,
+                showFooter: true,
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildVehiclesFleetHeroTextBlock({
+    required double titleSize,
+    required double introSize,
+    required double introLineHeight,
+    required double titleIntroGap,
+  }) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        _buildVehiclesFleetTitle(titleSize),
+        SizedBox(height: titleIntroGap),
+        _buildVehiclesFleetIntro(introSize, introLineHeight),
+      ],
+    );
+  }
+
+  Widget _buildVehiclesFleetTitle(double fontSize) {
+    return Text(
+      _t(_card4VehiclesFleetTitle),
+      softWrap: true,
+      overflow: TextOverflow.visible,
+      style: TextStyle(
+        color: _gold,
+        fontSize: fontSize,
+        fontWeight: FontWeight.w900,
+        height: 1.06,
+        letterSpacing: 0.15,
+        shadows: <Shadow>[
+          Shadow(color: _gold.withOpacity(0.40), blurRadius: 14),
+          Shadow(
+            color: Colors.black.withOpacity(0.75),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildVehiclesFleetIntro(double fontSize, double lineHeight) {
+    return Text(
+      _t(_card4VehiclesFleetIntro),
+      softWrap: true,
+      overflow: TextOverflow.visible,
+      style: TextStyle(
+        color: Colors.white.withOpacity(0.90),
+        fontSize: fontSize,
+        fontWeight: FontWeight.w500,
+        height: lineHeight,
+        shadows: const <Shadow>[
+          Shadow(color: Color(0xCC000000), blurRadius: 8, offset: Offset(0, 1)),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildVehiclesFleetFeaturePanel({
+    required double zoneWidth,
+    required double titleSize,
+    required double bodySize,
+    required double footerSize,
+    required bool isPortrait,
+    required bool showFooter,
+  }) {
+    final double scale = _card4LangFontScale().clamp(0.90, 1.0).toDouble();
+    final double rowGap = (isPortrait ? 8.0 : 5.5) * scale;
+    final double rowPaddingH = (isPortrait ? 9.0 : 7.0) * scale;
+    final double rowPaddingV = (isPortrait ? 5.0 : 4.0) * scale;
+    return FittedBox(
+      fit: BoxFit.scaleDown,
+      alignment: Alignment.topLeft,
+      child: SizedBox(
+        width: zoneWidth,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            for (int i = 0; i < _card4VehiclesFleetFeatures.length; i++)
+              Padding(
+                padding: EdgeInsets.only(top: i == 0 ? 0 : rowGap),
+                child: _buildVehiclesFleetFeatureRow(
+                  _card4VehiclesFleetFeatures[i],
+                  titleSize: titleSize,
+                  bodySize: bodySize,
+                  dotSize: (isPortrait ? 6.5 : 6.0) * scale,
+                  rowPaddingH: rowPaddingH,
+                  rowPaddingV: rowPaddingV,
+                ),
+              ),
+            if (showFooter) ...<Widget>[
+              SizedBox(height: (isPortrait ? 9.0 : 6.5) * scale),
+              _buildVehiclesFleetFeatureFooter(footerSize),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildVehiclesFleetFeatureRow(
+    _OrientationBulletItem feature, {
+    required double titleSize,
+    required double bodySize,
+    required double dotSize,
+    required double rowPaddingH,
+    required double rowPaddingV,
+  }) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: Colors.black.withOpacity(0.18),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: _gold.withOpacity(0.12)),
+      ),
+      child: Padding(
+        padding: EdgeInsets.symmetric(
+          horizontal: rowPaddingH,
+          vertical: rowPaddingV,
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Container(
+              width: dotSize,
+              height: dotSize,
+              margin: EdgeInsets.only(top: titleSize * 0.33),
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: _gold,
+                boxShadow: <BoxShadow>[
+                  BoxShadow(
+                    color: _gold.withOpacity(0.45),
+                    blurRadius: 8,
+                    spreadRadius: 1,
+                  ),
+                ],
+              ),
+            ),
+            SizedBox(width: rowPaddingH * 0.72),
+            Expanded(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  Text(
+                    _t(feature.title),
+                    softWrap: true,
+                    overflow: TextOverflow.visible,
+                    style: TextStyle(
+                      color: _gold,
+                      fontSize: titleSize,
+                      fontWeight: FontWeight.w800,
+                      height: 1.06,
+                      shadows: const <Shadow>[
+                        Shadow(
+                          color: Color(0xCC000000),
+                          blurRadius: 6,
+                          offset: Offset(0, 1),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 1),
+                  Text(
+                    _t(feature.description),
+                    softWrap: true,
+                    overflow: TextOverflow.visible,
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.86),
+                      fontSize: bodySize,
+                      fontWeight: FontWeight.w500,
+                      height: 1.08,
+                      shadows: const <Shadow>[
+                        Shadow(
+                          color: Color(0xCC000000),
+                          blurRadius: 6,
+                          offset: Offset(0, 1),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildVehiclesFleetFeatureFooter(double fontSize) {
+    return Text(
+      _t(_card4VehiclesFleetFooter),
+      softWrap: true,
+      overflow: TextOverflow.visible,
+      style: TextStyle(
+        color: _gold,
+        fontSize: fontSize,
+        fontWeight: FontWeight.w800,
+        height: 1.08,
+        letterSpacing: 0.08,
+        shadows: const <Shadow>[
+          Shadow(color: Color(0xCC000000), blurRadius: 7, offset: Offset(0, 1)),
+        ],
+      ),
+    );
   }
 
   Widget _buildSubscriptionTabletLandscapeFullViewportHero() {
@@ -3536,6 +4739,8 @@ enum _OrientationCardLayout {
   welcome,
   companyCockpit,
   subscription,
+  vehiclesFleet,
+  chironDocumentsRich,
   iconCard,
   placeholder,
 }
