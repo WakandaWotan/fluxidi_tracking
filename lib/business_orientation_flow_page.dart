@@ -397,6 +397,14 @@ class _BusinessOrientationFlowPageState
   static const String _card6DriverManagementTabletLandscapeAsset =
       'assets/fluxidi/onboarding/card6_welcome_tablet_landscape_bg.png';
 
+  /// Card 7 tablet PNGs — Region Radar. The radar / service-area
+  /// visual is baked into the artwork; Flutter overlays one bounded
+  /// text panel in measured dark safe zones beside the visual.
+  static const String _card7RegionRadarTabletPortraitAsset =
+      'assets/fluxidi/onboarding/card7_welcome_tablet_portrait_bg.png';
+  static const String _card7RegionRadarTabletLandscapeAsset =
+      'assets/fluxidi/onboarding/card7_welcome_tablet_landscape_bg.png';
+
   static const _Tr _chironDocumentsTitle = _Tr(
     nl: 'Chiron & rittenregister',
     en: 'Chiron & ride register',
@@ -561,28 +569,10 @@ class _BusinessOrientationFlowPageState
         es: 'Perfiles de conductor',
       ),
       description: _Tr(
-        nl:
-            'Voeg telefoon, status, voertuigkoppeling, bedrijfskoppeling en '
-            'chauffeursfoto toe.',
-        en: 'Add phone, status, vehicle link, company link and driver photo.',
-        fr:
-            'Ajoutez téléphone, statut, véhicule, entreprise et photo '
-            'chauffeur.',
-        es: 'Añade teléfono, estado, vehículo, empresa y foto del conductor.',
-      ),
-    ),
-    _OrientationBulletItem(
-      title: _Tr(
-        nl: 'Codes & QR-koppeling',
-        en: 'Codes & QR pairing',
-        fr: 'Codes & QR',
-        es: 'Códigos y QR',
-      ),
-      description: _Tr(
-        nl: 'Genereer een nieuwe chauffeurcode of tijdelijke koppel-QR.',
-        en: 'Generate a new driver code or temporary pairing QR.',
-        fr: 'Générez un nouveau code chauffeur ou un QR de liaison temporaire.',
-        es: 'Genera un nuevo código de conductor o QR temporal de vinculación.',
+        nl: 'Beheer telefoon, status, voertuigkoppeling en chauffeursfoto.',
+        en: 'Manage phone, status, vehicle link and driver photo.',
+        fr: 'Gérez téléphone, statut, véhicule lié et photo chauffeur.',
+        es: 'Gestiona teléfono, estado, vehículo vinculado y foto del conductor.',
       ),
     ),
     _OrientationBulletItem(
@@ -594,37 +584,35 @@ class _BusinessOrientationFlowPageState
       ),
       description: _Tr(
         nl:
-            'Volg rijbewijs, bestuurderpas, chauffeurkaart, medische keuringen '
-            'en vergunningen op.',
-        en:
-            'Track licence, driver pass, driver card, medical checks and '
-            'permits.',
+            'Volg rijbewijs, bestuurderspas, medische keuringen en '
+            'vergunningen op.',
+        en: 'Track licence, driver pass, medical checks and permits.',
         fr:
-            'Suivez permis, carte chauffeur, visite médicale et '
+            'Suivez permis, carte chauffeur, visites médicales et '
             'autorisations.',
         es: 'Sigue licencia, tarjeta, revisión médica y permisos.',
       ),
     ),
     _OrientationBulletItem(
       title: _Tr(
-        nl: 'Nakijken & goedkeuren',
-        en: 'Review & approvals',
-        fr: 'Vérifier & approuver',
-        es: 'Revisión y aprobación',
+        nl: 'Codes & QR-koppeling',
+        en: 'Codes & QR pairing',
+        fr: 'Codes & QR',
+        es: 'Códigos y QR',
       ),
       description: _Tr(
         nl:
-            'Chauffeurs kunnen documenten uploaden; de bedrijfsleider kan ze '
-            'nakijken en goedkeuren.',
+            'Genereer chauffeurscodes en tijdelijke koppel-QR’s voor '
+            'nieuwe toestellen.',
         en:
-            'Drivers can upload documents; the business owner can review and '
-            'approve them.',
+            'Generate driver codes and temporary pairing QR codes for '
+            'new devices.',
         fr:
-            'Les chauffeurs peuvent importer des documents; l’entreprise les '
-            'valide.',
+            'Générez codes chauffeur et QR temporaires pour nouveaux '
+            'appareils.',
         es:
-            'Los conductores suben documentos; la empresa los revisa y '
-            'aprueba.',
+            'Genera códigos de conductor y QR temporales para nuevos '
+            'dispositivos.',
       ),
     ),
     _OrientationBulletItem(
@@ -636,32 +624,155 @@ class _BusinessOrientationFlowPageState
       ),
       description: _Tr(
         nl:
-            'Zie actieve, inactieve, gepauzeerde en beschikbare chauffeurs in '
-            'één oogopslag.',
-        en: 'See active, inactive, paused and available drivers at a glance.',
+            'Zie actieve, gepauzeerde en beschikbare chauffeurs in één '
+            'overzicht.',
+        en: 'See active, paused and available drivers at a glance.',
         fr:
-            'Voyez actifs, inactifs, en pause et disponibles en un coup '
+            'Voyez chauffeurs actifs, en pause et disponibles d’un coup '
             'd’œil.',
-        es: 'Ve activos, inactivos, en pausa y disponibles de un vistazo.',
-      ),
-    ),
-    _OrientationBulletItem(
-      title: _Tr(
-        nl: 'Publieke partnerfoto',
-        en: 'Public partner photo',
-        fr: 'Photo partenaire',
-        es: 'Foto pública',
-      ),
-      description: _Tr(
-        nl:
-            'Publiceer een chauffeursportret dat zichtbaar kan zijn in de '
-            'klantenapp.',
-        en: 'Publish a driver portrait that can appear in the customer app.',
-        fr: 'Publiez un portrait chauffeur visible dans l’app client.',
-        es: 'Publica un retrato del conductor visible en la app cliente.',
+        es:
+            'Ve conductores activos, en pausa y disponibles de un '
+            'vistazo.',
       ),
     ),
   ];
+
+  // ---------------------------------------------------------------
+  // Card 9 — Region Radar. Uses the existing card7 artwork because
+  // this is the flow step immediately after Chiron.
+  // ---------------------------------------------------------------
+
+  static const _Tr _regionRadarTitle = _Tr(
+    nl: 'Regioradar',
+    en: 'Region Radar',
+    fr: 'Radar régional',
+    es: 'Radar regional',
+  );
+
+  static const _Tr _regionRadarIntro = _Tr(
+    nl:
+        'Zie waar potentiële klanten actief zijn, waar vraag groeit en '
+        'stuur je bedrijf gerichter vooruit.',
+    en:
+        'See where potential customers are active, where demand grows and '
+        'move your business forward with focus.',
+    fr:
+        'Voyez où les clients potentiels sont actifs, où la demande '
+        'augmente et développez votre activité avec précision.',
+    es:
+        'Vea dónde hay clientes potenciales activos, dónde crece la '
+        'demanda e impulse su negocio con enfoque.',
+  );
+
+  static const _Tr _regionRadarExplanationEyebrow = _Tr(
+    nl: 'REGIONALE VRAAGINTELLIGENTIE',
+    en: 'REGIONAL DEMAND INTELLIGENCE',
+    fr: 'INTELLIGENCE RÉGIONALE DE LA DEMANDE',
+    es: 'INTELIGENCIA REGIONAL DE DEMANDA',
+  );
+
+  static const _Tr _regionRadarExplanationHeading = _Tr(
+    nl: 'Zet lokale signalen om in betere dekking.',
+    en: 'Turn local signals into better coverage.',
+    fr: 'Transformez les signaux locaux en meilleure couverture.',
+    es: 'Convierta señales locales en mejor cobertura.',
+  );
+
+  static const _Tr _regionRadarExplanationIntro = _Tr(
+    nl:
+        'Region Radar helpt een taxibedrijf begrijpen waar potentiële '
+        'klanten actief zijn, waar de vraag groeit en hoe ver het huidige '
+        'servicegebied reikt.',
+    en:
+        'Region Radar helps a taxi company understand where potential '
+        'customers are active, where demand is growing, and how far the '
+        'current service radius reaches.',
+    fr:
+        'Region Radar aide une entreprise de taxi à comprendre où les '
+        'clients potentiels sont actifs, où la demande augmente et '
+        'jusqu’où s’étend la zone de service actuelle.',
+    es:
+        'Region Radar ayuda a una empresa de taxi a entender dónde hay '
+        'clientes potenciales activos, dónde crece la demanda y hasta '
+        'dónde llega la zona de servicio actual.',
+  );
+
+  static const List<_OrientationBulletItem> _regionRadarExplanationFeatures =
+      <_OrientationBulletItem>[
+        _OrientationBulletItem(
+          title: _Tr(
+            nl: 'Vraag in beeld',
+            en: 'Demand insight',
+            fr: 'Demande visible',
+            es: 'Demanda visible',
+          ),
+          description: _Tr(
+            nl:
+                'Zie waar mensen taxi-service zoeken nog vóór die vraag '
+                'zichtbaar wordt via boekingen.',
+            en:
+                'See where people are looking for taxi service before demand '
+                'becomes visible through bookings.',
+            fr:
+                'Voyez où les personnes recherchent un service taxi avant '
+                'que la demande ne devienne visible via les réservations.',
+            es:
+                'Vea dónde las personas buscan servicio de taxi antes de que '
+                'esa demanda aparezca en las reservas.',
+          ),
+        ),
+        _OrientationBulletItem(
+          title: _Tr(
+            nl: 'Slimmer servicegebied',
+            en: 'Smarter coverage',
+            fr: 'Couverture plus intelligente',
+            es: 'Cobertura más inteligente',
+          ),
+          description: _Tr(
+            nl:
+                'Vergelijk interesse in de buurt, service-radius en '
+                'groeizones in je werkgebied.',
+            en:
+                'Compare nearby interest, service radius and growth zones in '
+                'your working area.',
+            fr:
+                'Comparez l’intérêt local, le rayon de service et les zones '
+                'de croissance dans votre région.',
+            es:
+                'Compare interés cercano, radio de servicio y zonas de '
+                'crecimiento en su área de trabajo.',
+          ),
+        ),
+        _OrientationBulletItem(
+          title: _Tr(
+            nl: 'Gericht groeien',
+            en: 'Grow with focus',
+            fr: 'Croissance ciblée',
+            es: 'Crecimiento enfocado',
+          ),
+          description: _Tr(
+            nl:
+                'Gebruik regiosignalen om te beslissen waar je adverteert, '
+                'voertuigen inzet of lokale partners activeert.',
+            en:
+                'Use regional signals to decide where to advertise, add '
+                'vehicles or activate local partners.',
+            fr:
+                'Utilisez les signaux régionaux pour décider où communiquer, '
+                'ajouter des véhicules ou activer des partenaires locaux.',
+            es:
+                'Use señales regionales para decidir dónde anunciarse, '
+                'añadir vehículos o activar socios locales.',
+          ),
+        ),
+      ];
+
+  static const _Tr _regionRadarExplanationClosing = _Tr(
+    nl: 'Minder gokken. Betere dekking. Gerichter groeien.',
+    en: 'Less guesswork. Better coverage. More focused growth.',
+    fr: 'Moins d’intuition. Plus de couverture. Une croissance plus ciblée.',
+    es: 'Menos suposiciones. Mejor cobertura. Crecimiento más enfocado.',
+  );
 
   /// Shared body copy for not-yet-designed product-tour stops. Kept
   /// deliberately generic — the real per-card explanations land when
@@ -1124,15 +1235,12 @@ class _BusinessOrientationFlowPageState
     // 9 — Demand radar / demand insight.
     _OrientationCardData(
       id: 'demand_radar',
-      layout: _OrientationCardLayout.placeholder,
+      layout: _OrientationCardLayout.regionRadarRich,
       icon: Icons.radar,
-      title: _Tr(
-        nl: 'Demand radar & inzicht',
-        en: 'Demand radar & insight',
-        fr: 'Radar de demande et analyse',
-        es: 'Radar de demanda e información',
-      ),
-      body: _placeholderBody,
+      title: _regionRadarTitle,
+      body: _regionRadarIntro,
+      portraitAsset: _card7RegionRadarTabletPortraitAsset,
+      landscapeAsset: _card7RegionRadarTabletLandscapeAsset,
     ),
     // 10 — Public booking link.
     _OrientationCardData(
@@ -1519,6 +1627,8 @@ class _BusinessOrientationFlowPageState
             currentCard.layout == _OrientationCardLayout.driverManagementRich;
         final bool isChironDocumentsCard =
             currentCard.layout == _OrientationCardLayout.chironDocumentsRich;
+        final bool isRegionRadarCard =
+            currentCard.layout == _OrientationCardLayout.regionRadarRich;
         final bool isWelcomeTabletHero =
             isWelcomeCard && (isTabletPortrait || isTabletLandscape);
         final bool isCentralCockpitTabletPortraitHero =
@@ -1537,6 +1647,8 @@ class _BusinessOrientationFlowPageState
             isDriverManagementCard && (isTabletPortrait || isTabletLandscape);
         final bool isChironDocumentsTabletHero =
             isChironDocumentsCard && (isTabletPortrait || isTabletLandscape);
+        final bool isRegionRadarTabletHero =
+            isRegionRadarCard && (isTabletPortrait || isTabletLandscape);
         final Color scaffoldBackground =
             (isWelcomeTabletHero ||
                 isCentralCockpitTabletPortraitHero ||
@@ -1544,7 +1656,8 @@ class _BusinessOrientationFlowPageState
                 isSubscriptionTabletHero ||
                 isVehiclesFleetTabletHero ||
                 isDriverManagementTabletHero ||
-                isChironDocumentsTabletHero)
+                isChironDocumentsTabletHero ||
+                isRegionRadarTabletHero)
             ? _heroBg
             : _bg;
 
@@ -1585,6 +1698,10 @@ class _BusinessOrientationFlowPageState
             isChironDocumentsCard && isTabletPortrait;
         final bool useChironDocumentsLandscapeFullHero =
             isChironDocumentsCard && isTabletLandscape;
+        final bool useRegionRadarPortraitFullHero =
+            isRegionRadarCard && isTabletPortrait;
+        final bool useRegionRadarLandscapeFullHero =
+            isRegionRadarCard && isTabletLandscape;
 
         // Keep only one Card 1 tablet-hero decoder active. Runs
         // post-frame so [MediaQuery] is stable and we do not call
@@ -1651,6 +1768,14 @@ class _BusinessOrientationFlowPageState
               if (useChironDocumentsLandscapeFullHero)
                 Positioned.fill(
                   child: _buildChironDocumentsTabletLandscapeFullViewportHero(),
+                ),
+              if (useRegionRadarPortraitFullHero)
+                Positioned.fill(
+                  child: _buildRegionRadarTabletPortraitFullViewportHero(),
+                ),
+              if (useRegionRadarLandscapeFullHero)
+                Positioned.fill(
+                  child: _buildRegionRadarTabletLandscapeFullViewportHero(),
                 ),
               // Foreground layer — the existing chrome + PageView
               // composition. Identical to the pre-refactor layout
@@ -1726,6 +1851,11 @@ class _BusinessOrientationFlowPageState
                               (isTabletPortrait || isTabletLandscape)) {
                             return const SizedBox.expand();
                           }
+                          if (card.layout ==
+                                  _OrientationCardLayout.regionRadarRich &&
+                              (isTabletPortrait || isTabletLandscape)) {
+                            return const SizedBox.expand();
+                          }
                           // Card 1 tablet portrait keeps the in-slot
                           // immersive video hero — bypass the 640 px
                           // generic card cap and anchor top-centre so
@@ -1768,7 +1898,9 @@ class _BusinessOrientationFlowPageState
                           useVehiclesFleetPortraitFullHero ||
                           useVehiclesFleetLandscapeFullHero ||
                           useChironDocumentsPortraitFullHero ||
-                          useChironDocumentsLandscapeFullHero,
+                          useChironDocumentsLandscapeFullHero ||
+                          useRegionRadarPortraitFullHero ||
+                          useRegionRadarLandscapeFullHero,
                     ),
                   ],
                 ),
@@ -2034,6 +2166,11 @@ class _BusinessOrientationFlowPageState
         // stable icon composition with the card's title + intro.
         return _buildOrientationCard(data, compact);
       case _OrientationCardLayout.chironDocumentsRich:
+        // Tablet portrait/landscape are short-circuited in [build]
+        // (bespoke PNG hero behind the Stack); phones fall back to the
+        // stable icon composition with the card's title + intro.
+        return _buildOrientationCard(data, compact);
+      case _OrientationCardLayout.regionRadarRich:
         // Tablet portrait/landscape are short-circuited in [build]
         // (bespoke PNG hero behind the Stack); phones fall back to the
         // stable icon composition with the card's title + intro.
@@ -3064,6 +3201,600 @@ class _BusinessOrientationFlowPageState
     );
   }
 
+  /// Per-language down-scale for the longer FR/ES Region Radar copy so
+  /// responsive sizes land smaller before the outer [FittedBox] engages.
+  double _regionRadarLangScale() {
+    switch (appLanguageNotifier.value) {
+      case AppLanguage.fr:
+      case AppLanguage.es:
+        return 0.92;
+      case AppLanguage.nl:
+      case AppLanguage.en:
+        return 1.0;
+    }
+  }
+
+  Widget _buildRegionRadarTabletPortraitFullViewportHero() {
+    return Stack(
+      fit: StackFit.expand,
+      children: <Widget>[
+        Image.asset(
+          _card7RegionRadarTabletPortraitAsset,
+          fit: BoxFit.fill,
+          alignment: Alignment.center,
+          errorBuilder: (ctx, error, stackTrace) {
+            debugPrint(
+              '[ORIENTATION_FLOW][REGION_RADAR_PORTRAIT_PNG_FAIL] '
+              'error=$error',
+            );
+            return _buildWelcomeMediaUltimateFallback();
+          },
+        ),
+        IgnorePointer(child: _buildRegionRadarTabletPortraitOverlay()),
+      ],
+    );
+  }
+
+  Widget _buildRegionRadarTabletLandscapeFullViewportHero() {
+    return Stack(
+      fit: StackFit.expand,
+      children: <Widget>[
+        Image.asset(
+          _card7RegionRadarTabletLandscapeAsset,
+          fit: BoxFit.fill,
+          alignment: Alignment.center,
+          errorBuilder: (ctx, error, stackTrace) {
+            debugPrint(
+              '[ORIENTATION_FLOW][REGION_RADAR_LANDSCAPE_PNG_FAIL] '
+              'error=$error',
+            );
+            return _buildWelcomeMediaUltimateFallback();
+          },
+        ),
+        IgnorePointer(child: _buildRegionRadarTabletLandscapeOverlay()),
+      ],
+    );
+  }
+
+  /// Region Radar portrait — title/intro in the top-right black safe
+  /// zone marked on the card7 artwork (away from logo and radar).
+  Widget _buildRegionRadarTabletPortraitOverlay() {
+    return LayoutBuilder(
+      builder: (ctx, constraints) {
+        final double w = constraints.maxWidth;
+        final double h = constraints.maxHeight;
+        if (h <= w) {
+          return const SizedBox.shrink();
+        }
+
+        const double panelLeft = 0.395;
+        const double panelTop = 0.038;
+        const double panelWidth = 0.535;
+        const double panelHeight = 0.112;
+        const double contentLeft = 0.033;
+        const double contentTop = 0.213;
+        const double contentWidth = 0.918;
+        const double contentHeight = 0.318;
+
+        return Stack(
+          children: <Widget>[
+            Positioned(
+              left: w * panelLeft,
+              top: h * panelTop,
+              width: w * panelWidth,
+              height: h * panelHeight,
+              child: _buildDemandRadarTextPanel(
+                zoneWidth: w * panelWidth,
+                zoneHeight: h * panelHeight,
+                isPortrait: true,
+              ),
+            ),
+            Positioned(
+              left: w * contentLeft,
+              top: h * contentTop,
+              width: w * contentWidth,
+              height: h * contentHeight,
+              child: _buildDemandRadarExplanationFrame(
+                zoneWidth: w * contentWidth,
+                zoneHeight: h * contentHeight,
+                isPortrait: true,
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  /// Region Radar landscape — title/intro in the top-center/right
+  /// black safe zone, away from the Fluxidi logo and radar visual.
+  Widget _buildRegionRadarTabletLandscapeOverlay() {
+    return LayoutBuilder(
+      builder: (ctx, constraints) {
+        final double w = constraints.maxWidth;
+        final double h = constraints.maxHeight;
+        if (w <= h) {
+          return const SizedBox.shrink();
+        }
+
+        const double panelLeft = 0.355;
+        const double panelTop = 0.063;
+        const double panelWidth = 0.585;
+        const double panelHeight = 0.143;
+        const double contentLeft = 0.019;
+        const double contentTop = 0.379;
+        const double contentWidth = 0.323;
+        const double contentHeight = 0.469;
+
+        return Stack(
+          children: <Widget>[
+            Positioned(
+              left: w * panelLeft,
+              top: h * panelTop,
+              width: w * panelWidth,
+              height: h * panelHeight,
+              child: _buildDemandRadarTextPanel(
+                zoneWidth: w * panelWidth,
+                zoneHeight: h * panelHeight,
+                isPortrait: false,
+              ),
+            ),
+            Positioned(
+              left: w * contentLeft,
+              top: h * contentTop,
+              width: w * contentWidth,
+              height: h * contentHeight,
+              child: _buildDemandRadarExplanationFrame(
+                zoneWidth: w * contentWidth,
+                zoneHeight: h * contentHeight,
+                isPortrait: false,
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  /// Framed title/intro panel for demand_radar only.
+  Widget _buildDemandRadarTextPanel({
+    required double zoneWidth,
+    required double zoneHeight,
+    required bool isPortrait,
+  }) {
+    final double langScale = _regionRadarLangScale();
+    final double titleSize = (isPortrait ? 32.0 : 33.0) * langScale;
+    final double introSize = (isPortrait ? 16.5 : 15.0) * langScale;
+    final EdgeInsets padding = isPortrait
+        ? const EdgeInsets.symmetric(horizontal: 22, vertical: 16)
+        : const EdgeInsets.symmetric(horizontal: 24, vertical: 12);
+
+    final Widget copy = Column(
+      mainAxisSize: MainAxisSize.min,
+      mainAxisAlignment: MainAxisAlignment.center,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        Text(
+          _t(_regionRadarTitle),
+          softWrap: true,
+          overflow: TextOverflow.visible,
+          style: TextStyle(
+            color: _gold,
+            fontSize: titleSize,
+            fontWeight: FontWeight.w900,
+            height: 1.06,
+            letterSpacing: 0.12,
+            shadows: <Shadow>[
+              Shadow(color: _gold.withOpacity(0.36), blurRadius: 14),
+              Shadow(
+                color: Colors.black.withOpacity(0.78),
+                blurRadius: 8,
+                offset: const Offset(0, 2),
+              ),
+            ],
+          ),
+        ),
+        SizedBox(height: isPortrait ? 5.0 : 4.0),
+        Text(
+          _t(_regionRadarIntro),
+          softWrap: true,
+          overflow: TextOverflow.visible,
+          style: TextStyle(
+            color: Colors.white.withOpacity(0.90),
+            fontSize: introSize,
+            fontWeight: FontWeight.w500,
+            height: isPortrait ? 1.14 : 1.12,
+            shadows: const <Shadow>[
+              Shadow(
+                color: Color(0xCC000000),
+                blurRadius: 8,
+                offset: Offset(0, 1),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+
+    final double innerWidth = zoneWidth - padding.horizontal;
+
+    return SizedBox(
+      width: zoneWidth,
+      height: zoneHeight,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: Colors.black.withOpacity(0.52),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: _gold.withOpacity(0.20)),
+          boxShadow: <BoxShadow>[
+            BoxShadow(
+              color: Colors.black.withOpacity(0.35),
+              blurRadius: 12,
+              offset: const Offset(0, 3),
+            ),
+          ],
+        ),
+        child: Padding(
+          padding: padding,
+          child: LayoutBuilder(
+            builder: (BuildContext context, BoxConstraints constraints) {
+              return SizedBox(
+                width: constraints.maxWidth,
+                height: constraints.maxHeight,
+                child: _regionRadarWholeBlockScaleDown(
+                  maxWidth: constraints.maxWidth,
+                  child: copy,
+                ),
+              );
+            },
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// One whole-block scale-down safety net for Region Radar panels.
+  /// Applies to the complete content composition — never to individual
+  /// text widgets, sentences, or lines.
+  Widget _regionRadarWholeBlockScaleDown({
+    required double maxWidth,
+    required Widget child,
+    Alignment alignment = Alignment.centerLeft,
+  }) {
+    return Align(
+      alignment: alignment,
+      child: FittedBox(
+        fit: BoxFit.scaleDown,
+        alignment: alignment,
+        child: SizedBox(width: maxWidth, child: child),
+      ),
+    );
+  }
+
+  /// One premium explanation panel inside the measured red content frame.
+  Widget _buildDemandRadarExplanationFrame({
+    required double zoneWidth,
+    required double zoneHeight,
+    required bool isPortrait,
+  }) {
+    return SizedBox(
+      width: zoneWidth,
+      height: zoneHeight,
+      child: _buildDemandRadarExplanationPanel(
+        zoneWidth: zoneWidth,
+        zoneHeight: zoneHeight,
+        isPortrait: isPortrait,
+      ),
+    );
+  }
+
+  Widget _buildDemandRadarExplanationPanel({
+    required double zoneWidth,
+    required double zoneHeight,
+    required bool isPortrait,
+  }) {
+    final double langScale = _regionRadarLangScale();
+    final EdgeInsets padding = isPortrait
+        ? const EdgeInsets.fromLTRB(14, 11, 14, 9)
+        : const EdgeInsets.fromLTRB(11, 8, 11, 6);
+    final double eyebrowSize = (isPortrait ? 11.0 : 10.0) * langScale;
+    final double headingSize = (isPortrait ? 25.0 : 21.0) * langScale;
+    final double introSize = (isPortrait ? 16.0 : 13.5) * langScale;
+    final double rowTitleSize = (isPortrait ? 17.5 : 14.5) * langScale;
+    final double rowBodySize = (isPortrait ? 15.5 : 13.0) * langScale;
+    final double closingSize = (isPortrait ? 16.0 : 13.5) * langScale;
+
+    final Widget eyebrow = Container(
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+      decoration: BoxDecoration(
+        color: _gold.withOpacity(0.10),
+        borderRadius: BorderRadius.circular(4),
+        border: Border.all(color: _gold.withOpacity(0.26)),
+      ),
+      child: Text(
+        _t(_regionRadarExplanationEyebrow),
+        softWrap: true,
+        overflow: TextOverflow.visible,
+        style: TextStyle(
+          color: _gold,
+          fontSize: eyebrowSize,
+          fontWeight: FontWeight.w700,
+          letterSpacing: 0.65,
+          height: 1.12,
+        ),
+      ),
+    );
+
+    final Widget heading = Text(
+      _t(_regionRadarExplanationHeading),
+      softWrap: true,
+      overflow: TextOverflow.visible,
+      style: TextStyle(
+        color: _gold,
+        fontSize: headingSize,
+        fontWeight: FontWeight.w900,
+        height: 1.08,
+        letterSpacing: 0.08,
+        shadows: const <Shadow>[
+          Shadow(color: Color(0xCC000000), blurRadius: 6, offset: Offset(0, 1)),
+        ],
+      ),
+    );
+
+    final Widget intro = Text(
+      _t(_regionRadarExplanationIntro),
+      softWrap: true,
+      overflow: TextOverflow.visible,
+      style: TextStyle(
+        color: Colors.white.withOpacity(0.88),
+        fontSize: introSize,
+        fontWeight: FontWeight.w500,
+        height: 1.14,
+        shadows: const <Shadow>[
+          Shadow(color: Color(0xCC000000), blurRadius: 6, offset: Offset(0, 1)),
+        ],
+      ),
+    );
+
+    final Widget closing = Text(
+      _t(_regionRadarExplanationClosing),
+      softWrap: true,
+      overflow: TextOverflow.visible,
+      style: TextStyle(
+        color: _gold.withOpacity(0.88),
+        fontSize: closingSize,
+        fontWeight: FontWeight.w700,
+        height: 1.12,
+        letterSpacing: 0.1,
+        shadows: const <Shadow>[
+          Shadow(color: Color(0xCC000000), blurRadius: 6, offset: Offset(0, 1)),
+        ],
+      ),
+    );
+
+    final List<Widget> featureRows = <Widget>[
+      for (int i = 0; i < _regionRadarExplanationFeatures.length; i++)
+        _buildDemandRadarExplanationFeatureRow(
+          _regionRadarExplanationFeatures[i],
+          titleSize: rowTitleSize,
+          bodySize: rowBodySize,
+          showDivider: i > 0,
+          compact: !isPortrait,
+        ),
+    ];
+
+    final List<Widget> spacedFeatureRows = <Widget>[];
+    for (int i = 0; i < featureRows.length; i++) {
+      if (i > 0) {
+        spacedFeatureRows.add(const SizedBox(height: 5.0));
+      }
+      spacedFeatureRows.add(featureRows[i]);
+    }
+
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: Colors.black.withOpacity(0.54),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: _gold.withOpacity(0.22)),
+        boxShadow: <BoxShadow>[
+          BoxShadow(
+            color: Colors.black.withOpacity(0.32),
+            blurRadius: 12,
+            offset: const Offset(0, 3),
+          ),
+        ],
+      ),
+      child: Padding(
+        padding: padding,
+        child: LayoutBuilder(
+          builder: (BuildContext context, BoxConstraints constraints) {
+            final double innerWidth = constraints.maxWidth;
+            final double innerHeight = constraints.maxHeight;
+
+            if (isPortrait) {
+              return SizedBox(
+                width: innerWidth,
+                height: innerHeight,
+                child: _buildDemandRadarExplanationPortraitBody(
+                  eyebrow: eyebrow,
+                  heading: heading,
+                  intro: intro,
+                  closing: closing,
+                  featureRows: featureRows,
+                ),
+              );
+            }
+
+            // Landscape — approved layout; do not change.
+            final Widget contentBlock = Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                eyebrow,
+                const SizedBox(height: 5),
+                heading,
+                const SizedBox(height: 5),
+                intro,
+                const SizedBox(height: 7),
+                ...spacedFeatureRows,
+                const SizedBox(height: 6),
+                closing,
+              ],
+            );
+
+            return SizedBox(
+              width: constraints.maxWidth,
+              height: constraints.maxHeight,
+              child: _regionRadarWholeBlockScaleDown(
+                maxWidth: innerWidth,
+                alignment: Alignment.topLeft,
+                child: contentBlock,
+              ),
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  /// Portrait-only explanation body — fills the approved frame height.
+  /// Left column anchors the footer low; right column spreads feature
+  /// rows evenly. Landscape uses a separate approved path.
+  Widget _buildDemandRadarExplanationPortraitBody({
+    required Widget eyebrow,
+    required Widget heading,
+    required Widget intro,
+    required Widget closing,
+    required List<Widget> featureRows,
+  }) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: <Widget>[
+        Expanded(
+          flex: 42,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              eyebrow,
+              const SizedBox(height: 7),
+              heading,
+              const SizedBox(height: 8),
+              intro,
+              const Spacer(flex: 2),
+              closing,
+            ],
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          flex: 58,
+          child: Column(
+            children: <Widget>[
+              for (int i = 0; i < featureRows.length; i++)
+                Expanded(
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: featureRows[i],
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildDemandRadarExplanationFeatureRow(
+    _OrientationBulletItem feature, {
+    required double titleSize,
+    required double bodySize,
+    required bool showDivider,
+    required bool compact,
+  }) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: <Widget>[
+        if (showDivider)
+          Padding(
+            padding: EdgeInsets.only(bottom: compact ? 4 : 5),
+            child: Divider(
+              color: _gold.withOpacity(0.14),
+              height: 1,
+              thickness: 1,
+            ),
+          ),
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Container(
+              width: compact ? 6.5 : 7,
+              height: compact ? 6.5 : 7,
+              margin: EdgeInsets.only(top: titleSize * 0.34),
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: _gold,
+                boxShadow: <BoxShadow>[
+                  BoxShadow(
+                    color: _gold.withOpacity(0.45),
+                    blurRadius: 8,
+                    spreadRadius: 1,
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: <Widget>[
+                  Text(
+                    _t(feature.title),
+                    softWrap: true,
+                    overflow: TextOverflow.visible,
+                    style: TextStyle(
+                      color: _gold,
+                      fontSize: titleSize,
+                      fontWeight: FontWeight.w800,
+                      height: 1.06,
+                      shadows: const <Shadow>[
+                        Shadow(
+                          color: Color(0xCC000000),
+                          blurRadius: 6,
+                          offset: Offset(0, 1),
+                        ),
+                      ],
+                    ),
+                  ),
+                  SizedBox(height: compact ? 2 : 3),
+                  Text(
+                    _t(feature.description),
+                    softWrap: true,
+                    overflow: TextOverflow.visible,
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.86),
+                      fontSize: bodySize,
+                      fontWeight: FontWeight.w500,
+                      height: 1.10,
+                      shadows: const <Shadow>[
+                        Shadow(
+                          color: Color(0xCC000000),
+                          blurRadius: 6,
+                          offset: Offset(0, 1),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
   // =================================================================
   // Card 3 — Subscription & scalability (bespoke tablet heroes).
   //
@@ -3466,14 +4197,39 @@ class _BusinessOrientationFlowPageState
   //
   // The card6 artwork carries the driver management screenshots and
   // Fluxidi wordmark. Flutter overlays only the localised title/intro
-  // (hero block) and a responsive framed feature panel of stacked
-  // gold-dot mini-cards, in measured per-orientation safe zones that
-  // avoid the driver faces, document controls and screenshots.
+  // (hero block) and one premium parent explanation panel with four
+  // evenly distributed feature rows in measured per-orientation safe
+  // zones that avoid the driver faces, document controls and
+  // screenshots.
+  // =================================================================
+
+  // =================================================================
+  // Card 7 — Drivers & documents (bespoke tablet heroes).
   //
-  // Portrait and landscape use separate measured panel builders.
-  // Every text block wraps in a [FittedBox] scale-down safety net so
-  // the longest NL/FR/ES copy can never raise a yellow/black overflow
-  // band; EN/NL render at the requested fixed sizes.
+  // Measured safe-zone frame ratios (FROZEN — do not move until the
+  // Region-Radar-style rebuild re-approves them). Artwork targets:
+  // portrait 1752×2800, landscape 2800×1752.
+  //
+  // Flutter overlays ONLY:
+  //   • top title/intro panel
+  //   • lower-left explanation / feature panel
+  //
+  // Dashboard screenshots + phone mockup are BAKED into the card6
+  // PNG — no separate Flutter Positioned widgets for visual areas.
+  //
+  // PORTRAIT title/intro panel:
+  //   left 0.455, top 0.060, width 0.500, height 0.150
+  // PORTRAIT explanation panel:
+  //   left 0.040, top 0.515, width 0.365, height 0.345
+  //
+  // LANDSCAPE title/intro panel:
+  //   left 0.445, top 0.070, width 0.460, height 0.150
+  // LANDSCAPE explanation panel:
+  //   left 0.018, top 0.385, width 0.320, height 0.430
+  //
+  // Visual/mockup areas (asset-only, approximate artwork zones):
+  //   portrait dashboard ~ left 0.10, top 0.22, width 0.85, height 0.30
+  //   portrait phone mockup ~ left 0.45, top 0.42, width 0.45, height 0.40
   // =================================================================
 
   /// Per-language down-scale for the longer FR/ES Card 6 copy so the
@@ -3552,12 +4308,28 @@ class _BusinessOrientationFlowPageState
         final double titleHeight = isPortrait ? 0.150 : 0.150;
         // Feature-panel safe zones: lower-left portrait free zone and
         // left-side landscape zone on the fixed driver artwork targets
-        // (portrait 1752x2800, landscape 2800x1752). All six rows and
-        // the footer live in ONE bounded rectangle away from screenshots.
+        // (portrait 1752x2800, landscape 2800x1752). Four feature rows
+        // live in ONE parent panel inside the bounded rectangle.
         final double panelLeft = isPortrait ? 0.040 : 0.018;
         final double panelTop = isPortrait ? 0.515 : 0.385;
         final double panelWidth = isPortrait ? 0.365 : 0.320;
         final double panelHeight = isPortrait ? 0.345 : 0.430;
+
+        if (kDebugMode) {
+          debugPrint(
+            '[ORIENTATION_FLOW][DRIVER_MGMT_FRAME] '
+            'orientation=${isPortrait ? 'portrait' : 'landscape'} '
+            'title(left=${titleLeft.toStringAsFixed(3)}, '
+            'top=${titleTop.toStringAsFixed(3)}, '
+            'width=${titleWidth.toStringAsFixed(3)}, '
+            'height=${titleHeight.toStringAsFixed(3)}) '
+            'explanation(left=${panelLeft.toStringAsFixed(3)}, '
+            'top=${panelTop.toStringAsFixed(3)}, '
+            'width=${panelWidth.toStringAsFixed(3)}, '
+            'height=${panelHeight.toStringAsFixed(3)}) '
+            'visuals=baked_card6_png',
+          );
+        }
 
         final double scale = _driverManagementLangScale()
             .clamp(0.90, 1.0)
@@ -3576,27 +4348,28 @@ class _BusinessOrientationFlowPageState
                 padding: isPortrait
                     ? const EdgeInsets.symmetric(horizontal: 4, vertical: 6)
                     : const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-                child: Align(
-                  alignment: Alignment.centerLeft,
-                  child: FittedBox(
-                    fit: BoxFit.scaleDown,
-                    alignment: Alignment.centerLeft,
-                    child: SizedBox(
-                      width: w * titleWidth,
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: <Widget>[
-                          _buildDriverManagementTitle(titleSize),
-                          SizedBox(height: isPortrait ? 8.0 : 10.0),
-                          _buildDriverManagementIntro(
-                            introSize,
-                            isPortrait ? 1.20 : 1.22,
-                          ),
-                        ],
+                child: LayoutBuilder(
+                  builder: (BuildContext context, BoxConstraints constraints) {
+                    return SizedBox(
+                      width: constraints.maxWidth,
+                      height: constraints.maxHeight,
+                      child: _regionRadarWholeBlockScaleDown(
+                        maxWidth: constraints.maxWidth,
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: <Widget>[
+                            _buildDriverManagementTitle(titleSize),
+                            SizedBox(height: isPortrait ? 8.0 : 10.0),
+                            _buildDriverManagementIntro(
+                              introSize,
+                              isPortrait ? 1.20 : 1.22,
+                            ),
+                          ],
+                        ),
                       ),
-                    ),
-                  ),
+                    );
+                  },
                 ),
               ),
             ),
@@ -3605,7 +4378,7 @@ class _BusinessOrientationFlowPageState
               top: h * panelTop,
               width: w * panelWidth,
               height: h * panelHeight,
-              child: _buildDriverManagementFeatureList(
+              child: _buildDriverManagementExplanationPanel(
                 zoneWidth: w * panelWidth,
                 zoneHeight: h * panelHeight,
                 isPortrait: isPortrait,
@@ -3657,111 +4430,112 @@ class _BusinessOrientationFlowPageState
     );
   }
 
-  /// Feature panel for Card 7 — one bounded lower-left safe rectangle.
-  /// All six framed rows share a single [Column] inside
-  /// [SingleChildScrollView] (emergency fallback for long translations).
-  /// No per-row [Positioned] widgets and no per-row [FittedBox] shrinkers.
-  Widget _buildDriverManagementFeatureList({
+  /// One premium explanation panel inside the measured safe frame.
+  /// Four feature rows share a single parent panel — Region-Radar-style.
+  Widget _buildDriverManagementExplanationPanel({
     required double zoneWidth,
     required double zoneHeight,
     required bool isPortrait,
   }) {
-    // Fixed readable sizes — same rhythm as the approved Vehicles card.
-    final double titleSize = isPortrait ? 18.0 : 16.0;
-    final double bodySize = isPortrait ? 14.0 : 12.5;
-    final double rowPaddingH = isPortrait ? 9.0 : 7.0;
-    final double rowPaddingV = isPortrait ? 5.0 : 4.0;
-    final double dotSize = isPortrait ? 6.5 : 6.0;
-
-    Widget buildRow(int index) {
-      return _buildDriverManagementFeatureRow(
-        _driverManagementFeatures[index],
-        titleSize: titleSize,
-        bodySize: bodySize,
-        dotSize: dotSize,
-        rowPaddingH: rowPaddingH,
-        rowPaddingV: rowPaddingV,
-      );
-    }
+    final double langScale = _driverManagementLangScale();
+    final EdgeInsets padding = isPortrait
+        ? const EdgeInsets.fromLTRB(12, 10, 12, 8)
+        : const EdgeInsets.fromLTRB(10, 8, 10, 6);
+    final double rowTitleSize = (isPortrait ? 17.5 : 15.5) * langScale;
+    final double rowBodySize = (isPortrait ? 15.5 : 13.5) * langScale;
 
     return SizedBox(
       width: zoneWidth,
       height: zoneHeight,
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          // Compact controlled gaps; scroll only if content exceeds zone.
-          final double rowGap = isPortrait ? 6.0 : 4.5;
-
-          final List<Widget> children = <Widget>[];
-          for (int i = 0; i < _driverManagementFeatures.length; i++) {
-            if (i > 0) {
-              children.add(SizedBox(height: rowGap));
-            }
-            children.add(buildRow(i));
-          }
-
-          return SingleChildScrollView(
-            physics: const ClampingScrollPhysics(),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: children,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: Colors.black.withOpacity(0.54),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: _gold.withOpacity(0.22)),
+          boxShadow: <BoxShadow>[
+            BoxShadow(
+              color: Colors.black.withOpacity(0.32),
+              blurRadius: 12,
+              offset: const Offset(0, 3),
             ),
-          );
-        },
+          ],
+        ),
+        child: Padding(
+          padding: padding,
+          child: Column(
+            children: <Widget>[
+              for (int i = 0; i < _driverManagementFeatures.length; i++)
+                Expanded(
+                  child: Padding(
+                    padding: EdgeInsets.symmetric(
+                      vertical: isPortrait ? 3.0 : 2.0,
+                    ),
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: _buildDriverManagementExplanationFeatureRow(
+                        _driverManagementFeatures[i],
+                        titleSize: rowTitleSize,
+                        bodySize: rowBodySize,
+                        showDivider: i > 0,
+                        compact: !isPortrait,
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
       ),
     );
   }
 
-  /// Single stacked mini-card: gold dot + gold feature title on the
-  /// first line, soft white body text below. Shared by both
-  /// orientations; the panels supply the orientation-specific sizing.
-  Widget _buildDriverManagementFeatureRow(
+  /// Internal feature row — gold dot, title, body. No per-row card border.
+  Widget _buildDriverManagementExplanationFeatureRow(
     _OrientationBulletItem feature, {
     required double titleSize,
     required double bodySize,
-    required double dotSize,
-    required double rowPaddingH,
-    required double rowPaddingV,
+    required bool showDivider,
+    required bool compact,
   }) {
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: Colors.black.withOpacity(0.18),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: _gold.withOpacity(0.12)),
-      ),
-      child: Padding(
-        padding: EdgeInsets.symmetric(
-          horizontal: rowPaddingH,
-          vertical: rowPaddingV,
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: <Widget>[
+        if (showDivider)
+          Padding(
+            padding: EdgeInsets.only(bottom: compact ? 5 : 6),
+            child: Divider(
+              color: _gold.withOpacity(0.14),
+              height: 1,
+              thickness: 1,
+            ),
+          ),
+        Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[
-            Row(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: <Widget>[
-                Container(
-                  width: dotSize,
-                  height: dotSize,
-                  margin: EdgeInsets.only(top: titleSize * 0.34),
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: _gold,
-                    boxShadow: <BoxShadow>[
-                      BoxShadow(
-                        color: _gold.withOpacity(0.45),
-                        blurRadius: 8,
-                        spreadRadius: 1,
-                      ),
-                    ],
+            Container(
+              width: compact ? 6.5 : 7,
+              height: compact ? 6.5 : 7,
+              margin: EdgeInsets.only(top: titleSize * 0.34),
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: _gold,
+                boxShadow: <BoxShadow>[
+                  BoxShadow(
+                    color: _gold.withOpacity(0.45),
+                    blurRadius: 8,
+                    spreadRadius: 1,
                   ),
-                ),
-                SizedBox(width: rowPaddingH * 0.72),
-                Flexible(
-                  child: Text(
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: <Widget>[
+                  Text(
                     _t(feature.title),
                     softWrap: true,
                     overflow: TextOverflow.visible,
@@ -3779,34 +4553,31 @@ class _BusinessOrientationFlowPageState
                       ],
                     ),
                   ),
-                ),
-              ],
-            ),
-            SizedBox(height: 1.0),
-            Padding(
-              padding: EdgeInsets.only(left: dotSize + rowPaddingH * 0.72),
-              child: Text(
-                _t(feature.description),
-                softWrap: true,
-                overflow: TextOverflow.visible,
-                style: TextStyle(
-                  color: Colors.white.withOpacity(0.86),
-                  fontSize: bodySize,
-                  fontWeight: FontWeight.w500,
-                  height: 1.08,
-                  shadows: const <Shadow>[
-                    Shadow(
-                      color: Color(0xCC000000),
-                      blurRadius: 6,
-                      offset: Offset(0, 1),
+                  SizedBox(height: compact ? 2 : 3),
+                  Text(
+                    _t(feature.description),
+                    softWrap: true,
+                    overflow: TextOverflow.visible,
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.86),
+                      fontSize: bodySize,
+                      fontWeight: FontWeight.w500,
+                      height: 1.10,
+                      shadows: const <Shadow>[
+                        Shadow(
+                          color: Color(0xCC000000),
+                          blurRadius: 6,
+                          offset: Offset(0, 1),
+                        ),
+                      ],
                     ),
-                  ],
-                ),
+                  ),
+                ],
               ),
             ),
           ],
         ),
-      ),
+      ],
     );
   }
 
@@ -5256,6 +6027,9 @@ enum _HeroVideoLane { none, portrait, landscape }
 ///   localised overlay: title/body zone, two info cards, and a
 ///   bottom plans strip) on tablet portrait/landscape; the generic
 ///   icon card on phones.
+/// * [regionRadarRich] — bespoke Region Radar card using card7 PNG
+///   artwork with one bounded text panel on tablet; the generic icon
+///   card on phones.
 /// * [iconCard] — the stable baseline icon + title + body composition.
 /// * [placeholder] — a safe, centred, scroll-friendly "coming next"
 ///   card for product-tour stops that are not yet designed. Never
@@ -5268,6 +6042,7 @@ enum _OrientationCardLayout {
   vehiclesFleet,
   driverManagementRich,
   chironDocumentsRich,
+  regionRadarRich,
   iconCard,
   placeholder,
 }
