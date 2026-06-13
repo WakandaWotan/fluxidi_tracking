@@ -421,6 +421,30 @@ class _BusinessOrientationFlowPageState
   static const String _card10AiDispatchTabletLandscapeAsset =
       'assets/fluxidi/onboarding/card10_welcome_tablet_landscape_bg.png';
 
+  /// Card 8 tablet PNGs — Driver View / Chauffeurcockpit. The driver
+  /// dashboard visual is baked into the artwork; Flutter overlays
+  /// measured premium panels in dark safe zones.
+  static const String _card8DriverViewTabletPortraitAsset =
+      'assets/fluxidi/onboarding/card8_welcome_tablet_portrait_bg.png';
+  static const String _card8DriverViewTabletLandscapeAsset =
+      'assets/fluxidi/onboarding/card8_welcome_tablet_landscape_bg.png';
+
+  /// Card 11 tablet PNGs — Calculator & ride pricing. The calculator
+  /// visual is baked into the artwork; Flutter overlays measured
+  /// premium panels in dark safe zones.
+  static const String _card11CalculatorTabletPortraitAsset =
+      'assets/fluxidi/onboarding/card11_welcome_tablet_portrait_bg.png';
+  static const String _card11CalculatorTabletLandscapeAsset =
+      'assets/fluxidi/onboarding/card11_welcome_tablet_landscape_bg.png';
+
+  /// Card 12 tablet PNGs — Driver receipts, history & documents. The
+  /// in-cockpit tablet visual is baked into the artwork; Flutter
+  /// overlays measured premium panels in dark safe zones.
+  static const String _card12DriverReceiptsTabletPortraitAsset =
+      'assets/fluxidi/onboarding/card12_welcome_tablet_portrait_bg.png';
+  static const String _card12DriverReceiptsTabletLandscapeAsset =
+      'assets/fluxidi/onboarding/card12_welcome_tablet_landscape_bg.png';
+
   static const _Tr _chironDocumentsTitle = _Tr(
     nl: 'Chiron & rittenregister',
     en: 'Chiron & ride register',
@@ -1046,6 +1070,416 @@ class _BusinessOrientationFlowPageState
     es: 'Menos trabajo manual. Planificación más rápida. Más control.',
   );
 
+  // ---------------------------------------------------------------
+  // Card 12 — Driver View / Chauffeurcockpit.
+  // ---------------------------------------------------------------
+
+  static const _Tr _driverViewTitle = _Tr(
+    nl: 'Chauffeurcockpit',
+    en: 'Driver cockpit',
+    fr: 'Cockpit chauffeur',
+    es: 'Cockpit del conductor',
+  );
+
+  static const _Tr _driverViewSubtitle = _Tr(
+    nl:
+        'Geef chauffeurs één duidelijke werkplek voor ritten, navigatie, '
+        'documenten en snelle acties.',
+    en:
+        'Give drivers one clear workspace for rides, navigation, documents '
+        'and quick actions.',
+    fr:
+        'Offrez aux chauffeurs un espace clair pour courses, navigation, '
+        'documents et actions rapides.',
+    es:
+        'Dé a los conductores un espacio claro para viajes, navegación, '
+        'documentos y acciones rápidas.',
+  );
+
+  static const _Tr _driverViewExplanationEyebrow = _Tr(
+    nl: 'CHAUFFEURWERKPLEK',
+    en: 'DRIVER WORKSPACE',
+    fr: 'ESPACE CHAUFFEUR',
+    es: 'ESPACIO DEL CONDUCTOR',
+  );
+
+  static const _Tr _driverViewExplanationHeading = _Tr(
+    nl: 'Alles klaar voor elke rit.',
+    en: 'Everything ready for every ride.',
+    fr: 'Tout est prêt pour chaque course.',
+    es: 'Todo listo para cada viaje.',
+  );
+
+  static const _Tr _driverViewExplanationIntro = _Tr(
+    nl:
+        'De chauffeur ziet planning, volgende rit, route-info en dagelijkse '
+        'tools in één overzichtelijke cockpit.',
+    en:
+        'The driver sees planning, next ride, route information and daily '
+        'tools in one clear cockpit.',
+    fr:
+        'Le chauffeur voit planning, prochaine course, itinéraire et outils '
+        'quotidiens dans un cockpit clair.',
+    es:
+        'El conductor ve planificación, próximo viaje, ruta y herramientas '
+        'diarias en un cockpit claro.',
+  );
+
+  static const List<_OrientationBulletItem>
+  _driverViewExplanationFeatures = <_OrientationBulletItem>[
+    _OrientationBulletItem(
+      title: _Tr(
+        nl: 'Live ritinformatie',
+        en: 'Live ride info',
+        fr: 'Infos course en direct',
+        es: 'Información en vivo',
+      ),
+      description: _Tr(
+        nl: 'Bekijk volgende rit, status, klantinfo en route in één scherm.',
+        en:
+            'View next ride, status, customer details and route in one '
+            'screen.',
+        fr:
+            'Consultez prochaine course, statut, client et itinéraire sur '
+            'un seul écran.',
+        es:
+            'Vea próximo viaje, estado, cliente y ruta en una sola '
+            'pantalla.',
+      ),
+    ),
+    _OrientationBulletItem(
+      title: _Tr(
+        nl: 'Direct navigeren',
+        en: 'Direct navigation',
+        fr: 'Navigation directe',
+        es: 'Navegación directa',
+      ),
+      description: _Tr(
+        nl:
+            'Open navigatie of ritdetails zonder te zoeken tijdens het '
+            'werk.',
+        en: 'Open navigation or ride details without searching during work.',
+        fr:
+            'Ouvrez navigation ou détails de course sans chercher pendant '
+            'le service.',
+        es:
+            'Abra navegación o detalles del viaje sin buscar durante el '
+            'servicio.',
+      ),
+    ),
+    _OrientationBulletItem(
+      title: _Tr(
+        nl: 'Snelle tools',
+        en: 'Quick tools',
+        fr: 'Outils rapides',
+        es: 'Herramientas rápidas',
+      ),
+      description: _Tr(
+        nl:
+            'Straatrit, calculator, bonnetjes, documenten en historiek '
+            'binnen handbereik.',
+        en:
+            'Street ride, calculator, receipts, documents and history '
+            'within reach.',
+        fr:
+            'Course directe, calculateur, reçus, documents et historique à '
+            'portée de main.',
+        es:
+            'Viaje directo, calculadora, recibos, documentos e historial '
+            'al alcance.',
+      ),
+    ),
+    _OrientationBulletItem(
+      title: _Tr(
+        nl: 'Meer rust onderweg',
+        en: 'More focus on the road',
+        fr: 'Plus de calme en route',
+        es: 'Más calma en ruta',
+      ),
+      description: _Tr(
+        nl: 'Minder schakelen tussen apps, meer focus op klant en rit.',
+        en:
+            'Less switching between apps, more focus on the customer and '
+            'ride.',
+        fr:
+            'Moins de changements d\u2019apps, plus de focus sur le client '
+            'et la course.',
+        es: 'Menos cambios entre apps, más foco en el cliente y el viaje.',
+      ),
+    ),
+  ];
+
+  static const _Tr _driverViewExplanationClosing = _Tr(
+    nl: 'Eén cockpit. Minder zoeken. Meer controle onderweg.',
+    en: 'One cockpit. Less searching. More control on the road.',
+    fr: 'Un cockpit. Moins de recherche. Plus de contrôle en route.',
+    es: 'Un cockpit. Menos búsqueda. Más control en ruta.',
+  );
+
+  // ---------------------------------------------------------------
+  // Card 13 — Calculator & ride pricing.
+  // ---------------------------------------------------------------
+
+  static const _Tr _calculatorTitle = _Tr(
+    nl: 'Calculator & ritprijzen',
+    en: 'Calculator & ride pricing',
+    fr: 'Calculateur & prix de course',
+    es: 'Calculadora y precios',
+  );
+
+  static const _Tr _calculatorSubtitle = _Tr(
+    nl:
+        'Bereken taxi-, luchthaven- en vaste ritprijzen vanuit één '
+        'professionele flow.',
+    en:
+        'Calculate taxi, airport and fixed ride prices from one '
+        'professional flow.',
+    fr:
+        'Calculez les prix taxi, aéroport et forfaitaires dans un flux '
+        'professionnel.',
+    es:
+        'Calcule precios de taxi, aeropuerto y tarifas fijas desde un '
+        'flujo profesional.',
+  );
+
+  static const _Tr _calculatorExplanationEyebrow = _Tr(
+    nl: 'RITPRIJS & BOEKING',
+    en: 'FARE CALCULATION',
+    fr: 'PRIX & RÉSERVATION',
+    es: 'PRECIO Y RESERVA',
+  );
+
+  static const _Tr _calculatorExplanationHeading = _Tr(
+    nl: 'Van prijsberekening naar boeking in één stap.',
+    en: 'From fare calculation to booking in one step.',
+    fr: 'Du calcul du prix à la réservation en une étape.',
+    es: 'Del cálculo del precio a la reserva en un paso.',
+  );
+
+  static const _Tr _calculatorExplanationIntro = _Tr(
+    nl:
+        'Fluxidi helpt duidelijke ritprijzen maken, zodat klanten sneller '
+        'een correcte offerte en boekingsflow krijgen.',
+    en:
+        'Fluxidi helps build clear ride prices, so customers get a correct '
+        'quote and booking flow faster.',
+    fr:
+        'Fluxidi aide à créer des prix clairs, pour donner plus vite un '
+        'devis correct et un parcours de réservation.',
+    es:
+        'Fluxidi ayuda a crear precios claros, para que el cliente reciba '
+        'antes una oferta correcta y pueda reservar.',
+  );
+
+  static const List<_OrientationBulletItem>
+  _calculatorExplanationFeatures = <_OrientationBulletItem>[
+    _OrientationBulletItem(
+      title: _Tr(
+        nl: 'Taxi & luchthaven',
+        en: 'Taxi & airport',
+        fr: 'Taxi & aéroport',
+        es: 'Taxi y aeropuerto',
+      ),
+      description: _Tr(
+        nl:
+            'Bereken gewone ritten, luchthaventransfers en terugritten met '
+            'duidelijke invoer.',
+        en:
+            'Calculate regular rides, airport transfers and return flows '
+            'with clear input.',
+        fr:
+            'Calculez courses classiques, transferts aéroport et retours '
+            'avec une saisie claire.',
+        es:
+            'Calcule viajes normales, traslados al aeropuerto y vueltas '
+            'con datos claros.',
+      ),
+    ),
+    _OrientationBulletItem(
+      title: _Tr(
+        nl: 'Slimme prijslogica',
+        en: 'Smart pricing',
+        fr: 'Prix intelligents',
+        es: 'Precio inteligente',
+      ),
+      description: _Tr(
+        nl:
+            'Neem afstand, tijd, service, voertuigtype, wachttijd en '
+            'extra\u2019s mee.',
+        en:
+            'Include distance, time, service, vehicle type, waiting time '
+            'and extras.',
+        fr:
+            'Incluez distance, durée, service, véhicule, attente et '
+            'options.',
+        es:
+            'Incluya distancia, tiempo, servicio, vehículo, espera y '
+            'extras.',
+      ),
+    ),
+    _OrientationBulletItem(
+      title: _Tr(
+        nl: 'Vaste tarieven',
+        en: 'Fixed rates',
+        fr: 'Tarifs fixes',
+        es: 'Tarifas fijas',
+      ),
+      description: _Tr(
+        nl:
+            'Gebruik bedrijfsinstellingen en vaste prijzen voor voorspelbare '
+            'offertes.',
+        en: 'Use company settings and fixed prices for predictable quotes.',
+        fr:
+            'Utilisez les réglages d\u2019entreprise et les forfaits pour '
+            'des devis prévisibles.',
+        es:
+            'Use ajustes de empresa y precios fijos para ofertas '
+            'previsibles.',
+      ),
+    ),
+    _OrientationBulletItem(
+      title: _Tr(
+        nl: 'Klaar om te boeken',
+        en: 'Ready to book',
+        fr: 'Prêt à réserver',
+        es: 'Listo para reservar',
+      ),
+      description: _Tr(
+        nl:
+            'Zet een berekende prijs direct om naar een ritaanvraag of '
+            'boeking.',
+        en: 'Turn a calculated fare directly into a ride request or booking.',
+        fr:
+            'Transformez le prix calculé en demande de course ou '
+            'réservation.',
+        es:
+            'Convierta el precio calculado directamente en solicitud o '
+            'reserva.',
+      ),
+    ),
+  ];
+
+  static const _Tr _calculatorExplanationClosing = _Tr(
+    nl: 'Minder manueel werk. Duidelijke prijzen. Sneller boeken.',
+    en: 'Less manual work. Clear prices. Faster bookings.',
+    fr: 'Moins de manuel. Des prix clairs. Des réservations plus rapides.',
+    es: 'Menos trabajo manual. Precios claros. Reservas más rápidas.',
+  );
+
+  // ---------------------------------------------------------------
+  // Card 14 — Ride receipts, history & documents (driver cockpit).
+  // ---------------------------------------------------------------
+
+  static const _Tr _driverReceiptsTitle = _Tr(
+    nl: 'Ritbonnen, historiek & documenten',
+    en: 'Receipts, history & documents',
+    fr: 'Reçus, historique & documents',
+    es: 'Recibos, historial y documentos',
+  );
+
+  static const _Tr _driverReceiptsSubtitle = _Tr(
+    nl:
+        'Geef chauffeurs één duidelijke plek voor ritbonnen, vorige ritten '
+        'en documenten.',
+    en:
+        'Give drivers one clear place for receipts, previous rides and '
+        'documents.',
+    fr:
+        'Donnez aux chauffeurs un espace clair pour reçus, courses passées '
+        'et documents.',
+    es:
+        'Dé a los conductores un lugar claro para recibos, viajes '
+        'anteriores y documentos.',
+  );
+
+  static const _Tr _driverReceiptsExplanationEyebrow = _Tr(
+    nl: 'CHAUFFEURADMINISTRATIE',
+    en: 'DRIVER ADMINISTRATION',
+    fr: 'ADMINISTRATION CHAUFFEUR',
+    es: 'ADMINISTRACIÓN DEL CONDUCTOR',
+  );
+
+  static const _Tr _driverReceiptsExplanationHeading = _Tr(
+    nl: 'Alles terugvinden zonder zoeken.',
+    en: 'Find everything without searching.',
+    fr: 'Tout retrouver sans chercher.',
+    es: 'Encuentre todo sin buscar.',
+  );
+
+  static const _Tr _driverReceiptsExplanationIntro = _Tr(
+    nl:
+        'De chauffeur opent ritbonnen, historiek en documenten rechtstreeks '
+        'vanuit zijn cockpit.',
+    en:
+        'The driver opens receipts, history and documents directly from the '
+        'cockpit.',
+    fr:
+        'Le chauffeur ouvre reçus, historique et documents directement '
+        'depuis son cockpit.',
+    es:
+        'El conductor abre recibos, historial y documentos directamente '
+        'desde su cockpit.',
+  );
+
+  static const List<_OrientationBulletItem> _driverReceiptsExplanationFeatures =
+      <_OrientationBulletItem>[
+        _OrientationBulletItem(
+          title: _Tr(
+            nl: 'Ritbonnen bij de hand',
+            en: 'Receipts at hand',
+            fr: 'Reçus à portée de main',
+            es: 'Recibos a mano',
+          ),
+          description: _Tr(
+            nl: 'Bekijk bedragen, ritdetails en bonnen per uitgevoerde rit.',
+            en: 'View amounts, ride details and receipts per completed ride.',
+            fr: 'Consultez montants, détails et reçus par course terminée.',
+            es: 'Consulte importes, detalles y recibos por viaje realizado.',
+          ),
+        ),
+        _OrientationBulletItem(
+          title: _Tr(
+            nl: 'Historiek per chauffeur',
+            en: 'Driver ride history',
+            fr: 'Historique chauffeur',
+            es: 'Historial del conductor',
+          ),
+          description: _Tr(
+            nl: 'Controleer vorige ritten, tijden, routes en betalingen.',
+            en: 'Check previous rides, times, routes and payments.',
+            fr: 'Vérifiez courses passées, horaires, trajets et paiements.',
+            es: 'Revise viajes anteriores, horarios, rutas y pagos.',
+          ),
+        ),
+        _OrientationBulletItem(
+          title: _Tr(
+            nl: 'Documenten overzichtelijk',
+            en: 'Documents in order',
+            fr: 'Documents organisés',
+            es: 'Documentos ordenados',
+          ),
+          description: _Tr(
+            nl:
+                'Rijbewijs, vergunningen en chauffeursdocumenten blijven '
+                'bereikbaar.',
+            en: 'Licence, permits and driver documents stay accessible.',
+            fr:
+                'Permis, autorisations et documents chauffeur restent '
+                'accessibles.',
+            es:
+                'Licencia, permisos y documentos del conductor siempre '
+                'accesibles.',
+          ),
+        ),
+      ];
+
+  static const _Tr _driverReceiptsExplanationClosing = _Tr(
+    nl: 'Minder zoeken. Sneller opvolgen. Meer rust onderweg.',
+    en: 'Less searching. Faster follow-up. More calm on the road.',
+    fr: 'Moins de recherche. Suivi plus rapide. Plus de calme en route.',
+    es: 'Menos búsqueda. Seguimiento más rápido. Más calma en ruta.',
+  );
+
   /// Shared body copy for not-yet-designed product-tour stops. Kept
   /// deliberately generic — the real per-card explanations land when
   /// each card graduates from [_OrientationCardLayout.placeholder] to
@@ -1534,44 +1968,36 @@ class _BusinessOrientationFlowPageState
       portraitAsset: _card10AiDispatchTabletPortraitAsset,
       landscapeAsset: _card10AiDispatchTabletLandscapeAsset,
     ),
-    // 12 — Driver view.
+    // 12 — Driver View / Chauffeurcockpit (bespoke PNG + measured panels).
     _OrientationCardData(
       id: 'driver_view',
-      layout: _OrientationCardLayout.placeholder,
+      layout: _OrientationCardLayout.driverViewRich,
       icon: Icons.drive_eta_outlined,
-      title: _Tr(
-        nl: 'Chauffeursweergave',
-        en: 'Driver view',
-        fr: 'Vue chauffeur',
-        es: 'Vista del conductor',
-      ),
-      body: _placeholderBody,
+      title: _driverViewTitle,
+      body: _driverViewSubtitle,
+      portraitAsset: _card8DriverViewTabletPortraitAsset,
+      landscapeAsset: _card8DriverViewTabletLandscapeAsset,
     ),
-    // 13 — Calculator, Streetride & driver rides.
+    // 13 — Calculator & ride pricing (bespoke PNG + measured panels).
     _OrientationCardData(
       id: 'calculator_streetride',
-      layout: _OrientationCardLayout.placeholder,
+      layout: _OrientationCardLayout.calculatorRich,
       icon: Icons.calculate_outlined,
-      title: _Tr(
-        nl: 'Calculator, Streetride & chauffeursritten',
-        en: 'Calculator, Streetride & driver rides',
-        fr: 'Calculateur, Streetride et courses chauffeur',
-        es: 'Calculadora, Streetride y viajes del conductor',
-      ),
-      body: _placeholderBody,
+      title: _calculatorTitle,
+      body: _calculatorSubtitle,
+      portraitAsset: _card11CalculatorTabletPortraitAsset,
+      landscapeAsset: _card11CalculatorTabletLandscapeAsset,
     ),
-    // 14 — Ride receipts, history & documents.
+    // 14 — Ride receipts, history & documents (bespoke PNG + measured
+    // panels).
     _OrientationCardData(
       id: 'ride_receipts',
-      layout: _OrientationCardLayout.placeholder,
+      layout: _OrientationCardLayout.driverReceiptsRich,
       icon: Icons.receipt_long_outlined,
-      title: _Tr(
-        nl: 'Ritbonnen, geschiedenis & documenten',
-        en: 'Ride receipts, history & documents',
-        fr: 'Reçus de course, historique et documents',
-        es: 'Recibos de viaje, historial y documentos',
-      ),
-      body: _placeholderBody,
+      title: _driverReceiptsTitle,
+      body: _driverReceiptsSubtitle,
+      portraitAsset: _card12DriverReceiptsTabletPortraitAsset,
+      landscapeAsset: _card12DriverReceiptsTabletLandscapeAsset,
     ),
     // 15 — Activate your customers / share your link.
     _OrientationCardData(
@@ -1899,6 +2325,12 @@ class _BusinessOrientationFlowPageState
             currentCard.layout == _OrientationCardLayout.publicBookingLinkRich;
         final bool isAiDispatchCard =
             currentCard.layout == _OrientationCardLayout.aiDispatchRich;
+        final bool isDriverViewCard =
+            currentCard.layout == _OrientationCardLayout.driverViewRich;
+        final bool isCalculatorCard =
+            currentCard.layout == _OrientationCardLayout.calculatorRich;
+        final bool isDriverReceiptsCard =
+            currentCard.layout == _OrientationCardLayout.driverReceiptsRich;
         final bool isWelcomeTabletHero =
             isWelcomeCard && (isTabletPortrait || isTabletLandscape);
         final bool isCentralCockpitTabletPortraitHero =
@@ -1923,6 +2355,12 @@ class _BusinessOrientationFlowPageState
             isPublicBookingLinkCard && (isTabletPortrait || isTabletLandscape);
         final bool isAiDispatchTabletHero =
             isAiDispatchCard && (isTabletPortrait || isTabletLandscape);
+        final bool isDriverViewTabletHero =
+            isDriverViewCard && (isTabletPortrait || isTabletLandscape);
+        final bool isCalculatorTabletHero =
+            isCalculatorCard && (isTabletPortrait || isTabletLandscape);
+        final bool isDriverReceiptsTabletHero =
+            isDriverReceiptsCard && (isTabletPortrait || isTabletLandscape);
         final Color scaffoldBackground =
             (isWelcomeTabletHero ||
                 isCentralCockpitTabletPortraitHero ||
@@ -1933,7 +2371,10 @@ class _BusinessOrientationFlowPageState
                 isChironDocumentsTabletHero ||
                 isRegionRadarTabletHero ||
                 isPublicBookingLinkTabletHero ||
-                isAiDispatchTabletHero)
+                isAiDispatchTabletHero ||
+                isDriverViewTabletHero ||
+                isCalculatorTabletHero ||
+                isDriverReceiptsTabletHero)
             ? _heroBg
             : _bg;
 
@@ -1986,6 +2427,18 @@ class _BusinessOrientationFlowPageState
             isAiDispatchCard && isTabletPortrait;
         final bool useAiDispatchLandscapeFullHero =
             isAiDispatchCard && isTabletLandscape;
+        final bool useDriverViewPortraitFullHero =
+            isDriverViewCard && isTabletPortrait;
+        final bool useDriverViewLandscapeFullHero =
+            isDriverViewCard && isTabletLandscape;
+        final bool useCalculatorPortraitFullHero =
+            isCalculatorCard && isTabletPortrait;
+        final bool useCalculatorLandscapeFullHero =
+            isCalculatorCard && isTabletLandscape;
+        final bool useDriverReceiptsPortraitFullHero =
+            isDriverReceiptsCard && isTabletPortrait;
+        final bool useDriverReceiptsLandscapeFullHero =
+            isDriverReceiptsCard && isTabletLandscape;
 
         // Keep only one Card 1 tablet-hero decoder active. Runs
         // post-frame so [MediaQuery] is stable and we do not call
@@ -2079,6 +2532,30 @@ class _BusinessOrientationFlowPageState
                 Positioned.fill(
                   child: _buildAiDispatchTabletLandscapeFullViewportHero(),
                 ),
+              if (useDriverViewPortraitFullHero)
+                Positioned.fill(
+                  child: _buildDriverViewTabletPortraitFullViewportHero(),
+                ),
+              if (useDriverViewLandscapeFullHero)
+                Positioned.fill(
+                  child: _buildDriverViewTabletLandscapeFullViewportHero(),
+                ),
+              if (useCalculatorPortraitFullHero)
+                Positioned.fill(
+                  child: _buildCalculatorTabletPortraitFullViewportHero(),
+                ),
+              if (useCalculatorLandscapeFullHero)
+                Positioned.fill(
+                  child: _buildCalculatorTabletLandscapeFullViewportHero(),
+                ),
+              if (useDriverReceiptsPortraitFullHero)
+                Positioned.fill(
+                  child: _buildDriverReceiptsTabletPortraitFullViewportHero(),
+                ),
+              if (useDriverReceiptsLandscapeFullHero)
+                Positioned.fill(
+                  child: _buildDriverReceiptsTabletLandscapeFullViewportHero(),
+                ),
               // Foreground layer — the existing chrome + PageView
               // composition. Identical to the pre-refactor layout
               // for portrait, phones, and Cards 2-7. For Card 1 in
@@ -2169,6 +2646,21 @@ class _BusinessOrientationFlowPageState
                               (isTabletPortrait || isTabletLandscape)) {
                             return const SizedBox.expand();
                           }
+                          if (card.layout ==
+                                  _OrientationCardLayout.driverViewRich &&
+                              (isTabletPortrait || isTabletLandscape)) {
+                            return const SizedBox.expand();
+                          }
+                          if (card.layout ==
+                                  _OrientationCardLayout.calculatorRich &&
+                              (isTabletPortrait || isTabletLandscape)) {
+                            return const SizedBox.expand();
+                          }
+                          if (card.layout ==
+                                  _OrientationCardLayout.driverReceiptsRich &&
+                              (isTabletPortrait || isTabletLandscape)) {
+                            return const SizedBox.expand();
+                          }
                           // Card 1 tablet portrait keeps the in-slot
                           // immersive video hero — bypass the 640 px
                           // generic card cap and anchor top-centre so
@@ -2217,7 +2709,11 @@ class _BusinessOrientationFlowPageState
                           usePublicBookingLinkPortraitFullHero ||
                           usePublicBookingLinkLandscapeFullHero ||
                           useAiDispatchPortraitFullHero ||
-                          useAiDispatchLandscapeFullHero,
+                          useAiDispatchLandscapeFullHero ||
+                          useDriverViewPortraitFullHero ||
+                          useDriverViewLandscapeFullHero ||
+                          useCalculatorPortraitFullHero ||
+                          useCalculatorLandscapeFullHero,
                     ),
                   ],
                 ),
@@ -2498,6 +2994,21 @@ class _BusinessOrientationFlowPageState
         // stable icon composition with the card's title + intro.
         return _buildOrientationCard(data, compact);
       case _OrientationCardLayout.aiDispatchRich:
+        // Tablet portrait/landscape are short-circuited in [build]
+        // (bespoke PNG hero behind the Stack); phones fall back to the
+        // stable icon composition with the card's title + intro.
+        return _buildOrientationCard(data, compact);
+      case _OrientationCardLayout.driverViewRich:
+        // Tablet portrait/landscape are short-circuited in [build]
+        // (bespoke PNG hero behind the Stack); phones fall back to the
+        // stable icon composition with the card's title + intro.
+        return _buildOrientationCard(data, compact);
+      case _OrientationCardLayout.calculatorRich:
+        // Tablet portrait/landscape are short-circuited in [build]
+        // (bespoke PNG hero behind the Stack); phones fall back to the
+        // stable icon composition with the card's title + intro.
+        return _buildOrientationCard(data, compact);
+      case _OrientationCardLayout.driverReceiptsRich:
         // Tablet portrait/landscape are short-circuited in [build]
         // (bespoke PNG hero behind the Stack); phones fall back to the
         // stable icon composition with the card's title + intro.
@@ -5355,6 +5866,1678 @@ class _BusinessOrientationFlowPageState
   }
 
   // =================================================================
+  // Card 12 — Driver View / Chauffeurcockpit (bespoke tablet heroes).
+  // Card8 artwork carries the driver dashboard visual; Flutter
+  // overlays measured premium panels in dark safe zones.
+  //
+  // PORTRAIT title frame (frozen):
+  //   left 0.368, top 0.021, width 0.590, height 0.177
+  // PORTRAIT explanation frame (frozen):
+  //   left 0.012, top 0.199, width 0.259, height 0.722
+  // LANDSCAPE title frame (frozen):
+  //   left 0.352, top 0.050, width 0.610, height 0.056
+  // LANDSCAPE explanation frame (frozen):
+  //   left 0.011, top 0.371, width 0.332, height 0.523
+  // =================================================================
+
+  double _driverViewLangScale() {
+    switch (appLanguageNotifier.value) {
+      case AppLanguage.fr:
+      case AppLanguage.es:
+        return 0.92;
+      case AppLanguage.nl:
+      case AppLanguage.en:
+        return 1.0;
+    }
+  }
+
+  /// Whole-block scale-down safety for Driver View only.
+  Widget _driverViewWholeBlockScaleDown({
+    required double maxWidth,
+    required Widget child,
+    Alignment alignment = Alignment.topLeft,
+  }) {
+    return Align(
+      alignment: alignment,
+      child: FittedBox(
+        fit: BoxFit.scaleDown,
+        alignment: alignment,
+        child: SizedBox(width: maxWidth, child: child),
+      ),
+    );
+  }
+
+  BoxDecoration _driverViewPanelDecoration() {
+    return BoxDecoration(
+      color: Colors.black.withOpacity(0.54),
+      borderRadius: BorderRadius.circular(14),
+      border: Border.all(color: _gold.withOpacity(0.22)),
+      boxShadow: <BoxShadow>[
+        BoxShadow(
+          color: Colors.black.withOpacity(0.32),
+          blurRadius: 12,
+          offset: const Offset(0, 3),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildDriverViewTabletPortraitFullViewportHero() {
+    return Stack(
+      fit: StackFit.expand,
+      children: <Widget>[
+        Image.asset(
+          _card8DriverViewTabletPortraitAsset,
+          fit: BoxFit.fill,
+          alignment: Alignment.center,
+          errorBuilder: (ctx, error, stackTrace) {
+            debugPrint(
+              '[ORIENTATION_FLOW][DRIVER_VIEW_PORTRAIT_PNG_FAIL] '
+              'error=$error',
+            );
+            return _buildWelcomeMediaUltimateFallback();
+          },
+        ),
+        IgnorePointer(child: _buildDriverViewTabletPortraitOverlay()),
+      ],
+    );
+  }
+
+  Widget _buildDriverViewTabletLandscapeFullViewportHero() {
+    return Stack(
+      fit: StackFit.expand,
+      children: <Widget>[
+        Image.asset(
+          _card8DriverViewTabletLandscapeAsset,
+          fit: BoxFit.fill,
+          alignment: Alignment.center,
+          errorBuilder: (ctx, error, stackTrace) {
+            debugPrint(
+              '[ORIENTATION_FLOW][DRIVER_VIEW_LANDSCAPE_PNG_FAIL] '
+              'error=$error',
+            );
+            return _buildWelcomeMediaUltimateFallback();
+          },
+        ),
+        IgnorePointer(child: _buildDriverViewTabletLandscapeOverlay()),
+      ],
+    );
+  }
+
+  Widget _buildDriverViewTabletPortraitOverlay() {
+    return LayoutBuilder(
+      builder: (ctx, constraints) {
+        final double w = constraints.maxWidth;
+        final double h = constraints.maxHeight;
+        if (h <= w) {
+          return const SizedBox.shrink();
+        }
+
+        const double titleLeft = 0.368;
+        const double titleTop = 0.021;
+        const double titleWidth = 0.590;
+        const double titleHeight = 0.177;
+        const double explainLeft = 0.012;
+        const double explainTop = 0.199;
+        const double explainWidth = 0.259;
+        const double explainHeight = 0.722;
+
+        return Stack(
+          children: <Widget>[
+            Positioned(
+              left: w * titleLeft,
+              top: h * titleTop,
+              width: w * titleWidth,
+              height: h * titleHeight,
+              child: _buildDriverViewTitlePanel(
+                zoneWidth: w * titleWidth,
+                zoneHeight: h * titleHeight,
+                isPortrait: true,
+              ),
+            ),
+            Positioned(
+              left: w * explainLeft,
+              top: h * explainTop,
+              width: w * explainWidth,
+              height: h * explainHeight,
+              child: _buildDriverViewExplanationPanel(
+                zoneWidth: w * explainWidth,
+                zoneHeight: h * explainHeight,
+                isPortrait: true,
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildDriverViewTabletLandscapeOverlay() {
+    return LayoutBuilder(
+      builder: (ctx, constraints) {
+        final double w = constraints.maxWidth;
+        final double h = constraints.maxHeight;
+        if (w <= h) {
+          return const SizedBox.shrink();
+        }
+
+        const double titleLeft = 0.352;
+        const double titleTop = 0.050;
+        const double titleWidth = 0.610;
+        const double titleHeight = 0.056;
+        const double explainLeft = 0.011;
+        const double explainTop = 0.371;
+        const double explainWidth = 0.332;
+        const double explainHeight = 0.523;
+
+        return Stack(
+          children: <Widget>[
+            Positioned(
+              left: w * titleLeft,
+              top: h * titleTop,
+              width: w * titleWidth,
+              height: h * titleHeight,
+              child: _buildDriverViewTitlePanel(
+                zoneWidth: w * titleWidth,
+                zoneHeight: h * titleHeight,
+                isPortrait: false,
+              ),
+            ),
+            Positioned(
+              left: w * explainLeft,
+              top: h * explainTop,
+              width: w * explainWidth,
+              height: h * explainHeight,
+              child: _buildDriverViewExplanationPanel(
+                zoneWidth: w * explainWidth,
+                zoneHeight: h * explainHeight,
+                isPortrait: false,
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildDriverViewTitlePanel({
+    required double zoneWidth,
+    required double zoneHeight,
+    required bool isPortrait,
+  }) {
+    final double langScale = _driverViewLangScale();
+    final EdgeInsets padding = isPortrait
+        ? const EdgeInsets.symmetric(horizontal: 18, vertical: 12)
+        : const EdgeInsets.symmetric(horizontal: 14, vertical: 3);
+    final double titleSize = (isPortrait ? 33.0 : 30.0) * langScale;
+    final double subtitleSize = (isPortrait ? 16.5 : 13.5) * langScale;
+    final double titleSubtitleGap = isPortrait ? 6.0 : 3.0;
+
+    final Widget copy = Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        Text(
+          _t(_driverViewTitle),
+          softWrap: true,
+          overflow: TextOverflow.visible,
+          style: TextStyle(
+            color: _gold,
+            fontSize: titleSize,
+            fontWeight: FontWeight.w900,
+            height: 1.06,
+            letterSpacing: 0.12,
+            shadows: <Shadow>[
+              Shadow(color: _gold.withOpacity(0.36), blurRadius: 14),
+              Shadow(
+                color: Colors.black.withOpacity(0.78),
+                blurRadius: 8,
+                offset: const Offset(0, 2),
+              ),
+            ],
+          ),
+        ),
+        SizedBox(height: titleSubtitleGap),
+        Text(
+          _t(_driverViewSubtitle),
+          softWrap: true,
+          overflow: TextOverflow.visible,
+          style: TextStyle(
+            color: Colors.white.withOpacity(0.90),
+            fontSize: subtitleSize,
+            fontWeight: FontWeight.w500,
+            height: isPortrait ? 1.14 : 1.10,
+            shadows: const <Shadow>[
+              Shadow(
+                color: Color(0xCC000000),
+                blurRadius: 8,
+                offset: Offset(0, 1),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+
+    return SizedBox(
+      width: zoneWidth,
+      height: zoneHeight,
+      child: DecoratedBox(
+        decoration: _driverViewPanelDecoration(),
+        child: Padding(
+          padding: padding,
+          child: LayoutBuilder(
+            builder: (BuildContext context, BoxConstraints constraints) {
+              final Widget composed = ConstrainedBox(
+                constraints: BoxConstraints(minHeight: constraints.maxHeight),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[copy],
+                ),
+              );
+
+              return SizedBox(
+                width: constraints.maxWidth,
+                height: constraints.maxHeight,
+                child: _driverViewWholeBlockScaleDown(
+                  maxWidth: constraints.maxWidth,
+                  alignment: Alignment.centerLeft,
+                  child: composed,
+                ),
+              );
+            },
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDriverViewExplanationPanel({
+    required double zoneWidth,
+    required double zoneHeight,
+    required bool isPortrait,
+  }) {
+    final double langScale = _driverViewLangScale();
+    final EdgeInsets padding = isPortrait
+        ? const EdgeInsets.fromLTRB(12, 12, 12, 10)
+        : const EdgeInsets.fromLTRB(12, 10, 12, 8);
+    final double eyebrowSize = (isPortrait ? 10.5 : 10.5) * langScale;
+    final double headingSize = (isPortrait ? 20.0 : 21.0) * langScale;
+    final double introSize = (isPortrait ? 14.5 : 14.0) * langScale;
+    final double rowTitleSize = (isPortrait ? 15.5 : 15.0) * langScale;
+    final double rowBodySize = (isPortrait ? 14.0 : 13.5) * langScale;
+    final double closingSize = (isPortrait ? 14.0 : 13.5) * langScale;
+    final double sectionGap = isPortrait ? 7.0 : 6.0;
+    final double rowGap = isPortrait ? 8.0 : 7.0;
+
+    final Widget eyebrow = Container(
+      padding: EdgeInsets.symmetric(
+        horizontal: isPortrait ? 8 : 9,
+        vertical: isPortrait ? 4 : 5,
+      ),
+      decoration: BoxDecoration(
+        color: _gold.withOpacity(0.10),
+        borderRadius: BorderRadius.circular(4),
+        border: Border.all(color: _gold.withOpacity(0.26)),
+      ),
+      child: Text(
+        _t(_driverViewExplanationEyebrow),
+        softWrap: true,
+        overflow: TextOverflow.visible,
+        style: TextStyle(
+          color: _gold,
+          fontSize: eyebrowSize,
+          fontWeight: FontWeight.w700,
+          letterSpacing: 0.55,
+          height: 1.12,
+        ),
+      ),
+    );
+
+    final Widget heading = Text(
+      _t(_driverViewExplanationHeading),
+      softWrap: true,
+      overflow: TextOverflow.visible,
+      style: TextStyle(
+        color: _gold,
+        fontSize: headingSize,
+        fontWeight: FontWeight.w900,
+        height: 1.08,
+        letterSpacing: 0.08,
+        shadows: const <Shadow>[
+          Shadow(color: Color(0xCC000000), blurRadius: 6, offset: Offset(0, 1)),
+        ],
+      ),
+    );
+
+    final Widget intro = Text(
+      _t(_driverViewExplanationIntro),
+      softWrap: true,
+      overflow: TextOverflow.visible,
+      style: TextStyle(
+        color: Colors.white.withOpacity(0.88),
+        fontSize: introSize,
+        fontWeight: FontWeight.w500,
+        height: 1.12,
+        shadows: const <Shadow>[
+          Shadow(color: Color(0xCC000000), blurRadius: 6, offset: Offset(0, 1)),
+        ],
+      ),
+    );
+
+    final Widget closing = Text(
+      _t(_driverViewExplanationClosing),
+      softWrap: true,
+      overflow: TextOverflow.visible,
+      style: TextStyle(
+        color: _gold.withOpacity(0.88),
+        fontSize: closingSize,
+        fontWeight: FontWeight.w700,
+        height: 1.10,
+        letterSpacing: 0.08,
+        shadows: const <Shadow>[
+          Shadow(color: Color(0xCC000000), blurRadius: 6, offset: Offset(0, 1)),
+        ],
+      ),
+    );
+
+    final List<Widget> featureRows = <Widget>[
+      for (int i = 0; i < _driverViewExplanationFeatures.length; i++)
+        _buildDriverViewExplanationFeatureRow(
+          _driverViewExplanationFeatures[i],
+          titleSize: rowTitleSize,
+          bodySize: rowBodySize,
+          showDivider: i > 0,
+          compact: !isPortrait,
+        ),
+    ];
+
+    return SizedBox(
+      width: zoneWidth,
+      height: zoneHeight,
+      child: DecoratedBox(
+        decoration: _driverViewPanelDecoration(),
+        child: Padding(
+          padding: padding,
+          child: LayoutBuilder(
+            builder: (BuildContext context, BoxConstraints constraints) {
+              final Widget topBlock = Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: <Widget>[
+                  eyebrow,
+                  SizedBox(height: sectionGap),
+                  heading,
+                  SizedBox(height: sectionGap),
+                  intro,
+                ],
+              );
+
+              final List<Widget> spacedFeatureRows = <Widget>[];
+              for (int i = 0; i < featureRows.length; i++) {
+                if (i > 0) {
+                  spacedFeatureRows.add(SizedBox(height: rowGap));
+                }
+                spacedFeatureRows.add(featureRows[i]);
+              }
+
+              final Widget rowsBlock = Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: spacedFeatureRows,
+              );
+
+              final Widget composedPanel = ConstrainedBox(
+                constraints: BoxConstraints(
+                  minHeight: constraints.maxHeight,
+                  maxWidth: constraints.maxWidth,
+                ),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: <Widget>[topBlock, rowsBlock, closing],
+                ),
+              );
+
+              return SizedBox(
+                width: constraints.maxWidth,
+                height: constraints.maxHeight,
+                child: _driverViewWholeBlockScaleDown(
+                  maxWidth: constraints.maxWidth,
+                  alignment: Alignment.topLeft,
+                  child: composedPanel,
+                ),
+              );
+            },
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDriverViewExplanationFeatureRow(
+    _OrientationBulletItem feature, {
+    required double titleSize,
+    required double bodySize,
+    required bool showDivider,
+    required bool compact,
+  }) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: <Widget>[
+        if (showDivider)
+          Padding(
+            padding: EdgeInsets.only(bottom: compact ? 4 : 5),
+            child: Divider(
+              color: _gold.withOpacity(0.14),
+              height: 1,
+              thickness: 1,
+            ),
+          ),
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Container(
+              width: compact ? 6.5 : 7,
+              height: compact ? 6.5 : 7,
+              margin: EdgeInsets.only(top: titleSize * 0.34),
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: _gold,
+                boxShadow: <BoxShadow>[
+                  BoxShadow(
+                    color: _gold.withOpacity(0.45),
+                    blurRadius: 8,
+                    spreadRadius: 1,
+                  ),
+                ],
+              ),
+            ),
+            SizedBox(width: compact ? 7 : 8),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: <Widget>[
+                  Text(
+                    _t(feature.title),
+                    softWrap: true,
+                    overflow: TextOverflow.visible,
+                    style: TextStyle(
+                      color: _gold,
+                      fontSize: titleSize,
+                      fontWeight: FontWeight.w800,
+                      height: 1.06,
+                      shadows: const <Shadow>[
+                        Shadow(
+                          color: Color(0xCC000000),
+                          blurRadius: 6,
+                          offset: Offset(0, 1),
+                        ),
+                      ],
+                    ),
+                  ),
+                  SizedBox(height: compact ? 2 : 3),
+                  Text(
+                    _t(feature.description),
+                    softWrap: true,
+                    overflow: TextOverflow.visible,
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.86),
+                      fontSize: bodySize,
+                      fontWeight: FontWeight.w500,
+                      height: 1.10,
+                      shadows: const <Shadow>[
+                        Shadow(
+                          color: Color(0xCC000000),
+                          blurRadius: 6,
+                          offset: Offset(0, 1),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  // =================================================================
+  // Card 13 — Calculator & ride pricing (bespoke tablet heroes).
+  // Card11 artwork carries the calculator visual; Flutter overlays
+  // measured premium panels in dark safe zones.
+  //
+  // PORTRAIT title frame (frozen):
+  //   left 0.3551912568, top 0.0224609375, width 0.6276346604,
+  //   height 0.1411132813
+  // PORTRAIT explanation frame (frozen):
+  //   left 0.0148321624, top 0.1992187500, width 0.9711163154,
+  //   height 0.2866210938
+  // LANDSCAPE title frame (frozen):
+  //   left 0.3818359375, top 0.0468384075, width 0.5493164063,
+  //   height 0.1725214676
+  // LANDSCAPE explanation frame (frozen):
+  //   left 0.0107421875, top 0.3692427791, width 0.3710937500,
+  //   height 0.4824355972
+  // =================================================================
+
+  double _calculatorLangScale() {
+    switch (appLanguageNotifier.value) {
+      case AppLanguage.fr:
+      case AppLanguage.es:
+        return 0.92;
+      case AppLanguage.nl:
+      case AppLanguage.en:
+        return 1.0;
+    }
+  }
+
+  /// Whole-block scale-down safety for Calculator card only.
+  Widget _calculatorWholeBlockScaleDown({
+    required double maxWidth,
+    required Widget child,
+    Alignment alignment = Alignment.topLeft,
+  }) {
+    return Align(
+      alignment: alignment,
+      child: FittedBox(
+        fit: BoxFit.scaleDown,
+        alignment: alignment,
+        child: SizedBox(width: maxWidth, child: child),
+      ),
+    );
+  }
+
+  BoxDecoration _calculatorPanelDecoration() {
+    return BoxDecoration(
+      color: Colors.black.withOpacity(0.54),
+      borderRadius: BorderRadius.circular(14),
+      border: Border.all(color: _gold.withOpacity(0.22)),
+      boxShadow: <BoxShadow>[
+        BoxShadow(
+          color: Colors.black.withOpacity(0.32),
+          blurRadius: 12,
+          offset: const Offset(0, 3),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildCalculatorTabletPortraitFullViewportHero() {
+    return Stack(
+      fit: StackFit.expand,
+      children: <Widget>[
+        Image.asset(
+          _card11CalculatorTabletPortraitAsset,
+          fit: BoxFit.fill,
+          alignment: Alignment.center,
+          errorBuilder: (ctx, error, stackTrace) {
+            debugPrint(
+              '[ORIENTATION_FLOW][CALCULATOR_PORTRAIT_PNG_FAIL] '
+              'error=$error',
+            );
+            return _buildWelcomeMediaUltimateFallback();
+          },
+        ),
+        IgnorePointer(child: _buildCalculatorTabletPortraitOverlay()),
+      ],
+    );
+  }
+
+  Widget _buildCalculatorTabletLandscapeFullViewportHero() {
+    return Stack(
+      fit: StackFit.expand,
+      children: <Widget>[
+        Image.asset(
+          _card11CalculatorTabletLandscapeAsset,
+          fit: BoxFit.fill,
+          alignment: Alignment.center,
+          errorBuilder: (ctx, error, stackTrace) {
+            debugPrint(
+              '[ORIENTATION_FLOW][CALCULATOR_LANDSCAPE_PNG_FAIL] '
+              'error=$error',
+            );
+            return _buildWelcomeMediaUltimateFallback();
+          },
+        ),
+        IgnorePointer(child: _buildCalculatorTabletLandscapeOverlay()),
+      ],
+    );
+  }
+
+  Widget _buildCalculatorTabletPortraitOverlay() {
+    return LayoutBuilder(
+      builder: (ctx, constraints) {
+        final double w = constraints.maxWidth;
+        final double h = constraints.maxHeight;
+        if (h <= w) {
+          return const SizedBox.shrink();
+        }
+
+        const double titleLeft = 0.3551912568;
+        const double titleTop = 0.0224609375;
+        const double titleWidth = 0.6276346604;
+        const double titleHeight = 0.1411132813;
+        const double explainLeft = 0.0148321624;
+        const double explainTop = 0.1992187500;
+        const double explainWidth = 0.9711163154;
+        const double explainHeight = 0.2866210938;
+
+        return Stack(
+          children: <Widget>[
+            Positioned(
+              left: w * titleLeft,
+              top: h * titleTop,
+              width: w * titleWidth,
+              height: h * titleHeight,
+              child: _buildCalculatorTitlePanel(
+                zoneWidth: w * titleWidth,
+                zoneHeight: h * titleHeight,
+                isPortrait: true,
+              ),
+            ),
+            Positioned(
+              left: w * explainLeft,
+              top: h * explainTop,
+              width: w * explainWidth,
+              height: h * explainHeight,
+              child: _buildCalculatorExplanationPanel(
+                zoneWidth: w * explainWidth,
+                zoneHeight: h * explainHeight,
+                isPortrait: true,
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildCalculatorTabletLandscapeOverlay() {
+    return LayoutBuilder(
+      builder: (ctx, constraints) {
+        final double w = constraints.maxWidth;
+        final double h = constraints.maxHeight;
+        if (w <= h) {
+          return const SizedBox.shrink();
+        }
+
+        const double titleLeft = 0.3818359375;
+        const double titleTop = 0.0468384075;
+        const double titleWidth = 0.5493164063;
+        const double titleHeight = 0.1725214676;
+        const double explainLeft = 0.0107421875;
+        const double explainTop = 0.3692427791;
+        const double explainWidth = 0.3710937500;
+        const double explainHeight = 0.4824355972;
+
+        return Stack(
+          children: <Widget>[
+            Positioned(
+              left: w * titleLeft,
+              top: h * titleTop,
+              width: w * titleWidth,
+              height: h * titleHeight,
+              child: _buildCalculatorTitlePanel(
+                zoneWidth: w * titleWidth,
+                zoneHeight: h * titleHeight,
+                isPortrait: false,
+              ),
+            ),
+            Positioned(
+              left: w * explainLeft,
+              top: h * explainTop,
+              width: w * explainWidth,
+              height: h * explainHeight,
+              child: _buildCalculatorExplanationPanel(
+                zoneWidth: w * explainWidth,
+                zoneHeight: h * explainHeight,
+                isPortrait: false,
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildCalculatorTitlePanel({
+    required double zoneWidth,
+    required double zoneHeight,
+    required bool isPortrait,
+  }) {
+    final double langScale = _calculatorLangScale();
+    final EdgeInsets padding = isPortrait
+        ? const EdgeInsets.symmetric(horizontal: 18, vertical: 12)
+        : const EdgeInsets.symmetric(horizontal: 16, vertical: 10);
+    final double titleSize = (isPortrait ? 33.0 : 32.0) * langScale;
+    final double subtitleSize = (isPortrait ? 16.5 : 15.0) * langScale;
+    final double titleSubtitleGap = isPortrait ? 6.0 : 5.0;
+
+    final Widget copy = Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        Text(
+          _t(_calculatorTitle),
+          softWrap: true,
+          overflow: TextOverflow.visible,
+          style: TextStyle(
+            color: _gold,
+            fontSize: titleSize,
+            fontWeight: FontWeight.w900,
+            height: 1.06,
+            letterSpacing: 0.12,
+            shadows: <Shadow>[
+              Shadow(color: _gold.withOpacity(0.36), blurRadius: 14),
+              Shadow(
+                color: Colors.black.withOpacity(0.78),
+                blurRadius: 8,
+                offset: const Offset(0, 2),
+              ),
+            ],
+          ),
+        ),
+        SizedBox(height: titleSubtitleGap),
+        Text(
+          _t(_calculatorSubtitle),
+          softWrap: true,
+          overflow: TextOverflow.visible,
+          style: TextStyle(
+            color: Colors.white.withOpacity(0.90),
+            fontSize: subtitleSize,
+            fontWeight: FontWeight.w500,
+            height: isPortrait ? 1.14 : 1.12,
+            shadows: const <Shadow>[
+              Shadow(
+                color: Color(0xCC000000),
+                blurRadius: 8,
+                offset: Offset(0, 1),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+
+    return SizedBox(
+      width: zoneWidth,
+      height: zoneHeight,
+      child: DecoratedBox(
+        decoration: _calculatorPanelDecoration(),
+        child: Padding(
+          padding: padding,
+          child: LayoutBuilder(
+            builder: (BuildContext context, BoxConstraints constraints) {
+              // Stable content block: a single mainAxisSize.min Column
+              // with fixed gaps and no Expanded/Spacer/spaceBetween
+              // (those require a bounded main-axis under the outer
+              // FittedBox, which passes unbounded constraints).
+              final Widget composed = Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[copy],
+              );
+
+              return SizedBox(
+                width: constraints.maxWidth,
+                height: constraints.maxHeight,
+                child: _calculatorWholeBlockScaleDown(
+                  maxWidth: constraints.maxWidth,
+                  alignment: Alignment.centerLeft,
+                  child: composed,
+                ),
+              );
+            },
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCalculatorExplanationPanel({
+    required double zoneWidth,
+    required double zoneHeight,
+    required bool isPortrait,
+  }) {
+    final double langScale = _calculatorLangScale();
+    final EdgeInsets padding = isPortrait
+        ? const EdgeInsets.fromLTRB(14, 11, 14, 9)
+        : const EdgeInsets.fromLTRB(12, 10, 12, 8);
+    final double eyebrowSize = (isPortrait ? 10.0 : 10.5) * langScale;
+    final double headingSize = (isPortrait ? 20.0 : 21.0) * langScale;
+    final double introSize = (isPortrait ? 14.0 : 14.0) * langScale;
+    final double rowTitleSize = (isPortrait ? 15.0 : 15.0) * langScale;
+    final double rowBodySize = (isPortrait ? 13.5 : 13.5) * langScale;
+    final double closingSize = (isPortrait ? 13.0 : 13.5) * langScale;
+    final double sectionGap = isPortrait ? 6.0 : 6.0;
+    final double rowGap = isPortrait ? 6.0 : 7.0;
+
+    final Widget eyebrow = Container(
+      padding: EdgeInsets.symmetric(
+        horizontal: isPortrait ? 8 : 9,
+        vertical: isPortrait ? 4 : 5,
+      ),
+      decoration: BoxDecoration(
+        color: _gold.withOpacity(0.10),
+        borderRadius: BorderRadius.circular(4),
+        border: Border.all(color: _gold.withOpacity(0.26)),
+      ),
+      child: Text(
+        _t(_calculatorExplanationEyebrow),
+        softWrap: true,
+        overflow: TextOverflow.visible,
+        style: TextStyle(
+          color: _gold,
+          fontSize: eyebrowSize,
+          fontWeight: FontWeight.w700,
+          letterSpacing: 0.55,
+          height: 1.12,
+        ),
+      ),
+    );
+
+    final Widget heading = Text(
+      _t(_calculatorExplanationHeading),
+      softWrap: true,
+      overflow: TextOverflow.visible,
+      style: TextStyle(
+        color: _gold,
+        fontSize: headingSize,
+        fontWeight: FontWeight.w900,
+        height: 1.08,
+        letterSpacing: 0.08,
+        shadows: const <Shadow>[
+          Shadow(color: Color(0xCC000000), blurRadius: 6, offset: Offset(0, 1)),
+        ],
+      ),
+    );
+
+    final Widget intro = Text(
+      _t(_calculatorExplanationIntro),
+      softWrap: true,
+      overflow: TextOverflow.visible,
+      style: TextStyle(
+        color: Colors.white.withOpacity(0.88),
+        fontSize: introSize,
+        fontWeight: FontWeight.w500,
+        height: 1.12,
+        shadows: const <Shadow>[
+          Shadow(color: Color(0xCC000000), blurRadius: 6, offset: Offset(0, 1)),
+        ],
+      ),
+    );
+
+    final Widget closing = Text(
+      _t(_calculatorExplanationClosing),
+      softWrap: true,
+      overflow: TextOverflow.visible,
+      style: TextStyle(
+        color: _gold.withOpacity(0.88),
+        fontSize: closingSize,
+        fontWeight: FontWeight.w700,
+        height: 1.10,
+        letterSpacing: 0.08,
+        shadows: const <Shadow>[
+          Shadow(color: Color(0xCC000000), blurRadius: 6, offset: Offset(0, 1)),
+        ],
+      ),
+    );
+
+    final List<Widget> featureRows = <Widget>[
+      for (int i = 0; i < _calculatorExplanationFeatures.length; i++)
+        _buildCalculatorExplanationFeatureRow(
+          _calculatorExplanationFeatures[i],
+          titleSize: rowTitleSize,
+          bodySize: rowBodySize,
+          showDivider: i > 0,
+          compact: !isPortrait,
+        ),
+    ];
+
+    return SizedBox(
+      width: zoneWidth,
+      height: zoneHeight,
+      child: DecoratedBox(
+        decoration: _calculatorPanelDecoration(),
+        child: Padding(
+          padding: padding,
+          child: LayoutBuilder(
+            builder: (BuildContext context, BoxConstraints constraints) {
+              // Stable content block. The outer whole-block FittedBox
+              // passes unbounded constraints to its child, so the
+              // composed Column MUST use mainAxisSize.min with fixed
+              // gaps only — no Expanded/Flexible/Spacer/spaceBetween,
+              // which would trip the layout boundary assertion.
+              final List<Widget> spacedFeatureRows = <Widget>[];
+              for (int i = 0; i < featureRows.length; i++) {
+                if (i > 0) {
+                  spacedFeatureRows.add(SizedBox(height: rowGap));
+                }
+                spacedFeatureRows.add(featureRows[i]);
+              }
+
+              final Widget composedPanel = Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: <Widget>[
+                  eyebrow,
+                  SizedBox(height: sectionGap),
+                  heading,
+                  SizedBox(height: sectionGap),
+                  intro,
+                  SizedBox(height: sectionGap + 2),
+                  ...spacedFeatureRows,
+                  SizedBox(height: sectionGap + 2),
+                  closing,
+                ],
+              );
+
+              return SizedBox(
+                width: constraints.maxWidth,
+                height: constraints.maxHeight,
+                child: _calculatorWholeBlockScaleDown(
+                  maxWidth: constraints.maxWidth,
+                  alignment: Alignment.topLeft,
+                  child: composedPanel,
+                ),
+              );
+            },
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCalculatorExplanationFeatureRow(
+    _OrientationBulletItem feature, {
+    required double titleSize,
+    required double bodySize,
+    required bool showDivider,
+    required bool compact,
+  }) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: <Widget>[
+        if (showDivider)
+          Padding(
+            padding: EdgeInsets.only(bottom: compact ? 4 : 5),
+            child: Divider(
+              color: _gold.withOpacity(0.14),
+              height: 1,
+              thickness: 1,
+            ),
+          ),
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Container(
+              width: compact ? 6.5 : 7,
+              height: compact ? 6.5 : 7,
+              margin: EdgeInsets.only(top: titleSize * 0.34),
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: _gold,
+                boxShadow: <BoxShadow>[
+                  BoxShadow(
+                    color: _gold.withOpacity(0.45),
+                    blurRadius: 8,
+                    spreadRadius: 1,
+                  ),
+                ],
+              ),
+            ),
+            SizedBox(width: compact ? 7 : 8),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: <Widget>[
+                  Text(
+                    _t(feature.title),
+                    softWrap: true,
+                    overflow: TextOverflow.visible,
+                    style: TextStyle(
+                      color: _gold,
+                      fontSize: titleSize,
+                      fontWeight: FontWeight.w800,
+                      height: 1.06,
+                      shadows: const <Shadow>[
+                        Shadow(
+                          color: Color(0xCC000000),
+                          blurRadius: 6,
+                          offset: Offset(0, 1),
+                        ),
+                      ],
+                    ),
+                  ),
+                  SizedBox(height: compact ? 2 : 3),
+                  Text(
+                    _t(feature.description),
+                    softWrap: true,
+                    overflow: TextOverflow.visible,
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.86),
+                      fontSize: bodySize,
+                      fontWeight: FontWeight.w500,
+                      height: 1.10,
+                      shadows: const <Shadow>[
+                        Shadow(
+                          color: Color(0xCC000000),
+                          blurRadius: 6,
+                          offset: Offset(0, 1),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  // =================================================================
+  // Card 14 — Ride receipts, history & documents (bespoke tablet
+  // heroes). Card12 artwork carries the in-cockpit tablet visual;
+  // Flutter overlays measured premium panels in the dark safe zones.
+  //
+  // PORTRAIT title frame (frozen):
+  //   left 0.357, top 0.023, width 0.625, height 0.139
+  // PORTRAIT explanation frame (frozen):
+  //   left 0.016, top 0.200, width 0.968, height 0.293
+  // LANDSCAPE title frame (frozen):
+  //   left 0.336, top 0.049, width 0.647, height 0.132
+  // LANDSCAPE explanation frame (frozen):
+  //   left 0.010, top 0.411, width 0.371, height 0.536
+  //
+  // The content blocks fed to the FittedBox(scaleDown) safety
+  // wrapper MUST be mainAxisSize.min Columns with fixed
+  // SizedBox gaps only — no Expanded/Flexible/Spacer/spaceBetween,
+  // since the outer FittedBox passes unbounded constraints which
+  // would trip the layout boundary assertion.
+  // =================================================================
+
+  double _driverReceiptsLangScale() {
+    switch (appLanguageNotifier.value) {
+      case AppLanguage.fr:
+      case AppLanguage.es:
+        return 0.92;
+      case AppLanguage.nl:
+      case AppLanguage.en:
+        return 1.0;
+    }
+  }
+
+  /// Whole-block scale-down safety for Driver Receipts only.
+  Widget _driverReceiptsWholeBlockScaleDown({
+    required double maxWidth,
+    required Widget child,
+    Alignment alignment = Alignment.topLeft,
+  }) {
+    return Align(
+      alignment: alignment,
+      child: FittedBox(
+        fit: BoxFit.scaleDown,
+        alignment: alignment,
+        child: SizedBox(width: maxWidth, child: child),
+      ),
+    );
+  }
+
+  BoxDecoration _driverReceiptsPanelDecoration() {
+    return BoxDecoration(
+      color: Colors.black.withOpacity(0.54),
+      borderRadius: BorderRadius.circular(14),
+      border: Border.all(color: _gold.withOpacity(0.22)),
+      boxShadow: <BoxShadow>[
+        BoxShadow(
+          color: Colors.black.withOpacity(0.32),
+          blurRadius: 12,
+          offset: const Offset(0, 3),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildDriverReceiptsTabletPortraitFullViewportHero() {
+    return Stack(
+      fit: StackFit.expand,
+      children: <Widget>[
+        Image.asset(
+          _card12DriverReceiptsTabletPortraitAsset,
+          fit: BoxFit.fill,
+          alignment: Alignment.center,
+          errorBuilder: (ctx, error, stackTrace) {
+            debugPrint(
+              '[ORIENTATION_FLOW][DRIVER_RECEIPTS_PORTRAIT_PNG_FAIL] '
+              'error=$error',
+            );
+            return _buildWelcomeMediaUltimateFallback();
+          },
+        ),
+        IgnorePointer(child: _buildDriverReceiptsTabletPortraitOverlay()),
+      ],
+    );
+  }
+
+  Widget _buildDriverReceiptsTabletLandscapeFullViewportHero() {
+    return Stack(
+      fit: StackFit.expand,
+      children: <Widget>[
+        Image.asset(
+          _card12DriverReceiptsTabletLandscapeAsset,
+          fit: BoxFit.fill,
+          alignment: Alignment.center,
+          errorBuilder: (ctx, error, stackTrace) {
+            debugPrint(
+              '[ORIENTATION_FLOW][DRIVER_RECEIPTS_LANDSCAPE_PNG_FAIL] '
+              'error=$error',
+            );
+            return _buildWelcomeMediaUltimateFallback();
+          },
+        ),
+        IgnorePointer(child: _buildDriverReceiptsTabletLandscapeOverlay()),
+      ],
+    );
+  }
+
+  Widget _buildDriverReceiptsTabletPortraitOverlay() {
+    return LayoutBuilder(
+      builder: (ctx, constraints) {
+        final double w = constraints.maxWidth;
+        final double h = constraints.maxHeight;
+        if (h <= w) {
+          return const SizedBox.shrink();
+        }
+
+        const double titleLeft = 0.357;
+        const double titleTop = 0.023;
+        const double titleWidth = 0.625;
+        const double titleHeight = 0.139;
+        const double explainLeft = 0.016;
+        const double explainTop = 0.200;
+        const double explainWidth = 0.968;
+        const double explainHeight = 0.293;
+
+        return Stack(
+          children: <Widget>[
+            Positioned(
+              left: w * titleLeft,
+              top: h * titleTop,
+              width: w * titleWidth,
+              height: h * titleHeight,
+              child: _buildDriverReceiptsTitlePanel(
+                zoneWidth: w * titleWidth,
+                zoneHeight: h * titleHeight,
+                isPortrait: true,
+              ),
+            ),
+            Positioned(
+              left: w * explainLeft,
+              top: h * explainTop,
+              width: w * explainWidth,
+              height: h * explainHeight,
+              child: _buildDriverReceiptsExplanationPanel(
+                zoneWidth: w * explainWidth,
+                zoneHeight: h * explainHeight,
+                isPortrait: true,
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildDriverReceiptsTabletLandscapeOverlay() {
+    return LayoutBuilder(
+      builder: (ctx, constraints) {
+        final double w = constraints.maxWidth;
+        final double h = constraints.maxHeight;
+        if (w <= h) {
+          return const SizedBox.shrink();
+        }
+
+        const double titleLeft = 0.336;
+        const double titleTop = 0.049;
+        const double titleWidth = 0.647;
+        const double titleHeight = 0.132;
+        const double explainLeft = 0.010;
+        const double explainTop = 0.411;
+        const double explainWidth = 0.371;
+        // Landscape only: pull the panel bottom up to ~0.851 of the
+        // viewport (= 0.411 + 0.440) so it lands above the dots /
+        // Previous / Next row (matching the approved Calculator
+        // landscape safe bottom of ~0.852). Portrait frame ratios are
+        // unchanged. The frozen-frame guidance still applies; this is
+        // the explicit landscape overlap-fix amendment.
+        const double explainHeight = 0.440;
+
+        return Stack(
+          children: <Widget>[
+            Positioned(
+              left: w * titleLeft,
+              top: h * titleTop,
+              width: w * titleWidth,
+              height: h * titleHeight,
+              child: _buildDriverReceiptsTitlePanel(
+                zoneWidth: w * titleWidth,
+                zoneHeight: h * titleHeight,
+                isPortrait: false,
+              ),
+            ),
+            Positioned(
+              left: w * explainLeft,
+              top: h * explainTop,
+              width: w * explainWidth,
+              height: h * explainHeight,
+              child: _buildDriverReceiptsExplanationPanel(
+                zoneWidth: w * explainWidth,
+                zoneHeight: h * explainHeight,
+                isPortrait: false,
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildDriverReceiptsTitlePanel({
+    required double zoneWidth,
+    required double zoneHeight,
+    required bool isPortrait,
+  }) {
+    final double langScale = _driverReceiptsLangScale();
+    final EdgeInsets padding = isPortrait
+        ? const EdgeInsets.symmetric(horizontal: 18, vertical: 14)
+        : const EdgeInsets.symmetric(horizontal: 16, vertical: 12);
+    final double titleSize = (isPortrait ? 30.0 : 28.0) * langScale;
+    final double subtitleSize = (isPortrait ? 15.5 : 14.5) * langScale;
+    final double accentToTitleGap = isPortrait ? 9.0 : 7.0;
+    final double titleSubtitleGap = isPortrait ? 9.0 : 8.0;
+    final double accentBarWidth = isPortrait ? 64.0 : 56.0;
+
+    final Widget accentBar = Container(
+      width: accentBarWidth,
+      height: 3,
+      decoration: BoxDecoration(
+        color: _gold.withOpacity(0.85),
+        borderRadius: BorderRadius.circular(3),
+        boxShadow: <BoxShadow>[
+          BoxShadow(color: _gold.withOpacity(0.45), blurRadius: 10),
+        ],
+      ),
+    );
+
+    final Widget copy = Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        accentBar,
+        SizedBox(height: accentToTitleGap),
+        Text(
+          _t(_driverReceiptsTitle),
+          softWrap: true,
+          overflow: TextOverflow.visible,
+          style: TextStyle(
+            color: _gold,
+            fontSize: titleSize,
+            fontWeight: FontWeight.w900,
+            height: 1.06,
+            letterSpacing: 0.10,
+            shadows: <Shadow>[
+              Shadow(color: _gold.withOpacity(0.36), blurRadius: 14),
+              Shadow(
+                color: Colors.black.withOpacity(0.78),
+                blurRadius: 8,
+                offset: const Offset(0, 2),
+              ),
+            ],
+          ),
+        ),
+        SizedBox(height: titleSubtitleGap),
+        Text(
+          _t(_driverReceiptsSubtitle),
+          softWrap: true,
+          overflow: TextOverflow.visible,
+          style: TextStyle(
+            color: Colors.white.withOpacity(0.90),
+            fontSize: subtitleSize,
+            fontWeight: FontWeight.w500,
+            height: isPortrait ? 1.16 : 1.14,
+            shadows: const <Shadow>[
+              Shadow(
+                color: Color(0xCC000000),
+                blurRadius: 8,
+                offset: Offset(0, 1),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+
+    return SizedBox(
+      width: zoneWidth,
+      height: zoneHeight,
+      child: DecoratedBox(
+        decoration: _driverReceiptsPanelDecoration(),
+        child: Padding(
+          padding: padding,
+          child: LayoutBuilder(
+            builder: (BuildContext context, BoxConstraints constraints) {
+              // Stable block: mainAxisSize.min, no Expanded/Spacer/
+              // spaceBetween/MainAxisAlignment.center under the outer
+              // FittedBox's unbounded constraints. The whole-block
+              // scale-down + centerLeft alignment vertically centers
+              // the natural-sized title group inside the frozen frame.
+              return SizedBox(
+                width: constraints.maxWidth,
+                height: constraints.maxHeight,
+                child: _driverReceiptsWholeBlockScaleDown(
+                  maxWidth: constraints.maxWidth,
+                  alignment: Alignment.centerLeft,
+                  child: copy,
+                ),
+              );
+            },
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDriverReceiptsExplanationPanel({
+    required double zoneWidth,
+    required double zoneHeight,
+    required bool isPortrait,
+  }) {
+    final double langScale = _driverReceiptsLangScale();
+    // Portrait padding/gaps are the approved values. Landscape values
+    // are tightened to keep the natural content height comfortable
+    // inside the reduced landscape explanation frame (the landscape
+    // explainHeight was pulled up to fix the overlap with the
+    // dots / Previous / Next row).
+    final EdgeInsets padding = isPortrait
+        ? const EdgeInsets.fromLTRB(14, 14, 14, 14)
+        : const EdgeInsets.fromLTRB(13, 12, 13, 12);
+    final double eyebrowSize = (isPortrait ? 10.5 : 11.0) * langScale;
+    final double headingSize = (isPortrait ? 20.0 : 21.5) * langScale;
+    final double introSize = (isPortrait ? 14.0 : 14.5) * langScale;
+    final double rowTitleSize = (isPortrait ? 15.0 : 15.5) * langScale;
+    final double rowBodySize = (isPortrait ? 13.5 : 14.0) * langScale;
+    final double closingSize = (isPortrait ? 13.0 : 13.5) * langScale;
+    // Tuned so the natural content height fills most of the frozen
+    // explanation frame and the centerLeft alignment of the whole-
+    // block scale-down vertically centers any spare room. No
+    // Expanded/Flexible/Spacer/spaceBetween anywhere inside the
+    // FittedBox's unbounded subtree. Landscape gaps are smaller than
+    // portrait because the landscape frame is shorter (overlap fix);
+    // portrait values are the approved ones.
+    final double eyebrowToHeadingGap = isPortrait ? 9.0 : 9.0;
+    final double headingToIntroGap = isPortrait ? 7.0 : 7.0;
+    final double introToFeaturesGap = isPortrait ? 14.0 : 12.0;
+    final double rowGap = isPortrait ? 9.0 : 9.0;
+    final double featuresToClosingGap = isPortrait ? 14.0 : 12.0;
+
+    final Widget eyebrow = Align(
+      alignment: Alignment.topLeft,
+      child: Container(
+        padding: EdgeInsets.symmetric(
+          horizontal: isPortrait ? 8 : 9,
+          vertical: isPortrait ? 4 : 5,
+        ),
+        decoration: BoxDecoration(
+          color: _gold.withOpacity(0.10),
+          borderRadius: BorderRadius.circular(4),
+          border: Border.all(color: _gold.withOpacity(0.26)),
+        ),
+        child: Text(
+          _t(_driverReceiptsExplanationEyebrow),
+          softWrap: true,
+          overflow: TextOverflow.visible,
+          style: TextStyle(
+            color: _gold,
+            fontSize: eyebrowSize,
+            fontWeight: FontWeight.w700,
+            letterSpacing: 0.55,
+            height: 1.12,
+          ),
+        ),
+      ),
+    );
+
+    final Widget heading = Text(
+      _t(_driverReceiptsExplanationHeading),
+      softWrap: true,
+      overflow: TextOverflow.visible,
+      style: TextStyle(
+        color: _gold,
+        fontSize: headingSize,
+        fontWeight: FontWeight.w900,
+        height: 1.08,
+        letterSpacing: 0.08,
+        shadows: const <Shadow>[
+          Shadow(color: Color(0xCC000000), blurRadius: 6, offset: Offset(0, 1)),
+        ],
+      ),
+    );
+
+    final Widget intro = Text(
+      _t(_driverReceiptsExplanationIntro),
+      softWrap: true,
+      overflow: TextOverflow.visible,
+      style: TextStyle(
+        color: Colors.white.withOpacity(0.88),
+        fontSize: introSize,
+        fontWeight: FontWeight.w500,
+        height: 1.16,
+        shadows: const <Shadow>[
+          Shadow(color: Color(0xCC000000), blurRadius: 6, offset: Offset(0, 1)),
+        ],
+      ),
+    );
+
+    final Widget closing = Text(
+      _t(_driverReceiptsExplanationClosing),
+      softWrap: true,
+      overflow: TextOverflow.visible,
+      style: TextStyle(
+        color: _gold.withOpacity(0.88),
+        fontSize: closingSize,
+        fontWeight: FontWeight.w700,
+        height: 1.14,
+        letterSpacing: 0.08,
+        shadows: const <Shadow>[
+          Shadow(color: Color(0xCC000000), blurRadius: 6, offset: Offset(0, 1)),
+        ],
+      ),
+    );
+
+    // Topical icons aligned with the three benefit rows so each row
+    // reads as its own compact mini-card — Receipts / History /
+    // Documents.
+    const List<IconData> featureIcons = <IconData>[
+      Icons.receipt_long_rounded,
+      Icons.history_rounded,
+      Icons.folder_open_rounded,
+    ];
+
+    final List<Widget> featureRows = <Widget>[
+      for (int i = 0; i < _driverReceiptsExplanationFeatures.length; i++)
+        _buildDriverReceiptsExplanationFeatureRow(
+          _driverReceiptsExplanationFeatures[i],
+          icon: featureIcons[i % featureIcons.length],
+          titleSize: rowTitleSize,
+          bodySize: rowBodySize,
+          compact: isPortrait,
+        ),
+    ];
+
+    return SizedBox(
+      width: zoneWidth,
+      height: zoneHeight,
+      child: DecoratedBox(
+        decoration: _driverReceiptsPanelDecoration(),
+        child: Padding(
+          padding: padding,
+          child: LayoutBuilder(
+            builder: (BuildContext context, BoxConstraints constraints) {
+              // Stable block: single mainAxisSize.min Column, fixed
+              // SizedBox gaps only. No Expanded/Flexible/Spacer/
+              // spaceBetween under the outer FittedBox's unbounded
+              // constraints. Content rhythm is achieved by tuned
+              // inter-section gaps; the whole-block scale-down with
+              // centerLeft alignment then vertically centers the
+              // resulting block inside the frozen panel frame so
+              // breathing space sits both above and below the copy
+              // instead of all stacking at the top.
+              final List<Widget> spacedFeatureRows = <Widget>[];
+              for (int i = 0; i < featureRows.length; i++) {
+                if (i > 0) {
+                  spacedFeatureRows.add(SizedBox(height: rowGap));
+                }
+                spacedFeatureRows.add(featureRows[i]);
+              }
+
+              final Widget composedPanel = Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: <Widget>[
+                  eyebrow,
+                  SizedBox(height: eyebrowToHeadingGap),
+                  heading,
+                  SizedBox(height: headingToIntroGap),
+                  intro,
+                  SizedBox(height: introToFeaturesGap),
+                  ...spacedFeatureRows,
+                  SizedBox(height: featuresToClosingGap),
+                  closing,
+                ],
+              );
+
+              return SizedBox(
+                width: constraints.maxWidth,
+                height: constraints.maxHeight,
+                child: _driverReceiptsWholeBlockScaleDown(
+                  maxWidth: constraints.maxWidth,
+                  alignment: Alignment.centerLeft,
+                  child: composedPanel,
+                ),
+              );
+            },
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDriverReceiptsExplanationFeatureRow(
+    _OrientationBulletItem feature, {
+    required IconData icon,
+    required double titleSize,
+    required double bodySize,
+    required bool compact,
+  }) {
+    final double iconBox = compact ? 30.0 : 32.0;
+    final double iconSize = compact ? 16.0 : 18.0;
+    // Portrait (compact) keeps the approved 8 px vertical padding.
+    // Landscape uses 7 px so each mini-card is a touch shorter and
+    // the three rows fit comfortably inside the reduced landscape
+    // explanation frame without leaning on the FittedBox safety net.
+    return Container(
+      padding: EdgeInsets.symmetric(
+        horizontal: compact ? 9 : 10,
+        vertical: compact ? 8 : 7,
+      ),
+      decoration: BoxDecoration(
+        color: _gold.withOpacity(0.06),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: _gold.withOpacity(0.20)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: <Widget>[
+          Container(
+            width: iconBox,
+            height: iconBox,
+            decoration: BoxDecoration(
+              color: _gold.withOpacity(0.14),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: _gold.withOpacity(0.36)),
+              boxShadow: <BoxShadow>[
+                BoxShadow(
+                  color: _gold.withOpacity(0.20),
+                  blurRadius: 8,
+                  spreadRadius: 0.5,
+                ),
+              ],
+            ),
+            alignment: Alignment.center,
+            child: Icon(icon, color: _gold, size: iconSize),
+          ),
+          SizedBox(width: compact ? 9 : 11),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                Text(
+                  _t(feature.title),
+                  softWrap: true,
+                  overflow: TextOverflow.visible,
+                  style: TextStyle(
+                    color: _gold,
+                    fontSize: titleSize,
+                    fontWeight: FontWeight.w800,
+                    height: 1.06,
+                    shadows: const <Shadow>[
+                      Shadow(
+                        color: Color(0xCC000000),
+                        blurRadius: 6,
+                        offset: Offset(0, 1),
+                      ),
+                    ],
+                  ),
+                ),
+                SizedBox(height: compact ? 2 : 3),
+                Text(
+                  _t(feature.description),
+                  softWrap: true,
+                  overflow: TextOverflow.visible,
+                  style: TextStyle(
+                    color: Colors.white.withOpacity(0.86),
+                    fontSize: bodySize,
+                    fontWeight: FontWeight.w500,
+                    height: 1.12,
+                    shadows: const <Shadow>[
+                      Shadow(
+                        color: Color(0xCC000000),
+                        blurRadius: 6,
+                        offset: Offset(0, 1),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // =================================================================
   // Card 3 — Subscription & scalability (bespoke tablet heroes).
   //
   // Both orientations paint the dedicated card3 PNG full-bleed
@@ -7595,6 +9778,15 @@ enum _HeroVideoLane { none, portrait, landscape }
 /// * [aiDispatchRich] — bespoke AI Dispatch card using card10 PNG
 ///   artwork with measured premium panels on tablet; the generic icon
 ///   card on phones.
+/// * [driverViewRich] — bespoke Driver View card using card8 PNG
+///   artwork with measured premium panels on tablet; the generic icon
+///   card on phones.
+/// * [calculatorRich] — bespoke Calculator card using card11 PNG
+///   artwork with measured premium panels on tablet; the generic icon
+///   card on phones.
+/// * [driverReceiptsRich] — bespoke Ride receipts / history / documents
+///   card using card12 PNG artwork with measured premium panels on
+///   tablet; the generic icon card on phones.
 /// * [iconCard] — the stable baseline icon + title + body composition.
 /// * [placeholder] — a safe, centred, scroll-friendly "coming next"
 ///   card for product-tour stops that are not yet designed. Never
@@ -7610,6 +9802,9 @@ enum _OrientationCardLayout {
   regionRadarRich,
   publicBookingLinkRich,
   aiDispatchRich,
+  driverViewRich,
+  calculatorRich,
+  driverReceiptsRich,
   iconCard,
   placeholder,
 }
