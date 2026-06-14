@@ -53,6 +53,7 @@ flutter:
   assets:
     - assets/fluxidi/
     - assets/fluxidi/onboarding/
+    - assets/fluxidi/brochures/
     - assets_card5_themes/
     - assets/Midday Gold Chauffeur/
     - assets/Midnight Bleu Chauffeur/

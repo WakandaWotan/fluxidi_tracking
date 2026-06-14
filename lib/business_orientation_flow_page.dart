@@ -1,9 +1,13 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show rootBundle;
 import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
 import 'package:video_player/video_player.dart';
 
 /// First-version Fluxidi business orientation / product-tour flow.
@@ -2055,6 +2059,39 @@ class _BusinessOrientationFlowPageState
     es: 'Tu servicio. Más movilidad. Más clientes que vuelven.',
   );
 
+  static const Map<AppLanguage, String> _brochureAssetByLanguage =
+      <AppLanguage, String>{
+        AppLanguage.nl:
+            'assets/fluxidi/brochures/fluxidi_platform_brochure_nl_final.pdf',
+        AppLanguage.en:
+            'assets/fluxidi/brochures/fluxidi_platform_brochure_en_final.pdf',
+        AppLanguage.fr:
+            'assets/fluxidi/brochures/fluxidi_platform_brochure_fr_final.pdf',
+        AppLanguage.es:
+            'assets/fluxidi/brochures/fluxidi_platform_brochure_es_final.pdf',
+      };
+
+  static const _Tr _brochureCtaLabel = _Tr(
+    nl: 'Bewaar of deel Fluxidi brochure',
+    en: 'Save or share Fluxidi brochure',
+    fr: 'Enregistrer ou partager la brochure Fluxidi',
+    es: 'Guardar o compartir folleto Fluxidi',
+  );
+
+  static const _Tr _brochureCtaHelper = _Tr(
+    nl: 'Bewaar of deel het volledige platformoverzicht.',
+    en: 'Save or share the full platform overview.',
+    fr: 'Enregistrez ou partagez la présentation complète.',
+    es: 'Guarde o comparta la presentación completa.',
+  );
+
+  static const _Tr _brochureShareError = _Tr(
+    nl: 'De brochure kon niet worden geladen. Probeer het opnieuw.',
+    en: 'Could not load the brochure. Please try again.',
+    fr: 'Impossible de charger la brochure. Veuillez réessayer.',
+    es: 'No se pudo cargar el folleto. Inténtelo de nuevo.',
+  );
+
   // ---------------------------------------------------------------
   // Card 3 — Subscription & scalability. All copy lives here in the
   // central model so the bespoke overlay simply binds it; no pricing
@@ -2733,6 +2770,113 @@ class _BusinessOrientationFlowPageState
       case AppLanguage.es:
         return tr.es;
     }
+  }
+
+  String _brochureAssetPathForCurrentLanguage() {
+    return _brochureAssetByLanguage[appLanguageNotifier.value] ??
+        _brochureAssetByLanguage[AppLanguage.en]!;
+  }
+
+  Future<void> _sharePlatformBrochure() async {
+    if (!mounted) return;
+    try {
+      final String assetPath = _brochureAssetPathForCurrentLanguage();
+      final ByteData byteData = await rootBundle.load(assetPath);
+      final Uint8List bytes = byteData.buffer.asUint8List(
+        byteData.offsetInBytes,
+        byteData.lengthInBytes,
+      );
+      final Directory tempDir = await getTemporaryDirectory();
+      final String fileName = assetPath.split('/').last;
+      final File file = File('${tempDir.path}/$fileName');
+      await file.writeAsBytes(bytes, flush: true);
+      await Share.shareXFiles(<XFile>[
+        XFile(file.path),
+      ], text: _t(_brochureCtaHelper));
+    } catch (error, stackTrace) {
+      debugPrint(
+        '[ORIENTATION_FLOW][BROCHURE_SHARE_FAIL] error=$error '
+        'stack=$stackTrace',
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(_t(_brochureShareError))));
+    }
+  }
+
+  Widget _buildBrochureDownloadCta({
+    required bool compact,
+    bool landscapeFullHero = false,
+  }) {
+    final bool veryCompact = compact || landscapeFullHero;
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: _sharePlatformBrochure,
+        borderRadius: BorderRadius.circular(12),
+        child: Ink(
+          decoration: BoxDecoration(
+            color: _gold.withOpacity(0.08),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: _gold.withOpacity(0.42)),
+          ),
+          child: Padding(
+            padding: EdgeInsets.symmetric(
+              horizontal: veryCompact ? 12 : 14,
+              vertical: veryCompact ? 10 : 12,
+            ),
+            child: Row(
+              children: <Widget>[
+                Icon(
+                  Icons.picture_as_pdf_outlined,
+                  color: _gold,
+                  size: veryCompact ? 20 : 22,
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: <Widget>[
+                      Text(
+                        _t(_brochureCtaLabel),
+                        maxLines: veryCompact ? 1 : 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w700,
+                          fontSize: veryCompact ? 13 : 14,
+                          height: 1.15,
+                        ),
+                      ),
+                      if (!veryCompact) ...<Widget>[
+                        const SizedBox(height: 4),
+                        Text(
+                          _t(_brochureCtaHelper),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: Colors.white.withOpacity(0.72),
+                            fontSize: 11.5,
+                            height: 1.2,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+                Icon(
+                  Icons.ios_share_outlined,
+                  color: _gold.withOpacity(0.85),
+                  size: 18,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
   }
 
   /// Central accessor for the product-tour cards. Everything that
@@ -3462,6 +3606,13 @@ class _BusinessOrientationFlowPageState
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: <Widget>[
+          if (isLast) ...<Widget>[
+            _buildBrochureDownloadCta(
+              compact: compact,
+              landscapeFullHero: landscapeFullHero,
+            ),
+            SizedBox(height: landscapeFullHero ? 6 : (compact ? 8 : 12)),
+          ],
           _buildDots(),
           SizedBox(height: landscapeFullHero ? 6 : (compact ? 8 : 14)),
           Row(
