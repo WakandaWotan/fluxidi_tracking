@@ -761,6 +761,12 @@ class _BusinessHomePageState extends State<BusinessHomePage>
     );
   }
 
+  Future<void> _openBusinessHelpManual(BuildContext context) async {
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(builder: (_) => const BusinessHelpManualPage()),
+    );
+  }
+
   String _normalizePublicBookingCompanyCode(String raw) {
     return raw.trim().toUpperCase().replaceAll(RegExp(r'\s+'), '');
   }
@@ -1989,6 +1995,10 @@ class _BusinessHomePageState extends State<BusinessHomePage>
               _openCompanyDetails(context);
               return;
             }
+            if (value == 'help_manual') {
+              _openBusinessHelpManual(context);
+              return;
+            }
             if (value == 'verify_company') {
               unawaited(_verifyCompanyFromBusinessHome(context));
               return;
@@ -2138,6 +2148,20 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                   en: 'Company details',
                   fr: 'Données de l’entreprise',
                   es: 'Datos de empresa',
+                ),
+                style: isCleanProfessional
+                    ? TextStyle(color: palette.textPrimary)
+                    : null,
+              ),
+            ),
+            PopupMenuItem<String>(
+              value: 'help_manual',
+              child: Text(
+                _t(
+                  nl: 'Help & handleiding',
+                  en: 'Help & guide',
+                  fr: 'Aide & guide',
+                  es: 'Ayuda y guía',
                 ),
                 style: isCleanProfessional
                     ? TextStyle(color: palette.textPrimary)
