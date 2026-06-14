@@ -227,7 +227,7 @@ class _QuickActionsGrid extends StatelessWidget {
                   fr: 'Ouvrez à nouveau la visite complète en 15 étapes.',
                   es: 'Vuelva a abrir el recorrido completo de 15 pasos.',
                 ),
-                onTap: () => _openPlatformTour(context),
+                onTap: () => _openPlatformTour(context, language),
               ),
             ),
             SizedBox(
@@ -585,7 +585,24 @@ class _IconBadge extends StatelessWidget {
   }
 }
 
-void _openPlatformTour(BuildContext context) {
+/// The full Business Platform Tour is a premium tablet / large-screen
+/// presentation. Phones (any orientation) intentionally do NOT open it;
+/// they get a professional localized explanation instead, pointing them
+/// to the brochure / company guide which DO work on phone.
+///
+/// We use the shortest-side rule (>= 600 = tablet/large) rather than the
+/// width-based [FluxidiBreakpoints] so phone-landscape (wide but short)
+/// is still treated as a phone — matching the orientation flow's own
+/// internal tablet detection.
+bool _isPlatformTourSupported(BuildContext context) {
+  return MediaQuery.sizeOf(context).shortestSide >= 600;
+}
+
+void _openPlatformTour(BuildContext context, AppLanguage language) {
+  if (!_isPlatformTourSupported(context)) {
+    _showPlatformTourTabletOnlyMessage(context, language);
+    return;
+  }
   Navigator.of(context).push(
     MaterialPageRoute<void>(
       builder: (orientationCtx) => BusinessOrientationFlowPage(
@@ -602,6 +619,50 @@ void _openPlatformTour(BuildContext context) {
           Navigator.of(orientationCtx).maybePop();
         },
       ),
+    ),
+  );
+}
+
+Future<void> _showPlatformTourTabletOnlyMessage(
+  BuildContext context,
+  AppLanguage language,
+) async {
+  await showDialog<void>(
+    context: context,
+    builder: (dialogCtx) => AlertDialog(
+      icon: const Icon(Icons.tablet_mac_outlined),
+      title: Text(
+        _t(
+          language,
+          nl: 'Platformrondleiding',
+          en: 'Platform tour',
+          fr: 'Visite de la plateforme',
+          es: 'Recorrido de la plataforma',
+        ),
+      ),
+      content: Text(
+        _t(
+          language,
+          nl: 'Deze platformrondleiding is geoptimaliseerd voor tablet of groter scherm. Gebruik op gsm de brochure of handleiding.',
+          en: 'This platform tour is optimized for tablet or larger screens. On phone, please use the brochure or company guide.',
+          fr: 'Cette visite de la plateforme est optimisée pour tablette ou écran plus grand. Sur téléphone, utilisez la brochure ou le guide d’entreprise.',
+          es: 'Este recorrido de la plataforma está optimizado para tablet o pantallas más grandes. En el teléfono, utiliza el folleto o la guía de empresa.',
+        ),
+      ),
+      actions: <Widget>[
+        TextButton(
+          onPressed: () => Navigator.of(dialogCtx).maybePop(),
+          child: Text(
+            _t(
+              language,
+              nl: 'Begrepen',
+              en: 'Got it',
+              fr: 'Compris',
+              es: 'Entendido',
+            ),
+          ),
+        ),
+      ],
     ),
   );
 }

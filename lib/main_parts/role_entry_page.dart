@@ -2052,6 +2052,47 @@ class RoleEntryPage extends StatelessWidget {
                           // pre-orientation behavior.
                           onFinished: () {
                             if (!wizardCtx.mounted) return;
+                            // The full Business Platform Tour is a
+                            // premium tablet / large-screen presentation.
+                            // On phone (shortest side < 600, any
+                            // orientation) we deliberately skip it: the
+                            // guided setup wizard itself still ran on
+                            // phone, but after completion we land the
+                            // operator on Business Home exactly like the
+                            // normal post-setup flow and show a short
+                            // localized note that the tour is optimized
+                            // for larger screens. Tablet/large keeps the
+                            // existing behavior and opens the tour.
+                            final bool platformTourSupported =
+                                MediaQuery.sizeOf(wizardCtx).shortestSide >=
+                                600;
+                            if (!platformTourSupported) {
+                              debugPrint(
+                                '[FIRST_RUN_WIZARD][AFTER_FINISH] '
+                                'phone -> business_home (tour skipped)',
+                              );
+                              final messenger = ScaffoldMessenger.of(wizardCtx);
+                              unawaited(
+                                _navigateToBusinessHomeWithBootstrapHydration(
+                                  wizardCtx,
+                                  reason: 'first_run_phone_no_platform_tour',
+                                ),
+                              );
+                              messenger.showSnackBar(
+                                SnackBar(
+                                  duration: const Duration(seconds: 6),
+                                  content: Text(
+                                    _t(
+                                      nl: 'Deze platformrondleiding is geoptimaliseerd voor tablet of groter scherm. Gebruik op gsm de brochure of handleiding.',
+                                      en: 'This platform tour is optimized for tablet or larger screens. On phone, please use the brochure or company guide.',
+                                      fr: 'Cette visite de la plateforme est optimisée pour tablette ou écran plus grand. Sur téléphone, utilisez la brochure ou le guide d’entreprise.',
+                                      es: 'Este recorrido de la plataforma está optimizado para tablet o pantallas más grandes. En el teléfono, utiliza el folleto o la guía de empresa.',
+                                    ),
+                                  ),
+                                ),
+                              );
+                              return;
+                            }
                             debugPrint(
                               '[FIRST_RUN_WIZARD][AFTER_FINISH] '
                               '-> orientation_flow',
