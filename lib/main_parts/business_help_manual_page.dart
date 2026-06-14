@@ -7,8 +7,8 @@ import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/business_orientation_flow_page.dart';
 import 'package:fluxidi_tracking/business_theme_palette.dart';
 import 'package:fluxidi_tracking/business_theme_store.dart';
+import 'package:open_filex/open_filex.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 const String _fluxidiSupportWhatsAppUrl = 'https://wa.me/32469788891';
@@ -22,6 +22,18 @@ const Map<AppLanguage, String> _brochureAssetByLanguage = <AppLanguage, String>{
       'assets/fluxidi/brochures/fluxidi_platform_brochure_fr_final.pdf',
   AppLanguage.es:
       'assets/fluxidi/brochures/fluxidi_platform_brochure_es_final.pdf',
+};
+
+const Map<AppLanguage, String>
+_businessGuideAssetByLanguage = <AppLanguage, String>{
+  AppLanguage.nl:
+      'assets/fluxidi/manuals/fluxidi_bedrijfspagina_handleiding_nl_v1_0_final.pdf',
+  AppLanguage.en:
+      'assets/fluxidi/manuals/fluxidi_business_page_guide_en_v1_0_final.pdf',
+  AppLanguage.fr:
+      'assets/fluxidi/manuals/fluxidi_guide_page_entreprise_fr_v1_0_final.pdf',
+  AppLanguage.es:
+      'assets/fluxidi/manuals/fluxidi_guia_pagina_empresa_es_v1_0_final.pdf',
 };
 
 class BusinessHelpManualPage extends StatelessWidget {
@@ -203,7 +215,7 @@ class _QuickActionsGrid extends StatelessWidget {
                 icon: Icons.play_circle_outline_rounded,
                 title: _t(
                   language,
-                  nl: 'Platformrondleiding bekijken',
+                  nl: 'Platform tour bekijken',
                   en: 'View platform tour',
                   fr: 'Voir la visite de la plateforme',
                   es: 'Ver recorrido de la plataforma',
@@ -225,19 +237,41 @@ class _QuickActionsGrid extends StatelessWidget {
                 icon: Icons.picture_as_pdf_outlined,
                 title: _t(
                   language,
-                  nl: 'Brochure bewaren of delen',
-                  en: 'Save or share brochure',
-                  fr: 'Enregistrer ou partager la brochure',
-                  es: 'Guardar o compartir folleto',
+                  nl: 'Brochure bekijken',
+                  en: 'View brochure',
+                  fr: 'Voir la brochure',
+                  es: 'Ver folleto',
                 ),
                 subtitle: _t(
                   language,
-                  nl: 'Bewaar of deel het volledige platformoverzicht.',
-                  en: 'Save or share the full platform overview.',
-                  fr: 'Enregistrez ou partagez la présentation complète.',
-                  es: 'Guarde o comparta la presentación completa.',
+                  nl: 'Open de volledige platformbrochure.',
+                  en: 'Open the full platform brochure.',
+                  fr: 'Ouvrez la brochure complète de la plateforme.',
+                  es: 'Abre el folleto completo de la plataforma.',
                 ),
-                onTap: () => _sharePlatformBrochure(context, language),
+                onTap: () => _viewPlatformBrochure(context, language),
+              ),
+            ),
+            SizedBox(
+              width: width,
+              child: _QuickActionCard(
+                palette: palette,
+                icon: Icons.menu_book_outlined,
+                title: _t(
+                  language,
+                  nl: 'Bedrijfspagina handleiding bekijken',
+                  en: 'View business page guide',
+                  fr: 'Voir le guide de la page entreprise',
+                  es: 'Ver guía de la página de empresa',
+                ),
+                subtitle: _t(
+                  language,
+                  nl: 'Open de volledige bedrijfspagina-handleiding.',
+                  en: 'Open the full business page guide.',
+                  fr: 'Ouvrez le guide complet de la page entreprise.',
+                  es: 'Abre la guía completa de la página de empresa.',
+                ),
+                onTap: () => _viewBusinessPageGuide(context, language),
               ),
             ),
           ],
@@ -608,7 +642,7 @@ String _brochureAssetPathForLanguage(AppLanguage language) {
       _brochureAssetByLanguage[AppLanguage.en]!;
 }
 
-Future<void> _sharePlatformBrochure(
+Future<void> _viewPlatformBrochure(
   BuildContext context,
   AppLanguage language,
 ) async {
@@ -623,35 +657,80 @@ Future<void> _sharePlatformBrochure(
     final String fileName = assetPath.split('/').last;
     final File file = File('${tempDir.path}/$fileName');
     await file.writeAsBytes(bytes, flush: true);
-    await Share.shareXFiles(
-      <XFile>[XFile(file.path)],
-      text: _t(
-        language,
-        nl: 'Bewaar of deel het volledige platformoverzicht.',
-        en: 'Save or share the full platform overview.',
-        fr: 'Enregistrez ou partagez la présentation complète.',
-        es: 'Guarde o comparta la presentación completa.',
-      ),
-    );
+    final OpenResult result = await OpenFilex.open(file.path);
+    if (result.type == ResultType.done || !context.mounted) return;
+    _showBrochureViewError(context, language);
   } catch (error, stackTrace) {
     debugPrint(
-      '[HELP_MANUAL][BROCHURE_SHARE_FAIL] error=$error stack=$stackTrace',
+      '[HELP_MANUAL][BROCHURE_VIEW_FAIL] error=$error stack=$stackTrace',
     );
     if (!context.mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          _t(
-            language,
-            nl: 'De brochure kon niet worden geladen. Probeer het opnieuw.',
-            en: 'Could not load the brochure. Please try again.',
-            fr: 'Impossible de charger la brochure. Veuillez réessayer.',
-            es: 'No se pudo cargar el folleto. Inténtelo de nuevo.',
-          ),
+    _showBrochureViewError(context, language);
+  }
+}
+
+void _showBrochureViewError(BuildContext context, AppLanguage language) {
+  ScaffoldMessenger.of(context).showSnackBar(
+    SnackBar(
+      content: Text(
+        _t(
+          language,
+          nl: 'De brochure kon niet worden geopend. Probeer het opnieuw.',
+          en: 'Could not open the brochure. Please try again.',
+          fr: 'Impossible d’ouvrir la brochure. Veuillez réessayer.',
+          es: 'No se pudo abrir el folleto. Inténtelo de nuevo.',
         ),
       ),
+    ),
+  );
+}
+
+String _businessGuideAssetPathForLanguage(AppLanguage language) {
+  return _businessGuideAssetByLanguage[language] ??
+      _businessGuideAssetByLanguage[AppLanguage.en]!;
+}
+
+Future<void> _viewBusinessPageGuide(
+  BuildContext context,
+  AppLanguage language,
+) async {
+  try {
+    final String assetPath = _businessGuideAssetPathForLanguage(language);
+    final byteData = await rootBundle.load(assetPath);
+    final bytes = byteData.buffer.asUint8List(
+      byteData.offsetInBytes,
+      byteData.lengthInBytes,
     );
+    final Directory tempDir = await getTemporaryDirectory();
+    final String fileName = assetPath.split('/').last;
+    final File file = File('${tempDir.path}/$fileName');
+    await file.writeAsBytes(bytes, flush: true);
+    final OpenResult result = await OpenFilex.open(file.path);
+    if (result.type == ResultType.done || !context.mounted) return;
+    _showBusinessGuideViewError(context, language);
+  } catch (error, stackTrace) {
+    debugPrint(
+      '[HELP_MANUAL][BUSINESS_GUIDE_VIEW_FAIL] error=$error stack=$stackTrace',
+    );
+    if (!context.mounted) return;
+    _showBusinessGuideViewError(context, language);
   }
+}
+
+void _showBusinessGuideViewError(BuildContext context, AppLanguage language) {
+  ScaffoldMessenger.of(context).showSnackBar(
+    SnackBar(
+      content: Text(
+        _t(
+          language,
+          nl: 'De bedrijfspagina-handleiding kon niet worden geopend. Probeer het opnieuw.',
+          en: 'Could not open the business page guide. Please try again.',
+          fr: 'Impossible d’ouvrir le guide de la page entreprise. Veuillez réessayer.',
+          es: 'No se pudo abrir la guía de la página de empresa. Inténtelo de nuevo.',
+        ),
+      ),
+    ),
+  );
 }
 
 BoxDecoration _premiumDecoration(BusinessThemePalette palette) {
