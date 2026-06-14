@@ -2315,41 +2315,6 @@ class RoleEntryPage extends StatelessWidget {
     );
   }
 
-  /// Debug-only navigator helper used by the "Preview orientation" FAB.
-  /// Pushes [BusinessOrientationFlowPage] on top of the role-entry
-  /// route with both `onFinish` and `onSkip` wired to a simple
-  /// `Navigator.maybePop`, so the orientation flow can be tested
-  /// visually without creating a company profile, without going
-  /// through `_openBusinessOnboarding`, and without invoking the
-  /// production navigation helper
-  /// `_navigateToBusinessHomeWithBootstrapHydration` (which silently
-  /// no-ops without a usable company bootstrap token and would
-  /// strand the tester on the orientation page).
-  ///
-  /// Guarded by `kDebugMode` at the call site; the early-return is a
-  /// belt-and-braces check so the function is also a no-op if it is
-  /// ever reached in a non-debug build.
-  void _debugPreviewOrientation(BuildContext context) {
-    if (!kDebugMode) return;
-    debugPrint('[ORIENTATION_FLOW][DEBUG_PREVIEW_OPEN]');
-    Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (orientationCtx) => BusinessOrientationFlowPage(
-          onFinish: () {
-            if (!orientationCtx.mounted) return;
-            debugPrint('[ORIENTATION_FLOW][DEBUG_PREVIEW_FINISH]');
-            Navigator.of(orientationCtx).maybePop();
-          },
-          onSkip: () {
-            if (!orientationCtx.mounted) return;
-            debugPrint('[ORIENTATION_FLOW][DEBUG_PREVIEW_SKIP]');
-            Navigator.of(orientationCtx).maybePop();
-          },
-        ),
-      ),
-    );
-  }
-
   Widget _buildScaffoldWithBackground({
     required BuildContext context,
     required List<String> assets,
@@ -2364,37 +2329,6 @@ class RoleEntryPage extends StatelessWidget {
     final isScaffoldPhoneLandscape = _isCompactPhoneLandscape(viewportSize);
     return Scaffold(
       backgroundColor: kFluxidiBlack,
-      // Debug-only shortcut: a small extended FAB that pushes the
-      // BusinessOrientationFlowPage directly so QA can iterate on its
-      // visuals without creating a fresh company profile each time.
-      // `kDebugMode` is a const true ONLY in `flutter run` debug
-      // builds — Dart tree-shaking removes both this widget and
-      // `_debugPreviewOrientation` from release/profile bundles, so
-      // this cannot leak into a production build. The shortcut never
-      // touches first-run wizard state, "Finish setup later", token
-      // hydration, or any backend; it just pushes the page on top of
-      // the role entry route and pops back when the user finishes or
-      // skips. Hidden behind a transparent-on-light/gold accent so it
-      // is obvious to internal testers without being mistaken for a
-      // production CTA.
-      floatingActionButton: kDebugMode
-          ? FloatingActionButton.extended(
-              heroTag: 'debug_orientation_preview_fab',
-              backgroundColor: const Color(0xFFE5B641),
-              foregroundColor: const Color(0xFF0B1020),
-              icon: const Icon(Icons.visibility_outlined, size: 18),
-              label: Text(
-                _t(
-                  nl: 'Rondleiding testen',
-                  en: 'Preview orientation',
-                  fr: 'Aperçu de la visite',
-                  es: 'Vista previa del recorrido',
-                ),
-                style: const TextStyle(fontWeight: FontWeight.w800),
-              ),
-              onPressed: () => _debugPreviewOrientation(context),
-            )
-          : null,
       body: SafeArea(
         bottom: !isTabletPortrait,
         child: Stack(
