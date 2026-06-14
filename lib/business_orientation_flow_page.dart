@@ -32,12 +32,41 @@ import 'package:video_player/video_player.dart';
 ///   hero video does loop silently in the background, but it never
 ///   advances the page),
 /// * does NOT keep its own persistent state (one-shot orientation).
+
+/// Which entry point opened the orientation / product-tour flow.
+///
+/// Drives Card 1's status pill + intro sentence so the "Setup
+/// voltooid" reward moment is only shown when the tour is launched
+/// right after the guided setup/settings flow has been completed.
+/// Opening the same tour later from Help & guide uses the neutral
+/// "Startgids" framing instead, where claiming setup is "complete"
+/// would be misleading.
+enum BusinessOrientationEntryMode {
+  /// Opened from Help & guide or any general entry point — neutral
+  /// "Startgids / Quick guide" framing. Safe default.
+  generalGuide,
+
+  /// Opened immediately after the guided setup/settings flow was
+  /// completed — celebratory "Setup voltooid / Setup complete"
+  /// framing.
+  setupCompleted,
+}
+
 class BusinessOrientationFlowPage extends StatefulWidget {
   const BusinessOrientationFlowPage({
     super.key,
     required this.onFinish,
     this.onSkip,
+    this.entryMode = BusinessOrientationEntryMode.generalGuide,
   });
+
+  /// Entry context for the tour. Controls only Card 1's status pill
+  /// and intro sentence (see [BusinessOrientationEntryMode]); the page
+  /// order, navigation chrome and every other card stay identical.
+  /// Defaults to the safe [BusinessOrientationEntryMode.generalGuide]
+  /// so any general/Help entry point never falsely claims setup is
+  /// complete.
+  final BusinessOrientationEntryMode entryMode;
 
   /// Invoked when the operator presses the final-page "Go to cockpit"
   /// CTA. The host is responsible for navigating onwards (typically via
@@ -11610,35 +11639,59 @@ class _BusinessOrientationFlowPageState
     );
   }
 
-  /// Setup-complete capsule — emerald tint + check icon. Localised
-  /// to celebrate that the wizard step that just preceded this flow
-  /// has indeed wired up the operator's business profile.
+  /// Card 1 status capsule — context-aware via [widget.entryMode].
+  ///
+  /// * [BusinessOrientationEntryMode.setupCompleted]: emerald tint +
+  ///   check icon "Setup voltooid", celebrating that the guided setup
+  ///   that just preceded this flow wired up the operator's business
+  ///   profile.
+  /// * [BusinessOrientationEntryMode.generalGuide]: neutral gold/dark
+  ///   "Startgids" capsule matching the Fluxidi accent, used when the
+  ///   tour is reopened from Help & guide where "completed" would be
+  ///   misleading.
+  ///
+  /// Layout (padding, pill radius, icon size, font) is identical
+  /// across both modes so neither variant overflows or clips in
+  /// NL/EN/FR/ES.
   Widget _buildHeroSetupBadge() {
-    const Color successFill = Color(0x3322C55E); // ~20% emerald
-    const Color successText = Color(0xFF7DE2A4);
+    final bool setupCompleted =
+        widget.entryMode == BusinessOrientationEntryMode.setupCompleted;
+    final Color fill = setupCompleted
+        ? const Color(0x3322C55E) // ~20% emerald
+        : _gold.withOpacity(0.16);
+    final Color foreground = setupCompleted ? const Color(0xFF7DE2A4) : _gold;
+    final IconData icon = setupCompleted
+        ? Icons.check_circle
+        : Icons.explore_outlined;
+    final _Tr label = setupCompleted
+        ? const _Tr(
+            nl: 'Setup voltooid',
+            en: 'Setup complete',
+            fr: 'Configuration terminée',
+            es: 'Configuración completada',
+          )
+        : const _Tr(
+            nl: 'Startgids',
+            en: 'Quick guide',
+            fr: 'Guide de démarrage',
+            es: 'Guía inicial',
+          );
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
       decoration: BoxDecoration(
-        color: successFill,
+        color: fill,
         borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: successText.withOpacity(0.48)),
+        border: Border.all(color: foreground.withOpacity(0.48)),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: <Widget>[
-          const Icon(Icons.check_circle, size: 16, color: successText),
+          Icon(icon, size: 16, color: foreground),
           const SizedBox(width: 7),
           Text(
-            _t(
-              const _Tr(
-                nl: 'Setup voltooid',
-                en: 'Setup complete',
-                fr: 'Configuration terminée',
-                es: 'Configuración completada',
-              ),
-            ),
-            style: const TextStyle(
-              color: successText,
+            _t(label),
+            style: TextStyle(
+              color: foreground,
               fontSize: 13,
               fontWeight: FontWeight.w700,
               letterSpacing: 0.3,
@@ -11714,15 +11767,23 @@ class _BusinessOrientationFlowPageState
   /// localisation trims gracefully rather than blowing the height
   /// budget.
   Widget _buildHeroBody({double fontSize = 15, int? maxLines}) {
+    final bool setupCompleted =
+        widget.entryMode == BusinessOrientationEntryMode.setupCompleted;
+    final _Tr copy = setupCompleted
+        ? const _Tr(
+            nl: 'Je bedrijfsbasis is ingesteld. In deze korte rondleiding ontdek je hoe je boekingen, chauffeurs, voertuigen en klanten beheert.',
+            en: 'Your business basis is set up. In this short tour, you will discover how to manage bookings, drivers, vehicles and customers.',
+            fr: 'La base de votre entreprise est configurée. Dans cette courte visite, vous découvrirez comment gérer les réservations, les chauffeurs, les véhicules et les clients.',
+            es: 'La base de tu empresa está configurada. En este breve recorrido descubrirás cómo gestionar reservas, conductores, vehículos y clientes.',
+          )
+        : const _Tr(
+            nl: 'Ontdek in deze korte rondleiding hoe je boekingen, chauffeurs, voertuigen en klanten beheert.',
+            en: 'In this short tour, discover how to manage bookings, drivers, vehicles and customers.',
+            fr: 'Dans cette courte visite, découvrez comment gérer les réservations, les chauffeurs, les véhicules et les clients.',
+            es: 'En este breve recorrido, descubre cómo gestionar reservas, conductores, vehículos y clientes.',
+          );
     return Text(
-      _t(
-        const _Tr(
-          nl: 'Je bedrijfsbasis is ingesteld. In deze korte rondleiding ontdek je hoe je boekingen, chauffeurs, voertuigen en klanten beheert.',
-          en: "Your business setup is ready. In this short tour, you'll discover how to manage bookings, drivers, vehicles and customers.",
-          fr: 'La base de votre entreprise est configurée. Dans cette courte visite, découvrez comment gérer les réservations, chauffeurs, véhicules et clients.',
-          es: 'La base de tu empresa está configurada. En este breve recorrido descubrirás cómo gestionar reservas, conductores, vehículos y clientes.',
-        ),
-      ),
+      _t(copy),
       textAlign: TextAlign.center,
       maxLines: maxLines,
       overflow: maxLines == null ? TextOverflow.clip : TextOverflow.ellipsis,

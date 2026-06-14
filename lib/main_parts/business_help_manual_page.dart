@@ -589,6 +589,10 @@ void _openPlatformTour(BuildContext context) {
   Navigator.of(context).push(
     MaterialPageRoute<void>(
       builder: (orientationCtx) => BusinessOrientationFlowPage(
+        // Reopened from Help & guide → neutral "Startgids / Quick
+        // guide" framing; claiming setup is "complete" here would be
+        // misleading.
+        entryMode: BusinessOrientationEntryMode.generalGuide,
         onFinish: () {
           if (!orientationCtx.mounted) return;
           Navigator.of(orientationCtx).maybePop();

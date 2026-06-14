@@ -2060,6 +2060,11 @@ class RoleEntryPage extends StatelessWidget {
                               MaterialPageRoute<void>(
                                 builder: (orientationCtx) =>
                                     BusinessOrientationFlowPage(
+                                      // Opened right after the guided
+                                      // setup flow completed → show the
+                                      // "Setup voltooid" reward framing.
+                                      entryMode: BusinessOrientationEntryMode
+                                          .setupCompleted,
                                       onFinish: () {
                                         if (!orientationCtx.mounted) return;
                                         unawaited(
