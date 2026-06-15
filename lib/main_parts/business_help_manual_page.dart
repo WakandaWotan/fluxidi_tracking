@@ -1275,10 +1275,10 @@ const _faqItems = <_FaqItem>[
       es: '¿Dónde encuentro el folleto?',
     ),
     answer: _L(
-      nl: 'De brochure staat op kaart 15 van de platformrondleiding en gebruikt automatisch je huidige taal.',
-      en: 'The brochure is on card 15 of the platform tour and automatically uses your current language.',
-      fr: 'La brochure se trouve sur la carte 15 de la visite et utilise automatiquement votre langue.',
-      es: 'El folleto está en la tarjeta 15 del recorrido y usa automáticamente su idioma actual.',
+      nl: 'De brochure staat rechtstreeks in Help & guide. Open de brochuresectie om ze te bekijken of te delen in je huidige taal.',
+      en: 'The brochure is available directly in Help & guide. Open the brochure section to view or share it in your current language.',
+      fr: 'La brochure est disponible directement dans Help & guide. Ouvrez la section brochure pour la consulter ou la partager dans votre langue actuelle.',
+      es: 'El folleto está disponible directamente en Help & guide. Abre la sección del folleto para verlo o compartirlo en tu idioma actual.',
     ),
   ),
 ];
