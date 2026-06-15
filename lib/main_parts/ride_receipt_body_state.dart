@@ -1759,6 +1759,283 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
     ).toString();
   }
 
+  /// Resolves the booking/ride owner tenant + company **strictly** from the
+  /// booking record (booking details + raw history payload).
+  ///
+  /// In Fluxidi's tenant model, `tenant_id == company_id` for the booking
+  /// owner (see [resolveStrictTenantCompanyScope] / `EffectiveTenantCompanyScope`,
+  /// which always sets `tenantId: activeCompanyId, companyId: activeCompanyId`).
+  /// The `/trips/history` backend `summarizeTrip()` currently emits only
+  /// `tenant_id` at the top level of each trip; legacy records may stamp the
+  /// id under `company_id` / `owner_company_id` / nested `record.*` paths
+  /// only. To honour that invariant without "inventing" a scope from session
+  /// state, we accept the canonical owner id under **either** name and mirror
+  /// it into the missing slot. Returns `null` only when neither identifier
+  /// can be found anywhere on the record.
+  ///
+  /// Session/profile values are intentionally **not** used as fallback here.
+  /// `presentFields` is populated with the alias paths that produced a value
+  /// (for diagnostics only).
+  ({
+    String tenantId,
+    String companyId,
+    String tenantSource,
+    String companySource,
+  })?
+  _bookingOwnerScopeForBankPayment({Set<String>? presentFields}) {
+    final sources = <(String, Map<dynamic, dynamic>)>[
+      ('bookingDetails', item.bookingDetails),
+      ('rawSource', item.rawSource),
+    ];
+    const tenantAliases = <List<String>>[
+      ['tenant_id'],
+      ['tenantId'],
+      ['owner_tenant_id'],
+      ['ownerTenantId'],
+      ['booking', 'tenant_id'],
+      ['booking', 'tenantId'],
+      ['booking', 'owner_tenant_id'],
+      ['booking', 'ownerTenantId'],
+      ['booking_details', 'tenant_id'],
+      ['booking_details', 'tenantId'],
+      ['record', 'tenant_id'],
+      ['record', 'tenantId'],
+      ['record', 'booking', 'tenant_id'],
+      ['record', 'booking', 'tenantId'],
+      ['record', 'booking_details', 'tenant_id'],
+      ['record', 'booking_details', 'tenantId'],
+      ['record', 'payload', 'tenant_id'],
+      ['record', 'payload', 'tenantId'],
+      ['payload', 'tenant_id'],
+      ['payload', 'tenantId'],
+      ['payload', 'booking', 'tenant_id'],
+      ['payload', 'booking', 'tenantId'],
+    ];
+    const companyAliases = <List<String>>[
+      ['company_id'],
+      ['companyId'],
+      ['owner_company_id'],
+      ['ownerCompanyId'],
+      ['booking', 'company_id'],
+      ['booking', 'companyId'],
+      ['booking', 'owner_company_id'],
+      ['booking', 'ownerCompanyId'],
+      ['booking_details', 'company_id'],
+      ['booking_details', 'companyId'],
+      ['record', 'company_id'],
+      ['record', 'companyId'],
+      ['record', 'booking', 'company_id'],
+      ['record', 'booking', 'companyId'],
+      ['record', 'booking_details', 'company_id'],
+      ['record', 'booking_details', 'companyId'],
+      ['record', 'payload', 'company_id'],
+      ['record', 'payload', 'companyId'],
+      ['payload', 'company_id'],
+      ['payload', 'companyId'],
+      ['payload', 'booking', 'company_id'],
+      ['payload', 'booking', 'companyId'],
+    ];
+
+    ({String value, String source})? findFirst(List<List<String>> aliases) {
+      for (final entry in sources) {
+        for (final path in aliases) {
+          final value = _deepLookupInBookingMap(entry.$2, path);
+          if (value == null) continue;
+          final text = value.toString().trim();
+          if (text.isEmpty) continue;
+          final lower = text.toLowerCase();
+          if (lower == 'null' || lower == 'undefined') continue;
+          final aliasLabel = '${entry.$1}.${path.join('.')}';
+          if (presentFields != null) presentFields.add(aliasLabel);
+          return (value: text, source: aliasLabel);
+        }
+      }
+      return null;
+    }
+
+    final tenantHit = findFirst(tenantAliases);
+    final companyHit = findFirst(companyAliases);
+    if (tenantHit == null && companyHit == null) return null;
+
+    final tenantId = tenantHit?.value ?? companyHit!.value;
+    final companyId = companyHit?.value ?? tenantHit!.value;
+    return (
+      tenantId: tenantId,
+      companyId: companyId,
+      tenantSource: tenantHit?.source ?? '${companyHit!.source}|mirrored',
+      companySource: companyHit?.source ?? '${tenantHit!.source}|mirrored',
+    );
+  }
+
+  /// Resolves the currently active company-session tenant + company.
+  ///
+  /// `localBackendBusinessProfileNotifier` itself carries no `company_id` —
+  /// it is loaded as the **active company session's** business profile. The
+  /// caller must therefore prove that the active session scope matches the
+  /// booking-owner scope before trusting that profile's IBAN as the QR
+  /// beneficiary. This helper never falls back to the central
+  /// `kTenantId` / demo / default scope.
+  ({String tenantId, String companyId, String source})?
+  _activeCompanyScopeForBankPayment() {
+    final companySession = activeCompanySessionNotifier.value;
+    final sessionCompanyId = (companySession?.companyId ?? '').trim();
+    if (sessionCompanyId.isNotEmpty) {
+      return (
+        tenantId: sessionCompanyId,
+        companyId: sessionCompanyId,
+        source: 'active_company_session',
+      );
+    }
+    final companyProfile = companyProfileNotifier.value;
+    final profileCompanyId = (companyProfile?.companyId ?? '').trim();
+    if (profileCompanyId.isNotEmpty) {
+      return (
+        tenantId: profileCompanyId,
+        companyId: profileCompanyId,
+        source: 'company_profile',
+      );
+    }
+    final driverSession = activeDriverSessionNotifier.value;
+    final driverTenantId = (driverSession?.tenantId ?? '').trim();
+    final driverCompanyId = (driverSession?.companyId ?? '').trim();
+    if ((driverSession?.isVerifiedPairingSession ?? false) &&
+        driverTenantId.isNotEmpty &&
+        driverCompanyId.isNotEmpty) {
+      return (
+        tenantId: driverTenantId,
+        companyId: driverCompanyId,
+        source: 'verified_driver_session',
+      );
+    }
+    return null;
+  }
+
+  _BankPaymentDetails _bankPaymentDetails() {
+    final profile = localBackendBusinessProfileNotifier.value;
+    final beneficiaryRaw = (profile?.legalName.trim().isNotEmpty ?? false)
+        ? profile!.legalName.trim()
+        : (profile?.companyName.trim().isNotEmpty ?? false)
+        ? profile!.companyName.trim()
+        : kCompanyName;
+    // EPC SCT name field max 70 chars.
+    final beneficiary = beneficiaryRaw.length > 70
+        ? beneficiaryRaw.substring(0, 70)
+        : beneficiaryRaw;
+    final ibanNormalized = (profile?.iban ?? '')
+        .replaceAll(RegExp(r'\s+'), '')
+        .toUpperCase();
+    final amount = _receiptTotalAmount() ?? 0.0;
+    final currency = item.currency.trim().isEmpty
+        ? 'EUR'
+        : item.currency.trim().toUpperCase();
+    final memo =
+        '$kCompanyName ${_receiptText('receiptTitle')} $_customerReference';
+    // EPC unstructured remittance info max 140 chars.
+    final reference = memo.length > 140 ? memo.substring(0, 140) : memo;
+    return _BankPaymentDetails(
+      beneficiary: beneficiary,
+      iban: ibanNormalized,
+      bic: '',
+      amount: amount,
+      currency: currency,
+      reference: reference,
+    );
+  }
+
+  /// EPC069-12 SEPA Credit Transfer QR payload (version 002).
+  ///
+  /// Banking apps that support EPC/SEPA QR codes open a prefilled transfer
+  /// screen to the company IBAN. The customer still confirms the transfer
+  /// inside their own bank app, so this never marks the booking as paid.
+  String _bankPaymentEpcPayload(_BankPaymentDetails details) {
+    final amountString =
+        '${details.currency}${details.amount.toStringAsFixed(2)}';
+    return <String>[
+      'BCD',
+      '002',
+      '1',
+      'SCT',
+      details.bic,
+      details.beneficiary,
+      details.iban,
+      amountString,
+      '',
+      '',
+      details.reference,
+    ].join('\n');
+  }
+
+  String _bankPaymentClipboardText(_BankPaymentDetails details) {
+    final amountText = _moneyText(details.amount);
+    final beneficiaryLabel = _tr(
+      nl: 'Begunstigde',
+      en: 'Beneficiary',
+      fr: 'Bénéficiaire',
+      es: 'Beneficiario',
+    );
+    final memoLabel = _tr(
+      nl: 'Mededeling',
+      en: 'Reference',
+      fr: 'Communication',
+      es: 'Concepto',
+    );
+    return <String>[
+      '${_receiptText('amount')}: $amountText',
+      '$beneficiaryLabel: ${details.beneficiary}',
+      'IBAN: ${details.iban}',
+      '$memoLabel: ${details.reference}',
+    ].join('\n');
+  }
+
+  String _bankPaymentSetupMissingMessage() {
+    return _tr(
+      nl: 'Bankgegevens ontbreken in de bedrijfsinstellingen.',
+      en: 'Bank details are missing in business settings.',
+      fr: 'Les coordonnées bancaires manquent dans les paramètres de l’entreprise.',
+      es: 'Faltan los datos bancarios en la configuración de la empresa.',
+    );
+  }
+
+  String _bankPaymentScopeMismatchMessage() {
+    return _tr(
+      nl: 'Bankgegevens komen niet overeen met dit bedrijf.',
+      en: 'Bank details do not match this company.',
+      fr: 'Les coordonnées bancaires ne correspondent pas à cette entreprise.',
+      es: 'Los datos bancarios no coinciden con esta empresa.',
+    );
+  }
+
+  String _maskScopeForLog(String value) {
+    final trimmed = value.trim();
+    if (trimmed.isEmpty) return '-';
+    if (trimmed.length <= 6) return trimmed;
+    return '${trimmed.substring(0, 3)}…${trimmed.substring(trimmed.length - 3)}';
+  }
+
+  String _bankPaymentCopyButtonLabel() {
+    return _tr(
+      nl: 'Kopieer betaalgegevens',
+      en: 'Copy payment details',
+      fr: 'Copier les données de paiement',
+      es: 'Copiar datos de pago',
+    );
+  }
+
+  String _bankPaymentCopySnackText() {
+    return _tr(
+      nl: 'Betaalgegevens gekopieerd.',
+      en: 'Payment details copied.',
+      fr: 'Données de paiement copiées.',
+      es: 'Datos de pago copiados.',
+    );
+  }
+
+  String _maskIbanForLog(String iban) {
+    final compact = iban.replaceAll(RegExp(r'\s+'), '');
+    if (compact.length <= 6) return compact;
+    return '${compact.substring(0, 4)}…${compact.substring(compact.length - 2)}';
+  }
+
   void _markPaymentRequestSent() {
     if (_paymentStatus == _ReceiptPaymentStatus.pending) {
       setState(() => _paymentStatus = _ReceiptPaymentStatus.sent);
@@ -2669,8 +2946,88 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
 
   void _showPaymentQr(BuildContext context) {
     if (!_guardDriverReceiptOperation(action: 'payment_qr')) return;
+
+    final rideRefMasked = _safeRefPreview(item.bookingId ?? item.tripId);
+
+    // 1) Booking owner scope must be present on the ride record itself.
+    final bookingFieldHits = <String>{};
+    final bookingScope = _bookingOwnerScopeForBankPayment(
+      presentFields: bookingFieldHits,
+    );
+    if (bookingScope == null) {
+      final bookingDetailKeys = item.bookingDetails.keys
+          .map((k) => k.toString())
+          .take(10)
+          .join(',');
+      final rawSourceKeys = item.rawSource.keys
+          .map((k) => k.toString())
+          .take(10)
+          .join(',');
+      debugPrint(
+        '[QR_PAYMENT][CONFIG] status=missing_booking_scope ref=$rideRefMasked bookingFields=- bookingDetailsKeys=$bookingDetailKeys rawSourceKeys=$rawSourceKeys',
+      );
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(_bankPaymentScopeMismatchMessage())),
+      );
+      return;
+    }
+
+    // 2) Active company scope must be present (no fallback to central/demo).
+    final activeScope = _activeCompanyScopeForBankPayment();
+    if (activeScope == null) {
+      debugPrint(
+        '[QR_PAYMENT][CONFIG] status=missing_active_scope ref=$rideRefMasked rideTenant=${_maskScopeForLog(bookingScope.tenantId)} rideCompany=${_maskScopeForLog(bookingScope.companyId)} bookingFields=${bookingFieldHits.join(',')}',
+      );
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(_bankPaymentScopeMismatchMessage())),
+      );
+      return;
+    }
+
+    // 3) Both tenantId AND companyId must match (case-insensitive, trimmed,
+    // whitespace-normalized). The cached business profile is implicitly
+    // scoped to the active session, so any mismatch here would mean we'd
+    // otherwise hand the customer another company's IBAN.
+    String normalize(String value) =>
+        value.trim().replaceAll(RegExp(r'\s+'), '').toLowerCase();
+    final tenantMatch =
+        normalize(bookingScope.tenantId) == normalize(activeScope.tenantId);
+    final companyMatch =
+        normalize(bookingScope.companyId) == normalize(activeScope.companyId);
+    if (!tenantMatch || !companyMatch) {
+      debugPrint(
+        '[QR_PAYMENT][CONFIG] status=scope_mismatch ref=$rideRefMasked tenant_match=$tenantMatch company_match=$companyMatch bookingTenant=${_maskScopeForLog(bookingScope.tenantId)} bookingCompany=${_maskScopeForLog(bookingScope.companyId)} activeTenant=${_maskScopeForLog(activeScope.tenantId)} activeCompany=${_maskScopeForLog(activeScope.companyId)} source=${activeScope.source} bookingFields=${bookingFieldHits.join(',')} tenantAliasSource=${bookingScope.tenantSource} companyAliasSource=${bookingScope.companySource}',
+      );
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(_bankPaymentScopeMismatchMessage())),
+      );
+      return;
+    }
+
+    // 4) Now safe to read the cached business profile IBAN/beneficiary.
+    final details = _bankPaymentDetails();
+    if (!details.isComplete) {
+      debugPrint(
+        '[QR_PAYMENT][CONFIG] status=missing_bank_details ref=$rideRefMasked tenant=${_maskScopeForLog(activeScope.tenantId)} company=${_maskScopeForLog(activeScope.companyId)} source=${activeScope.source} iban_present=false beneficiary_present=${details.beneficiary.isNotEmpty}',
+      );
+      debugPrint(
+        '[QR_PAYMENT][PAYLOAD] type=epc tenant=${_maskScopeForLog(activeScope.tenantId)} company=${_maskScopeForLog(activeScope.companyId)} amount=${details.amount.toStringAsFixed(2)} ref=${_safeRefPreview(_customerReference)} status=setup_missing',
+      );
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(_bankPaymentSetupMissingMessage())),
+      );
+      return;
+    }
+
     _markPaymentRequestSent();
-    final link = _paymentLink();
+    final epcPayload = _bankPaymentEpcPayload(details);
+    final clipboardText = _bankPaymentClipboardText(details);
+    debugPrint(
+      '[QR_PAYMENT][CONFIG] status=ok ref=$rideRefMasked tenant=${_maskScopeForLog(activeScope.tenantId)} company=${_maskScopeForLog(activeScope.companyId)} source=matched_business_profile iban_present=true iban_masked=${_maskIbanForLog(details.iban)} bookingFields=${bookingFieldHits.join(',')}',
+    );
+    debugPrint(
+      '[QR_PAYMENT][PAYLOAD] type=epc tenant=${_maskScopeForLog(activeScope.tenantId)} company=${_maskScopeForLog(activeScope.companyId)} amount=${details.amount.toStringAsFixed(2)} ref=${_safeRefPreview(_customerReference)}',
+    );
     showDialog<void>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -2679,25 +3036,30 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
           width: 280,
           child: Column(
             mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              QrImageView(
-                data: link,
-                version: QrVersions.auto,
-                size: 220,
-                backgroundColor: Colors.white,
+              Center(
+                child: QrImageView(
+                  data: epcPayload,
+                  version: QrVersions.auto,
+                  size: 220,
+                  backgroundColor: Colors.white,
+                ),
               ),
               const SizedBox(height: 12),
-              Text(
-                _totalText(),
-                style: const TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.w800,
+              Center(
+                child: Text(
+                  _totalText(),
+                  style: const TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w800,
+                  ),
                 ),
               ),
               const SizedBox(height: 8),
               SelectableText(
-                link,
-                textAlign: TextAlign.center,
+                clipboardText,
+                textAlign: TextAlign.left,
                 style: const TextStyle(fontSize: 12),
               ),
             ],
@@ -2716,11 +3078,15 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
             child: Text(_receiptText('confirmQrPaid')),
           ),
           FilledButton(
-            onPressed: () {
-              Navigator.of(ctx).pop();
-              _copyPaymentLink(context);
+            onPressed: () async {
+              await Clipboard.setData(ClipboardData(text: clipboardText));
+              _markPaymentRequestSent();
+              if (!context.mounted) return;
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text(_bankPaymentCopySnackText())),
+              );
             },
-            child: Text(_receiptText('copyLink')),
+            child: Text(_bankPaymentCopyButtonLabel()),
           ),
         ],
       ),
@@ -3591,4 +3957,47 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
       },
     );
   }
+}
+
+/// Walks a nested booking map (or any `Map`) along the supplied key path
+/// and returns the leaf value (or `null` if any segment is missing or the
+/// intermediate value is not a `Map`). Used to look up tenant/company
+/// owner ids on bookings whose scope is stamped under nested locations
+/// such as `record.tenant_id`, `record.booking.company_id`,
+/// `payload.booking.owner_tenant_id`, etc.
+dynamic _deepLookupInBookingMap(
+  Map<dynamic, dynamic> source,
+  List<String> path,
+) {
+  dynamic current = source;
+  for (final key in path) {
+    if (current is Map && current.containsKey(key)) {
+      current = current[key];
+    } else {
+      return null;
+    }
+  }
+  return current;
+}
+
+/// Resolved company bank-payment details used to render the customer-facing
+/// SEPA Credit Transfer QR and the human-readable payment summary.
+class _BankPaymentDetails {
+  const _BankPaymentDetails({
+    required this.beneficiary,
+    required this.iban,
+    required this.bic,
+    required this.amount,
+    required this.currency,
+    required this.reference,
+  });
+
+  final String beneficiary;
+  final String iban;
+  final String bic;
+  final double amount;
+  final String currency;
+  final String reference;
+
+  bool get isComplete => beneficiary.isNotEmpty && iban.isNotEmpty;
 }
