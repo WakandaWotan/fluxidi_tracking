@@ -1472,12 +1472,58 @@ class _DriverHomePageState extends State<DriverHomePage>
     return auth.headers;
   }
 
+  /// Scope for driver History / completed-today fetches.
+  ///
+  /// Standalone driver mode must never inherit tenant/company from a stale
+  /// company profile when the active driver session belongs to another company.
+  ({String tenantId, String companyId, String source})?
+  _strictDriverHistoryScopeIdsWithSource() {
+    if (_isBusinessPreviewMode) {
+      return _strictActiveLocalScopeIdsWithSource();
+    }
+
+    final driverSession = activeDriverSessionNotifier.value;
+    final driverTenantId = (driverSession?.tenantId ?? '').trim();
+    final driverCompanyId = (driverSession?.companyId ?? '').trim();
+    final hasDriverScope =
+        driverTenantId.isNotEmpty && driverCompanyId.isNotEmpty;
+    final standaloneDriverView =
+        appRoleNotifier.value == AppRole.driver ||
+        (driverSession?.isStandaloneLoginSession ?? false);
+
+    if (standaloneDriverView && hasDriverScope) {
+      final companyProfileId =
+          companyProfileNotifier.value?.companyId.trim() ?? '';
+      final sessionCompanyId =
+          activeCompanySessionNotifier.value?.companyId.trim() ?? '';
+      if ((companyProfileId.isNotEmpty &&
+              companyProfileId != driverCompanyId) ||
+          (sessionCompanyId.isNotEmpty &&
+              sessionCompanyId != driverCompanyId)) {
+        debugPrint(
+          '[DRIVER_HISTORY][SCOPE] reason=standalone_driver_session_over_company_context profile=${_maskLocalScopeId(companyProfileId)} session=${_maskLocalScopeId(sessionCompanyId)} driver_company=${_maskLocalScopeId(driverCompanyId)}',
+        );
+      }
+      return (
+        tenantId: driverTenantId,
+        companyId: driverCompanyId,
+        source: 'driver_session',
+      );
+    }
+
+    return _strictActiveLocalScopeIdsWithSource();
+  }
+
   Future<Map<String, String>> _tripsHistoryAuthHeaders({
     required String scopeSource,
     required String driverId,
     String fetchContext = 'history',
   }) async {
-    final auth = await resolveTripsHistoryAuthHeaders(json: false);
+    final preferDriverSession = scopeSource.trim() == 'driver_session';
+    final auth = await resolveTripsHistoryAuthHeaders(
+      json: false,
+      preferDriverSession: preferDriverSession,
+    );
     final scopeLabel = switch (scopeSource.trim()) {
       'company_profile' || 'company_session' => 'company',
       'driver_session' => 'driver_session',
@@ -9104,7 +9150,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     setState(() => _completedTodayLoading = true);
 
     try {
-      final strictScope = _strictActiveLocalScopeIdsWithSource();
+      final strictScope = _strictDriverHistoryScopeIdsWithSource();
       if (strictScope == null) {
         debugPrint(
           '[DRIVER_DASHBOARD][COMPLETED_TODAY][SKIP_SCOPE] reason=missing_tenant_company_scope source=$reason',
@@ -15846,7 +15892,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       activeDetails['booking'] = nestedBooking;
       bookingDetailsById[activeBookingId] = activeDetails;
     }
-    final strictScope = _strictActiveLocalScopeIdsWithSource();
+    final strictScope = _strictDriverHistoryScopeIdsWithSource();
     if (strictScope == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(

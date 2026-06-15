@@ -3107,9 +3107,32 @@ class TripsHistoryAuthHeaders {
 /// Prefers compile-time admin token or active company session when available
 /// (business preview / company tablet). Falls back to the standalone public
 /// driver session bearer when no company-owner auth is present.
+///
+/// When [preferDriverSession] is true (standalone driver History), the driver
+/// bearer is used first so stale company profile/session on the device cannot
+/// be mixed with the active standalone driver session.
 Future<TripsHistoryAuthHeaders> resolveTripsHistoryAuthHeaders({
   bool json = true,
+  bool preferDriverSession = false,
 }) async {
+  final headers = <String, String>{'Accept': 'application/json'};
+  if (json) headers['Content-Type'] = 'application/json';
+
+  if (preferDriverSession) {
+    final driverSessionToken =
+        (activeDriverSessionNotifier.value?.driverSessionToken ?? '').trim();
+    if (driverSessionToken.isNotEmpty) {
+      headers['Authorization'] = 'Bearer $driverSessionToken';
+      debugPrint(
+        '[TRIPS_HISTORY_AUTH][MODE] auth_mode=driver_session prefer=true',
+      );
+      return TripsHistoryAuthHeaders(
+        headers: headers,
+        mode: TripsHistoryAuthMode.driverSession,
+      );
+    }
+  }
+
   final companyAuth = await resolveCompanyOwnerAuthHeaders(json: json);
   if (companyAuth.mode == CompanyOwnerAuthMode.admin) {
     return TripsHistoryAuthHeaders(
@@ -3124,8 +3147,6 @@ Future<TripsHistoryAuthHeaders> resolveTripsHistoryAuthHeaders({
     );
   }
 
-  final headers = <String, String>{'Accept': 'application/json'};
-  if (json) headers['Content-Type'] = 'application/json';
   final driverSessionToken =
       (activeDriverSessionNotifier.value?.driverSessionToken ?? '').trim();
   if (driverSessionToken.isNotEmpty) {
