@@ -639,7 +639,8 @@ export class FleetAllocatorDO {
     if (reservations[bookingId]?.vehicle_id) {
       let keepReservation = true;
       try {
-        const linked = await this.env.BOOKING_KV.get(`booking:${bookingId}`, {
+        const linkedBookingKey = _parentBookingIdFromAllocatorReservationId(bookingId);
+        const linked = await this.env.BOOKING_KV.get(`booking:${linkedBookingKey}`, {
           type: "json",
         });
         if (!linked || isTerminalLifecycleStatus(_bookingLifecycleValue(linked))) {
@@ -775,7 +776,7 @@ export class FleetAllocatorDO {
     // when no other ride is competing for the same slot. The protection
     // against OTHER overlapping unassigned demand is preserved unchanged.
     const _selfDemandCanonicalId = _dashboardCanonicalBookingNumber(
-      safeStr(bookingId, 160),
+      safeStr(_parentBookingIdFromAllocatorReservationId(bookingId) || bookingId, 160),
     );
     const _selfDemandMaskedBookingId = _bookingIntentMask(bookingId);
     let _selfDemandTotalOverlapping = 0;
@@ -788,11 +789,7 @@ export class FleetAllocatorDO {
         continue;
       }
       _selfDemandTotalOverlapping += 1;
-      const selfMatch = _demandItemMatchesCurrentBooking(
-        d,
-        bookingId,
-        _selfDemandCanonicalId,
-      );
+      const selfMatch = _demandItemMatchesAllocatorBooking(d, bookingId);
       if (selfMatch) {
         _selfDemandExcluded += 1;
         console.log(
@@ -929,7 +926,8 @@ export class FleetAllocatorDO {
     for (const [id, r] of Object.entries(reservations)) {
       if (!r || id === bookingId) continue;
       try {
-        const linked = await this.env.BOOKING_KV.get(`booking:${id}`, { type: "json" });
+        const linkedBookingKey = _parentBookingIdFromAllocatorReservationId(id);
+        const linked = await this.env.BOOKING_KV.get(`booking:${linkedBookingKey}`, { type: "json" });
         if (!linked || isTerminalLifecycleStatus(_bookingLifecycleValue(linked))) {
           delete reservations[id];
           reservationsDirty = true;
@@ -9958,15 +9956,42 @@ async function upsertDriverVehicleBookingIndexesBestEffort(env, bookingId, rec, 
     const fallbackScope = resolveBookingTenantScopeFromRecord(rec);
     const scope = normalizeFleetTenantScope(scopeHint?.hasScope ? scopeHint : fallbackScope);
     if (!scope?.hasScope) return { ok: false, skipped: true, reason: "missing_scope" };
-    const item = bookingAssignmentIndexItemFromRecord(bookingId, rec);
+    const safeBookingId = safeStr(bookingId, 160);
+    const item = bookingAssignmentIndexItemFromRecord(safeBookingId, rec);
     if (!item) return { ok: false, skipped: true, reason: "invalid_item" };
-    const assignedDriverId = bookingAssignedDriverId(rec);
-    const assignedVehicleId = bookingAssignedVehicleId(rec);
+
+    const indexTargets = [];
+    if (resolveRoundtripDispatchMode(rec) === "split_no_wait") {
+      const rows = _flattenBookingForRidesListWithOperationalLegs(safeBookingId, rec);
+      const seenDrivers = new Set();
+      const seenVehicles = new Set();
+      for (const row of rows) {
+        const rowDriverId = safeStr(row?.assigned_driver_id ?? row?.assignedDriverId, 96);
+        const rowVehicleId = safeStr(row?.assigned_vehicle_id ?? row?.assignedVehicleId, 128);
+        if (rowDriverId && !seenDrivers.has(rowDriverId)) {
+          seenDrivers.add(rowDriverId);
+          indexTargets.push({ kind: "driver", id: rowDriverId });
+        }
+        if (rowVehicleId && !seenVehicles.has(rowVehicleId)) {
+          seenVehicles.add(rowVehicleId);
+          indexTargets.push({ kind: "vehicle", id: rowVehicleId });
+        }
+      }
+    } else {
+      const assignedDriverId = bookingAssignedDriverId(rec);
+      const assignedVehicleId = bookingAssignedVehicleId(rec);
+      if (assignedDriverId) indexTargets.push({ kind: "driver", id: assignedDriverId });
+      if (assignedVehicleId) indexTargets.push({ kind: "vehicle", id: assignedVehicleId });
+    }
+
     const keys = [];
-    const driverKey = driverScopedBookingsIndexKey(scope, assignedDriverId);
-    const vehicleKey = vehicleScopedBookingsIndexKey(scope, assignedVehicleId);
-    if (driverKey) keys.push(driverKey);
-    if (vehicleKey) keys.push(vehicleKey);
+    for (const target of indexTargets) {
+      const key =
+        target.kind === "driver"
+          ? driverScopedBookingsIndexKey(scope, target.id)
+          : vehicleScopedBookingsIndexKey(scope, target.id);
+      if (key) keys.push(key);
+    }
     if (!keys.length) return { ok: false, skipped: true, reason: "missing_assignment" };
     for (const key of keys) {
       const read = await readScopedAssignmentBookingIndex(env, key);
@@ -9983,11 +10008,16 @@ async function upsertDriverVehicleBookingIndexesBestEffort(env, bookingId, rec, 
       booking_id_preview: _bookingIntentMask(bookingId),
       tenant: scopeMask.tenant || "-",
       company: scopeMask.company || "-",
-      driver_assigned: !!driverKey,
-      vehicle_assigned: !!vehicleKey,
+      driver_assigned: indexTargets.some((target) => target.kind === "driver"),
+      vehicle_assigned: indexTargets.some((target) => target.kind === "vehicle"),
+      split_no_wait: resolveRoundtripDispatchMode(rec) === "split_no_wait",
       ok: true,
     });
-    return { ok: true, driver_indexed: !!driverKey, vehicle_indexed: !!vehicleKey };
+    return {
+      ok: true,
+      driver_indexed: indexTargets.some((target) => target.kind === "driver"),
+      vehicle_indexed: indexTargets.some((target) => target.kind === "vehicle"),
+    };
   } catch (err) {
     const scopeMask = _bookingIntentScopeMask(scopeHint || {});
     console.warn({
@@ -33287,6 +33317,9 @@ async function handleBooking(payload, env, request, options = {}) {
   let allocatorReleaseBookingId = "";
   let allocatorReleasePickupIso = "";
   let allocatorReleaseScope = null;
+  const allocatorReservations = [];
+  let handleBookingLegDispatchResults = null;
+  let handleBookingDispatchMode = "single";
   const explicitAssignmentTrusted = options?.explicitAssignmentTrusted === true;
   const explicitAssignmentTrustSource = safeStr(
     options?.explicitAssignmentTrustSource,
@@ -33296,6 +33329,13 @@ async function handleBooking(payload, env, request, options = {}) {
     if (!allocatorReservationAcquired || bookingPersisted) {
       console.log(
         `[ALLOCATOR][RESERVATION][RELEASE_SAFE] result=skipped reason=missing_reservation`,
+      );
+      return;
+    }
+    if (allocatorReservations.length) {
+      await _releaseFleetLegReservations(env, allocatorReservations, allocatorReleaseScope);
+      console.log(
+        `[ALLOCATOR][RESERVATION][RELEASE_SAFE] result=ok reason=released count=${allocatorReservations.length}`,
       );
       return;
     }
@@ -33760,6 +33800,64 @@ async function handleBooking(payload, env, request, options = {}) {
       payload?.fromLng ??
       (routeResolvedPickupCoords?.usable === true ? routeResolvedPickupCoords.lng : null);
 
+    // Layer 1B: surface the resolved pickup/dropoff coordinates and their
+    // source the moment handleBooking has them. If a downstream gate (e.g.
+    // FleetAllocator route) ever sees pickup_has_location=false this log
+    // makes it instantly clear whether the body lacked coords, the route
+    // geocode failed, or only one side resolved. Diagnostic only, scope
+    // values are not logged here.
+    try {
+      const _bookingDropoffLat =
+        payload?.dropoff_lat ??
+        payload?.dropoffLat ??
+        payload?.to_lat ??
+        payload?.toLat ??
+        payload?.destination_lat ??
+        payload?.destinationLat ??
+        null;
+      const _bookingDropoffLng =
+        payload?.dropoff_lng ??
+        payload?.dropoffLng ??
+        payload?.to_lng ??
+        payload?.toLng ??
+        payload?.destination_lng ??
+        payload?.destinationLng ??
+        null;
+      const _bodyPickupLatRaw =
+        payload?.pickup_lat ?? payload?.pickupLat ?? payload?.from_lat ?? payload?.fromLat ?? null;
+      const _bodyPickupLngRaw =
+        payload?.pickup_lng ?? payload?.pickupLng ?? payload?.from_lng ?? payload?.fromLng ?? null;
+      const _bookingPickupSource = Number.isFinite(Number(_bodyPickupLatRaw)) &&
+        Number.isFinite(Number(_bodyPickupLngRaw))
+          ? "body_aliases"
+          : routeResolvedPickupCoords?.usable === true
+            ? "route_resolved"
+            : "none";
+      const _bookingDropoffSource = Number.isFinite(Number(_bookingDropoffLat)) &&
+        Number.isFinite(Number(_bookingDropoffLng))
+          ? "body_aliases"
+          : "none";
+      const _hasPickupLatLng =
+        Number.isFinite(Number(bookingPickupLatForAllocator)) &&
+        Number.isFinite(Number(bookingPickupLngForAllocator));
+      const _hasDropoffLatLng = _bookingDropoffSource === "body_aliases";
+      const _bookingAirportIata = safeStr(
+        payload?.airport_iata ?? payload?.airportIata ?? payload?.airport_id ?? payload?.airportId,
+        16,
+      ) || "-";
+      console.log(
+        `[BOOKING_COORDS][PARITY] booking=${_bookingIntentMask(canonicalBookingId)} ` +
+        `hasPickupLatLng=${_hasPickupLatLng ? "true" : "false"} ` +
+        `hasDropoffLatLng=${_hasDropoffLatLng ? "true" : "false"} ` +
+        `pickupSource=${_bookingPickupSource} ` +
+        `dropoffSource=${_bookingDropoffSource} ` +
+        `service=${safeStr(service, 32) || "-"} ` +
+        `airportIata=${_bookingAirportIata}`,
+      );
+    } catch (_) {
+      // Diagnostics only; never affect booking creation.
+    }
+
     const distance_km = round1((routeOut?.route?.distance || 0) / 1000);
     const duration_route_min = Math.round((routeOut?.route?.duration || 0) / 60);
 
@@ -34153,28 +34251,46 @@ async function handleBooking(payload, env, request, options = {}) {
         if (availabilityMode === "multi_vehicle") {
           calendarAllocatorHandled = true;
           if (shouldReserveNow) {
-            const alloc = await _allocatorRequest(env, pickup_iso, {
-              action: "allocate",
-              booking_id: canonicalBookingId,
-              pickup_ms: Date.parse(pickup_iso),
-              service_min: bookingServiceMin,
+            const dispatchOutcome = await _runBookingCreationFleetDispatch(env, {
+              canonicalBookingId,
+              fleetScope,
+              service,
+              pickup_iso,
+              from,
+              to,
+              return_pickup_iso,
+              return_from,
+              return_to,
+              duration_route_min,
+              return_duration_min,
+              wait_min,
               tier,
               pax,
               bags,
-              from,
-              pickup_from: from,
-              pickup_address: from,
-              to,
-              dropoff_to: to,
-              dropoff_address: to,
-              pickup_iso,
-              pickup_lat: bookingPickupLatForAllocator,
-              pickup_lng: bookingPickupLngForAllocator,
-              tenantScope: fleetScope,
+              stop_count,
+              ret,
+              hasReturnSchedule,
+              bookingPickupLatForAllocator,
+              bookingPickupLngForAllocator,
+              bookingServiceMin,
             });
+            const failedLeg = (dispatchOutcome?.legResults || []).find(
+              (leg) => leg?.ok !== true && leg?.skipped !== true,
+            );
+            const alloc = {
+              ...(failedLeg?.alloc || dispatchOutcome?.alloc || {}),
+              allowed: dispatchOutcome?.ok === true && dispatchOutcome?.assigned === true,
+              reason:
+                safeStr(failedLeg?.alloc?.reason, 80) ||
+                safeStr(dispatchOutcome?.allocator_reason, 80) ||
+                safeStr(dispatchOutcome?.reason, 80) ||
+                "vehicle_capacity_exceeded",
+              assigned_vehicle_id: dispatchOutcome?.assignedVehicleId || null,
+              assigned_driver: dispatchOutcome?.assignedDriver || null,
+            };
             if (!alloc?.allowed) {
               console.log(
-                `[BOOKING][NO_VEHICLE] tenant=${bookingScopeMask.tenant || "-"} company=${bookingScopeMask.company || "-"} booking=${_bookingIntentMask(canonicalBookingId)} mode=${availabilityMode} reason=${safeStr(alloc?.reason || "vehicle_capacity_exceeded", 64) || "vehicle_capacity_exceeded"} ${_bookingNoVehicleDiagnosticsLog(alloc)}`,
+                `[BOOKING][NO_VEHICLE] tenant=${bookingScopeMask.tenant || "-"} company=${bookingScopeMask.company || "-"} booking=${_bookingIntentMask(canonicalBookingId)} mode=${availabilityMode} dispatch_mode=${safeStr(dispatchOutcome?.mode, 24) || "-"} reason=${safeStr(alloc?.reason || "vehicle_capacity_exceeded", 64) || "vehicle_capacity_exceeded"} ${_bookingNoVehicleDiagnosticsLog(alloc)}`,
               );
               return {
                 ok: false,
@@ -34182,182 +34298,59 @@ async function handleBooking(payload, env, request, options = {}) {
                 availability: {
                   reason: "vehicle_capacity",
                   availability_mode: availabilityMode,
+                  roundtrip_dispatch_mode: safeStr(dispatchOutcome?.mode, 24) || "single",
                   allocator_reason: alloc?.reason || "vehicle_capacity_exceeded",
                   reason_code: safeStr(alloc?.reason_code, 80) || safeStr(alloc?.reason, 80) || "vehicle_capacity_exceeded",
                   block_reason: safeStr(alloc?.block_reason, 80) || safeStr(alloc?.reason, 80) || "vehicle_capacity_exceeded",
                   suitable_vehicle_count: Number(alloc?.suitable_vehicle_count || 0),
                   available_slots: Number(alloc?.available_slots || 0),
-                  available_seconds: Number.isFinite(Number(alloc?.available_seconds)) ? Number(alloc.available_seconds) : null,
-                  required_seconds: Number.isFinite(Number(alloc?.required_seconds)) ? Number(alloc.required_seconds) : null,
-                  origin_travel_seconds: Number.isFinite(Number(alloc?.origin_travel_seconds)) ? Number(alloc.origin_travel_seconds) : null,
-                  required_buffer_seconds: Number.isFinite(Number(alloc?.required_buffer_seconds)) ? Number(alloc.required_buffer_seconds) : null,
-                  origin_source: safeStr(alloc?.origin_source, 80) || null,
-                  origin_has_location:
-                    typeof alloc?.origin_has_location === "boolean" ? alloc.origin_has_location : null,
-                  pickup_has_location:
-                    typeof alloc?.pickup_has_location === "boolean" ? alloc.pickup_has_location : null,
-                  origin_address_preview: safeStr(alloc?.origin_address_preview, 80) || null,
-                  pickup_address_preview: safeStr(alloc?.pickup_address_preview, 80) || null,
-                  origin_age_seconds: Number.isFinite(Number(alloc?.origin_age_seconds)) ? Number(alloc.origin_age_seconds) : null,
-                  origin_candidate_count: Number.isFinite(Number(alloc?.origin_candidate_count))
-                    ? Number(alloc.origin_candidate_count)
-                    : null,
-                  origin_candidate_sources_tried: safeStr(alloc?.origin_candidate_sources_tried, 240) || null,
-                  origin_candidate_resolution_summary:
-                    safeStr(alloc?.origin_candidate_resolution_summary, 240) || null,
-                  origin_geocode_attempted:
-                    typeof alloc?.origin_geocode_attempted === "boolean"
-                      ? alloc.origin_geocode_attempted
-                      : null,
-                  origin_geocode_success:
-                    typeof alloc?.origin_geocode_success === "boolean"
-                      ? alloc.origin_geocode_success
-                      : null,
-                  origin_geocode_source: safeStr(alloc?.origin_geocode_source, 80) || null,
-                  origin_geocode_error_code: safeStr(alloc?.origin_geocode_error_code, 80) || null,
-                  origin_geocode_error_message: safeStr(alloc?.origin_geocode_error_message, 180) || null,
-                  previous_reservation_id_preview: safeStr(alloc?.previous_reservation_id_preview, 40) || null,
-                  previous_reservation_dropoff_has_coords:
-                    typeof alloc?.previous_reservation_dropoff_has_coords === "boolean"
-                      ? alloc.previous_reservation_dropoff_has_coords
-                      : null,
-                  previous_reservation_dropoff_has_address:
-                    typeof alloc?.previous_reservation_dropoff_has_address === "boolean"
-                      ? alloc.previous_reservation_dropoff_has_address
-                      : null,
-                  previous_reservation_dropoff_geocode_attempted:
-                    typeof alloc?.previous_reservation_dropoff_geocode_attempted === "boolean"
-                      ? alloc.previous_reservation_dropoff_geocode_attempted
-                      : null,
-                  previous_reservation_dropoff_geocode_success:
-                    typeof alloc?.previous_reservation_dropoff_geocode_success === "boolean"
-                      ? alloc.previous_reservation_dropoff_geocode_success
-                      : null,
-                  previous_reservation_dropoff_coordinate_source:
-                    safeStr(alloc?.previous_reservation_dropoff_coordinate_source, 80) || null,
-                  previous_reservation_dropoff_resolution_summary:
-                    safeStr(alloc?.previous_reservation_dropoff_resolution_summary, 240) || null,
-                  earliest_available_at_ms: Number.isFinite(Number(alloc?.earliest_available_at_ms))
-                    ? Number(alloc.earliest_available_at_ms)
-                    : null,
-                  earliest_available_at: safeStr(alloc?.earliest_available_at, 80) || null,
-                  route_failure_reason: safeStr(alloc?.route_failure_reason, 80) || null,
-                  route_http_status: Number.isFinite(Number(alloc?.route_http_status))
-                    ? Number(alloc.route_http_status)
-                    : null,
-                  route_error_message: safeStr(alloc?.route_error_message, 180) || null,
-                  route_error_code: safeStr(alloc?.route_error_code, 80) || null,
-                  route_profile: safeStr(alloc?.route_profile, 80) || null,
-                  route_origin_lat_ok:
-                    typeof alloc?.route_origin_lat_ok === "boolean" ? alloc.route_origin_lat_ok : null,
-                  route_origin_lng_ok:
-                    typeof alloc?.route_origin_lng_ok === "boolean" ? alloc.route_origin_lng_ok : null,
-                  route_origin_coords_usable:
-                    typeof alloc?.route_origin_coords_usable === "boolean"
-                      ? alloc.route_origin_coords_usable
-                      : null,
-                  route_pickup_lat_ok:
-                    typeof alloc?.route_pickup_lat_ok === "boolean" ? alloc.route_pickup_lat_ok : null,
-                  route_pickup_lng_ok:
-                    typeof alloc?.route_pickup_lng_ok === "boolean" ? alloc.route_pickup_lng_ok : null,
-                  route_pickup_coords_usable:
-                    typeof alloc?.route_pickup_coords_usable === "boolean"
-                      ? alloc.route_pickup_coords_usable
-                      : null,
-                  route_origin_latlng_preview: safeStr(alloc?.route_origin_latlng_preview, 64) || null,
-                  route_origin_lnglat_preview: safeStr(alloc?.route_origin_lnglat_preview, 64) || null,
-                  route_origin_coordinate_source: safeStr(alloc?.route_origin_coordinate_source, 64) || null,
-                  route_origin_coords_belgium_like:
-                    typeof alloc?.route_origin_coords_belgium_like === "boolean"
-                      ? alloc.route_origin_coords_belgium_like
-                      : null,
-                  route_pickup_latlng_preview: safeStr(alloc?.route_pickup_latlng_preview, 64) || null,
-                  route_pickup_lnglat_preview: safeStr(alloc?.route_pickup_lnglat_preview, 64) || null,
-                  route_pickup_coordinate_source: safeStr(alloc?.route_pickup_coordinate_source, 64) || null,
-                  route_pickup_coords_belgium_like:
-                    typeof alloc?.route_pickup_coords_belgium_like === "boolean"
-                      ? alloc.route_pickup_coords_belgium_like
-                      : null,
-                  route_duration_seconds_raw: Number.isFinite(Number(alloc?.route_duration_seconds_raw))
-                    ? Number(alloc.route_duration_seconds_raw)
-                    : null,
-                  route_response_has_routes:
-                    typeof alloc?.route_response_has_routes === "boolean"
-                      ? alloc.route_response_has_routes
-                      : null,
-                  route_response_routes_count: Number.isFinite(Number(alloc?.route_response_routes_count))
-                    ? Number(alloc.route_response_routes_count)
-                    : null,
-                  route_response_has_duration:
-                    typeof alloc?.route_response_has_duration === "boolean"
-                      ? alloc.route_response_has_duration
-                      : null,
-                  route_used_coordinate_direct:
-                    typeof alloc?.route_used_coordinate_direct === "boolean"
-                      ? alloc.route_used_coordinate_direct
-                      : null,
-                  route_used_geocode_fallback:
-                    typeof alloc?.route_used_geocode_fallback === "boolean"
-                      ? alloc.route_used_geocode_fallback
-                      : null,
-                  route_retry_reason: safeStr(alloc?.route_retry_reason, 80) || null,
-                  route_retry_used:
-                    typeof alloc?.route_retry_used === "boolean" ? alloc.route_retry_used : null,
-                  route_retry_success:
-                    typeof alloc?.route_retry_success === "boolean" ? alloc.route_retry_success : null,
-                  route_retry_http_status: Number.isFinite(Number(alloc?.route_retry_http_status))
-                    ? Number(alloc.route_retry_http_status)
-                    : null,
-                  route_retry_error_code: safeStr(alloc?.route_retry_error_code, 80) || null,
-                  route_retry_error_message: safeStr(alloc?.route_retry_error_message, 180) || null,
-                  route_retry_duration_seconds_raw:
-                    Number.isFinite(Number(alloc?.route_retry_duration_seconds_raw))
-                      ? Number(alloc.route_retry_duration_seconds_raw)
-                      : null,
-                  route_retry_radius_used: safeStr(alloc?.route_retry_radius_used, 32) || null,
-                  route_retry_snap_penalty_seconds:
-                    Number.isFinite(Number(alloc?.route_retry_snap_penalty_seconds))
-                      ? Number(alloc.route_retry_snap_penalty_seconds)
-                      : 0,
-                  route_retry_attempts_count:
-                    Number.isFinite(Number(alloc?.route_retry_attempts_count))
-                      ? Number(alloc.route_retry_attempts_count)
-                      : null,
-                  route_retry_attempts_summary: safeStr(alloc?.route_retry_attempts_summary, 180) || null,
-                  route_same_point_shortcut:
-                    typeof alloc?.route_same_point_shortcut === "boolean"
-                      ? alloc.route_same_point_shortcut
-                      : null,
-                  route_same_point_distance_meters:
-                    Number.isFinite(Number(alloc?.route_same_point_distance_meters))
-                      ? Number(alloc.route_same_point_distance_meters)
-                      : null,
                 },
               };
             }
             allocatorReservationAcquired = true;
-            if (alloc?.assigned_vehicle_id) {
-              allocatorAssignedVehicleId = String(alloc.assigned_vehicle_id);
+            if (Array.isArray(dispatchOutcome?.reservations)) {
+              allocatorReservations.push(...dispatchOutcome.reservations);
+            }
+            handleBookingDispatchMode = safeStr(dispatchOutcome?.mode, 24) || "single";
+            if (dispatchOutcome?.mode === "split_no_wait") {
+              handleBookingLegDispatchResults = dispatchOutcome.legResults || [];
+              const outboundLegResult = handleBookingLegDispatchResults.find(
+                (leg) => leg?.legKey === "OUTBOUND",
+              );
+              if (outboundLegResult?.assignedVehicleId) {
+                allocatorAssignedVehicleId = String(outboundLegResult.assignedVehicleId);
+                resolvedAssignedVehicleId = allocatorAssignedVehicleId;
+                resolvedAssignedDriver = outboundLegResult.assignedDriver || null;
+              }
+            } else if (dispatchOutcome?.assignedVehicleId) {
+              allocatorAssignedVehicleId = String(dispatchOutcome.assignedVehicleId);
               resolvedAssignedVehicleId = allocatorAssignedVehicleId;
-              resolvedAssignedDriver = alloc?.assigned_driver || null;
+              resolvedAssignedDriver = dispatchOutcome.assignedDriver || null;
             }
           } else {
-            const vehicleCapacity = await _vehicleCapacityGateForRequest(env, {
-              pickupMs: Date.parse(pickup_iso),
-              serviceMin: bookingServiceMin,
-              tier,
-              pax,
-              bags,
-              from,
-              pickup_from: from,
-              pickup_address: from,
-              to,
-              dropoff_to: to,
-              dropoff_address: to,
-              pickup_iso,
-              pickup_lat: bookingPickupLatForAllocator,
-              pickup_lng: bookingPickupLngForAllocator,
-              tenantScope: fleetScope,
+            const vehicleCapacity = await _vehicleCapacityGateForRoundtripDispatch(env, {
+              parentBookingId: canonicalBookingId,
+              bookingFields: {
+                service,
+                pickup_iso,
+                from,
+                to,
+                return_pickup_iso,
+                return_from,
+                return_to,
+                duration_route_min,
+                return_duration_min,
+                wait_min,
+                tier,
+                pax,
+                bags,
+                stop_count,
+                return_enabled: ret.enabled,
+                service_min: bookingServiceMin,
+              },
+              fleetScope,
+              pickupLat: bookingPickupLatForAllocator,
+              pickupLng: bookingPickupLngForAllocator,
             });
             if (!vehicleCapacity.ok) {
               console.log(
@@ -35133,28 +35126,46 @@ Retour route: ${return_from || to} → ${return_to || from}`,
 
     if ((!calendarConfigured || calendarSyncSuppressed) && availabilityMode === "multi_vehicle" && !calendarAllocatorHandled) {
       if (shouldReserveNow) {
-        const alloc = await _allocatorRequest(env, pickup_iso, {
-          action: "allocate",
-          booking_id: canonicalBookingId,
-          pickup_ms: Date.parse(pickup_iso),
-          service_min: bookingServiceMin,
+        const dispatchOutcome = await _runBookingCreationFleetDispatch(env, {
+          canonicalBookingId,
+          fleetScope,
+          service,
+          pickup_iso,
+          from,
+          to,
+          return_pickup_iso,
+          return_from,
+          return_to,
+          duration_route_min,
+          return_duration_min,
+          wait_min,
           tier,
           pax,
           bags,
-          from,
-          pickup_from: from,
-          pickup_address: from,
-          to,
-          dropoff_to: to,
-          dropoff_address: to,
-          pickup_iso,
-          pickup_lat: bookingPickupLatForAllocator,
-          pickup_lng: bookingPickupLngForAllocator,
-          tenantScope: fleetScope,
+          stop_count,
+          ret,
+          hasReturnSchedule,
+          bookingPickupLatForAllocator,
+          bookingPickupLngForAllocator,
+          bookingServiceMin,
         });
+        const failedLeg = (dispatchOutcome?.legResults || []).find(
+          (leg) => leg?.ok !== true && leg?.skipped !== true,
+        );
+        const alloc = {
+          ...(failedLeg?.alloc || dispatchOutcome?.alloc || {}),
+          allowed: dispatchOutcome?.ok === true && dispatchOutcome?.assigned === true,
+          reason:
+            safeStr(failedLeg?.alloc?.reason, 80) ||
+            safeStr(dispatchOutcome?.allocator_reason, 80) ||
+            safeStr(dispatchOutcome?.reason, 80) ||
+            "vehicle_capacity_exceeded",
+          assigned_vehicle_id: dispatchOutcome?.assignedVehicleId || null,
+          assigned_driver: dispatchOutcome?.assignedDriver || null,
+        };
         if (!alloc?.allowed) {
           console.log(
-            `[BOOKING][NO_VEHICLE] tenant=${bookingScopeMask.tenant || "-"} company=${bookingScopeMask.company || "-"} booking=${_bookingIntentMask(canonicalBookingId)} mode=${availabilityMode} reason=${safeStr(alloc?.reason || "vehicle_capacity_exceeded", 64) || "vehicle_capacity_exceeded"} ${_bookingNoVehicleDiagnosticsLog(alloc)}`,
+            `[BOOKING][NO_VEHICLE] tenant=${bookingScopeMask.tenant || "-"} company=${bookingScopeMask.company || "-"} booking=${_bookingIntentMask(canonicalBookingId)} mode=${availabilityMode} dispatch_mode=${safeStr(dispatchOutcome?.mode, 24) || "-"} reason=${safeStr(alloc?.reason || "vehicle_capacity_exceeded", 64) || "vehicle_capacity_exceeded"} ${_bookingNoVehicleDiagnosticsLog(alloc)}`,
           );
           return {
             ok: false,
@@ -35162,182 +35173,59 @@ Retour route: ${return_from || to} → ${return_to || from}`,
             availability: {
               reason: "vehicle_capacity",
               availability_mode: availabilityMode,
+              roundtrip_dispatch_mode: safeStr(dispatchOutcome?.mode, 24) || "single",
               allocator_reason: alloc?.reason || "vehicle_capacity_exceeded",
               reason_code: safeStr(alloc?.reason_code, 80) || safeStr(alloc?.reason, 80) || "vehicle_capacity_exceeded",
               block_reason: safeStr(alloc?.block_reason, 80) || safeStr(alloc?.reason, 80) || "vehicle_capacity_exceeded",
               suitable_vehicle_count: Number(alloc?.suitable_vehicle_count || 0),
               available_slots: Number(alloc?.available_slots || 0),
-              available_seconds: Number.isFinite(Number(alloc?.available_seconds)) ? Number(alloc.available_seconds) : null,
-              required_seconds: Number.isFinite(Number(alloc?.required_seconds)) ? Number(alloc.required_seconds) : null,
-              origin_travel_seconds: Number.isFinite(Number(alloc?.origin_travel_seconds)) ? Number(alloc.origin_travel_seconds) : null,
-              required_buffer_seconds: Number.isFinite(Number(alloc?.required_buffer_seconds)) ? Number(alloc.required_buffer_seconds) : null,
-              origin_source: safeStr(alloc?.origin_source, 80) || null,
-              origin_has_location:
-                typeof alloc?.origin_has_location === "boolean" ? alloc.origin_has_location : null,
-              pickup_has_location:
-                typeof alloc?.pickup_has_location === "boolean" ? alloc.pickup_has_location : null,
-              origin_address_preview: safeStr(alloc?.origin_address_preview, 80) || null,
-              pickup_address_preview: safeStr(alloc?.pickup_address_preview, 80) || null,
-              origin_age_seconds: Number.isFinite(Number(alloc?.origin_age_seconds)) ? Number(alloc.origin_age_seconds) : null,
-              origin_candidate_count: Number.isFinite(Number(alloc?.origin_candidate_count))
-                ? Number(alloc.origin_candidate_count)
-                : null,
-              origin_candidate_sources_tried: safeStr(alloc?.origin_candidate_sources_tried, 240) || null,
-              origin_candidate_resolution_summary:
-                safeStr(alloc?.origin_candidate_resolution_summary, 240) || null,
-              origin_geocode_attempted:
-                typeof alloc?.origin_geocode_attempted === "boolean"
-                  ? alloc.origin_geocode_attempted
-                  : null,
-              origin_geocode_success:
-                typeof alloc?.origin_geocode_success === "boolean"
-                  ? alloc.origin_geocode_success
-                  : null,
-              origin_geocode_source: safeStr(alloc?.origin_geocode_source, 80) || null,
-              origin_geocode_error_code: safeStr(alloc?.origin_geocode_error_code, 80) || null,
-              origin_geocode_error_message: safeStr(alloc?.origin_geocode_error_message, 180) || null,
-              previous_reservation_id_preview: safeStr(alloc?.previous_reservation_id_preview, 40) || null,
-              previous_reservation_dropoff_has_coords:
-                typeof alloc?.previous_reservation_dropoff_has_coords === "boolean"
-                  ? alloc.previous_reservation_dropoff_has_coords
-                  : null,
-              previous_reservation_dropoff_has_address:
-                typeof alloc?.previous_reservation_dropoff_has_address === "boolean"
-                  ? alloc.previous_reservation_dropoff_has_address
-                  : null,
-              previous_reservation_dropoff_geocode_attempted:
-                typeof alloc?.previous_reservation_dropoff_geocode_attempted === "boolean"
-                  ? alloc.previous_reservation_dropoff_geocode_attempted
-                  : null,
-              previous_reservation_dropoff_geocode_success:
-                typeof alloc?.previous_reservation_dropoff_geocode_success === "boolean"
-                  ? alloc.previous_reservation_dropoff_geocode_success
-                  : null,
-              previous_reservation_dropoff_coordinate_source:
-                safeStr(alloc?.previous_reservation_dropoff_coordinate_source, 80) || null,
-              previous_reservation_dropoff_resolution_summary:
-                safeStr(alloc?.previous_reservation_dropoff_resolution_summary, 240) || null,
-              earliest_available_at_ms: Number.isFinite(Number(alloc?.earliest_available_at_ms))
-                ? Number(alloc.earliest_available_at_ms)
-                : null,
-              earliest_available_at: safeStr(alloc?.earliest_available_at, 80) || null,
-              route_failure_reason: safeStr(alloc?.route_failure_reason, 80) || null,
-              route_http_status: Number.isFinite(Number(alloc?.route_http_status))
-                ? Number(alloc.route_http_status)
-                : null,
-              route_error_message: safeStr(alloc?.route_error_message, 180) || null,
-              route_error_code: safeStr(alloc?.route_error_code, 80) || null,
-              route_profile: safeStr(alloc?.route_profile, 80) || null,
-              route_origin_lat_ok:
-                typeof alloc?.route_origin_lat_ok === "boolean" ? alloc.route_origin_lat_ok : null,
-              route_origin_lng_ok:
-                typeof alloc?.route_origin_lng_ok === "boolean" ? alloc.route_origin_lng_ok : null,
-              route_origin_coords_usable:
-                typeof alloc?.route_origin_coords_usable === "boolean"
-                  ? alloc.route_origin_coords_usable
-                  : null,
-              route_pickup_lat_ok:
-                typeof alloc?.route_pickup_lat_ok === "boolean" ? alloc.route_pickup_lat_ok : null,
-              route_pickup_lng_ok:
-                typeof alloc?.route_pickup_lng_ok === "boolean" ? alloc.route_pickup_lng_ok : null,
-              route_pickup_coords_usable:
-                typeof alloc?.route_pickup_coords_usable === "boolean"
-                  ? alloc.route_pickup_coords_usable
-                  : null,
-              route_origin_latlng_preview: safeStr(alloc?.route_origin_latlng_preview, 64) || null,
-              route_origin_lnglat_preview: safeStr(alloc?.route_origin_lnglat_preview, 64) || null,
-              route_origin_coordinate_source: safeStr(alloc?.route_origin_coordinate_source, 64) || null,
-              route_origin_coords_belgium_like:
-                typeof alloc?.route_origin_coords_belgium_like === "boolean"
-                  ? alloc.route_origin_coords_belgium_like
-                  : null,
-              route_pickup_latlng_preview: safeStr(alloc?.route_pickup_latlng_preview, 64) || null,
-              route_pickup_lnglat_preview: safeStr(alloc?.route_pickup_lnglat_preview, 64) || null,
-              route_pickup_coordinate_source: safeStr(alloc?.route_pickup_coordinate_source, 64) || null,
-              route_pickup_coords_belgium_like:
-                typeof alloc?.route_pickup_coords_belgium_like === "boolean"
-                  ? alloc.route_pickup_coords_belgium_like
-                  : null,
-              route_duration_seconds_raw: Number.isFinite(Number(alloc?.route_duration_seconds_raw))
-                ? Number(alloc.route_duration_seconds_raw)
-                : null,
-              route_response_has_routes:
-                typeof alloc?.route_response_has_routes === "boolean"
-                  ? alloc.route_response_has_routes
-                  : null,
-              route_response_routes_count: Number.isFinite(Number(alloc?.route_response_routes_count))
-                ? Number(alloc.route_response_routes_count)
-                : null,
-              route_response_has_duration:
-                typeof alloc?.route_response_has_duration === "boolean"
-                  ? alloc.route_response_has_duration
-                  : null,
-              route_used_coordinate_direct:
-                typeof alloc?.route_used_coordinate_direct === "boolean"
-                  ? alloc.route_used_coordinate_direct
-                  : null,
-              route_used_geocode_fallback:
-                typeof alloc?.route_used_geocode_fallback === "boolean"
-                  ? alloc.route_used_geocode_fallback
-                  : null,
-              route_retry_reason: safeStr(alloc?.route_retry_reason, 80) || null,
-              route_retry_used:
-                typeof alloc?.route_retry_used === "boolean" ? alloc.route_retry_used : null,
-              route_retry_success:
-                typeof alloc?.route_retry_success === "boolean" ? alloc.route_retry_success : null,
-              route_retry_http_status: Number.isFinite(Number(alloc?.route_retry_http_status))
-                ? Number(alloc.route_retry_http_status)
-                : null,
-              route_retry_error_code: safeStr(alloc?.route_retry_error_code, 80) || null,
-              route_retry_error_message: safeStr(alloc?.route_retry_error_message, 180) || null,
-              route_retry_duration_seconds_raw:
-                Number.isFinite(Number(alloc?.route_retry_duration_seconds_raw))
-                  ? Number(alloc.route_retry_duration_seconds_raw)
-                  : null,
-              route_retry_radius_used: safeStr(alloc?.route_retry_radius_used, 32) || null,
-              route_retry_snap_penalty_seconds:
-                Number.isFinite(Number(alloc?.route_retry_snap_penalty_seconds))
-                  ? Number(alloc.route_retry_snap_penalty_seconds)
-                  : 0,
-              route_retry_attempts_count:
-                Number.isFinite(Number(alloc?.route_retry_attempts_count))
-                  ? Number(alloc.route_retry_attempts_count)
-                  : null,
-              route_retry_attempts_summary: safeStr(alloc?.route_retry_attempts_summary, 180) || null,
-              route_same_point_shortcut:
-                typeof alloc?.route_same_point_shortcut === "boolean"
-                  ? alloc.route_same_point_shortcut
-                  : null,
-              route_same_point_distance_meters:
-                Number.isFinite(Number(alloc?.route_same_point_distance_meters))
-                  ? Number(alloc.route_same_point_distance_meters)
-                  : null,
             },
           };
         }
         allocatorReservationAcquired = true;
-        if (alloc?.assigned_vehicle_id) {
-          allocatorAssignedVehicleId = String(alloc.assigned_vehicle_id);
+        if (Array.isArray(dispatchOutcome?.reservations)) {
+          allocatorReservations.push(...dispatchOutcome.reservations);
+        }
+        handleBookingDispatchMode = safeStr(dispatchOutcome?.mode, 24) || "single";
+        if (dispatchOutcome?.mode === "split_no_wait") {
+          handleBookingLegDispatchResults = dispatchOutcome.legResults || [];
+          const outboundLegResult = handleBookingLegDispatchResults.find(
+            (leg) => leg?.legKey === "OUTBOUND",
+          );
+          if (outboundLegResult?.assignedVehicleId) {
+            allocatorAssignedVehicleId = String(outboundLegResult.assignedVehicleId);
+            resolvedAssignedVehicleId = allocatorAssignedVehicleId;
+            resolvedAssignedDriver = outboundLegResult.assignedDriver || null;
+          }
+        } else if (dispatchOutcome?.assignedVehicleId) {
+          allocatorAssignedVehicleId = String(dispatchOutcome.assignedVehicleId);
           resolvedAssignedVehicleId = allocatorAssignedVehicleId;
-          resolvedAssignedDriver = alloc?.assigned_driver || null;
+          resolvedAssignedDriver = dispatchOutcome.assignedDriver || null;
         }
       } else {
-        const vehicleCapacity = await _vehicleCapacityGateForRequest(env, {
-          pickupMs: Date.parse(pickup_iso),
-          serviceMin: bookingServiceMin,
-          tier,
-          pax,
-          bags,
-          from,
-          pickup_from: from,
-          pickup_address: from,
-          to,
-          dropoff_to: to,
-          dropoff_address: to,
-          pickup_iso,
-          pickup_lat: bookingPickupLatForAllocator,
-          pickup_lng: bookingPickupLngForAllocator,
-          tenantScope: fleetScope,
+        const vehicleCapacity = await _vehicleCapacityGateForRoundtripDispatch(env, {
+          parentBookingId: canonicalBookingId,
+          bookingFields: {
+            service,
+            pickup_iso,
+            from,
+            to,
+            return_pickup_iso,
+            return_from,
+            return_to,
+            duration_route_min,
+            return_duration_min,
+            wait_min,
+            tier,
+            pax,
+            bags,
+            stop_count,
+            return_enabled: ret.enabled,
+            service_min: bookingServiceMin,
+          },
+          fleetScope,
+          pickupLat: bookingPickupLatForAllocator,
+          pickupLng: bookingPickupLngForAllocator,
         });
         if (!vehicleCapacity.ok) {
           console.log(
@@ -35836,8 +35724,29 @@ Retour route: ${return_from || to} → ${return_to || from}`,
       updatedAt: bookingCreatedAt,
     });
     console.log(
-      `[BOOKING][OPERATIONAL_LEGS] booking=${_bookingIntentMask(canonicalBookingId)} count=${bookingOperationalLegs.length} return_enabled=${ret.enabled === true} has_return_schedule=${hasReturnSchedule === true} wait_min=${Math.max(0, Number(wait_min) || 0)} service=${safeStr(service, 24) || "-"}`,
+      `[BOOKING][OPERATIONAL_LEGS] booking=${_bookingIntentMask(canonicalBookingId)} count=${bookingOperationalLegs.length} return_enabled=${ret.enabled === true} has_return_schedule=${hasReturnSchedule === true} wait_min=${Math.max(0, Number(wait_min) || 0)} service=${safeStr(service, 24) || "-"} dispatch_mode=${handleBookingDispatchMode}`,
     );
+    if (
+      handleBookingDispatchMode === "split_no_wait" &&
+      Array.isArray(handleBookingLegDispatchResults) &&
+      handleBookingLegDispatchResults.length
+    ) {
+      for (const leg of bookingOperationalLegs) {
+        const legType = safeStr(leg?.leg_type ?? leg?.legType, 24).toLowerCase();
+        const legKey = legType === "return" ? "RETURN" : "OUTBOUND";
+        const legResult = handleBookingLegDispatchResults.find((entry) => entry?.legKey === legKey);
+        if (!legResult?.assignedVehicleId) continue;
+        _stampOperationalLegFleetAssignment(leg, {
+          vehicleId: legResult.assignedVehicleId,
+          driver: legResult.assignedDriver,
+          driverId: legResult.assignedDriverId,
+          nowIso: bookingCreatedAt,
+        });
+        console.log(
+          `[ROUNDTRIP_DISPATCH][LEG_ASSIGNMENT_WRITE] leg=${legType || "leg"} booking=${_bookingIntentMask(canonicalBookingId)} assigned_vehicle=${_bookingIntentMask(legResult.assignedVehicleId)} assigned_driver=${_bookingIntentMask(legResult.assignedDriverId)}`,
+        );
+      }
+    }
 
     const booking = {
       bookingId: canonicalBookingId,
@@ -35963,6 +35872,19 @@ Retour route: ${return_from || to} → ${return_to || from}`,
       source_context: tenantContext.source_context,
       tenant_resolution_mode: tenantContext.tenant_resolution_mode,
       tenant_resolved_at: tenantContext.tenant_resolved_at,
+      roundtrip_dispatch_mode: handleBookingDispatchMode,
+      roundtripDispatchMode: handleBookingDispatchMode,
+      ...(handleBookingDispatchMode === "split_no_wait"
+        ? {
+            parent_assignment_mode: "summary",
+            parentAssignmentMode: "summary",
+          }
+        : handleBookingDispatchMode === "continuous_wait"
+          ? {
+              parent_assignment_mode: "continuous_wait",
+              parentAssignmentMode: "continuous_wait",
+            }
+          : {}),
       ...bookingAssignmentFields,
       operational_legs: bookingOperationalLegs,
       operationalLegs: bookingOperationalLegs,
@@ -38731,10 +38653,375 @@ function _shouldSplitOperationalReturnLeg({
   waitMin,
 } = {}) {
   if (!returnEnabled) return false;
-  if (service === "airport") return true;
   const normalizedWaitMin = Math.max(0, Number(waitMin) || 0);
   if (normalizedWaitMin > 0) return false;
+  // Split only when a real return leg exists (scheduled return pickup).
+  // Airport one-way (returnEnabled false) and any booking without return
+  // schedule stay non-split regardless of service type.
   return !!hasReturnSchedule;
+}
+
+function _roundtripDispatchContextFromAny(source) {
+  const rec = source && typeof source === "object" ? source : {};
+  const bookingObj = rec?.booking && typeof rec.booking === "object" ? rec.booking : {};
+  const payloadObj = rec?.payload && typeof rec.payload === "object" ? rec.payload : {};
+  const quoteObj = rec?.quote && typeof rec.quote === "object" ? rec.quote : {};
+  const returnEnabled = !!(
+    rec?.return_enabled ??
+      rec?.returnEnabled ??
+      bookingObj?.return_enabled ??
+      bookingObj?.returnEnabled ??
+      payloadObj?.return_enabled ??
+      payloadObj?.return ??
+      quoteObj?.return?.enabled ??
+      false
+  );
+  const hasReturnSchedule = !!safeStr(
+    rec?.return_pickup_iso ??
+      rec?.returnPickupIso ??
+      bookingObj?.return_pickup_iso ??
+      bookingObj?.returnPickupIso ??
+      payloadObj?.return_pickup_iso ??
+      payloadObj?.returnPickupIso ??
+      quoteObj?.return?.pickup_iso,
+    80,
+  );
+  const waitMin = parseDurationMin(
+    rec?.wait_min ??
+      rec?.waitMin ??
+      bookingObj?.wait_min ??
+      bookingObj?.waitMin ??
+      payloadObj?.wait_min ??
+      payloadObj?.waitMin ??
+      payloadObj?.wait_minutes ??
+      payloadObj?.waiting_min ??
+      quoteObj?.wait_min,
+    0,
+  );
+  const service = normalizeService(
+    rec?.service ??
+      bookingObj?.service ??
+      payloadObj?.service ??
+      "passenger",
+  );
+  return {
+    service,
+    returnEnabled,
+    hasReturnSchedule,
+    waitMin,
+    normalizedWaitMin: Math.max(0, Number(waitMin) || 0),
+  };
+}
+
+function isSplitRoundtripWithoutWaiting(source) {
+  const ctx = _roundtripDispatchContextFromAny(source);
+  return _shouldSplitOperationalReturnLeg(ctx);
+}
+
+function isContinuousWaitRoundtrip(source) {
+  const ctx = _roundtripDispatchContextFromAny(source);
+  if (!ctx.returnEnabled) return false;
+  if (isSplitRoundtripWithoutWaiting(source)) return false;
+  return ctx.normalizedWaitMin > 0;
+}
+
+function resolveRoundtripDispatchMode(source) {
+  if (isSplitRoundtripWithoutWaiting(source)) return "split_no_wait";
+  if (isContinuousWaitRoundtrip(source)) return "continuous_wait";
+  return "single";
+}
+
+function _operationalLegAllocatorReservationId(parentBookingId, legKey) {
+  const parent = safeStr(parentBookingId, 160);
+  const key = safeStr(legKey, 24).toUpperCase() || "LEG";
+  return parent ? `${parent}:${key}` : "";
+}
+
+function _parentBookingIdFromAllocatorReservationId(reservationId) {
+  const safe = safeStr(reservationId, 200);
+  if (!safe) return "";
+  const idx = safe.lastIndexOf(":");
+  if (idx <= 0) return safe;
+  const suffix = safe.slice(idx + 1).toUpperCase();
+  if (suffix === "OUTBOUND" || suffix === "RETURN") {
+    return safe.slice(0, idx);
+  }
+  return safe;
+}
+
+function _allocatorSelfDemandTargetIds(allocatorBookingId) {
+  const targets = new Set();
+  const safe = safeStr(allocatorBookingId, 160);
+  if (!safe) return targets;
+  targets.add(safe);
+  const parent = _parentBookingIdFromAllocatorReservationId(safe);
+  if (parent) {
+    targets.add(parent);
+    targets.add(_operationalLegAllocatorReservationId(parent, "OUTBOUND"));
+    targets.add(_operationalLegAllocatorReservationId(parent, "RETURN"));
+    const canonical = _dashboardCanonicalBookingNumber(parent);
+    if (canonical) targets.add(canonical);
+  }
+  const directCanonical = _dashboardCanonicalBookingNumber(safe);
+  if (directCanonical) targets.add(directCanonical);
+  return targets;
+}
+
+function _demandItemMatchesAllocatorBooking(item, allocatorBookingId) {
+  const targets = _allocatorSelfDemandTargetIds(allocatorBookingId);
+  if (!targets.size) return null;
+  for (const target of targets) {
+    const match = _demandItemMatchesCurrentBooking(item, target, _dashboardCanonicalBookingNumber(target));
+    if (match) return match;
+  }
+  return null;
+}
+
+function _operationalLegAssignmentFromLeg(leg) {
+  if (!leg || typeof leg !== "object") {
+    return { assignedDriverId: null, assignedVehicleId: null };
+  }
+  return {
+    assignedDriverId:
+      safeStr(leg?.assigned_driver_id ?? leg?.assignedDriverId, 96) || null,
+    assignedVehicleId:
+      safeStr(leg?.assigned_vehicle_id ?? leg?.assignedVehicleId, 128) || null,
+  };
+}
+
+function _operationalLegServiceMinForDispatch({
+  durationMin = 0,
+  stopCount = 0,
+  waitMin = 0,
+  includeReturnDuration = false,
+  returnDurationMin = 0,
+  env = null,
+} = {}) {
+  const durationMainMin = Math.max(0, Number(durationMin) || 0);
+  const durationReturnMin = Math.max(0, Number(returnDurationMin) || 0);
+  const durationTotalMin = includeReturnDuration
+    ? durationMainMin + durationReturnMin
+    : durationMainMin;
+  return Math.max(
+    30,
+    Math.round(
+      durationTotalMin +
+        Math.max(0, Number(waitMin) || 0) +
+        Math.max(0, getStopHandlingMin(stopCount, env || {})) +
+        Math.max(0, getPostBufferMin(env || {})),
+    ),
+  );
+}
+
+function _buildSplitRoundtripLegDispatchSpecs({
+  parentBookingId,
+  rec = null,
+  bookingObj = null,
+  payloadObj = null,
+  quoteObj = null,
+  env = null,
+  outboundPickupIso = "",
+  outboundFrom = "",
+  outboundTo = "",
+  outboundPickupLat = null,
+  outboundPickupLng = null,
+  returnPickupIso = "",
+  returnFrom = "",
+  returnTo = "",
+  returnPickupLat = null,
+  returnPickupLng = null,
+  durationRouteMin = 0,
+  returnDurationMin = 0,
+  tier = "comfort",
+  pax = 1,
+  bags = 0,
+  stopCount = 0,
+} = {}) {
+  const parentId = safeStr(parentBookingId, 160);
+  if (!parentId) return [];
+  const legs = _bookingOperationalLegsFromRecord(rec || { booking: bookingObj, operational_legs: [] });
+  const outboundLeg =
+    legs.find((leg) => safeStr(leg?.leg_type ?? leg?.legType, 24).toLowerCase() === "outbound") ||
+    null;
+  const returnLeg =
+    legs.find((leg) => safeStr(leg?.leg_type ?? leg?.legType, 24).toLowerCase() === "return") ||
+    null;
+  const outboundPickup =
+    safeStr(outboundLeg?.pickup_iso ?? outboundLeg?.pickupIso ?? outboundPickupIso, 80) ||
+    outboundPickupIso;
+  const returnPickup =
+    safeStr(returnLeg?.pickup_iso ?? returnLeg?.pickupIso ?? returnPickupIso, 80) ||
+    returnPickupIso;
+  const outboundServiceMin = _operationalLegServiceMinForDispatch({
+    durationMin: outboundLeg?.duration_min ?? outboundLeg?.durationMin ?? durationRouteMin,
+    stopCount,
+    waitMin: 0,
+    includeReturnDuration: false,
+    env,
+  });
+  const returnServiceMin = _operationalLegServiceMinForDispatch({
+    durationMin: returnLeg?.duration_min ?? returnLeg?.durationMin ?? returnDurationMin,
+    stopCount: 0,
+    waitMin: 0,
+    includeReturnDuration: false,
+    env,
+  });
+  const specs = [];
+  if (outboundPickup) {
+    specs.push({
+      legKey: "OUTBOUND",
+      legType: "outbound",
+      allocatorBookingId: _operationalLegAllocatorReservationId(parentId, "OUTBOUND"),
+      pickupIso: outboundPickup,
+      pickupMs: Date.parse(outboundPickup),
+      serviceMin: outboundServiceMin,
+      tier,
+      pax,
+      bags,
+      from: safeStr(outboundLeg?.from ?? outboundFrom, 320) || outboundFrom,
+      to: safeStr(outboundLeg?.to ?? outboundTo, 320) || outboundTo,
+      pickupLat: outboundPickupLat,
+      pickupLng: outboundPickupLng,
+    });
+  }
+  if (returnPickup) {
+    specs.push({
+      legKey: "RETURN",
+      legType: "return",
+      allocatorBookingId: _operationalLegAllocatorReservationId(parentId, "RETURN"),
+      pickupIso: returnPickup,
+      pickupMs: Date.parse(returnPickup),
+      serviceMin: returnServiceMin,
+      tier,
+      pax,
+      bags,
+      from: safeStr(returnLeg?.from ?? returnFrom, 320) || returnFrom,
+      to: safeStr(returnLeg?.to ?? returnTo, 320) || returnTo,
+      pickupLat: returnPickupLat,
+      pickupLng: returnPickupLng,
+    });
+  }
+  return specs.filter(
+    (spec) =>
+      spec.allocatorBookingId &&
+      spec.pickupIso &&
+      Number.isFinite(spec.pickupMs),
+  );
+}
+
+function _stampOperationalLegFleetAssignment(leg, { vehicleId, driver, driverId, nowIso }) {
+  if (!leg || typeof leg !== "object") return leg;
+  const safeVehicleId = safeStr(vehicleId, 128) || null;
+  const safeDriverId =
+    safeStr(driverId ?? driver?.driver_id ?? driver?.driverId ?? driver?.id, 96) || null;
+  if (safeVehicleId) {
+    leg.assigned_vehicle_id = safeVehicleId;
+    leg.assignedVehicleId = safeVehicleId;
+  }
+  if (safeDriverId) {
+    leg.assigned_driver_id = safeDriverId;
+    leg.assignedDriverId = safeDriverId;
+  }
+  if (driver && typeof driver === "object") {
+    leg.assigned_driver = driver;
+    leg.assignedDriver = driver;
+  }
+  if (nowIso) {
+    leg.updated_at = nowIso;
+    leg.updatedAt = nowIso;
+  }
+  return leg;
+}
+
+function _applySplitRoundtripLegAssignmentsToRecord(rec, legResults, nowIso) {
+  if (!rec || typeof rec !== "object" || !Array.isArray(legResults)) return rec;
+  const byKey = new Map();
+  for (const result of legResults) {
+    const key = safeStr(result?.legKey, 24).toUpperCase();
+    if (key) byKey.set(key, result);
+  }
+  const stampCollection = (legs) => {
+    if (!Array.isArray(legs)) return legs;
+    for (const leg of legs) {
+      if (!leg || typeof leg !== "object") continue;
+      const legType = safeStr(leg?.leg_type ?? leg?.legType, 24).toLowerCase();
+      const key = legType === "return" ? "RETURN" : "OUTBOUND";
+      const result = byKey.get(key);
+      if (!result?.assignedVehicleId) continue;
+      _stampOperationalLegFleetAssignment(leg, {
+        vehicleId: result.assignedVehicleId,
+        driver: result.assignedDriver,
+        driverId: result.assignedDriverId,
+        nowIso,
+      });
+    }
+    return legs;
+  };
+  stampCollection(rec.operational_legs);
+  stampCollection(rec.operationalLegs);
+  if (rec.booking && typeof rec.booking === "object") {
+    stampCollection(rec.booking.operational_legs);
+    stampCollection(rec.booking.operationalLegs);
+  }
+  const outbound = byKey.get("OUTBOUND");
+  const ret = byKey.get("RETURN");
+  const summaryVehicle =
+    outbound?.assignedVehicleId && ret?.assignedVehicleId &&
+    outbound.assignedVehicleId === ret.assignedVehicleId
+      ? outbound.assignedVehicleId
+      : (outbound?.assignedVehicleId || ret?.assignedVehicleId || null);
+  const summaryDriverId =
+    outbound?.assignedDriverId && ret?.assignedDriverId &&
+    outbound.assignedDriverId === ret.assignedDriverId
+      ? outbound.assignedDriverId
+      : (outbound?.assignedDriverId || ret?.assignedDriverId || null);
+  const summaryDriver =
+    outbound?.assignedDriver &&
+    ret?.assignedDriver &&
+    summaryDriverId &&
+    outbound.assignedDriverId === ret.assignedDriverId
+      ? outbound.assignedDriver
+      : (outbound?.assignedDriver || ret?.assignedDriver || null);
+  rec.roundtrip_dispatch_mode = "split_no_wait";
+  rec.roundtripDispatchMode = "split_no_wait";
+  rec.parent_assignment_mode = "summary";
+  rec.parentAssignmentMode = "summary";
+  if (summaryVehicle) {
+    rec.assigned_vehicle_id = summaryVehicle;
+    rec.assignedVehicleId = summaryVehicle;
+    if (rec.booking && typeof rec.booking === "object") {
+      rec.booking.assigned_vehicle_id = summaryVehicle;
+      rec.booking.assignedVehicleId = summaryVehicle;
+    }
+  }
+  if (summaryDriverId) {
+    rec.assigned_driver_id = summaryDriverId;
+    rec.assignedDriverId = summaryDriverId;
+    if (rec.booking && typeof rec.booking === "object") {
+      rec.booking.assigned_driver_id = summaryDriverId;
+      rec.booking.assignedDriverId = summaryDriverId;
+    }
+  }
+  if (summaryDriver && typeof summaryDriver === "object") {
+    rec.assigned_driver = summaryDriver;
+    rec.assignedDriver = summaryDriver;
+    if (rec.booking && typeof rec.booking === "object") {
+      rec.booking.assigned_driver = summaryDriver;
+      rec.booking.assignedDriver = summaryDriver;
+    }
+  }
+  if (nowIso) {
+    rec.updated_at = nowIso;
+    rec.updatedAt = nowIso;
+    if (rec.booking && typeof rec.booking === "object") {
+      rec.booking.updated_at = nowIso;
+      rec.booking.updatedAt = nowIso;
+    }
+  }
+  console.log(
+    `[ROUNDTRIP_DISPATCH][PARENT_ASSIGNMENT] mode=summary outbound_vehicle=${_bookingIntentMask(outbound?.assignedVehicleId)} return_vehicle=${_bookingIntentMask(ret?.assignedVehicleId)} summary_vehicle=${_bookingIntentMask(summaryVehicle)}`,
+  );
+  return rec;
 }
 
 function _buildOperationalLegRecord({
@@ -44815,8 +45102,21 @@ async function _deriveVehicleOrigin(env, vehicle, vehicleDemands, candidatePicku
     }
   }
 
+  // Only a dropoff that completes strictly before this candidate's pickup can
+  // serve as a "last completed dropoff" origin. A concurrent or future demand
+  // (dropoff at or after the pickup) is not a real prior location; using it
+  // would force available_seconds=0 and a false
+  // vehicle_cannot_reach_pickup_in_time rejection for an otherwise free
+  // vehicle. We pick the most recent such completed dropoff.
   const lastDemand = [...(vehicleDemands || [])]
-    .sort((a, b) => Number(a?.pickupAtMs ?? a?.pickupMs ?? 0) - Number(b?.pickupAtMs ?? b?.pickupMs ?? 0))
+    .map((d) => ({ demand: d, dropoffAtMs: Number(_demandDropoffTiming(d).dropoffAtMs) }))
+    .filter(
+      (entry) =>
+        Number.isFinite(entry.dropoffAtMs) &&
+        entry.dropoffAtMs < Number(candidatePickupMs),
+    )
+    .sort((a, b) => a.dropoffAtMs - b.dropoffAtMs)
+    .map((entry) => entry.demand)
     .pop();
   if (lastDemand && _isUsableLocationPoint(lastDemand.dropoffPoint)) {
     const timing = _demandDropoffTiming(lastDemand);
@@ -45425,6 +45725,7 @@ function bookingDemandItemFromRecord(bookingId, rec, env) {
   const pax = _toPositiveInt(demand?.pax, 1);
   const bags = _toPositiveInt(demand?.bags, 0);
   const assignedVehicleId = safeStr(_assignedVehicleIdFromRecord(rec), 120) || null;
+  const assignedDriverId = safeStr(bookingAssignedDriverId(rec), 96) || null;
   const dropoffPoint = _locationPointFromAny(demand?.dropoffPoint || {});
   const dropoffLat = Number(dropoffPoint?.lat);
   const dropoffLng = Number(dropoffPoint?.lng);
@@ -45437,6 +45738,13 @@ function bookingDemandItemFromRecord(bookingId, rec, env) {
       rec?.createdAt,
     80,
   ) || new Date().toISOString();
+  try {
+    console.log(
+      `[BOOKING_DEMAND_ITEM][BUILD] booking=${_bookingIntentMask(safeBookingId)} parent=${_bookingIntentMask(safeBookingId)} leg=- vehicle=${_bookingIntentMask(assignedVehicleId)} driver=${_bookingIntentMask(assignedDriverId)} pickup_ms=${pickupMs} end_ms=${dropoffAtMs} duration_min=${Math.max(0, Math.round((Number(demand?.routeDurationSeconds) || 0) / 60))} source=record`,
+    );
+  } catch (_) {
+    // Diagnostics only; never affect demand persistence.
+  }
   return {
     booking_id: safeBookingId,
     pickup_ms: pickupMs,
@@ -45446,6 +45754,7 @@ function bookingDemandItemFromRecord(bookingId, rec, env) {
     pax,
     bags,
     assigned_vehicle_id: assignedVehicleId,
+    assigned_driver_id: assignedDriverId,
     lifecycle,
     dropoff_point: {
       lat: Number.isFinite(dropoffLat) ? dropoffLat : null,
@@ -45454,6 +45763,153 @@ function bookingDemandItemFromRecord(bookingId, rec, env) {
     },
     updated_at: updatedAt,
   };
+}
+
+function bookingDemandLegItemFromOperationalLeg(parentBookingId, rec, leg, env) {
+  const parentId = safeStr(parentBookingId, 160);
+  if (!parentId || !rec || typeof rec !== "object" || !leg || typeof leg !== "object") {
+    return null;
+  }
+  const legType = safeStr(leg?.leg_type ?? leg?.legType, 24).toLowerCase();
+  const legKey = legType === "return" ? "RETURN" : "OUTBOUND";
+  const demandBookingId = _operationalLegAllocatorReservationId(parentId, legKey);
+  const pickupIso = safeStr(leg?.pickup_iso ?? leg?.pickupIso, 80);
+  const pickupMs = pickupIso ? Date.parse(pickupIso) : Number.NaN;
+  const durationMin = Math.max(0, Number(leg?.duration_min ?? leg?.durationMin ?? 0) || 0);
+  const stopCount = 0;
+  const serviceMin = _operationalLegServiceMinForDispatch({
+    durationMin,
+    stopCount,
+    waitMin: 0,
+    includeReturnDuration: false,
+    env,
+  });
+  const dropoffAtMs = Number.isFinite(pickupMs)
+    ? pickupMs + serviceMin * 60000
+    : Number.NaN;
+  if (!Number.isFinite(pickupMs) || !Number.isFinite(dropoffAtMs)) return null;
+  const lifecycleRaw = _normLifecycleStatus(
+    leg?.lifecycle_status ?? leg?.lifecycleStatus ?? leg?.status ?? _bookingLifecycleValue(rec),
+  );
+  const lifecycle = safeStr(lifecycleRaw, 40).toLowerCase() || "pending";
+  const tier = normalizeTier(
+    _pick(rec, ["booking", "tier"], null) ?? _pick(rec, ["quote", "tier"], null) ?? "comfort",
+  );
+  const pax = _toPositiveInt(_pick(rec, ["booking", "pax"], null), 1);
+  const bags = _toPositiveInt(_pick(rec, ["booking", "bags"], null), 0);
+  const legAssignment = _operationalLegAssignmentFromLeg(leg);
+  const assignedVehicleId =
+    legAssignment.assignedVehicleId ||
+    safeStr(_assignedVehicleIdFromRecord(rec), 120) ||
+    null;
+  const dropoffPoint = _locationPointFromAny({
+    address: safeStr(leg?.to, 320) || null,
+  });
+  const updatedAt = safeStr(
+    leg?.updated_at ??
+      leg?.updatedAt ??
+      rec?.updated_at ??
+      rec?.updatedAt ??
+      rec?.created_at ??
+      rec?.createdAt,
+    80,
+  ) || new Date().toISOString();
+  return {
+    booking_id: demandBookingId,
+    parent_booking_id: parentId,
+    parentBookingId: parentId,
+    leg_id: safeStr(leg?.leg_id ?? leg?.legId, 200) || demandBookingId,
+    legId: safeStr(leg?.leg_id ?? leg?.legId, 200) || demandBookingId,
+    leg_type: legType,
+    legType: legType,
+    pickup_ms: pickupMs,
+    service_min: serviceMin,
+    dropoff_at_ms: dropoffAtMs,
+    tier,
+    pax,
+    bags,
+    assigned_vehicle_id: assignedVehicleId,
+    lifecycle,
+    dropoff_point: {
+      lat: Number.isFinite(Number(dropoffPoint?.lat)) ? Number(dropoffPoint.lat) : null,
+      lng: Number.isFinite(Number(dropoffPoint?.lng)) ? Number(dropoffPoint.lng) : null,
+      address: safeStr(dropoffPoint?.address, 240) || safeStr(leg?.to, 240) || null,
+    },
+    updated_at: updatedAt,
+  };
+}
+
+function bookingDemandItemsFromRecord(bookingId, rec, env) {
+  const safeBookingId = safeStr(bookingId, 160);
+  if (!safeBookingId || !rec || typeof rec !== "object") return [];
+  const mode = resolveRoundtripDispatchMode(rec);
+  if (mode !== "split_no_wait") {
+    const single = bookingDemandItemFromRecord(safeBookingId, rec, env);
+    return single ? [single] : [];
+  }
+  const legs = _bookingOperationalLegsFromRecord(rec);
+  const items = [];
+  for (const leg of legs) {
+    const item = bookingDemandLegItemFromOperationalLeg(safeBookingId, rec, leg, env);
+    if (item) items.push(item);
+  }
+  if (items.length) return items;
+  const specs = _buildSplitRoundtripLegDispatchSpecs({
+    parentBookingId: safeBookingId,
+    rec,
+    env,
+    outboundPickupIso: bookingPickupIsoFromRecord(rec),
+    returnPickupIso: safeStr(
+      rec?.return_pickup_iso ??
+        rec?.returnPickupIso ??
+        _pick(rec, ["booking", "return_pickup_iso"], null),
+      80,
+    ),
+    durationRouteMin: Number(
+      _pick(rec, ["booking", "duration_route_min"], null) ??
+        _pick(rec, ["quote", "duration_min"], null) ??
+        0,
+    ),
+    returnDurationMin: Number(
+      _pick(rec, ["booking", "return_duration_min"], null) ??
+        _pick(rec, ["quote", "return", "duration_min"], null) ??
+        0,
+    ),
+  });
+  return specs
+    .map((spec) => {
+      const pseudoLeg = {
+        leg_type: spec.legType,
+        legType: spec.legType,
+        leg_id: spec.allocatorBookingId,
+        legId: spec.allocatorBookingId,
+        pickup_iso: spec.pickupIso,
+        pickupIso: spec.pickupIso,
+        duration_min: spec.serviceMin,
+        durationMin: spec.serviceMin,
+        from: spec.from,
+        to: spec.to,
+      };
+      return bookingDemandLegItemFromOperationalLeg(safeBookingId, rec, pseudoLeg, env);
+    })
+    .filter(Boolean);
+}
+
+function _bookingDemandIndexIdentityKeys(bookingId, rec = null) {
+  const keys = new Set();
+  const parentId = safeStr(bookingId, 160);
+  if (parentId) {
+    keys.add(parentId);
+    keys.add(_operationalLegAllocatorReservationId(parentId, "OUTBOUND"));
+    keys.add(_operationalLegAllocatorReservationId(parentId, "RETURN"));
+  }
+  if (rec && resolveRoundtripDispatchMode(rec) === "split_no_wait") {
+    for (const item of bookingDemandItemsFromRecord(parentId, rec, null)) {
+      const id = safeStr(item?.booking_id, 160);
+      if (id) keys.add(id);
+    }
+  }
+  return keys;
 }
 
 async function loadBookingDemandIndex(env, scope) {
@@ -45543,29 +45999,46 @@ async function saveBookingDemandIndex(env, scope, indexObj) {
 async function upsertBookingDemandIndexBestEffort(env, bookingId, rec, scopeHint = null) {
   try {
     if (!env?.BOOKING_KV) return { ok: false, reason: "missing_booking_kv" };
-    const item = bookingDemandItemFromRecord(bookingId, rec, env);
-    if (!item) return { ok: false, reason: "invalid_demand_item" };
+    const items = bookingDemandItemsFromRecord(bookingId, rec, env);
+    if (!items.length) return { ok: false, reason: "invalid_demand_item" };
     const fallbackScope = resolveBookingTenantScopeFromRecord(rec);
     const scope = normalizeFleetTenantScope(scopeHint?.hasScope ? scopeHint : fallbackScope);
     if (!scope?.hasScope) return { ok: false, reason: "missing_scope" };
-    if (isTerminalLifecycleStatus(item.lifecycle)) {
+    const terminal = items.every((item) => isTerminalLifecycleStatus(item.lifecycle));
+    if (terminal) {
       return await removeBookingDemandIndexBestEffort(env, bookingId, scope, {
         source: "terminal_lifecycle",
+        rec,
       });
     }
     const loaded = await loadBookingDemandIndex(env, scope);
     if (!loaded?.ok) return { ok: false, reason: "load_failed" };
-    const itemsById = new Map((loaded.items || []).map((entry) => [safeStr(entry?.booking_id, 160), entry]));
-    itemsById.set(item.booking_id, item);
+    const identityKeys = _bookingDemandIndexIdentityKeys(bookingId, rec);
+    const itemsById = new Map(
+      (loaded.items || [])
+        .filter((entry) => {
+          const entryId = safeStr(entry?.booking_id, 160);
+          const parentId = safeStr(entry?.parent_booking_id ?? entry?.parentBookingId, 160);
+          if (identityKeys.has(entryId)) return false;
+          if (parentId && identityKeys.has(parentId)) return false;
+          return true;
+        })
+        .map((entry) => [safeStr(entry?.booking_id, 160), entry]),
+    );
+    for (const item of items) {
+      itemsById.set(item.booking_id, item);
+    }
     const result = await saveBookingDemandIndex(env, scope, {
       items: Array.from(itemsById.values()),
       source: "upsert_active",
       reason: "booking_upsert",
     });
     const maskedScope = _bookingIntentScopeMask(scope);
-    console.log(
-      `[BOOKING_DEMAND_INDEX][UPSERT] tenant=${maskedScope.tenant || "-"} company=${maskedScope.company || "-"} booking=${_bookingIntentMask(item.booking_id)} count=${Number(result?.count || 0)}`,
-    );
+    for (const item of items) {
+      console.log(
+        `[BOOKING_DEMAND_INDEX][UPSERT] tenant=${maskedScope.tenant || "-"} company=${maskedScope.company || "-"} booking=${_bookingIntentMask(item.booking_id)} parent=${_bookingIntentMask(item?.parent_booking_id ?? bookingId)} count=${Number(result?.count || 0)}`,
+      );
+    }
     return { ok: true, key: result?.key || loaded?.key || "", count: Number(result?.count || 0) };
   } catch (err) {
     const scope = normalizeFleetTenantScope(scopeHint || {});
@@ -45584,9 +46057,17 @@ async function removeBookingDemandIndexBestEffort(env, bookingId, scopeHint = nu
     if (!safeBookingId) return { ok: false, reason: "missing_booking_id" };
     const scope = normalizeFleetTenantScope(scopeHint || {});
     if (!scope?.hasScope) return { ok: false, reason: "missing_scope" };
+    const rec = options?.rec && typeof options.rec === "object" ? options.rec : null;
+    const identityKeys = _bookingDemandIndexIdentityKeys(safeBookingId, rec);
     const loaded = await loadBookingDemandIndex(env, scope);
     if (!loaded?.ok) return { ok: false, reason: "load_failed" };
-    const nextItems = (loaded.items || []).filter((entry) => safeStr(entry?.booking_id, 160) !== safeBookingId);
+    const nextItems = (loaded.items || []).filter((entry) => {
+      const entryId = safeStr(entry?.booking_id, 160);
+      const parentId = safeStr(entry?.parent_booking_id ?? entry?.parentBookingId, 160);
+      if (identityKeys.has(entryId)) return false;
+      if (parentId && identityKeys.has(parentId)) return false;
+      return true;
+    });
     if (nextItems.length === 0) {
       const result = await saveBookingDemandIndex(env, scope, {
         items: [],
@@ -46347,10 +46828,9 @@ async function _evaluateFleetAvailability(env, req, diagContext = {}) {
     // feasibility remain unchanged.
     _innerSelfDemandTotalOverlapping += 1;
     if (_innerSelfBookingIdRaw) {
-      const _innerSelfMatch = _demandItemMatchesCurrentBooking(
+      const _innerSelfMatch = _demandItemMatchesAllocatorBooking(
         d,
         _innerSelfBookingIdRaw,
-        _innerSelfCanonicalId,
       );
       if (_innerSelfMatch) {
         _innerSelfDemandExcluded += 1;
@@ -46469,6 +46949,95 @@ async function _evaluateFleetAvailability(env, req, diagContext = {}) {
       const demands = [...(vehicleDemands.get(vehicleId) || [])]
         .filter((d) => Number.isFinite(Number(d?.pickupAtMs ?? d?.pickupMs)))
         .sort((a, b) => Number(a.pickupAtMs ?? a.pickupMs) - Number(b.pickupAtMs ?? b.pickupMs));
+      // Layer 1C: forward-feasibility (next-reservation) check.
+      // The existing `previous`-reservation chain already rejects a vehicle
+      // when its prior dropoff cannot make this candidate's pickup in time.
+      // The mirror direction was missing: when this vehicle has an existing
+      // FUTURE assigned ride, we must also verify the candidate can finish
+      // (with required gap) before that next pickup. Otherwise back-to-back
+      // overlapping rides get stacked on the same vehicle because the
+      // strict window-overlap on serviceMin only fires when the two rides
+      // actually share clock time.
+      // serviceMin already includes the candidate's route+wait+stop+post
+      // buffer, so we only add the inter-trip travel gap here. We do this
+      // check up-front so a forward-conflict short-circuits before any
+      // routing call is made.
+      const nextDemand = [...demands]
+        .filter((d) => Number(d?.pickupAtMs ?? d?.pickupMs) > pickupMs)
+        .sort((a, b) => Number(a?.pickupAtMs ?? a?.pickupMs) - Number(b?.pickupAtMs ?? b?.pickupMs))[0] || null;
+      if (nextDemand) {
+        const _nextPickupMs = Number(nextDemand?.pickupAtMs ?? nextDemand?.pickupMs);
+        const _candidateServiceEndMs = pickupMs + serviceMin * 60000;
+        const _requiredGapMs = Math.max(0, requiredBufferSeconds * 1000);
+        const _candidateEndWithGapMs = _candidateServiceEndMs + _requiredGapMs;
+        const _nextDropoffTiming = _demandDropoffTiming(nextDemand);
+        const _nextDropoffMs = Number(_nextDropoffTiming?.dropoffAtMs);
+        const _nextEndForCheckMs = Number.isFinite(_nextDropoffMs)
+          ? _nextDropoffMs
+          : (_nextPickupMs + Math.max(1, Number(nextDemand?.serviceMin) || 1) * 60000);
+        const _overlapsNext =
+          Number.isFinite(_nextPickupMs) && _candidateEndWithGapMs > _nextPickupMs;
+        try {
+          console.log(
+            `[FLEET_ALLOCATOR][ASSIGNED_OVERLAP_CHECK] booking=${_diagBookingMask} candidate_vehicle=${_bookingIntentMask(vehicleId)} existing_booking=${_bookingIntentMask(nextDemand?.booking_id)} existing_vehicle=${_bookingIntentMask(nextDemand?.assigned_vehicle_id)} candidate_start=${pickupMs} candidate_end=${_candidateEndWithGapMs} existing_start=${_nextPickupMs} existing_end=${_nextEndForCheckMs} overlaps=${_overlapsNext ? "true" : "false"} reason=${_overlapsNext ? "candidate_end_with_buffer_after_next_start" : "ok_gap_sufficient"}`,
+          );
+        } catch (_) {
+          // Diagnostics only.
+        }
+        if (_overlapsNext) {
+          try {
+            console.log(
+              `[FLEET_ALLOCATOR][VEHICLE_REJECT_ASSIGNED_OVERLAP] booking=${_diagBookingMask} vehicle=${_bookingIntentMask(vehicleId)} existing_booking=${_bookingIntentMask(nextDemand?.booking_id)} reason=vehicle_busy_with_next_reservation`,
+            );
+          } catch (_) {
+            // Diagnostics only.
+          }
+          etaFailures.push({
+            vehicle_id: vehicleId,
+            reason_code: "vehicle_busy_with_next_reservation",
+            block_reason: "vehicle_busy_with_next_reservation",
+            available_seconds: Math.max(
+              0,
+              Math.round((_nextPickupMs - pickupMs) / 1000),
+            ),
+            required_seconds: Math.max(
+              0,
+              Math.round((serviceMin * 60) + requiredBufferSeconds),
+            ),
+            origin_travel_seconds: null,
+            required_buffer_seconds: requiredBufferSeconds,
+            origin_source: "next_reservation_pickup",
+            origin_has_location: null,
+            pickup_has_location: _isUsableLocationPoint(pickupPoint),
+            origin_address_preview: null,
+            pickup_address_preview: _allocatorAddressPreviewMasked(pickupPoint?.address),
+            origin_age_seconds: null,
+            earliest_available_at_ms: null,
+            earliest_available_at: null,
+            next_reservation_booking_id: safeStr(nextDemand?.booking_id, 160) || null,
+            next_reservation_pickup_ms: Number.isFinite(_nextPickupMs) ? _nextPickupMs : null,
+            next_reservation_dropoff_ms: Number.isFinite(_nextDropoffMs) ? _nextDropoffMs : null,
+            route_failure_reason: null,
+            route_http_status: null,
+            route_error_code: null,
+            route_error_message: null,
+            route_profile: null,
+            route_origin_lat_ok: null,
+            route_origin_lng_ok: null,
+            route_pickup_lat_ok: _isUsableLocationPoint(pickupPoint),
+            route_pickup_lng_ok: _isUsableLocationPoint(pickupPoint),
+            route_origin_latlng_preview: null,
+            route_pickup_latlng_preview: null,
+            route_duration_seconds_raw: null,
+            route_response_has_routes: null,
+            route_response_routes_count: null,
+            route_response_has_duration: null,
+            route_used_coordinate_direct: null,
+            route_used_geocode_fallback: null,
+          });
+          continue;
+        }
+      }
       const previous = [...demands]
         .filter((d) => Number(_demandDropoffTiming(d).dropoffAtMs) < pickupMs)
         .sort((a, b) => Number(_demandDropoffTiming(b).dropoffAtMs) - Number(_demandDropoffTiming(a).dropoffAtMs))[0] || null;
@@ -46671,6 +47240,16 @@ async function _evaluateFleetAvailability(env, req, diagContext = {}) {
           });
           continue;
         }
+        try {
+          console.log(
+            `[FLEET_ALLOCATOR][ETA_CANDIDATE] booking=${_diagBookingMask} vehicle=${_bookingIntentMask(vehicleId)} origin_source=previous_reservation_dropoff origin_has_location=true pickup_has_location=${_isUsableLocationPoint(pickupPoint) ? "true" : "false"} available_seconds=${availableSeconds} required_seconds=${requiredSeconds} travel_seconds=${Number(travel.travel_seconds || 0)} eta_ok=true reject_reason=-`,
+          );
+          console.log(
+            `[FLEET_ALLOCATOR][ETA_SELECTED] booking=${_diagBookingMask} vehicle=${_bookingIntentMask(vehicleId)} driver=${_bookingIntentMask(_assignedDriverFromVehicle(vehicle)?.driver_id)} reason=vehicle_capacity_ok`,
+          );
+        } catch (_) {
+          // Diagnostics only.
+        }
         nextVehicle = {
           vehicle_id: vehicleId,
           assigned_driver: _assignedDriverFromVehicle(vehicle),
@@ -46769,6 +47348,13 @@ async function _evaluateFleetAvailability(env, req, diagContext = {}) {
         allowStale: !nearFuture,
       });
       if (!origin || origin.has_location !== true || !_isUsableLocationPoint(origin.point)) {
+        try {
+          console.log(
+            `[FLEET_ALLOCATOR][ETA_CANDIDATE] booking=${_diagBookingMask} vehicle=${_bookingIntentMask(vehicleId)} origin_source=${safeStr(origin?.source, 80) || "-"} origin_has_location=false pickup_has_location=${_isUsableLocationPoint(pickupPoint) ? "true" : "false"} available_seconds=- required_seconds=- travel_seconds=- eta_ok=false reject_reason=missing_vehicle_origin_location`,
+          );
+        } catch (_) {
+          // Diagnostics only.
+        }
         etaFailures.push({
           vehicle_id: vehicleId,
           reason_code: "missing_vehicle_origin_location",
@@ -46824,6 +47410,13 @@ async function _evaluateFleetAvailability(env, req, diagContext = {}) {
       }
       const travel = await _computeRoadTravelSecondsBetweenPoints(env, origin.point, pickupPoint);
       if (!travel.ok) {
+        try {
+          console.log(
+            `[FLEET_ALLOCATOR][ETA_CANDIDATE] booking=${_diagBookingMask} vehicle=${_bookingIntentMask(vehicleId)} origin_source=${safeStr(origin?.source, 80) || "-"} origin_has_location=${origin?.has_location === true ? "true" : "false"} pickup_has_location=${_isUsableLocationPoint(pickupPoint) ? "true" : "false"} available_seconds=- required_seconds=- travel_seconds=- eta_ok=false reject_reason=${safeStr(travel?.route_failure_reason, 48) || "route_error"}`,
+          );
+        } catch (_) {
+          // Diagnostics only.
+        }
         etaFailures.push({
           vehicle_id: vehicleId,
           reason_code: "origin_eta_not_feasible",
@@ -46915,6 +47508,13 @@ async function _evaluateFleetAvailability(env, req, diagContext = {}) {
       const requiredSeconds = Math.max(0, Number(travel.travel_seconds || 0)) + requiredBufferSeconds;
       if (availableSeconds < requiredSeconds) {
         const earliest = _earliestAvailabilityFieldsFromBaseline(baselineMs, requiredSeconds);
+        try {
+          console.log(
+            `[FLEET_ALLOCATOR][ETA_CANDIDATE] booking=${_diagBookingMask} vehicle=${_bookingIntentMask(vehicleId)} origin_source=${safeStr(origin?.source, 80) || "-"} origin_has_location=${origin?.has_location === true ? "true" : "false"} pickup_has_location=${_isUsableLocationPoint(pickupPoint) ? "true" : "false"} available_seconds=${availableSeconds} required_seconds=${requiredSeconds} travel_seconds=${Number(travel.travel_seconds || 0)} eta_ok=false reject_reason=vehicle_cannot_reach_pickup_in_time`,
+          );
+        } catch (_) {
+          // Diagnostics only.
+        }
         etaFailures.push({
           vehicle_id: vehicleId,
           reason_code: "vehicle_cannot_reach_pickup_in_time",
@@ -47000,6 +47600,16 @@ async function _evaluateFleetAvailability(env, req, diagContext = {}) {
           ...travel,
         });
         continue;
+      }
+      try {
+        console.log(
+          `[FLEET_ALLOCATOR][ETA_CANDIDATE] booking=${_diagBookingMask} vehicle=${_bookingIntentMask(vehicleId)} origin_source=${safeStr(origin?.source, 80) || "-"} origin_has_location=${origin?.has_location === true ? "true" : "false"} pickup_has_location=${_isUsableLocationPoint(pickupPoint) ? "true" : "false"} available_seconds=${availableSeconds} required_seconds=${requiredSeconds} travel_seconds=${Number(travel.travel_seconds || 0)} eta_ok=true reject_reason=-`,
+        );
+        console.log(
+          `[FLEET_ALLOCATOR][ETA_SELECTED] booking=${_diagBookingMask} vehicle=${_bookingIntentMask(vehicleId)} driver=${_bookingIntentMask(_assignedDriverFromVehicle(vehicle)?.driver_id)} reason=vehicle_capacity_ok`,
+        );
+      } catch (_) {
+        // Diagnostics only.
       }
       nextVehicle = {
         vehicle_id: vehicleId,
@@ -47089,6 +47699,34 @@ async function _evaluateFleetAvailability(env, req, diagContext = {}) {
       };
       break;
     }
+  }
+  try {
+    if (!nextVehicle && freeVehicles.length > 0) {
+      const _rejectReasons = etaFailures
+        .map((f) => safeStr(f?.reason_code, 48) || "-")
+        .filter(Boolean)
+        .join(",");
+      console.log(
+        `[FLEET_ALLOCATOR][ETA_ALL_REJECTED] booking=${_diagBookingMask} free_vehicle_count=${freeVehicles.length} rejected_count=${etaFailures.length} reasons=${_rejectReasons || "-"}`,
+      );
+    }
+    // Layer 1C: surface when a vehicle was picked only after we rejected at
+    // least one earlier candidate (e.g. the prior next-reservation overlap
+    // gate). Makes the "second vehicle now gets it" outcome visible without
+    // diffing multiple ETA_CANDIDATE lines.
+    if (nextVehicle && etaFailures.length > 0) {
+      const _selectedDriverId = safeStr(
+        nextVehicle?.assigned_driver?.driver_id ??
+          nextVehicle?.assigned_driver?.driverId ??
+          nextVehicle?.assigned_driver?.id,
+        96,
+      );
+      console.log(
+        `[FLEET_ALLOCATOR][VEHICLE_SELECTED_AFTER_OVERLAP] booking=${_diagBookingMask} vehicle=${_bookingIntentMask(nextVehicle?.vehicle_id)} driver=${_bookingIntentMask(_selectedDriverId)} reason=${safeStr(nextVehicle?.reason_code || nextVehicle?.reason, 64) || "vehicle_capacity_ok"}`,
+      );
+    }
+  } catch (_) {
+    // Diagnostics only.
   }
   const topEtaFailure = etaFailures[0] || null;
 
@@ -55163,6 +55801,524 @@ function _applyResumePaidPaymentToCanonicalRecord(
   }
 }
 
+async function _requestFleetLegAllocation(env, spec, fleetScope, sourceLabel = "fleet_dispatch") {
+  const allocatorBookingId = safeStr(spec?.allocatorBookingId, 200);
+  const legKey = safeStr(spec?.legKey, 24).toLowerCase() || "leg";
+  const maskedAllocatorId = _bookingIntentMask(allocatorBookingId);
+  console.log(
+    `[ROUNDTRIP_DISPATCH][LEG_ALLOCATE_START] leg=${legKey} booking=${maskedAllocatorId} source=${safeStr(sourceLabel, 64) || "fleet_dispatch"}`,
+  );
+  const alloc = await _allocatorRequest(env, spec.pickupIso, {
+    action: "allocate",
+    booking_id: allocatorBookingId,
+    pickup_ms: spec.pickupMs,
+    service_min: spec.serviceMin,
+    tier: spec.tier,
+    pax: spec.pax,
+    bags: spec.bags,
+    from: spec.from,
+    pickup_from: spec.from,
+    pickup_address: spec.from,
+    to: spec.to,
+    dropoff_to: spec.to,
+    dropoff_address: spec.to,
+    pickup_iso: spec.pickupIso,
+    pickup_lat: spec.pickupLat,
+    pickup_lng: spec.pickupLng,
+    tenantScope: fleetScope,
+  });
+  const allowed = alloc?.allowed === true;
+  const vehicleId = safeStr(alloc?.assigned_vehicle_id, 128) || null;
+  let assignedDriver =
+    alloc?.assigned_driver && typeof alloc.assigned_driver === "object"
+      ? alloc.assigned_driver
+      : null;
+  if (!assignedDriver && vehicleId) {
+    try {
+      assignedDriver = await _driverSummaryForVehicleId(env, vehicleId, fleetScope);
+    } catch (_) {
+      assignedDriver = null;
+    }
+  }
+  const driverId =
+    safeStr(
+      assignedDriver?.driver_id ?? assignedDriver?.driverId ?? assignedDriver?.id,
+      96,
+    ) || null;
+  console.log(
+    `[ROUNDTRIP_DISPATCH][LEG_ALLOCATE_RESULT] leg=${legKey} booking=${maskedAllocatorId} allowed=${allowed ? "true" : "false"} vehicle=${_bookingIntentMask(vehicleId)} driver=${_bookingIntentMask(driverId)} reason=${safeStr(alloc?.reason, 80) || "-"}`,
+  );
+  return {
+    ok: allowed && !!vehicleId,
+    allowed,
+    allocatorBookingId,
+    legKey: safeStr(spec?.legKey, 24).toUpperCase(),
+    legType: spec?.legType || legKey,
+    assignedVehicleId: vehicleId,
+    assignedDriverId: driverId,
+    assignedDriver,
+    alloc,
+    pickupIso: spec.pickupIso,
+  };
+}
+
+async function _releaseFleetLegReservations(env, reservations, fleetScope) {
+  for (const reservation of reservations || []) {
+    const bookingId = safeStr(reservation?.bookingId ?? reservation?.allocatorBookingId, 200);
+    const pickupIso = safeStr(reservation?.pickupIso, 80);
+    if (!bookingId || !pickupIso) continue;
+    try {
+      await _allocatorRequest(env, pickupIso, {
+        action: "release",
+        booking_id: bookingId,
+        tenantScope: fleetScope,
+      });
+    } catch (_) {
+      // Best-effort release only.
+    }
+  }
+}
+
+async function _vehicleCapacityGateForRoundtripDispatch(env, {
+  parentBookingId,
+  rec = null,
+  bookingFields = null,
+  fleetScope,
+  pickupLat = null,
+  pickupLng = null,
+} = {}) {
+  const mode = resolveRoundtripDispatchMode(rec || bookingFields || {});
+  const bookingObj = bookingFields && typeof bookingFields === "object" ? bookingFields : {};
+  const tier = normalizeTier(bookingObj.tier ?? "comfort");
+  const pax = clampInt(bookingObj.pax, 1, 99);
+  const bags = Math.max(0, clampInt(bookingObj.bags, 0, 99));
+  const common = { tier, pax, bags, tenantScope: fleetScope };
+  if (mode !== "split_no_wait") {
+    return _vehicleCapacityGateForRequest(env, {
+      ...common,
+      pickupMs: Date.parse(bookingObj.pickup_iso),
+      serviceMin: bookingObj.service_min,
+      from: bookingObj.from,
+      pickup_from: bookingObj.from,
+      pickup_address: bookingObj.from,
+      to: bookingObj.to,
+      dropoff_to: bookingObj.to,
+      dropoff_address: bookingObj.to,
+      pickup_iso: bookingObj.pickup_iso,
+      pickup_lat: pickupLat,
+      pickup_lng: pickupLng,
+    });
+  }
+  const legSpecs = _buildSplitRoundtripLegDispatchSpecs({
+    parentBookingId,
+    rec,
+    env,
+    outboundPickupIso: bookingObj.pickup_iso,
+    outboundFrom: bookingObj.from,
+    outboundTo: bookingObj.to,
+    outboundPickupLat: pickupLat,
+    outboundPickupLng: pickupLng,
+    returnPickupIso: bookingObj.return_pickup_iso,
+    returnFrom: bookingObj.return_from,
+    returnTo: bookingObj.return_to,
+    durationRouteMin: bookingObj.duration_route_min,
+    returnDurationMin: bookingObj.return_duration_min,
+    tier,
+    pax,
+    bags,
+    stopCount: bookingObj.stop_count,
+  });
+  for (const spec of legSpecs) {
+    const gate = await _vehicleCapacityGateForRequest(env, {
+      ...common,
+      pickupMs: spec.pickupMs,
+      serviceMin: spec.serviceMin,
+      from: spec.from,
+      pickup_from: spec.from,
+      pickup_address: spec.from,
+      to: spec.to,
+      dropoff_to: spec.to,
+      dropoff_address: spec.to,
+      pickup_iso: spec.pickupIso,
+      pickup_lat: spec.pickupLat,
+      pickup_lng: spec.pickupLng,
+    });
+    if (!gate.ok) return gate;
+  }
+  return { ok: true, available_slots: legSpecs.length, suitable_vehicle_count: legSpecs.length };
+}
+
+async function _runBookingCreationFleetDispatch(env, {
+  canonicalBookingId,
+  fleetScope,
+  service,
+  pickup_iso,
+  from,
+  to,
+  return_pickup_iso = "",
+  return_from = "",
+  return_to = "",
+  duration_route_min = 0,
+  return_duration_min = 0,
+  wait_min = 0,
+  tier = "comfort",
+  pax = 1,
+  bags = 0,
+  stop_count = 0,
+  ret = { enabled: false },
+  hasReturnSchedule = false,
+  bookingPickupLatForAllocator = null,
+  bookingPickupLngForAllocator = null,
+  bookingServiceMin = 30,
+} = {}) {
+  const bookingFields = {
+    service,
+    pickup_iso,
+    from,
+    to,
+    return_pickup_iso,
+    return_from,
+    return_to,
+    duration_route_min,
+    return_duration_min,
+    wait_min,
+    tier,
+    pax,
+    bags,
+    stop_count,
+    return_enabled: ret?.enabled === true,
+    hasReturnSchedule,
+    service_min: bookingServiceMin,
+    // Layer 1B: forward the pickup coordinates resolved by handleBooking
+    // (payload pickup_lat/pickupLat/from_lat/fromLat or route geocode) so the
+    // allocator route check has a usable pickup origin. Without these the
+    // allocator fires with pickup_lat=null, the route returns no_route, and
+    // an otherwise free vehicle is rejected with route_pickup_coords_usable=
+    // false / route_pickup_coordinate_source=unavailable. Both standard and
+    // camelCase aliases are written so any downstream reader matches.
+    pickup_lat: bookingPickupLatForAllocator,
+    pickup_lng: bookingPickupLngForAllocator,
+    pickupLat: bookingPickupLatForAllocator,
+    pickupLng: bookingPickupLngForAllocator,
+  };
+  return _dispatchFleetAssignmentForBooking(env, {
+    parentBookingId: canonicalBookingId,
+    rec: { booking: bookingFields, return_enabled: ret?.enabled === true, return_pickup_iso, wait_min, service },
+    fleetScope,
+    sourceLabel: "booking_create",
+    requireAllLegs: true,
+    allowPartialLegAssignment: false,
+    bookingFields,
+  });
+}
+
+async function _dispatchFleetAssignmentForBooking(
+  env,
+  {
+    parentBookingId,
+    rec = null,
+    fleetScope,
+    sourceLabel = "fleet_dispatch",
+    requireAllLegs = false,
+    allowPartialLegAssignment = true,
+    bookingFields = null,
+  } = {},
+) {
+  const safeParentId = safeStr(parentBookingId, 160);
+  const maskedParentId = _bookingIntentMask(safeParentId);
+  const mode = resolveRoundtripDispatchMode(rec || bookingFields || {});
+  console.log(
+    `[ROUNDTRIP_DISPATCH][MODE] mode=${mode} booking=${maskedParentId} source=${safeStr(sourceLabel, 64) || "fleet_dispatch"}`,
+  );
+
+  const bookingObj = rec?.booking && typeof rec.booking === "object" ? rec.booking : {};
+  const payloadObj = rec?.payload && typeof rec.payload === "object" ? rec.payload : {};
+  const quoteObj = rec?.quote && typeof rec.quote === "object" ? rec.quote : {};
+  const fields = bookingFields && typeof bookingFields === "object" ? bookingFields : {};
+  const tier = normalizeTier(
+    fields.tier ?? bookingObj?.tier ?? payloadObj?.tier ?? rec?.tier ?? "comfort",
+  );
+  const pax = clampInt(fields.pax ?? bookingObj?.pax ?? payloadObj?.pax ?? rec?.pax, 1, 99);
+  const bags = Math.max(
+    0,
+    clampInt(fields.bags ?? bookingObj?.bags ?? payloadObj?.bags ?? rec?.bags, 0, 99),
+  );
+  const stopCount = Math.max(
+    0,
+    Array.isArray(fields.stops)
+      ? fields.stops.length
+      : Array.isArray(bookingObj?.stops)
+        ? bookingObj.stops.length
+        : Array.isArray(payloadObj?.stops)
+          ? payloadObj.stops.length
+          : 0,
+  );
+  const durationRouteMin = Number(
+    fields.duration_route_min ??
+      bookingObj?.duration_route_min ??
+      rec?.duration_route_min ??
+      quoteObj?.duration_min ??
+      0,
+  );
+  const returnDurationMin = Number(
+    fields.return_duration_min ??
+      bookingObj?.return_duration_min ??
+      rec?.return_duration_min ??
+      quoteObj?.return?.duration_min ??
+      0,
+  );
+  const waitMin = Number(
+    fields.wait_min ?? bookingObj?.wait_min ?? rec?.wait_min ?? payloadObj?.wait_min ?? 0,
+  );
+  const outboundPickupIso =
+    safeStr(
+      fields.pickup_iso ??
+        bookingObj?.pickup_iso ??
+        bookingObj?.pickupStartIso ??
+        rec?.pickup_iso ??
+        quoteObj?.pickup_iso,
+      80,
+    ) || bookingPickupIsoFromRecord(rec || {});
+  const returnPickupIso = safeStr(
+    fields.return_pickup_iso ??
+      bookingObj?.return_pickup_iso ??
+      bookingObj?.returnPickupIso ??
+      rec?.return_pickup_iso ??
+      rec?.returnPickupIso,
+    80,
+  );
+  const outboundFrom = safeStr(fields.from ?? bookingObj?.from ?? payloadObj?.from ?? quoteObj?.from, 320);
+  const outboundTo = safeStr(fields.to ?? bookingObj?.to ?? payloadObj?.to ?? quoteObj?.to, 320);
+  const returnFrom = safeStr(
+    fields.return_from ?? bookingObj?.return_from ?? rec?.return_from ?? outboundTo,
+    320,
+  );
+  const returnTo = safeStr(
+    fields.return_to ?? bookingObj?.return_to ?? rec?.return_to ?? outboundFrom,
+    320,
+  );
+  // Layer 1B: accept the same airport/customer aliases the /book payload and
+  // the persisted booking record carry (pickup_lat / pickupLat / from_lat /
+  // fromLat). bookingObj may be either bookingFields-shaped (from booking
+  // creation) or the persisted booking record (from post-payment auto
+  // dispatch) and both spellings must work.
+  const outboundPickupLat =
+    fields.pickup_lat ??
+    fields.pickupLat ??
+    fields.from_lat ??
+    fields.fromLat ??
+    bookingObj?.pickup_lat ??
+    bookingObj?.pickupLat ??
+    bookingObj?.from_lat ??
+    bookingObj?.fromLat ??
+    payloadObj?.pickup_lat ??
+    payloadObj?.pickupLat ??
+    payloadObj?.from_lat ??
+    payloadObj?.fromLat ??
+    null;
+  const outboundPickupLng =
+    fields.pickup_lng ??
+    fields.pickupLng ??
+    fields.from_lng ??
+    fields.fromLng ??
+    bookingObj?.pickup_lng ??
+    bookingObj?.pickupLng ??
+    bookingObj?.from_lng ??
+    bookingObj?.fromLng ??
+    payloadObj?.pickup_lng ??
+    payloadObj?.pickupLng ??
+    payloadObj?.from_lng ??
+    payloadObj?.fromLng ??
+    null;
+
+  if (mode === "split_no_wait") {
+    const legSpecs = _buildSplitRoundtripLegDispatchSpecs({
+      parentBookingId: safeParentId,
+      rec,
+      bookingObj,
+      payloadObj,
+      quoteObj,
+      env,
+      outboundPickupIso,
+      outboundFrom,
+      outboundTo,
+      outboundPickupLat,
+      outboundPickupLng,
+      returnPickupIso,
+      returnFrom,
+      returnTo,
+      durationRouteMin,
+      returnDurationMin,
+      tier,
+      pax,
+      bags,
+      stopCount,
+    });
+    const legResults = [];
+    const acquiredReservations = [];
+    for (const spec of legSpecs) {
+      const existingLeg =
+        _bookingOperationalLegsFromRecord(rec || {}).find((leg) => {
+          const legType = safeStr(leg?.leg_type ?? leg?.legType, 24).toLowerCase();
+          return legType === spec.legType;
+        }) || null;
+      const existingAssignment = _operationalLegAssignmentFromLeg(existingLeg);
+      if (existingAssignment.assignedVehicleId || existingAssignment.assignedDriverId) {
+        legResults.push({
+          legKey: spec.legKey,
+          legType: spec.legType,
+          assignedVehicleId: existingAssignment.assignedVehicleId,
+          assignedDriverId: existingAssignment.assignedDriverId,
+          assignedDriver: null,
+          skipped: true,
+          reason: "already_assigned",
+        });
+        continue;
+      }
+      let result;
+      try {
+        result = await _requestFleetLegAllocation(env, spec, fleetScope, sourceLabel);
+      } catch (err) {
+        result = {
+          ok: false,
+          allowed: false,
+          legKey: spec.legKey,
+          legType: spec.legType,
+          assignedVehicleId: null,
+          assignedDriverId: null,
+          assignedDriver: null,
+          alloc: { reason: safeStr(err?.message || err, 120) || "exception" },
+        };
+      }
+      if (result.ok) {
+        acquiredReservations.push({
+          bookingId: spec.allocatorBookingId,
+          pickupIso: spec.pickupIso,
+        });
+        legResults.push(result);
+      } else if (requireAllLegs) {
+        await _releaseFleetLegReservations(env, acquiredReservations, fleetScope);
+        return {
+          ok: false,
+          mode,
+          assigned: false,
+          reason: "not_allowed",
+          allocator_reason: safeStr(result?.alloc?.reason, 80) || "vehicle_capacity_exceeded",
+          legResults,
+          reservations: acquiredReservations,
+        };
+      } else if (allowPartialLegAssignment) {
+        legResults.push(result);
+      }
+    }
+    const assignedLegs = legResults.filter((leg) => !!leg.assignedVehicleId);
+    const allRequestedAssigned =
+      legSpecs.length > 0 &&
+      legSpecs.every((spec) =>
+        legResults.some(
+          (leg) =>
+            leg.legKey === spec.legKey &&
+            (!!leg.assignedVehicleId || leg.skipped === true),
+        ),
+      );
+    return {
+      ok: assignedLegs.length > 0 || allRequestedAssigned,
+      mode,
+      assigned: allRequestedAssigned,
+      partial: assignedLegs.length > 0 && !allRequestedAssigned,
+      reason: assignedLegs.length ? (allRequestedAssigned ? "assigned" : "partial_assigned") : "not_allowed",
+      legResults,
+      reservations: acquiredReservations,
+      assignedVehicleId: assignedLegs[0]?.assignedVehicleId || null,
+      assignedDriverId: assignedLegs[0]?.assignedDriverId || null,
+      assignedDriver: assignedLegs[0]?.assignedDriver || null,
+    };
+  }
+
+  const serviceMin = _operationalLegServiceMinForDispatch({
+    durationMin: durationRouteMin,
+    stopCount,
+    waitMin,
+    includeReturnDuration: mode === "continuous_wait" && !returnPickupIso,
+    returnDurationMin,
+    env,
+  });
+  const pickupMs = Date.parse(outboundPickupIso);
+  const allocatorPayload = {
+    action: "allocate",
+    booking_id: safeParentId,
+    pickup_ms: pickupMs,
+    service_min: serviceMin,
+    tier,
+    pax,
+    bags,
+    from: outboundFrom,
+    pickup_from: outboundFrom,
+    pickup_address: outboundFrom,
+    to: outboundTo,
+    dropoff_to: outboundTo,
+    dropoff_address: outboundTo,
+    pickup_iso: outboundPickupIso,
+    pickup_lat: outboundPickupLat,
+    pickup_lng: outboundPickupLng,
+    tenantScope: fleetScope,
+  };
+  console.log(
+    `[ROUNDTRIP_DISPATCH][LEG_ALLOCATE_START] leg=parent booking=${maskedParentId} source=${safeStr(sourceLabel, 64) || "fleet_dispatch"}`,
+  );
+  let alloc;
+  try {
+    alloc = await _allocatorRequest(env, outboundPickupIso, allocatorPayload);
+  } catch (allocErr) {
+    return {
+      ok: false,
+      mode,
+      assigned: false,
+      reason: "allocator_error",
+      allocator_reason: safeStr(allocErr?.message || allocErr, 120) || "exception",
+    };
+  }
+  const vehicleId = safeStr(alloc?.assigned_vehicle_id, 128) || null;
+  let assignedDriver =
+    alloc?.assigned_driver && typeof alloc.assigned_driver === "object"
+      ? alloc.assigned_driver
+      : null;
+  if (!assignedDriver && vehicleId) {
+    try {
+      assignedDriver = await _driverSummaryForVehicleId(env, vehicleId, fleetScope);
+    } catch (_) {
+      assignedDriver = null;
+    }
+  }
+  const driverId =
+    safeStr(
+      assignedDriver?.driver_id ?? assignedDriver?.driverId ?? assignedDriver?.id,
+      96,
+    ) || null;
+  console.log(
+    `[ROUNDTRIP_DISPATCH][LEG_ALLOCATE_RESULT] leg=parent booking=${maskedParentId} allowed=${alloc?.allowed === true ? "true" : "false"} vehicle=${_bookingIntentMask(vehicleId)} driver=${_bookingIntentMask(driverId)} reason=${safeStr(alloc?.reason, 80) || "-"}`,
+  );
+  if (mode === "continuous_wait") {
+    console.log(
+      `[ROUNDTRIP_DISPATCH][PARENT_ASSIGNMENT] mode=continuous_wait booking=${maskedParentId} vehicle=${_bookingIntentMask(vehicleId)} driver=${_bookingIntentMask(driverId)}`,
+    );
+  }
+  return {
+    ok: alloc?.allowed === true && !!vehicleId,
+    mode,
+    assigned: alloc?.allowed === true && !!vehicleId,
+    reason: alloc?.allowed ? (vehicleId ? "assigned" : "allocator_returned_no_vehicle") : "not_allowed",
+    allocator_reason: safeStr(alloc?.reason, 80) || null,
+    alloc,
+    assignedVehicleId: vehicleId,
+    assignedDriverId: driverId,
+    assignedDriver,
+    reservations: vehicleId
+      ? [{ bookingId: safeParentId, pickupIso: outboundPickupIso }]
+      : [],
+  };
+}
+
 // G3: idempotent post-finalize hook that asks the existing FleetAllocatorDO to
 // allocate a vehicle/driver for a paid, open, unassigned canonical booking.
 //
@@ -55217,21 +56373,44 @@ async function ensurePaidOpenBookingAutoDispatched(
       return skip("terminal_status");
     }
 
-    const existingVehicleId = safeStr(bookingAssignedVehicleId(rec), 128);
-    const existingDriverId = safeStr(bookingAssignedDriverId(rec), 96);
-    if (existingVehicleId || existingDriverId) {
-      console.log(
-        `[DISPATCH_AUTO_ASSIGN][SKIP] booking=${maskedBookingId} reason=already_assigned source=${sourceLabel} vehicle=${_bookingIntentMask(existingVehicleId)} driver=${_bookingIntentMask(existingDriverId)}`,
-      );
-      return {
-        ok: true,
-        skipped: true,
-        mutated: false,
-        reason: "already_assigned",
-        assigned: true,
-        assigned_driver_id: existingDriverId || null,
-        assigned_vehicle_id: existingVehicleId || null,
-      };
+    const dispatchMode = resolveRoundtripDispatchMode(rec);
+    if (dispatchMode === "split_no_wait") {
+      const operationalLegs = _bookingOperationalLegsFromRecord(rec);
+      const unassignedLegs = operationalLegs.filter((leg) => {
+        const assignment = _operationalLegAssignmentFromLeg(leg);
+        return !assignment.assignedVehicleId && !assignment.assignedDriverId;
+      });
+      if (!unassignedLegs.length && operationalLegs.length > 0) {
+        console.log(
+          `[DISPATCH_AUTO_ASSIGN][SKIP] booking=${maskedBookingId} reason=already_assigned source=${sourceLabel} mode=${dispatchMode}`,
+        );
+        return {
+          ok: true,
+          skipped: true,
+          mutated: false,
+          reason: "already_assigned",
+          assigned: true,
+          assigned_driver_id: safeStr(bookingAssignedDriverId(rec), 96) || null,
+          assigned_vehicle_id: safeStr(bookingAssignedVehicleId(rec), 128) || null,
+        };
+      }
+    } else {
+      const existingVehicleId = safeStr(bookingAssignedVehicleId(rec), 128);
+      const existingDriverId = safeStr(bookingAssignedDriverId(rec), 96);
+      if (existingVehicleId || existingDriverId) {
+        console.log(
+          `[DISPATCH_AUTO_ASSIGN][SKIP] booking=${maskedBookingId} reason=already_assigned source=${sourceLabel} vehicle=${_bookingIntentMask(existingVehicleId)} driver=${_bookingIntentMask(existingDriverId)}`,
+        );
+        return {
+          ok: true,
+          skipped: true,
+          mutated: false,
+          reason: "already_assigned",
+          assigned: true,
+          assigned_driver_id: existingDriverId || null,
+          assigned_vehicle_id: existingVehicleId || null,
+        };
+      }
     }
 
     const recordScope = resolveBookingTenantScopeFromRecord(rec);
@@ -55309,170 +56488,25 @@ async function ensurePaidOpenBookingAutoDispatched(
       return skip("pickup_invalid");
     }
 
-    const tier = normalizeTier(
-      bookingObj?.tier ?? payloadObj?.tier ?? rec?.tier ?? "comfort",
-    );
-    const pax = clampInt(
-      bookingObj?.pax ?? payloadObj?.pax ?? rec?.pax,
-      1,
-      99,
-    );
-    const bags = Math.max(
-      0,
-      clampInt(bookingObj?.bags ?? payloadObj?.bags ?? rec?.bags, 0, 99),
-    );
-    const fromText = safeStr(
-      bookingObj?.from ??
-        payloadObj?.from ??
-        rec?.from ??
-        quoteObj?.from ??
-        bookingObj?.pickup_address ??
-        bookingObj?.pickupAddress,
-      320,
-    );
-    const toText = safeStr(
-      bookingObj?.to ??
-        payloadObj?.to ??
-        rec?.to ??
-        quoteObj?.to ??
-        bookingObj?.dropoff_address ??
-        bookingObj?.dropoffAddress,
-      320,
-    );
-
-    const durationRouteMin = Number(
-      bookingObj?.duration_route_min ??
-        bookingObj?.durationRouteMin ??
-        rec?.duration_route_min ??
-        rec?.durationRouteMin ??
-        quoteObj?.duration_min ??
-        quoteObj?.durationMin ??
-        0,
-    );
-    const returnDurationMin = Number(
-      _pick(bookingObj, ["return", "duration_min"], null) ??
-        _pick(rec, ["return", "duration_min"], null) ??
-        _pick(quoteObj, ["return", "duration_min"], null) ??
-        0,
-    );
-    const waitMin = Number(
-      bookingObj?.wait_min ??
-        bookingObj?.waitMin ??
-        rec?.wait_min ??
-        rec?.waitMin ??
-        payloadObj?.wait_min ??
-        payloadObj?.waitMin ??
-        0,
-    );
-    const stopsArr = Array.isArray(bookingObj?.stops)
-      ? bookingObj.stops
-      : Array.isArray(payloadObj?.stops)
-        ? payloadObj.stops
-        : Array.isArray(quoteObj?.stops)
-          ? quoteObj.stops
-          : [];
-    const stopCount = stopsArr.length;
-    const hasReturnSchedule = !!safeStr(
-      bookingObj?.returnPickupIso ??
-        bookingObj?.return_pickup_iso ??
-        rec?.returnPickupIso ??
-        rec?.return_pickup_iso,
-    );
-
-    const serviceMin = Math.max(
-      30,
-      Math.round(
-        Math.max(0, Number.isFinite(durationRouteMin) ? durationRouteMin : 0) +
-          (hasReturnSchedule
-            ? 0
-            : Math.max(0, Number.isFinite(returnDurationMin) ? returnDurationMin : 0)) +
-          Math.max(0, Number.isFinite(waitMin) ? waitMin : 0) +
-          Math.max(0, getStopHandlingMin(stopCount, env)) +
-          Math.max(0, getPostBufferMin(env)),
-      ),
-    );
-
-    const recordPickupPoint = _locationPointFromAny({
-      lat: bookingObj?.pickup_lat ?? bookingObj?.pickupLat,
-      lng: bookingObj?.pickup_lng ?? bookingObj?.pickupLng,
-    }) ||
-      _locationPointFromAny({
-        lat: payloadObj?.pickup_lat ?? payloadObj?.pickupLat ?? payloadObj?.from_lat ?? payloadObj?.fromLat,
-        lng: payloadObj?.pickup_lng ?? payloadObj?.pickupLng ?? payloadObj?.from_lng ?? payloadObj?.fromLng,
-      }) ||
-      _locationPointFromAny({
-        lat: rec?.pickup_lat ?? rec?.pickupLat,
-        lng: rec?.pickup_lng ?? rec?.pickupLng,
-      });
-    const pickupLat = recordPickupPoint && Number.isFinite(recordPickupPoint.lat)
-      ? recordPickupPoint.lat
-      : null;
-    const pickupLng = recordPickupPoint && Number.isFinite(recordPickupPoint.lng)
-      ? recordPickupPoint.lng
-      : null;
-
-    const allocatorPayload = {
-      action: "allocate",
-      booking_id: safeBookingId,
-      pickup_ms: pickupMs,
-      service_min: serviceMin,
-      tier,
-      pax,
-      bags,
-      from: fromText,
-      pickup_from: fromText,
-      pickup_address: fromText,
-      to: toText,
-      dropoff_to: toText,
-      dropoff_address: toText,
-      pickup_iso: pickupIso,
-      pickup_lat: pickupLat,
-      pickup_lng: pickupLng,
-      tenantScope: fleetScope,
-    };
-
-    // G3-D: diagnostics-only request summary. Coordinates are reduced to a
-    // boolean (has/has-not) so we never log exact lat/lng. from/to text
-    // existence is logged as a boolean to avoid leaking customer addresses.
-    const _diagServiceTypeForLog = safeStr(
-      bookingObj?.service ?? payloadObj?.service ?? rec?.service,
-      32,
-    ) || "-";
-    const _diagDropoffPoint =
-      _locationPointFromAny({
-        lat: bookingObj?.dropoff_lat ?? bookingObj?.dropoffLat,
-        lng: bookingObj?.dropoff_lng ?? bookingObj?.dropoffLng,
-      }) ||
-      _locationPointFromAny({
-        lat: payloadObj?.dropoff_lat ?? payloadObj?.dropoffLat ?? payloadObj?.to_lat ?? payloadObj?.toLat,
-        lng: payloadObj?.dropoff_lng ?? payloadObj?.dropoffLng ?? payloadObj?.to_lng ?? payloadObj?.toLng,
-      }) ||
-      _locationPointFromAny({
-        lat: rec?.dropoff_lat ?? rec?.dropoffLat,
-        lng: rec?.dropoff_lng ?? rec?.dropoffLng,
-      });
-    const _diagPickupHasCoords =
-      Number.isFinite(pickupLat) && Number.isFinite(pickupLng);
-    const _diagDropoffHasCoords = !!(
-      _diagDropoffPoint &&
-      Number.isFinite(_diagDropoffPoint.lat) &&
-      Number.isFinite(_diagDropoffPoint.lng)
-    );
-    const _diagStopHandlingMin = Math.max(0, getStopHandlingMin(stopCount, env));
-    const _diagPostBufferMin = Math.max(0, getPostBufferMin(env));
     console.log(
-      `[DISPATCH_AUTO_ASSIGN][REQUEST] booking=${maskedBookingId} source=${sourceLabel} pax=${pax} bags=${bags} tier=${tier} service=${_diagServiceTypeForLog} pickup_iso=${pickupIso || "-"} service_min=${serviceMin} stop_handling_min=${_diagStopHandlingMin} post_buffer_min=${_diagPostBufferMin} pickup_has_coords=${_diagPickupHasCoords ? "true" : "false"} dropoff_has_coords=${_diagDropoffHasCoords ? "true" : "false"} from_present=${fromText ? "true" : "false"} to_present=${toText ? "true" : "false"}`,
+      `[DISPATCH_AUTO_ASSIGN][START] booking=${maskedBookingId} source=${sourceLabel} tenant=${_bookingIntentMask(fleetScope.tenant_id)} company=${_bookingIntentMask(fleetScope.company_id)} pickup_iso=${pickupIso || "-"} mode=${dispatchMode}`,
     );
 
-    console.log(
-      `[DISPATCH_AUTO_ASSIGN][START] booking=${maskedBookingId} source=${sourceLabel} tenant=${_bookingIntentMask(fleetScope.tenant_id)} company=${_bookingIntentMask(fleetScope.company_id)} pickup_iso=${pickupIso || "-"} service_min=${serviceMin}`,
-    );
-
-    let alloc;
+    let dispatchOutcome;
     try {
-      alloc = await _allocatorRequest(env, pickupIso, allocatorPayload);
-    } catch (allocErr) {
-      const reason = safeStr(allocErr?.message || allocErr, 140) || "exception";
+      const splitNoWait = dispatchMode === "split_no_wait";
+      dispatchOutcome = await _dispatchFleetAssignmentForBooking(env, {
+        parentBookingId: safeBookingId,
+        rec,
+        fleetScope,
+        sourceLabel,
+        // Split no-wait roundtrips must allocate both legs or neither —
+        // do not persist a paid booking with only outbound assigned.
+        requireAllLegs: splitNoWait,
+        allowPartialLegAssignment: !splitNoWait,
+      });
+    } catch (dispatchErr) {
+      const reason = safeStr(dispatchErr?.message || dispatchErr, 140) || "exception";
       console.log(
         `[DISPATCH_AUTO_ASSIGN][ERROR] booking=${maskedBookingId} stage=allocator_request reason=${reason}`,
       );
@@ -55488,12 +56522,12 @@ async function ensurePaidOpenBookingAutoDispatched(
       };
     }
 
-    const allocatorReason = safeStr(alloc?.reason, 80) || null;
+    const allocatorReason = safeStr(dispatchOutcome?.allocator_reason, 80) || null;
     console.log(
-      `[DISPATCH_AUTO_ASSIGN][ALLOCATOR_RESULT] booking=${maskedBookingId} allowed=${alloc?.allowed === true ? "true" : "false"} source=${safeStr(alloc?.source, 40) || "-"} reason=${allocatorReason || "-"}`,
+      `[DISPATCH_AUTO_ASSIGN][ALLOCATOR_RESULT] booking=${maskedBookingId} allowed=${dispatchOutcome?.ok === true ? "true" : "false"} mode=${safeStr(dispatchOutcome?.mode, 24) || "-"} reason=${safeStr(dispatchOutcome?.reason, 80) || "-"} allocator_reason=${allocatorReason || "-"}`,
     );
 
-    if (!alloc?.allowed) {
+    if (!dispatchOutcome?.ok) {
       return {
         ok: true,
         skipped: true,
@@ -55506,100 +56540,91 @@ async function ensurePaidOpenBookingAutoDispatched(
       };
     }
 
-    const allocVehicleId = safeStr(alloc?.assigned_vehicle_id, 128);
-    if (!allocVehicleId) {
-      console.log(
-        `[DISPATCH_AUTO_ASSIGN][SKIP] booking=${maskedBookingId} reason=allocator_returned_no_vehicle source=${sourceLabel}`,
-      );
-      return {
-        ok: true,
-        skipped: true,
-        mutated: false,
-        reason: "allocator_returned_no_vehicle",
-        allocator_reason: allocatorReason,
-        assigned: false,
-        assigned_driver_id: null,
-        assigned_vehicle_id: null,
-      };
-    }
-
-    let assignedDriver =
-      alloc?.assigned_driver && typeof alloc.assigned_driver === "object"
-        ? alloc.assigned_driver
-        : null;
-    if (!assignedDriver) {
-      try {
-        assignedDriver = await _driverSummaryForVehicleId(
-          env,
-          allocVehicleId,
-          fleetScope,
-        );
-      } catch (_) {
-        assignedDriver = null;
-      }
-    }
-    const assignedDriverId = safeStr(
-      assignedDriver?.driver_id ?? assignedDriver?.driverId ?? assignedDriver?.id,
-      96,
-    ) || null;
-
     const nowIso = new Date().toISOString();
-    rec.assigned_vehicle_id = allocVehicleId;
-    rec.assignedVehicleId = allocVehicleId;
-    if (assignedDriver && typeof assignedDriver === "object") {
-      rec.assigned_driver = assignedDriver;
-      rec.assignedDriver = assignedDriver;
-    }
-    if (assignedDriverId) {
-      rec.assigned_driver_id = assignedDriverId;
-      rec.assignedDriverId = assignedDriverId;
-    }
-    rec.updated_at = nowIso;
-    rec.updatedAt = nowIso;
-
-    if (rec.booking && typeof rec.booking === "object") {
-      rec.booking.assigned_vehicle_id = allocVehicleId;
-      rec.booking.assignedVehicleId = allocVehicleId;
+    if (dispatchOutcome.mode === "split_no_wait") {
+      _applySplitRoundtripLegAssignmentsToRecord(rec, dispatchOutcome.legResults || [], nowIso);
+      for (const legResult of dispatchOutcome.legResults || []) {
+        if (!legResult?.assignedVehicleId) continue;
+        console.log(
+          `[ROUNDTRIP_DISPATCH][LEG_ASSIGNMENT_WRITE] leg=${safeStr(legResult?.legKey, 24).toLowerCase() || "leg"} booking=${maskedBookingId} assigned_vehicle=${_bookingIntentMask(legResult.assignedVehicleId)} assigned_driver=${_bookingIntentMask(legResult.assignedDriverId)}`,
+        );
+      }
+    } else {
+      const allocVehicleId = safeStr(dispatchOutcome?.assignedVehicleId, 128);
+      const assignedDriverId = safeStr(dispatchOutcome?.assignedDriverId, 96) || null;
+      const assignedDriver =
+        dispatchOutcome?.assignedDriver && typeof dispatchOutcome.assignedDriver === "object"
+          ? dispatchOutcome.assignedDriver
+          : null;
+      if (!allocVehicleId) {
+        console.log(
+          `[DISPATCH_AUTO_ASSIGN][SKIP] booking=${maskedBookingId} reason=allocator_returned_no_vehicle source=${sourceLabel}`,
+        );
+        return {
+          ok: true,
+          skipped: true,
+          mutated: false,
+          reason: "allocator_returned_no_vehicle",
+          allocator_reason: allocatorReason,
+          assigned: false,
+          assigned_driver_id: null,
+          assigned_vehicle_id: null,
+        };
+      }
+      rec.assigned_vehicle_id = allocVehicleId;
+      rec.assignedVehicleId = allocVehicleId;
       if (assignedDriver && typeof assignedDriver === "object") {
-        rec.booking.assigned_driver = assignedDriver;
-        rec.booking.assignedDriver = assignedDriver;
+        rec.assigned_driver = assignedDriver;
+        rec.assignedDriver = assignedDriver;
       }
       if (assignedDriverId) {
-        rec.booking.assigned_driver_id = assignedDriverId;
-        rec.booking.assignedDriverId = assignedDriverId;
+        rec.assigned_driver_id = assignedDriverId;
+        rec.assignedDriverId = assignedDriverId;
       }
-      rec.booking.updated_at = nowIso;
-      rec.booking.updatedAt = nowIso;
-    }
-
-    const stampLegs = (legs) => {
-      if (!Array.isArray(legs)) return legs;
-      for (const leg of legs) {
-        if (!leg || typeof leg !== "object") continue;
-        leg.assigned_vehicle_id = allocVehicleId;
-        leg.assignedVehicleId = allocVehicleId;
-        if (assignedDriverId) {
-          leg.assigned_driver_id = assignedDriverId;
-          leg.assignedDriverId = assignedDriverId;
+      if (dispatchMode === "continuous_wait") {
+        rec.roundtrip_dispatch_mode = "continuous_wait";
+        rec.roundtripDispatchMode = "continuous_wait";
+      }
+      rec.updated_at = nowIso;
+      rec.updatedAt = nowIso;
+      if (rec.booking && typeof rec.booking === "object") {
+        rec.booking.assigned_vehicle_id = allocVehicleId;
+        rec.booking.assignedVehicleId = allocVehicleId;
+        if (assignedDriver && typeof assignedDriver === "object") {
+          rec.booking.assigned_driver = assignedDriver;
+          rec.booking.assignedDriver = assignedDriver;
         }
-        leg.updated_at = nowIso;
-        leg.updatedAt = nowIso;
+        if (assignedDriverId) {
+          rec.booking.assigned_driver_id = assignedDriverId;
+          rec.booking.assignedDriverId = assignedDriverId;
+        }
+        rec.booking.updated_at = nowIso;
+        rec.booking.updatedAt = nowIso;
       }
-      return legs;
-    };
-    if (Array.isArray(rec.operational_legs)) stampLegs(rec.operational_legs);
-    if (Array.isArray(rec.operationalLegs)) stampLegs(rec.operationalLegs);
-    if (rec.booking && typeof rec.booking === "object") {
-      if (Array.isArray(rec.booking.operational_legs)) {
-        stampLegs(rec.booking.operational_legs);
-      }
-      if (Array.isArray(rec.booking.operationalLegs)) {
-        stampLegs(rec.booking.operationalLegs);
+      const stampLegs = (legs) => {
+        if (!Array.isArray(legs)) return legs;
+        for (const leg of legs) {
+          _stampOperationalLegFleetAssignment(leg, {
+            vehicleId: allocVehicleId,
+            driver: assignedDriver,
+            driverId: assignedDriverId,
+            nowIso,
+          });
+        }
+        return legs;
+      };
+      if (Array.isArray(rec.operational_legs)) stampLegs(rec.operational_legs);
+      if (Array.isArray(rec.operationalLegs)) stampLegs(rec.operationalLegs);
+      if (rec.booking && typeof rec.booking === "object") {
+        if (Array.isArray(rec.booking.operational_legs)) stampLegs(rec.booking.operational_legs);
+        if (Array.isArray(rec.booking.operationalLegs)) stampLegs(rec.booking.operationalLegs);
       }
     }
 
+    const writeBackVehicleId = safeStr(rec?.assigned_vehicle_id ?? rec?.assignedVehicleId, 128);
+    const writeBackDriverId = safeStr(rec?.assigned_driver_id ?? rec?.assignedDriverId, 96);
     console.log(
-      `[DISPATCH_AUTO_ASSIGN][WRITE_BACK] booking=${maskedBookingId} vehicle=${_bookingIntentMask(allocVehicleId)} driver=${_bookingIntentMask(assignedDriverId)} persist=${persist ? "true" : "false"}`,
+      `[DISPATCH_AUTO_ASSIGN][WRITE_BACK] booking=${maskedBookingId} vehicle=${_bookingIntentMask(writeBackVehicleId)} driver=${_bookingIntentMask(writeBackDriverId)} persist=${persist ? "true" : "false"} mode=${safeStr(dispatchOutcome?.mode, 24) || "-"}`,
     );
 
     if (persist) {
@@ -55659,18 +56684,20 @@ async function ensurePaidOpenBookingAutoDispatched(
     }
 
     console.log(
-      `[DISPATCH_AUTO_ASSIGN][DONE] booking=${maskedBookingId} source=${sourceLabel} vehicle=${_bookingIntentMask(allocVehicleId)} driver=${_bookingIntentMask(assignedDriverId)} persisted=${persist ? "true" : "false"}`,
+      `[DISPATCH_AUTO_ASSIGN][DONE] booking=${maskedBookingId} source=${sourceLabel} vehicle=${_bookingIntentMask(writeBackVehicleId)} driver=${_bookingIntentMask(writeBackDriverId)} persisted=${persist ? "true" : "false"} mode=${safeStr(dispatchOutcome?.mode, 24) || "-"}`,
     );
 
     return {
       ok: true,
       skipped: false,
       mutated: true,
-      reason: "assigned",
+      reason: dispatchOutcome?.partial ? "partial_assigned" : "assigned",
       allocator_reason: allocatorReason,
-      assigned: true,
-      assigned_driver_id: assignedDriverId,
-      assigned_vehicle_id: allocVehicleId,
+      assigned: dispatchOutcome?.assigned === true,
+      partial: dispatchOutcome?.partial === true,
+      assigned_driver_id: writeBackDriverId || null,
+      assigned_vehicle_id: writeBackVehicleId || null,
+      roundtrip_dispatch_mode: safeStr(dispatchOutcome?.mode, 24) || null,
     };
   } catch (err) {
     const reason = safeStr(err?.message || err, 140) || "exception";

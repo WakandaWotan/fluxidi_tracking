@@ -856,6 +856,67 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
     return '${trimmed.substring(0, 3)}...${trimmed.substring(trimmed.length - 3)}';
   }
 
+  // Layer 1B: surface which pickup/dropoff coord aliases are actually being
+  // sent on /book. If a downstream "geen voertuig" ever comes back from the
+  // allocator with route_pickup_coords_usable=false this log makes it
+  // instantly clear whether the Flutter side dropped coordinates or whether
+  // the worker lost them. Coords are formatted to 5 decimals (≈1m precision)
+  // which is more than enough for parity inspection.
+  void _logAirportBookPayloadCoords(Map<String, dynamic> payload) {
+    double? readDouble(Iterable<dynamic> values) {
+      for (final value in values) {
+        if (value is num) return value.toDouble();
+        if (value is String) {
+          final parsed = double.tryParse(value.trim().replaceAll(',', '.'));
+          if (parsed != null) return parsed;
+        }
+      }
+      return null;
+    }
+
+    final fromLat = readDouble([
+      payload['pickup_lat'],
+      payload['pickupLat'],
+      payload['from_lat'],
+      payload['fromLat'],
+    ]);
+    final fromLng = readDouble([
+      payload['pickup_lng'],
+      payload['pickupLng'],
+      payload['from_lng'],
+      payload['fromLng'],
+    ]);
+    final toLat = readDouble([
+      payload['destination_lat'],
+      payload['destinationLat'],
+      payload['to_lat'],
+      payload['toLat'],
+    ]);
+    final toLng = readDouble([
+      payload['destination_lng'],
+      payload['destinationLng'],
+      payload['to_lng'],
+      payload['toLng'],
+    ]);
+    final airportIata = _firstNonEmptyText([
+      payload['airport_iata'],
+      payload['airportIata'],
+      payload['airport_id'],
+      payload['airportId'],
+    ]);
+
+    String fmt(double? v) => v == null ? '-' : v.toStringAsFixed(5);
+
+    debugPrint(
+      '[AIRPORT_BOOKING][BOOK_PAYLOAD_COORDS] '
+      'hasFromLatLng=${fromLat != null && fromLng != null ? "true" : "false"} '
+      'hasToLatLng=${toLat != null && toLng != null ? "true" : "false"} '
+      'fromLat=${fmt(fromLat)} fromLng=${fmt(fromLng)} '
+      'toLat=${fmt(toLat)} toLng=${fmt(toLng)} '
+      'airportIata=${airportIata.isEmpty ? "-" : airportIata}',
+    );
+  }
+
   Future<void> _submitBooking() async {
     if (_isSubmitting || _isSubmitted) return;
     if (!_visiblePaymentMethodIds.contains(_selectedPaymentMethodId)) {
@@ -891,6 +952,7 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
       companyName: companyName,
       vatNumber: vatNumber,
     );
+    _logAirportBookPayloadCoords(payload);
     setState(() {
       _isSubmitting = true;
       _submitError = null;
