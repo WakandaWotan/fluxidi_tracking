@@ -259,6 +259,7 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
     final def = PaymentMethodCatalog.definitionFor(id);
     if (def == null) return true;
     if (id == PaymentMethodIds.inVehicleCard) return false;
+    if (id == PaymentMethodIds.qrCode) return !_isQrPaymentConfigured();
     return !def.isSupportedMollieCheckout;
   }
 
@@ -267,6 +268,16 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
           methodId,
         )?.isSupportedMollieCheckout ??
         false;
+  }
+
+  bool _isSelectableExternalPaymentMethod(String methodId) {
+    final id = normalizePaymentMethodId(methodId);
+    final def = PaymentMethodCatalog.definitionFor(id);
+    if (def == null) return false;
+    if (def.isSupportedMollieCheckout) return false;
+    if (id == PaymentMethodIds.inVehicleCard) return true;
+    if (id == PaymentMethodIds.qrCode) return _isQrPaymentConfigured();
+    return false;
   }
 
   void _logPaymentPickerResolution() {
@@ -279,6 +290,9 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
     final direct = visible
         .where(_isDirectCheckoutPaymentMethod)
         .toList(growable: false);
+    final selectableExternal = visible
+        .where(_isSelectableExternalPaymentMethod)
+        .toList(growable: false);
     final displayOnly = visible
         .where(_isDisplayOnlyPaymentMethod)
         .toList(growable: false);
@@ -289,6 +303,10 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
           final def = PaymentMethodCatalog.definitionFor(id);
           final reason = def == null
               ? 'unknown'
+              : id == PaymentMethodIds.cash
+              ? 'represented_by_pay_in_car'
+              : id == PaymentMethodIds.onlinePayment
+              ? 'category_not_method'
               : def.isSupportedMollieCheckout
               ? 'market_or_owner_gate'
               : def.capability.name;
@@ -296,7 +314,7 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
         })
         .join('|');
     debugPrint(
-      '[PAYMENT_PICKER][RESOLVE] surface=airport market=$market companyCountryRaw=$companyCountryRaw routeCountryRaw=$routeCountryRaw enabledOptionIds=${enabled.join("|")} directCheckoutOptionIds=${direct.join("|")} displayOnlyOptionIds=${displayOnly.join("|")} hiddenOptionIdsWithReason=$hidden',
+      '[PAYMENT_PICKER][RESOLVE] surface=airport market=$market companyCountryRaw=$companyCountryRaw routeCountryRaw=$routeCountryRaw enabledOptionIds=${enabled.join("|")} directCheckoutOptionIds=${direct.join("|")} selectableExternalOptionIds=${selectableExternal.join("|")} displayOnlyOptionIds=${displayOnly.join("|")} hiddenOptionIdsWithReason=$hidden qrConfigured=${_isQrPaymentConfigured() ? "true" : "false"} qrMissingBankDetails=${_isQrPaymentMissingBankDetails() ? "true" : "false"}',
     );
   }
 
@@ -312,6 +330,45 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
     );
   }
 
+  String _qrPaymentSetupRequiredMessage() {
+    return _t(
+      nl: 'Vul eerst de bankgegevens in bij de bedrijfsinstellingen.',
+      en: 'Add bank details in business settings first.',
+      fr: 'Ajoutez d’abord les coordonnées bancaires dans les paramètres de l’entreprise.',
+      es: 'Añade primero los datos bancarios en la configuración de la empresa.',
+    );
+  }
+
+  String _payconiqWeroPendingMessage() {
+    return _t(
+      nl: 'Payconiq / Wero wordt later als aparte betaaloptie gekoppeld.',
+      en: 'Payconiq / Wero will be connected later as a separate payment option.',
+      fr: 'Payconiq / Wero sera connecté plus tard comme option de paiement séparée.',
+      es: 'Payconiq / Wero se conectará más adelante como una opción de pago separada.',
+    );
+  }
+
+  bool _isQrPaymentConfigured() {
+    final profile = localBackendBusinessProfileNotifier.value;
+    return (profile?.iban.trim().isNotEmpty ?? false);
+  }
+
+  bool _isQrPaymentMissingBankDetails() {
+    return _visiblePaymentMethodIds.contains(PaymentMethodIds.qrCode) &&
+        !_isQrPaymentConfigured();
+  }
+
+  String _displayOnlyPaymentMessage(String methodId) {
+    final id = normalizePaymentMethodId(methodId);
+    if (id == PaymentMethodIds.qrCode) {
+      return _qrPaymentSetupRequiredMessage();
+    }
+    if (id == PaymentMethodIds.payconiqWero) {
+      return _payconiqWeroPendingMessage();
+    }
+    return _paymentMethodUnavailableMessage();
+  }
+
   String _paymentMethodLabel(String methodId) {
     switch (normalizePaymentMethodId(methodId)) {
       case PaymentMethodIds.inVehicleCard:
@@ -325,6 +382,13 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
         return 'Bancontact';
       case PaymentMethodIds.bancontactQr:
         return 'Payconiq / Bancontact Pay QR';
+      case PaymentMethodIds.qrCode:
+        return _t(
+          nl: 'QR-betaling',
+          en: 'QR payment',
+          fr: 'Paiement par QR',
+          es: 'Pago por QR',
+        );
       case PaymentMethodIds.ideal:
         return 'iDEAL';
       case PaymentMethodIds.cardPayment:
@@ -353,13 +417,36 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
 
   String _paymentMethodDescription(String methodId) {
     final id = normalizePaymentMethodId(methodId);
-    if (id == PaymentMethodIds.inVehicleCard ||
-        PaymentMethodCatalog.providerFor(id) == PaymentProvider.manual) {
+    if (id == PaymentMethodIds.inVehicleCard || id == PaymentMethodIds.cash) {
       return _t(
         nl: 'De rit wordt bevestigd en je betaalt later in de wagen.',
         en: 'Ride is confirmed and you pay later in the vehicle.',
         fr: 'Le trajet est confirmé et vous payez plus tard dans le véhicule.',
         es: 'El trayecto se confirma y pagas después en el vehículo.',
+      );
+    }
+    if (id == PaymentMethodIds.qrCode) {
+      if (!_isQrPaymentConfigured()) {
+        return _t(
+          nl: 'Bankgegevens ontbreken in de bedrijfsinstellingen.',
+          en: 'Bank details are missing in business settings.',
+          fr: 'Les coordonnées bancaires manquent dans les paramètres de l’entreprise.',
+          es: 'Faltan los datos bancarios en la configuración de la empresa.',
+        );
+      }
+      return _t(
+        nl: 'Scan en betaal naar de rekening van het bedrijf.',
+        en: 'Scan and pay to the company bank account.',
+        fr: 'Scannez et payez sur le compte bancaire de l’entreprise.',
+        es: 'Escanea y paga a la cuenta bancaria de la empresa.',
+      );
+    }
+    if (id == PaymentMethodIds.payconiqWero) {
+      return _t(
+        nl: 'Payconiq / Wero — binnenkort beschikbaar',
+        en: 'Payconiq / Wero — coming soon',
+        fr: 'Payconiq / Wero — bientôt disponible',
+        es: 'Payconiq / Wero — próximamente',
       );
     }
     if (id == PaymentMethodIds.bancontactQr) {
@@ -382,6 +469,12 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
     final id = normalizePaymentMethodId(methodId);
     if (id == PaymentMethodIds.inVehicleCard) {
       return Icons.local_taxi_rounded;
+    }
+    if (id == PaymentMethodIds.qrCode) {
+      return Icons.qr_code_2_rounded;
+    }
+    if (id == PaymentMethodIds.payconiqWero) {
+      return Icons.schedule_rounded;
     }
     if (id == PaymentMethodIds.bancontactQr) {
       return Icons.qr_code_2_rounded;
@@ -994,7 +1087,7 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
                   behavior: SnackBarBehavior.floating,
                   backgroundColor: _panel,
                   content: Text(
-                    _paymentMethodUnavailableMessage(),
+                    _displayOnlyPaymentMessage(methodId),
                     style: TextStyle(color: _textPrimary),
                   ),
                 ),

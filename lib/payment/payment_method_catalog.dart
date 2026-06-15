@@ -256,6 +256,13 @@ abstract final class PaymentMethodCatalog {
     PaymentMethodIds.invoice,
   };
 
+  /// Known option ids that configure broader behavior but are not standalone
+  /// customer picker rows.
+  static const Set<String> hiddenPickerMethodIds = <String>{
+    PaymentMethodIds.cash,
+    PaymentMethodIds.onlinePayment,
+  };
+
   /// Default visible method order for a market (before partner enablement filter).
   static List<String> defaultMethodOrderForCountry(String rawCountryCode) {
     final country = normalizeCountryCode(rawCountryCode);

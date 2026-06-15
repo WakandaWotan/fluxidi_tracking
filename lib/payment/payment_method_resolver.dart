@@ -139,6 +139,7 @@ abstract final class PaymentMethodResolver {
 
     void addIfVisible(String id) {
       if (includedIds.contains(id)) return;
+      if (PaymentMethodCatalog.hiddenPickerMethodIds.contains(id)) return;
       if (enabledSet != null && !enabledSet.contains(id)) return;
       final def = PaymentMethodCatalog.definitionFor(id);
       if (def == null) return;
