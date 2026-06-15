@@ -763,7 +763,27 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
     return null;
   }
 
-  double? _receiptTotalAmount() {
+  /// Resolves the amount used for receipt display and outgoing payment
+  /// payloads.
+  ///
+  /// When [wholeBookingScope] is `true` the caller wants the full booking
+  /// total (e.g. EPC SEPA QR amount, booking-worker `/bookings/:id/payment`
+  /// payload, payment-zone display, legacy `fluxidi://pay` deep link). For
+  /// roundtrip/return-enabled bookings the per-leg `item.totalEur` would
+  /// silently undercollect (only the outbound leg amount would be charged),
+  /// so booking-level payment surfaces must prefer `booking_total_eur`.
+  ///
+  /// When [wholeBookingScope] is `false` (default) the historical per-leg
+  /// behaviour is preserved: planned operational-leg receipts use the leg
+  /// amount, falling back to `booking_total_eur` / `item.totalEur` if no
+  /// leg-level amount is available. This keeps the PDF receipt / VAT
+  /// breakdown / per-trip `/trip/payment` payload leg-focused.
+  double? _receiptTotalAmount({bool wholeBookingScope = false}) {
+    if (wholeBookingScope) {
+      final pkg = _detailDouble('booking_total_eur');
+      if (_isPositiveAmount(pkg)) return pkg;
+      return item.totalEur;
+    }
     if (_isPlannedReceipt) {
       final legAmount = _effectiveOperationalLegAmount();
       if (_isPositiveAmount(legAmount)) return legAmount;
@@ -777,8 +797,19 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
     return '€ ${value.toStringAsFixed(2)}';
   }
 
-  String _totalText() {
-    return _moneyText(_receiptTotalAmount());
+  /// Formats the receipt total for display.
+  ///
+  /// Defaults to the per-leg amount on planned operational-leg receipts (used
+  /// by the PDF body, share text, and the main "Total" row), matching the
+  /// invoice the customer keeps. Pass [wholeBookingScope] = `true` for
+  /// booking-level payment surfaces (payment-zone Amount row, QR dialog
+  /// caption) so the visible amount aligns with the EPC SEPA QR payload and
+  /// the booking-worker `/bookings/:id/payment` payload — preventing silent
+  /// undercollection of the return leg on roundtrip bookings.
+  String _totalText({bool wholeBookingScope = false}) {
+    return _moneyText(
+      _receiptTotalAmount(wholeBookingScope: wholeBookingScope),
+    );
   }
 
   String _kmText() {
@@ -1745,7 +1776,7 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
   }
 
   String _paymentLink() {
-    final amount = _receiptTotalAmount() ?? 0.0;
+    final amount = _receiptTotalAmount(wholeBookingScope: true) ?? 0.0;
     return Uri(
       scheme: 'fluxidi',
       host: 'pay',
@@ -1924,7 +1955,7 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
     final ibanNormalized = (profile?.iban ?? '')
         .replaceAll(RegExp(r'\s+'), '')
         .toUpperCase();
-    final amount = _receiptTotalAmount() ?? 0.0;
+    final amount = _receiptTotalAmount(wholeBookingScope: true) ?? 0.0;
     final currency = item.currency.trim().isEmpty
         ? 'EUR'
         : item.currency.trim().toUpperCase();
@@ -3049,7 +3080,7 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
               const SizedBox(height: 12),
               Center(
                 child: Text(
-                  _totalText(),
+                  _totalText(wholeBookingScope: true),
                   style: const TextStyle(
                     fontSize: 18,
                     fontWeight: FontWeight.w800,
@@ -3121,7 +3152,15 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
     if (strictScope == null) return;
     final bookingId = (item.bookingId ?? '').trim();
     final tripId = item.tripId.trim();
-    final normalizedMethod = method.toLowerCase().trim();
+    final rawNormalizedMethod = method.toLowerCase().trim();
+    // QR ("qr betaling") is conceptually a customer bank transfer for the
+    // ENTIRE booking, never for an operational leg. Standardize the wire
+    // method name to `qr_code` so it matches PaymentMethodCatalog and the
+    // company bookings list / booking-finance aggregate downstream. Other
+    // in-vehicle methods (cash, bancontact) keep their existing names.
+    final isQrPayment =
+        rawNormalizedMethod == 'qr' || rawNormalizedMethod == 'qr_code';
+    final normalizedMethod = isQrPayment ? 'qr_code' : rawNormalizedMethod;
     final hasLegId = (_operationalLegIdForReceipt() ?? '').trim().isNotEmpty;
     final hasLegType = (_operationalLegTypeTokenForReceipt() ?? '')
         .trim()
@@ -3130,10 +3169,34 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
         .trim()
         .isNotEmpty;
     final useLegTripPaymentPath = _isPlannedOperationalLegPaymentItem();
-    final useTripPaymentPath = bookingId.isEmpty || useLegTripPaymentPath;
+    // For QR specifically, force the authoritative booking-worker payment
+    // path whenever a bookingId exists. Reason: only the booking-worker
+    // `/bookings/:id/payment` endpoint triggers
+    // `_trackingSyncMaterializeBookingFinanceKpiBestEffort`, which contributes
+    // to the company monthly income KPI. The tracking-worker `/trip/payment`
+    // endpoint (used for per-leg in-car cash/Bancontact) only updates trip-KPI
+    // and never writes booking-finance, so a QR-confirmed booking would show
+    // Paid in the company list but be missing from the monthly revenue KPI.
+    final useTripPaymentPath = isQrPayment
+        ? false
+        : (bookingId.isEmpty || useLegTripPaymentPath);
     debugPrint(
-      '[RECEIPT_PAYMENT][LEG_GUARD_DECISION] tripId=$tripId bookingId=$bookingId isPlannedReceipt=$_isPlannedReceipt hasLegId=$hasLegId hasLegType=$hasLegType hasRowKey=$hasRowKey useLegTripPaymentPath=$useLegTripPaymentPath',
+      '[RECEIPT_PAYMENT][LEG_GUARD_DECISION] tripId=$tripId bookingId=$bookingId isPlannedReceipt=$_isPlannedReceipt hasLegId=$hasLegId hasLegType=$hasLegType hasRowKey=$hasRowKey useLegTripPaymentPath=$useLegTripPaymentPath method=$normalizedMethod isQr=$isQrPayment routing=${useTripPaymentPath ? "tracking_trip_payment" : "booking_worker_payment"}',
     );
+    if (isQrPayment && bookingId.isEmpty) {
+      // QR without a bookingId cannot be reconciled to a company booking, so
+      // the booking-finance contribution would never fire. Refuse the
+      // confirmation explicitly instead of silently routing to the tracking
+      // path that would leave the KPI out of sync.
+      debugPrint(
+        '[QR_PAYMENT][CONFIRM] status=missing_booking_id tripId=$tripId ref=${_safeRefPreview(tripId)} method=$normalizedMethod amount=${_receiptTotalAmount() ?? "-"}',
+      );
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(_receiptText('bookingIdMissing'))));
+      return;
+    }
     if (useTripPaymentPath) {
       if (tripId.isEmpty) {
         if (!context.mounted) return;
@@ -3247,18 +3310,38 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
       return;
     }
 
-    final amount = _receiptTotalAmount();
+    // Booking-level payment (QR / cash / Bancontact via the booking-worker
+    // `/bookings/:id/payment` path) MUST carry the full booking total — not
+    // the per-leg amount — otherwise roundtrip bookings silently
+    // undercollect the return leg even though the booking record flips to
+    // `payment_status=paid`.
+    final amount = _receiptTotalAmount(wholeBookingScope: true);
+    final legAmountForLog = _receiptTotalAmount();
+    final bookingTotalForLog = _detailDouble('booking_total_eur');
+    final paidAtIso = DateTime.now().toUtc().toIso8601String();
+    final maskedRef = _safeRefPreview(bookingId);
+    final maskedTenant = _maskScopeForLog(strictScope['tenant_id'] ?? '');
+    final maskedCompany = _maskScopeForLog(strictScope['company_id'] ?? '');
+    debugPrint(
+      '[QR_PAYMENT][AMOUNT_RESOLUTION] booking=$maskedRef leg_amount=${legAmountForLog ?? "-"} booking_total=${bookingTotalForLog ?? "-"} selected=${amount ?? "-"} scope=whole_booking method=$normalizedMethod isQr=$isQrPayment',
+    );
     final payload = <String, dynamic>{
       'booking_id': bookingId,
       'payment_status': 'paid',
       'payment_method': normalizedMethod,
       'payment_source': 'in_car',
+      // QR / cash / Bancontact via the driver receipt are always manual
+      // confirmations (no Mollie checkout, no PSP id). Tag the provider
+      // explicitly so the booking-worker stores it as such and the booking
+      // finance aggregate uses the same canonical shape as other manual
+      // confirmations.
+      if (isQrPayment) 'payment_provider': 'manual',
       ...strictScope,
       'currency': item.currency.trim().isEmpty
           ? 'EUR'
           : item.currency.trim().toUpperCase(),
       'paid_by_driver_id': kDriverId,
-      'paid_at': DateTime.now().toUtc().toIso8601String(),
+      'paid_at': paidAtIso,
       ..._driverMutationActorFields(
         actorVehicleId: (item.vehicleId ?? '').trim(),
       ),
@@ -3269,9 +3352,14 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
       headers['x-admin-token'] = kAdminToken.trim();
     }
 
+    if (isQrPayment) {
+      debugPrint(
+        '[QR_PAYMENT][CONFIRM] booking=$maskedRef amount=${amount ?? "-"} tenant=$maskedTenant company=$maskedCompany method=$normalizedMethod provider=manual source=in_car paid_at=$paidAtIso',
+      );
+    }
     try {
       debugPrint(
-        '[RECEIPT_PAYMENT][PARENT_BOOKING_PAYMENT] bookingId=$bookingId method=$normalizedMethod',
+        '[RECEIPT_PAYMENT][PARENT_BOOKING_PAYMENT] bookingId=$bookingId method=$normalizedMethod amount=${amount ?? "-"} tenant=$maskedTenant company=$maskedCompany',
       );
       final uri = Uri.parse(
         '$kBookingBaseUrl/bookings/${Uri.encodeComponent(bookingId)}/payment',
@@ -3279,6 +3367,15 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
       final res = await http
           .post(uri, headers: headers, body: jsonEncode(payload))
           .timeout(const Duration(seconds: 12));
+      if (isQrPayment) {
+        final qrResBody = utf8.decode(res.bodyBytes);
+        final qrBodyPreview = qrResBody.length > 240
+            ? '${qrResBody.substring(0, 240)}...'
+            : qrResBody;
+        debugPrint(
+          '[BOOKING_PAYMENT_UPDATE][QR] status=${res.statusCode} provider=manual amount=${amount ?? "-"} booking=$maskedRef tenant=$maskedTenant company=$maskedCompany endpoint=booking_worker bodyPreview=$qrBodyPreview',
+        );
+      }
       if (res.statusCode < 200 || res.statusCode >= 300) {
         throw Exception('HTTP ${res.statusCode}');
       }
@@ -3294,6 +3391,10 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
       extracted['paymentMethod'] = normalizedMethod;
       extracted['payment_source'] = 'in_car';
       extracted['paymentSource'] = 'in_car';
+      if (isQrPayment) {
+        extracted['payment_provider'] ??= 'manual';
+        extracted['paymentProvider'] ??= 'manual';
+      }
       extracted['paid_at'] ??= payload['paid_at'];
       extracted['paidAt'] ??= payload['paid_at'];
       _mergePaymentFieldsIntoReceiptDetails(extracted);
@@ -3331,6 +3432,11 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
       debugPrint(
         '[RECEIPT][PAYMENT_MARK_FAILED] bookingId=$bookingId method=$method err=$err',
       );
+      if (isQrPayment) {
+        debugPrint(
+          '[BOOKING_PAYMENT_UPDATE][QR] status=error booking=$maskedRef tenant=$maskedTenant company=$maskedCompany endpoint=booking_worker err=$err',
+        );
+      }
       if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(_receiptText('paymentMarkFailed'))),
@@ -3552,7 +3658,12 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
   }
 
   Widget _paymentSection(BuildContext context) {
-    final receiptTotal = _receiptTotalAmount();
+    final receiptTotal = _receiptTotalAmount(wholeBookingScope: true);
+    final legAmountForLog = _receiptTotalAmount();
+    final bookingTotalForLog = _detailDouble('booking_total_eur');
+    debugPrint(
+      '[QR_PAYMENT][SECTION_AMOUNT] booking=${_safeRefPreview(item.bookingId ?? "")} leg_amount=${legAmountForLog ?? "-"} booking_total=${bookingTotalForLog ?? "-"} selected=${receiptTotal ?? "-"} scope=whole_booking',
+    );
     // Hide payment action buttons whenever ANY paid signal is present in the
     // hydrated JSON, not just when the in-memory `_paymentStatus` enum was
     // already flipped to paid. Prevents `Pay by QR / Cash received / Paid by
@@ -3582,7 +3693,11 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
           ),
           const SizedBox(height: 8),
           _receiptRow(_receiptText('paymentStatus'), _paymentStatusText()),
-          _receiptRow(_receiptText('amount'), _totalText(), highlight: true),
+          _receiptRow(
+            _receiptText('amount'),
+            _totalText(wholeBookingScope: true),
+            highlight: true,
+          ),
           const SizedBox(height: 10),
           if (!alreadyPaid) ...[
             FilledButton.icon(
