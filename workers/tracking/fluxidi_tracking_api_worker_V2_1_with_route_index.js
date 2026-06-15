@@ -3260,24 +3260,6 @@ async function handleDashboardTripKpis(req, url, env, origin) {
   const monthBookingPaidIncomeCents = Number.isFinite(Number(financeMonth.monthly_paid_bookings_income_cents))
     ? Math.max(0, Math.round(Number(financeMonth.monthly_paid_bookings_income_cents)))
     : 0;
-  // Revenue source selection:
-  //   The legacy `Math.max(trip, booking_finance)` blend inflated revenue when the
-  //   booking-worker payment fan-out wrote the full booking total onto each per-leg
-  //   `planned_<bookingId>[_suffix]` trip record. Booking-finance is keyed per
-  //   booking_id and cannot inflate from multi-leg fan-out, so it is now the
-  //   canonical monthly revenue source. The trip-KPI sum stays as a fallback only
-  //   when booking-finance has no data (e.g. legacy direct trips that pre-date
-  //   booking-finance materialization, or non-booking-backed street hails).
-  const selectedMonthlyIncomeSource =
-    monthBookingPaidIncomeCents > 0 ? "booking_finance" : "trip_kpi_fallback";
-  const selectedMonthlyIncomeCents =
-    selectedMonthlyIncomeSource === "booking_finance"
-      ? monthBookingPaidIncomeCents
-      : monthIncomeCents;
-  const blendedMonthlyIncomeCents = selectedMonthlyIncomeCents;
-  console.log(
-    `[DASHBOARD_REVENUE][SOURCE] tenant=${maskScopeForTripKpiLog(normalizedScope.tenant_id)} company=${maskScopeForTripKpiLog(normalizedScope.company_id)} month=${selectedMonth} source=${selectedMonthlyIncomeSource} booking_finance_cents=${monthBookingPaidIncomeCents} trip_kpi_cents=${monthIncomeCents} selected_cents=${selectedMonthlyIncomeCents}`,
-  );
   const monthCancelledPaidCents = Number.isFinite(Number(financeMonth.monthly_cancelled_paid_bookings_cents))
     ? Math.max(0, Math.round(Number(financeMonth.monthly_cancelled_paid_bookings_cents)))
     : 0;
@@ -3287,12 +3269,43 @@ async function handleDashboardTripKpis(req, url, env, origin) {
   const monthCreditedCents = Number.isFinite(Number(financeMonth.monthly_credited_cents))
     ? Math.max(0, Math.round(Number(financeMonth.monthly_credited_cents)))
     : 0;
-  const grossMonthlyIncomeCents = blendedMonthlyIncomeCents;
   const pendingCreditCents = monthPendingCreditCents;
   const creditedCents = monthCreditedCents;
-  const netMonthlyIncomeCents = Math.max(
+  // Booking-finance net is kept as a diagnostic only. It applies the
+  // historical credit-subtraction model (gross − pending_credit − credited)
+  // to the booking-finance gross. It is NOT used as the dashboard display
+  // value unless trip-KPI is empty, because cancelled/credited bookings are
+  // already excluded from completed-trip revenue.
+  const bookingFinanceNetIncomeCents = Math.max(
     0,
-    grossMonthlyIncomeCents - pendingCreditCents - creditedCents,
+    monthBookingPaidIncomeCents - pendingCreditCents - creditedCents,
+  );
+  // Dashboard revenue source selection:
+  //   Prefer completed-paid trip revenue (trip-KPI per-month aggregate)
+  //   because it matches `completed_rides_count` 1:1 and cannot include
+  //   cancelled/refunded/credited bookings. Booking-finance can include
+  //   amounts for bookings whose lifecycle was cancelled after capture, so
+  //   it inflates the visible revenue card vs. what a user sees in the
+  //   Completed bookings tab. Fall back to booking-finance only when trip
+  //   completed revenue is zero or missing, to preserve legacy months and
+  //   tenants without trip-KPI materialization.
+  const selectedMonthlyIncomeSource =
+    monthIncomeCents > 0 ? "completed_trip_kpi" : "booking_finance_fallback";
+  const selectedMonthlyIncomeCents =
+    selectedMonthlyIncomeSource === "completed_trip_kpi"
+      ? monthIncomeCents
+      : monthBookingPaidIncomeCents;
+  // Dashboard display fields all resolve to the selected source. We do NOT
+  // subtract credits here: when the source is completed_trip_kpi the
+  // cancelled/credited bookings are already excluded from the trip sum, and
+  // when the source is booking_finance_fallback the credit-subtracted view
+  // is still available as `booking_finance_net_income_cents` diagnostic.
+  const dashboardMonthlyIncomeCents = selectedMonthlyIncomeCents;
+  const blendedMonthlyIncomeCents = dashboardMonthlyIncomeCents;
+  const grossMonthlyIncomeCents = dashboardMonthlyIncomeCents;
+  const netMonthlyIncomeCents = dashboardMonthlyIncomeCents;
+  console.log(
+    `[DASHBOARD_REVENUE][DISPLAY_SOURCE] tenant=${maskScopeForTripKpiLog(normalizedScope.tenant_id)} company=${maskScopeForTripKpiLog(normalizedScope.company_id)} month=${selectedMonth} source=${selectedMonthlyIncomeSource} trip_cents=${monthIncomeCents} booking_finance_cents=${monthBookingPaidIncomeCents} booking_finance_net_cents=${bookingFinanceNetIncomeCents} selected_cents=${selectedMonthlyIncomeCents}`,
   );
   const scopeMismatchCount = Number.isFinite(Number(debugCounters.scope_mismatch))
     ? Math.max(0, Math.round(Number(debugCounters.scope_mismatch)))
@@ -3330,6 +3343,10 @@ async function handleDashboardTripKpis(req, url, env, origin) {
     trip_monthly_income_eur: monthIncomeCents / 100,
     booking_finance_monthly_income_cents: monthBookingPaidIncomeCents,
     booking_finance_monthly_income_eur: monthBookingPaidIncomeCents / 100,
+    booking_finance_net_income_cents: bookingFinanceNetIncomeCents,
+    booking_finance_net_income_eur: bookingFinanceNetIncomeCents / 100,
+    dashboard_monthly_income_cents: dashboardMonthlyIncomeCents,
+    dashboard_monthly_income_eur: dashboardMonthlyIncomeCents / 100,
     selected_monthly_income_source: selectedMonthlyIncomeSource,
     trip_kpi_reconcile_scanned: Number.isFinite(Number(reconcileResult?.trip_kpi_reconcile_scanned))
       ? Math.max(0, Math.round(Number(reconcileResult.trip_kpi_reconcile_scanned)))
