@@ -25,7 +25,7 @@ const Map<AppLanguage, String> _brochureAssetByLanguage = <AppLanguage, String>{
 };
 
 const Map<AppLanguage, String>
-_businessGuideAssetByLanguage = <AppLanguage, String>{
+_businessGuideTabletAssetByLanguage = <AppLanguage, String>{
   AppLanguage.nl:
       'assets/fluxidi/manuals/fluxidi_bedrijfspagina_handleiding_nl_v1_0_final.pdf',
   AppLanguage.en:
@@ -34,6 +34,18 @@ _businessGuideAssetByLanguage = <AppLanguage, String>{
       'assets/fluxidi/manuals/fluxidi_guide_page_entreprise_fr_v1_0_final.pdf',
   AppLanguage.es:
       'assets/fluxidi/manuals/fluxidi_guia_pagina_empresa_es_v1_0_final.pdf',
+};
+
+const Map<AppLanguage, String>
+_businessGuideMobileAssetByLanguage = <AppLanguage, String>{
+  AppLanguage.nl:
+      'assets/fluxidi/manuals/fluxidi_bedrijfspagina_handleiding_nl_v1_0_mobile_gsm_premium.pdf',
+  AppLanguage.en:
+      'assets/fluxidi/manuals/fluxidi_business_page_guide_en_v1_0_mobile_gsm_premium.pdf',
+  AppLanguage.fr:
+      'assets/fluxidi/manuals/fluxidi_guide_page_entreprise_fr_v1_0_mobile_gsm_premium.pdf',
+  AppLanguage.es:
+      'assets/fluxidi/manuals/fluxidi_guia_pagina_empresa_es_v1_0_mobile_gsm_premium.pdf',
 };
 
 class BusinessHelpManualPage extends StatelessWidget {
@@ -750,9 +762,12 @@ void _showBrochureViewError(BuildContext context, AppLanguage language) {
   );
 }
 
-String _businessGuideAssetPathForLanguage(AppLanguage language) {
-  return _businessGuideAssetByLanguage[language] ??
-      _businessGuideAssetByLanguage[AppLanguage.en]!;
+String _businessGuideAssetPathFor(BuildContext context, AppLanguage language) {
+  final Map<AppLanguage, String> assets = _isPlatformTourSupported(context)
+      ? _businessGuideTabletAssetByLanguage
+      : _businessGuideMobileAssetByLanguage;
+  return assets[language] ??
+      _businessGuideTabletAssetByLanguage[AppLanguage.en]!;
 }
 
 Future<void> _viewBusinessPageGuide(
@@ -760,7 +775,7 @@ Future<void> _viewBusinessPageGuide(
   AppLanguage language,
 ) async {
   try {
-    final String assetPath = _businessGuideAssetPathForLanguage(language);
+    final String assetPath = _businessGuideAssetPathFor(context, language);
     final byteData = await rootBundle.load(assetPath);
     final bytes = byteData.buffer.asUint8List(
       byteData.offsetInBytes,
@@ -1121,10 +1136,10 @@ const _faqItems = <_FaqItem>[
       es: '¿Por qué debo publicar?',
     ),
     answer: _L(
-      nl: 'Publiceren maakt je actuele profiel, diensten en boekingsmogelijkheden zichtbaar voor klanten.',
-      en: 'Publishing makes your current profile, services and booking options visible to customers.',
-      fr: 'Publier rend visibles votre profil, vos services et vos options de réservation actuels.',
-      es: 'Publicar muestra a los clientes su perfil, servicios y opciones de reserva actuales.',
+      nl: 'Publiceren werkt je publieke bedrijfsprofiel, boekingslink, diensten, prijzen, media en klantinformatie bij.',
+      en: 'Publishing updates your public company profile, booking link, services, prices, media and customer-facing information.',
+      fr: 'Publier met à jour votre profil public, lien de réservation, services, prix, médias et informations clients.',
+      es: 'Publicar actualiza su perfil público, enlace de reserva, servicios, precios, medios e información para clientes.',
     ),
   ),
   _FaqItem(
@@ -1135,10 +1150,10 @@ const _faqItems = <_FaqItem>[
       es: '¿Dónde encuentro mi enlace de reserva?',
     ),
     answer: _L(
-      nl: 'Gebruik “Deel boekingslink” op Business Home voor de link en QR-code.',
-      en: 'Use “Share booking link” on Business Home for the link and QR code.',
-      fr: 'Utilisez « Partager le lien de réservation » sur Business Home pour le lien et le QR.',
-      es: 'Use “Compartir enlace de reserva” en Business Home para el enlace y QR.',
+      nl: 'Je publieke boekingslink staat onder Publiceren & boekingslink in Bedrijfsinstellingen. Je kunt ze kopiëren, openen of delen.',
+      en: 'Your public booking link is under Publishing & booking link in Business settings. You can copy, open or share it.',
+      fr: 'Votre lien public se trouve sous Publication & lien de réservation dans les paramètres entreprise. Copiez-le, ouvrez-le ou partagez-le.',
+      es: 'Su enlace público está en Publicación y enlace de reserva en Ajustes de empresa. Puede copiarlo, abrirlo o compartirlo.',
     ),
   ),
   _FaqItem(
@@ -1149,24 +1164,24 @@ const _faqItems = <_FaqItem>[
       es: '¿Cómo comparto mi código QR?',
     ),
     answer: _L(
-      nl: 'Open “Deel boekingslink” en gebruik de deeloptie voor website, WhatsApp, e-mail of drukwerk.',
-      en: 'Open “Share booking link” and use the share option for website, WhatsApp, email or print.',
-      fr: 'Ouvrez « Partager le lien de réservation » et utilisez l’option de partage.',
-      es: 'Abra “Compartir enlace de reserva” y use la opción de compartir.',
+      nl: 'De QR-code opent je publieke boekingslink. Gebruik ze in de wagen, op flyers, aan de balie, op social media of op je website.',
+      en: 'The QR code opens your public booking link. Use it in the vehicle, on flyers, at the desk, on social media or on your website.',
+      fr: 'Le code QR ouvre votre lien public. Utilisez-le dans le véhicule, sur des flyers, au comptoir, sur les réseaux sociaux ou sur votre site.',
+      es: 'El código QR abre su enlace público. Úselo en el vehículo, en folletos, en mostrador, en redes sociales o en su web.',
     ),
   ),
   _FaqItem(
     question: _L(
       nl: 'Waarom moet ik voertuigen en chauffeurs toevoegen?',
-      en: 'Why add vehicles and drivers?',
+      en: 'Why do I need to add vehicles and drivers?',
       fr: 'Pourquoi ajouter véhicules et chauffeurs ?',
-      es: '¿Por qué añadir vehículos y conductores?',
+      es: '¿Por qué debo añadir vehículos y conductores?',
     ),
     answer: _L(
-      nl: 'Ze zijn nodig voor planning, toewijzing, uitvoering en duidelijke ritopvolging.',
-      en: 'They are needed for planning, assignment, execution and clear ride follow-up.',
-      fr: 'Ils sont nécessaires pour planifier, affecter, exécuter et suivre les courses.',
-      es: 'Son necesarios para planificar, asignar, ejecutar y seguir viajes.',
+      nl: 'Voertuigen en chauffeurs helpen ritten correct toe te wijzen, de juiste gegevens tonen en ritbonnen, geschiedenis en dispatch te ondersteunen.',
+      en: 'Vehicles and drivers help assign rides correctly, show the right details and support receipts, history and dispatch.',
+      fr: 'Véhicules et chauffeurs aident à affecter correctement les courses, afficher les bonnes informations et gérer reçus, historique et dispatch.',
+      es: 'Vehículos y conductores ayudan a asignar viajes correctamente, mostrar los datos correctos y apoyar recibos, historial y despacho.',
     ),
   ),
   _FaqItem(
@@ -1177,10 +1192,10 @@ const _faqItems = <_FaqItem>[
       es: '¿Cómo cambio mis precios?',
     ),
     answer: _L(
-      nl: 'Ga naar instellingen en pas je diensten, tarieven en prijsregels aan. Publiceer daarna opnieuw.',
-      en: 'Go to settings and update services, rates and price rules. Then publish again.',
-      fr: 'Allez dans les paramètres, modifiez services, tarifs et règles, puis republiez.',
-      es: 'Vaya a ajustes, actualice servicios, tarifas y reglas, y publique de nuevo.',
+      nl: 'Prijzen beheer je in Bedrijfsinstellingen via de prijsmotor: starttarief, prijs per km, prijs per minuut, minimumtarief en toeslagen.',
+      en: 'Manage prices in Business settings under the price engine: start fare, price per kilometre, price per minute, minimum fare and surcharges.',
+      fr: 'Gérez les prix dans les paramètres entreprise via le moteur tarifaire : prise en charge, prix au km, prix à la minute, tarif minimum et suppléments.',
+      es: 'Gestione precios en Ajustes de empresa con el motor de precios: tarifa inicial, precio por km, precio por minuto, tarifa mínima y recargos.',
     ),
   ),
   _FaqItem(
@@ -1191,10 +1206,10 @@ const _faqItems = <_FaqItem>[
       es: '¿Cómo ve un cliente su viaje?',
     ),
     answer: _L(
-      nl: 'Via de klantflow kan de klant details, bevestiging, betaling en status volgen.',
-      en: 'Through the customer flow, the customer can follow details, confirmation, payment and status.',
-      fr: 'Via le parcours client, il suit détails, confirmation, paiement et statut.',
-      es: 'En el flujo del cliente puede ver detalles, confirmación, pago y estado.',
+      nl: 'In de klantflow ziet de klant boeking, status, ophaal- en bestemming, datum/tijd, betalingsstatus en beschikbare acties.',
+      en: 'In the customer flow, customers see their booking, status, pickup and destination, date and time, payment status and available actions.',
+      fr: 'Dans le parcours client, il voit la réservation, le statut, prise en charge et destination, date/heure, statut de paiement et actions disponibles.',
+      es: 'En el flujo del cliente ve reserva, estado, recogida y destino, fecha y hora, estado de pago y acciones disponibles.',
     ),
   ),
   _FaqItem(
@@ -1205,10 +1220,24 @@ const _faqItems = <_FaqItem>[
       es: '¿Cómo funciona pagar en el vehículo?',
     ),
     answer: _L(
-      nl: 'Als dit geconfigureerd is, ziet klant en chauffeur dat betaling in de wagen mogelijk is.',
-      en: 'When configured, both customer and driver see that payment in the car is available.',
-      fr: 'Si configuré, client et chauffeur voient que le paiement dans le véhicule est possible.',
-      es: 'Si está configurado, cliente y conductor ven que el pago en vehículo está disponible.',
+      nl: 'De rit kan als betaalbaar in de wagen worden geboekt. Bedrijf of chauffeur kan daarna de betaling registreren zodat boeking en ritbon kloppen.',
+      en: 'The ride can be booked as payable in the vehicle. The company or driver can register payment afterwards so the booking and receipt show the correct status.',
+      fr: 'La course peut être réservée avec paiement dans le véhicule. L’entreprise ou le chauffeur enregistre ensuite le paiement pour que réservation et reçu soient corrects.',
+      es: 'El viaje puede reservarse como pagadero en el vehículo. La empresa o el conductor registra el pago después para que reserva y recibo muestren el estado correcto.',
+    ),
+  ),
+  _FaqItem(
+    question: _L(
+      nl: 'Hoe werken online betalingen?',
+      en: 'How do online payments work?',
+      fr: 'Comment fonctionnent les paiements en ligne ?',
+      es: '¿Cómo funcionan los pagos en línea?',
+    ),
+    answer: _L(
+      nl: 'Online betalen hangt af van je betaalinstellingen. Als dit actief is, kunnen klanten via de beschikbare opties betalen en werkt Fluxidi boeking en betalingsstatus bij.',
+      en: 'Online payment depends on your company payment settings. When enabled, customers can pay through the available options and Fluxidi updates booking and payment status.',
+      fr: 'Le paiement en ligne dépend de vos paramètres de paiement. Une fois activé, les clients paient via les options disponibles et Fluxidi met à jour réservation et statut de paiement.',
+      es: 'El pago en línea depende de sus ajustes de pago. Si está activo, los clientes pagan con las opciones disponibles y Fluxidi actualiza reserva y estado de pago.',
     ),
   ),
   _FaqItem(
@@ -1219,10 +1248,10 @@ const _faqItems = <_FaqItem>[
       es: '¿Dónde encuentro recibos?',
     ),
     answer: _L(
-      nl: 'Ritbonnen horen bij ritgeschiedenis en administratie na uitvoering van ritten.',
-      en: 'Receipts belong with ride history and administration after rides are completed.',
-      fr: 'Les reçus se trouvent avec l’historique et l’administration après les courses.',
-      es: 'Los recibos están con historial y administración tras completar viajes.',
+      nl: 'Ritbonnen vind je bij boekingsdetails of ritgeschiedenis waar ondersteund. Ze helpen bij administratie, klantbewijs en opvolging.',
+      en: 'Receipts are available from booking details or ride history where supported. They help with administration, customer proof and follow-up.',
+      fr: 'Les reçus sont disponibles dans les détails de réservation ou l’historique des courses le cas échéant. Ils aident pour l’administration, la preuve client et le suivi.',
+      es: 'Los recibos están en detalles de reserva o historial de viajes donde esté disponible. Ayudan con administración, prueba al cliente y seguimiento.',
     ),
   ),
   _FaqItem(
@@ -1233,10 +1262,10 @@ const _faqItems = <_FaqItem>[
       es: '¿Qué ocurre con una cancelación?',
     ),
     answer: _L(
-      nl: 'De boeking krijgt een annulatiestatus en blijft zichtbaar in de geschiedenis.',
-      en: 'The booking receives a cancellation status and remains visible in history.',
-      fr: 'La réservation reçoit un statut annulé et reste visible dans l’historique.',
-      es: 'La reserva recibe estado de cancelación y queda visible en el historial.',
+      nl: 'Annulatie hangt af van bedrijfsinstellingen, timing en ritstatus. Sommige ritten kunnen vrij worden geannuleerd; late of lopende ritten kunnen anders worden afgehandeld.',
+      en: 'Cancellation depends on company settings, timing and ride status. Some rides can be cancelled freely; late or already-started rides may be handled differently.',
+      fr: 'L’annulation dépend des paramètres, du moment et du statut. Certaines courses s’annulent librement ; les courses tardives ou déjà commencées peuvent être traitées autrement.',
+      es: 'La cancelación depende de ajustes, momento y estado del viaje. Algunos viajes se cancelan libremente; los tardíos o ya iniciados pueden gestionarse de otra forma.',
     ),
   ),
   _FaqItem(
@@ -1247,38 +1276,24 @@ const _faqItems = <_FaqItem>[
       es: '¿Puede un conductor abrir navegación?',
     ),
     answer: _L(
-      nl: 'Ja, waar beschikbaar kan navigatie vanuit de chauffeurflow geopend worden.',
-      en: 'Yes, where available, navigation can be opened from the driver flow.',
-      fr: 'Oui, si disponible, la navigation s’ouvre depuis le parcours chauffeur.',
-      es: 'Sí, cuando esté disponible, se abre desde el flujo del conductor.',
+      nl: 'Ja, wanneer ophaal- of bestemmingsgegevens beschikbaar zijn, kan de chauffeur navigatie openen zonder adressen handmatig te kopiëren.',
+      en: 'Yes, when pickup or destination details are available, drivers can open navigation without copying addresses manually.',
+      fr: 'Oui, lorsque les détails de prise en charge ou de destination sont disponibles, le chauffeur ouvre la navigation sans copier les adresses manuellement.',
+      es: 'Sí, cuando hay datos de recogida o destino, el conductor puede abrir navegación sin copiar direcciones manualmente.',
     ),
   ),
   _FaqItem(
     question: _L(
-      nl: 'Kan ik de platformrondleiding opnieuw bekijken?',
-      en: 'Can I view the platform tour again?',
-      fr: 'Puis-je revoir la visite de la plateforme ?',
-      es: '¿Puedo volver a ver el recorrido?',
+      nl: 'Wat controleer ik als klanten niet kunnen boeken?',
+      en: 'What should I check if customers cannot book?',
+      fr: 'Que vérifier si les clients ne peuvent pas réserver ?',
+      es: '¿Qué reviso si los clientes no pueden reservar?',
     ),
     answer: _L(
-      nl: 'Ja, gebruik “Platformrondleiding bekijken” bovenaan deze help-pagina.',
-      en: 'Yes, use “View platform tour” at the top of this help page.',
-      fr: 'Oui, utilisez « Voir la visite de la plateforme » en haut de cette page.',
-      es: 'Sí, use “Ver recorrido de la plataforma” arriba en esta página.',
-    ),
-  ),
-  _FaqItem(
-    question: _L(
-      nl: 'Waar vind ik de brochure?',
-      en: 'Where do I find the brochure?',
-      fr: 'Où trouver la brochure ?',
-      es: '¿Dónde encuentro el folleto?',
-    ),
-    answer: _L(
-      nl: 'De brochure staat rechtstreeks in Help & guide. Open de brochuresectie om ze te bekijken of te delen in je huidige taal.',
-      en: 'The brochure is available directly in Help & guide. Open the brochure section to view or share it in your current language.',
-      fr: 'La brochure est disponible directement dans Help & guide. Ouvrez la section brochure pour la consulter ou la partager dans votre langue actuelle.',
-      es: 'El folleto está disponible directamente en Help & guide. Abre la sección del folleto para verlo o compartirlo en tu idioma actual.',
+      nl: 'Controleer publicatiestatus, publieke boekingslink, diensten, prijzen, voertuigen/chauffeurs en betaalinstellingen.',
+      en: 'Check publishing status, public booking link, service settings, prices, vehicles and drivers, and payment settings.',
+      fr: 'Vérifiez le statut de publication, le lien public, les services, les prix, les véhicules/chauffeurs et les paramètres de paiement.',
+      es: 'Revise estado de publicación, enlace público, servicios, precios, vehículos/conductores y ajustes de pago.',
     ),
   ),
 ];
