@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:fluxidi_tracking/company_session_store.dart';
 import 'package:fluxidi_tracking/customer_bookings_store.dart';
 import 'package:fluxidi_tracking/customer_profile_store.dart';
 import 'package:fluxidi_tracking/customer_theme_palette.dart';
@@ -716,20 +717,71 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
     ]);
   }
 
-  Future<Map<String, dynamic>?> _fetchAuthoritativeBooking(
+  Future<({Map<String, dynamic>? booking, bool forbidden})>
+  _fetchAuthoritativeBooking(
     String bookingId,
     Map<String, dynamic> requestPayload,
+    Map<String, dynamic> bookResponse,
   ) async {
+    const failure = (booking: null, forbidden: false);
+    const forbidden = (booking: null, forbidden: true);
     final id = bookingId.trim();
-    if (id.isEmpty) return null;
-    final tenantId = _firstNonEmptyText([
+    if (id.isEmpty) return failure;
+
+    final bookResponseBookingMap = bookResponse['booking'] is Map
+        ? Map<String, dynamic>.from(bookResponse['booking'] as Map)
+        : const <String, dynamic>{};
+    // 1) Scope returned by the booking creation response (authoritative).
+    final responseTenant = _firstNonEmptyText([
+      bookResponse['tenant_id'],
+      bookResponse['tenantId'],
+      bookResponseBookingMap['tenant_id'],
+      bookResponseBookingMap['tenantId'],
+    ]);
+    final responseCompany = _firstNonEmptyText([
+      bookResponse['company_id'],
+      bookResponse['companyId'],
+      bookResponseBookingMap['company_id'],
+      bookResponseBookingMap['companyId'],
+    ]);
+    // 2) Selected partner / route scope used for the quote & booking.
+    final selectedTenant = _firstNonEmptyText([
       requestPayload['tenant_id'],
       requestPayload['tenantId'],
     ]);
-    final companyId = _firstNonEmptyText([
+    final selectedCompany = _firstNonEmptyText([
       requestPayload['company_id'],
       requestPayload['companyId'],
     ]);
+    // Active business/company session is NEVER used as scope in the customer
+    // booking flow — captured here only for diagnostics.
+    final activeCompanySession = activeCompanySessionNotifier.value;
+    final activeCompanyCompany = (activeCompanySession?.companyId ?? '').trim();
+    // This session model uses a single id for both tenant and company.
+    final activeCompanyTenant = activeCompanyCompany;
+
+    final tenantId = responseTenant.isNotEmpty
+        ? responseTenant
+        : selectedTenant;
+    final companyId = responseCompany.isNotEmpty
+        ? responseCompany
+        : selectedCompany;
+    final scopeSource = responseTenant.isNotEmpty || responseCompany.isNotEmpty
+        ? 'booking_response'
+        : (selectedTenant.isNotEmpty || selectedCompany.isNotEmpty)
+        ? 'selected_partner_scope'
+        : 'none';
+    debugPrint(
+      '[AIRPORT_BOOKING][FETCH_SCOPE] '
+      'selectedTenant=${_maskScopeText(selectedTenant)} '
+      'selectedCompany=${_maskScopeText(selectedCompany)} '
+      'responseTenant=${_maskScopeText(responseTenant)} '
+      'responseCompany=${_maskScopeText(responseCompany)} '
+      'activeCompanyTenant=${_maskScopeText(activeCompanyTenant)} '
+      'activeCompanyCompany=${_maskScopeText(activeCompanyCompany)} '
+      'source=$scopeSource',
+    );
+
     final customerRaw = requestPayload['customer'];
     final customerMap = customerRaw is Map
         ? Map<String, dynamic>.from(customerRaw)
@@ -763,26 +815,45 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
         );
     try {
       final response = await http.get(uri).timeout(const Duration(seconds: 12));
+      if (response.statusCode == 403) {
+        debugPrint(
+          '[AIRPORT_BOOKING][AUTHORITATIVE_FETCH][STATUS] code=${response.statusCode}',
+        );
+        debugPrint(
+          '[AIRPORT_BOOKING][AUTHORITATIVE_FETCH][FORBIDDEN_SCOPE] '
+          'tenant=${_maskScopeText(tenantId)} '
+          'company=${_maskScopeText(companyId)} '
+          'source=$scopeSource',
+        );
+        return forbidden;
+      }
       if (response.statusCode != 200) {
         debugPrint(
           '[AIRPORT_BOOKING][AUTHORITATIVE_FETCH][STATUS] code=${response.statusCode}',
         );
-        return null;
+        return failure;
       }
       final dynamic decoded = response.body.trim().isEmpty
           ? const <String, dynamic>{}
           : jsonDecode(response.body);
       if (decoded is Map<String, dynamic>) {
-        return decoded;
+        return (booking: decoded, forbidden: false);
       }
       if (decoded is Map) {
-        return Map<String, dynamic>.from(decoded);
+        return (booking: Map<String, dynamic>.from(decoded), forbidden: false);
       }
-      return null;
+      return failure;
     } catch (err) {
       debugPrint('[AIRPORT_BOOKING][AUTHORITATIVE_FETCH][ERROR] $err');
-      return null;
+      return failure;
     }
+  }
+
+  String _maskScopeText(String value) {
+    final trimmed = value.trim();
+    if (trimmed.isEmpty) return '-';
+    if (trimmed.length <= 6) return trimmed;
+    return '${trimmed.substring(0, 3)}...${trimmed.substring(trimmed.length - 3)}';
   }
 
   Future<void> _submitBooking() async {
@@ -984,16 +1055,30 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
           customerPhone: phone,
           customerEmail: email,
         );
-        final authoritativeResponse = bookingId.isEmpty
-            ? null
-            : await _fetchAuthoritativeBooking(bookingId, payload);
-        final storedBooking = authoritativeResponse != null
-            ? StoredCustomerBooking.fromAuthoritativeResponse(
-                bookingId: bookingId,
-                response: authoritativeResponse,
-                fallback: localFallback,
-              )
-            : localFallback;
+        final fetchResult = bookingId.isEmpty
+            ? (booking: null, forbidden: false)
+            : await _fetchAuthoritativeBooking(bookingId, payload, body);
+        final StoredCustomerBooking storedBooking;
+        if (fetchResult.booking != null) {
+          storedBooking = StoredCustomerBooking.fromAuthoritativeResponse(
+            bookingId: bookingId,
+            response: fetchResult.booking!,
+            fallback: localFallback,
+          );
+        } else if (fetchResult.forbidden) {
+          // Booking was created successfully but the authoritative read-back was
+          // forbidden for the resolved scope. Keep the local record and mark it
+          // as sync pending instead of misreporting it as "no driver".
+          debugPrint(
+            '[AIRPORT_BOOKING][AUTHORITATIVE_FETCH][SYNC_PENDING] '
+            'booking=${safeBookingPreview(bookingId)}',
+          );
+          storedBooking = localFallback.copyWith(
+            status: 'booking_created_fetch_failed',
+          );
+        } else {
+          storedBooking = localFallback;
+        }
         await CustomerBookingsStore.instance.upsert(storedBooking);
       } catch (err) {
         debugPrint('[AIRPORT_BOOKING][LOCAL_PERSIST][ERROR] $err');
