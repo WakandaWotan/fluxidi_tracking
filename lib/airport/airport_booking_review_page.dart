@@ -70,6 +70,7 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
   void initState() {
     super.initState();
     _vatNumberController.addListener(_onVatNumberChanged);
+    _logPaymentPickerResolution();
     unawaited(_prefillFromCustomerProfile());
   }
 
@@ -147,40 +148,83 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
   BookingPaymentSelection get _bookingPaymentSelection =>
       BookingPaymentSelection.fromMethodId(_selectedPaymentMethodId);
 
+  String _normalizePaymentMarketCountry(String raw) {
+    final normalized = normalizeCountryCode(raw);
+    if (normalized.isNotEmpty &&
+        PaymentCountryCodes.supported.contains(normalized)) {
+      return normalized;
+    }
+    switch (raw.trim().toLowerCase()) {
+      case 'belgie':
+      case 'belgië':
+      case 'belgium':
+        return PaymentCountryCodes.belgium;
+      case 'nederland':
+      case 'netherlands':
+        return PaymentCountryCodes.netherlands;
+      case 'frankrijk':
+      case 'france':
+        return PaymentCountryCodes.france;
+      case 'spanje':
+      case 'spain':
+      case 'españa':
+      case 'espana':
+        return PaymentCountryCodes.spain;
+      default:
+        return '';
+    }
+  }
+
+  String _firstPaymentMarketCountryFromPayload(
+    Map<String, dynamic> base,
+    List<String> keys,
+  ) {
+    for (final key in keys) {
+      final normalized = _normalizePaymentMarketCountry(
+        base[key]?.toString() ?? '',
+      );
+      if (normalized.isNotEmpty) return normalized;
+    }
+    return '';
+  }
+
   String _paymentCountryCodeForResolver() {
+    final profile = localBackendBusinessProfileNotifier.value;
+    final companyCountry = _normalizePaymentMarketCountry(
+      profile?.country ?? '',
+    );
+    if (companyCountry.isNotEmpty) return companyCountry;
+
     final base = widget.payload;
-    for (final key in [
+    final routeCode = _firstPaymentMarketCountryFromPayload(base, const [
       'airport_country_code',
       'airportCountryCode',
       'country_code',
       'countryCode',
+    ]);
+    if (routeCode.isNotEmpty) return routeCode;
+
+    final routeCountry = _firstPaymentMarketCountryFromPayload(base, const [
+      'airport_country',
+      'airportCountry',
+    ]);
+    return routeCountry.isNotEmpty ? routeCountry : PaymentCountryCodes.belgium;
+  }
+
+  String _airportRouteCountryRawForLog() {
+    final base = widget.payload;
+    for (final key in const [
+      'airport_country_code',
+      'airportCountryCode',
+      'country_code',
+      'countryCode',
+      'airport_country',
+      'airportCountry',
     ]) {
-      final normalized = normalizeCountryCode(base[key]?.toString() ?? '');
-      if (normalized.isNotEmpty &&
-          PaymentCountryCodes.supported.contains(normalized)) {
-        return normalized;
-      }
+      final raw = base[key]?.toString().trim() ?? '';
+      if (raw.isNotEmpty) return raw;
     }
-    final name = (base['airport_country'] ?? base['airportCountry'] ?? '')
-        .toString()
-        .trim()
-        .toLowerCase();
-    const nameToCode = {
-      'belgië': PaymentCountryCodes.belgium,
-      'belgie': PaymentCountryCodes.belgium,
-      'belgium': PaymentCountryCodes.belgium,
-      'nederland': PaymentCountryCodes.netherlands,
-      'netherlands': PaymentCountryCodes.netherlands,
-      'frankrijk': PaymentCountryCodes.france,
-      'france': PaymentCountryCodes.france,
-      'españa': PaymentCountryCodes.spain,
-      'espana': PaymentCountryCodes.spain,
-      'spain': PaymentCountryCodes.spain,
-      'united kingdom': PaymentCountryCodes.greatBritain,
-      'uk': PaymentCountryCodes.greatBritain,
-      'great britain': PaymentCountryCodes.greatBritain,
-    };
-    return nameToCode[name] ?? PaymentCountryCodes.belgium;
+    return '';
   }
 
   PaymentOwnershipGate get _paymentOwnershipGate {
@@ -193,17 +237,80 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
     );
   }
 
+  List<String> get _enabledCompanyPaymentOptionIds {
+    final profile = localBackendBusinessProfileNotifier.value;
+    return profile == null
+        ? const <String>[]
+        : filterKnownPaymentMethodIds(profile.publicPaymentOptions);
+  }
+
   ResolvedPaymentMethods get _resolvedPaymentMethods =>
       PaymentMethodResolver.resolve(
         countryCode: _paymentCountryCodeForResolver(),
+        enabledPublicPaymentOptionIds: _enabledCompanyPaymentOptionIds,
         ownershipGate: _paymentOwnershipGate,
         languageCode: widget.languageCode,
       );
 
   List<String> get _visiblePaymentMethodIds => _resolvedPaymentMethods.ids;
 
+  bool _isDisplayOnlyPaymentMethod(String methodId) {
+    final id = normalizePaymentMethodId(methodId);
+    final def = PaymentMethodCatalog.definitionFor(id);
+    if (def == null) return true;
+    if (id == PaymentMethodIds.inVehicleCard) return false;
+    return !def.isSupportedMollieCheckout;
+  }
+
+  bool _isDirectCheckoutPaymentMethod(String methodId) {
+    return PaymentMethodCatalog.definitionFor(
+          methodId,
+        )?.isSupportedMollieCheckout ??
+        false;
+  }
+
+  void _logPaymentPickerResolution() {
+    final profile = localBackendBusinessProfileNotifier.value;
+    final companyCountryRaw = profile?.country ?? '';
+    final routeCountryRaw = _airportRouteCountryRawForLog();
+    final market = _paymentCountryCodeForResolver();
+    final enabled = _enabledCompanyPaymentOptionIds;
+    final visible = _visiblePaymentMethodIds;
+    final direct = visible
+        .where(_isDirectCheckoutPaymentMethod)
+        .toList(growable: false);
+    final displayOnly = visible
+        .where(_isDisplayOnlyPaymentMethod)
+        .toList(growable: false);
+    final visibleSet = visible.toSet();
+    final hidden = enabled
+        .where((id) => !visibleSet.contains(id))
+        .map((id) {
+          final def = PaymentMethodCatalog.definitionFor(id);
+          final reason = def == null
+              ? 'unknown'
+              : def.isSupportedMollieCheckout
+              ? 'market_or_owner_gate'
+              : def.capability.name;
+          return '$id:$reason';
+        })
+        .join('|');
+    debugPrint(
+      '[PAYMENT_PICKER][RESOLVE] surface=airport market=$market companyCountryRaw=$companyCountryRaw routeCountryRaw=$routeCountryRaw enabledOptionIds=${enabled.join("|")} directCheckoutOptionIds=${direct.join("|")} displayOnlyOptionIds=${displayOnly.join("|")} hiddenOptionIdsWithReason=$hidden',
+    );
+  }
+
   String? get _onlinePaymentsBlockedMessage =>
       _resolvedPaymentMethods.onlinePaymentsBlockedMessage;
+
+  String _paymentMethodUnavailableMessage() {
+    return _t(
+      nl: 'Deze betaalmethode is niet beschikbaar voor dit bedrijf.',
+      en: 'This payment method is not available for this company.',
+      fr: 'Ce moyen de paiement n’est pas disponible pour cette entreprise.',
+      es: 'Este método de pago no está disponible para esta empresa.',
+    );
+  }
 
   String _paymentMethodLabel(String methodId) {
     switch (normalizePaymentMethodId(methodId)) {
@@ -239,8 +346,6 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
         return 'Carte Bancaire / CB';
       case PaymentMethodIds.payconiqWero:
         return 'Payconiq / Wero';
-      case PaymentMethodIds.tikkie:
-        return 'Tikkie';
       default:
         return methodId;
     }
@@ -255,14 +360,6 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
         en: 'Ride is confirmed and you pay later in the vehicle.',
         fr: 'Le trajet est confirmé et vous payez plus tard dans le véhicule.',
         es: 'El trayecto se confirma y pagas después en el vehículo.',
-      );
-    }
-    if (PaymentMethodCatalog.isTikkieMethod(id)) {
-      return _t(
-        nl: 'Betaalverzoek volgt na het bevestigen.',
-        en: 'A payment request follows after confirming.',
-        fr: 'Une demande de paiement suit après confirmation.',
-        es: 'Una solicitud de pago sigue tras confirmar.',
       );
     }
     if (id == PaymentMethodIds.bancontactQr) {
@@ -285,9 +382,6 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
     final id = normalizePaymentMethodId(methodId);
     if (id == PaymentMethodIds.inVehicleCard) {
       return Icons.local_taxi_rounded;
-    }
-    if (PaymentMethodCatalog.isTikkieMethod(id)) {
-      return Icons.send_rounded;
     }
     if (id == PaymentMethodIds.bancontactQr) {
       return Icons.qr_code_2_rounded;
@@ -600,6 +694,12 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
 
   Future<void> _submitBooking() async {
     if (_isSubmitting || _isSubmitted) return;
+    if (!_visiblePaymentMethodIds.contains(_selectedPaymentMethodId)) {
+      setState(() {
+        _submitError = _paymentMethodUnavailableMessage();
+      });
+      return;
+    }
     final name = _nameController.text.trim();
     final phone = _phoneController.text.trim();
     final email = _emailController.text.trim();
@@ -882,10 +982,24 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
 
   Widget _paymentMethodChoiceOptionTile(String methodId) {
     final selected = _selectedPaymentMethodId == methodId;
+    final displayOnly = _isDisplayOnlyPaymentMethod(methodId);
     return InkWell(
       borderRadius: BorderRadius.circular(12),
       onTap: _isSubmitting || _isSubmitted
           ? null
+          : displayOnly
+          ? () {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  behavior: SnackBarBehavior.floating,
+                  backgroundColor: _panel,
+                  content: Text(
+                    _paymentMethodUnavailableMessage(),
+                    style: TextStyle(color: _textPrimary),
+                  ),
+                ),
+              );
+            }
           : () {
               setState(() {
                 _selectedPaymentMethodId = methodId;
@@ -911,7 +1025,11 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
           children: [
             Icon(
               _paymentMethodIcon(methodId),
-              color: selected ? _gold : _textMuted,
+              color: displayOnly
+                  ? _textMuted.withOpacity(0.72)
+                  : selected
+                  ? _gold
+                  : _textMuted,
               size: 18,
             ),
             const SizedBox(width: 9),
@@ -922,7 +1040,7 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
                   Text(
                     _paymentMethodLabel(methodId),
                     style: TextStyle(
-                      color: _textPrimary,
+                      color: displayOnly ? _textMuted : _textPrimary,
                       fontSize: 12.8,
                       fontWeight: selected ? FontWeight.w800 : FontWeight.w700,
                     ),
@@ -941,8 +1059,16 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
             ),
             const SizedBox(width: 8),
             Icon(
-              selected ? Icons.radio_button_checked : Icons.radio_button_off,
-              color: selected ? _gold : _textMuted.withOpacity(0.8),
+              displayOnly
+                  ? Icons.info_outline_rounded
+                  : selected
+                  ? Icons.radio_button_checked
+                  : Icons.radio_button_off,
+              color: displayOnly
+                  ? _textMuted.withOpacity(0.72)
+                  : selected
+                  ? _gold
+                  : _textMuted.withOpacity(0.8),
               size: 18,
             ),
           ],

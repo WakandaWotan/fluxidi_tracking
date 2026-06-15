@@ -3,15 +3,21 @@
 /// Pure Dart — no Flutter imports.
 library;
 
-/// Checkout / collection channel. Tikkie is never classified as [mollie].
-enum PaymentProvider { mollie, manual, tikkieManual }
+enum PaymentProvider { mollie, manual }
+
+/// Capability bucket for payment-option display vs. checkout creation.
+enum PaymentMethodCapability {
+  manual,
+  offlineOrExternal,
+  mollieOnline,
+  futureOrConditional,
+}
 
 /// Stable provider tokens for payloads and persistence.
 extension PaymentProviderWire on PaymentProvider {
   String get wireValue => switch (this) {
     PaymentProvider.mollie => 'mollie',
     PaymentProvider.manual => 'manual',
-    PaymentProvider.tikkieManual => 'tikkie_manual',
   };
 }
 
@@ -20,7 +26,6 @@ abstract final class PaymentMethodIds {
   static const bancontact = 'bancontact';
   static const bancontactQr = 'bancontact_qr';
   static const ideal = 'ideal';
-  static const tikkie = 'tikkie';
   static const cardPayment = 'card_payment';
   static const applePay = 'apple_pay';
   static const googlePay = 'google_pay';
@@ -39,7 +44,6 @@ abstract final class PaymentMethodIds {
     bancontact,
     bancontactQr,
     ideal,
-    tikkie,
     cardPayment,
     applePay,
     googlePay,
@@ -77,14 +81,20 @@ abstract final class PaymentCountryCodes {
 
 /// Immutable definition for a known payment method.
 class PaymentMethodDefinition {
-  const PaymentMethodDefinition({required this.id, required this.provider});
+  const PaymentMethodDefinition({
+    required this.id,
+    required this.provider,
+    required this.capability,
+  });
 
   final String id;
   final PaymentProvider provider;
+  final PaymentMethodCapability capability;
 
   bool get isMollie => provider == PaymentProvider.mollie;
 
-  bool get isTikkie => provider == PaymentProvider.tikkieManual;
+  bool get isSupportedMollieCheckout =>
+      capability == PaymentMethodCapability.mollieOnline;
 
   bool get isManual => provider == PaymentProvider.manual;
 
@@ -94,13 +104,15 @@ class PaymentMethodDefinition {
       other is PaymentMethodDefinition &&
           runtimeType == other.runtimeType &&
           id == other.id &&
-          provider == other.provider;
+          provider == other.provider &&
+          capability == other.capability;
 
   @override
-  int get hashCode => Object.hash(id, provider);
+  int get hashCode => Object.hash(id, provider, capability);
 
   @override
-  String toString() => 'PaymentMethodDefinition(id: $id, provider: $provider)';
+  String toString() =>
+      'PaymentMethodDefinition(id: $id, provider: $provider, capability: $capability)';
 }
 
 /// Normalizes raw payment method tokens to canonical ids when recognized.
@@ -119,13 +131,23 @@ String normalizePaymentMethodId(String raw) {
       return PaymentMethodIds.onlinePayment;
     case 'card':
     case 'cards':
+    case 'creditcard':
+    case 'credit_card':
       return PaymentMethodIds.cardPayment;
+    case 'applepay':
+      return PaymentMethodIds.applePay;
+    case 'googlepay':
+      return PaymentMethodIds.googlePay;
     case 'carte_bancaire':
     case 'cartes_bancaire':
+    case 'carte_bancaires':
+    case 'cartesbancaires':
+    case 'cartes_bancaires_cb':
     case 'cb':
       return PaymentMethodIds.cartesBancaires;
     case 'wero':
     case 'payconiq':
+    case 'payconiq_by_bancontact':
       return PaymentMethodIds.payconiqWero;
     case 'bancontact_qr':
     case 'bancontactqr':
@@ -134,10 +156,14 @@ String normalizePaymentMethodId(String raw) {
       return PaymentMethodIds.bancontactQr;
     case 'bacs':
     case 'bank_transfer':
+    case 'bankoverschrijving':
       return PaymentMethodIds.bankTransferBacs;
     case 'in_car':
     case 'in_vehicle':
     case 'in-car':
+    case 'manual':
+    case 'pay_in_car':
+    case 'cash_in_car':
       return PaymentMethodIds.inVehicleCard;
     default:
       return token;
@@ -181,7 +207,6 @@ abstract final class PaymentMethodCatalog {
     PaymentMethodIds.bancontact,
     PaymentMethodIds.bancontactQr,
     PaymentMethodIds.ideal,
-    PaymentMethodIds.tikkie,
     PaymentMethodIds.cardPayment,
     PaymentMethodIds.applePay,
     PaymentMethodIds.googlePay,
@@ -213,9 +238,8 @@ abstract final class PaymentMethodCatalog {
   static bool isMollieMethod(String rawId) =>
       providerFor(rawId) == PaymentProvider.mollie;
 
-  /// Returns true when the method uses the Tikkie payment-request channel.
-  static bool isTikkieMethod(String rawId) =>
-      providerFor(rawId) == PaymentProvider.tikkieManual;
+  static bool isSupportedMollieCheckoutMethod(String rawId) =>
+      definitionFor(rawId)?.isSupportedMollieCheckout ?? false;
 
   /// Manual methods always shown in booking pickers (before country profile methods).
   ///
@@ -224,6 +248,13 @@ abstract final class PaymentMethodCatalog {
   static const List<String> alwaysVisibleManualMethodIds = <String>[
     PaymentMethodIds.inVehicleCard,
   ];
+
+  static const Set<String> legacyManualEnablementIds = <String>{
+    PaymentMethodIds.cash,
+    PaymentMethodIds.qrCode,
+    PaymentMethodIds.inVehicleCard,
+    PaymentMethodIds.invoice,
+  };
 
   /// Default visible method order for a market (before partner enablement filter).
   static List<String> defaultMethodOrderForCountry(String rawCountryCode) {
@@ -239,70 +270,82 @@ abstract final class PaymentMethodCatalog {
         PaymentMethodDefinition(
           id: PaymentMethodIds.bancontact,
           provider: PaymentProvider.mollie,
+          capability: PaymentMethodCapability.mollieOnline,
         ),
         PaymentMethodDefinition(
           id: PaymentMethodIds.bancontactQr,
           provider: PaymentProvider.mollie,
+          capability: PaymentMethodCapability.mollieOnline,
         ),
         PaymentMethodDefinition(
           id: PaymentMethodIds.ideal,
           provider: PaymentProvider.mollie,
-        ),
-        PaymentMethodDefinition(
-          id: PaymentMethodIds.tikkie,
-          provider: PaymentProvider.tikkieManual,
+          capability: PaymentMethodCapability.mollieOnline,
         ),
         PaymentMethodDefinition(
           id: PaymentMethodIds.cardPayment,
           provider: PaymentProvider.mollie,
+          capability: PaymentMethodCapability.mollieOnline,
         ),
         PaymentMethodDefinition(
           id: PaymentMethodIds.applePay,
           provider: PaymentProvider.mollie,
+          capability: PaymentMethodCapability.mollieOnline,
         ),
         PaymentMethodDefinition(
           id: PaymentMethodIds.googlePay,
           provider: PaymentProvider.mollie,
+          capability: PaymentMethodCapability.mollieOnline,
         ),
         PaymentMethodDefinition(
           id: PaymentMethodIds.paypal,
           provider: PaymentProvider.mollie,
+          capability: PaymentMethodCapability.mollieOnline,
         ),
         PaymentMethodDefinition(
           id: PaymentMethodIds.cartesBancaires,
           provider: PaymentProvider.mollie,
+          capability: PaymentMethodCapability.mollieOnline,
         ),
         PaymentMethodDefinition(
           id: PaymentMethodIds.bizum,
-          provider: PaymentProvider.mollie,
+          provider: PaymentProvider.manual,
+          capability: PaymentMethodCapability.futureOrConditional,
         ),
         PaymentMethodDefinition(
           id: PaymentMethodIds.payconiqWero,
-          provider: PaymentProvider.mollie,
+          provider: PaymentProvider.manual,
+          capability: PaymentMethodCapability.futureOrConditional,
         ),
         PaymentMethodDefinition(
           id: PaymentMethodIds.onlinePayment,
-          provider: PaymentProvider.mollie,
+          provider: PaymentProvider.manual,
+          capability: PaymentMethodCapability.offlineOrExternal,
         ),
         PaymentMethodDefinition(
           id: PaymentMethodIds.cash,
           provider: PaymentProvider.manual,
+          capability: PaymentMethodCapability.manual,
         ),
         PaymentMethodDefinition(
           id: PaymentMethodIds.qrCode,
           provider: PaymentProvider.manual,
+          capability: PaymentMethodCapability.offlineOrExternal,
         ),
         PaymentMethodDefinition(
           id: PaymentMethodIds.bankTransferBacs,
           provider: PaymentProvider.manual,
+          capability: PaymentMethodCapability.offlineOrExternal,
         ),
         PaymentMethodDefinition(
           id: PaymentMethodIds.inVehicleCard,
           provider: PaymentProvider.manual,
+          capability: PaymentMethodCapability.manual,
         ),
         PaymentMethodDefinition(
           id: PaymentMethodIds.invoice,
           provider: PaymentProvider.manual,
+          capability: PaymentMethodCapability.offlineOrExternal,
         ),
       ];
 
@@ -318,8 +361,6 @@ abstract final class PaymentMethodCatalog {
         ],
         PaymentCountryCodes.netherlands: <String>[
           PaymentMethodIds.ideal,
-          PaymentMethodIds.payconiqWero,
-          PaymentMethodIds.tikkie,
           PaymentMethodIds.cardPayment,
           PaymentMethodIds.applePay,
           PaymentMethodIds.googlePay,
@@ -333,7 +374,6 @@ abstract final class PaymentMethodCatalog {
           PaymentMethodIds.paypal,
         ],
         PaymentCountryCodes.spain: <String>[
-          PaymentMethodIds.bizum,
           PaymentMethodIds.cardPayment,
           PaymentMethodIds.applePay,
           PaymentMethodIds.googlePay,

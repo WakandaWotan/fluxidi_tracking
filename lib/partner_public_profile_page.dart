@@ -925,8 +925,6 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
         return _t(nl: 'Cash', en: 'Cash', fr: 'Espèces', es: 'Efectivo');
       case 'qr_code':
         return _t(nl: 'QR-code', en: 'QR code', fr: 'Code QR', es: 'Código QR');
-      case 'tikkie':
-        return 'Tikkie';
       case 'bancontact':
         return 'Bancontact';
       case 'payconiq_wero':
@@ -1042,7 +1040,6 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
       case 'bancontact':
       case 'payconiq_wero':
       case 'ideal':
-      case 'tikkie':
       case 'cartes_bancaires':
       case 'bizum':
       case 'card_payment':
@@ -1188,7 +1185,6 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
           m == 'apple_pay' ||
           m == 'google_pay' ||
           m == 'paypal' ||
-          m == 'tikkie' ||
           m == 'bizum' ||
           m == 'bancontact' ||
           m == 'payconiq_wero' ||

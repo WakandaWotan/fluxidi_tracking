@@ -143,7 +143,6 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
   static const List<String> _publicPaymentOptionCatalog = <String>[
     'cash',
     'qr_code',
-    'tikkie',
     'bancontact',
     'payconiq_wero',
     'ideal',
@@ -2725,8 +2724,6 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         return _t(nl: 'Cash', en: 'Cash', fr: 'Espèces', es: 'Efectivo');
       case 'qr_code':
         return _t(nl: 'QR-code', en: 'QR code', fr: 'Code QR', es: 'Código QR');
-      case 'tikkie':
-        return 'Tikkie';
       case 'bancontact':
         return 'Bancontact';
       case 'payconiq_wero':

@@ -3269,6 +3269,7 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
     widget.driverThemeListenable.addListener(_onThemeChanged);
     businessThemeNotifier.addListener(_onThemeChanged);
     fluxidiPendingPaymentNotifier.addListener(_onPendingPaymentChanged);
+    _logPaymentPickerResolution();
     if (_allowsCustomerSessionLink) {
       unawaited(_prefillFromCustomerProfile());
     }
@@ -3437,14 +3438,103 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
     );
   }
 
+  List<String> get _enabledCompanyPaymentOptionIds {
+    final profile = localBackendBusinessProfileNotifier.value;
+    return profile == null
+        ? const <String>[]
+        : filterKnownPaymentMethodIds(profile.publicPaymentOptions);
+  }
+
+  String _normalizePaymentMarketCountry(String raw) {
+    final normalized = normalizeCountryCode(raw);
+    if (normalized.isNotEmpty &&
+        PaymentCountryCodes.supported.contains(normalized)) {
+      return normalized;
+    }
+    switch (raw.trim().toLowerCase()) {
+      case 'belgie':
+      case 'belgië':
+      case 'belgium':
+        return PaymentCountryCodes.belgium;
+      case 'nederland':
+      case 'netherlands':
+        return PaymentCountryCodes.netherlands;
+      case 'frankrijk':
+      case 'france':
+        return PaymentCountryCodes.france;
+      case 'spanje':
+      case 'spain':
+      case 'españa':
+      case 'espana':
+        return PaymentCountryCodes.spain;
+      default:
+        return '';
+    }
+  }
+
+  String _paymentMarketCountryCode() {
+    final profile = localBackendBusinessProfileNotifier.value;
+    final companyCountry = _normalizePaymentMarketCountry(
+      profile?.country ?? '',
+    );
+    if (companyCountry.isNotEmpty) return companyCountry;
+    return PaymentCountryCodes.belgium;
+  }
+
   ResolvedPaymentMethods get _resolvedPaymentMethods =>
       PaymentMethodResolver.resolve(
-        countryCode: 'BE',
+        countryCode: _paymentMarketCountryCode(),
+        enabledPublicPaymentOptionIds: _enabledCompanyPaymentOptionIds,
         ownershipGate: _paymentOwnershipGate,
         languageCode: widget.language.name,
       );
 
   List<String> get _visiblePaymentMethodIds => _resolvedPaymentMethods.ids;
+
+  bool _isDisplayOnlyPaymentMethod(String methodId) {
+    final id = normalizePaymentMethodId(methodId);
+    final def = PaymentMethodCatalog.definitionFor(id);
+    if (def == null) return true;
+    if (id == PaymentMethodIds.inVehicleCard) return false;
+    return !def.isSupportedMollieCheckout;
+  }
+
+  bool _isDirectCheckoutPaymentMethod(String methodId) {
+    return PaymentMethodCatalog.definitionFor(
+          methodId,
+        )?.isSupportedMollieCheckout ??
+        false;
+  }
+
+  void _logPaymentPickerResolution() {
+    final profile = localBackendBusinessProfileNotifier.value;
+    final companyCountryRaw = profile?.country ?? '';
+    final market = _paymentMarketCountryCode();
+    final enabled = _enabledCompanyPaymentOptionIds;
+    final visible = _visiblePaymentMethodIds;
+    final direct = visible
+        .where(_isDirectCheckoutPaymentMethod)
+        .toList(growable: false);
+    final displayOnly = visible
+        .where(_isDisplayOnlyPaymentMethod)
+        .toList(growable: false);
+    final visibleSet = visible.toSet();
+    final hidden = enabled
+        .where((id) => !visibleSet.contains(id))
+        .map((id) {
+          final def = PaymentMethodCatalog.definitionFor(id);
+          final reason = def == null
+              ? 'unknown'
+              : def.isSupportedMollieCheckout
+              ? 'market_or_owner_gate'
+              : def.capability.name;
+          return '$id:$reason';
+        })
+        .join('|');
+    debugPrint(
+      '[PAYMENT_PICKER][RESOLVE] surface=calculator market=$market companyCountryRaw=$companyCountryRaw routeCountryRaw=- enabledOptionIds=${enabled.join("|")} directCheckoutOptionIds=${direct.join("|")} displayOnlyOptionIds=${displayOnly.join("|")} hiddenOptionIdsWithReason=$hidden',
+    );
+  }
 
   String? get _onlinePaymentsBlockedMessage =>
       _resolvedPaymentMethods.onlinePaymentsBlockedMessage;
@@ -3474,6 +3564,15 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
         backgroundColor: _panelAlt,
         content: Text(message, style: TextStyle(color: _textPrimary)),
       ),
+    );
+  }
+
+  String _paymentMethodUnavailableMessage() {
+    return _localizedText(
+      nl: 'Deze betaalmethode is niet beschikbaar voor dit bedrijf.',
+      en: 'This payment method is not available for this company.',
+      fr: 'Ce moyen de paiement n’est pas disponible pour cette entreprise.',
+      es: 'Este método de pago no está disponible para esta empresa.',
     );
   }
 
@@ -3511,8 +3610,6 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
         return 'Carte Bancaire / CB';
       case PaymentMethodIds.payconiqWero:
         return 'Payconiq / Wero';
-      case PaymentMethodIds.tikkie:
-        return 'Tikkie';
       default:
         return methodId;
     }
@@ -3527,14 +3624,6 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
         en: 'Booking is created immediately, payment follows during the ride.',
         fr: 'La réservation est créée immédiatement, paiement pendant le trajet.',
         es: 'La reserva se crea al instante, el pago se realiza durante el trayecto.',
-      );
-    }
-    if (PaymentMethodCatalog.isTikkieMethod(id)) {
-      return _localizedText(
-        nl: 'Betaalverzoek volgt na het bevestigen.',
-        en: 'A payment request follows after confirming.',
-        fr: 'Une demande de paiement suit après confirmation.',
-        es: 'Una solicitud de pago sigue tras confirmar.',
       );
     }
     if (id == PaymentMethodIds.bancontactQr) {
@@ -3557,9 +3646,6 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
     final id = normalizePaymentMethodId(methodId);
     if (id == PaymentMethodIds.inVehicleCard) {
       return Icons.local_taxi_rounded;
-    }
-    if (PaymentMethodCatalog.isTikkieMethod(id)) {
-      return Icons.send_rounded;
     }
     if (id == PaymentMethodIds.bancontactQr) {
       return Icons.qr_code_2_rounded;
@@ -3636,10 +3722,13 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
 
   Widget _paymentMethodChoiceOption(String methodId) {
     final selected = _selectedPaymentMethodId == methodId;
+    final displayOnly = _isDisplayOnlyPaymentMethod(methodId);
     return InkWell(
       borderRadius: BorderRadius.circular(12),
       onTap: _submitting
           ? null
+          : displayOnly
+          ? () => _showThemedSnackBar(_paymentMethodUnavailableMessage())
           : () => setState(() {
               _selectedPaymentMethodId = methodId;
             }),
@@ -3663,7 +3752,11 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
           children: [
             Icon(
               _paymentMethodIcon(methodId),
-              color: selected ? _gold : _textPrimary.withOpacity(0.8),
+              color: displayOnly
+                  ? _textMuted.withOpacity(0.72)
+                  : selected
+                  ? _gold
+                  : _textPrimary.withOpacity(0.8),
               size: 18,
             ),
             const SizedBox(width: 9),
@@ -3674,7 +3767,7 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
                   Text(
                     _paymentMethodLabel(methodId),
                     style: TextStyle(
-                      color: _textPrimary,
+                      color: displayOnly ? _textMuted : _textPrimary,
                       fontSize: 12.8,
                       fontWeight: selected ? FontWeight.w800 : FontWeight.w700,
                     ),
@@ -3693,8 +3786,16 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
             ),
             const SizedBox(width: 8),
             Icon(
-              selected ? Icons.radio_button_checked : Icons.radio_button_off,
-              color: selected ? _gold : _textMuted.withOpacity(0.8),
+              displayOnly
+                  ? Icons.info_outline_rounded
+                  : selected
+                  ? Icons.radio_button_checked
+                  : Icons.radio_button_off,
+              color: displayOnly
+                  ? _textMuted.withOpacity(0.72)
+                  : selected
+                  ? _gold
+                  : _textMuted.withOpacity(0.8),
               size: 18,
             ),
           ],
@@ -4523,6 +4624,10 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
     if (_quoteAvailabilityBlocksBooking()) {
       final availabilityMessage = _availabilityUnavailableMessage();
       _showThemedSnackBar(availabilityMessage);
+      return;
+    }
+    if (!_visiblePaymentMethodIds.contains(_selectedPaymentMethodId)) {
+      _showThemedSnackBar(_paymentMethodUnavailableMessage());
       return;
     }
     final name = _nameCtrl.text.trim();

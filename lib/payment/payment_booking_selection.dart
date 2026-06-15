@@ -12,7 +12,6 @@ class BookingPaymentSelection {
     required this.paymentMode,
     required this.paymentProvider,
     required this.isMollieCheckout,
-    required this.isTikkieRequest,
     required this.isManualCollection,
     this.mollieMethod,
     this.qrPreferred = false,
@@ -24,14 +23,11 @@ class BookingPaymentSelection {
   /// Worker checkout gate: `mollie` or `manual`.
   final String paymentMode;
 
-  /// Collection channel: `mollie`, `manual`, or `tikkie_manual`.
+  /// Collection channel: `mollie` or `manual`.
   final String paymentProvider;
 
   /// True when Mollie hosted checkout should be triggered.
   final bool isMollieCheckout;
-
-  /// True when the Tikkie payment-request channel applies.
-  final bool isTikkieRequest;
 
   /// True when payment is collected manually during or after the ride.
   final bool isManualCollection;
@@ -60,7 +56,6 @@ class BookingPaymentSelection {
       paymentMode: PaymentProvider.manual.wireValue,
       paymentProvider: PaymentProvider.manual.wireValue,
       isMollieCheckout: false,
-      isTikkieRequest: false,
       isManualCollection: true,
     );
   }
@@ -76,9 +71,6 @@ class BookingPaymentSelection {
       case PaymentProvider.mollie:
         mode = PaymentProvider.mollie.wireValue;
         providerWire = PaymentProvider.mollie.wireValue;
-      case PaymentProvider.tikkieManual:
-        mode = PaymentProvider.manual.wireValue;
-        providerWire = PaymentProvider.tikkieManual.wireValue;
       case PaymentProvider.manual:
         mode = PaymentProvider.manual.wireValue;
         providerWire = PaymentProvider.manual.wireValue;
@@ -90,8 +82,9 @@ class BookingPaymentSelection {
       paymentMethodId: definition.id,
       paymentMode: mode,
       paymentProvider: providerWire,
-      isMollieCheckout: provider == PaymentProvider.mollie,
-      isTikkieRequest: provider == PaymentProvider.tikkieManual,
+      isMollieCheckout:
+          definition.isSupportedMollieCheckout &&
+          provider == PaymentProvider.mollie,
       isManualCollection: provider == PaymentProvider.manual,
       mollieMethod: mollieExtras.$1,
       qrPreferred: mollieExtras.$2,
@@ -108,18 +101,14 @@ class BookingPaymentSelection {
         return ('ideal', false);
       case PaymentMethodIds.cardPayment:
         return ('creditcard', false);
+      case PaymentMethodIds.cartesBancaires:
+        return ('creditcard', false);
       case PaymentMethodIds.applePay:
         return ('applepay', false);
       case PaymentMethodIds.googlePay:
         return ('googlepay', false);
       case PaymentMethodIds.paypal:
         return ('paypal', false);
-      case PaymentMethodIds.cartesBancaires:
-        return ('creditcard', false);
-      case PaymentMethodIds.bizum:
-        return ('creditcard', false);
-      case PaymentMethodIds.payconiqWero:
-        return ('bancontact', false);
       case PaymentMethodIds.onlinePayment:
         return (null, false);
       default:
@@ -158,7 +147,6 @@ class BookingPaymentSelection {
           paymentMode == other.paymentMode &&
           paymentProvider == other.paymentProvider &&
           isMollieCheckout == other.isMollieCheckout &&
-          isTikkieRequest == other.isTikkieRequest &&
           isManualCollection == other.isManualCollection &&
           mollieMethod == other.mollieMethod &&
           qrPreferred == other.qrPreferred;
@@ -169,7 +157,6 @@ class BookingPaymentSelection {
     paymentMode,
     paymentProvider,
     isMollieCheckout,
-    isTikkieRequest,
     isManualCollection,
     mollieMethod,
     qrPreferred,
@@ -179,6 +166,6 @@ class BookingPaymentSelection {
   String toString() =>
       'BookingPaymentSelection(method: $paymentMethodId, mode: $paymentMode, '
       'provider: $paymentProvider, mollie: $isMollieCheckout, '
-      'tikkie: $isTikkieRequest, manual: $isManualCollection, '
-      'mollieMethod: $mollieMethod, qrPreferred: $qrPreferred)';
+      'manual: $isManualCollection, mollieMethod: $mollieMethod, '
+      'qrPreferred: $qrPreferred)';
 }

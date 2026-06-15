@@ -24,7 +24,9 @@ class PaymentOwnershipGate {
       case 'manual_only':
         return false;
       case 'company_mollie':
-        return mollieConnected;
+        // Backend company Mollie credentials are not available yet; do not
+        // advertise online checkout until that owner mode is implemented.
+        return false;
       case 'fluxidi_central_demo':
         return true;
       default:
@@ -35,16 +37,16 @@ class PaymentOwnershipGate {
   String? onlinePaymentsBlockedMessage({String languageCode = 'nl'}) {
     if (onlinePaymentsAvailable) return null;
     final mode = paymentOwnerMode.trim().toLowerCase();
-    if (mode == 'company_mollie' && !mollieConnected) {
+    if (mode == 'company_mollie') {
       switch (languageCode.toLowerCase()) {
         case 'en':
-          return 'Online payments are unavailable until Mollie is connected.';
+          return 'Online payments with the company Mollie account are not available yet.';
         case 'fr':
-          return 'Les paiements en ligne sont indisponibles tant que Mollie n’est pas connecté.';
+          return 'Les paiements en ligne avec le compte Mollie de l’entreprise ne sont pas encore disponibles.';
         case 'es':
-          return 'Los pagos en línea no están disponibles hasta que Mollie esté conectado.';
+          return 'Los pagos online con la cuenta Mollie de la empresa aún no están disponibles.';
         default:
-          return 'Online betalingen zijn niet beschikbaar tot Mollie is gekoppeld.';
+          return 'Online betalingen via het eigen Mollie-account zijn nog niet beschikbaar.';
       }
     }
     switch (languageCode.toLowerCase()) {
@@ -101,8 +103,8 @@ abstract final class PaymentMethodResolver {
   /// When [enabledPublicPaymentOptionIds] is null or empty, all methods from
   /// the country profile are returned.
   ///
-  /// When provided, only methods present in both the country profile and the
-  /// normalized enabled set are returned (country profile order preserved).
+  /// When provided, known enabled methods remain visible even when they are not
+  /// part of the country profile. The country profile only controls ordering.
   /// Unknown enabled ids are ignored safely.
   ///
   /// When [ownershipGate] blocks online payments, Mollie-hosted methods are
@@ -131,26 +133,67 @@ abstract final class PaymentMethodResolver {
 
     final methods = <PaymentMethodDefinition>[];
     final includedIds = <String>{};
-    for (final id in profileOrder) {
-      if (enabledSet != null && !enabledSet.contains(id)) continue;
+    final manualEnabledByFilter =
+        !enabledFilterApplied ||
+        enabled.any(PaymentMethodCatalog.legacyManualEnablementIds.contains);
+
+    void addIfVisible(String id) {
+      if (includedIds.contains(id)) return;
+      if (enabledSet != null && !enabledSet.contains(id)) return;
       final def = PaymentMethodCatalog.definitionFor(id);
-      if (def == null) continue;
-      if (!onlineAllowed && def.isMollie) continue;
+      if (def == null) return;
+      if (!onlineAllowed && def.isSupportedMollieCheckout) return;
       methods.add(def);
       includedIds.add(def.id);
+    }
+
+    if (enabledFilterApplied) {
+      final profileSet = profileOrder.toSet();
+
+      for (final id in profileOrder) {
+        final def = PaymentMethodCatalog.definitionFor(id);
+        if (def == null || !def.isSupportedMollieCheckout) continue;
+        addIfVisible(id);
+      }
+
+      for (final id in enabled) {
+        if (profileSet.contains(id)) continue;
+        final def = PaymentMethodCatalog.definitionFor(id);
+        if (def == null || !def.isSupportedMollieCheckout) continue;
+        addIfVisible(id);
+      }
+
+      for (final id in profileOrder) {
+        final def = PaymentMethodCatalog.definitionFor(id);
+        if (def == null || def.isSupportedMollieCheckout) continue;
+        addIfVisible(id);
+      }
+
+      for (final id in enabled) {
+        if (profileSet.contains(id)) continue;
+        final def = PaymentMethodCatalog.definitionFor(id);
+        if (def == null || def.isSupportedMollieCheckout) continue;
+        addIfVisible(id);
+      }
+    } else {
+      for (final id in profileOrder) {
+        addIfVisible(id);
+      }
     }
 
     // Pay in the car / manual in-vehicle collection is not in every country
     // profile (e.g. BE lists online methods only). Pre-P3A.1 UI prepended it
     // explicitly; retain that contract here so ownership gating only affects
     // online Mollie methods.
-    for (final manualId
-        in PaymentMethodCatalog.alwaysVisibleManualMethodIds.reversed) {
-      if (includedIds.contains(manualId)) continue;
-      final def = PaymentMethodCatalog.definitionFor(manualId);
-      if (def == null) continue;
-      methods.insert(0, def);
-      includedIds.add(def.id);
+    if (manualEnabledByFilter) {
+      for (final manualId
+          in PaymentMethodCatalog.alwaysVisibleManualMethodIds.reversed) {
+        if (includedIds.contains(manualId)) continue;
+        final def = PaymentMethodCatalog.definitionFor(manualId);
+        if (def == null) continue;
+        methods.insert(0, def);
+        includedIds.add(def.id);
+      }
     }
 
     return ResolvedPaymentMethods(

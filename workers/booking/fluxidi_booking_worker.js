@@ -1662,7 +1662,6 @@ function sanitizeTenantString(value, maxLength = 240) {
 const PUBLIC_PAYMENT_OPTION_IDS = new Set([
   "cash",
   "qr_code",
-  "tikkie",
   "bancontact",
   "bancontact_qr",
   "payconiq_wero",
@@ -1677,6 +1676,85 @@ const PUBLIC_PAYMENT_OPTION_IDS = new Set([
   "bank_transfer_bacs",
 ]);
 
+const LEGACY_PUBLIC_PAYMENT_OPTIONS = [
+  "cash",
+  "qr_code",
+  "in_vehicle_card",
+  "online_payment",
+  "bank_transfer_bacs",
+];
+const MANUAL_PUBLIC_PAYMENT_OPTION_IDS = new Set([
+  "cash",
+  "qr_code",
+  "in_vehicle_card",
+  "invoice",
+  "manual",
+  "pay_in_car",
+]);
+const OFFLINE_OR_EXTERNAL_PUBLIC_PAYMENT_OPTION_IDS = new Set([
+  "qr_code",
+  "bank_transfer_bacs",
+  "invoice",
+]);
+const FUTURE_OR_CONDITIONAL_PUBLIC_PAYMENT_OPTION_IDS = new Set([
+  "bizum",
+  "payconiq_wero",
+  "tikkie",
+]);
+const SUPPORTED_MOLLIE_CHECKOUT_PUBLIC_PAYMENT_OPTION_IDS = new Set([
+  "bancontact",
+  "bancontact_qr",
+  "ideal",
+  "cartes_bancaires",
+  "card_payment",
+  "apple_pay",
+  "google_pay",
+  "paypal",
+  "online_payment",
+]);
+const SUPPORTED_MOLLIE_API_METHOD_IDS = new Set([
+  "bancontact",
+  "ideal",
+  "creditcard",
+  "applepay",
+  "googlepay",
+  "paypal",
+]);
+
+function normalizePublicPaymentOptionId(raw) {
+  const token = sanitizeTenantString(raw, 80).toLowerCase().replace(/-/g, "_");
+  if (!token) return "";
+  const aliases = {
+    qr: "qr_code",
+    online: "online_payment",
+    online_payments: "online_payment",
+    card: "card_payment",
+    cards: "card_payment",
+    creditcard: "card_payment",
+    credit_card: "card_payment",
+    applepay: "apple_pay",
+    googlepay: "google_pay",
+    payconiq: "payconiq_wero",
+    payconiq_by_bancontact: "payconiq_wero",
+    wero: "payconiq_wero",
+    carte_bancaire: "cartes_bancaires",
+    cartes_bancaire: "cartes_bancaires",
+    carte_bancaires: "cartes_bancaires",
+    cartesbancaires: "cartes_bancaires",
+    cartes_bancaires_cb: "cartes_bancaires",
+    cb: "cartes_bancaires",
+    bacs: "bank_transfer_bacs",
+    bank_transfer: "bank_transfer_bacs",
+    bankoverschrijving: "bank_transfer_bacs",
+    cash_in_car: "in_vehicle_card",
+    in_car: "in_vehicle_card",
+    in_vehicle: "in_vehicle_card",
+    manual: "in_vehicle_card",
+    pay_in_car: "in_vehicle_card",
+  };
+  return aliases[token] || token;
+}
+
 function normalizePublicPaymentOptions(input) {
   const list = Array.isArray(input)
     ? input
@@ -1686,11 +1764,7 @@ function normalizePublicPaymentOptions(input) {
   const out = [];
   const seen = new Set();
   for (const item of list) {
-    const raw = sanitizeTenantString(item, 64).toLowerCase();
-    if (!raw) continue;
-    const id = raw === "qr"
-      ? "qr_code"
-      : (raw === "online_payments" ? "online_payment" : raw);
+    const id = normalizePublicPaymentOptionId(item);
     if (!PUBLIC_PAYMENT_OPTION_IDS.has(id) || seen.has(id)) continue;
     seen.add(id);
     out.push(id);
@@ -10841,6 +10915,12 @@ function _projectPublicBookResponse(out, companyCode) {
     return {
       ok: false,
       error: safeStr(out.error, 180) || "booking_failed",
+      ...(out.code ? { code: safeStr(out.code, 180) } : {}),
+      ...(out.message ? { message: safeStr(out.message, 240) } : {}),
+      ...(out.payment_method ? { payment_method: safeStr(out.payment_method, 80) } : {}),
+      ...(out.paymentMethod ? { paymentMethod: safeStr(out.paymentMethod, 80) } : {}),
+      ...(out.payment_owner_mode ? { payment_owner_mode: safeStr(out.payment_owner_mode, 80) } : {}),
+      ...(out.paymentOwnerMode ? { paymentOwnerMode: safeStr(out.paymentOwnerMode, 80) } : {}),
       company_code: companyCode,
     };
   }
@@ -28448,11 +28528,16 @@ async function assertTrustedOnlinePaymentScope(env, request, requestedScope, opt
   } catch (_) {
     businessProfile = null;
   }
+  const rawBusinessProfile = businessProfile && typeof businessProfile === "object" ? businessProfile : {};
+  const explicitProfileOwnerMode = safeStr(
+    rawBusinessProfile.payment_owner_mode ?? rawBusinessProfile.paymentOwnerMode,
+    40,
+  ).toLowerCase();
   businessProfile = normalizeBusinessProfile(businessProfile || DEFAULT_BUSINESS_PROFILE);
   const ownerMode = normalizePaymentOwnerMode(businessProfile.payment_owner_mode);
   const mollieConfig = getMollieConfig(env);
   const devLike = isDevelopmentLikeMollieEnv(mollieRuntimeEnv(env));
-  if (ownerMode === "fluxidi_central_demo" && mollieConfig.ok) {
+  if (ownerMode === "fluxidi_central_demo" && explicitProfileOwnerMode === "fluxidi_central_demo" && mollieConfig.ok) {
     const allowed = isCentralDemoAllowedForCompany(
       env,
       tenantId,
@@ -28509,15 +28594,34 @@ function _validateMollieWebhookMetadataScope(stored, metadataTenantId, metadataC
 function readPaymentOwnershipFromRecord(rec) {
   const source = rec && typeof rec === "object" ? rec : {};
   const paymentDemoRaw = source.payment_demo_mode ?? source.paymentDemoMode;
+  const paymentOwnerMode = normalizePaymentOwnerMode(
+    source.payment_owner_mode ??
+      source.paymentOwnerMode ??
+      source.payment_owner ??
+      source.paymentOwner,
+  );
   return {
-    payment_owner_mode: normalizePaymentOwnerMode(
-      source.payment_owner_mode ?? source.paymentOwnerMode,
-    ),
+    payment_owner_mode: paymentOwnerMode,
     payment_credential_source:
-      safeStr(source.payment_credential_source ?? source.paymentCredentialSource, 40) || null,
+      safeStr(
+        source.payment_credential_source ??
+          source.paymentCredentialSource ??
+          source.credential_source ??
+          source.credentialSource,
+        40,
+      ) || null,
     payment_demo_mode:
       typeof paymentDemoRaw === "boolean" ? paymentDemoRaw : null,
   };
+}
+
+function paymentCostOwnerForCredentialSource(ownerMode, credentialSource) {
+  const owner = normalizePaymentOwnerMode(ownerMode);
+  const source = safeStr(credentialSource, 40).toLowerCase();
+  if (owner === "fluxidi_central_demo" || source === "fluxidi_central_demo") {
+    return "platform_demo";
+  }
+  return "company";
 }
 
 function applyPaymentOwnershipFields(target, creds = {}) {
@@ -28525,23 +28629,61 @@ function applyPaymentOwnershipFields(target, creds = {}) {
   const ownerMode = normalizePaymentOwnerMode(creds.payment_owner_mode);
   const credentialSource = safeStr(creds.payment_credential_source, 40) || null;
   const demoMode = creds.payment_demo_mode === true;
+  const paymentCompanyId = safeStr(
+    creds.payment_company_id ??
+      creds.paymentCompanyId ??
+      creds.company_id ??
+      creds.companyId,
+    80,
+  );
+  const costOwner = paymentCostOwnerForCredentialSource(ownerMode, credentialSource);
+  target.payment_owner = ownerMode;
+  target.paymentOwner = ownerMode;
   target.payment_owner_mode = ownerMode;
   target.paymentOwnerMode = ownerMode;
   if (credentialSource) {
+    target.credential_source = credentialSource;
+    target.credentialSource = credentialSource;
     target.payment_credential_source = credentialSource;
     target.paymentCredentialSource = credentialSource;
   }
+  if (paymentCompanyId) {
+    target.payment_company_id = paymentCompanyId;
+    target.paymentCompanyId = paymentCompanyId;
+  }
+  target.payment_cost_owner = costOwner;
+  target.paymentCostOwner = costOwner;
   target.payment_demo_mode = demoMode;
   target.paymentDemoMode = demoMode;
   return target;
 }
 
 function paymentOwnershipApiFields(creds = {}) {
-  if (!creds?.ok) return {};
+  if (!creds || typeof creds !== "object") return {};
+  const ownerMode = normalizePaymentOwnerMode(creds.payment_owner_mode);
+  const credentialSource = safeStr(creds.payment_credential_source, 40) || null;
+  const paymentCompanyId = safeStr(
+    creds.payment_company_id ??
+      creds.paymentCompanyId ??
+      creds.company_id ??
+      creds.companyId,
+    80,
+  );
   return {
-    payment_owner_mode: normalizePaymentOwnerMode(creds.payment_owner_mode),
-    payment_credential_source: safeStr(creds.payment_credential_source, 40) || null,
+    payment_owner: ownerMode,
+    paymentOwner: ownerMode,
+    payment_owner_mode: ownerMode,
+    paymentOwnerMode: ownerMode,
+    credential_source: credentialSource,
+    credentialSource,
+    payment_credential_source: credentialSource,
+    paymentCredentialSource: credentialSource,
+    ...(paymentCompanyId ? { payment_company_id: paymentCompanyId } : {}),
+    ...(paymentCompanyId ? { paymentCompanyId } : {}),
+    payment_cost_owner: paymentCostOwnerForCredentialSource(ownerMode, credentialSource),
+    paymentCostOwner: paymentCostOwnerForCredentialSource(ownerMode, credentialSource),
     payment_demo_mode: creds.payment_demo_mode === true,
+    paymentDemoMode: creds.payment_demo_mode === true,
   };
 }
 
@@ -28551,6 +28693,7 @@ function applyPaymentOwnershipFromPayResult(target, pay) {
     payment_owner_mode: pay.payment_owner_mode ?? pay.paymentOwnerMode,
     payment_credential_source: pay.payment_credential_source ?? pay.paymentCredentialSource,
     payment_demo_mode: pay.payment_demo_mode ?? pay.paymentDemoMode,
+    payment_company_id: pay.payment_company_id ?? pay.paymentCompanyId ?? pay.company_id ?? pay.companyId,
   });
 }
 
@@ -28568,6 +28711,11 @@ async function resolveRideMollieCredentials(env, tenantScope = {}, options = {})
       businessProfile = null;
     }
   }
+  const rawBusinessProfile = businessProfile && typeof businessProfile === "object" ? businessProfile : {};
+  const explicitProfileOwnerMode = safeStr(
+    rawBusinessProfile.payment_owner_mode ?? rawBusinessProfile.paymentOwnerMode,
+    40,
+  ).toLowerCase();
   businessProfile = normalizeBusinessProfile(businessProfile || DEFAULT_BUSINESS_PROFILE);
 
   const storedCredentialSource = safeStr(
@@ -28586,6 +28734,14 @@ async function resolveRideMollieCredentials(env, tenantScope = {}, options = {})
   } else if (storedCredentialSource === "fluxidi_central_demo") {
     paymentOwnerMode = "fluxidi_central_demo";
   }
+  const explicitCentralDemoConfigured =
+    storedCredentialSource === "fluxidi_central_demo" ||
+    safeStr(
+      options.paymentOwnerMode ??
+        options.payment_owner_mode,
+      40,
+    ).toLowerCase() === "fluxidi_central_demo" ||
+    explicitProfileOwnerMode === "fluxidi_central_demo";
   const paymentDemoMode =
     typeof options.paymentDemoMode === "boolean"
       ? options.paymentDemoMode
@@ -28604,6 +28760,8 @@ async function resolveRideMollieCredentials(env, tenantScope = {}, options = {})
       payment_owner_mode: paymentOwnerMode,
       payment_credential_source: storedCredentialSource || "manual_only",
       payment_demo_mode: paymentDemoMode,
+      payment_company_id: companyId,
+      company_id: companyId,
     };
   }
 
@@ -28622,6 +28780,8 @@ async function resolveRideMollieCredentials(env, tenantScope = {}, options = {})
       payment_owner_mode: paymentOwnerMode,
       payment_credential_source: "company_mollie",
       payment_demo_mode: paymentDemoMode,
+      payment_company_id: companyId,
+      company_id: companyId,
     };
   }
 
@@ -28635,6 +28795,23 @@ async function resolveRideMollieCredentials(env, tenantScope = {}, options = {})
       payment_owner_mode: paymentOwnerMode,
       payment_credential_source: storedCredentialSource,
       payment_demo_mode: paymentDemoMode,
+      payment_company_id: companyId,
+      company_id: companyId,
+    };
+  }
+
+  if (!explicitCentralDemoConfigured) {
+    console.log(
+      `[MOLLIE_CREDENTIALS][BLOCK] tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} mode=${paymentOwnerMode} credentialSource=${storedCredentialSource || "-"} reason=central_demo_not_explicitly_configured`,
+    );
+    return {
+      ok: false,
+      error: "company_payment_provider_not_configured",
+      payment_owner_mode: "company_mollie",
+      payment_credential_source: "company_mollie",
+      payment_demo_mode: false,
+      payment_company_id: companyId,
+      company_id: companyId,
     };
   }
 
@@ -28645,6 +28822,8 @@ async function resolveRideMollieCredentials(env, tenantScope = {}, options = {})
       payment_owner_mode: paymentOwnerMode,
       payment_credential_source: "fluxidi_central_demo",
       payment_demo_mode: paymentDemoMode,
+      payment_company_id: companyId,
+      company_id: companyId,
     };
   }
 
@@ -28666,6 +28845,8 @@ async function resolveRideMollieCredentials(env, tenantScope = {}, options = {})
       payment_owner_mode: paymentOwnerMode,
       payment_credential_source: "fluxidi_central_demo",
       payment_demo_mode: paymentDemoMode,
+      payment_company_id: companyId,
+      company_id: companyId,
     };
   }
 
@@ -28681,6 +28862,8 @@ async function resolveRideMollieCredentials(env, tenantScope = {}, options = {})
     payment_owner_mode: paymentOwnerMode,
     payment_credential_source: "fluxidi_central_demo",
     payment_demo_mode: paymentDemoMode,
+    payment_company_id: companyId,
+    company_id: companyId,
   };
 }
 
@@ -28795,10 +28978,19 @@ function resolveMollieMethodForPublicPayment(publicMethod, mollieMethodHint = nu
       card_payment: "creditcard",
       card: "creditcard",
       cards: "creditcard",
+      credit_card: "creditcard",
+      cb: "creditcard",
+      carte_bancaire: "creditcard",
+      cartes_bancaire: "creditcard",
+      carte_bancaires: "creditcard",
+      cartes_bancaires: "creditcard",
+      cartesbancaires: "creditcard",
+      cartes_bancaires_cb: "creditcard",
       apple_pay: "applepay",
       google_pay: "googlepay",
     };
-    return hintAliases[hinted] || hinted;
+    const mappedHint = hintAliases[hinted] || hinted;
+    return SUPPORTED_MOLLIE_API_METHOD_IDS.has(mappedHint) ? mappedHint : null;
   }
   const method = safeStr(publicMethod, 40).toLowerCase();
   if (!method) return null;
@@ -28807,15 +28999,185 @@ function resolveMollieMethodForPublicPayment(publicMethod, mollieMethodHint = nu
     card_payment: "creditcard",
     card: "creditcard",
     cards: "creditcard",
+    creditcard: "creditcard",
+    credit_card: "creditcard",
+    cb: "creditcard",
+    carte_bancaire: "creditcard",
+    cartes_bancaire: "creditcard",
+    carte_bancaires: "creditcard",
+    cartes_bancaires: "creditcard",
+    cartesbancaires: "creditcard",
+    cartes_bancaires_cb: "creditcard",
     apple_pay: "applepay",
     google_pay: "googlepay",
-    payconiq_wero: "bancontact",
     online_payment: null,
   };
   if (Object.prototype.hasOwnProperty.call(aliases, method)) {
     return aliases[method];
   }
-  return method;
+  return SUPPORTED_MOLLIE_API_METHOD_IDS.has(method) ? method : null;
+}
+
+function _paymentOptionsMethodUnavailableResponse(paymentMethod, options = {}) {
+  const method = safeStr(paymentMethod, 80) || "unknown";
+  return {
+    ok: false,
+    error: "payment_method_disabled_for_company",
+    code: "payment_method_disabled_for_company",
+    message: "This payment method is not available for this company.",
+    payment_method: method,
+    paymentMethod: method,
+    ...(options.ownerMode ? { payment_owner_mode: options.ownerMode, paymentOwnerMode: options.ownerMode } : {}),
+  };
+}
+
+function _paymentOptionsCompanyMollieUnavailableResponse() {
+  return {
+    ok: false,
+    error: "company_mollie_credentials_unavailable",
+    code: "company_mollie_credentials_unavailable",
+    message: "Company Mollie checkout is not available yet for this company.",
+    payment_owner_mode: "company_mollie",
+    paymentOwnerMode: "company_mollie",
+  };
+}
+
+function _paymentOptionsUnsupportedCheckoutResponse(paymentMethod) {
+  const method = safeStr(paymentMethod, 80) || "unknown";
+  return {
+    ok: false,
+    error: "payment_method_not_supported_for_mollie_checkout",
+    code: "payment_method_not_supported_for_mollie_checkout",
+    message: "This payment method cannot be used for direct online checkout.",
+    payment_method: method,
+    paymentMethod: method,
+  };
+}
+
+async function resolveCompanyPaymentOptionsForScope(env, tenantScope = {}, options = {}) {
+  const tenantId = safeStr(tenantScope?.tenant_id ?? tenantScope?.tenantId, 80);
+  const companyId = safeStr(tenantScope?.company_id ?? tenantScope?.companyId, 80);
+  let businessProfile = options.businessProfile;
+  if (!businessProfile && tenantId && companyId && env?.BOOKING_KV) {
+    try {
+      businessProfile = await loadBusinessProfile(env, {
+        tenant_id: tenantId,
+        company_id: companyId,
+      });
+    } catch (_) {
+      businessProfile = null;
+    }
+  }
+  const normalizedProfile = normalizeBusinessProfile(businessProfile || DEFAULT_BUSINESS_PROFILE);
+  const configured = normalizePublicPaymentOptions(normalizedProfile.publicPaymentOptions);
+  const hasExplicitOptions = configured.length > 0;
+  const enabled = hasExplicitOptions ? configured : LEGACY_PUBLIC_PAYMENT_OPTIONS.slice();
+  const ownerMode = normalizePaymentOwnerMode(normalizedProfile.payment_owner_mode);
+  const scopeMask = _bookingIntentScopeMask({ tenant_id: tenantId, company_id: companyId });
+  console.log(
+    `[PAYMENT_OPTIONS][RESOLVE] tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} explicit=${hasExplicitOptions ? "true" : "false"} count=${enabled.length} ownerMode=${ownerMode}`,
+  );
+  return {
+    ok: true,
+    tenant_id: tenantId,
+    company_id: companyId,
+    enabled,
+    enabledSet: new Set(enabled),
+    hasExplicitOptions,
+    businessProfile: normalizedProfile,
+    payment_owner_mode: ownerMode,
+  };
+}
+
+function _isOnlinePaymentRequestedFromPayload(payload = {}) {
+  const mode = safeStr(payload?.payment_mode ?? payload?.paymentMode, 40).toLowerCase();
+  const provider = safeStr(payload?.payment_provider ?? payload?.paymentProvider, 40).toLowerCase();
+  return (
+    mode === "mollie" ||
+    mode === "online" ||
+    mode === "online_payment" ||
+    mode === "online-payments" ||
+    mode === "online_payments" ||
+    provider === "mollie"
+  );
+}
+
+function _requestedPublicPaymentMethodFromPayload(payload = {}) {
+  const normalized = normalizePublicBookingPaymentMethod(payload);
+  const explicitMethod = normalizePublicPaymentOptionId(
+    normalized.paymentMethod ||
+      payload?.payment_method ||
+      payload?.paymentMethod ||
+      "",
+  );
+  const onlineRequested = _isOnlinePaymentRequestedFromPayload(payload);
+  if (explicitMethod) return explicitMethod;
+  return onlineRequested ? "online_payment" : "in_vehicle_card";
+}
+
+async function validateCompanyPaymentMethodForBooking(env, tenantScope = {}, payload = {}, options = {}) {
+  const resolved = await resolveCompanyPaymentOptionsForScope(env, tenantScope, options);
+  const requestedMethod = _requestedPublicPaymentMethodFromPayload(payload);
+  const onlineRequested = options.onlineRequested ?? _isOnlinePaymentRequestedFromPayload(payload);
+  const ownerMode = resolved.payment_owner_mode;
+  if (onlineRequested && ownerMode === "company_mollie") {
+    const scopeMask = _bookingIntentScopeMask(tenantScope || {});
+    console.log(
+      `[PAYMENT_OWNER][COMPANY_MOLLIE_UNAVAILABLE] tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"}`,
+    );
+    return {
+      ..._paymentOptionsCompanyMollieUnavailableResponse(),
+      payment_method: requestedMethod,
+      paymentMethod: requestedMethod,
+      status: 400,
+    };
+  }
+  const enabled = resolved.enabledSet;
+  const checkoutSupported =
+    requestedMethod === "online_payment" ||
+    SUPPORTED_MOLLIE_CHECKOUT_PUBLIC_PAYMENT_OPTION_IDS.has(requestedMethod);
+  if (onlineRequested && !checkoutSupported) {
+    const scopeMask = _bookingIntentScopeMask(tenantScope || {});
+    console.log(
+      `[PAYMENT_OPTIONS][REJECT_UNSUPPORTED_CHECKOUT] tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} method=${safeStr(requestedMethod, 40) || "-"} ownerMode=${ownerMode}`,
+    );
+    return {
+      ..._paymentOptionsUnsupportedCheckoutResponse(requestedMethod),
+      status: 400,
+      payment_owner_mode: ownerMode,
+      paymentOwnerMode: ownerMode,
+    };
+  }
+  const onlineAllowed =
+    enabled.has(requestedMethod) ||
+    (SUPPORTED_MOLLIE_CHECKOUT_PUBLIC_PAYMENT_OPTION_IDS.has(requestedMethod) &&
+      enabled.has("online_payment"));
+  const manualAllowed =
+    enabled.has(requestedMethod) ||
+    (MANUAL_PUBLIC_PAYMENT_OPTION_IDS.has(requestedMethod) &&
+      Array.from(enabled).some((id) => MANUAL_PUBLIC_PAYMENT_OPTION_IDS.has(id)));
+  const allowed = onlineRequested ? onlineAllowed : manualAllowed;
+  if (!allowed) {
+    const scopeMask = _bookingIntentScopeMask(tenantScope || {});
+    console.log(
+      `[PAYMENT_OPTIONS][REJECT_DISABLED] tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} method=${safeStr(requestedMethod, 40) || "-"} online=${onlineRequested ? "true" : "false"} ownerMode=${ownerMode}`,
+    );
+    return {
+      ..._paymentOptionsMethodUnavailableResponse(requestedMethod, { ownerMode }),
+      status: 400,
+      enabled_payment_options: resolved.enabled,
+      enabledPaymentOptions: resolved.enabled,
+    };
+  }
+  return {
+    ok: true,
+    payment_method: requestedMethod,
+    paymentMethod: requestedMethod,
+    enabled_payment_options: resolved.enabled,
+    enabledPaymentOptions: resolved.enabled,
+    payment_owner_mode: ownerMode,
+    businessProfile: resolved.businessProfile,
+  };
 }
 
 function shouldRequestMollieQrCode({ qrPreferred = false, mollieMethod = null } = {}) {
@@ -31871,6 +32233,15 @@ async function mollieCreatePayment(payload, env, request, options = {}) {
     }
     const paymentTenantId = safeStr(requestedScope.tenant_id, 80);
     const paymentCompanyId = safeStr(requestedScope.company_id, 80);
+    const paymentOptionValidation = await validateCompanyPaymentMethodForBooking(
+      env,
+      { tenant_id: paymentTenantId, company_id: paymentCompanyId },
+      payload,
+      { onlineRequested: true },
+    );
+    if (!paymentOptionValidation.ok) {
+      return paymentOptionValidation;
+    }
     const rideCredentials = await resolveRideMollieCredentials(env, requestedScope);
     if (!rideCredentials.ok) {
       return {
@@ -33073,6 +33444,15 @@ async function handleBooking(payload, env, request, options = {}) {
       bookingPaymentFields?.payment_status ?? bookingPaymentFields?.paymentStatus,
       40,
     ).toLowerCase();
+    const bookingPaymentOptionValidation = await validateCompanyPaymentMethodForBooking(
+      env,
+      { tenant_id: tenantContext.tenant_id, company_id: tenantContext.company_id },
+      payload,
+      { onlineRequested: requiresPayment },
+    );
+    if (!bookingPaymentOptionValidation.ok) {
+      return bookingPaymentOptionValidation;
+    }
     const invoice_intent = business_detected ? "business_invoice" : "none";
     const invoice_state = invoice_intent === "business_invoice"
       ? (bookingPaymentStatusToken === "paid" ? "ready_to_send" : "pending_payment")
@@ -49715,8 +50095,14 @@ async function resumeBookingCheckoutAuthoritative(
     );
     return {
       ok: false,
-      error: "payment_checkout_unavailable",
+      error: safeStr(pay?.error || pay?.code, 80) || "payment_checkout_unavailable",
+      code: safeStr(pay?.code || pay?.error, 80) || "payment_checkout_unavailable",
       message: safeStr(pay?.message || pay?.error, 180) || "Online payment checkout could not be created",
+      ...(pay?.payment_method ? { payment_method: pay.payment_method, paymentMethod: pay.payment_method } : {}),
+      ...(pay?.payment_owner_mode ? {
+        payment_owner_mode: pay.payment_owner_mode,
+        paymentOwnerMode: pay.payment_owner_mode,
+      } : {}),
     };
   }
 
