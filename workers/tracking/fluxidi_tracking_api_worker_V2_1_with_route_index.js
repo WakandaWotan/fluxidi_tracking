@@ -3260,7 +3260,24 @@ async function handleDashboardTripKpis(req, url, env, origin) {
   const monthBookingPaidIncomeCents = Number.isFinite(Number(financeMonth.monthly_paid_bookings_income_cents))
     ? Math.max(0, Math.round(Number(financeMonth.monthly_paid_bookings_income_cents)))
     : 0;
-  const blendedMonthlyIncomeCents = Math.max(monthIncomeCents, monthBookingPaidIncomeCents);
+  // Revenue source selection:
+  //   The legacy `Math.max(trip, booking_finance)` blend inflated revenue when the
+  //   booking-worker payment fan-out wrote the full booking total onto each per-leg
+  //   `planned_<bookingId>[_suffix]` trip record. Booking-finance is keyed per
+  //   booking_id and cannot inflate from multi-leg fan-out, so it is now the
+  //   canonical monthly revenue source. The trip-KPI sum stays as a fallback only
+  //   when booking-finance has no data (e.g. legacy direct trips that pre-date
+  //   booking-finance materialization, or non-booking-backed street hails).
+  const selectedMonthlyIncomeSource =
+    monthBookingPaidIncomeCents > 0 ? "booking_finance" : "trip_kpi_fallback";
+  const selectedMonthlyIncomeCents =
+    selectedMonthlyIncomeSource === "booking_finance"
+      ? monthBookingPaidIncomeCents
+      : monthIncomeCents;
+  const blendedMonthlyIncomeCents = selectedMonthlyIncomeCents;
+  console.log(
+    `[DASHBOARD_REVENUE][SOURCE] tenant=${maskScopeForTripKpiLog(normalizedScope.tenant_id)} company=${maskScopeForTripKpiLog(normalizedScope.company_id)} month=${selectedMonth} source=${selectedMonthlyIncomeSource} booking_finance_cents=${monthBookingPaidIncomeCents} trip_kpi_cents=${monthIncomeCents} selected_cents=${selectedMonthlyIncomeCents}`,
+  );
   const monthCancelledPaidCents = Number.isFinite(Number(financeMonth.monthly_cancelled_paid_bookings_cents))
     ? Math.max(0, Math.round(Number(financeMonth.monthly_cancelled_paid_bookings_cents)))
     : 0;
@@ -3309,6 +3326,11 @@ async function handleDashboardTripKpis(req, url, env, origin) {
     monthly_paid_bookings_count: monthBookingPaidCount,
     monthly_paid_bookings_income_cents: monthBookingPaidIncomeCents,
     monthly_paid_bookings_income_eur: monthBookingPaidIncomeCents / 100,
+    trip_monthly_income_cents: monthIncomeCents,
+    trip_monthly_income_eur: monthIncomeCents / 100,
+    booking_finance_monthly_income_cents: monthBookingPaidIncomeCents,
+    booking_finance_monthly_income_eur: monthBookingPaidIncomeCents / 100,
+    selected_monthly_income_source: selectedMonthlyIncomeSource,
     trip_kpi_reconcile_scanned: Number.isFinite(Number(reconcileResult?.trip_kpi_reconcile_scanned))
       ? Math.max(0, Math.round(Number(reconcileResult.trip_kpi_reconcile_scanned)))
       : 0,
