@@ -19920,6 +19920,85 @@ GET /oauth/callback
         return json(out, out?.ok ? 200 : 400);
       }
 
+      // Admin booking-finance backfill for missing contribs. Scans
+      // authoritative BOOKING_KV records for the given tenant/company
+      // scope, finds bookings whose paid_at month matches the requested
+      // YYYY-MM, and idempotently writes any missing
+      // booking_finance_contrib + recomputes the month aggregate. Default
+      // is `dry_run=true` so the caller can preview the impact (e.g. for
+      // legacy QR confirmations that went via /trip/payment only).
+      if (
+        url.pathname === "/admin/dashboard/booking-finance/backfill" &&
+        request.method === "POST"
+      ) {
+        _requireAdmin(request, url, env);
+        const body = await safeJson(request);
+        const explicitScope = resolveAdminExplicitTenantCompanyScope({ request, url, body });
+        if (!explicitScope?.hasScope) {
+          return json(missingTenantScopeError(), 400);
+        }
+        const monthParam = safeStr(
+          body?.month ?? url.searchParams.get("month"),
+          16,
+        );
+        if (!monthParam || !/^\d{4}-\d{2}$/.test(monthParam)) {
+          return json({ ok: false, error: "month must be YYYY-MM" }, 400);
+        }
+        // Dry-run by default to make accidental admin invocations safe.
+        // Caller must explicitly pass `dry_run=false` (or `dryRun=false`)
+        // to actually mutate booking_finance_contrib / month aggregate.
+        const dryRunRaw =
+          body?.dry_run ?? body?.dryRun ??
+          url.searchParams.get("dry_run") ?? url.searchParams.get("dryRun");
+        const dryRun = dryRunRaw == null ? true : _coerceBoolean(dryRunRaw, true);
+        const out = await backfillBookingFinanceMonthFromBookingRecordsBestEffort(
+          env,
+          explicitScope,
+          monthParam,
+          { dryRun },
+        );
+        return json(out, out?.ok ? 200 : 400);
+      }
+
+      // Admin repair endpoint: resync already-paid booking records into
+      // their scoped tracking trip records and per-trip / booking-finance
+      // KPI aggregates. Use when a booking is already authoritative-paid
+      // (so the driver UI hides the QR confirm button) but the related
+      // trip records still show Unpaid because the original confirm
+      // happened before the planned-trip fan-out existed (or via the
+      // legacy tracking-side /trip/payment path). The booking record
+      // remains the only source of truth: unpaid bookings are never
+      // promoted to paid from trip state. Dry-run is the default.
+      if (
+        url.pathname === "/admin/dashboard/booking-payment/repair-trip-sync" &&
+        request.method === "POST"
+      ) {
+        _requireAdmin(request, url, env);
+        const body = await safeJson(request);
+        const explicitScope = resolveAdminExplicitTenantCompanyScope({ request, url, body });
+        if (!explicitScope?.hasScope) {
+          return json(missingTenantScopeError(), 400);
+        }
+        const monthParam = safeStr(
+          body?.month ?? url.searchParams.get("month"),
+          16,
+        );
+        if (!monthParam || !/^\d{4}-\d{2}$/.test(monthParam)) {
+          return json({ ok: false, error: "month must be YYYY-MM" }, 400);
+        }
+        const dryRunRaw =
+          body?.dry_run ?? body?.dryRun ??
+          url.searchParams.get("dry_run") ?? url.searchParams.get("dryRun");
+        const dryRun = dryRunRaw == null ? true : _coerceBoolean(dryRunRaw, true);
+        const out = await repairTripPaymentSyncFromPaidBookingsBestEffort(
+          env,
+          explicitScope,
+          monthParam,
+          { dryRun },
+        );
+        return json(out, out?.ok ? 200 : 400);
+      }
+
       // GET /partners/nearby?postcode=... or /partners/nearby?lat=..&lng=..&radius_km=..
       if (url.pathname === "/partners/nearby" && request.method === "GET") {
         const postcode = String(url.searchParams.get("postcode") || "").trim();
@@ -36325,6 +36404,22 @@ function _trackingSyncScopedTripKey(scope, tripId) {
   return `tenant:${tenantPart}:company:${companyPart}:trip:${tripPart}`;
 }
 
+// Scoped tracking-KV prefix matching ALL planned-trip records for the given
+// booking. `handleRecordPlannedStopTrip` writes trip ids as either
+// `planned_<bookingId>` (single leg, no leg-suffix) OR
+// `planned_<bookingId>_<legSuffix>` (multi-leg / per-leg). Returning the
+// prefix without a trailing separator allows a single `list({ prefix })`
+// call to enumerate both shapes without false-positives from unrelated
+// bookings (the booking id is already opaque enough that other planned
+// bookings cannot share the same prefix).
+function _trackingSyncScopedPlannedTripPrefix(scope, bookingId) {
+  const tenantPart = _trackingSyncSafeKeyPart(scope?.tenant_id, 96);
+  const companyPart = _trackingSyncSafeKeyPart(scope?.company_id, 96);
+  const bookingPart = _trackingSyncSafeKeyPart(bookingId, 160);
+  if (!tenantPart || !companyPart || !bookingPart) return "";
+  return `tenant:${tenantPart}:company:${companyPart}:trip:planned_${bookingPart}`;
+}
+
 function _trackingSyncScopedTripKpisKey(scope) {
   const tenantPart = _trackingSyncSafeKeyPart(scope?.tenant_id, 96);
   const companyPart = _trackingSyncSafeKeyPart(scope?.company_id, 96);
@@ -37417,6 +37512,852 @@ async function _trackingSyncReconcileBookingFinanceMonthFromContribsBestEffort(
   };
 }
 
+// Idempotent backfill for `booking_finance_contrib` records that were
+// never written for paid bookings (e.g. legacy QR confirmations that
+// went through the tracking-trip-payment endpoint and therefore only
+// updated trip-KPIs, never the booking-finance aggregate). Scans every
+// authoritative `booking:` record in BOOKING_KV, filters by the
+// requested tenant/company scope, restricts to bookings whose
+// authoritative `paid_at` falls in `month`, and writes the missing
+// contribution + aggregate via the same materializer used by the live
+// payment update path. Records that already have a non-zero contrib are
+// skipped to avoid double-counting. A `dryRun=true` invocation reports
+// what would be written without mutating anything.
+async function backfillBookingFinanceMonthFromBookingRecordsBestEffort(
+  env,
+  scope,
+  month,
+  { dryRun = true } = {},
+) {
+  const safeMonth = _trackingSyncSafeKeyPart(month, 16);
+  const scopeMask = _bookingIntentScopeMask(scope);
+  if (!env?.BOOKING_KV || !env?.FLUXIDI_TRACKING) {
+    return { ok: false, error: "missing_kv_binding" };
+  }
+  if (!scope?.hasScope) {
+    return { ok: false, error: "missing_tenant_scope" };
+  }
+  if (!safeMonth || !/^\d{4}-\d{2}$/.test(safeMonth)) {
+    return { ok: false, error: "month must be YYYY-MM" };
+  }
+
+  console.log(
+    `[BOOKING_FINANCE_KPI][BACKFILL_SCAN] tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} month=${safeMonth} dry_run=${dryRun ? "true" : "false"}`,
+  );
+
+  let scanned = 0;
+  let scopeMatched = 0;
+  let monthMatched = 0;
+  let written = 0;
+  let wouldWrite = 0;
+  let existingContrib = 0;
+  let skippedUnpaid = 0;
+  let skippedWrongMonth = 0;
+  let skippedMissingAmount = 0;
+  let skippedShadow = 0;
+  let skippedNoContribDerivable = 0;
+  const writtenPreview = [];
+  const wouldWritePreview = [];
+
+  let cursor;
+  do {
+    const page = await env.BOOKING_KV.list({
+      prefix: "booking:",
+      limit: 1000,
+      cursor,
+    });
+    for (const keyItem of (page?.keys || [])) {
+      const key = safeStr(keyItem?.name, 240);
+      if (!key.startsWith("booking:")) continue;
+      const bookingId = key.slice("booking:".length);
+      if (!bookingId) continue;
+      scanned += 1;
+      const rec = await env.BOOKING_KV.get(key, { type: "json" });
+      if (!rec || typeof rec !== "object") continue;
+      if (!bookingMatchesRequestedTenantScope(rec, scope)) continue;
+      scopeMatched += 1;
+      if (_bookingListIsPaymentShadowRecord(rec, bookingId)) {
+        skippedShadow += 1;
+        console.log(
+          `[BOOKING_FINANCE_KPI][BACKFILL] booking=${_bookingIntentMask(bookingId)} action=skip_payment_shadow`,
+        );
+        continue;
+      }
+      const derived = _trackingSyncDeriveBookingFinanceContribution(bookingId, rec);
+      if (!derived) {
+        skippedNoContribDerivable += 1;
+        continue;
+      }
+      if (!derived.paid) {
+        skippedUnpaid += 1;
+        console.log(
+          `[BOOKING_FINANCE_KPI][BACKFILL] booking=${_bookingIntentMask(bookingId)} action=skip_unpaid`,
+        );
+        continue;
+      }
+      if (derived.paid_month !== safeMonth) {
+        skippedWrongMonth += 1;
+        continue;
+      }
+      monthMatched += 1;
+      const derivedIncomeCents = Number.isFinite(
+        Number(derived.monthly_paid_bookings_income_cents),
+      )
+        ? Math.max(0, Math.round(Number(derived.monthly_paid_bookings_income_cents)))
+        : 0;
+      if (derivedIncomeCents <= 0) {
+        skippedMissingAmount += 1;
+        console.log(
+          `[BOOKING_FINANCE_KPI][BACKFILL] booking=${_bookingIntentMask(bookingId)} action=skip_missing_amount month=${safeMonth}`,
+        );
+        continue;
+      }
+      const contribKey = _trackingSyncScopedBookingFinanceContribKey(scope, bookingId);
+      const existing = await _trackingSyncGetJson(env, contribKey);
+      const existingShape = _trackingSyncReadBookingFinanceContribShape(existing, bookingId);
+      const hasUsableExisting =
+        !!existing &&
+        existingShape?.paid_month === safeMonth &&
+        Number.isFinite(Number(existingShape?.monthly_paid_bookings_income_cents)) &&
+        Math.round(Number(existingShape.monthly_paid_bookings_income_cents)) === derivedIncomeCents;
+      if (hasUsableExisting) {
+        existingContrib += 1;
+        console.log(
+          `[BOOKING_FINANCE_KPI][BACKFILL] booking=${_bookingIntentMask(bookingId)} action=skip_existing month=${safeMonth} income_cents=${derivedIncomeCents}`,
+        );
+        continue;
+      }
+      if (dryRun) {
+        wouldWrite += 1;
+        if (wouldWritePreview.length < 20) {
+          wouldWritePreview.push({
+            booking_id: _bookingIntentMask(bookingId),
+            income_cents: derivedIncomeCents,
+            month: safeMonth,
+            had_existing: !!existing,
+          });
+        }
+        console.log(
+          `[BOOKING_FINANCE_KPI][BACKFILL] booking=${_bookingIntentMask(bookingId)} action=would_put income_cents=${derivedIncomeCents} dry_run=true`,
+        );
+        continue;
+      }
+      try {
+        await _trackingSyncMaterializeBookingFinanceKpiBestEffort({
+          env,
+          scope,
+          bookingId,
+          rec,
+          source: "booking_finance_backfill",
+        });
+        const afterContrib = await _trackingSyncGetJson(env, contribKey);
+        const afterShape = _trackingSyncReadBookingFinanceContribShape(afterContrib, bookingId);
+        const writtenCents = Number.isFinite(Number(afterShape?.monthly_paid_bookings_income_cents))
+          ? Math.max(0, Math.round(Number(afterShape.monthly_paid_bookings_income_cents)))
+          : 0;
+        if (writtenCents > 0) {
+          written += 1;
+          if (writtenPreview.length < 20) {
+            writtenPreview.push({
+              booking_id: _bookingIntentMask(bookingId),
+              income_cents: writtenCents,
+              month: safeMonth,
+            });
+          }
+          console.log(
+            `[BOOKING_FINANCE_KPI][BACKFILL] booking=${_bookingIntentMask(bookingId)} action=put income_cents=${writtenCents} month=${safeMonth}`,
+          );
+        } else {
+          skippedMissingAmount += 1;
+          console.log(
+            `[BOOKING_FINANCE_KPI][BACKFILL] booking=${_bookingIntentMask(bookingId)} action=skip_missing_amount_post_write`,
+          );
+        }
+      } catch (writeErr) {
+        console.log(
+          `[BOOKING_FINANCE_KPI][BACKFILL] booking=${_bookingIntentMask(bookingId)} action=error reason=${safeStr(writeErr?.message || writeErr, 160) || "unknown"}`,
+        );
+      }
+    }
+    cursor = page?.cursor;
+    if (page?.list_complete !== false) break;
+    if (!cursor) break;
+  } while (cursor);
+
+  // After we have idempotently materialized any missing contribs, run the
+  // existing read-side reconcile so the month aggregate (`booking_finance:
+  // month:<YYYY-MM>:v1`) is recomputed from the now-complete contrib set.
+  // This avoids drift if a previous payment update had written a stale
+  // aggregate that did not match the sum of contribs.
+  let reconcileResult = null;
+  if (!dryRun) {
+    reconcileResult = await _trackingSyncReconcileBookingFinanceMonthFromContribsBestEffort(
+      env,
+      scope,
+      safeMonth,
+      {
+        persist: true,
+        source: "booking_finance_backfill_post_reconcile",
+        includeDebugRows: false,
+        debugRowLimit: 5,
+      },
+    );
+  }
+
+  const result = {
+    ok: true,
+    month: safeMonth,
+    dry_run: dryRun === true,
+    scanned,
+    scope_matched: scopeMatched,
+    month_matched: monthMatched,
+    existing_contrib: existingContrib,
+    written,
+    would_write: wouldWrite,
+    skipped_unpaid: skippedUnpaid,
+    skipped_wrong_month: skippedWrongMonth,
+    skipped_missing_amount: skippedMissingAmount,
+    skipped_payment_shadow: skippedShadow,
+    skipped_no_contrib_derivable: skippedNoContribDerivable,
+    written_preview: writtenPreview,
+    would_write_preview: wouldWritePreview,
+    post_reconcile_month_income_cents:
+      reconcileResult?.monthly_paid_bookings_income_cents ?? null,
+    post_reconcile_month_paid_count:
+      reconcileResult?.monthly_paid_bookings_count ?? null,
+  };
+  console.log(
+    `[BOOKING_FINANCE_KPI][BACKFILL_RESULT] tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} month=${safeMonth} dry_run=${dryRun ? "true" : "false"} scanned=${scanned} scope_matched=${scopeMatched} month_matched=${monthMatched} existing=${existingContrib} written=${written} would_write=${wouldWrite} skipped_unpaid=${skippedUnpaid} skipped_wrong_month=${skippedWrongMonth} skipped_missing_amount=${skippedMissingAmount} post_reconcile_income_cents=${result.post_reconcile_month_income_cents ?? "-"}`,
+  );
+  return result;
+}
+
+// Repair / resync paid bookings into their tracking trip records and
+// per-trip / per-booking KPI aggregates. This is the admin-only path for
+// bookings that were already marked paid in the past and therefore can
+// no longer be re-confirmed from the driver UI (the QR confirm button is
+// correctly hidden once payment_status=paid). It enumerates every
+// candidate scoped trip key for each paid booking (explicit trip_id
+// from the record + every `planned_<bookingId>[_<suffix>]` entry under
+// the scoped planned-trip prefix) and re-applies the booking record's
+// payment fields to each trip via the shared
+// `_trackingSyncApplyPaymentToScopedTripKey` helper, which uses
+// prev/next deltas so re-running the repair never double-counts.
+// `booking_finance_contrib` is also re-materialized (idempotent) and the
+// month aggregate is re-built from the contribs at the end. This
+// function NEVER marks an unpaid booking as paid; the booking record
+// remains the only source of truth.
+async function repairTripPaymentSyncFromPaidBookingsBestEffort(
+  env,
+  scope,
+  month,
+  { dryRun = true } = {},
+) {
+  const safeMonth = _trackingSyncSafeKeyPart(month, 16);
+  const scopeMask = _bookingIntentScopeMask(scope);
+  if (!env?.BOOKING_KV || !env?.FLUXIDI_TRACKING) {
+    return { ok: false, error: "missing_kv_binding" };
+  }
+  if (!scope?.hasScope) {
+    return { ok: false, error: "missing_tenant_scope" };
+  }
+  if (!safeMonth || !/^\d{4}-\d{2}$/.test(safeMonth)) {
+    return { ok: false, error: "month must be YYYY-MM" };
+  }
+
+  console.log(
+    `[BOOKING_PAYMENT_REPAIR][START] tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} month=${safeMonth} dry_run=${dryRun ? "true" : "false"}`,
+  );
+
+  let scannedBookings = 0;
+  let paidBookingsMatched = 0;
+  let tripKeysFound = 0;
+  let tripsUpdated = 0;
+  let tripsWouldUpdate = 0;
+  let tripsAlreadyPaid = 0;
+  let missingTrips = 0;
+  let skippedUnpaid = 0;
+  let skippedWrongMonth = 0;
+  let skippedScopeMismatch = 0;
+  let skippedMissingAmount = 0;
+  let skippedPaymentShadow = 0;
+  let skippedTripBookingMismatch = 0;
+  const errors = [];
+  const updatedPreview = [];
+  const wouldUpdatePreview = [];
+  const missingTripPreview = [];
+
+  let cursor;
+  do {
+    const page = await env.BOOKING_KV.list({
+      prefix: "booking:",
+      limit: 1000,
+      cursor,
+    });
+    for (const keyItem of (page?.keys || [])) {
+      const key = safeStr(keyItem?.name, 240);
+      if (!key.startsWith("booking:")) continue;
+      const bookingId = key.slice("booking:".length);
+      if (!bookingId) continue;
+      scannedBookings += 1;
+      let rec;
+      try {
+        rec = await env.BOOKING_KV.get(key, { type: "json" });
+      } catch (readErr) {
+        if (errors.length < 20) {
+          errors.push(
+            `booking_read:${_bookingIntentMask(bookingId)}:${safeStr(readErr?.message || readErr, 80)}`,
+          );
+        }
+        continue;
+      }
+      if (!rec || typeof rec !== "object") continue;
+      if (!bookingMatchesRequestedTenantScope(rec, scope)) {
+        // Scope mismatch at the booking-record level is normal during a
+        // full-KV scan (other tenants share the same KV). Do not log per
+        // record, only count.
+        skippedScopeMismatch += 1;
+        continue;
+      }
+      if (_bookingListIsPaymentShadowRecord(rec, bookingId)) {
+        skippedPaymentShadow += 1;
+        continue;
+      }
+      const derived = _trackingSyncDeriveBookingFinanceContribution(bookingId, rec);
+      if (!derived) continue;
+      if (!derived.paid) {
+        skippedUnpaid += 1;
+        console.log(
+          `[BOOKING_PAYMENT_REPAIR][SKIP] booking=${_bookingIntentMask(bookingId)} reason=unpaid`,
+        );
+        continue;
+      }
+      if (derived.paid_month !== safeMonth) {
+        skippedWrongMonth += 1;
+        continue;
+      }
+      const amountCents = Number.isFinite(
+        Number(derived.monthly_paid_bookings_income_cents),
+      )
+        ? Math.max(0, Math.round(Number(derived.monthly_paid_bookings_income_cents)))
+        : 0;
+      if (amountCents <= 0) {
+        skippedMissingAmount += 1;
+        console.log(
+          `[BOOKING_PAYMENT_REPAIR][SKIP] booking=${_bookingIntentMask(bookingId)} reason=missing_amount month=${safeMonth}`,
+        );
+        continue;
+      }
+      paidBookingsMatched += 1;
+      const recordScope = _trackingSyncScopeFromBookingRecord(rec);
+      if (!recordScope?.hasScope) {
+        skippedScopeMismatch += 1;
+        console.log(
+          `[BOOKING_PAYMENT_REPAIR][SKIP] booking=${_bookingIntentMask(bookingId)} reason=missing_record_scope`,
+        );
+        continue;
+      }
+      const method = safeStr(rec?.payment_method ?? rec?.paymentMethod, 32).toLowerCase();
+      const provider = safeStr(rec?.payment_provider ?? rec?.paymentProvider, 32).toLowerCase();
+      const paymentSource = safeStr(rec?.payment_source ?? rec?.paymentSource, 32).toLowerCase();
+      const publicRef = safeStr(
+        rec?.public_booking_reference ??
+          rec?.publicBookingReference ??
+          rec?.booking_reference ??
+          rec?.bookingReference ??
+          rec?.booking?.public_booking_reference ??
+          rec?.booking?.publicBookingReference,
+        120,
+      );
+      console.log(
+        `[BOOKING_PAYMENT_REPAIR][BOOKING] booking=${_bookingIntentMask(bookingId)} public_ref=${_bookingIntentMask(publicRef)} method=${method || "-"} provider=${provider || "-"} source=${paymentSource || "-"} amount_cents=${amountCents} paid_month=${derived.paid_month || "-"}`,
+      );
+
+      // Collect candidate scoped trip keys: explicit trip_id from the
+      // booking record (rare for planned trips) plus every
+      // `planned_<bookingId>[_<suffix>]` entry under the scoped planned-
+      // trip prefix. Strict guard (`name === prefix || startsWith(prefix +
+      // "_")`) prevents prefix collisions with adjacent booking ids.
+      const candidateKeys = new Set();
+      const explicitTripId = _trackingSyncResolveTripId(bookingId, rec);
+      if (explicitTripId) {
+        const explicitKey = _trackingSyncScopedTripKey(recordScope, explicitTripId);
+        if (explicitKey) candidateKeys.add(explicitKey);
+      }
+      const plannedPrefix = _trackingSyncScopedPlannedTripPrefix(recordScope, bookingId);
+      if (plannedPrefix && env.FLUXIDI_TRACKING?.list) {
+        let listCursor;
+        try {
+          do {
+            const tripPage = await env.FLUXIDI_TRACKING.list({
+              prefix: plannedPrefix,
+              limit: 200,
+              cursor: listCursor,
+            });
+            for (const tItem of (tripPage?.keys || [])) {
+              const name = safeStr(tItem?.name, 320);
+              if (!name) continue;
+              if (name === plannedPrefix || name.startsWith(`${plannedPrefix}_`)) {
+                candidateKeys.add(name);
+              }
+            }
+            listCursor = tripPage?.cursor;
+            if (tripPage?.list_complete !== false) break;
+            if (!listCursor) break;
+          } while (listCursor);
+        } catch (listErr) {
+          if (errors.length < 20) {
+            errors.push(
+              `trip_list:${_bookingIntentMask(bookingId)}:${safeStr(listErr?.message || listErr, 80)}`,
+            );
+          }
+        }
+      }
+
+      if (candidateKeys.size === 0) {
+        missingTrips += 1;
+        if (missingTripPreview.length < 20) {
+          missingTripPreview.push({
+            booking_id: _bookingIntentMask(bookingId),
+            public_ref: _bookingIntentMask(publicRef),
+            amount_cents: amountCents,
+            planned_prefix: _bookingIntentMask(plannedPrefix),
+          });
+        }
+        console.log(
+          `[BOOKING_PAYMENT_REPAIR][TRIP_MATCH] booking=${_bookingIntentMask(bookingId)} trip_count=0 planned_prefix=${_bookingIntentMask(plannedPrefix)}`,
+        );
+        continue;
+      }
+      tripKeysFound += candidateKeys.size;
+      console.log(
+        `[BOOKING_PAYMENT_REPAIR][TRIP_MATCH] booking=${_bookingIntentMask(bookingId)} trip_count=${candidateKeys.size} planned_prefix=${_bookingIntentMask(plannedPrefix)}`,
+      );
+
+      for (const tripKey of candidateKeys) {
+        let trip;
+        try {
+          trip = await _trackingSyncGetJson(env, tripKey);
+        } catch (readErr) {
+          if (errors.length < 20) {
+            errors.push(
+              `trip_read:${_bookingIntentMask(tripKey)}:${safeStr(readErr?.message || readErr, 80)}`,
+            );
+          }
+          continue;
+        }
+        if (!trip || typeof trip !== "object" || Array.isArray(trip)) {
+          missingTrips += 1;
+          console.log(
+            `[BOOKING_PAYMENT_REPAIR][SKIP] booking=${_bookingIntentMask(bookingId)} trip_key=${_bookingIntentMask(tripKey)} reason=trip_missing`,
+          );
+          continue;
+        }
+        const tripTenant = safeStr(trip?.tenant_id ?? trip?.tenantId, 96);
+        const tripCompany = safeStr(trip?.company_id ?? trip?.companyId, 96);
+        if (
+          (tripTenant && tripTenant !== recordScope.tenant_id) ||
+          (tripCompany && tripCompany !== recordScope.company_id)
+        ) {
+          skippedScopeMismatch += 1;
+          console.log(
+            `[BOOKING_PAYMENT_REPAIR][SKIP] booking=${_bookingIntentMask(bookingId)} trip_key=${_bookingIntentMask(tripKey)} reason=trip_scope_mismatch`,
+          );
+          continue;
+        }
+        const tripBookingId = safeStr(
+          trip?.booking_id ?? trip?.bookingId ?? trip?.owner_booking_id ?? trip?.ownerBookingId,
+          160,
+        );
+        if (tripBookingId && tripBookingId !== bookingId) {
+          skippedTripBookingMismatch += 1;
+          console.log(
+            `[BOOKING_PAYMENT_REPAIR][SKIP] booking=${_bookingIntentMask(bookingId)} trip_key=${_bookingIntentMask(tripKey)} reason=trip_booking_mismatch trip_booking=${_bookingIntentMask(tripBookingId)}`,
+          );
+          continue;
+        }
+        const tripPaymentStatus = String(
+          trip?.payment_status || trip?.paymentStatus || "",
+        ).toLowerCase();
+        const alreadyPaid = tripPaymentStatus === "paid";
+
+        if (dryRun) {
+          if (alreadyPaid) {
+            tripsAlreadyPaid += 1;
+            console.log(
+              `[BOOKING_PAYMENT_REPAIR][TRIP_UPDATE] booking=${_bookingIntentMask(bookingId)} trip_key=${_bookingIntentMask(tripKey)} action=would_skip reason=already_paid dry_run=true`,
+            );
+          } else {
+            tripsWouldUpdate += 1;
+            if (wouldUpdatePreview.length < 20) {
+              wouldUpdatePreview.push({
+                booking_id: _bookingIntentMask(bookingId),
+                trip_key: _bookingIntentMask(tripKey),
+                method: method || null,
+                provider: provider || null,
+                source: paymentSource || null,
+                amount_cents: amountCents,
+              });
+            }
+            console.log(
+              `[BOOKING_PAYMENT_REPAIR][TRIP_UPDATE] booking=${_bookingIntentMask(bookingId)} trip_key=${_bookingIntentMask(tripKey)} action=would_update method=${method || "-"} provider=${provider || "-"} source=${paymentSource || "-"} amount_cents=${amountCents} dry_run=true`,
+            );
+          }
+          continue;
+        }
+
+        try {
+          const result = await _trackingSyncApplyPaymentToScopedTripKey({
+            env,
+            recordScope,
+            tripKey,
+            resolvedBookingId: bookingId,
+            rec,
+            source: "booking_payment_repair_trip_sync",
+          });
+          if (result?.ok && result?.kpiUpdated) {
+            if (alreadyPaid) {
+              // Trip was already paid; helper re-wrote the same payment
+              // fields with prev/next delta=0. Counted as already_paid to
+              // make the no-double-count guarantee visible in the result.
+              tripsAlreadyPaid += 1;
+              console.log(
+                `[BOOKING_PAYMENT_REPAIR][TRIP_UPDATE] booking=${_bookingIntentMask(bookingId)} trip_key=${_bookingIntentMask(tripKey)} action=reapply_paid method=${method || "-"} provider=${provider || "-"}`,
+              );
+            } else {
+              tripsUpdated += 1;
+              if (updatedPreview.length < 20) {
+                updatedPreview.push({
+                  booking_id: _bookingIntentMask(bookingId),
+                  trip_key: _bookingIntentMask(tripKey),
+                  method: method || null,
+                  provider: provider || null,
+                  source: paymentSource || null,
+                  amount_cents: amountCents,
+                });
+              }
+              console.log(
+                `[BOOKING_PAYMENT_REPAIR][TRIP_UPDATE] booking=${_bookingIntentMask(bookingId)} trip_key=${_bookingIntentMask(tripKey)} action=updated method=${method || "-"} provider=${provider || "-"} source=${paymentSource || "-"}`,
+              );
+            }
+          } else if (result?.ok === false && result?.reason === "trip_missing") {
+            missingTrips += 1;
+            console.log(
+              `[BOOKING_PAYMENT_REPAIR][SKIP] booking=${_bookingIntentMask(bookingId)} trip_key=${_bookingIntentMask(tripKey)} reason=trip_missing_post_read`,
+            );
+          } else if (result?.ok === false && result?.reason === "trip_booking_mismatch") {
+            skippedTripBookingMismatch += 1;
+            console.log(
+              `[BOOKING_PAYMENT_REPAIR][SKIP] booking=${_bookingIntentMask(bookingId)} trip_key=${_bookingIntentMask(tripKey)} reason=trip_booking_mismatch_post_read`,
+            );
+          } else if (result?.ok === false && result?.reason === "scope_mismatch") {
+            skippedScopeMismatch += 1;
+          } else if (result?.ok === false) {
+            if (errors.length < 20) {
+              errors.push(
+                `trip_apply:${_bookingIntentMask(tripKey)}:${safeStr(result?.reason, 64) || "unknown"}`,
+              );
+            }
+          }
+        } catch (applyErr) {
+          if (errors.length < 20) {
+            errors.push(
+              `trip_apply:${_bookingIntentMask(tripKey)}:${safeStr(applyErr?.message || applyErr, 80)}`,
+            );
+          }
+        }
+      }
+
+      // Re-materialize booking_finance_contrib for this paid booking. The
+      // helper uses prev/next delta accounting against the existing
+      // contrib so re-runs do not double-count income. This is also the
+      // safety net for paid bookings whose legacy QR confirmation never
+      // wrote a contrib in the first place (e.g. PLN-2026-000264).
+      if (!dryRun) {
+        try {
+          await _trackingSyncMaterializeBookingFinanceKpiBestEffort({
+            env,
+            scope: recordScope,
+            bookingId,
+            rec,
+            source: "booking_payment_repair_trip_sync",
+          });
+        } catch (matErr) {
+          if (errors.length < 20) {
+            errors.push(
+              `booking_finance_materialize:${_bookingIntentMask(bookingId)}:${safeStr(matErr?.message || matErr, 80)}`,
+            );
+          }
+        }
+      }
+    }
+    cursor = page?.cursor;
+    if (page?.list_complete !== false) break;
+    if (!cursor) break;
+  } while (cursor);
+
+  // After every per-booking materialize, rebuild the month aggregate from
+  // the now-complete contrib set so the dashboard tile reflects the
+  // repaired bookings on its next read.
+  let reconcile = null;
+  if (!dryRun) {
+    try {
+      reconcile = await _trackingSyncReconcileBookingFinanceMonthFromContribsBestEffort(
+        env,
+        scope,
+        safeMonth,
+        {
+          persist: true,
+          source: "booking_payment_repair_trip_sync_post_reconcile",
+          includeDebugRows: false,
+          debugRowLimit: 5,
+        },
+      );
+    } catch (reconErr) {
+      if (errors.length < 20) {
+        errors.push(
+          `booking_finance_reconcile:${safeStr(reconErr?.message || reconErr, 80)}`,
+        );
+      }
+    }
+  }
+
+  const result = {
+    ok: true,
+    dry_run: dryRun === true,
+    month: safeMonth,
+    scanned_bookings: scannedBookings,
+    paid_bookings_matched: paidBookingsMatched,
+    trip_keys_found: tripKeysFound,
+    trips_updated: dryRun ? tripsWouldUpdate : tripsUpdated,
+    trips_already_paid: tripsAlreadyPaid,
+    missing_trips: missingTrips,
+    skipped_unpaid: skippedUnpaid,
+    skipped_wrong_month: skippedWrongMonth,
+    skipped_scope_mismatch: skippedScopeMismatch,
+    skipped_missing_amount: skippedMissingAmount,
+    skipped_payment_shadow: skippedPaymentShadow,
+    skipped_trip_booking_mismatch: skippedTripBookingMismatch,
+    errors,
+    updated_preview: dryRun ? [] : updatedPreview,
+    would_update_preview: dryRun ? wouldUpdatePreview : [],
+    missing_trip_preview: missingTripPreview,
+    post_reconcile_month_income_cents:
+      reconcile?.monthly_paid_bookings_income_cents ?? null,
+    post_reconcile_month_paid_count:
+      reconcile?.monthly_paid_bookings_count ?? null,
+  };
+  console.log(
+    `[BOOKING_PAYMENT_REPAIR][RESULT] tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} month=${safeMonth} dry_run=${dryRun ? "true" : "false"} scanned=${scannedBookings} paid_matched=${paidBookingsMatched} trip_keys=${tripKeysFound} updated=${dryRun ? "(dry)" : tripsUpdated} would_update=${dryRun ? tripsWouldUpdate : 0} already_paid=${tripsAlreadyPaid} missing_trips=${missingTrips} skipped_unpaid=${skippedUnpaid} skipped_wrong_month=${skippedWrongMonth} skipped_scope_mismatch=${skippedScopeMismatch} skipped_missing_amount=${skippedMissingAmount} skipped_trip_booking_mismatch=${skippedTripBookingMismatch} errors=${errors.length} post_reconcile_income_cents=${result.post_reconcile_month_income_cents ?? "-"}`,
+  );
+  return result;
+}
+
+// Apply the booking record's payment fields to one scoped tracking trip,
+// then idempotently re-compute the trip-KPI deltas (global + per-month).
+// Extracted from `syncScopedTrackingTripKpiBestEffort` so QR/manual
+// confirmations on multi-leg planned bookings can fan out to every leg
+// trip we discover under the booking's scoped planned-trip prefix.
+async function _trackingSyncApplyPaymentToScopedTripKey({
+  env,
+  recordScope,
+  tripKey,
+  resolvedBookingId,
+  rec,
+  source,
+}) {
+  if (!env?.FLUXIDI_TRACKING || !tripKey) {
+    return { ok: false, reason: "missing_env_or_key" };
+  }
+  const trip = await _trackingSyncGetJson(env, tripKey);
+  if (!trip || typeof trip !== "object" || Array.isArray(trip)) {
+    return { ok: false, reason: "trip_missing", tripKey };
+  }
+  const tripTenant = safeStr(trip?.tenant_id ?? trip?.tenantId, 96);
+  const tripCompany = safeStr(trip?.company_id ?? trip?.companyId, 96);
+  if (
+    (tripTenant && tripTenant !== recordScope.tenant_id) ||
+    (tripCompany && tripCompany !== recordScope.company_id)
+  ) {
+    console.log(
+      `[TRACKING_KPI_SYNC][SKIP_SCOPE] reason=trip_scope_mismatch trip_key=${_bookingIntentMask(tripKey)} booking=${_bookingIntentMask(resolvedBookingId)}`,
+    );
+    await _trackingSyncBumpDebugCounterBestEffort(
+      env,
+      recordScope,
+      "scope_mismatch",
+      1,
+    );
+    return { ok: false, reason: "scope_mismatch", tripKey };
+  }
+  const tripBookingId = safeStr(
+    trip?.booking_id ?? trip?.bookingId ?? trip?.owner_booking_id ?? trip?.ownerBookingId,
+    160,
+  );
+  if (tripBookingId && tripBookingId !== resolvedBookingId) {
+    console.log(
+      `[TRACKING_KPI_SYNC][SKIP] reason=trip_booking_mismatch trip_key=${_bookingIntentMask(tripKey)} booking=${_bookingIntentMask(resolvedBookingId)} trip_booking=${_bookingIntentMask(tripBookingId)}`,
+    );
+    return { ok: false, reason: "trip_booking_mismatch", tripKey };
+  }
+
+  const normalizedStatus = normalizeCompliancePaymentStatus(
+    rec?.payment_status ?? rec?.paymentStatus,
+  );
+  if (normalizedStatus) {
+    trip.payment_status = normalizedStatus;
+    trip.paymentStatus = normalizedStatus;
+  }
+  const paidAt = safeStr(rec?.paid_at ?? rec?.paidAt, 64);
+  if (paidAt) {
+    trip.paid_at = paidAt;
+    trip.paidAt = paidAt;
+  }
+  const method = safeStr(rec?.payment_method ?? rec?.paymentMethod, 32).toLowerCase();
+  if (method) {
+    trip.payment_method = method;
+    trip.paymentMethod = method;
+  }
+  const provider = safeStr(rec?.payment_provider ?? rec?.paymentProvider, 32).toLowerCase();
+  if (provider) {
+    trip.payment_provider = provider;
+    trip.paymentProvider = provider;
+  }
+  const paymentSource = safeStr(
+    rec?.payment_source ?? rec?.paymentSource,
+    32,
+  ).toLowerCase();
+  if (paymentSource) {
+    trip.payment_source = paymentSource;
+    trip.paymentSource = paymentSource;
+  }
+  const currency = safeStr(
+    rec?.currency ?? rec?.booking?.currency ?? trip?.currency ?? "EUR",
+    8,
+  ).toUpperCase();
+  if (currency) {
+    trip.currency = currency;
+  }
+  const amountRaw = rec?.payment_amount ?? rec?.paymentAmount;
+  const amountNum = Number(amountRaw);
+  if (Number.isFinite(amountNum)) {
+    trip.payment_amount = amountNum;
+    trip.paymentAmount = amountNum;
+  }
+  trip.tenant_id = recordScope.tenant_id;
+  trip.tenantId = recordScope.tenant_id;
+  trip.company_id = recordScope.company_id;
+  trip.companyId = recordScope.company_id;
+  await _trackingSyncPutJson(env, tripKey, trip);
+  console.log(
+    `[TRIP_PAYMENT_SYNC][FROM_BOOKING] booking=${_bookingIntentMask(resolvedBookingId)} trip_key=${_bookingIntentMask(tripKey)} payment_status=${normalizedStatus || "-"} method=${method || "-"} provider=${provider || "-"} source=${paymentSource || "-"}`,
+  );
+
+  const nextRaw = _trackingSyncDeriveContribution(trip);
+  if (!nextRaw?.trip_id) return { ok: true, kpiUpdated: false, tripKey };
+  const next = _trackingSyncReadContribShape(nextRaw, nextRaw.trip_id);
+  const contribKey = _trackingSyncScopedTripContribKey(recordScope, next.trip_id);
+  const prev = _trackingSyncReadContribShape(
+    await _trackingSyncGetJson(env, contribKey),
+    next.trip_id,
+  );
+
+  const globalKey = _trackingSyncScopedTripKpisKey(recordScope);
+  const globalCurrent = (await _trackingSyncGetJson(env, globalKey)) ?? {};
+  const currentCompleted = Number.isFinite(Number(globalCurrent.completed_rides_count))
+    ? Math.round(Number(globalCurrent.completed_rides_count))
+    : 0;
+  const currentUnpaid = Number.isFinite(Number(globalCurrent.unpaid_completed_rides_count))
+    ? Math.round(Number(globalCurrent.unpaid_completed_rides_count))
+    : 0;
+  const nextCompleted =
+    currentCompleted + (next.completed_rides_count - prev.completed_rides_count);
+  const nextUnpaid =
+    currentUnpaid + (next.unpaid_completed_rides_count - prev.unpaid_completed_rides_count);
+  await _trackingSyncPutJson(env, globalKey, {
+    completed_rides_count: Math.max(0, nextCompleted),
+    unpaid_completed_rides_count: Math.max(0, nextUnpaid),
+    updated_at: new Date().toISOString(),
+  });
+
+  const monthDeltas = {};
+  if (prev.paid_month && prev.monthly_paid_rides_count > 0) {
+    monthDeltas[prev.paid_month] = monthDeltas[prev.paid_month] || {
+      monthly_paid_rides_count: 0,
+      monthly_income_cents: 0,
+      monthly_missing_amount_count: 0,
+    };
+    monthDeltas[prev.paid_month].monthly_paid_rides_count -= prev.monthly_paid_rides_count;
+    monthDeltas[prev.paid_month].monthly_income_cents -= prev.monthly_income_cents;
+    monthDeltas[prev.paid_month].monthly_missing_amount_count -= prev.monthly_missing_amount_count;
+  }
+  if (next.paid_month && next.monthly_paid_rides_count > 0) {
+    monthDeltas[next.paid_month] = monthDeltas[next.paid_month] || {
+      monthly_paid_rides_count: 0,
+      monthly_income_cents: 0,
+      monthly_missing_amount_count: 0,
+    };
+    monthDeltas[next.paid_month].monthly_paid_rides_count += next.monthly_paid_rides_count;
+    monthDeltas[next.paid_month].monthly_income_cents += next.monthly_income_cents;
+    monthDeltas[next.paid_month].monthly_missing_amount_count += next.monthly_missing_amount_count;
+  }
+
+  for (const [month, delta] of Object.entries(monthDeltas)) {
+    if (
+      !delta ||
+      (!delta.monthly_paid_rides_count &&
+        !delta.monthly_income_cents &&
+        !delta.monthly_missing_amount_count)
+    ) {
+      continue;
+    }
+    const monthKey = _trackingSyncScopedTripMonthKpisKey(recordScope, month);
+    const current = (await _trackingSyncGetJson(env, monthKey)) ?? {};
+    const currentCount = Number.isFinite(Number(current.monthly_paid_rides_count))
+      ? Math.round(Number(current.monthly_paid_rides_count))
+      : 0;
+    const currentIncome = Number.isFinite(Number(current.monthly_income_cents))
+      ? Math.round(Number(current.monthly_income_cents))
+      : 0;
+    const currentMissingAmountCount = Number.isFinite(Number(current.monthly_missing_amount_count))
+      ? Math.round(Number(current.monthly_missing_amount_count))
+      : 0;
+    await _trackingSyncPutJson(env, monthKey, {
+      month,
+      currency: "EUR",
+      monthly_paid_rides_count: Math.max(
+        0,
+        currentCount + delta.monthly_paid_rides_count,
+      ),
+      monthly_income_cents: Math.max(
+        0,
+        currentIncome + delta.monthly_income_cents,
+      ),
+      monthly_missing_amount_count: Math.max(
+        0,
+        currentMissingAmountCount + delta.monthly_missing_amount_count,
+      ),
+      updated_at: new Date().toISOString(),
+    });
+  }
+
+  if (next.monthly_paid_rides_count > 0 && next.monthly_income_cents <= 0) {
+    await _trackingSyncBumpDebugCounterBestEffort(
+      env,
+      recordScope,
+      "missing_amount",
+      1,
+    );
+  }
+
+  await _trackingSyncPutJson(env, contribKey, {
+    ...next,
+    updated_at: new Date().toISOString(),
+    source,
+  });
+  return { ok: true, kpiUpdated: true, tripKey, tripId: next.trip_id };
+}
+
 async function syncScopedTrackingTripKpiBestEffort({
   env,
   bookingId,
@@ -37466,15 +38407,57 @@ async function syncScopedTrackingTripKpiBestEffort({
       rec,
       source,
     });
-    const tripId = _trackingSyncResolveTripId(resolvedBookingId, rec);
-    if (!tripId) {
-      console.log("[TRACKING_KPI_SYNC][SKIP] reason=missing_trip_id");
-      return;
+
+    // Resolve the explicit trip id when the booking record knows it
+    // (e.g. direct trips, or planned bookings where the trip id was
+    // round-tripped on the booking after /trip/record-planned-stop).
+    const explicitTripId = _trackingSyncResolveTripId(resolvedBookingId, rec);
+    const candidateKeys = new Set();
+    if (explicitTripId) {
+      const explicitKey = _trackingSyncScopedTripKey(recordScope, explicitTripId);
+      if (explicitKey) candidateKeys.add(explicitKey);
     }
 
-    const tripKey = _trackingSyncScopedTripKey(recordScope, tripId);
-    const trip = await _trackingSyncGetJson(env, tripKey);
-    if (!trip || typeof trip !== "object" || Array.isArray(trip)) {
+    // Discover every planned-trip leg recorded for this booking by listing
+    // the scoped planned-trip prefix. `handleRecordPlannedStopTrip` keys
+    // are `planned_<bookingId>` (single-leg) OR `planned_<bookingId>_<suffix>`
+    // (multi-leg), and the synthetic id from `_trackingSyncResolveTripId`
+    // only ever matches the single-leg shape. Without this enumeration
+    // multi-leg airport bookings would skip the trip update silently and
+    // leave Driver History showing Unpaid even though the booking record
+    // and booking-finance KPI are paid.
+    const plannedPrefix = _trackingSyncScopedPlannedTripPrefix(recordScope, resolvedBookingId);
+    if (plannedPrefix && env?.FLUXIDI_TRACKING?.list) {
+      let listCursor;
+      try {
+        do {
+          const page = await env.FLUXIDI_TRACKING.list({
+            prefix: plannedPrefix,
+            limit: 200,
+            cursor: listCursor,
+          });
+          for (const item of (page?.keys || [])) {
+            const name = safeStr(item?.name, 320);
+            if (!name) continue;
+            // Guard against bookingId values that could overlap as prefixes.
+            // Accept only `<plannedPrefix>` exact or `<plannedPrefix>_*`.
+            if (name === plannedPrefix || name.startsWith(`${plannedPrefix}_`)) {
+              candidateKeys.add(name);
+            }
+          }
+          listCursor = page?.cursor;
+          if (page?.list_complete !== false) break;
+          if (!listCursor) break;
+        } while (listCursor);
+      } catch (listErr) {
+        console.log(
+          `[TRACKING_KPI_SYNC][WARN] reason=planned_prefix_list_failed booking=${_bookingIntentMask(resolvedBookingId)} err=${safeStr(listErr?.message || listErr, 120) || "unknown"}`,
+        );
+      }
+    }
+
+    if (candidateKeys.size === 0) {
+      const markerTripId = explicitTripId || `planned_${resolvedBookingId}`;
       await _trackingSyncUpsertPendingBookingMarkerBestEffort(
         env,
         recordScope,
@@ -37482,180 +38465,42 @@ async function syncScopedTrackingTripKpiBestEffort({
         rec,
         "trip_missing",
         source,
-        tripId,
+        markerTripId,
       );
       console.log(
-        `[TRACKING_KPI_SYNC][SKIP] reason=trip_missing booking=${safeStr(resolvedBookingId)} trip=${safeStr(tripId)}`,
+        `[TRACKING_KPI_SYNC][SKIP] reason=trip_missing booking=${_bookingIntentMask(resolvedBookingId)} explicit_trip=${safeStr(explicitTripId) || "-"} planned_prefix=${_bookingIntentMask(plannedPrefix)}`,
       );
       return;
     }
 
-    const tripTenant = safeStr(trip?.tenant_id ?? trip?.tenantId, 96);
-    const tripCompany = safeStr(trip?.company_id ?? trip?.companyId, 96);
-    if (
-      (tripTenant && tripTenant !== recordScope.tenant_id) ||
-      (tripCompany && tripCompany !== recordScope.company_id)
-    ) {
-      console.log("[TRACKING_KPI_SYNC][SKIP_SCOPE] reason=trip_scope_mismatch");
-      await _trackingSyncBumpDebugCounterBestEffort(
+    let updatedAny = false;
+    for (const tripKey of candidateKeys) {
+      const result = await _trackingSyncApplyPaymentToScopedTripKey({
         env,
         recordScope,
-        "scope_mismatch",
-        1,
-      );
-      return;
-    }
-    await _trackingSyncDeleteJsonBestEffort(
-      env,
-      _trackingSyncScopedPendingBookingKey(recordScope, resolvedBookingId),
-    );
-
-    const normalizedStatus = normalizeCompliancePaymentStatus(
-      rec?.payment_status ?? rec?.paymentStatus,
-    );
-    if (normalizedStatus) {
-      trip.payment_status = normalizedStatus;
-      trip.paymentStatus = normalizedStatus;
-    }
-    const paidAt = safeStr(rec?.paid_at ?? rec?.paidAt, 64);
-    if (paidAt) {
-      trip.paid_at = paidAt;
-      trip.paidAt = paidAt;
-    }
-    const method = safeStr(rec?.payment_method ?? rec?.paymentMethod, 32).toLowerCase();
-    if (method) {
-      trip.payment_method = method;
-      trip.paymentMethod = method;
-    }
-    const paymentSource = safeStr(
-      rec?.payment_source ?? rec?.paymentSource,
-      32,
-    ).toLowerCase();
-    if (paymentSource) {
-      trip.payment_source = paymentSource;
-      trip.paymentSource = paymentSource;
-    }
-    const currency = safeStr(
-      rec?.currency ?? rec?.booking?.currency ?? trip?.currency ?? "EUR",
-      8,
-    ).toUpperCase();
-    if (currency) {
-      trip.currency = currency;
-    }
-    const amountRaw = rec?.payment_amount ?? rec?.paymentAmount;
-    const amountNum = Number(amountRaw);
-    if (Number.isFinite(amountNum)) {
-      trip.payment_amount = amountNum;
-      trip.paymentAmount = amountNum;
-    }
-    trip.tenant_id = recordScope.tenant_id;
-    trip.tenantId = recordScope.tenant_id;
-    trip.company_id = recordScope.company_id;
-    trip.companyId = recordScope.company_id;
-    await _trackingSyncPutJson(env, tripKey, trip);
-
-    const nextRaw = _trackingSyncDeriveContribution(trip);
-    if (!nextRaw?.trip_id) return;
-    const next = _trackingSyncReadContribShape(nextRaw, nextRaw.trip_id);
-    const contribKey = _trackingSyncScopedTripContribKey(recordScope, next.trip_id);
-    const prev = _trackingSyncReadContribShape(
-      await _trackingSyncGetJson(env, contribKey),
-      next.trip_id,
-    );
-
-    const globalKey = _trackingSyncScopedTripKpisKey(recordScope);
-    const globalCurrent = (await _trackingSyncGetJson(env, globalKey)) ?? {};
-    const currentCompleted = Number.isFinite(Number(globalCurrent.completed_rides_count))
-      ? Math.round(Number(globalCurrent.completed_rides_count))
-      : 0;
-    const currentUnpaid = Number.isFinite(Number(globalCurrent.unpaid_completed_rides_count))
-      ? Math.round(Number(globalCurrent.unpaid_completed_rides_count))
-      : 0;
-    const nextCompleted =
-      currentCompleted + (next.completed_rides_count - prev.completed_rides_count);
-    const nextUnpaid =
-      currentUnpaid + (next.unpaid_completed_rides_count - prev.unpaid_completed_rides_count);
-    await _trackingSyncPutJson(env, globalKey, {
-      completed_rides_count: Math.max(0, nextCompleted),
-      unpaid_completed_rides_count: Math.max(0, nextUnpaid),
-      updated_at: new Date().toISOString(),
-    });
-
-    const monthDeltas = {};
-    if (prev.paid_month && prev.monthly_paid_rides_count > 0) {
-      monthDeltas[prev.paid_month] = monthDeltas[prev.paid_month] || {
-        monthly_paid_rides_count: 0,
-        monthly_income_cents: 0,
-        monthly_missing_amount_count: 0,
-      };
-      monthDeltas[prev.paid_month].monthly_paid_rides_count -= prev.monthly_paid_rides_count;
-      monthDeltas[prev.paid_month].monthly_income_cents -= prev.monthly_income_cents;
-      monthDeltas[prev.paid_month].monthly_missing_amount_count -= prev.monthly_missing_amount_count;
-    }
-    if (next.paid_month && next.monthly_paid_rides_count > 0) {
-      monthDeltas[next.paid_month] = monthDeltas[next.paid_month] || {
-        monthly_paid_rides_count: 0,
-        monthly_income_cents: 0,
-        monthly_missing_amount_count: 0,
-      };
-      monthDeltas[next.paid_month].monthly_paid_rides_count += next.monthly_paid_rides_count;
-      monthDeltas[next.paid_month].monthly_income_cents += next.monthly_income_cents;
-      monthDeltas[next.paid_month].monthly_missing_amount_count += next.monthly_missing_amount_count;
-    }
-
-    for (const [month, delta] of Object.entries(monthDeltas)) {
-      if (
-        !delta ||
-        (!delta.monthly_paid_rides_count &&
-          !delta.monthly_income_cents &&
-          !delta.monthly_missing_amount_count)
-      ) {
-        continue;
-      }
-      const monthKey = _trackingSyncScopedTripMonthKpisKey(recordScope, month);
-      const current = (await _trackingSyncGetJson(env, monthKey)) ?? {};
-      const currentCount = Number.isFinite(Number(current.monthly_paid_rides_count))
-        ? Math.round(Number(current.monthly_paid_rides_count))
-        : 0;
-      const currentIncome = Number.isFinite(Number(current.monthly_income_cents))
-        ? Math.round(Number(current.monthly_income_cents))
-        : 0;
-      const currentMissingAmountCount = Number.isFinite(Number(current.monthly_missing_amount_count))
-        ? Math.round(Number(current.monthly_missing_amount_count))
-        : 0;
-      await _trackingSyncPutJson(env, monthKey, {
-        month,
-        currency: "EUR",
-        monthly_paid_rides_count: Math.max(
-          0,
-          currentCount + delta.monthly_paid_rides_count,
-        ),
-        monthly_income_cents: Math.max(
-          0,
-          currentIncome + delta.monthly_income_cents,
-        ),
-        monthly_missing_amount_count: Math.max(
-          0,
-          currentMissingAmountCount + delta.monthly_missing_amount_count,
-        ),
-        updated_at: new Date().toISOString(),
+        tripKey,
+        resolvedBookingId,
+        rec,
+        source,
       });
+      if (result?.ok && result?.kpiUpdated) {
+        updatedAny = true;
+      } else if (result?.ok === false && result?.reason === "trip_missing") {
+        // A previously-known explicit trip id may have been pruned; this
+        // is non-fatal because the planned-prefix scan covers the live
+        // record set.
+        console.log(
+          `[TRACKING_KPI_SYNC][SKIP] reason=trip_missing booking=${_bookingIntentMask(resolvedBookingId)} trip_key=${_bookingIntentMask(tripKey)}`,
+        );
+      }
     }
 
-    if (next.monthly_paid_rides_count > 0 && next.monthly_income_cents <= 0) {
-      await _trackingSyncBumpDebugCounterBestEffort(
+    if (updatedAny) {
+      await _trackingSyncDeleteJsonBestEffort(
         env,
-        recordScope,
-        "missing_amount",
-        1,
+        _trackingSyncScopedPendingBookingKey(recordScope, resolvedBookingId),
       );
     }
-
-    await _trackingSyncPutJson(env, contribKey, {
-      ...next,
-      updated_at: new Date().toISOString(),
-      source,
-    });
   } catch (err) {
     const reason = safeStr(err?.message || err).slice(0, 180) || "unknown";
     console.log(`[TRACKING_KPI_SYNC][WARN] reason=${reason}`);
@@ -50822,12 +51667,40 @@ async function updateBookingPaymentAuthoritative(
 
   const method = asText(payment?.payment_method || payment?.paymentMethod).toLowerCase();
   const source = asText(payment?.payment_source || payment?.paymentSource).toLowerCase() || "in_car";
+  const providerRaw = asText(payment?.payment_provider || payment?.paymentProvider).toLowerCase();
   const paidAt = asText(payment?.paid_at || payment?.paidAt) || new Date().toISOString();
   const currency = asText(payment?.currency || rec?.booking?.currency || rec?.currency || "EUR").toUpperCase() || "EUR";
   const amountRaw = payment?.amount ?? payment?.price ?? payment?.total;
   const amountNum = Number(amountRaw);
   const amount = Number.isFinite(amountNum) ? amountNum : null;
   const paidByDriverId = asText(payment?.paid_by_driver_id || payment?.paidByDriverId);
+
+  // Manual in-car confirmations (QR bank transfer, cash, Bancontact terminal)
+  // are the only way the booking finance KPI sees a non-Mollie payment for the
+  // current month. Emit an explicit diagnostic so we can verify the request
+  // reached the authoritative path with a non-zero amount and the right
+  // tenant/company scope. Without this log we cannot distinguish "request never
+  // arrived" from "request arrived but amount/scope was empty" in production.
+  if (normalizedStatus === "paid") {
+    const amountCentsLogged = Number.isFinite(amountNum)
+      ? Math.round(amountNum * 100)
+      : (Number.isFinite(Number(rec?.payment_amount))
+          ? Math.round(Number(rec.payment_amount) * 100)
+          : (Number.isFinite(Number(rec?.booking?.price_incl_vat))
+              ? Math.round(Number(rec.booking.price_incl_vat) * 100)
+              : 0));
+    const oldStatusForLog = String(
+      rec?.payment_status || rec?.paymentStatus || "unpaid",
+    ).toLowerCase() || "unpaid";
+    console.log(
+      `[BOOKING_PAYMENT_UPDATE][AUTHORITATIVE] booking=${_bookingIntentMask(bookingId)} old_status=${oldStatusForLog} new_status=${normalizedStatus} method=${method || "-"} source=${source || "-"} provider_in=${providerRaw || "-"} amount=${amount != null ? amount : "-"} amount_cents=${amountCentsLogged} currency=${currency} paid_at=${paidAt} tenant=${_bookingIntentMask(tenantScope?.tenant_id)} company=${_bookingIntentMask(tenantScope?.company_id)} was_already_paid=${wasAlreadyPaid ? "true" : "false"}`,
+    );
+    if (method === "qr_code" || method === "qr") {
+      console.log(
+        `[BOOKING_PAYMENT_UPDATE][QR] booking=${_bookingIntentMask(bookingId)} status=paid provider=manual amount=${amount != null ? amount : "-"} amount_cents=${amountCentsLogged} tenant=${_bookingIntentMask(tenantScope?.tenant_id)} company=${_bookingIntentMask(tenantScope?.company_id)} endpoint=/bookings/:id/payment`,
+      );
+    }
+  }
 
   rec.payment_status = normalizedStatus;
   rec.paymentStatus = normalizedStatus;
@@ -50915,11 +51788,21 @@ async function updateBookingPaymentAuthoritative(
   }
 
   await env.BOOKING_KV.put(key, JSON.stringify(rec));
-  await upsertCompanyBookingsListIndexBestEffort(
+  const indexUpsertResult = await upsertCompanyBookingsListIndexBestEffort(
     env,
     bookingId,
     rec,
     normalizeFleetTenantScope(tenantScope),
+  );
+  // The company bookings list index stores an opaque entry per booking
+  // and the list endpoint always re-hydrates the full booking record at
+  // serve time, so the projection in the index does not carry payment
+  // fields. The diagnostic below confirms that after an authoritative
+  // payment update we successfully re-touched the index entry for this
+  // booking; the next /bookings list response will read the freshly
+  // persisted paid status from BOOKING_KV directly.
+  console.log(
+    `[BOOKING_INDEX][PAYMENT_SYNC] booking=${_bookingIntentMask(bookingId)} payment_status=${rec.payment_status || "-"} method=${method || "-"} provider=${rec.payment_provider || rec.paymentProvider || "-"} index_ok=${indexUpsertResult?.ok === true ? "true" : "false"} index_reason=${safeStr(indexUpsertResult?.reason || (indexUpsertResult?.ok ? "ok" : "unknown"), 64)}`,
   );
   await upsertDashboardBookingsKpiProjectionBestEffort(
     env,
@@ -50928,12 +51811,18 @@ async function updateBookingPaymentAuthoritative(
     normalizeFleetTenantScope(tenantScope),
   );
   if (normalizedStatus === "paid") {
+    const kpiSyncSource = (method === "qr_code" || method === "qr")
+      ? "booking_payment_update_qr"
+      : "booking_payment_update";
+    console.log(
+      `[BOOKING_FINANCE_KPI][SYNC_INVOKE] booking=${_bookingIntentMask(bookingId)} method=${method || "-"} source=${source || "-"} tenant=${_bookingIntentMask(tenantScope?.tenant_id)} company=${_bookingIntentMask(tenantScope?.company_id)} kpi_source=${kpiSyncSource}`,
+    );
     await syncScopedTrackingTripKpiBestEffort({
       env,
       bookingId,
       rec,
       tenantScope,
-      source: "booking_payment_update",
+      source: kpiSyncSource,
     });
   }
   const complianceEvent = buildBookingPaymentUpdateComplianceEvent(rec, bookingId, payment);
