@@ -1472,6 +1472,23 @@ class _DriverHomePageState extends State<DriverHomePage>
     return auth.headers;
   }
 
+  Future<Map<String, String>> _tripsHistoryAuthHeaders({
+    required String scopeSource,
+    required String driverId,
+    String fetchContext = 'history',
+  }) async {
+    final auth = await resolveTripsHistoryAuthHeaders(json: false);
+    final scopeLabel = switch (scopeSource.trim()) {
+      'company_profile' || 'company_session' => 'company',
+      'driver_session' => 'driver_session',
+      _ => scopeSource.trim().isEmpty ? 'unknown' : scopeSource.trim(),
+    };
+    debugPrint(
+      '[DRIVER_HISTORY][FETCH] context=$fetchContext auth_mode=${auth.fetchLogAuthMode} scope_source=$scopeLabel driver=${_maskLocalScopeId(driverId)}',
+    );
+    return auth.headers;
+  }
+
   void _startBookingPolling({required String reason}) {
     if (_liveRideActive) {
       _stopBookingPolling(reason: 'tracking_started');
@@ -9087,7 +9104,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     setState(() => _completedTodayLoading = true);
 
     try {
-      final strictScope = _strictActiveLocalScopeIds();
+      final strictScope = _strictActiveLocalScopeIdsWithSource();
       if (strictScope == null) {
         debugPrint(
           '[DRIVER_DASHBOARD][COMPLETED_TODAY][SKIP_SCOPE] reason=missing_tenant_company_scope source=$reason',
@@ -9118,7 +9135,11 @@ class _DriverHomePageState extends State<DriverHomePage>
         '&driver_id=${Uri.encodeQueryComponent(driverId)}'
         '&limit=200',
       );
-      final historyHeaders = await _companyOwnerHeaders();
+      final historyHeaders = await _tripsHistoryAuthHeaders(
+        scopeSource: strictScope.source,
+        driverId: driverId,
+        fetchContext: 'completed_today',
+      );
       final res = await http
           .get(uri, headers: historyHeaders)
           .timeout(const Duration(seconds: 10));
@@ -15825,7 +15846,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       activeDetails['booking'] = nestedBooking;
       bookingDetailsById[activeBookingId] = activeDetails;
     }
-    final strictScope = _strictActiveLocalScopeIds();
+    final strictScope = _strictActiveLocalScopeIdsWithSource();
     if (strictScope == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -15841,7 +15862,12 @@ class _DriverHomePageState extends State<DriverHomePage>
       );
       return;
     }
-    final historyHeaders = await _companyOwnerHeaders();
+    final historyDriverId = kDriverId.trim();
+    final historyHeaders = await _tripsHistoryAuthHeaders(
+      scopeSource: strictScope.source,
+      driverId: historyDriverId,
+      fetchContext: 'trip_history_page',
+    );
     if (!mounted) return;
     unawaited(
       Navigator.of(context)
@@ -15851,7 +15877,7 @@ class _DriverHomePageState extends State<DriverHomePage>
                 workerBaseUrl: kWorkerBaseUrl,
                 tenantId: strictScope.tenantId,
                 companyId: strictScope.companyId,
-                driverId: kDriverId,
+                driverId: historyDriverId,
                 headers: historyHeaders,
                 bookingDetailsById: bookingDetailsById,
                 driverThemeListenable: _activeDriverThemeListenable,

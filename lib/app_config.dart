@@ -6,6 +6,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/company_session_store.dart';
+import 'package:fluxidi_tracking/driver_session_store.dart';
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
 import 'package:path_provider/path_provider.dart';
@@ -3081,6 +3082,65 @@ Future<CompanyOwnerAuthHeaders> resolveCompanyOwnerAuthHeaders({
   return CompanyOwnerAuthHeaders(
     headers: headers,
     mode: CompanyOwnerAuthMode.none,
+  );
+}
+
+enum TripsHistoryAuthMode { admin, companySession, driverSession, none }
+
+class TripsHistoryAuthHeaders {
+  final Map<String, String> headers;
+  final TripsHistoryAuthMode mode;
+
+  const TripsHistoryAuthHeaders({required this.headers, required this.mode});
+
+  /// Compact label for `[DRIVER_HISTORY][FETCH]` logs.
+  String get fetchLogAuthMode => switch (mode) {
+    TripsHistoryAuthMode.admin ||
+    TripsHistoryAuthMode.companySession => 'company',
+    TripsHistoryAuthMode.driverSession => 'driver',
+    TripsHistoryAuthMode.none => 'none',
+  };
+}
+
+/// Auth headers for tracking-worker `GET /trips/history`.
+///
+/// Prefers compile-time admin token or active company session when available
+/// (business preview / company tablet). Falls back to the standalone public
+/// driver session bearer when no company-owner auth is present.
+Future<TripsHistoryAuthHeaders> resolveTripsHistoryAuthHeaders({
+  bool json = true,
+}) async {
+  final companyAuth = await resolveCompanyOwnerAuthHeaders(json: json);
+  if (companyAuth.mode == CompanyOwnerAuthMode.admin) {
+    return TripsHistoryAuthHeaders(
+      headers: companyAuth.headers,
+      mode: TripsHistoryAuthMode.admin,
+    );
+  }
+  if (companyAuth.mode == CompanyOwnerAuthMode.companySession) {
+    return TripsHistoryAuthHeaders(
+      headers: companyAuth.headers,
+      mode: TripsHistoryAuthMode.companySession,
+    );
+  }
+
+  final headers = <String, String>{'Accept': 'application/json'};
+  if (json) headers['Content-Type'] = 'application/json';
+  final driverSessionToken =
+      (activeDriverSessionNotifier.value?.driverSessionToken ?? '').trim();
+  if (driverSessionToken.isNotEmpty) {
+    headers['Authorization'] = 'Bearer $driverSessionToken';
+    debugPrint('[TRIPS_HISTORY_AUTH][MODE] auth_mode=driver_session');
+    return TripsHistoryAuthHeaders(
+      headers: headers,
+      mode: TripsHistoryAuthMode.driverSession,
+    );
+  }
+
+  debugPrint('[TRIPS_HISTORY_AUTH][MODE] auth_mode=none');
+  return TripsHistoryAuthHeaders(
+    headers: headers,
+    mode: TripsHistoryAuthMode.none,
   );
 }
 

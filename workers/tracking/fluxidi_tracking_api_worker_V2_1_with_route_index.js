@@ -74,6 +74,8 @@ function hasValidAdminToken(req, url, env) {
 
 const COMPANY_SESSION_KEY_PREFIX = "company_admin:session:";
 const COMPANY_SESSION_KEY_SUFFIX = ":v1";
+const PUBLIC_DRIVER_SESSION_KEY_PREFIX = "public_driver:session:";
+const PUBLIC_DRIVER_SESSION_KEY_SUFFIX = ":v1";
 
 function companySessionKey(tokenHash) {
   const safeHash = safeStr(tokenHash, 200);
@@ -100,6 +102,12 @@ async function hashCompanySessionToken(token) {
   return trimmed ? trimmed.toLowerCase() : "";
 }
 
+function publicDriverSessionKey(tokenHash) {
+  const safeHash = safeStr(tokenHash, 200);
+  if (!safeHash) return "";
+  return `${PUBLIC_DRIVER_SESSION_KEY_PREFIX}${safeHash.toLowerCase()}${PUBLIC_DRIVER_SESSION_KEY_SUFFIX}`;
+}
+
 async function loadCompanySessionFromRequest(req, env) {
   if (!env?.BOOKING_KV) return null;
   const token = getBearerToken(req);
@@ -124,6 +132,37 @@ async function loadCompanySessionFromRequest(req, env) {
   }
   if (!tenantId || !companyId) return null;
   return { tenant_id: tenantId, company_id: companyId };
+}
+
+async function loadPublicDriverSessionFromRequest(req, env) {
+  if (!env?.BOOKING_KV) return null;
+  const token = getBearerToken(req);
+  if (!token) return null;
+  const tokenHash = await hashCompanySessionToken(token);
+  if (!tokenHash) return null;
+  const key = publicDriverSessionKey(tokenHash);
+  if (!key) return null;
+  const record = await env.BOOKING_KV.get(key, { type: "json" });
+  if (!record || typeof record !== "object" || Array.isArray(record)) return null;
+  const role = (safeStr(record.role, 24) ?? "").toLowerCase();
+  if (role !== "driver") return null;
+  const tenantId = safeStr(record.tenant_id ?? record.tenantId, 80);
+  const companyId = safeStr(record.company_id ?? record.companyId, 80);
+  const driverId = safeStr(record.driver_id ?? record.driverId, 96);
+  const expiresAt = safeStr(record.expires_at ?? record.expiresAt, 80);
+  const expiresAtMs = Date.parse(expiresAt || "");
+  if (!Number.isFinite(expiresAtMs) || Date.now() >= expiresAtMs) {
+    try {
+      await env.BOOKING_KV.delete(key);
+    } catch (_) {}
+    return null;
+  }
+  if (!tenantId || !companyId || !driverId) return null;
+  return {
+    tenant_id: tenantId,
+    company_id: companyId,
+    driver_id: driverId,
+  };
 }
 
 function maskScopeForTripKpiLog(value) {
@@ -158,6 +197,77 @@ async function requireAdminOrCompanySessionForScope(req, url, env, scope, origin
     `[TRIP_KPIS][AUTH] auth_mode=company_session tenant=${maskScopeForTripKpiLog(companySession.tenant_id)} company=${maskScopeForTripKpiLog(companySession.company_id)}`,
   );
   return { ok: true, auth_mode: "company_session" };
+}
+
+async function resolveTripsHistoryAuth(req, url, env, scope, origin) {
+  const tenantMasked = maskScopeForTripKpiLog(scope.tenant_id);
+  const companyMasked = maskScopeForTripKpiLog(scope.company_id);
+  const requestedDriverId = safeStr(url.searchParams.get("driver_id"), 96);
+
+  if (hasValidAdminToken(req, url, env)) {
+    console.log(
+      `[TRIPS_HISTORY][AUTH] auth_mode=admin tenant=${tenantMasked} company=${companyMasked} driver=${requestedDriverId ? maskScopeForTripKpiLog(requestedDriverId) : "-"}`,
+    );
+    return { ok: true, auth_mode: "admin", forced_driver_id: null };
+  }
+
+  const companySession = await loadCompanySessionFromRequest(req, env);
+  if (companySession) {
+    if (
+      scope.tenant_id !== companySession.tenant_id ||
+      scope.company_id !== companySession.company_id
+    ) {
+      return {
+        ok: false,
+        response: withCors(
+          json({ ok: false, error: "forbidden" }, { status: 403 }),
+          origin,
+        ),
+      };
+    }
+    console.log(
+      `[TRIPS_HISTORY][AUTH] auth_mode=company_session tenant=${tenantMasked} company=${companyMasked} driver=${requestedDriverId ? maskScopeForTripKpiLog(requestedDriverId) : "-"}`,
+    );
+    return { ok: true, auth_mode: "company_session", forced_driver_id: null };
+  }
+
+  const driverSession = await loadPublicDriverSessionFromRequest(req, env);
+  if (driverSession) {
+    if (
+      scope.tenant_id !== driverSession.tenant_id ||
+      scope.company_id !== driverSession.company_id
+    ) {
+      return {
+        ok: false,
+        response: withCors(
+          json({ ok: false, error: "forbidden" }, { status: 403 }),
+          origin,
+        ),
+      };
+    }
+    if (requestedDriverId && requestedDriverId !== driverSession.driver_id) {
+      console.log(
+        `[TRIPS_HISTORY][AUTH] auth_mode=driver_session tenant=${tenantMasked} company=${companyMasked} driver=${maskScopeForTripKpiLog(requestedDriverId)} result=forbidden_driver_mismatch`,
+      );
+      return {
+        ok: false,
+        response: withCors(
+          json({ ok: false, error: "forbidden" }, { status: 403 }),
+          origin,
+        ),
+      };
+    }
+    console.log(
+      `[TRIPS_HISTORY][AUTH] auth_mode=driver_session tenant=${tenantMasked} company=${companyMasked} driver=${maskScopeForTripKpiLog(driverSession.driver_id)}`,
+    );
+    return {
+      ok: true,
+      auth_mode: "driver_session",
+      forced_driver_id: driverSession.driver_id,
+    };
+  }
+
+  throw new Error("Unauthorized");
 }
 
 function requireMapbox(env) {
@@ -3713,11 +3823,12 @@ async function handleTripsHistory(req, url, env, origin) {
   const requiredScope = parseRequiredTenantCompanyScope(req, url, null, { returnResponse: true, origin });
   if (requiredScope instanceof Response) return requiredScope;
   const scope = requiredScope;
-  const auth = await requireAdminOrCompanySessionForScope(req, url, env, scope, origin);
+  const auth = await resolveTripsHistoryAuth(req, url, env, scope, origin);
   if (!auth.ok) return auth.response;
   const tenant_id = scope.tenant_id;
   const company_id = scope.company_id;
-  const driver_id = safeStr(url.searchParams.get("driver_id"), 96);
+  const driver_id =
+    auth.forced_driver_id ?? safeStr(url.searchParams.get("driver_id"), 96);
   const limit = Math.min(200, Math.max(1, Number(url.searchParams.get("limit") || 50)));
   const includeActive = (url.searchParams.get("include_active") || "").toLowerCase() === "1";
   const includeArchived = (url.searchParams.get("include_archived") || "").toLowerCase() === "1";

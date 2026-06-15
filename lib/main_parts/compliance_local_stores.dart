@@ -23,25 +23,44 @@ String _maskLocalScopeId(String value) {
   return (tenantId: tenantId, companyId: companyId);
 }
 
-({String tenantId, String companyId})? _strictActiveLocalScopeIds() {
+({String tenantId, String companyId, String source})?
+_strictActiveLocalScopeIdsWithSource() {
   final activeCompanyId = companyProfileNotifier.value?.companyId.trim() ?? '';
   if (activeCompanyId.isNotEmpty) {
-    return (tenantId: activeCompanyId, companyId: activeCompanyId);
+    return (
+      tenantId: activeCompanyId,
+      companyId: activeCompanyId,
+      source: 'company_profile',
+    );
   }
   final sessionCompanyId =
       activeCompanySessionNotifier.value?.companyId.trim() ?? '';
   if (sessionCompanyId.isNotEmpty) {
-    return (tenantId: sessionCompanyId, companyId: sessionCompanyId);
+    return (
+      tenantId: sessionCompanyId,
+      companyId: sessionCompanyId,
+      source: 'company_session',
+    );
   }
   final driverSession = activeDriverSessionNotifier.value;
   final driverTenantId = (driverSession?.tenantId ?? '').trim();
   final driverCompanyId = (driverSession?.companyId ?? '').trim();
-  if ((driverSession?.isVerifiedPairingSession ?? false) &&
+  if ((driverSession?.isStandaloneLoginSession ?? false) &&
       driverTenantId.isNotEmpty &&
       driverCompanyId.isNotEmpty) {
-    return (tenantId: driverTenantId, companyId: driverCompanyId);
+    return (
+      tenantId: driverTenantId,
+      companyId: driverCompanyId,
+      source: 'driver_session',
+    );
   }
   return null;
+}
+
+({String tenantId, String companyId})? _strictActiveLocalScopeIds() {
+  final resolved = _strictActiveLocalScopeIdsWithSource();
+  if (resolved == null) return null;
+  return (tenantId: resolved.tenantId, companyId: resolved.companyId);
 }
 
 ({String tenantId, String companyId})? _resolveComplianceLedgerScope({
