@@ -27,6 +27,28 @@ class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
     required String es,
   }) => _tr(nl: nl, en: en, fr: fr, es: es);
 
+  void _applyCustomerBookingListRemoval({
+    required Set<String> aliases,
+    required String bookingForLog,
+    required String action,
+  }) {
+    if (!mounted) return;
+    final beforeCount = _bookings.length;
+    setState(() {
+      _bookings = _bookings
+          .where(
+            (item) => !_customerAliasesIntersect(
+              _customerBookingAliasesFromStored(item),
+              aliases,
+            ),
+          )
+          .toList(growable: false);
+    });
+    debugPrint(
+      '[CUSTOMER_BOOKING_CANCEL][LIST_APPLY_RESULT] action=$action booking=${_safeRefPreview(bookingForLog)} aliases=${aliases.length} before=$beforeCount after=${_bookings.length}',
+    );
+  }
+
   @override
   void initState() {
     super.initState();
@@ -105,16 +127,16 @@ class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
     }
   }
 
-  Future<void> _loadLocal() async {
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
+  Future<void> _loadLocal({bool showLoading = true}) async {
+    if (showLoading) {
+      setState(() {
+        _loading = true;
+        _error = null;
+      });
+    }
     try {
       final items = await CustomerBookingsStore.instance.loadAll();
-      final visible = items
-          .where((item) => _isActiveCustomerLifecycleStatus(item.status))
-          .toList(growable: false);
+      final visible = await _filterActiveNonHiddenStoredCustomerBookings(items);
       if (!mounted) return;
       final overlay = await _buildPaymentOverlayForBookings(
         visible,
@@ -124,16 +146,20 @@ class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
       setState(() {
         _bookings = visible;
         _paymentOverlayByBookingId = overlay;
-        _loading = false;
+        if (showLoading) {
+          _loading = false;
+        }
         _lastUpdated = DateTime.now();
       });
       debugPrint(
-        '[CUSTOMER_BOOKINGS][RELOAD_AFTER_DELETE] count=${visible.length}',
+        '[CUSTOMER_BOOKINGS][RELOAD_AFTER_DELETE] count=${visible.length} showLoading=$showLoading',
       );
     } catch (err) {
       if (!mounted) return;
       setState(() {
-        _loading = false;
+        if (showLoading) {
+          _loading = false;
+        }
         _error = _t(
           nl: 'Laden mislukt.',
           en: 'Loading failed.',
@@ -156,6 +182,12 @@ class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
       for (final item in snapshot) {
         final id = item.canonicalBookingId.trim();
         if (id.isEmpty) continue;
+        final itemAliases = _customerBookingAliasesFromStored(item);
+        if (await CustomerBookingsStore.instance.isAnyReferenceAliasHidden(
+          itemAliases,
+        )) {
+          continue;
+        }
         try {
           final proof = await _customerOwnershipProof(
             bookingId: id,
@@ -193,9 +225,9 @@ class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
         }
       }
       final refreshed = await CustomerBookingsStore.instance.loadAll();
-      final visible = refreshed
-          .where((item) => _isActiveCustomerLifecycleStatus(item.status))
-          .toList(growable: false);
+      final visible = await _filterActiveNonHiddenStoredCustomerBookings(
+        refreshed,
+      );
       if (!mounted) return;
       final overlay = await _buildPaymentOverlayForBookings(
         visible,
@@ -517,6 +549,7 @@ class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
   Widget _premiumBookingCard(StoredCustomerBooking booking) {
     final statusColor = _statusColor(booking);
     final paymentKnownPaid = _displayPaymentKnownPaid(booking);
+    final isTerminal = _isCustomerBookingTerminalStatus(booking.status);
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(12),
@@ -682,25 +715,48 @@ class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
           Row(
             mainAxisAlignment: MainAxisAlignment.end,
             children: [
-              OutlinedButton(
-                onPressed: () => _removeFromMyBookings(booking),
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: Colors.white.withOpacity(0.9),
-                  side: BorderSide(color: Colors.white.withOpacity(0.22)),
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 8,
+              if (isTerminal)
+                OutlinedButton(
+                  onPressed: () => _removeFromMyBookings(booking),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.white.withOpacity(0.9),
+                    side: BorderSide(color: Colors.white.withOpacity(0.22)),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 8,
+                    ),
+                  ),
+                  child: Text(
+                    _t(
+                      nl: 'Verwijderen',
+                      en: 'Remove',
+                      fr: 'Supprimer',
+                      es: 'Eliminar',
+                    ),
+                  ),
+                )
+              else
+                OutlinedButton(
+                  onPressed: () => _cancelFromCard(booking),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: const Color(0xFFE88989),
+                    side: BorderSide(
+                      color: const Color(0xFFE88989).withOpacity(0.55),
+                    ),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 8,
+                    ),
+                  ),
+                  child: Text(
+                    _t(
+                      nl: 'Boeking annuleren',
+                      en: 'Cancel booking',
+                      fr: 'Annuler la reservation',
+                      es: 'Cancelar reserva',
+                    ),
                   ),
                 ),
-                child: Text(
-                  _t(
-                    nl: 'Verwijderen',
-                    en: 'Remove',
-                    fr: 'Supprimer',
-                    es: 'Eliminar',
-                  ),
-                ),
-              ),
               const SizedBox(width: 8),
               OutlinedButton(
                 onPressed: () => _openDetails(booking),
@@ -728,7 +784,25 @@ class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
     );
   }
 
-  Future<void> _openDetails(StoredCustomerBooking booking) async {
+  Future<void> _cancelFromCard(StoredCustomerBooking booking) async {
+    final id = booking.canonicalBookingId.trim();
+    if (id.isEmpty) return;
+    debugPrint(
+      '[CUSTOMER_BOOKING_CARD][ACTION] action=cancel booking=${_safeRefPreview(id)} status=${booking.status.isEmpty ? "-" : booking.status}',
+    );
+    debugPrint(
+      '[CUSTOMER_BOOKING_CANCEL][CARD_ROUTE] booking=${_safeRefPreview(id)} route=detail_pending_action',
+    );
+    await _openDetails(
+      booking,
+      pendingAction: kCustomerDetailPendingActionCancel,
+    );
+  }
+
+  Future<void> _openDetails(
+    StoredCustomerBooking booking, {
+    String? pendingAction,
+  }) async {
     final id = booking.canonicalBookingId.trim();
     if (id.isEmpty) return;
     final aliases = _customerBookingAliasesFromStored(booking);
@@ -738,25 +812,19 @@ class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
           bookingId: id,
           initialView: CustomerBookingView.fromStored(booking),
           startsFromLocalCache: true,
+          pendingAction: pendingAction,
         ),
       ),
     );
     final action = _customerDetailResultAction(result);
     if (action == _customerDetailResultRemovedLocal ||
         action == _customerDetailResultCancelledServer) {
-      if (mounted) {
-        setState(() {
-          _bookings = _bookings
-              .where(
-                (item) => !_customerAliasesIntersect(
-                  _customerBookingAliasesFromStored(item),
-                  aliases,
-                ),
-              )
-              .toList(growable: false);
-        });
-      }
-      await _loadLocal();
+      _applyCustomerBookingListRemoval(
+        aliases: aliases,
+        bookingForLog: id,
+        action: action!,
+      );
+      await _loadLocal(showLoading: false);
       if (!mounted) return;
       if (action == _customerDetailResultRemovedLocal) {
         final message = _t(
@@ -777,6 +845,9 @@ class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
   Future<void> _removeFromMyBookings(StoredCustomerBooking booking) async {
     final bookingId = booking.canonicalBookingId.trim();
     if (bookingId.isEmpty) return;
+    debugPrint(
+      '[CUSTOMER_BOOKING_CARD][ACTION] action=local_hide booking=${_safeRefPreview(bookingId)} status=${booking.status.isEmpty ? "-" : booking.status}',
+    );
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -821,19 +892,26 @@ class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
       '[CUSTOMER_BOOKINGS][DELETE_CONFIRM] action=remove_one confirmed=${confirmed == true} booking=${_safeRefPreview(bookingId)}',
     );
     if (confirmed != true || !mounted) return;
-    final result = await _removeLocalCustomerBookingEverywhere(
-      bookingForLog: bookingId,
-      aliases: _customerBookingDeleteAliases(
-        bookingId: booking.bookingId,
-        publicBookingReference: booking.publicBookingReference,
-        bookingReference: booking.bookingReference,
-        publicReference: booking.publicReference,
-        planningReference: booking.planningReference,
-        receiptReference: booking.receiptReference,
-        paymentBookingId: booking.paymentBookingId,
-      ),
+    final aliases = _customerBookingDeleteAliases(
+      bookingId: booking.bookingId,
+      publicBookingReference: booking.publicBookingReference,
+      bookingReference: booking.bookingReference,
+      publicReference: booking.publicReference,
+      planningReference: booking.planningReference,
+      receiptReference: booking.receiptReference,
+      paymentBookingId: booking.paymentBookingId,
     );
-    await _loadLocal();
+    _applyCustomerBookingListRemoval(
+      aliases: aliases,
+      bookingForLog: bookingId,
+      action: _customerDetailResultRemovedLocal,
+    );
+    final result = await _optimisticHideCustomerBookingForCancelOrRemove(
+      bookingForLog: bookingId,
+      aliases: aliases,
+      reason: 'remove',
+    );
+    await _loadLocal(showLoading: false);
     if (!mounted) return;
     final message = result.removed
         ? _t(
@@ -1096,4 +1174,76 @@ class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
       ),
     );
   }
+}
+
+Future<List<StoredCustomerBooking>>
+_filterActiveNonHiddenStoredCustomerBookings(
+  List<StoredCustomerBooking> items,
+) async {
+  final visible = <StoredCustomerBooking>[];
+  for (final item in items) {
+    if (!_isActiveCustomerLifecycleStatus(item.status)) continue;
+    final aliases = _customerBookingAliasesFromStored(item);
+    if (await CustomerBookingsStore.instance.isAnyReferenceAliasHidden(
+      aliases,
+    )) {
+      continue;
+    }
+    visible.add(item);
+  }
+  return visible;
+}
+
+Future<List<CustomerSavedBooking>> _filterActiveNonHiddenSavedCustomerBookings(
+  List<CustomerSavedBooking> items,
+) async {
+  final visible = <CustomerSavedBooking>[];
+  for (final item in items) {
+    if (!_isActiveCustomerLifecycleStatus(item.bookingStatus)) continue;
+    final aliases = _customerBookingDeleteAliases(
+      bookingId: item.bookingId,
+      publicBookingReference: item.publicReference,
+      bookingReference: item.publicReference,
+      publicReference: item.publicReference,
+      source: item.rawSnapshot,
+    );
+    if (await CustomerBookingsStore.instance.isAnyReferenceAliasHidden(
+      aliases,
+    )) {
+      continue;
+    }
+    visible.add(item);
+  }
+  return visible;
+}
+
+Future<({bool removed, bool storeA, bool storeB, int remaining})>
+_optimisticHideCustomerBookingForCancelOrRemove({
+  required String bookingForLog,
+  required Set<String> aliases,
+  required String reason,
+}) async {
+  final tag = reason == 'remove'
+      ? '[CUSTOMER_BOOKING_REMOVE][OPTIMISTIC_HIDE]'
+      : '[CUSTOMER_BOOKING_CANCEL][OPTIMISTIC_HIDE]';
+  debugPrint(
+    '$tag booking=${_safeRefPreview(bookingForLog)} aliases=${aliases.length}',
+  );
+  await CustomerBookingsStore.instance.markHiddenByAnyReferenceAliases(aliases);
+  final activeResult = await CustomerBookingsStore.instance
+      .removeByAnyReferenceAliases(aliases);
+  final crossScopeResult = await CustomerBookingsStore.instance
+      .removeByAnyReferenceAliasesAcrossKnownCustomerScopesForDisplayOnly(
+        aliases,
+      );
+  final removed = activeResult.removed || crossScopeResult.removed;
+  debugPrint(
+    '[CUSTOMER_BOOKING][HIDE_PERSIST] booking=${_safeRefPreview(bookingForLog)} activeRemoved=${activeResult.removedCount} crossRemoved=${crossScopeResult.removedCount}',
+  );
+  return (
+    removed: removed,
+    storeA: activeResult.removed,
+    storeB: crossScopeResult.removed,
+    remaining: activeResult.remaining,
+  );
 }

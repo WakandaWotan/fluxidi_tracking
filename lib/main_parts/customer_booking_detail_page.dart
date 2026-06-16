@@ -3,17 +3,30 @@ part of '../main.dart';
 /// Customer-facing booking detail screen. Read-only; pull-to-refresh re-fetches
 /// the same `GET /bookings/{id}` endpoint. Does not expose driver/admin data
 /// or modify any backend state.
+/// Identifier for the "auto-start cancel" flow triggered when the customer
+/// taps "Boeking annuleren" directly from a list card. The detail page hosts
+/// the canonical cancellation flow (proof + scope + policy + failure dialogs);
+/// the list cards delegate to it so we never duplicate that logic.
+const String kCustomerDetailPendingActionCancel = 'cancel';
+
 class CustomerBookingDetailPage extends StatefulWidget {
   const CustomerBookingDetailPage({
     super.key,
     required this.bookingId,
     required this.initialView,
     this.startsFromLocalCache = false,
+    this.pendingAction,
   });
 
   final String bookingId;
   final CustomerBookingView initialView;
   final bool startsFromLocalCache;
+
+  /// Optional one-shot action to invoke automatically after first frame.
+  /// Currently only [kCustomerDetailPendingActionCancel] is supported.
+  /// Used by customer overview cards to delegate the cancel flow to the
+  /// existing detail-page handler without duplicating cancel logic.
+  final String? pendingAction;
 
   @override
   State<CustomerBookingDetailPage> createState() =>
@@ -45,6 +58,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
   // label flicker after a successful resumed Mollie payment.
   bool _optimisticPaidApplied = false;
   String? _optimisticPaidPaymentBookingId;
+  bool _pendingActionConsumed = false;
 
   String _t({
     required String nl,
@@ -65,6 +79,23 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
     fluxidiPendingPaymentNotifier.addListener(
       _onPendingPaymentNotifierChangedForCustomerDetail,
     );
+    _schedulePendingAction();
+  }
+
+  void _schedulePendingAction() {
+    final action = widget.pendingAction?.trim().toLowerCase();
+    if (action == null || action.isEmpty) return;
+    if (_pendingActionConsumed) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _pendingActionConsumed) return;
+      _pendingActionConsumed = true;
+      if (action == kCustomerDetailPendingActionCancel) {
+        debugPrint(
+          '[CUSTOMER_BOOKING_CANCEL][CARD_ROUTE] booking=${_safeRefPreview(widget.bookingId)} route=detail_pending_action',
+        );
+        unawaited(_cancelBookingServerSide());
+      }
+    });
   }
 
   @override
@@ -1335,18 +1366,6 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
       '[CUSTOMER_BOOKINGS][DELETE_CONFIRM] action=detail_remove_one confirmed=${confirmed == true} booking=${_safeRefPreview(bookingId)}',
     );
     if (confirmed != true || !mounted) return;
-    final result = await _removeLocalCustomerBookingEverywhere(
-      bookingForLog: bookingId,
-      aliases: _customerBookingDeleteAliases(
-        bookingId: bookingId,
-        publicBookingReference: _view.publicBookingReference,
-        bookingReference: _view.publicBookingReference,
-        publicReference: _view.publicBookingReference,
-        planningReference: _view.planningReference,
-        receiptReference: _view.receiptReference,
-        source: _view.source,
-      ),
-    );
     final aliases = _customerBookingDeleteAliases(
       bookingId: bookingId,
       publicBookingReference: _view.publicBookingReference,
@@ -1355,6 +1374,11 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
       planningReference: _view.planningReference,
       receiptReference: _view.receiptReference,
       source: _view.source,
+    );
+    final result = await _optimisticHideCustomerBookingForCancelOrRemove(
+      bookingForLog: bookingId,
+      aliases: aliases,
+      reason: 'remove',
     );
     final localAfterDelete = await CustomerBookingsStore.instance.loadAll();
     final stillExists = localAfterDelete.any(
@@ -1367,6 +1391,9 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
     if (result.removed || !stillExists) {
       debugPrint(
         '[CUSTOMER_BOOKING][DELETE_POP] booking=${_safeRefPreview(bookingId)} reason=${result.removed ? 'removed' : 'already_absent'}',
+      );
+      debugPrint(
+        '[CUSTOMER_BOOKING_CANCEL][DETAIL_RESULT] action=$_customerDetailResultRemovedLocal booking=${_safeRefPreview(bookingId)} aliases=${aliases.length}',
       );
       Navigator.of(
         context,
@@ -1684,6 +1711,8 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
       return 'paid_cancellation_requires_contact';
     }
     if (token == 'cancellation_window_closed') return token;
+    if (token == 'driver_already_en_route') return token;
+    if (token == 'customer_cancellation_disabled') return token;
     if (token == 'booking_not_found') return token;
     if (token == 'network_error' || token == 'http_0') return 'network_error';
     return token;
@@ -1692,8 +1721,12 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
   int _cancellationFailurePriority(String reason) {
     switch (_normalizeCancellationFailureReason(reason)) {
       case 'paid_cancellation_requires_contact':
+        return 6;
+      case 'driver_already_en_route':
         return 5;
       case 'cancellation_window_closed':
+        return 4;
+      case 'customer_cancellation_disabled':
         return 4;
       case 'booking_not_found':
         return 3;
@@ -1800,6 +1833,42 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
           allowRefresh: false,
           accent: _themePalette.danger,
           icon: Icons.block_rounded,
+        );
+      case 'driver_already_en_route':
+        return (
+          title: _t(
+            nl: 'Chauffeur is al onderweg',
+            en: 'Driver already en route',
+            fr: 'Le chauffeur est deja en route',
+            es: 'El conductor ya esta en camino',
+          ),
+          message: _t(
+            nl: 'De chauffeur is al onderweg naar het ophaaladres. Online annuleren is daarom niet meer mogelijk. Neem contact op met het taxibedrijf als je hulp nodig hebt.',
+            en: 'The driver is already on the way to the pickup address, so online cancellation is no longer possible. Please contact the taxi company if you need help.',
+            fr: 'Le chauffeur est deja en route vers l adresse de prise en charge. L annulation en ligne n est donc plus possible. Contactez la compagnie de taxi si vous avez besoin d aide.',
+            es: 'El conductor ya esta en camino al punto de recogida. Por eso la cancelacion en linea ya no es posible. Contacta con la empresa de taxi si necesitas ayuda.',
+          ),
+          allowRefresh: false,
+          accent: _themePalette.danger,
+          icon: Icons.directions_car_filled_rounded,
+        );
+      case 'customer_cancellation_disabled':
+        return (
+          title: _t(
+            nl: 'Annuleren niet online mogelijk',
+            en: 'Online cancellation not available',
+            fr: 'Annulation en ligne impossible',
+            es: 'Cancelacion online no disponible',
+          ),
+          message: _t(
+            nl: 'Dit taxibedrijf staat online annuleren momenteel niet toe. Neem contact op met het taxibedrijf om je boeking te annuleren.',
+            en: 'This taxi company does not currently allow online cancellation. Please contact the taxi company to cancel your booking.',
+            fr: 'Cette compagnie de taxi n autorise pas l annulation en ligne pour le moment. Contactez la compagnie pour annuler votre reservation.',
+            es: 'Esta empresa de taxi no permite actualmente la cancelacion en linea. Contacta con la empresa para cancelar tu reserva.',
+          ),
+          allowRefresh: false,
+          accent: _themePalette.gold,
+          icon: Icons.support_agent_rounded,
         );
       case 'booking_not_found':
         return (
@@ -2179,6 +2248,13 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
               ? reasonCode
               : (errorCode.isNotEmpty ? errorCode : 'http_${res.statusCode}'),
         );
+        if (normalizedReason == 'driver_already_en_route' ||
+            normalizedReason == 'customer_cancellation_disabled') {
+          await _showCustomerCancellationFailureDialog(
+            reason: normalizedReason,
+          );
+          return;
+        }
         strongestFailureReason = _pickStrongerCancellationFailure(
           strongestFailureReason,
           normalizedReason,
@@ -2201,14 +2277,18 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
         receiptReference: _view.receiptReference,
         source: _view.source,
       );
-      final localResult = await _removeLocalCustomerBookingEverywhere(
+      final localResult = await _optimisticHideCustomerBookingForCancelOrRemove(
         bookingForLog: bookingIdForRemoval,
         aliases: aliases,
+        reason: 'cancel',
       );
       debugPrint(
         '[CUSTOMER_BOOKING][CANCEL_LOCAL_UPDATE] booking=${_safeRefPreview(bookingIdForRemoval)} removed=${localResult.removed} remaining=${localResult.remaining}',
       );
       if (!mounted) return;
+      debugPrint(
+        '[CUSTOMER_BOOKING_CANCEL][DETAIL_RESULT] action=$_customerDetailResultCancelledServer booking=${_safeRefPreview(bookingIdForRemoval)} aliases=${aliases.length}',
+      );
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
@@ -2236,14 +2316,19 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
           cancelScope: scope,
         );
         if (cancelled) {
-          final localResult = await _removeLocalCustomerBookingEverywhere(
-            bookingForLog: bookingId,
-            aliases: aliases,
-          );
+          final localResult =
+              await _optimisticHideCustomerBookingForCancelOrRemove(
+                bookingForLog: bookingId,
+                aliases: aliases,
+                reason: 'cancel',
+              );
           debugPrint(
             '[CUSTOMER_BOOKING][CANCEL_VERIFY_OK] booking=${_safeRefPreview(bookingId)} removed=${localResult.removed}',
           );
           if (!mounted) return;
+          debugPrint(
+            '[CUSTOMER_BOOKING_CANCEL][DETAIL_RESULT] action=$_customerDetailResultCancelledServer booking=${_safeRefPreview(bookingId)} aliases=${aliases.length}',
+          );
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
               content: Text(

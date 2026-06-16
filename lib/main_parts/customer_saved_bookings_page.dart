@@ -95,19 +95,24 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
     }
   }
 
-  Future<void> _loadLocal() async {
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
+  Future<void> _loadLocal({
+    bool showLoading = true,
+    bool runBootstrap = true,
+  }) async {
+    if (showLoading) {
+      setState(() {
+        _loading = true;
+        _error = null;
+      });
+    }
     try {
-      await _bootstrapCustomerSessionAndMergeBookings(
-        reason: 'customer_saved_bookings',
-      );
+      if (runBootstrap) {
+        await _bootstrapCustomerSessionAndMergeBookings(
+          reason: 'customer_saved_bookings',
+        );
+      }
       final items = await CustomerBookingStore.instance.loadAll();
-      final visible = items
-          .where((item) => _isActiveCustomerLifecycleStatus(item.bookingStatus))
-          .toList(growable: false);
+      final visible = await _filterActiveNonHiddenSavedCustomerBookings(items);
       if (!mounted) return;
       final overlay = await _buildPaymentOverlayForBookings(
         visible,
@@ -117,12 +122,16 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
       setState(() {
         _bookings = visible;
         _paymentOverlayByBookingId = overlay;
-        _loading = false;
+        if (showLoading) {
+          _loading = false;
+        }
       });
     } catch (err) {
       if (!mounted) return;
       setState(() {
-        _loading = false;
+        if (showLoading) {
+          _loading = false;
+        }
         _paymentOverlayByBookingId = const <String, String>{};
         _error = _t(
           nl: 'Laden mislukt.',
@@ -132,6 +141,28 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
         );
       });
     }
+  }
+
+  void _applySavedBookingListRemoval({
+    required Set<String> aliases,
+    required String bookingForLog,
+    required String action,
+  }) {
+    if (!mounted) return;
+    final beforeCount = _bookings.length;
+    setState(() {
+      _bookings = _bookings
+          .where(
+            (item) => !_customerAliasesIntersect(
+              _aliasesForSavedBooking(item),
+              aliases,
+            ),
+          )
+          .toList(growable: false);
+    });
+    debugPrint(
+      '[CUSTOMER_BOOKING_CANCEL][LIST_APPLY_RESULT] action=$action booking=${_safeRefPreview(bookingForLog)} aliases=${aliases.length} before=$beforeCount after=${_bookings.length}',
+    );
   }
 
   Set<String> _aliasesForSavedBooking(CustomerSavedBooking booking) {
@@ -515,6 +546,7 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
         : palette.textMuted.withOpacity(0.86);
     final statusColor = _savedStatusColor(booking);
     final paid = _displayPaymentKnownPaid(booking);
+    final isTerminal = _isCustomerBookingTerminalStatus(booking.bookingStatus);
     final reference = booking.publicReference.trim().isNotEmpty
         ? booking.publicReference.trim()
         : booking.bookingId.trim();
@@ -707,6 +739,76 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
                   ),
                 ],
               ),
+              const SizedBox(height: 10),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  if (isTerminal)
+                    OutlinedButton(
+                      onPressed: () => _removeSavedFromMyBookings(booking),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: primaryTextColor.withOpacity(0.9),
+                        side: BorderSide(
+                          color: palette.border.withOpacity(0.6),
+                        ),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 8,
+                        ),
+                      ),
+                      child: Text(
+                        _t(
+                          nl: 'Verwijderen',
+                          en: 'Remove',
+                          fr: 'Supprimer',
+                          es: 'Eliminar',
+                        ),
+                      ),
+                    )
+                  else
+                    OutlinedButton(
+                      onPressed: () => _cancelSavedFromCard(booking),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: palette.danger.withOpacity(0.95),
+                        side: BorderSide(
+                          color: palette.danger.withOpacity(0.55),
+                        ),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 8,
+                        ),
+                      ),
+                      child: Text(
+                        _t(
+                          nl: 'Boeking annuleren',
+                          en: 'Cancel booking',
+                          fr: 'Annuler la reservation',
+                          es: 'Cancelar reserva',
+                        ),
+                      ),
+                    ),
+                  const SizedBox(width: 8),
+                  OutlinedButton(
+                    onPressed: () => _openSavedBooking(booking),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: palette.gold.withOpacity(0.97),
+                      side: BorderSide(color: palette.gold.withOpacity(0.4)),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 8,
+                      ),
+                    ),
+                    child: Text(
+                      _t(
+                        nl: 'Boeking bekijken',
+                        en: 'View booking',
+                        fr: 'Voir la reservation',
+                        es: 'Ver reserva',
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             ],
           ),
         ),
@@ -714,7 +816,103 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
     );
   }
 
-  Future<void> _openSavedBooking(CustomerSavedBooking booking) async {
+  Future<void> _cancelSavedFromCard(CustomerSavedBooking booking) async {
+    final id = booking.bookingId.trim();
+    if (id.isEmpty) return;
+    debugPrint(
+      '[CUSTOMER_BOOKING_CARD][ACTION] action=cancel booking=${_safeRefPreview(id)} status=${booking.bookingStatus.isEmpty ? "-" : booking.bookingStatus}',
+    );
+    debugPrint(
+      '[CUSTOMER_BOOKING_CANCEL][CARD_ROUTE] booking=${_safeRefPreview(id)} route=detail_pending_action',
+    );
+    await _openSavedBooking(
+      booking,
+      pendingAction: kCustomerDetailPendingActionCancel,
+    );
+  }
+
+  Future<void> _removeSavedFromMyBookings(CustomerSavedBooking booking) async {
+    final bookingId = booking.bookingId.trim();
+    if (bookingId.isEmpty) return;
+    debugPrint(
+      '[CUSTOMER_BOOKING_CARD][ACTION] action=local_hide booking=${_safeRefPreview(bookingId)} status=${booking.bookingStatus.isEmpty ? "-" : booking.bookingStatus}',
+    );
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(
+          _t(
+            nl: 'Boeking verwijderen?',
+            en: 'Remove booking?',
+            fr: 'Supprimer la reservation ?',
+            es: '¿Eliminar reserva?',
+          ),
+        ),
+        content: Text(
+          _t(
+            nl: 'Deze boeking wordt alleen uit jouw lokale overzicht verwijderd. De bedrijfsadministratie en ritgeschiedenis blijven bewaard.',
+            en: 'This booking will only be removed from your local overview. Company administration and ride history remain stored.',
+            fr: 'Cette reservation sera supprimee uniquement de votre apercu local. L administration et l historique des trajets restent conserves.',
+            es: 'Esta reserva solo se eliminara de tu vista local. La administracion de la empresa y el historial de viajes se conservan.',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: Text(
+              _t(nl: 'Annuleren', en: 'Cancel', fr: 'Annuler', es: 'Cancelar'),
+            ),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: Text(
+              _t(
+                nl: 'Verwijderen',
+                en: 'Remove',
+                fr: 'Supprimer',
+                es: 'Eliminar',
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    final aliases = _aliasesForSavedBooking(booking);
+    _applySavedBookingListRemoval(
+      aliases: aliases,
+      bookingForLog: bookingId,
+      action: _customerDetailResultRemovedLocal,
+    );
+    final result = await _optimisticHideCustomerBookingForCancelOrRemove(
+      bookingForLog: bookingId,
+      aliases: aliases,
+      reason: 'remove',
+    );
+    await _loadLocal(showLoading: false, runBootstrap: false);
+    if (!mounted) return;
+    final message = result.removed
+        ? _t(
+            nl: 'Boeking verwijderd uit je lokale overzicht.',
+            en: 'Booking removed from your local overview.',
+            fr: 'Reservation supprimee de votre apercu local.',
+            es: 'Reserva eliminada de tu vista local.',
+          )
+        : _t(
+            nl: 'Boeking niet gevonden in lokale opslag.',
+            en: 'Booking not found in local storage.',
+            fr: 'Reservation introuvable dans le stockage local.',
+            es: 'Reserva no encontrada en el almacenamiento local.',
+          );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  Future<void> _openSavedBooking(
+    CustomerSavedBooking booking, {
+    String? pendingAction,
+  }) async {
     final id = booking.bookingId.trim();
     if (id.isEmpty) return;
     final beforeCount = _bookings.length;
@@ -747,25 +945,19 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
                 bookingId: id,
                 initialView: view,
                 startsFromLocalCache: false,
+                pendingAction: pendingAction,
               ),
             ),
           );
           final action = _customerDetailResultAction(result);
           if (action == _customerDetailResultRemovedLocal ||
               action == _customerDetailResultCancelledServer) {
-            if (mounted) {
-              setState(() {
-                _bookings = _bookings
-                    .where(
-                      (item) => !_customerAliasesIntersect(
-                        _aliasesForSavedBooking(item),
-                        aliases,
-                      ),
-                    )
-                    .toList(growable: false);
-              });
-            }
-            await _loadLocal();
+            _applySavedBookingListRemoval(
+              aliases: aliases,
+              bookingForLog: id,
+              action: action!,
+            );
+            await _loadLocal(showLoading: false, runBootstrap: false);
           }
           if (mounted) {
             debugPrint(
@@ -806,25 +998,19 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
           bookingId: id,
           initialView: CustomerBookingView.fromStored(fallback),
           startsFromLocalCache: true,
+          pendingAction: pendingAction,
         ),
       ),
     );
     final action = _customerDetailResultAction(result);
     if (action == _customerDetailResultRemovedLocal ||
         action == _customerDetailResultCancelledServer) {
-      if (mounted) {
-        setState(() {
-          _bookings = _bookings
-              .where(
-                (item) => !_customerAliasesIntersect(
-                  _aliasesForSavedBooking(item),
-                  aliases,
-                ),
-              )
-              .toList(growable: false);
-        });
-      }
-      await _loadLocal();
+      _applySavedBookingListRemoval(
+        aliases: aliases,
+        bookingForLog: id,
+        action: action!,
+      );
+      await _loadLocal(showLoading: false, runBootstrap: false);
     }
     if (mounted) {
       debugPrint(
