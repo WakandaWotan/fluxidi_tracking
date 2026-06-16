@@ -712,8 +712,7 @@ class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
             ],
           ),
           const SizedBox(height: 10),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.end,
+          _CustomerBookingCardActionsLayout(
             children: [
               if (isTerminal)
                 OutlinedButton(
@@ -725,6 +724,7 @@ class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
                       horizontal: 12,
                       vertical: 8,
                     ),
+                    minimumSize: const Size(64, 44),
                   ),
                   child: Text(
                     _t(
@@ -747,6 +747,7 @@ class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
                       horizontal: 12,
                       vertical: 8,
                     ),
+                    minimumSize: const Size(64, 44),
                   ),
                   child: Text(
                     _t(
@@ -757,7 +758,6 @@ class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
                     ),
                   ),
                 ),
-              const SizedBox(width: 8),
               OutlinedButton(
                 onPressed: () => _openDetails(booking),
                 style: OutlinedButton.styleFrom(
@@ -767,6 +767,7 @@ class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
                     horizontal: 12,
                     vertical: 8,
                   ),
+                  minimumSize: const Size(64, 44),
                 ),
                 child: Text(
                   _t(
@@ -1246,4 +1247,42 @@ _optimisticHideCustomerBookingForCancelOrRemove({
     storeB: crossScopeResult.removed,
     remaining: activeResult.remaining,
   );
+}
+
+class _CustomerBookingCardActionsLayout extends StatelessWidget {
+  const _CustomerBookingCardActionsLayout({required this.children});
+
+  final List<Widget> children;
+
+  static const double _stackBreakpoint = 520;
+  static const double _gap = 9;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final stackVertically = constraints.maxWidth < _stackBreakpoint;
+        if (stackVertically) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              for (var i = 0; i < children.length; i++) ...[
+                if (i > 0) const SizedBox(height: _gap),
+                SizedBox(width: double.infinity, child: children[i]),
+              ],
+            ],
+          );
+        }
+        return Row(
+          mainAxisAlignment: MainAxisAlignment.end,
+          children: [
+            for (var i = 0; i < children.length; i++) ...[
+              if (i > 0) const SizedBox(width: _gap),
+              children[i],
+            ],
+          ],
+        );
+      },
+    );
+  }
 }

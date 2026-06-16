@@ -740,8 +740,7 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
                 ],
               ),
               const SizedBox(height: 10),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.end,
+              _CustomerBookingCardActionsLayout(
                 children: [
                   if (isTerminal)
                     OutlinedButton(
@@ -755,6 +754,7 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
                           horizontal: 12,
                           vertical: 8,
                         ),
+                        minimumSize: const Size(64, 44),
                       ),
                       child: Text(
                         _t(
@@ -777,6 +777,7 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
                           horizontal: 12,
                           vertical: 8,
                         ),
+                        minimumSize: const Size(64, 44),
                       ),
                       child: Text(
                         _t(
@@ -787,7 +788,6 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
                         ),
                       ),
                     ),
-                  const SizedBox(width: 8),
                   OutlinedButton(
                     onPressed: () => _openSavedBooking(booking),
                     style: OutlinedButton.styleFrom(
@@ -797,6 +797,7 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
                         horizontal: 12,
                         vertical: 8,
                       ),
+                      minimumSize: const Size(64, 44),
                     ),
                     child: Text(
                       _t(
