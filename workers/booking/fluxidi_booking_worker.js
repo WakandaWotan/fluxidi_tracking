@@ -17889,11 +17889,13 @@ async function handleSafeResetOperationalData(request, url, env) {
   }, 200);
 }
 
-const BOOKING_TEST_RESET_DRY_RUN_MODES = [
+const BOOKING_TEST_RESET_MODES = [
   "bookings_only",
   "bookings_and_tracking",
   "full_test_reset",
 ];
+
+const BOOKING_TEST_RESET_CONFIRM_PHRASE = "RESET_TEST_BOOKINGS";
 
 function _bookingTestResetScopedPrefix(scope, suffix) {
   const normalized = _safeResetNormalizedScope(scope);
@@ -17905,17 +17907,23 @@ function _isScopedBookingIndexLikeKey(key) {
   return /:bookings:v1$/.test(String(key || ""));
 }
 
-async function _safeDryRunCountKvPrefix(namespace, prefix, { keyFilter = null, maxSamples = 5 } = {}) {
+function _bookingTestResetKeyPreview(key, maxLen = 120) {
+  const text = String(key || "");
+  if (!text) return "";
+  return text.length > maxLen ? `${text.slice(0, maxLen - 3)}...` : text;
+}
+
+function _bookingTestResetSampleKeyPreviews(keys, maxSamples = 5) {
+  return (keys || [])
+    .slice(0, maxSamples)
+    .map((key) => _bookingTestResetKeyPreview(key));
+}
+
+async function _listScopedBookingTestResetKvKeys(namespace, prefix, { keyFilter = null } = {}) {
   if (!namespace || !prefix) {
-    return {
-      count: 0,
-      sample_key_previews: [],
-      scan_complete: false,
-      error: "missing_namespace_or_prefix",
-    };
+    return { keys: [], scan_complete: false, error: "missing_namespace_or_prefix" };
   }
-  let count = 0;
-  const sample_key_previews = [];
+  const keys = [];
   let cursor = undefined;
   let scan_complete = true;
   try {
@@ -17925,10 +17933,7 @@ async function _safeDryRunCountKvPrefix(namespace, prefix, { keyFilter = null, m
         const key = String(item?.name || "");
         if (!key) continue;
         if (typeof keyFilter === "function" && !keyFilter(key)) continue;
-        count += 1;
-        if (sample_key_previews.length < maxSamples) {
-          sample_key_previews.push(key.length > 120 ? `${key.slice(0, 117)}...` : key);
-        }
+        keys.push(key);
       }
       cursor = page?.cursor;
       if (page?.list_complete !== false) break;
@@ -17937,33 +17942,52 @@ async function _safeDryRunCountKvPrefix(namespace, prefix, { keyFilter = null, m
         break;
       }
     } while (cursor);
-    return { count, sample_key_previews, scan_complete };
+    return { keys, scan_complete };
   } catch (err) {
     return {
-      count,
-      sample_key_previews,
+      keys,
       scan_complete: false,
       error: safeStr(err?.message || String(err), 200) || "kv_list_error",
     };
   }
 }
 
-async function _safeDryRunCountKvPrefixes(namespace, prefixes, options = {}) {
-  let count = 0;
-  const sample_key_previews = [];
+async function _listScopedBookingTestResetKvKeysMulti(namespace, prefixes, options = {}) {
+  const seen = new Set();
+  const keys = [];
   let scan_complete = true;
   let error = null;
   for (const prefix of prefixes || []) {
-    const result = await _safeDryRunCountKvPrefix(namespace, prefix, options);
-    count += Number(result?.count || 0);
-    for (const preview of result?.sample_key_previews || []) {
-      if (sample_key_previews.length >= (options.maxSamples || 5)) break;
-      if (!sample_key_previews.includes(preview)) sample_key_previews.push(preview);
+    const listed = await _listScopedBookingTestResetKvKeys(namespace, prefix, options);
+    for (const key of listed?.keys || []) {
+      if (seen.has(key)) continue;
+      seen.add(key);
+      keys.push(key);
     }
-    if (result?.scan_complete !== true) scan_complete = false;
-    if (result?.error && !error) error = result.error;
+    if (listed?.scan_complete !== true) scan_complete = false;
+    if (listed?.error && !error) error = listed.error;
   }
-  return { count, sample_key_previews, scan_complete, error };
+  return { keys, scan_complete, error };
+}
+
+async function _safeDryRunCountKvPrefix(namespace, prefix, { keyFilter = null, maxSamples = 5 } = {}) {
+  const listed = await _listScopedBookingTestResetKvKeys(namespace, prefix, { keyFilter });
+  return {
+    count: listed.keys.length,
+    sample_key_previews: _bookingTestResetSampleKeyPreviews(listed.keys, maxSamples),
+    scan_complete: listed.scan_complete,
+    ...(listed.error ? { error: listed.error } : {}),
+  };
+}
+
+async function _safeDryRunCountKvPrefixes(namespace, prefixes, options = {}) {
+  const listed = await _listScopedBookingTestResetKvKeysMulti(namespace, prefixes, options);
+  return {
+    count: listed.keys.length,
+    sample_key_previews: _bookingTestResetSampleKeyPreviews(listed.keys, options.maxSamples || 5),
+    scan_complete: listed.scan_complete,
+    ...(listed.error ? { error: listed.error } : {}),
+  };
 }
 
 async function _safeDryRunExactKeyStats(namespace, key) {
@@ -18028,44 +18052,123 @@ function _bookingTestResetCategoryDeletes(action) {
   );
 }
 
-async function handleScopedBookingTestResetDryRun(request, url, env) {
-  _requireAdmin(request, url, env);
+function _bookingTestResetCategoryResidualCount(category) {
+  if (!category || category?.ok === false) return 0;
+  if (category?.action === "replace_empty") {
+    return Number(category?.current_items || 0) > 0 ? 1 : 0;
+  }
+  if (category?.id === "dashboard_bookings_kpis") {
+    return Number(category?.contrib_count ?? category?.count ?? 0);
+  }
+  if (category?.id === "trips_index") {
+    return Number(category?.driver_index_count ?? category?.count ?? 0);
+  }
+  if (!_bookingTestResetCategoryDeletes(category?.action)) return 0;
+  return Number(category?.count || 0);
+}
+
+function _bookingTestResetCategoryKeyFilter(categoryId) {
+  if (categoryId === "customer_booking_indexes" || categoryId === "driver_booking_indexes" || categoryId === "vehicle_booking_indexes") {
+    return _isScopedBookingIndexLikeKey;
+  }
+  return null;
+}
+
+function _bookingTestResetPublicCategoryView(entry) {
+  if (!entry || typeof entry !== "object") return entry;
+  const { keys, ...publicView } = entry;
+  return publicView;
+}
+
+function _bookingTestResetPreservedBlock() {
+  return {
+    settings: true,
+    business_profile: true,
+    pricing: true,
+    fleet_inventory: true,
+    driver_roster: true,
+    airport_fares: true,
+    customer_identity: true,
+    customer_sessions: true,
+    mollie_config: true,
+    invoice_artifacts: true,
+    compliance_events: true,
+    reference_sequences: true,
+  };
+}
+
+function _bookingTestResetWouldRebuildEmptyIds() {
+  return [
+    "company_bookings_list",
+    "demand_index",
+    "dashboard_bookings_kpis",
+    "live_booking_index",
+  ];
+}
+
+function _bookingTestResetComputeWouldDeleteTotal(categories = []) {
+  return categories.reduce((sum, entry) => {
+    return sum + _bookingTestResetCategoryResidualCount(entry);
+  }, 0);
+}
+
+function _resolveScopedBookingTestResetScopeAndMode(url, body, request = null) {
   const requestedScope = resolveExplicitBookingRequestScope({
     request,
     url,
+    body,
     allowLegacyFallback: false,
   });
   if (!requestedScope?.hasScope) {
-    return json(
-      requestedScope?.error === "tenant_scope_conflict" ? scopeConflictError() : missingTenantScopeError(),
-      400,
-    );
+    return {
+      ok: false,
+      status: 400,
+      response: json(
+        requestedScope?.error === "tenant_scope_conflict" ? scopeConflictError() : missingTenantScopeError(),
+        400,
+      ),
+    };
   }
   const requestedTenant = _scopeText(requestedScope?.tenant_id);
   const requestedCompany = _scopeText(requestedScope?.company_id);
   if (requestedTenant === "fluxidi" || requestedCompany === "fluxidi") {
-    return json({ ok: false, error: "unsafe_legacy_scope_not_allowed" }, 400);
+    return {
+      ok: false,
+      status: 400,
+      response: json({ ok: false, error: "unsafe_legacy_scope_not_allowed" }, 400),
+    };
   }
-
-  const modeRaw = safeStr(url.searchParams.get("mode"), 64).toLowerCase();
+  const modeRaw = safeStr(
+    body?.mode ?? url?.searchParams?.get("mode"),
+    64,
+  ).toLowerCase();
   const mode = modeRaw || "bookings_and_tracking";
-  if (!BOOKING_TEST_RESET_DRY_RUN_MODES.includes(mode)) {
-    return json(
-      { ok: false, error: "invalid_mode", supported_modes: BOOKING_TEST_RESET_DRY_RUN_MODES },
-      400,
-    );
+  if (!BOOKING_TEST_RESET_MODES.includes(mode)) {
+    return {
+      ok: false,
+      status: 400,
+      response: json(
+        { ok: false, error: "invalid_mode", supported_modes: BOOKING_TEST_RESET_MODES },
+        400,
+      ),
+    };
   }
+  return {
+    ok: true,
+    scope: requestedScope,
+    tenant_id: requestedTenant,
+    company_id: requestedCompany,
+    mode,
+  };
+}
 
-  const tenantMasked = _maskPublicDriverLoginValue(requestedTenant);
-  const companyMasked = _maskPublicDriverLoginValue(requestedCompany);
-  console.log(
-    `[BOOKING_TEST_RESET][DRY_RUN][START] tenant=${tenantMasked} company=${companyMasked} mode=${mode}`,
-  );
-
-  const categories = [];
-  let partial = false;
+async function buildScopedBookingTestResetPlan(env, scope, mode) {
+  const requestedTenant = _scopeText(scope?.tenant_id);
+  const requestedCompany = _scopeText(scope?.company_id);
   const includeTracking = mode === "bookings_and_tracking" || mode === "full_test_reset";
   const includeRatings = mode === "full_test_reset";
+  const categories = [];
+  let partial = false;
 
   const pushCategory = (entry) => {
     categories.push(entry);
@@ -18079,7 +18182,7 @@ async function handleScopedBookingTestResetDryRun(request, url, env) {
     scan_complete: false,
   };
   try {
-    collected = await collectScopedResetBookingIds(env, requestedScope);
+    collected = await collectScopedResetBookingIds(env, scope);
   } catch (err) {
     partial = true;
     pushCategory({
@@ -18089,6 +18192,7 @@ async function handleScopedBookingTestResetDryRun(request, url, env) {
     });
   }
 
+  const authoritativeKeys = (collected.bookingIds || []).map((bookingId) => `booking:${bookingId}`);
   const sampleBookingIds = (collected.bookingIds || []).slice(0, 10).map((id) => _bookingIntentMask(id));
   if (!categories.some((entry) => entry?.id === "authoritative_bookings" && entry?.ok === false)) {
     pushCategory({
@@ -18096,6 +18200,7 @@ async function handleScopedBookingTestResetDryRun(request, url, env) {
       namespace: "BOOKING_KV",
       kind: "global_prefix_filter",
       prefix: "booking:",
+      keys: authoritativeKeys,
       count: Number(collected?.matched_count || 0),
       sample_ids: sampleBookingIds,
       action: "delete",
@@ -18105,15 +18210,16 @@ async function handleScopedBookingTestResetDryRun(request, url, env) {
 
   const bookingIntentPrefix = `booking_intent:${requestedTenant}:${requestedCompany}:`;
   try {
-    const bookingIntents = await _safeDryRunCountKvPrefix(env?.BOOKING_KV, bookingIntentPrefix);
+    const bookingIntents = await _listScopedBookingTestResetKvKeys(env?.BOOKING_KV, bookingIntentPrefix);
     if (bookingIntents?.error) partial = true;
     pushCategory({
       id: "booking_intents",
       namespace: "BOOKING_KV",
       kind: "prefix",
       prefix: bookingIntentPrefix,
-      count: Number(bookingIntents?.count || 0),
-      sample_key_previews: bookingIntents?.sample_key_previews || [],
+      keys: bookingIntents.keys,
+      count: bookingIntents.keys.length,
+      sample_key_previews: _bookingTestResetSampleKeyPreviews(bookingIntents.keys),
       action: "delete",
       ok: !bookingIntents?.error,
       ...(bookingIntents?.error ? { error: bookingIntents.error } : {}),
@@ -18127,7 +18233,7 @@ async function handleScopedBookingTestResetDryRun(request, url, env) {
     });
   }
 
-  const companyListKey = companyBookingsListIndexKey(requestedScope);
+  const companyListKey = companyBookingsListIndexKey(scope);
   try {
     const companyList = await _safeDryRunExactKeyStats(env?.BOOKING_KV, companyListKey);
     if (companyList?.error) partial = true;
@@ -18136,7 +18242,8 @@ async function handleScopedBookingTestResetDryRun(request, url, env) {
       namespace: "BOOKING_KV",
       kind: "exact",
       key: companyListKey,
-      count: companyList?.exists ? 1 : 0,
+      keys: companyListKey ? [companyListKey] : [],
+      count: companyList?.exists && Number(companyList?.current_items || 0) > 0 ? 1 : 0,
       current_items: Number(companyList?.current_items || 0),
       action: "replace_empty",
       ok: !companyList?.error,
@@ -18147,7 +18254,7 @@ async function handleScopedBookingTestResetDryRun(request, url, env) {
     pushCategory({ id: "company_bookings_list", ok: false, error: safeStr(err?.message || String(err), 200) });
   }
 
-  const demandKey = bookingDemandIndexKey(requestedScope);
+  const demandKey = bookingDemandIndexKey(scope);
   try {
     const demandIndex = await _safeDryRunExactKeyStats(env?.BOOKING_KV, demandKey);
     if (demandIndex?.error) partial = true;
@@ -18156,7 +18263,8 @@ async function handleScopedBookingTestResetDryRun(request, url, env) {
       namespace: "BOOKING_KV",
       kind: "exact",
       key: demandKey,
-      count: demandIndex?.exists ? 1 : 0,
+      keys: demandKey ? [demandKey] : [],
+      count: demandIndex?.exists && Number(demandIndex?.current_items || 0) > 0 ? 1 : 0,
       current_items: Number(demandIndex?.current_items || 0),
       action: "replace_empty",
       ok: !demandIndex?.error,
@@ -18167,29 +18275,46 @@ async function handleScopedBookingTestResetDryRun(request, url, env) {
     pushCategory({ id: "demand_index", ok: false, error: safeStr(err?.message || String(err), 200) });
   }
 
-  const dashboardBookingsKpiPrefix = _bookingTestResetScopedPrefix(requestedScope, "dashboard:bookings_kpi");
+  const dashboardBookingsKpiPrefix = _bookingTestResetScopedPrefix(scope, "dashboard:bookings_kpi");
+  const dashboardBookingsKpiContribPrefix = _dashboardBookingsKpiContributionPrefix(scope);
+  const dashboardBookingsKpiAggregateKeyExact = dashboardBookingsKpiAggregateKey(scope);
   try {
-    const dashboardKpis = await _safeDryRunCountKvPrefix(env?.BOOKING_KV, dashboardBookingsKpiPrefix);
-    if (dashboardKpis?.error) partial = true;
+    const dashboardKpiContrib = dashboardBookingsKpiContribPrefix
+      ? await _listScopedBookingTestResetKvKeys(env?.BOOKING_KV, dashboardBookingsKpiContribPrefix)
+      : { keys: [], scan_complete: true };
+    const dashboardKpiAggregate = dashboardBookingsKpiAggregateKeyExact
+      ? await _safeDryRunExactKeyStats(env?.BOOKING_KV, dashboardBookingsKpiAggregateKeyExact)
+      : { exists: false, scan_complete: true };
+    const dashboardKpiKeys = [...(dashboardKpiContrib?.keys || [])];
+    if (dashboardKpiAggregate?.exists && dashboardBookingsKpiAggregateKeyExact) {
+      dashboardKpiKeys.push(dashboardBookingsKpiAggregateKeyExact);
+    }
+    if (dashboardKpiContrib?.error || dashboardKpiAggregate?.error) partial = true;
     pushCategory({
       id: "dashboard_bookings_kpis",
       namespace: "BOOKING_KV",
       kind: "prefix",
       prefix: dashboardBookingsKpiPrefix,
-      count: Number(dashboardKpis?.count || 0),
-      sample_key_previews: dashboardKpis?.sample_key_previews || [],
+      contrib_prefix: dashboardBookingsKpiContribPrefix,
+      aggregate_key: dashboardBookingsKpiAggregateKeyExact,
+      keys: dashboardKpiKeys,
+      contrib_count: dashboardKpiContrib.keys.length,
+      count: dashboardKpiContrib.keys.length,
+      sample_key_previews: _bookingTestResetSampleKeyPreviews(dashboardKpiContrib.keys),
       action: "delete_and_zero_aggregate",
-      ok: !dashboardKpis?.error,
-      ...(dashboardKpis?.error ? { error: dashboardKpis.error } : {}),
+      ok: !(dashboardKpiContrib?.error || dashboardKpiAggregate?.error),
+      ...((dashboardKpiContrib?.error || dashboardKpiAggregate?.error)
+        ? { error: dashboardKpiContrib?.error || dashboardKpiAggregate?.error }
+        : {}),
     });
   } catch (err) {
     partial = true;
     pushCategory({ id: "dashboard_bookings_kpis", ok: false, error: safeStr(err?.message || String(err), 200) });
   }
 
-  const customerIndexPrefix = _bookingTestResetScopedPrefix(requestedScope, "customer:");
+  const customerIndexPrefix = _bookingTestResetScopedPrefix(scope, "customer:");
   try {
-    const customerIndexes = await _safeDryRunCountKvPrefix(env?.BOOKING_KV, customerIndexPrefix, {
+    const customerIndexes = await _listScopedBookingTestResetKvKeys(env?.BOOKING_KV, customerIndexPrefix, {
       keyFilter: _isScopedBookingIndexLikeKey,
     });
     if (customerIndexes?.error) partial = true;
@@ -18198,8 +18323,9 @@ async function handleScopedBookingTestResetDryRun(request, url, env) {
       namespace: "BOOKING_KV",
       kind: "prefix",
       prefix: customerIndexPrefix,
-      count: Number(customerIndexes?.count || 0),
-      sample_key_previews: customerIndexes?.sample_key_previews || [],
+      keys: customerIndexes.keys,
+      count: customerIndexes.keys.length,
+      sample_key_previews: _bookingTestResetSampleKeyPreviews(customerIndexes.keys),
       action: "delete",
       ok: !customerIndexes?.error,
       ...(customerIndexes?.error ? { error: customerIndexes.error } : {}),
@@ -18209,9 +18335,9 @@ async function handleScopedBookingTestResetDryRun(request, url, env) {
     pushCategory({ id: "customer_booking_indexes", ok: false, error: safeStr(err?.message || String(err), 200) });
   }
 
-  const driverIndexPrefix = _bookingTestResetScopedPrefix(requestedScope, "driver:");
+  const driverIndexPrefix = _bookingTestResetScopedPrefix(scope, "driver:");
   try {
-    const driverIndexes = await _safeDryRunCountKvPrefix(env?.BOOKING_KV, driverIndexPrefix, {
+    const driverIndexes = await _listScopedBookingTestResetKvKeys(env?.BOOKING_KV, driverIndexPrefix, {
       keyFilter: _isScopedBookingIndexLikeKey,
     });
     if (driverIndexes?.error) partial = true;
@@ -18220,8 +18346,9 @@ async function handleScopedBookingTestResetDryRun(request, url, env) {
       namespace: "BOOKING_KV",
       kind: "prefix",
       prefix: driverIndexPrefix,
-      count: Number(driverIndexes?.count || 0),
-      sample_key_previews: driverIndexes?.sample_key_previews || [],
+      keys: driverIndexes.keys,
+      count: driverIndexes.keys.length,
+      sample_key_previews: _bookingTestResetSampleKeyPreviews(driverIndexes.keys),
       action: "delete",
       ok: !driverIndexes?.error,
       ...(driverIndexes?.error ? { error: driverIndexes.error } : {}),
@@ -18231,9 +18358,9 @@ async function handleScopedBookingTestResetDryRun(request, url, env) {
     pushCategory({ id: "driver_booking_indexes", ok: false, error: safeStr(err?.message || String(err), 200) });
   }
 
-  const vehicleIndexPrefix = _bookingTestResetScopedPrefix(requestedScope, "vehicle:");
+  const vehicleIndexPrefix = _bookingTestResetScopedPrefix(scope, "vehicle:");
   try {
-    const vehicleIndexes = await _safeDryRunCountKvPrefix(env?.BOOKING_KV, vehicleIndexPrefix, {
+    const vehicleIndexes = await _listScopedBookingTestResetKvKeys(env?.BOOKING_KV, vehicleIndexPrefix, {
       keyFilter: _isScopedBookingIndexLikeKey,
     });
     if (vehicleIndexes?.error) partial = true;
@@ -18242,8 +18369,9 @@ async function handleScopedBookingTestResetDryRun(request, url, env) {
       namespace: "BOOKING_KV",
       kind: "prefix",
       prefix: vehicleIndexPrefix,
-      count: Number(vehicleIndexes?.count || 0),
-      sample_key_previews: vehicleIndexes?.sample_key_previews || [],
+      keys: vehicleIndexes.keys,
+      count: vehicleIndexes.keys.length,
+      sample_key_previews: _bookingTestResetSampleKeyPreviews(vehicleIndexes.keys),
       action: "delete",
       ok: !vehicleIndexes?.error,
       ...(vehicleIndexes?.error ? { error: vehicleIndexes.error } : {}),
@@ -18254,19 +18382,23 @@ async function handleScopedBookingTestResetDryRun(request, url, env) {
   }
 
   const bookingKvTrackingPrefixes = [
-    _bookingTestResetScopedPrefix(requestedScope, "tracking:session:"),
-    _bookingTestResetScopedPrefix(requestedScope, "tracking:trip:"),
+    _bookingTestResetScopedPrefix(scope, "tracking:session:"),
+    _bookingTestResetScopedPrefix(scope, "tracking:trip:"),
   ].filter(Boolean);
   try {
-    const bookingKvTrackingMaps = await _safeDryRunCountKvPrefixes(env?.BOOKING_KV, bookingKvTrackingPrefixes);
+    const bookingKvTrackingMaps = await _listScopedBookingTestResetKvKeysMulti(
+      env?.BOOKING_KV,
+      bookingKvTrackingPrefixes,
+    );
     if (bookingKvTrackingMaps?.error) partial = true;
     pushCategory({
       id: "booking_kv_tracking_maps",
       namespace: "BOOKING_KV",
       kind: "prefix",
       prefixes: bookingKvTrackingPrefixes,
-      count: Number(bookingKvTrackingMaps?.count || 0),
-      sample_key_previews: bookingKvTrackingMaps?.sample_key_previews || [],
+      keys: bookingKvTrackingMaps.keys,
+      count: bookingKvTrackingMaps.keys.length,
+      sample_key_previews: _bookingTestResetSampleKeyPreviews(bookingKvTrackingMaps.keys),
       action: "delete",
       ok: !bookingKvTrackingMaps?.error,
       ...(bookingKvTrackingMaps?.error ? { error: bookingKvTrackingMaps.error } : {}),
@@ -18277,17 +18409,18 @@ async function handleScopedBookingTestResetDryRun(request, url, env) {
   }
 
   if (includeTracking) {
-    const tripRecordsPrefix = _bookingTestResetScopedPrefix(requestedScope, "trip:");
+    const tripRecordsPrefix = _bookingTestResetScopedPrefix(scope, "trip:");
     try {
-      const tripRecords = await _safeDryRunCountKvPrefix(env?.FLUXIDI_TRACKING, tripRecordsPrefix);
+      const tripRecords = await _listScopedBookingTestResetKvKeys(env?.FLUXIDI_TRACKING, tripRecordsPrefix);
       if (tripRecords?.error) partial = true;
       pushCategory({
         id: "trip_records",
         namespace: "FLUXIDI_TRACKING",
         kind: "prefix",
         prefix: tripRecordsPrefix,
-        count: Number(tripRecords?.count || 0),
-        sample_key_previews: tripRecords?.sample_key_previews || [],
+        keys: tripRecords.keys,
+        count: tripRecords.keys.length,
+        sample_key_previews: _bookingTestResetSampleKeyPreviews(tripRecords.keys),
         action: "delete",
         ok: !tripRecords?.error,
         ...(tripRecords?.error ? { error: tripRecords.error } : {}),
@@ -18297,13 +18430,18 @@ async function handleScopedBookingTestResetDryRun(request, url, env) {
       pushCategory({ id: "trip_records", ok: false, error: safeStr(err?.message || String(err), 200) });
     }
 
-    const tripsIndexExactKey = _bookingTestResetScopedPrefix(requestedScope, "trips_index");
+    const tripsIndexExactKey = _bookingTestResetScopedPrefix(scope, "trips_index");
     const tripsIndexPrefix = tripsIndexExactKey ? `${tripsIndexExactKey}:` : "";
     try {
       const tripsIndexExact = await _safeDryRunExactKeyStats(env?.FLUXIDI_TRACKING, tripsIndexExactKey);
       const tripsIndexChildren = tripsIndexPrefix
-        ? await _safeDryRunCountKvPrefix(env?.FLUXIDI_TRACKING, tripsIndexPrefix)
-        : { count: 0, sample_key_previews: [], scan_complete: true };
+        ? await _listScopedBookingTestResetKvKeys(env?.FLUXIDI_TRACKING, tripsIndexPrefix)
+        : { keys: [], scan_complete: true };
+      const tripsIndexKeys = [...(tripsIndexChildren?.keys || [])];
+      const tripsIndexExactItems = Number(tripsIndexExact?.current_items || 0);
+      if (tripsIndexExact?.exists && tripsIndexExactKey && tripsIndexExactItems > 0) {
+        tripsIndexKeys.push(tripsIndexExactKey);
+      }
       if (tripsIndexExact?.error || tripsIndexChildren?.error) partial = true;
       pushCategory({
         id: "trips_index",
@@ -18311,9 +18449,11 @@ async function handleScopedBookingTestResetDryRun(request, url, env) {
         kind: "exact_prefix",
         key: tripsIndexExactKey,
         prefix: tripsIndexPrefix,
-        count: Number(tripsIndexExact?.exists ? 1 : 0) + Number(tripsIndexChildren?.count || 0),
-        current_items: Number(tripsIndexExact?.current_items || 0),
-        sample_key_previews: tripsIndexChildren?.sample_key_previews || [],
+        keys: tripsIndexKeys,
+        driver_index_count: tripsIndexChildren.keys.length,
+        count: tripsIndexChildren.keys.length,
+        current_items: tripsIndexExactItems,
+        sample_key_previews: _bookingTestResetSampleKeyPreviews(tripsIndexChildren?.keys || []),
         action: "delete_or_replace_empty",
         ok: !(tripsIndexExact?.error || tripsIndexChildren?.error),
         ...((tripsIndexExact?.error || tripsIndexChildren?.error)
@@ -18325,7 +18465,7 @@ async function handleScopedBookingTestResetDryRun(request, url, env) {
       pushCategory({ id: "trips_index", ok: false, error: safeStr(err?.message || String(err), 200) });
     }
 
-    const liveBookingIndexKey = _safeResetScopedBookingIndexKey(requestedScope);
+    const liveBookingIndexKey = _safeResetScopedBookingIndexKey(scope);
     try {
       const liveBookingIndex = await _safeDryRunExactKeyStats(env?.FLUXIDI_TRACKING, liveBookingIndexKey);
       if (liveBookingIndex?.error) partial = true;
@@ -18334,7 +18474,8 @@ async function handleScopedBookingTestResetDryRun(request, url, env) {
         namespace: "FLUXIDI_TRACKING",
         kind: "exact",
         key: liveBookingIndexKey,
-        count: liveBookingIndex?.exists ? 1 : 0,
+        keys: liveBookingIndexKey ? [liveBookingIndexKey] : [],
+        count: liveBookingIndex?.exists && Number(liveBookingIndex?.current_items || 0) > 0 ? 1 : 0,
         current_items: Number(liveBookingIndex?.current_items || 0),
         action: "replace_empty",
         ok: !liveBookingIndex?.error,
@@ -18346,13 +18487,13 @@ async function handleScopedBookingTestResetDryRun(request, url, env) {
     }
 
     const trackingSessionPrefixes = [
-      _bookingTestResetScopedPrefix(requestedScope, "booking:"),
-      _bookingTestResetScopedPrefix(requestedScope, "session:"),
-      _bookingTestResetScopedPrefix(requestedScope, "ping:"),
-      _bookingTestResetScopedPrefix(requestedScope, "public:"),
+      _bookingTestResetScopedPrefix(scope, "booking:"),
+      _bookingTestResetScopedPrefix(scope, "session:"),
+      _bookingTestResetScopedPrefix(scope, "ping:"),
+      _bookingTestResetScopedPrefix(scope, "public:"),
     ].filter(Boolean);
     try {
-      const trackingSessionsAndMaps = await _safeDryRunCountKvPrefixes(
+      const trackingSessionsAndMaps = await _listScopedBookingTestResetKvKeysMulti(
         env?.FLUXIDI_TRACKING,
         trackingSessionPrefixes,
       );
@@ -18362,8 +18503,9 @@ async function handleScopedBookingTestResetDryRun(request, url, env) {
         namespace: "FLUXIDI_TRACKING",
         kind: "prefix",
         prefixes: trackingSessionPrefixes,
-        count: Number(trackingSessionsAndMaps?.count || 0),
-        sample_key_previews: trackingSessionsAndMaps?.sample_key_previews || [],
+        keys: trackingSessionsAndMaps.keys,
+        count: trackingSessionsAndMaps.keys.length,
+        sample_key_previews: _bookingTestResetSampleKeyPreviews(trackingSessionsAndMaps.keys),
         action: "delete",
         ok: !trackingSessionsAndMaps?.error,
         ...(trackingSessionsAndMaps?.error ? { error: trackingSessionsAndMaps.error } : {}),
@@ -18373,17 +18515,18 @@ async function handleScopedBookingTestResetDryRun(request, url, env) {
       pushCategory({ id: "tracking_sessions_and_maps", ok: false, error: safeStr(err?.message || String(err), 200) });
     }
 
-    const tripKpiPrefix = _bookingTestResetScopedPrefix(requestedScope, "dashboard:trip_kpi");
+    const tripKpiPrefix = _bookingTestResetScopedPrefix(scope, "dashboard:trip_kpi");
     try {
-      const tripKpiMaterialization = await _safeDryRunCountKvPrefix(env?.FLUXIDI_TRACKING, tripKpiPrefix);
+      const tripKpiMaterialization = await _listScopedBookingTestResetKvKeys(env?.FLUXIDI_TRACKING, tripKpiPrefix);
       if (tripKpiMaterialization?.error) partial = true;
       pushCategory({
         id: "trip_kpi_materialization",
         namespace: "FLUXIDI_TRACKING",
         kind: "prefix",
         prefix: tripKpiPrefix,
-        count: Number(tripKpiMaterialization?.count || 0),
-        sample_key_previews: tripKpiMaterialization?.sample_key_previews || [],
+        keys: tripKpiMaterialization.keys,
+        count: tripKpiMaterialization.keys.length,
+        sample_key_previews: _bookingTestResetSampleKeyPreviews(tripKpiMaterialization.keys),
         action: "delete",
         ok: !tripKpiMaterialization?.error,
         ...(tripKpiMaterialization?.error ? { error: tripKpiMaterialization.error } : {}),
@@ -18393,9 +18536,9 @@ async function handleScopedBookingTestResetDryRun(request, url, env) {
       pushCategory({ id: "trip_kpi_materialization", ok: false, error: safeStr(err?.message || String(err), 200) });
     }
 
-    const bookingFinancePrefix = _bookingTestResetScopedPrefix(requestedScope, "dashboard:booking_finance");
+    const bookingFinancePrefix = _bookingTestResetScopedPrefix(scope, "dashboard:booking_finance");
     try {
-      const bookingFinanceMaterialization = await _safeDryRunCountKvPrefix(
+      const bookingFinanceMaterialization = await _listScopedBookingTestResetKvKeys(
         env?.FLUXIDI_TRACKING,
         bookingFinancePrefix,
       );
@@ -18405,8 +18548,9 @@ async function handleScopedBookingTestResetDryRun(request, url, env) {
         namespace: "FLUXIDI_TRACKING",
         kind: "prefix",
         prefix: bookingFinancePrefix,
-        count: Number(bookingFinanceMaterialization?.count || 0),
-        sample_key_previews: bookingFinanceMaterialization?.sample_key_previews || [],
+        keys: bookingFinanceMaterialization.keys,
+        count: bookingFinanceMaterialization.keys.length,
+        sample_key_previews: _bookingTestResetSampleKeyPreviews(bookingFinanceMaterialization.keys),
         action: "delete",
         ok: !bookingFinanceMaterialization?.error,
         ...(bookingFinanceMaterialization?.error ? { error: bookingFinanceMaterialization.error } : {}),
@@ -18422,17 +18566,18 @@ async function handleScopedBookingTestResetDryRun(request, url, env) {
   }
 
   if (includeRatings) {
-    const ratingsPrefix = _bookingTestResetScopedPrefix(requestedScope, "ratings:");
+    const ratingsPrefix = _bookingTestResetScopedPrefix(scope, "ratings:");
     try {
-      const ratingAggregates = await _safeDryRunCountKvPrefix(env?.BOOKING_KV, ratingsPrefix);
+      const ratingAggregates = await _listScopedBookingTestResetKvKeys(env?.BOOKING_KV, ratingsPrefix);
       if (ratingAggregates?.error) partial = true;
       pushCategory({
         id: "rating_aggregates",
         namespace: "BOOKING_KV",
         kind: "prefix",
         prefix: ratingsPrefix,
-        count: Number(ratingAggregates?.count || 0),
-        sample_key_previews: ratingAggregates?.sample_key_previews || [],
+        keys: ratingAggregates.keys,
+        count: ratingAggregates.keys.length,
+        sample_key_previews: _bookingTestResetSampleKeyPreviews(ratingAggregates.keys),
         action: "reset_or_delete_later",
         ok: !ratingAggregates?.error,
         ...(ratingAggregates?.error ? { error: ratingAggregates.error } : {}),
@@ -18443,11 +18588,412 @@ async function handleScopedBookingTestResetDryRun(request, url, env) {
     }
   }
 
-  const would_delete_total = categories.reduce((sum, entry) => {
-    if (entry?.ok === false || !_bookingTestResetCategoryDeletes(entry?.action)) return sum;
-    return sum + Number(entry?.count || 0);
-  }, 0);
+  return {
+    mode,
+    tenant_id: requestedTenant,
+    company_id: requestedCompany,
+    includeTracking,
+    includeRatings,
+    collected,
+    categories,
+    partial,
+  };
+}
 
+function _bookingTestResetCategoryById(plan, categoryId) {
+  return (plan?.categories || []).find((entry) => entry?.id === categoryId) || null;
+}
+
+async function _bookingTestResetDeleteKvPrefixSweep(
+  namespace,
+  namespaceName,
+  prefix,
+  { keyFilter = null, deleted, errors, step } = {},
+) {
+  if (!namespace || !prefix) return 0;
+  let removed = 0;
+  let cursor = undefined;
+  do {
+    const page = await namespace.list({ prefix, limit: 1000, cursor });
+    for (const item of page?.keys || []) {
+      const key = String(item?.name || "");
+      if (!key) continue;
+      if (typeof keyFilter === "function" && !keyFilter(key)) continue;
+      try {
+        await namespace.delete(key);
+        removed += 1;
+        if (deleted) {
+          deleted[namespaceName] = Number(deleted[namespaceName] || 0) + 1;
+          deleted.total = Number(deleted.total || 0) + 1;
+        }
+      } catch (err) {
+        if (errors) {
+          errors.push({
+            step: step || "prefix_sweep",
+            namespace: namespaceName,
+            key: _bookingTestResetKeyPreview(key),
+            error: safeStr(err?.message || String(err), 200) || "kv_delete_error",
+          });
+        }
+      }
+    }
+    cursor = page?.cursor;
+    if (page?.list_complete !== false) break;
+    if (!cursor) break;
+  } while (cursor);
+  return removed;
+}
+
+async function _bookingTestResetDeleteKeysBestEffort(namespace, namespaceName, keys, deleted, errors, step) {
+  let removed = 0;
+  for (const key of keys || []) {
+    if (!key || !namespace) continue;
+    try {
+      await namespace.delete(key);
+      removed += 1;
+      deleted[namespaceName] = Number(deleted[namespaceName] || 0) + 1;
+      deleted.total = Number(deleted.total || 0) + 1;
+    } catch (err) {
+      errors.push({
+        step,
+        namespace: namespaceName,
+        key: _bookingTestResetKeyPreview(key),
+        error: safeStr(err?.message || String(err), 200) || "kv_delete_error",
+      });
+    }
+  }
+  return removed;
+}
+
+async function _bookingTestResetApplyDeleteCategory(env, plan, categoryId, deleted, errors) {
+  const category = _bookingTestResetCategoryById(plan, categoryId);
+  if (!category || category?.ok === false) return 0;
+  const namespaceName = category.namespace;
+  const namespace = namespaceName === "FLUXIDI_TRACKING" ? env?.FLUXIDI_TRACKING : env?.BOOKING_KV;
+  const keyFilter = _bookingTestResetCategoryKeyFilter(categoryId);
+  let removed = 0;
+  removed += await _bookingTestResetDeleteKeysBestEffort(
+    namespace,
+    namespaceName,
+    category.keys,
+    deleted,
+    errors,
+    `delete_${categoryId}`,
+  );
+  if (category.prefix) {
+    removed += await _bookingTestResetDeleteKvPrefixSweep(namespace, namespaceName, category.prefix, {
+      keyFilter,
+      deleted,
+      errors,
+      step: `sweep_${categoryId}`,
+    });
+  }
+  for (const prefix of category.prefixes || []) {
+    removed += await _bookingTestResetDeleteKvPrefixSweep(namespace, namespaceName, prefix, {
+      keyFilter,
+      deleted,
+      errors,
+      step: `sweep_${categoryId}`,
+    });
+  }
+  return removed;
+}
+
+async function _bookingTestResetZeroDashboardBookingsKpis(env, scope, deleted, errors) {
+  if (!env?.BOOKING_KV) return;
+  const contribPrefix = _dashboardBookingsKpiContributionPrefix(scope);
+  const fullPrefix = _bookingTestResetScopedPrefix(scope, "dashboard:bookings_kpi");
+  if (contribPrefix) {
+    await _bookingTestResetDeleteKvPrefixSweep(env.BOOKING_KV, "BOOKING_KV", contribPrefix, {
+      deleted,
+      errors,
+      step: "zero_dashboard_bookings_kpi_contrib",
+    });
+  }
+  if (fullPrefix) {
+    await _bookingTestResetDeleteKvPrefixSweep(env.BOOKING_KV, "BOOKING_KV", fullPrefix, {
+      deleted,
+      errors,
+      step: "zero_dashboard_bookings_kpi_prefix",
+    });
+  }
+  try {
+    const aggregate = _buildDashboardBookingsKpiAggregateFromContributions([], {
+      rebuilt_at: new Date().toISOString(),
+      projection_complete: true,
+      projection_health: "ok",
+    });
+    await saveDashboardBookingsKpiAggregate(env, scope, aggregate);
+  } catch (err) {
+    errors.push({
+      step: "zero_dashboard_bookings_kpi_aggregate",
+      error: safeStr(err?.message || String(err), 200) || "zero_dashboard_bookings_kpi_aggregate_failed",
+    });
+  }
+}
+
+async function _bookingTestResetReplaceTripsIndexEmpty(env, scope, deleted, errors) {
+  const tripsIndexExactKey = _bookingTestResetScopedPrefix(scope, "trips_index");
+  const tripsIndexPrefix = tripsIndexExactKey ? `${tripsIndexExactKey}:` : "";
+  if (tripsIndexPrefix && env?.FLUXIDI_TRACKING) {
+    await _bookingTestResetDeleteKvPrefixSweep(env.FLUXIDI_TRACKING, "FLUXIDI_TRACKING", tripsIndexPrefix, {
+      deleted,
+      errors,
+      step: "zero_trips_index_driver_prefixes",
+    });
+  }
+  if (tripsIndexExactKey && env?.FLUXIDI_TRACKING) {
+    try {
+      await env.FLUXIDI_TRACKING.put(
+        tripsIndexExactKey,
+        JSON.stringify([]),
+        { expirationTtl: 60 * 60 * 24 * 30 },
+      );
+    } catch (err) {
+      errors.push({
+        step: "replace_trips_index_empty",
+        key: _bookingTestResetKeyPreview(tripsIndexExactKey),
+        error: safeStr(err?.message || String(err), 200) || "replace_trips_index_empty_failed",
+      });
+    }
+  }
+}
+
+async function applyScopedBookingTestReset(env, scope, mode, plan) {
+  const deleted = { BOOKING_KV: 0, FLUXIDI_TRACKING: 0, total: 0 };
+  const fleet = { attempted: 0, released: 0, failed: 0 };
+  const rebuilt_empty = [];
+  const errors = [];
+  const bookingIds = plan?.collected?.bookingIds || [];
+
+  for (const bookingId of bookingIds) {
+    const key = `booking:${bookingId}`;
+    fleet.attempted += 1;
+    try {
+      const rec = await env?.BOOKING_KV?.get(key, { type: "json" });
+      if (!rec || typeof rec !== "object") continue;
+      if (!bookingMatchesRequiredTenantCompanyScope(rec, scope)) continue;
+      const released = await releaseSafeResetBookingReservation(env, key);
+      if (released) fleet.released += 1;
+    } catch (err) {
+      fleet.failed += 1;
+      errors.push({
+        step: "fleet_reservation_release",
+        booking_id: _bookingIntentMask(bookingId),
+        error: safeStr(err?.message || String(err), 200) || "fleet_release_error",
+      });
+    }
+  }
+
+  for (const bookingId of bookingIds) {
+    const key = `booking:${bookingId}`;
+    try {
+      const rec = await env?.BOOKING_KV?.get(key, { type: "json" });
+      if (!rec || typeof rec !== "object") continue;
+      if (!bookingMatchesRequiredTenantCompanyScope(rec, scope)) continue;
+      await env.BOOKING_KV.delete(key);
+      deleted.BOOKING_KV += 1;
+      deleted.total += 1;
+    } catch (err) {
+      errors.push({
+        step: "delete_authoritative_booking",
+        booking_id: _bookingIntentMask(bookingId),
+        error: safeStr(err?.message || String(err), 200) || "booking_delete_error",
+      });
+    }
+  }
+
+  await _bookingTestResetApplyDeleteCategory(env, plan, "booking_intents", deleted, errors);
+
+  const bookingKvDeleteCategories = [
+    "dashboard_bookings_kpis",
+    "customer_booking_indexes",
+    "driver_booking_indexes",
+    "vehicle_booking_indexes",
+    "booking_kv_tracking_maps",
+  ];
+  for (const categoryId of bookingKvDeleteCategories) {
+    await _bookingTestResetApplyDeleteCategory(env, plan, categoryId, deleted, errors);
+  }
+
+  try {
+    await rebuildCompanyBookingsListIndexForScope(env, scope, { dryRun: false });
+    rebuilt_empty.push("company_bookings_list");
+  } catch (err) {
+    errors.push({
+      step: "rebuild_company_bookings_list",
+      error: safeStr(err?.message || String(err), 200) || "rebuild_company_bookings_list_failed",
+    });
+  }
+
+  try {
+    await rebuildBookingDemandIndexForScope(env, scope, { dryRun: false });
+    rebuilt_empty.push("demand_index");
+  } catch (err) {
+    errors.push({
+      step: "rebuild_demand_index",
+      error: safeStr(err?.message || String(err), 200) || "rebuild_demand_index_failed",
+    });
+  }
+
+  try {
+    await _bookingTestResetZeroDashboardBookingsKpis(env, scope, deleted, errors);
+    rebuilt_empty.push("dashboard_bookings_kpis");
+  } catch (err) {
+    errors.push({
+      step: "zero_dashboard_bookings_kpis",
+      error: safeStr(err?.message || String(err), 200) || "zero_dashboard_bookings_kpis_failed",
+    });
+  }
+
+  if (plan?.includeTracking) {
+    const trackingDeleteCategories = [
+      "trip_records",
+      "tracking_sessions_and_maps",
+      "trip_kpi_materialization",
+      "booking_finance_materialization",
+    ];
+    for (const categoryId of trackingDeleteCategories) {
+      await _bookingTestResetApplyDeleteCategory(env, plan, categoryId, deleted, errors);
+    }
+
+    await _bookingTestResetReplaceTripsIndexEmpty(env, scope, deleted, errors);
+
+    const liveBookingIndexKey = _safeResetScopedBookingIndexKey(scope);
+    if (liveBookingIndexKey && env?.FLUXIDI_TRACKING) {
+      try {
+        await env.FLUXIDI_TRACKING.put(
+          liveBookingIndexKey,
+          JSON.stringify([]),
+          { expirationTtl: 60 * 60 * 24 * 30 },
+        );
+        rebuilt_empty.push("live_booking_index");
+      } catch (err) {
+        errors.push({
+          step: "replace_live_booking_index",
+          key: _bookingTestResetKeyPreview(liveBookingIndexKey),
+          error: safeStr(err?.message || String(err), 200) || "replace_live_booking_index_failed",
+        });
+      }
+    }
+  }
+
+  if (plan?.includeRatings) {
+    await _bookingTestResetApplyDeleteCategory(env, plan, "rating_aggregates", deleted, errors);
+    try {
+      await rebuildRatingAggregatesForScope(env, scope, { dryRun: false });
+    } catch (err) {
+      errors.push({
+        step: "rebuild_rating_aggregates",
+        error: safeStr(err?.message || String(err), 200) || "rebuild_rating_aggregates_failed",
+      });
+    }
+  }
+
+  const finalizeCategories = [
+    "booking_intents",
+    "customer_booking_indexes",
+    "driver_booking_indexes",
+    "vehicle_booking_indexes",
+    "booking_kv_tracking_maps",
+  ];
+  if (plan?.includeTracking) {
+    finalizeCategories.push(
+      "trip_records",
+      "tracking_sessions_and_maps",
+      "trip_kpi_materialization",
+      "booking_finance_materialization",
+    );
+  }
+  if (plan?.includeRatings) {
+    finalizeCategories.push("rating_aggregates");
+  }
+  for (const categoryId of finalizeCategories) {
+    await _bookingTestResetApplyDeleteCategory(env, plan, categoryId, deleted, errors);
+  }
+  if (plan?.includeTracking) {
+    await _bookingTestResetReplaceTripsIndexEmpty(env, scope, deleted, errors);
+  }
+  await _bookingTestResetZeroDashboardBookingsKpis(env, scope, deleted, errors);
+
+  return { fleet, deleted, rebuilt_empty, errors };
+}
+
+async function _bookingTestResetAfterSnapshot(env, scope, mode) {
+  const afterPlan = await buildScopedBookingTestResetPlan(env, scope, mode);
+  const categoryResidualCount = (id) => {
+    const entry = _bookingTestResetCategoryById(afterPlan, id);
+    if (!entry || entry?.ok === false) return 0;
+    return _bookingTestResetCategoryResidualCount(entry);
+  };
+  const categoryCurrentItems = (id) => {
+    const entry = _bookingTestResetCategoryById(afterPlan, id);
+    if (!entry || entry?.ok === false) return 0;
+    return Number(entry?.current_items || 0);
+  };
+  return {
+    authoritative_bookings: categoryResidualCount("authoritative_bookings"),
+    company_bookings_list_current_items: categoryCurrentItems("company_bookings_list"),
+    demand_index_current_items: categoryCurrentItems("demand_index"),
+    dashboard_bookings_kpis_count: categoryResidualCount("dashboard_bookings_kpis"),
+    trip_records_count: categoryResidualCount("trip_records"),
+    trip_kpi_materialization_count: categoryResidualCount("trip_kpi_materialization"),
+    booking_finance_materialization_count: categoryResidualCount("booking_finance_materialization"),
+  };
+}
+
+async function _parseScopedBookingTestResetJsonBody(request) {
+  let raw = "";
+  try {
+    raw = await request.text();
+  } catch (_) {
+    return {
+      ok: false,
+      response: json({ ok: false, error: "invalid_json_body" }, 400),
+    };
+  }
+  const trimmed = String(raw || "").trim();
+  if (!trimmed) {
+    return {
+      ok: false,
+      response: json({ ok: false, error: "invalid_json_body" }, 400),
+    };
+  }
+  let body = null;
+  try {
+    body = JSON.parse(trimmed);
+  } catch (_) {
+    return {
+      ok: false,
+      response: json({ ok: false, error: "invalid_json_body" }, 400),
+    };
+  }
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return {
+      ok: false,
+      response: json({ ok: false, error: "invalid_json_body" }, 400),
+    };
+  }
+  return { ok: true, body };
+}
+
+async function handleScopedBookingTestResetDryRun(request, url, env) {
+  _requireAdmin(request, url, env);
+  const resolved = _resolveScopedBookingTestResetScopeAndMode(url, null, request);
+  if (!resolved.ok) return resolved.response;
+
+  const { scope: requestedScope, tenant_id: requestedTenant, company_id: requestedCompany, mode } = resolved;
+  const tenantMasked = _maskPublicDriverLoginValue(requestedTenant);
+  const companyMasked = _maskPublicDriverLoginValue(requestedCompany);
+  console.log(
+    `[BOOKING_TEST_RESET][DRY_RUN][START] tenant=${tenantMasked} company=${companyMasked} mode=${mode}`,
+  );
+
+  const plan = await buildScopedBookingTestResetPlan(env, requestedScope, mode);
+  const categories = (plan.categories || []).map(_bookingTestResetPublicCategoryView);
+  const partial = plan.partial === true;
+  const collected = plan.collected || {};
+  const would_delete_total = _bookingTestResetComputeWouldDeleteTotal(plan.categories);
   const would_release_fleet_reservations = await _bookingTestResetWouldReleaseReservationsCount(
     env,
     collected.bookingIds || [],
@@ -18466,27 +19012,9 @@ async function handleScopedBookingTestResetDryRun(request, url, env) {
     },
     categories,
     would_delete_total,
-    would_rebuild_empty: [
-      "company_bookings_list",
-      "demand_index",
-      "dashboard_bookings_kpis",
-      "live_booking_index",
-    ],
+    would_rebuild_empty: _bookingTestResetWouldRebuildEmptyIds(),
     would_release_fleet_reservations,
-    preserved: {
-      settings: true,
-      business_profile: true,
-      pricing: true,
-      fleet_inventory: true,
-      driver_roster: true,
-      airport_fares: true,
-      customer_identity: true,
-      customer_sessions: true,
-      mollie_config: true,
-      invoice_artifacts: true,
-      compliance_events: true,
-      reference_sequences: true,
-    },
+    preserved: _bookingTestResetPreservedBlock(),
     post_reset_expected: {
       company_bookings_list_count: 0,
       demand_index_count: 0,
@@ -18502,7 +19030,7 @@ async function handleScopedBookingTestResetDryRun(request, url, env) {
     apply_requirements: {
       future_apply_endpoint: "POST /admin/dev/scope/booking-test-reset",
       apply: true,
-      confirm: "RESET_TEST_BOOKINGS",
+      confirm: BOOKING_TEST_RESET_CONFIRM_PHRASE,
       env: [
         "ALLOW_DEV_RESET_ENDPOINTS=true",
         "ALLOW_DEV_RESET=true",
@@ -18517,6 +19045,108 @@ async function handleScopedBookingTestResetDryRun(request, url, env) {
   );
   return json(response, 200);
 }
+
+async function handleScopedBookingTestResetApply(request, url, env) {
+  _requireAdmin(request, url, env);
+  if (!allowDevResetEndpoints(env)) {
+    return json({ ok: false, error: "dev reset endpoints are disabled" }, 403);
+  }
+  if (String(env?.ALLOW_DEV_RESET || "").trim() !== "true") {
+    return json({ ok: false, error: "dev_reset_disabled" }, 403);
+  }
+
+  const parsedBody = await _parseScopedBookingTestResetJsonBody(request);
+  if (!parsedBody.ok) return parsedBody.response;
+  const body = parsedBody.body;
+
+  if (body.apply !== true) {
+    return json(
+      { ok: false, error: "apply_required", message: 'Body must include { "apply": true }' },
+      400,
+    );
+  }
+  if (body.confirm !== BOOKING_TEST_RESET_CONFIRM_PHRASE) {
+    return json(
+      {
+        ok: false,
+        error: "confirm_required",
+        message: "Body must include confirm phrase RESET_TEST_BOOKINGS",
+      },
+      400,
+    );
+  }
+
+  const resolved = _resolveScopedBookingTestResetScopeAndMode(url, body, request);
+  if (!resolved.ok) return resolved.response;
+
+  const { scope: requestedScope, tenant_id: requestedTenant, company_id: requestedCompany, mode } = resolved;
+  const tenantMasked = _maskPublicDriverLoginValue(requestedTenant);
+  const companyMasked = _maskPublicDriverLoginValue(requestedCompany);
+  console.log(
+    `[BOOKING_TEST_RESET][APPLY_START] tenant=${tenantMasked} company=${companyMasked} mode=${mode}`,
+  );
+
+  let beforePlan;
+  try {
+    beforePlan = await buildScopedBookingTestResetPlan(env, requestedScope, mode);
+  } catch (err) {
+    const message = safeStr(err?.message || String(err), 200) || "plan_build_failed";
+    console.log(
+      `[BOOKING_TEST_RESET][APPLY_ERROR] tenant=${tenantMasked} company=${companyMasked} mode=${mode} stage=plan_build error=${message}`,
+    );
+    return json({ ok: false, error: "plan_build_failed", message }, 500);
+  }
+
+  const beforeCategories = (beforePlan.categories || []).map(_bookingTestResetPublicCategoryView);
+  const would_delete_total = _bookingTestResetComputeWouldDeleteTotal(beforePlan.categories);
+  const would_release_fleet_reservations = await _bookingTestResetWouldReleaseReservationsCount(
+    env,
+    beforePlan.collected?.bookingIds || [],
+  );
+
+  let mutation;
+  try {
+    mutation = await applyScopedBookingTestReset(env, requestedScope, mode, beforePlan);
+  } catch (err) {
+    const message = safeStr(err?.message || String(err), 200) || "apply_failed";
+    console.log(
+      `[BOOKING_TEST_RESET][APPLY_ERROR] tenant=${tenantMasked} company=${companyMasked} mode=${mode} stage=apply error=${message}`,
+    );
+    return json({ ok: false, error: "apply_failed", message }, 500);
+  }
+
+  const after = await _bookingTestResetAfterSnapshot(env, requestedScope, mode);
+  const response = {
+    ok: true,
+    dry_run: false,
+    applied: true,
+    mode,
+    tenant_id: requestedTenant,
+    company_id: requestedCompany,
+    confirm: "accepted",
+    before: {
+      would_delete_total,
+      would_release_fleet_reservations,
+      categories: beforeCategories,
+    },
+    mutation: {
+      fleet_reservations: mutation.fleet,
+      deleted: mutation.deleted,
+      rebuilt_empty: mutation.rebuilt_empty,
+      errors: mutation.errors,
+    },
+    after,
+    preserved: _bookingTestResetPreservedBlock(),
+    message: "Scoped booking test reset applied.",
+  };
+  if ((mutation.errors || []).length > 0) response.partial = true;
+
+  console.log(
+    `[BOOKING_TEST_RESET][APPLY_DONE] tenant=${tenantMasked} company=${companyMasked} mode=${mode} deleted_total=${Number(mutation?.deleted?.total || 0)} released=${Number(mutation?.fleet?.released || 0)} partial=${response.partial === true ? "true" : "false"}`,
+  );
+  return json(response, 200);
+}
+
 
 export default {
   async fetch(request, env, ctx) {
@@ -21790,6 +22420,14 @@ GET /oauth/callback
           return json({ ok: false, error: "dev reset endpoints are disabled" }, 403);
         }
         return await handleScopedBookingTestResetDryRun(request, url, env);
+      }
+
+      // DEV/TEST ONLY. Must be disabled or protected before production.
+      if (url.pathname === "/admin/dev/scope/booking-test-reset" && request.method === "POST") {
+        if (!allowDevResetEndpoints(env)) {
+          return json({ ok: false, error: "dev reset endpoints are disabled" }, 403);
+        }
+        return await handleScopedBookingTestResetApply(request, url, env);
       }
 
       // DEV/TEST ONLY. Must be disabled or protected before production.
