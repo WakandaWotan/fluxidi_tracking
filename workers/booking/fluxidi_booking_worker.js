@@ -17889,6 +17889,635 @@ async function handleSafeResetOperationalData(request, url, env) {
   }, 200);
 }
 
+const BOOKING_TEST_RESET_DRY_RUN_MODES = [
+  "bookings_only",
+  "bookings_and_tracking",
+  "full_test_reset",
+];
+
+function _bookingTestResetScopedPrefix(scope, suffix) {
+  const normalized = _safeResetNormalizedScope(scope);
+  if (!normalized.hasScope) return "";
+  return `tenant:${normalized.tenant_id}:company:${normalized.company_id}:${suffix}`;
+}
+
+function _isScopedBookingIndexLikeKey(key) {
+  return /:bookings:v1$/.test(String(key || ""));
+}
+
+async function _safeDryRunCountKvPrefix(namespace, prefix, { keyFilter = null, maxSamples = 5 } = {}) {
+  if (!namespace || !prefix) {
+    return {
+      count: 0,
+      sample_key_previews: [],
+      scan_complete: false,
+      error: "missing_namespace_or_prefix",
+    };
+  }
+  let count = 0;
+  const sample_key_previews = [];
+  let cursor = undefined;
+  let scan_complete = true;
+  try {
+    do {
+      const page = await namespace.list({ prefix, limit: 1000, cursor });
+      for (const item of page?.keys || []) {
+        const key = String(item?.name || "");
+        if (!key) continue;
+        if (typeof keyFilter === "function" && !keyFilter(key)) continue;
+        count += 1;
+        if (sample_key_previews.length < maxSamples) {
+          sample_key_previews.push(key.length > 120 ? `${key.slice(0, 117)}...` : key);
+        }
+      }
+      cursor = page?.cursor;
+      if (page?.list_complete !== false) break;
+      if (!cursor) {
+        scan_complete = false;
+        break;
+      }
+    } while (cursor);
+    return { count, sample_key_previews, scan_complete };
+  } catch (err) {
+    return {
+      count,
+      sample_key_previews,
+      scan_complete: false,
+      error: safeStr(err?.message || String(err), 200) || "kv_list_error",
+    };
+  }
+}
+
+async function _safeDryRunCountKvPrefixes(namespace, prefixes, options = {}) {
+  let count = 0;
+  const sample_key_previews = [];
+  let scan_complete = true;
+  let error = null;
+  for (const prefix of prefixes || []) {
+    const result = await _safeDryRunCountKvPrefix(namespace, prefix, options);
+    count += Number(result?.count || 0);
+    for (const preview of result?.sample_key_previews || []) {
+      if (sample_key_previews.length >= (options.maxSamples || 5)) break;
+      if (!sample_key_previews.includes(preview)) sample_key_previews.push(preview);
+    }
+    if (result?.scan_complete !== true) scan_complete = false;
+    if (result?.error && !error) error = result.error;
+  }
+  return { count, sample_key_previews, scan_complete, error };
+}
+
+async function _safeDryRunExactKeyStats(namespace, key) {
+  if (!namespace || !key) {
+    return { count: 0, exists: false, current_items: 0, scan_complete: true };
+  }
+  try {
+    const raw = await namespace.get(key);
+    if (raw == null) {
+      return { count: 0, exists: false, current_items: 0, scan_complete: true };
+    }
+    let current_items = 0;
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) current_items = parsed.length;
+      else if (parsed && typeof parsed === "object" && Array.isArray(parsed.items)) {
+        current_items = parsed.items.length;
+      }
+    } catch (_) {
+      current_items = 0;
+    }
+    return { count: 1, exists: true, current_items, scan_complete: true };
+  } catch (err) {
+    return {
+      count: 0,
+      exists: false,
+      current_items: 0,
+      scan_complete: false,
+      error: safeStr(err?.message || String(err), 200) || "kv_read_error",
+    };
+  }
+}
+
+async function _bookingTestResetWouldReleaseReservationsCount(env, bookingIds = []) {
+  if (!env?.BOOKING_KV || !env?.FLEET_ALLOCATOR) return 0;
+  let count = 0;
+  for (const bookingId of bookingIds || []) {
+    const key = `booking:${bookingId}`;
+    try {
+      const rec = await env.BOOKING_KV.get(key, { type: "json" });
+      const pickupIso =
+        rec?.booking?.pickupStartIso ||
+        rec?.booking?.pickup_iso ||
+        rec?.quote?.pickup_iso ||
+        rec?.payload?.pickup_iso ||
+        rec?.payload?.pickupIso ||
+        null;
+      if (pickupIso) count += 1;
+    } catch (_) {
+      // Read-only census; skip unreadable records.
+    }
+  }
+  return count;
+}
+
+function _bookingTestResetCategoryDeletes(action) {
+  return (
+    action === "delete" ||
+    action === "delete_and_zero_aggregate" ||
+    action === "delete_or_replace_empty" ||
+    action === "reset_or_delete_later"
+  );
+}
+
+async function handleScopedBookingTestResetDryRun(request, url, env) {
+  _requireAdmin(request, url, env);
+  const requestedScope = resolveExplicitBookingRequestScope({
+    request,
+    url,
+    allowLegacyFallback: false,
+  });
+  if (!requestedScope?.hasScope) {
+    return json(
+      requestedScope?.error === "tenant_scope_conflict" ? scopeConflictError() : missingTenantScopeError(),
+      400,
+    );
+  }
+  const requestedTenant = _scopeText(requestedScope?.tenant_id);
+  const requestedCompany = _scopeText(requestedScope?.company_id);
+  if (requestedTenant === "fluxidi" || requestedCompany === "fluxidi") {
+    return json({ ok: false, error: "unsafe_legacy_scope_not_allowed" }, 400);
+  }
+
+  const modeRaw = safeStr(url.searchParams.get("mode"), 64).toLowerCase();
+  const mode = modeRaw || "bookings_and_tracking";
+  if (!BOOKING_TEST_RESET_DRY_RUN_MODES.includes(mode)) {
+    return json(
+      { ok: false, error: "invalid_mode", supported_modes: BOOKING_TEST_RESET_DRY_RUN_MODES },
+      400,
+    );
+  }
+
+  const tenantMasked = _maskPublicDriverLoginValue(requestedTenant);
+  const companyMasked = _maskPublicDriverLoginValue(requestedCompany);
+  console.log(
+    `[BOOKING_TEST_RESET][DRY_RUN][START] tenant=${tenantMasked} company=${companyMasked} mode=${mode}`,
+  );
+
+  const categories = [];
+  let partial = false;
+  const includeTracking = mode === "bookings_and_tracking" || mode === "full_test_reset";
+  const includeRatings = mode === "full_test_reset";
+
+  const pushCategory = (entry) => {
+    categories.push(entry);
+    if (entry?.ok === false) partial = true;
+  };
+
+  let collected = {
+    bookingIds: [],
+    scanned_count: 0,
+    matched_count: 0,
+    scan_complete: false,
+  };
+  try {
+    collected = await collectScopedResetBookingIds(env, requestedScope);
+  } catch (err) {
+    partial = true;
+    pushCategory({
+      id: "authoritative_bookings",
+      ok: false,
+      error: safeStr(err?.message || String(err), 200) || "authoritative_bookings_scan_failed",
+    });
+  }
+
+  const sampleBookingIds = (collected.bookingIds || []).slice(0, 10).map((id) => _bookingIntentMask(id));
+  if (!categories.some((entry) => entry?.id === "authoritative_bookings" && entry?.ok === false)) {
+    pushCategory({
+      id: "authoritative_bookings",
+      namespace: "BOOKING_KV",
+      kind: "global_prefix_filter",
+      prefix: "booking:",
+      count: Number(collected?.matched_count || 0),
+      sample_ids: sampleBookingIds,
+      action: "delete",
+      ok: true,
+    });
+  }
+
+  const bookingIntentPrefix = `booking_intent:${requestedTenant}:${requestedCompany}:`;
+  try {
+    const bookingIntents = await _safeDryRunCountKvPrefix(env?.BOOKING_KV, bookingIntentPrefix);
+    if (bookingIntents?.error) partial = true;
+    pushCategory({
+      id: "booking_intents",
+      namespace: "BOOKING_KV",
+      kind: "prefix",
+      prefix: bookingIntentPrefix,
+      count: Number(bookingIntents?.count || 0),
+      sample_key_previews: bookingIntents?.sample_key_previews || [],
+      action: "delete",
+      ok: !bookingIntents?.error,
+      ...(bookingIntents?.error ? { error: bookingIntents.error } : {}),
+    });
+  } catch (err) {
+    partial = true;
+    pushCategory({
+      id: "booking_intents",
+      ok: false,
+      error: safeStr(err?.message || String(err), 200) || "booking_intents_scan_failed",
+    });
+  }
+
+  const companyListKey = companyBookingsListIndexKey(requestedScope);
+  try {
+    const companyList = await _safeDryRunExactKeyStats(env?.BOOKING_KV, companyListKey);
+    if (companyList?.error) partial = true;
+    pushCategory({
+      id: "company_bookings_list",
+      namespace: "BOOKING_KV",
+      kind: "exact",
+      key: companyListKey,
+      count: companyList?.exists ? 1 : 0,
+      current_items: Number(companyList?.current_items || 0),
+      action: "replace_empty",
+      ok: !companyList?.error,
+      ...(companyList?.error ? { error: companyList.error } : {}),
+    });
+  } catch (err) {
+    partial = true;
+    pushCategory({ id: "company_bookings_list", ok: false, error: safeStr(err?.message || String(err), 200) });
+  }
+
+  const demandKey = bookingDemandIndexKey(requestedScope);
+  try {
+    const demandIndex = await _safeDryRunExactKeyStats(env?.BOOKING_KV, demandKey);
+    if (demandIndex?.error) partial = true;
+    pushCategory({
+      id: "demand_index",
+      namespace: "BOOKING_KV",
+      kind: "exact",
+      key: demandKey,
+      count: demandIndex?.exists ? 1 : 0,
+      current_items: Number(demandIndex?.current_items || 0),
+      action: "replace_empty",
+      ok: !demandIndex?.error,
+      ...(demandIndex?.error ? { error: demandIndex.error } : {}),
+    });
+  } catch (err) {
+    partial = true;
+    pushCategory({ id: "demand_index", ok: false, error: safeStr(err?.message || String(err), 200) });
+  }
+
+  const dashboardBookingsKpiPrefix = _bookingTestResetScopedPrefix(requestedScope, "dashboard:bookings_kpi");
+  try {
+    const dashboardKpis = await _safeDryRunCountKvPrefix(env?.BOOKING_KV, dashboardBookingsKpiPrefix);
+    if (dashboardKpis?.error) partial = true;
+    pushCategory({
+      id: "dashboard_bookings_kpis",
+      namespace: "BOOKING_KV",
+      kind: "prefix",
+      prefix: dashboardBookingsKpiPrefix,
+      count: Number(dashboardKpis?.count || 0),
+      sample_key_previews: dashboardKpis?.sample_key_previews || [],
+      action: "delete_and_zero_aggregate",
+      ok: !dashboardKpis?.error,
+      ...(dashboardKpis?.error ? { error: dashboardKpis.error } : {}),
+    });
+  } catch (err) {
+    partial = true;
+    pushCategory({ id: "dashboard_bookings_kpis", ok: false, error: safeStr(err?.message || String(err), 200) });
+  }
+
+  const customerIndexPrefix = _bookingTestResetScopedPrefix(requestedScope, "customer:");
+  try {
+    const customerIndexes = await _safeDryRunCountKvPrefix(env?.BOOKING_KV, customerIndexPrefix, {
+      keyFilter: _isScopedBookingIndexLikeKey,
+    });
+    if (customerIndexes?.error) partial = true;
+    pushCategory({
+      id: "customer_booking_indexes",
+      namespace: "BOOKING_KV",
+      kind: "prefix",
+      prefix: customerIndexPrefix,
+      count: Number(customerIndexes?.count || 0),
+      sample_key_previews: customerIndexes?.sample_key_previews || [],
+      action: "delete",
+      ok: !customerIndexes?.error,
+      ...(customerIndexes?.error ? { error: customerIndexes.error } : {}),
+    });
+  } catch (err) {
+    partial = true;
+    pushCategory({ id: "customer_booking_indexes", ok: false, error: safeStr(err?.message || String(err), 200) });
+  }
+
+  const driverIndexPrefix = _bookingTestResetScopedPrefix(requestedScope, "driver:");
+  try {
+    const driverIndexes = await _safeDryRunCountKvPrefix(env?.BOOKING_KV, driverIndexPrefix, {
+      keyFilter: _isScopedBookingIndexLikeKey,
+    });
+    if (driverIndexes?.error) partial = true;
+    pushCategory({
+      id: "driver_booking_indexes",
+      namespace: "BOOKING_KV",
+      kind: "prefix",
+      prefix: driverIndexPrefix,
+      count: Number(driverIndexes?.count || 0),
+      sample_key_previews: driverIndexes?.sample_key_previews || [],
+      action: "delete",
+      ok: !driverIndexes?.error,
+      ...(driverIndexes?.error ? { error: driverIndexes.error } : {}),
+    });
+  } catch (err) {
+    partial = true;
+    pushCategory({ id: "driver_booking_indexes", ok: false, error: safeStr(err?.message || String(err), 200) });
+  }
+
+  const vehicleIndexPrefix = _bookingTestResetScopedPrefix(requestedScope, "vehicle:");
+  try {
+    const vehicleIndexes = await _safeDryRunCountKvPrefix(env?.BOOKING_KV, vehicleIndexPrefix, {
+      keyFilter: _isScopedBookingIndexLikeKey,
+    });
+    if (vehicleIndexes?.error) partial = true;
+    pushCategory({
+      id: "vehicle_booking_indexes",
+      namespace: "BOOKING_KV",
+      kind: "prefix",
+      prefix: vehicleIndexPrefix,
+      count: Number(vehicleIndexes?.count || 0),
+      sample_key_previews: vehicleIndexes?.sample_key_previews || [],
+      action: "delete",
+      ok: !vehicleIndexes?.error,
+      ...(vehicleIndexes?.error ? { error: vehicleIndexes.error } : {}),
+    });
+  } catch (err) {
+    partial = true;
+    pushCategory({ id: "vehicle_booking_indexes", ok: false, error: safeStr(err?.message || String(err), 200) });
+  }
+
+  const bookingKvTrackingPrefixes = [
+    _bookingTestResetScopedPrefix(requestedScope, "tracking:session:"),
+    _bookingTestResetScopedPrefix(requestedScope, "tracking:trip:"),
+  ].filter(Boolean);
+  try {
+    const bookingKvTrackingMaps = await _safeDryRunCountKvPrefixes(env?.BOOKING_KV, bookingKvTrackingPrefixes);
+    if (bookingKvTrackingMaps?.error) partial = true;
+    pushCategory({
+      id: "booking_kv_tracking_maps",
+      namespace: "BOOKING_KV",
+      kind: "prefix",
+      prefixes: bookingKvTrackingPrefixes,
+      count: Number(bookingKvTrackingMaps?.count || 0),
+      sample_key_previews: bookingKvTrackingMaps?.sample_key_previews || [],
+      action: "delete",
+      ok: !bookingKvTrackingMaps?.error,
+      ...(bookingKvTrackingMaps?.error ? { error: bookingKvTrackingMaps.error } : {}),
+    });
+  } catch (err) {
+    partial = true;
+    pushCategory({ id: "booking_kv_tracking_maps", ok: false, error: safeStr(err?.message || String(err), 200) });
+  }
+
+  if (includeTracking) {
+    const tripRecordsPrefix = _bookingTestResetScopedPrefix(requestedScope, "trip:");
+    try {
+      const tripRecords = await _safeDryRunCountKvPrefix(env?.FLUXIDI_TRACKING, tripRecordsPrefix);
+      if (tripRecords?.error) partial = true;
+      pushCategory({
+        id: "trip_records",
+        namespace: "FLUXIDI_TRACKING",
+        kind: "prefix",
+        prefix: tripRecordsPrefix,
+        count: Number(tripRecords?.count || 0),
+        sample_key_previews: tripRecords?.sample_key_previews || [],
+        action: "delete",
+        ok: !tripRecords?.error,
+        ...(tripRecords?.error ? { error: tripRecords.error } : {}),
+      });
+    } catch (err) {
+      partial = true;
+      pushCategory({ id: "trip_records", ok: false, error: safeStr(err?.message || String(err), 200) });
+    }
+
+    const tripsIndexExactKey = _bookingTestResetScopedPrefix(requestedScope, "trips_index");
+    const tripsIndexPrefix = tripsIndexExactKey ? `${tripsIndexExactKey}:` : "";
+    try {
+      const tripsIndexExact = await _safeDryRunExactKeyStats(env?.FLUXIDI_TRACKING, tripsIndexExactKey);
+      const tripsIndexChildren = tripsIndexPrefix
+        ? await _safeDryRunCountKvPrefix(env?.FLUXIDI_TRACKING, tripsIndexPrefix)
+        : { count: 0, sample_key_previews: [], scan_complete: true };
+      if (tripsIndexExact?.error || tripsIndexChildren?.error) partial = true;
+      pushCategory({
+        id: "trips_index",
+        namespace: "FLUXIDI_TRACKING",
+        kind: "exact_prefix",
+        key: tripsIndexExactKey,
+        prefix: tripsIndexPrefix,
+        count: Number(tripsIndexExact?.exists ? 1 : 0) + Number(tripsIndexChildren?.count || 0),
+        current_items: Number(tripsIndexExact?.current_items || 0),
+        sample_key_previews: tripsIndexChildren?.sample_key_previews || [],
+        action: "delete_or_replace_empty",
+        ok: !(tripsIndexExact?.error || tripsIndexChildren?.error),
+        ...((tripsIndexExact?.error || tripsIndexChildren?.error)
+          ? { error: tripsIndexExact?.error || tripsIndexChildren?.error }
+          : {}),
+      });
+    } catch (err) {
+      partial = true;
+      pushCategory({ id: "trips_index", ok: false, error: safeStr(err?.message || String(err), 200) });
+    }
+
+    const liveBookingIndexKey = _safeResetScopedBookingIndexKey(requestedScope);
+    try {
+      const liveBookingIndex = await _safeDryRunExactKeyStats(env?.FLUXIDI_TRACKING, liveBookingIndexKey);
+      if (liveBookingIndex?.error) partial = true;
+      pushCategory({
+        id: "live_booking_index",
+        namespace: "FLUXIDI_TRACKING",
+        kind: "exact",
+        key: liveBookingIndexKey,
+        count: liveBookingIndex?.exists ? 1 : 0,
+        current_items: Number(liveBookingIndex?.current_items || 0),
+        action: "replace_empty",
+        ok: !liveBookingIndex?.error,
+        ...(liveBookingIndex?.error ? { error: liveBookingIndex.error } : {}),
+      });
+    } catch (err) {
+      partial = true;
+      pushCategory({ id: "live_booking_index", ok: false, error: safeStr(err?.message || String(err), 200) });
+    }
+
+    const trackingSessionPrefixes = [
+      _bookingTestResetScopedPrefix(requestedScope, "booking:"),
+      _bookingTestResetScopedPrefix(requestedScope, "session:"),
+      _bookingTestResetScopedPrefix(requestedScope, "ping:"),
+      _bookingTestResetScopedPrefix(requestedScope, "public:"),
+    ].filter(Boolean);
+    try {
+      const trackingSessionsAndMaps = await _safeDryRunCountKvPrefixes(
+        env?.FLUXIDI_TRACKING,
+        trackingSessionPrefixes,
+      );
+      if (trackingSessionsAndMaps?.error) partial = true;
+      pushCategory({
+        id: "tracking_sessions_and_maps",
+        namespace: "FLUXIDI_TRACKING",
+        kind: "prefix",
+        prefixes: trackingSessionPrefixes,
+        count: Number(trackingSessionsAndMaps?.count || 0),
+        sample_key_previews: trackingSessionsAndMaps?.sample_key_previews || [],
+        action: "delete",
+        ok: !trackingSessionsAndMaps?.error,
+        ...(trackingSessionsAndMaps?.error ? { error: trackingSessionsAndMaps.error } : {}),
+      });
+    } catch (err) {
+      partial = true;
+      pushCategory({ id: "tracking_sessions_and_maps", ok: false, error: safeStr(err?.message || String(err), 200) });
+    }
+
+    const tripKpiPrefix = _bookingTestResetScopedPrefix(requestedScope, "dashboard:trip_kpi");
+    try {
+      const tripKpiMaterialization = await _safeDryRunCountKvPrefix(env?.FLUXIDI_TRACKING, tripKpiPrefix);
+      if (tripKpiMaterialization?.error) partial = true;
+      pushCategory({
+        id: "trip_kpi_materialization",
+        namespace: "FLUXIDI_TRACKING",
+        kind: "prefix",
+        prefix: tripKpiPrefix,
+        count: Number(tripKpiMaterialization?.count || 0),
+        sample_key_previews: tripKpiMaterialization?.sample_key_previews || [],
+        action: "delete",
+        ok: !tripKpiMaterialization?.error,
+        ...(tripKpiMaterialization?.error ? { error: tripKpiMaterialization.error } : {}),
+      });
+    } catch (err) {
+      partial = true;
+      pushCategory({ id: "trip_kpi_materialization", ok: false, error: safeStr(err?.message || String(err), 200) });
+    }
+
+    const bookingFinancePrefix = _bookingTestResetScopedPrefix(requestedScope, "dashboard:booking_finance");
+    try {
+      const bookingFinanceMaterialization = await _safeDryRunCountKvPrefix(
+        env?.FLUXIDI_TRACKING,
+        bookingFinancePrefix,
+      );
+      if (bookingFinanceMaterialization?.error) partial = true;
+      pushCategory({
+        id: "booking_finance_materialization",
+        namespace: "FLUXIDI_TRACKING",
+        kind: "prefix",
+        prefix: bookingFinancePrefix,
+        count: Number(bookingFinanceMaterialization?.count || 0),
+        sample_key_previews: bookingFinanceMaterialization?.sample_key_previews || [],
+        action: "delete",
+        ok: !bookingFinanceMaterialization?.error,
+        ...(bookingFinanceMaterialization?.error ? { error: bookingFinanceMaterialization.error } : {}),
+      });
+    } catch (err) {
+      partial = true;
+      pushCategory({
+        id: "booking_finance_materialization",
+        ok: false,
+        error: safeStr(err?.message || String(err), 200),
+      });
+    }
+  }
+
+  if (includeRatings) {
+    const ratingsPrefix = _bookingTestResetScopedPrefix(requestedScope, "ratings:");
+    try {
+      const ratingAggregates = await _safeDryRunCountKvPrefix(env?.BOOKING_KV, ratingsPrefix);
+      if (ratingAggregates?.error) partial = true;
+      pushCategory({
+        id: "rating_aggregates",
+        namespace: "BOOKING_KV",
+        kind: "prefix",
+        prefix: ratingsPrefix,
+        count: Number(ratingAggregates?.count || 0),
+        sample_key_previews: ratingAggregates?.sample_key_previews || [],
+        action: "reset_or_delete_later",
+        ok: !ratingAggregates?.error,
+        ...(ratingAggregates?.error ? { error: ratingAggregates.error } : {}),
+      });
+    } catch (err) {
+      partial = true;
+      pushCategory({ id: "rating_aggregates", ok: false, error: safeStr(err?.message || String(err), 200) });
+    }
+  }
+
+  const would_delete_total = categories.reduce((sum, entry) => {
+    if (entry?.ok === false || !_bookingTestResetCategoryDeletes(entry?.action)) return sum;
+    return sum + Number(entry?.count || 0);
+  }, 0);
+
+  const would_release_fleet_reservations = await _bookingTestResetWouldReleaseReservationsCount(
+    env,
+    collected.bookingIds || [],
+  );
+
+  const response = {
+    ok: true,
+    dry_run: true,
+    mode,
+    tenant_id: requestedTenant,
+    company_id: requestedCompany,
+    scan: {
+      booking_records_scanned: Number(collected?.scanned_count || 0),
+      booking_records_matched_scope: Number(collected?.matched_count || 0),
+      scan_complete: collected?.scan_complete === true,
+    },
+    categories,
+    would_delete_total,
+    would_rebuild_empty: [
+      "company_bookings_list",
+      "demand_index",
+      "dashboard_bookings_kpis",
+      "live_booking_index",
+    ],
+    would_release_fleet_reservations,
+    preserved: {
+      settings: true,
+      business_profile: true,
+      pricing: true,
+      fleet_inventory: true,
+      driver_roster: true,
+      airport_fares: true,
+      customer_identity: true,
+      customer_sessions: true,
+      mollie_config: true,
+      invoice_artifacts: true,
+      compliance_events: true,
+      reference_sequences: true,
+    },
+    post_reset_expected: {
+      company_bookings_list_count: 0,
+      demand_index_count: 0,
+      dashboard_open_bookings: 0,
+      dashboard_completed_rides: 0,
+      dashboard_monthly_income_cents: 0,
+    },
+    risks: [
+      "mollie_payments_not_reversed",
+      "invoice_kv_artifacts_may_orphan",
+      "flutter_local_customer_cache_unaffected",
+    ],
+    apply_requirements: {
+      future_apply_endpoint: "POST /admin/dev/scope/booking-test-reset",
+      apply: true,
+      confirm: "RESET_TEST_BOOKINGS",
+      env: [
+        "ALLOW_DEV_RESET_ENDPOINTS=true",
+        "ALLOW_DEV_RESET=true",
+      ],
+    },
+    message: "Dry-run only. No data mutated.",
+  };
+  if (partial) response.partial = true;
+
+  console.log(
+    `[BOOKING_TEST_RESET][DRY_RUN][DONE] tenant=${tenantMasked} company=${companyMasked} mode=${mode} matched=${Number(collected?.matched_count || 0)} would_delete_total=${would_delete_total} partial=${partial ? "true" : "false"}`,
+  );
+  return json(response, 200);
+}
+
 export default {
   async fetch(request, env, ctx) {
     try {
@@ -21153,6 +21782,14 @@ GET /oauth/callback
           return json({ ok: false, error: "dev reset endpoints are disabled" }, 403);
         }
         return await handleSafeResetDryRun(request, url, env);
+      }
+
+      // DEV/TEST ONLY. Must be disabled or protected before production.
+      if (url.pathname === "/admin/dev/scope/booking-test-reset/dry-run" && request.method === "GET") {
+        if (!allowDevResetEndpoints(env)) {
+          return json({ ok: false, error: "dev reset endpoints are disabled" }, 403);
+        }
+        return await handleScopedBookingTestResetDryRun(request, url, env);
       }
 
       // DEV/TEST ONLY. Must be disabled or protected before production.
