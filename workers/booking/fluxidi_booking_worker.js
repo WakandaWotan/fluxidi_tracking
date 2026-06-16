@@ -21669,7 +21669,14 @@ GET /oauth/callback
             out,
             out?.error === "missing_tenant_scope"
               ? 400
-              : (out?.error === "forbidden" ? 403 : (out.ok ? 200 : 400)),
+              : out?.error === "forbidden"
+                ? 403
+                : out?.error === "future_pickup_not_started" ||
+                    out?.error === "future_completion_not_allowed"
+                  ? 409
+                  : out.ok
+                    ? 200
+                    : 400,
           );
         }
 
@@ -21747,6 +21754,10 @@ GET /oauth/callback
             out?.error === "operational_leg_not_found" ||
             out?.error === "operational_legs_not_found"
           ) statusCode = 404;
+          else if (
+            out?.error === "future_pickup_not_started" ||
+            out?.error === "future_completion_not_allowed"
+          ) statusCode = 409;
           return json(out, statusCode);
         }
 
@@ -22393,7 +22404,14 @@ GET /oauth/callback
           out,
           out?.error === "missing_tenant_scope"
             ? 400
-            : (out?.error === "forbidden" ? 403 : (out.ok ? 200 : 400)),
+            : out?.error === "forbidden"
+              ? 403
+              : out?.error === "future_pickup_not_started" ||
+                  out?.error === "future_completion_not_allowed"
+                ? 409
+                : out.ok
+                  ? 200
+                  : 400,
         );
       }
 
@@ -41437,6 +41455,48 @@ function bookingPickupIsoFromRecord(rec) {
   );
 }
 
+function operationalLegPickupIsoFromEntry(legEntry) {
+  if (!legEntry || typeof legEntry !== "object") return "";
+  return safeStr(
+    legEntry?.pickup_iso ??
+      legEntry?.pickupIso ??
+      legEntry?.pickupStartIso,
+    80,
+  );
+}
+
+function bookingLifecyclePickupMs(pickupIso) {
+  const text = safeStr(pickupIso, 80);
+  if (!text) return null;
+  const ms = Date.parse(text);
+  return Number.isFinite(ms) ? ms : null;
+}
+
+function isBookingLifecyclePickupInFuture(pickupIso, nowMs = Date.now()) {
+  const pickupMs = bookingLifecyclePickupMs(pickupIso);
+  if (pickupMs == null) return false;
+  return pickupMs > nowMs;
+}
+
+function isOperationalLegCompletionBlockedByFuturePickup(legEntry, nowMs = Date.now()) {
+  return isBookingLifecyclePickupInFuture(
+    operationalLegPickupIsoFromEntry(legEntry),
+    nowMs,
+  );
+}
+
+function logBookingLifecycleFuturePickupGuardRejected({
+  bookingId,
+  legId = "",
+  pickupIso = "",
+  nowIso,
+  requestedStatus = "COMPLETED",
+}) {
+  console.log(
+    `[BOOKING_LIFECYCLE][FUTURE_PICKUP_GUARD] booking=${_bookingIntentMask(bookingId)} leg=${safeStr(legId, 120) || "-"} pickup_iso=${safeStr(pickupIso, 80) || "-"} now=${safeStr(nowIso, 80) || "-"} requested_status=${safeStr(requestedStatus, 40) || "COMPLETED"} action=rejected`,
+  );
+}
+
 async function releaseAllocatorReservationForBooking({
   env,
   bookingId,
@@ -51787,6 +51847,35 @@ async function updateBookingStatusAuthoritative(
     rec?.booking?.stage,
   );
   const nowIso = new Date().toISOString();
+  if (normalized === "COMPLETED") {
+    const nowMs = Date.now();
+    const operationalLegs = _bookingOperationalLegsFromRecord(rec)
+      .map((entry) => (entry && typeof entry === "object" ? entry : null))
+      .filter((entry) => !!entry);
+    if (operationalLegs.length) {
+      for (const legEntry of operationalLegs) {
+        if (!isOperationalLegCompletionBlockedByFuturePickup(legEntry, nowMs)) {
+          continue;
+        }
+        logBookingLifecycleFuturePickupGuardRejected({
+          bookingId,
+          legId: safeStr(legEntry?.leg_id ?? legEntry?.legId, 200),
+          pickupIso: operationalLegPickupIsoFromEntry(legEntry),
+          nowIso,
+          requestedStatus: "COMPLETED",
+        });
+        return { ok: false, error: "future_completion_not_allowed" };
+      }
+    } else if (isBookingLifecyclePickupInFuture(bookingPickupIsoFromRecord(rec), nowMs)) {
+      logBookingLifecycleFuturePickupGuardRejected({
+        bookingId,
+        pickupIso: bookingPickupIsoFromRecord(rec),
+        nowIso,
+        requestedStatus: "COMPLETED",
+      });
+      return { ok: false, error: "future_pickup_not_started" };
+    }
+  }
   rec.status = normalized;
   rec.stage = normalized;
   rec.lifecycle_status = normalized.toLowerCase();
@@ -52014,6 +52103,23 @@ async function updateBookingOperationalLegStatusAuthoritative(
     return { ok: false, error: "operational_legs_not_found" };
   }
 
+  if (normalizedLegStatus === "COMPLETED") {
+    const nowMs = Date.now();
+    const targetLeg = _bookingOperationalLegsFromRecord(rec)
+      .map((entry) => (entry && typeof entry === "object" ? entry : null))
+      .find((entry) => safeStr(entry?.leg_id ?? entry?.legId, 200) === safeLegId);
+    if (targetLeg && isOperationalLegCompletionBlockedByFuturePickup(targetLeg, nowMs)) {
+      logBookingLifecycleFuturePickupGuardRejected({
+        bookingId: safeBookingId,
+        legId: safeLegId,
+        pickupIso: operationalLegPickupIsoFromEntry(targetLeg),
+        nowIso,
+        requestedStatus: "COMPLETED",
+      });
+      return { ok: false, error: "future_pickup_not_started" };
+    }
+  }
+
   let matchedAnyLeg = false;
   let selectedLegStatus = normalizedLegStatus;
   const mutateLegEntry = (entry) => {
@@ -52068,6 +52174,9 @@ async function updateBookingOperationalLegStatusAuthoritative(
   const operationalLegsCount = allLegs.length;
   let completedLegsCount = 0;
   let cancelledLegsCount = 0;
+  let rawCompletedLegsCount = 0;
+  let futureCompletedLegsIgnored = 0;
+  const parentDerivationNowMs = Date.now();
   for (const legEntry of allLegs) {
     const legStatus = _normLifecycleStatus(
       legEntry?.status ??
@@ -52076,6 +52185,11 @@ async function updateBookingOperationalLegStatusAuthoritative(
       "PENDING",
     );
     if (legStatus === "COMPLETED") {
+      rawCompletedLegsCount += 1;
+      if (isOperationalLegCompletionBlockedByFuturePickup(legEntry, parentDerivationNowMs)) {
+        futureCompletedLegsIgnored += 1;
+        continue;
+      }
       completedLegsCount += 1;
     } else if (legStatus === "CANCELLED") {
       cancelledLegsCount += 1;
@@ -52088,6 +52202,15 @@ async function updateBookingOperationalLegStatusAuthoritative(
 
   let derivedParentStatus = "PENDING";
   let progressState = "pending";
+  if (
+    operationalLegsCount > 0 &&
+    rawCompletedLegsCount === operationalLegsCount &&
+    futureCompletedLegsIgnored > 0
+  ) {
+    console.log(
+      `[BOOKING_LIFECYCLE][PARENT_COMPLETION_GUARD] booking=${_bookingIntentMask(safeBookingId)} reason=future_leg_completed_ignored ignored=${futureCompletedLegsIgnored} total=${operationalLegsCount}`,
+    );
+  }
   if (operationalLegsCount > 0 && completedLegsCount === operationalLegsCount) {
     derivedParentStatus = "COMPLETED";
     progressState = "completed";
