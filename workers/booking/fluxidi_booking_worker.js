@@ -20029,6 +20029,28 @@ GET /oauth/callback
         return json(out, out?.ok ? 200 : 400);
       }
 
+      // Admin repair: restore future bookings/legs that were incorrectly marked
+      // COMPLETED before pickup (pre-guard contamination). Dry-run by default.
+      if (
+        url.pathname === "/admin/bookings/lifecycle/repair-future-completed" &&
+        request.method === "POST"
+      ) {
+        _requireAdmin(request, url, env);
+        const body = await safeJson(request);
+        const explicitScope = resolveAdminExplicitTenantCompanyScope({ request, url, body });
+        if (!explicitScope?.hasScope) {
+          return json(missingTenantScopeError(), 400);
+        }
+        const dryRun = _resolveAdminRepairDryRun({ body, url });
+        const bookingIds = _parseAdminRepairBookingIds(body, url);
+        const out = await repairFutureCompletedBookingsForScope(
+          env,
+          explicitScope,
+          { dryRun, bookingIds },
+        );
+        return json(out, out?.ok ? 200 : 400);
+      }
+
       // GET /partners/nearby?postcode=... or /partners/nearby?lat=..&lng=..&radius_km=..
       if (url.pathname === "/partners/nearby" && request.method === "GET") {
         const postcode = String(url.searchParams.get("postcode") || "").trim();
@@ -41495,6 +41517,604 @@ function logBookingLifecycleFuturePickupGuardRejected({
   console.log(
     `[BOOKING_LIFECYCLE][FUTURE_PICKUP_GUARD] booking=${_bookingIntentMask(bookingId)} leg=${safeStr(legId, 120) || "-"} pickup_iso=${safeStr(pickupIso, 80) || "-"} now=${safeStr(nowIso, 80) || "-"} requested_status=${safeStr(requestedStatus, 40) || "COMPLETED"} action=rejected`,
   );
+}
+
+const REPAIR_SKIPPED_LIFECYCLE_TOKENS = new Set([
+  "CANCELLED",
+  "CANCELED",
+  "DELETED",
+  "DECLINED",
+  "FAILED",
+  "EXPIRED",
+  "ARCHIVED",
+]);
+
+function _resolveAdminRepairDryRun({ body, url } = {}) {
+  const applyRaw =
+    body?.apply ??
+    url?.searchParams?.get?.("apply");
+  if (applyRaw != null && _coerceBoolean(applyRaw, false)) {
+    return false;
+  }
+  const dryRunRaw =
+    body?.dry_run ??
+    body?.dryRun ??
+    url?.searchParams?.get?.("dry_run") ??
+    url?.searchParams?.get?.("dryRun");
+  if (dryRunRaw != null && !_coerceBoolean(dryRunRaw, true)) {
+    return false;
+  }
+  return dryRunRaw == null ? true : _coerceBoolean(dryRunRaw, true);
+}
+
+function _parseAdminRepairBookingIds(body, url) {
+  const raw =
+    body?.booking_ids ??
+    body?.bookingIds ??
+    url?.searchParams?.get?.("booking_ids") ??
+    url?.searchParams?.get?.("bookingIds");
+  if (Array.isArray(raw)) {
+    return raw
+      .map((entry) => safeStr(entry, 160))
+      .filter((entry) => !!entry);
+  }
+  const text = safeStr(raw, 4000);
+  if (!text) return [];
+  return text
+    .split(/[,\s]+/)
+    .map((entry) => safeStr(entry.trim(), 160))
+    .filter((entry) => !!entry);
+}
+
+function _bookingLifecycleStatusUpperFromRecord(rec) {
+  return _normLifecycleStatus(
+    rec?.status ??
+      rec?.stage ??
+      rec?.lifecycle_status ??
+      rec?.lifecycleStatus ??
+      rec?.booking_status ??
+      rec?.bookingStatus ??
+      rec?.booking?.status ??
+      rec?.booking?.stage ??
+      "PENDING",
+  );
+}
+
+function _isRepairSkippedLifecycleRecord(rec) {
+  const tokens = [
+    rec?.status,
+    rec?.stage,
+    rec?.lifecycle_status,
+    rec?.lifecycleStatus,
+    rec?.booking_status,
+    rec?.bookingStatus,
+    rec?.booking?.status,
+    rec?.booking?.stage,
+    rec?.refund_status,
+    rec?.refundStatus,
+  ];
+  for (const raw of tokens) {
+    const upper = String(raw || "").toUpperCase().trim();
+    if (REPAIR_SKIPPED_LIFECYCLE_TOKENS.has(upper)) return true;
+    if (_normLifecycleStatus(raw) === "CANCELLED") return true;
+  }
+  return false;
+}
+
+function _operationalLegStatusUpperFromEntry(legEntry) {
+  return _normLifecycleStatus(
+    legEntry?.status ??
+      legEntry?.lifecycle_status ??
+      legEntry?.lifecycleStatus ??
+      "PENDING",
+  );
+}
+
+function _proposedActiveOperationalLegStatusUpper(legEntry) {
+  const assignedDriver = safeStr(
+    legEntry?.assigned_driver_id ?? legEntry?.assignedDriverId,
+    96,
+  );
+  const assignedVehicle = safeStr(
+    legEntry?.assigned_vehicle_id ?? legEntry?.assignedVehicleId,
+    128,
+  );
+  if (assignedDriver && assignedVehicle) {
+    return "PENDING";
+  }
+  return "PENDING";
+}
+
+function _deriveParentLifecycleFromOperationalLegEntries(allLegs, nowMs = Date.now()) {
+  const operationalLegsCount = allLegs.length;
+  let completedLegsCount = 0;
+  let cancelledLegsCount = 0;
+  for (const legEntry of allLegs) {
+    const legStatus = _operationalLegStatusUpperFromEntry(legEntry);
+    if (legStatus === "COMPLETED") {
+      if (isOperationalLegCompletionBlockedByFuturePickup(legEntry, nowMs)) {
+        continue;
+      }
+      completedLegsCount += 1;
+    } else if (legStatus === "CANCELLED") {
+      cancelledLegsCount += 1;
+    }
+  }
+  const pendingLegsCount = Math.max(
+    0,
+    operationalLegsCount - completedLegsCount - cancelledLegsCount,
+  );
+  let derivedParentStatus = "PENDING";
+  let progressState = "pending";
+  if (operationalLegsCount > 0 && completedLegsCount === operationalLegsCount) {
+    derivedParentStatus = "COMPLETED";
+    progressState = "completed";
+  } else if (operationalLegsCount > 0 && cancelledLegsCount === operationalLegsCount) {
+    derivedParentStatus = "CANCELLED";
+    progressState = "cancelled";
+  } else if (completedLegsCount > 0 && pendingLegsCount > 0) {
+    derivedParentStatus = "PENDING";
+    progressState = "partially_completed";
+  } else if (cancelledLegsCount > 0 && pendingLegsCount > 0 && completedLegsCount === 0) {
+    derivedParentStatus = "PENDING";
+    progressState = "partially_cancelled";
+  } else if (completedLegsCount > 0 && cancelledLegsCount > 0 && pendingLegsCount === 0) {
+    derivedParentStatus = "PENDING";
+    progressState = "mixed_terminal";
+  }
+  return {
+    derivedParentStatus,
+    derivedParentLifecycle: derivedParentStatus.toLowerCase(),
+    progressState,
+    completedLegsCount,
+    cancelledLegsCount,
+    pendingLegsCount,
+    operationalLegsCount,
+  };
+}
+
+function _analyzeFutureCompletedBookingRepairCandidate(rec, bookingId, nowMs = Date.now()) {
+  const safeBookingId = safeStr(bookingId, 160);
+  const pickupIso = bookingPickupIsoFromRecord(rec);
+  const bookingPickupFuture = isBookingLifecyclePickupInFuture(pickupIso, nowMs);
+  const parentStatusUpper = _bookingLifecycleStatusUpperFromRecord(rec);
+  const parentCompleted = parentStatusUpper === "COMPLETED";
+  const allLegs = _bookingOperationalLegsFromRecord(rec)
+    .map((entry) => (entry && typeof entry === "object" ? entry : null))
+    .filter((entry) => !!entry);
+  const operationalLegSnapshots = allLegs.map((legEntry) => {
+    const legId = safeStr(legEntry?.leg_id ?? legEntry?.legId, 200);
+    const legPickupIso = operationalLegPickupIsoFromEntry(legEntry) || pickupIso;
+    const legStatusUpper = _operationalLegStatusUpperFromEntry(legEntry);
+    const legPickupFuture = isBookingLifecyclePickupInFuture(legPickupIso, nowMs);
+    const contaminated =
+      legStatusUpper === "COMPLETED" &&
+      isOperationalLegCompletionBlockedByFuturePickup(legEntry, nowMs);
+    const proposedStatusUpper = contaminated
+      ? _proposedActiveOperationalLegStatusUpper(legEntry)
+      : legStatusUpper;
+    return {
+      leg_id: legId || null,
+      leg_type: safeStr(legEntry?.leg_type ?? legEntry?.legType, 24) || null,
+      pickup_iso: legPickupIso || null,
+      current_status: legStatusUpper,
+      current_lifecycle_status: safeStr(
+        legEntry?.lifecycle_status ?? legEntry?.lifecycleStatus,
+        40,
+      ).toLowerCase() || legStatusUpper.toLowerCase(),
+      current_completed_at:
+        safeStr(legEntry?.completed_at ?? legEntry?.completedAt, 80) || null,
+      pickup_future: legPickupFuture,
+      contaminated,
+      proposed_status: proposedStatusUpper,
+      proposed_lifecycle_status: proposedStatusUpper.toLowerCase(),
+      fields_cleared: contaminated ? ["completed_at", "completedAt"] : [],
+      fields_preserved: [
+        "assigned_driver_id",
+        "assigned_vehicle_id",
+        "payment_status",
+        "paid_at",
+      ],
+    };
+  });
+  const contaminatedLegs = operationalLegSnapshots.filter((entry) => entry.contaminated);
+  const contaminated =
+    (bookingPickupFuture && parentCompleted) || contaminatedLegs.length > 0;
+  if (!contaminated) {
+    return {
+      contaminated: false,
+      reason: bookingPickupFuture ? "parent_not_completed" : "pickup_not_future",
+    };
+  }
+  const proposedLegs = operationalLegSnapshots.map((entry) =>
+    entry.contaminated
+      ? {
+          ...entry,
+          current_status: entry.current_status,
+        }
+      : entry,
+  );
+  const proposedLegEntries = allLegs.map((legEntry, index) => {
+    const snapshot = operationalLegSnapshots[index];
+    if (!snapshot?.contaminated) return legEntry;
+    const proposedStatusUpper = snapshot.proposed_status;
+    return {
+      ...legEntry,
+      status: proposedStatusUpper,
+      lifecycle_status: proposedStatusUpper.toLowerCase(),
+      lifecycleStatus: proposedStatusUpper.toLowerCase(),
+    };
+  });
+  const parentDerivation = _deriveParentLifecycleFromOperationalLegEntries(
+    proposedLegEntries.length ? proposedLegEntries : allLegs,
+    nowMs,
+  );
+  const parentFieldsCleared = [];
+  if (parentCompleted || safeStr(rec?.completed_at ?? rec?.completedAt, 80)) {
+    parentFieldsCleared.push("completed_at", "completedAt");
+  }
+  if (
+    parentDerivation.derivedParentStatus !== "COMPLETED" &&
+    safeStr(rec?.progress_state ?? rec?.progressState, 40) === "completed"
+  ) {
+    parentFieldsCleared.push("progress_state", "progressState");
+  }
+  return {
+    contaminated: true,
+    summary: {
+      booking_id: safeBookingId,
+      public_booking_reference: safeStr(
+        rec?.public_booking_reference ??
+          rec?.publicBookingReference ??
+          rec?.booking_reference ??
+          rec?.bookingReference ??
+          rec?.booking?.public_booking_reference ??
+          rec?.booking?.publicBookingReference,
+        120,
+      ) || null,
+      planning_reference: safeStr(
+        rec?.planning_reference ??
+          rec?.planningReference ??
+          rec?.booking?.planning_reference ??
+          rec?.booking?.planningReference,
+        120,
+      ) || null,
+      pickup_iso: pickupIso || null,
+      current_status: safeStr(rec?.status, 40) || null,
+      current_stage: safeStr(rec?.stage, 40) || null,
+      current_lifecycle_status: safeStr(
+        rec?.lifecycle_status ?? rec?.lifecycleStatus,
+        40,
+      ) || null,
+      current_booking_status: safeStr(
+        rec?.booking_status ?? rec?.bookingStatus,
+        40,
+      ) || null,
+      current_completed_at:
+        safeStr(rec?.completed_at ?? rec?.completedAt, 80) || null,
+      payment_status: safeStr(
+        rec?.payment_status ??
+          rec?.paymentStatus ??
+          rec?.booking?.payment_status ??
+          rec?.booking?.paymentStatus,
+        40,
+      ) || null,
+      operational_legs: proposedLegs,
+      proposed_parent_status: parentDerivation.derivedParentStatus,
+      proposed_parent_stage: parentDerivation.derivedParentStatus,
+      proposed_lifecycle_status: parentDerivation.derivedParentLifecycle,
+      proposed_booking_status: parentDerivation.derivedParentLifecycle,
+      proposed_progress_state: parentDerivation.progressState,
+      fields_cleared: parentFieldsCleared,
+      fields_preserved: [
+        "payment_status",
+        "paymentStatus",
+        "paid_at",
+        "paidAt",
+        "payment_provider",
+        "paymentProvider",
+        "payment_method",
+        "paymentMethod",
+        "payment_amount",
+        "paymentAmount",
+        "assigned_driver_id",
+        "assigned_vehicle_id",
+        "customer",
+        "quote",
+        "public_booking_reference",
+        "planning_reference",
+      ],
+      previous_status: safeStr(rec?.status, 40) || null,
+      previous_stage: safeStr(rec?.stage, 40) || null,
+      previous_completed_at:
+        safeStr(rec?.completed_at ?? rec?.completedAt, 80) || null,
+      previous_leg_statuses: operationalLegSnapshots.map((entry) => ({
+        leg_id: entry.leg_id,
+        status: entry.current_status,
+        lifecycle_status: entry.current_lifecycle_status,
+      })),
+    },
+  };
+}
+
+function _applyFutureCompletedBookingRepairToRecord(rec, bookingId, nowIso, nowMs = Date.now()) {
+  const analysis = _analyzeFutureCompletedBookingRepairCandidate(rec, bookingId, nowMs);
+  if (!analysis?.contaminated || !analysis?.summary) {
+    return { ok: false, reason: analysis?.reason || "not_contaminated" };
+  }
+  const summary = analysis.summary;
+  const previousAudit = {
+    previous_status: summary.previous_status,
+    previous_stage: summary.previous_stage,
+    previous_completed_at: summary.previous_completed_at,
+    previous_leg_statuses: summary.previous_leg_statuses,
+  };
+  const repairLegEntry = (entry) => {
+    if (!entry || typeof entry !== "object") return entry;
+    const legStatusUpper = _operationalLegStatusUpperFromEntry(entry);
+    if (
+      legStatusUpper !== "COMPLETED" ||
+      !isOperationalLegCompletionBlockedByFuturePickup(entry, nowMs)
+    ) {
+      return entry;
+    }
+    const proposedStatusUpper = _proposedActiveOperationalLegStatusUpper(entry);
+    const proposedLifecycle = proposedStatusUpper.toLowerCase();
+    const next = {
+      ...entry,
+      status: proposedStatusUpper,
+      lifecycle_status: proposedLifecycle,
+      lifecycleStatus: proposedLifecycle,
+      updated_at: nowIso,
+      updatedAt: nowIso,
+    };
+    delete next.completed_at;
+    delete next.completedAt;
+    return next;
+  };
+  const repairLegArray = (rawLegs) =>
+    Array.isArray(rawLegs) ? rawLegs.map((entry) => repairLegEntry(entry)) : rawLegs;
+  if (Array.isArray(rec?.operational_legs)) {
+    rec.operational_legs = repairLegArray(rec.operational_legs);
+  }
+  if (Array.isArray(rec?.operationalLegs)) {
+    rec.operationalLegs = repairLegArray(rec.operationalLegs);
+  }
+  if (rec?.booking && typeof rec.booking === "object") {
+    if (Array.isArray(rec.booking.operational_legs)) {
+      rec.booking.operational_legs = repairLegArray(rec.booking.operational_legs);
+    }
+    if (Array.isArray(rec.booking.operationalLegs)) {
+      rec.booking.operationalLegs = repairLegArray(rec.booking.operationalLegs);
+    }
+  }
+  const allLegs = _bookingOperationalLegsFromRecord(rec)
+    .map((entry) => (entry && typeof entry === "object" ? entry : null))
+    .filter((entry) => !!entry);
+  const parentDerivation = _deriveParentLifecycleFromOperationalLegEntries(allLegs, nowMs);
+  const {
+    derivedParentStatus,
+    derivedParentLifecycle,
+    progressState,
+    completedLegsCount,
+    cancelledLegsCount,
+    pendingLegsCount,
+    operationalLegsCount,
+  } = parentDerivation;
+  rec.status = derivedParentStatus;
+  rec.stage = derivedParentStatus;
+  rec.lifecycle_status = derivedParentLifecycle;
+  rec.lifecycleStatus = derivedParentLifecycle;
+  rec.booking_status = derivedParentLifecycle;
+  rec.bookingStatus = derivedParentLifecycle;
+  rec.progress_state = progressState;
+  rec.progressState = progressState;
+  rec.completed_legs_count = completedLegsCount;
+  rec.completedLegsCount = completedLegsCount;
+  rec.cancelled_legs_count = cancelledLegsCount;
+  rec.cancelledLegsCount = cancelledLegsCount;
+  rec.pending_legs_count = pendingLegsCount;
+  rec.pendingLegsCount = pendingLegsCount;
+  rec.operational_legs_count = operationalLegsCount;
+  rec.operationalLegsCount = operationalLegsCount;
+  rec.updated_at = nowIso;
+  rec.updatedAt = nowIso;
+  if (derivedParentStatus === "COMPLETED") {
+    rec.completed_at = rec.completed_at || nowIso;
+    rec.completedAt = rec.completedAt || rec.completed_at;
+  } else {
+    delete rec.completed_at;
+    delete rec.completedAt;
+  }
+  if (rec.booking && typeof rec.booking === "object") {
+    rec.booking.status = derivedParentStatus;
+    rec.booking.stage = derivedParentStatus;
+    rec.booking.lifecycle_status = derivedParentLifecycle;
+    rec.booking.lifecycleStatus = derivedParentLifecycle;
+    rec.booking.booking_status = derivedParentLifecycle;
+    rec.booking.bookingStatus = derivedParentLifecycle;
+    rec.booking.progress_state = progressState;
+    rec.booking.progressState = progressState;
+    rec.booking.completed_legs_count = completedLegsCount;
+    rec.booking.completedLegsCount = completedLegsCount;
+    rec.booking.cancelled_legs_count = cancelledLegsCount;
+    rec.booking.cancelledLegsCount = cancelledLegsCount;
+    rec.booking.pending_legs_count = pendingLegsCount;
+    rec.booking.pendingLegsCount = pendingLegsCount;
+    rec.booking.operational_legs_count = operationalLegsCount;
+    rec.booking.operationalLegsCount = operationalLegsCount;
+    rec.booking.updated_at = nowIso;
+    rec.booking.updatedAt = nowIso;
+    if (derivedParentStatus === "COMPLETED") {
+      rec.booking.completed_at = rec.booking.completed_at || rec.completed_at || nowIso;
+      rec.booking.completedAt = rec.booking.completedAt || rec.booking.completed_at;
+    } else {
+      delete rec.booking.completed_at;
+      delete rec.booking.completedAt;
+    }
+  }
+  const repairAudit = {
+    repaired_at: nowIso,
+    repaired_by: "admin_repair_future_completed",
+    reason: "future_pickup_completed_before_guard",
+    ...previousAudit,
+    proposed_parent_status: derivedParentStatus,
+    proposed_progress_state: progressState,
+  };
+  rec.lifecycle_repair_audit = repairAudit;
+  rec.lifecycleRepairAudit = repairAudit;
+  return { ok: true, summary: analysis.summary, parent_status: derivedParentStatus };
+}
+
+async function _refreshBookingIndexesAfterFutureCompletedRepair(
+  env,
+  bookingId,
+  rec,
+  tenantScope,
+) {
+  const fleetScope = normalizeFleetTenantScope(tenantScope);
+  await upsertBookingDemandIndexBestEffort(env, bookingId, rec, fleetScope);
+  await upsertDriverVehicleBookingIndexesBestEffort(
+    env,
+    bookingId,
+    rec,
+    fleetScope,
+  );
+  await upsertCompanyBookingsListIndexBestEffort(
+    env,
+    bookingId,
+    rec,
+    fleetScope,
+  );
+  await upsertDashboardBookingsKpiProjectionBestEffort(
+    env,
+    bookingId,
+    rec,
+    fleetScope,
+  );
+  const customerIndexResult = await upsertCustomerScopedBookingIndexForBooking(
+    env,
+    bookingId,
+    rec,
+  );
+  _logCustomerBookingIndexUpsert({
+    bookingId,
+    rec,
+    result: customerIndexResult,
+  });
+}
+
+async function repairFutureCompletedBookingsForScope(env, tenantScope, options = {}) {
+  const dryRun = options?.dryRun !== false;
+  const explicitIds = Array.isArray(options?.bookingIds)
+    ? options.bookingIds.map((entry) => safeStr(entry, 160)).filter((entry) => !!entry)
+    : [];
+  const explicitIdSet = new Set(explicitIds);
+  const nowMs = Date.now();
+  const nowIso = new Date(nowMs).toISOString();
+  let bookingIds = explicitIds.slice();
+  if (!bookingIds.length) {
+    const indexRead = await readCompanyBookingsListIndex(env, tenantScope);
+    bookingIds = (Array.isArray(indexRead?.index?.items) ? indexRead.index.items : [])
+      .map((entry) => safeStr(entry?.booking_id ?? entry?.bookingId, 160))
+      .filter((entry) => !!entry);
+  }
+  const candidates = [];
+  const skipped = [];
+  const applied = [];
+  const errors = [];
+  for (const bookingId of bookingIds) {
+    try {
+      const { key, rec } = await loadBookingRecord(env, bookingId);
+      if (!bookingMatchesRequiredTenantCompanyScope(rec, tenantScope)) {
+        skipped.push({ booking_id: bookingId, reason: "scope_mismatch" });
+        console.log(
+          `[BOOKING_LIFECYCLE][REPAIR_FUTURE_COMPLETED][SKIP] booking=${_bookingIntentMask(bookingId)} reason=scope_mismatch`,
+        );
+        continue;
+      }
+      const explicitTarget = explicitIdSet.has(bookingId);
+      if (_isRepairSkippedLifecycleRecord(rec) && !explicitTarget) {
+        skipped.push({ booking_id: bookingId, reason: "skipped_terminal_lifecycle" });
+        console.log(
+          `[BOOKING_LIFECYCLE][REPAIR_FUTURE_COMPLETED][SKIP] booking=${_bookingIntentMask(bookingId)} reason=skipped_terminal_lifecycle`,
+        );
+        continue;
+      }
+      const analysis = _analyzeFutureCompletedBookingRepairCandidate(
+        rec,
+        bookingId,
+        nowMs,
+      );
+      if (!analysis?.contaminated || !analysis?.summary) {
+        skipped.push({
+          booking_id: bookingId,
+          reason: analysis?.reason || "not_contaminated",
+        });
+        console.log(
+          `[BOOKING_LIFECYCLE][REPAIR_FUTURE_COMPLETED][SKIP] booking=${_bookingIntentMask(bookingId)} reason=${safeStr(analysis?.reason, 80) || "not_contaminated"}`,
+        );
+        continue;
+      }
+      candidates.push(analysis.summary);
+      if (dryRun) {
+        console.log(
+          `[BOOKING_LIFECYCLE][REPAIR_FUTURE_COMPLETED][DRY_RUN] booking=${_bookingIntentMask(bookingId)} proposed_parent=${analysis.summary.proposed_parent_status} contaminated_legs=${analysis.summary.operational_legs.filter((entry) => entry.contaminated).length}`,
+        );
+        continue;
+      }
+      const repairedRec = JSON.parse(JSON.stringify(rec));
+      const repairResult = _applyFutureCompletedBookingRepairToRecord(
+        repairedRec,
+        bookingId,
+        nowIso,
+        nowMs,
+      );
+      if (!repairResult?.ok) {
+        skipped.push({
+          booking_id: bookingId,
+          reason: repairResult?.reason || "repair_failed",
+        });
+        continue;
+      }
+      await env.BOOKING_KV.put(key, JSON.stringify(repairedRec));
+      await _refreshBookingIndexesAfterFutureCompletedRepair(
+        env,
+        bookingId,
+        repairedRec,
+        tenantScope,
+      );
+      applied.push({
+        booking_id: bookingId,
+        parent_status: repairResult.parent_status,
+        summary: repairResult.summary,
+      });
+      console.log(
+        `[BOOKING_LIFECYCLE][REPAIR_FUTURE_COMPLETED][APPLY] booking=${_bookingIntentMask(bookingId)} parent_status=${repairResult.parent_status}`,
+      );
+    } catch (err) {
+      const reason = safeStr(err?.message || err, 160) || "unexpected_failure";
+      errors.push({ booking_id: bookingId, reason });
+      console.log(
+        `[BOOKING_LIFECYCLE][REPAIR_FUTURE_COMPLETED][SKIP] booking=${_bookingIntentMask(bookingId)} reason=${reason}`,
+      );
+    }
+  }
+  return {
+    ok: true,
+    dry_run: dryRun,
+    tenant_id: tenantScope.tenant_id,
+    company_id: tenantScope.company_id,
+    scanned: bookingIds.length,
+    candidate_count: candidates.length,
+    applied_count: applied.length,
+    skipped_count: skipped.length,
+    error_count: errors.length,
+    candidates,
+    applied,
+    skipped,
+    errors,
+  };
 }
 
 async function releaseAllocatorReservationForBooking({
