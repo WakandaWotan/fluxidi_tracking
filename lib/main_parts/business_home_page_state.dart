@@ -47,6 +47,9 @@ class _BusinessHomePageState extends State<BusinessHomePage>
   int? _monthlyIncomeCents;
   String _kpiCurrency = 'EUR';
   bool _kpiRefreshInFlight = false;
+  String? _dashboardKpiTenantId;
+  String? _dashboardKpiCompanyId;
+  int _dashboardKpiRefreshGeneration = 0;
   bool _routeObserverSubscribed = false;
   bool _businessAccessGuardTriggered = false;
 
@@ -149,6 +152,8 @@ class _BusinessHomePageState extends State<BusinessHomePage>
     businessHomeMobileLayoutNotifier.addListener(
       _onBusinessHomeMobileLayoutChanged,
     );
+    activeCompanySessionNotifier.addListener(_onDashboardKpiScopeMaybeChanged);
+    companyProfileNotifier.addListener(_onDashboardKpiScopeMaybeChanged);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _guardBusinessAccessOrRedirect(reason: 'business_home_init');
     });
@@ -181,6 +186,10 @@ class _BusinessHomePageState extends State<BusinessHomePage>
     businessHomeMobileLayoutNotifier.removeListener(
       _onBusinessHomeMobileLayoutChanged,
     );
+    activeCompanySessionNotifier.removeListener(
+      _onDashboardKpiScopeMaybeChanged,
+    );
+    companyProfileNotifier.removeListener(_onDashboardKpiScopeMaybeChanged);
     // Releasing the business shell flag here means the next non-business
     // screen (role entry, login, customer, driver standalone) renders with
     // the brand default frame accent instead of inheriting Neon Rush /
@@ -251,6 +260,70 @@ class _BusinessHomePageState extends State<BusinessHomePage>
     return '${_kpiCurrency.toUpperCase()} $normalized';
   }
 
+  ({String tenantId, String companyId})? _activeDashboardKpiScope() {
+    final query = _activeBookingScopeQuery();
+    final tenantId = (query['tenant_id'] ?? query['tenantId'] ?? '')
+        .toString()
+        .trim();
+    final companyId = (query['company_id'] ?? query['companyId'] ?? '')
+        .toString()
+        .trim();
+    if (tenantId.isEmpty || companyId.isEmpty) return null;
+    return (tenantId: tenantId, companyId: companyId);
+  }
+
+  bool _dashboardKpiScopeMatches({
+    required String tenantId,
+    required String companyId,
+  }) {
+    final active = _activeDashboardKpiScope();
+    if (active == null) return false;
+    return active.tenantId == tenantId && active.companyId == companyId;
+  }
+
+  void _onDashboardKpiScopeMaybeChanged() {
+    if (!mounted) return;
+    final scope = _activeDashboardKpiScope();
+    final nextTenant = scope?.tenantId;
+    final nextCompany = scope?.companyId;
+    if (nextTenant == _dashboardKpiTenantId &&
+        nextCompany == _dashboardKpiCompanyId) {
+      return;
+    }
+    _clearDashboardKpisForScopeChange(reason: 'session_or_profile');
+  }
+
+  void _clearDashboardKpisForScopeChange({required String reason}) {
+    final scope = _activeDashboardKpiScope();
+    _dashboardKpiRefreshGeneration += 1;
+    debugPrint(
+      '[BUSINESS_DASHBOARD][KPI][SCOPE_CHANGE_CLEAR] reason=$reason '
+      'tenant=${_maskLocalScopeId(scope?.tenantId ?? '')} '
+      'company=${_maskLocalScopeId(scope?.companyId ?? '')} '
+      'generation=$_dashboardKpiRefreshGeneration',
+    );
+    if (!mounted) return;
+    setState(() {
+      _dashboardKpiTenantId = scope?.tenantId;
+      _dashboardKpiCompanyId = scope?.companyId;
+      if (scope != null) {
+        _openBookingsCount = 0;
+        _completedRidesCount = 0;
+        _unpaidCompletedRidesCount = 0;
+        _monthlyIncomeCents = 0;
+        _kpiCurrency = 'EUR';
+      } else {
+        _openBookingsCount = null;
+        _completedRidesCount = null;
+        _unpaidCompletedRidesCount = null;
+        _monthlyIncomeCents = null;
+      }
+    });
+    if (scope != null) {
+      unawaited(_refreshDashboardKpis(reason: 'scope_change:$reason'));
+    }
+  }
+
   Future<int?> _loadOpenBookingsFallbackCount({
     required Map<String, String> headers,
     required String reason,
@@ -313,11 +386,37 @@ class _BusinessHomePageState extends State<BusinessHomePage>
   }
 
   Future<void> _refreshDashboardKpis({required String reason}) async {
-    if (_kpiRefreshInFlight) return;
+    final requestScope = _activeDashboardKpiScope();
+    if (requestScope == null) {
+      debugPrint(
+        '[BUSINESS_DASHBOARD][KPI][WARN] reason=missing_scope trigger=$reason',
+      );
+      return;
+    }
+    final requestGeneration = _dashboardKpiRefreshGeneration;
+    final capturedTenantId = requestScope.tenantId;
+    final capturedCompanyId = requestScope.companyId;
+    if (_kpiRefreshInFlight &&
+        _dashboardKpiTenantId == capturedTenantId &&
+        _dashboardKpiCompanyId == capturedCompanyId) {
+      return;
+    }
     _kpiRefreshInFlight = true;
     try {
       final month = _activeMonthToken();
       final headers = await _companyOwnerHeaders();
+      if (requestGeneration != _dashboardKpiRefreshGeneration ||
+          !_dashboardKpiScopeMatches(
+            tenantId: capturedTenantId,
+            companyId: capturedCompanyId,
+          )) {
+        debugPrint(
+          '[BUSINESS_DASHBOARD][KPI][STALE_RESPONSE_SKIP] phase=pre_fetch '
+          'trigger=$reason tenant=${_maskLocalScopeId(capturedTenantId)} '
+          'company=${_maskLocalScopeId(capturedCompanyId)}',
+        );
+        return;
+      }
       final bookingsUri = _withActiveBookingScope(
         kBookingBaseUrl,
         '/admin/dashboard/bookings-kpis',
@@ -333,6 +432,8 @@ class _BusinessHomePageState extends State<BusinessHomePage>
       int? nextUnpaidCompleted;
       int? nextMonthlyIncomeCents;
       var nextCurrency = 'EUR';
+      var bookingsKpisOk = false;
+      var tripKpisOk = false;
 
       try {
         try {
@@ -342,7 +443,8 @@ class _BusinessHomePageState extends State<BusinessHomePage>
           if (bookingsRes.statusCode == 200) {
             final decoded = jsonDecode(bookingsRes.body);
             if (decoded is Map && decoded['ok'] == true) {
-              nextOpenBookings = _asInt(decoded['open_bookings_count']);
+              bookingsKpisOk = true;
+              nextOpenBookings = _asInt(decoded['open_bookings_count']) ?? 0;
             } else {
               debugPrint(
                 '[BUSINESS_DASHBOARD][KPI][WARN] source=bookings reason=invalid_payload trigger=$reason',
@@ -358,11 +460,13 @@ class _BusinessHomePageState extends State<BusinessHomePage>
             '[BUSINESS_DASHBOARD][KPI][WARN] source=bookings reason=fetch_failed trigger=$reason error=$e',
           );
         }
-        nextOpenBookings ??= await _loadOpenBookingsFallbackCount(
-          headers: headers,
-          reason: reason,
-        );
-        nextOpenBookings ??= 0;
+        if (!bookingsKpisOk) {
+          nextOpenBookings ??= await _loadOpenBookingsFallbackCount(
+            headers: headers,
+            reason: reason,
+          );
+          nextOpenBookings ??= 0;
+        }
 
         try {
           final tripRes = await http
@@ -371,10 +475,11 @@ class _BusinessHomePageState extends State<BusinessHomePage>
           if (tripRes.statusCode == 200) {
             final decoded = jsonDecode(tripRes.body);
             if (decoded is Map && decoded['ok'] == true) {
-              nextCompletedRides = _asInt(decoded['completed_rides_count']);
-              nextUnpaidCompleted = _asInt(
-                decoded['unpaid_completed_rides_count'],
-              );
+              tripKpisOk = true;
+              nextCompletedRides =
+                  _asInt(decoded['completed_rides_count']) ?? 0;
+              nextUnpaidCompleted =
+                  _asInt(decoded['unpaid_completed_rides_count']) ?? 0;
               nextCurrency =
                   (decoded['currency']?.toString().trim().isNotEmpty ?? false)
                   ? decoded['currency'].toString().trim().toUpperCase()
@@ -390,7 +495,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                 } else {
                   final eur = _asDouble(decoded['monthly_income_eur']);
                   nextMonthlyIncomeCents = eur == null
-                      ? null
+                      ? 0
                       : (eur * 100).round();
                 }
               }
@@ -409,17 +514,51 @@ class _BusinessHomePageState extends State<BusinessHomePage>
             '[BUSINESS_DASHBOARD][KPI][WARN] source=trip_kpis reason=fetch_failed trigger=$reason error=$e',
           );
         }
+        if (!tripKpisOk) {
+          nextCompletedRides = 0;
+          nextUnpaidCompleted = 0;
+          nextMonthlyIncomeCents = 0;
+        }
       } catch (e) {
         debugPrint(
           '[BUSINESS_DASHBOARD][KPI][WARN] reason=fetch_failed trigger=$reason error=$e',
         );
+        nextOpenBookings ??= 0;
+        nextCompletedRides ??= 0;
+        nextUnpaidCompleted ??= 0;
+        nextMonthlyIncomeCents ??= 0;
       }
       if (!mounted) return;
+      if (requestGeneration != _dashboardKpiRefreshGeneration ||
+          !_dashboardKpiScopeMatches(
+            tenantId: capturedTenantId,
+            companyId: capturedCompanyId,
+          )) {
+        debugPrint(
+          '[BUSINESS_DASHBOARD][KPI][STALE_RESPONSE_SKIP] phase=apply '
+          'trigger=$reason tenant=${_maskLocalScopeId(capturedTenantId)} '
+          'company=${_maskLocalScopeId(capturedCompanyId)} '
+          'request_generation=$requestGeneration '
+          'current_generation=$_dashboardKpiRefreshGeneration',
+        );
+        return;
+      }
+      debugPrint(
+        '[BUSINESS_DASHBOARD][KPI][APPLY] trigger=$reason '
+        'tenant=${_maskLocalScopeId(capturedTenantId)} '
+        'company=${_maskLocalScopeId(capturedCompanyId)} '
+        'open=${nextOpenBookings ?? 0} completed=${nextCompletedRides ?? 0} '
+        'unpaid_completed=${nextUnpaidCompleted ?? 0} '
+        'monthly_income_cents=${nextMonthlyIncomeCents ?? 0} '
+        'currency=$nextCurrency bookings_ok=$bookingsKpisOk trip_ok=$tripKpisOk',
+      );
       setState(() {
-        _openBookingsCount = nextOpenBookings;
-        _completedRidesCount = nextCompletedRides;
-        _unpaidCompletedRidesCount = nextUnpaidCompleted;
-        _monthlyIncomeCents = nextMonthlyIncomeCents;
+        _dashboardKpiTenantId = capturedTenantId;
+        _dashboardKpiCompanyId = capturedCompanyId;
+        _openBookingsCount = nextOpenBookings ?? 0;
+        _completedRidesCount = nextCompletedRides ?? 0;
+        _unpaidCompletedRidesCount = nextUnpaidCompleted ?? 0;
+        _monthlyIncomeCents = nextMonthlyIncomeCents ?? 0;
         _kpiCurrency = nextCurrency;
       });
     } finally {
