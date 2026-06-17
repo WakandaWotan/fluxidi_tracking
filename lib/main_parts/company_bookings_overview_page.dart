@@ -85,8 +85,21 @@ class _CompanyBookingsOverviewPageState
     return text.isEmpty || text == '—' || text == '-';
   }
 
-  bool _isCancellingBooking(String bookingId) {
-    return _cancellingBookingIds.contains(bookingId);
+  bool _isCancellingBooking(String busyKey) {
+    return _cancellingBookingIds.contains(busyKey);
+  }
+
+  String _cancelBusyKey(_CompanyBookingOverviewItem item) {
+    final bookingId = item.bookingId.trim();
+    final legId = item.legId.trim();
+    if (legId.isEmpty) return bookingId;
+    return '$bookingId::$legId';
+  }
+
+  bool _isRoundtripLegCancelEligible(_CompanyBookingOverviewItem item) {
+    return item.isOperationalLeg &&
+        item.isRoundtripParent &&
+        item.legId.trim().isNotEmpty;
   }
 
   bool _canApplyCreditDecisions() => _creditAuthEnabled;
@@ -1044,26 +1057,53 @@ class _CompanyBookingsOverviewPageState
   }
 
   Future<({bool ok, String error})> _cancelPaidBookingAsAdminById(
-    String bookingId,
-  ) async {
-    final id = bookingId.trim();
+    String bookingId, {
+    String? legId,
+    String? legType,
+    String? parentBookingId,
+    _AdminCancelPaidScope scope = _AdminCancelPaidScope.fullRoundtrip,
+  }) async {
+    final parentId = (parentBookingId ?? bookingId).trim();
+    final id = parentId.isNotEmpty ? parentId : bookingId.trim();
     if (id.isEmpty) return (ok: false, error: 'missing_booking_id');
+    final safeLegId = (legId ?? '').trim();
+    final safeLegType = (legType ?? '').trim();
+    final cancelSingleLeg =
+        scope == _AdminCancelPaidScope.singleLeg && safeLegId.isNotEmpty;
     final scopeQuery = _activeBookingScopeQuery();
-    final uri = _withActiveBookingScope(
-      kBookingBaseUrl,
-      '$kUpdateBookingStatusPath/${Uri.encodeComponent(id)}/status',
-    );
+    final path = cancelSingleLeg
+        ? '$kUpdateBookingStatusPath/${Uri.encodeComponent(id)}/legs/${Uri.encodeComponent(safeLegId)}/status'
+        : '$kUpdateBookingStatusPath/${Uri.encodeComponent(id)}/status';
+    final uri = _withActiveBookingScope(kBookingBaseUrl, path);
     final payload = <String, dynamic>{
       'booking_id': id,
+      'parent_booking_id': id,
+      'parentBookingId': id,
       'status': 'CANCELLED',
       'actor_role': 'admin',
       'actorRole': 'admin',
+      if (cancelSingleLeg) ...<String, dynamic>{
+        'leg_id': safeLegId,
+        'legId': safeLegId,
+        if (safeLegType.isNotEmpty) 'leg_type': safeLegType,
+        if (safeLegType.isNotEmpty) 'legType': safeLegType,
+        'cancel_scope': 'single_leg',
+        'cancelScope': 'single_leg',
+      } else ...<String, dynamic>{
+        'cancel_scope': 'full_roundtrip',
+        'cancelScope': 'full_roundtrip',
+      },
       if (scopeQuery['tenant_id'] != null) 'tenant_id': scopeQuery['tenant_id'],
       if (scopeQuery['company_id'] != null)
         'company_id': scopeQuery['company_id'],
       if (scopeQuery['tenantId'] != null) 'tenantId': scopeQuery['tenantId'],
       if (scopeQuery['companyId'] != null) 'companyId': scopeQuery['companyId'],
     };
+    debugPrint(
+      '[BOOKING_CANCEL][LEG] parent=$id leg=${cancelSingleLeg ? safeLegId : "-"} '
+      'leg_type=${safeLegType.isEmpty ? "-" : safeLegType} '
+      'scope=${cancelSingleLeg ? "single_leg" : "full_roundtrip"}',
+    );
     try {
       final res = await http
           .post(uri, headers: _adminHeaders(), body: jsonEncode(payload))
@@ -1087,42 +1127,61 @@ class _CompanyBookingsOverviewPageState
     }
   }
 
-  Future<void> _cancelPaidBookingAsAdmin(
+  Future<_AdminCancelPaidScope?> _showRoundtripCancelPaidDialog(
     _CompanyBookingOverviewItem item,
-  ) async {
-    if (_bulkArchiving) return;
-    final bookingId = item.bookingId.trim();
-    if (bookingId.isEmpty || _isCancellingBooking(bookingId)) return;
-    final tokens = _themeTokensFor(businessThemeNotifier.value);
-    final confirmed = await showDialog<bool>(
+    _CompanyBookingsThemeTokens tokens,
+  ) {
+    final legLabel = _companyLegLabel(item);
+    return showDialog<_AdminCancelPaidScope>(
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: tokens.palette.surface,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
         title: Text(
           _t(
-            nl: 'Betaalde rit annuleren?',
-            en: 'Cancel paid ride?',
-            fr: 'Annuler le trajet payé ?',
-            es: '¿Cancelar viaje pagado?',
+            nl: 'Rondrit annuleren?',
+            en: 'Cancel roundtrip ride?',
+            fr: 'Annuler le trajet aller-retour ?',
+            es: '¿Cancelar viaje de ida y vuelta?',
           ),
           style: TextStyle(color: tokens.textPrimary),
         ),
         content: Text(
           _t(
-            nl: 'De rit wordt geannuleerd en verdwijnt uit planning en chauffeursweergave. De boeking komt in Geannuleerd en Te crediteren. Er wordt nog geen automatische terugbetaling uitgevoerd.',
-            en: 'The ride will be cancelled and removed from planning and the driver view. The booking will appear in Cancelled and To credit. No automatic refund will be executed yet.',
-            fr: 'Le trajet sera annulé et retiré de la planification et de la vue chauffeur. La réservation apparaîtra dans Annulées et À créditer. Aucun remboursement automatique ne sera exécuté pour l’instant.',
-            es: 'El viaje se cancelará y desaparecerá de la planificación y de la vista del conductor. La reserva aparecerá en Canceladas y Por abonar. Aún no se ejecutará ningún reembolso automático.',
+            nl: 'Deze boeking heeft meerdere ritten. Kies of je alleen $legLabel annuleert of de volledige rondrit.',
+            en: 'This booking has multiple legs. Choose whether to cancel only $legLabel or the full roundtrip.',
+            fr: 'Cette réservation comporte plusieurs trajets. Choisissez d’annuler uniquement $legLabel ou l’aller-retour complet.',
+            es: 'Esta reserva tiene varios tramos. Elige si cancelar solo $legLabel o la ida y vuelta completa.',
           ),
           style: TextStyle(color: tokens.textSecondary, height: 1.35),
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.of(ctx).pop(false),
+            onPressed: () => Navigator.of(ctx).pop(null),
             child: Text(
-              _t(nl: 'Annuleren', en: 'Cancel', fr: 'Annuler', es: 'Cancelar'),
+              _t(
+                nl: 'Boeking behouden',
+                en: 'Keep booking',
+                fr: 'Conserver la réservation',
+                es: 'Mantener reserva',
+              ),
               style: TextStyle(color: tokens.textSecondary),
+            ),
+          ),
+          OutlinedButton(
+            onPressed: () =>
+                Navigator.of(ctx).pop(_AdminCancelPaidScope.singleLeg),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: tokens.danger.withOpacity(0.96),
+              side: BorderSide(color: tokens.danger.withOpacity(0.45)),
+            ),
+            child: Text(
+              _t(
+                nl: 'Alleen deze rit annuleren',
+                en: 'Cancel only this leg',
+                fr: 'Annuler uniquement ce trajet',
+                es: 'Cancelar solo este tramo',
+              ),
             ),
           ),
           FilledButton(
@@ -1130,43 +1189,130 @@ class _CompanyBookingsOverviewPageState
               backgroundColor: tokens.danger,
               foregroundColor: Colors.white,
             ),
-            onPressed: () => Navigator.of(ctx).pop(true),
+            onPressed: () =>
+                Navigator.of(ctx).pop(_AdminCancelPaidScope.fullRoundtrip),
             child: Text(
               _t(
-                nl: 'Annuleer betaalde rit',
-                en: 'Cancel paid ride',
-                fr: 'Annuler le trajet payé',
-                es: 'Cancelar viaje pagado',
+                nl: 'Volledige rondrit annuleren',
+                en: 'Cancel full roundtrip',
+                fr: 'Annuler l’aller-retour complet',
+                es: 'Cancelar ida y vuelta completa',
               ),
             ),
           ),
         ],
       ),
     );
-    if (confirmed != true || !mounted) return;
+  }
+
+  Future<void> _cancelPaidBookingAsAdmin(
+    _CompanyBookingOverviewItem item,
+  ) async {
+    if (_bulkArchiving) return;
+    final bookingId = item.bookingId.trim();
+    final busyKey = _cancelBusyKey(item);
+    if (bookingId.isEmpty || _isCancellingBooking(busyKey)) return;
+    final tokens = _themeTokensFor(businessThemeNotifier.value);
+    final isRoundtripLeg = _isRoundtripLegCancelEligible(item);
+    _AdminCancelPaidScope? roundtripScope;
+    if (isRoundtripLeg) {
+      roundtripScope = await _showRoundtripCancelPaidDialog(item, tokens);
+      if (roundtripScope == null || !mounted) return;
+    } else {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          backgroundColor: tokens.palette.surface,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+          ),
+          title: Text(
+            _t(
+              nl: 'Betaalde rit annuleren?',
+              en: 'Cancel paid ride?',
+              fr: 'Annuler le trajet payé ?',
+              es: '¿Cancelar viaje pagado?',
+            ),
+            style: TextStyle(color: tokens.textPrimary),
+          ),
+          content: Text(
+            _t(
+              nl: 'De rit wordt geannuleerd en verdwijnt uit planning en chauffeursweergave. De boeking komt in Geannuleerd en Te crediteren. Er wordt nog geen automatische terugbetaling uitgevoerd.',
+              en: 'The ride will be cancelled and removed from planning and the driver view. The booking will appear in Cancelled and To credit. No automatic refund will be executed yet.',
+              fr: 'Le trajet sera annulé et retiré de la planification et de la vue chauffeur. La réservation apparaîtra dans Annulées et À créditer. Aucun remboursement automatique ne sera exécuté pour l’instant.',
+              es: 'El viaje se cancelará y desaparecerá de la planificación y de la vista del conductor. La reserva aparecerá en Canceladas y Por abonar. Aún no se ejecutará ningún reembolso automático.',
+            ),
+            style: TextStyle(color: tokens.textSecondary, height: 1.35),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: Text(
+                _t(
+                  nl: 'Annuleren',
+                  en: 'Cancel',
+                  fr: 'Annuler',
+                  es: 'Cancelar',
+                ),
+                style: TextStyle(color: tokens.textSecondary),
+              ),
+            ),
+            FilledButton(
+              style: FilledButton.styleFrom(
+                backgroundColor: tokens.danger,
+                foregroundColor: Colors.white,
+              ),
+              onPressed: () => Navigator.of(ctx).pop(true),
+              child: Text(
+                _t(
+                  nl: 'Annuleer betaalde rit',
+                  en: 'Cancel paid ride',
+                  fr: 'Annuler le trajet payé',
+                  es: 'Cancelar viaje pagado',
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true || !mounted) return;
+    }
+    final cancelScope = isRoundtripLeg
+        ? roundtripScope!
+        : _AdminCancelPaidScope.fullRoundtrip;
     setState(() {
-      _cancellingBookingIds.add(bookingId);
+      _cancellingBookingIds.add(busyKey);
     });
-    final cancelOut = await _cancelPaidBookingAsAdminById(bookingId);
+    final cancelOut = await _cancelPaidBookingAsAdminById(
+      bookingId,
+      legId: item.legId,
+      legType: item.legType,
+      parentBookingId: item.parentBookingId,
+      scope: cancelScope,
+    );
     if (!mounted) return;
     setState(() {
-      _cancellingBookingIds.remove(bookingId);
+      _cancellingBookingIds.remove(busyKey);
     });
     if (cancelOut.ok) {
       await _loadBookings();
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            _t(
+      final successMessage = cancelScope == _AdminCancelPaidScope.singleLeg
+          ? _t(
+              nl: 'Deze rit is geannuleerd. De andere rit blijft gepland.',
+              en: 'This leg was cancelled. The other leg remains scheduled.',
+              fr: 'Ce trajet a été annulé. L’autre trajet reste planifié.',
+              es: 'Este tramo se canceló. El otro tramo sigue programado.',
+            )
+          : _t(
               nl: 'Betaalde rit geannuleerd. De boeking staat nu in Geannuleerd en Te crediteren.',
               en: 'Paid ride cancelled. The booking is now in Cancelled and To credit.',
               fr: 'Trajet payé annulé. La réservation figure maintenant dans Annulées et À créditer.',
               es: 'Viaje pagado cancelado. La reserva está ahora en Canceladas y Por abonar.',
-            ),
-          ),
-        ),
-      );
+            );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(successMessage)));
       return;
     }
     ScaffoldMessenger.of(context).showSnackBar(
@@ -1523,6 +1669,18 @@ class _CompanyBookingsOverviewPageState
         if (matches.isEmpty) continue;
         overlayMatched += 1;
         final anyPaid = matches.any((trip) => trip.isPaid);
+        final overlayStatuses = matches
+            .map(
+              (trip) => trip.paymentStatus.trim().isEmpty
+                  ? '-'
+                  : trip.paymentStatus.trim(),
+            )
+            .join('|');
+        debugPrint(
+          '[PAYMENT_OVERLAY][STATUS] booking=${probe.referenceText.trim().isNotEmpty ? probe.referenceText.trim() : probe.bookingId} '
+          'parent=${probe.parentReferenceText.trim().isNotEmpty ? probe.parentReferenceText.trim() : probe.parentBookingId} '
+          'leg=${probe.legType.isEmpty ? "-" : probe.legType} raw_status=$overlayStatuses isPaid=$anyPaid',
+        );
         if (anyPaid) {
           overlayPaid += 1;
           entry['payment_status'] = 'paid';
@@ -2245,7 +2403,7 @@ class _CompanyBookingsOverviewPageState
               SizedBox(
                 width: double.infinity,
                 child: OutlinedButton.icon(
-                  onPressed: _isCancellingBooking(item.bookingId)
+                  onPressed: _isCancellingBooking(_cancelBusyKey(item))
                       ? null
                       : () => _cancelPaidBookingAsAdmin(item),
                   style: OutlinedButton.styleFrom(
@@ -2259,7 +2417,7 @@ class _CompanyBookingsOverviewPageState
                       vertical: 10,
                     ),
                   ),
-                  icon: _isCancellingBooking(item.bookingId)
+                  icon: _isCancellingBooking(_cancelBusyKey(item))
                       ? SizedBox(
                           width: 16,
                           height: 16,
@@ -2276,7 +2434,7 @@ class _CompanyBookingsOverviewPageState
                           color: tokens.danger.withOpacity(0.96),
                         ),
                   label: Text(
-                    _isCancellingBooking(item.bookingId)
+                    _isCancellingBooking(_cancelBusyKey(item))
                         ? _t(
                             nl: 'Bezig met annuleren...',
                             en: 'Cancelling...',

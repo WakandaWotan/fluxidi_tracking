@@ -7,12 +7,36 @@ Future<Map<String, String>> _trackingOverlayHeaders() async {
 
 bool _isPaidTrackingPaymentToken(String? raw) {
   final token = (raw ?? '').trim().toLowerCase().replaceAll('-', '_');
+  if (token.isEmpty) return false;
+  const notPaid = {
+    'pending',
+    'open',
+    'checkout_open',
+    'online_pending',
+    'created',
+    'waiting',
+    'failed',
+    'cancelled',
+    'canceled',
+    'expired',
+    'abandoned',
+    'not_confirmed',
+    'unknown',
+    'unpaid',
+    'not_paid',
+    'initializing',
+    'payment_checkout_failed',
+    'processing',
+    'authorized',
+  };
+  if (notPaid.contains(token)) return false;
   return token == 'paid' ||
       token == 'settled' ||
       token == 'confirmed' ||
       token == 'completed' ||
       token == 'succeeded' ||
-      token == 'success';
+      token == 'success' ||
+      token == 'captured';
 }
 
 String _normalizeCustomerPaymentDisplayToken(String? raw) {

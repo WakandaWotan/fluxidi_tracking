@@ -31085,6 +31085,27 @@ function _bookingRecordPaymentProviderToken(rec) {
   ).toLowerCase();
 }
 
+function _bookingPaymentStatusTokens(rec) {
+  if (!rec || typeof rec !== "object") return [];
+  const booking = rec?.booking && typeof rec.booking === "object" ? rec.booking : {};
+  const payload = rec?.payload && typeof rec.payload === "object" ? rec.payload : {};
+  return [
+    rec?.payment_status,
+    rec?.paymentStatus,
+    booking?.payment_status,
+    booking?.paymentStatus,
+    payload?.payment_status,
+    payload?.paymentStatus,
+    rec?.mollie?.status,
+    booking?.mollie?.status,
+    payload?.mollie?.status,
+  ]
+    .map((value) =>
+      safeStr(value, 64).toLowerCase().replaceAll("-", "_").replaceAll(" ", "_"),
+    )
+    .filter(Boolean);
+}
+
 function _bookingRecordIsPaidForCredit(rec) {
   if (!rec || typeof rec !== "object") return false;
   const booking = rec?.booking && typeof rec.booking === "object" ? rec.booking : {};
@@ -31096,18 +31117,32 @@ function _bookingRecordIsPaidForCredit(rec) {
     "success",
     "settled",
     "succeeded",
+    "captured",
   ]);
-  const statusTokens = [
-    rec?.payment_status,
-    rec?.paymentStatus,
-    booking?.payment_status,
-    booking?.paymentStatus,
-    payload?.payment_status,
-    payload?.paymentStatus,
-  ]
-    .map((value) => safeStr(value, 64).toLowerCase())
-    .filter(Boolean);
+  const notPaidLike = new Set([
+    "pending",
+    "open",
+    "checkout_open",
+    "online_pending",
+    "created",
+    "waiting",
+    "failed",
+    "cancelled",
+    "canceled",
+    "expired",
+    "abandoned",
+    "not_confirmed",
+    "unknown",
+    "unpaid",
+    "not_paid",
+    "initializing",
+    "payment_checkout_failed",
+    "processing",
+    "authorized",
+  ]);
+  const statusTokens = _bookingPaymentStatusTokens(rec);
   if (statusTokens.some((token) => paidLike.has(token))) return true;
+  if (statusTokens.some((token) => notPaidLike.has(token))) return false;
   if (
     rec?.__mollie_paid === true ||
     booking?.__mollie_paid === true ||
@@ -31115,51 +31150,25 @@ function _bookingRecordIsPaidForCredit(rec) {
   ) {
     return true;
   }
-  const mollieStatuses = [
-    rec?.mollie?.status,
-    booking?.mollie?.status,
-    payload?.mollie?.status,
-  ]
-    .map((value) => safeStr(value, 40).toLowerCase())
-    .filter(Boolean);
-  if (mollieStatuses.some((token) => paidLike.has(token))) return true;
-
-  const onlinePaidProviders = _bookingRecordOnlinePaidProviderSet();
-  const provider = _bookingRecordPaymentProviderToken(rec);
-  const paymentId = safeStr(
-    rec?.payment_id ??
-      rec?.paymentId ??
-      booking?.payment_id ??
-      booking?.paymentId ??
-      payload?.payment_id ??
-      payload?.paymentId,
-    120,
-  );
-  const molliePaymentId = safeStr(
-    rec?.mollie?.id ??
-      rec?.mollie?.payment_id ??
-      booking?.mollie?.id ??
-      booking?.mollie?.payment_id ??
-      payload?.mollie?.id ??
-      payload?.mollie?.payment_id,
-    120,
-  );
-  const paidAt = safeStr(
-    rec?.paid_at ??
-      rec?.paidAt ??
-      booking?.paid_at ??
-      booking?.paidAt ??
-      payload?.paid_at ??
-      payload?.paidAt,
-    80,
-  );
-  if (paidAt) {
-    if (onlinePaidProviders.has(provider)) return true;
-    if (paymentId || molliePaymentId) return true;
-  }
-  if (paymentId && onlinePaidProviders.has(provider)) return true;
-  if (molliePaymentId) return true;
   return false;
+}
+
+function _logBookingPaymentClassify(rec, fields = {}) {
+  const bookingId = safeStr(rec?.booking_id ?? rec?.bookingId ?? rec?.booking?.booking_id, 160);
+  const parentId = safeStr(
+    rec?.parent_booking_id ??
+      rec?.parentBookingId ??
+      rec?.booking?.parent_booking_id ??
+      rec?.booking?.parentBookingId,
+    160,
+  );
+  const legType = safeStr(rec?.leg_type ?? rec?.legType ?? rec?.booking?.leg_type, 24) || "-";
+  const statusTokens = _bookingPaymentStatusTokens(rec);
+  const isPaid = _bookingRecordIsPaidForCredit(rec);
+  const isCreditEligible = _bookingRecordIsCancelledForCreditDecision(rec) && isPaid;
+  console.log(
+    `[BOOKING_PAYMENT_CLASSIFY] booking=${_bookingIntentMask(bookingId)} parent=${_bookingIntentMask(parentId)} leg=${legType} raw_status=${statusTokens.join("|") || "-"} normalized_status=${isPaid ? "paid" : (_bookingRecordPaymentStatusNormalized(rec) || "unpaid")} isPaid=${isPaid ? "true" : "false"} isCreditEligible=${isCreditEligible ? "true" : "false"} source=${safeStr(fields?.source, 48) || "-"}`,
+  );
 }
 
 function _resolveBookingRecordPaymentStatusForProjection(rec) {
@@ -31271,9 +31280,46 @@ function _bookingHasResolvedCreditDecision(rec) {
   return !!creditedAt;
 }
 
+function applyPendingCreditStateOnPaidLegCancellation(legEntry, rec, nowIso) {
+  if (!legEntry || typeof legEntry !== "object") return false;
+  if (!rec || typeof rec !== "object") return false;
+  const legType = safeStr(legEntry?.leg_type ?? legEntry?.legType, 24) || "-";
+  const legId = safeStr(legEntry?.leg_id ?? legEntry?.legId, 200) || "-";
+  const bookingId = safeStr(rec?.booking_id ?? rec?.bookingId ?? rec?.booking?.booking_id, 160) || "-";
+  if (!_bookingRecordIsPaidForCredit(rec)) {
+    console.log(
+      `[CREDIT_CLASSIFY][SKIP_UNPAID] booking=${_bookingIntentMask(bookingId)} parent=${_bookingIntentMask(bookingId)} leg=${legType} leg_id=${_bookingIntentMask(legId)} isPaid=false isCreditEligible=false`,
+    );
+    return false;
+  }
+  const resolvedCreditDecision = safeStr(
+    legEntry?.credit_decision ?? legEntry?.creditDecision,
+    64,
+  );
+  if (resolvedCreditDecision) return false;
+  const pendingCredit = "pending_credit";
+  legEntry.refund_status = pendingCredit;
+  legEntry.refundStatus = pendingCredit;
+  legEntry.credit_status = pendingCredit;
+  legEntry.creditStatus = pendingCredit;
+  legEntry.refund_required = true;
+  legEntry.refundRequired = true;
+  legEntry.credit_pending_at = legEntry.credit_pending_at || nowIso;
+  legEntry.creditPendingAt = legEntry.creditPendingAt || legEntry.credit_pending_at;
+  console.log(
+    `[CREDIT_CLASSIFY] booking=${_bookingIntentMask(bookingId)} parent=${_bookingIntentMask(bookingId)} leg=${legType} leg_id=${_bookingIntentMask(legId)} isPaid=true isCreditEligible=true reason=leg_pending_credit_applied`,
+  );
+  return true;
+}
+
 function applyPendingCreditStateOnPaidCancellation(rec, nowIso) {
   if (!rec || typeof rec !== "object") return false;
-  if (!_bookingRecordIsPaidForCredit(rec)) return false;
+  if (!_bookingRecordIsPaidForCredit(rec)) {
+    console.log(
+      `[CREDIT_CLASSIFY][SKIP_UNPAID] booking=${_bookingIntentMask(rec?.booking_id ?? rec?.bookingId ?? rec?.booking?.booking_id)} parent=${_bookingIntentMask(rec?.parent_booking_id ?? rec?.parentBookingId ?? rec?.booking?.parent_booking_id)} leg=${safeStr(rec?.leg_type ?? rec?.legType ?? rec?.booking?.leg_type, 24) || "-"} isPaid=false isCreditEligible=false`,
+    );
+    return false;
+  }
   if (_bookingHasResolvedCreditDecision(rec)) return false;
   const pendingCredit = "pending_credit";
   rec.refund_status = pendingCredit;
@@ -31284,6 +31330,9 @@ function applyPendingCreditStateOnPaidCancellation(rec, nowIso) {
   rec.refundRequired = true;
   rec.credit_pending_at = rec.credit_pending_at || nowIso;
   rec.creditPendingAt = rec.creditPendingAt || rec.credit_pending_at;
+  console.log(
+    `[CREDIT_CLASSIFY] booking=${_bookingIntentMask(rec?.booking_id ?? rec?.bookingId ?? rec?.booking?.booking_id)} parent=${_bookingIntentMask(rec?.parent_booking_id ?? rec?.parentBookingId ?? rec?.booking?.parent_booking_id)} leg=${safeStr(rec?.leg_type ?? rec?.legType ?? rec?.booking?.leg_type, 24) || "-"} isPaid=true isCreditEligible=true reason=pending_credit_applied`,
+  );
   if (rec.booking && typeof rec.booking === "object") {
     rec.booking.refund_status = pendingCredit;
     rec.booking.refundStatus = pendingCredit;
@@ -33572,6 +33621,188 @@ function maskEmailForLog(value) {
   return `${email.slice(0, 1)}***${email.slice(at)}`;
 }
 
+function _parsePositivePaymentAmount(value) {
+  const parsed = _trackingSyncParseAmountNumber(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return null;
+  return round2(parsed);
+}
+
+function _resolveMollieCheckoutPaymentAmount({
+  payload,
+  quote,
+  sourceBookingRec = null,
+} = {}) {
+  const bookingId = safeStr(
+    payload?.booking_id ??
+      payload?.bookingId ??
+      payload?.__booking_id ??
+      sourceBookingRec?.booking_id ??
+      sourceBookingRec?.bookingId,
+    160,
+  );
+  const service = safeStr(
+    payload?.service ??
+      payload?.booking_type ??
+      payload?.bookingType ??
+      sourceBookingRec?.service ??
+      sourceBookingRec?.booking?.service,
+    64,
+  );
+  const isRoundtrip =
+    boolish(payload?.return_enabled ?? payload?.returnEnabled) ||
+    boolish(payload?.return) ||
+    boolish(quote?.return_enabled ?? quote?.returnEnabled) ||
+    (quote?.return &&
+      typeof quote.return === "object" &&
+      quote.return.enabled !== false &&
+      safeStr(quote.return.enabled, 8).toLowerCase() !== "false") ||
+    _parsePositivePaymentAmount(quote?.price_incl_vat_return ?? quote?.priceInclVatReturn) != null ||
+    _parsePositivePaymentAmount(sourceBookingRec?.price_incl_vat_return ?? sourceBookingRec?.priceInclVatReturn) !=
+      null;
+  const fixedFare =
+    boolish(
+      quote?.fixed_fare_applied ??
+        quote?.fixed_fare_applied_main ??
+        quote?.fixedFareApplied ??
+        quote?.fixedFareAppliedMain ??
+        payload?.fixed_fare_applied ??
+        payload?.fixedFareApplied,
+    ) ||
+    safeStr(quote?.pricing_source ?? payload?.pricing_source, 40).toLowerCase() === "airport_fixed_fare";
+  const outboundIncl =
+    _parsePositivePaymentAmount(
+      quote?.price_incl_vat_main ??
+        quote?.priceInclVatMain ??
+        quote?.pricing_main?.price_incl_vat ??
+        quote?.pricing_main?.priceInclVat ??
+        sourceBookingRec?.price_incl_vat_main ??
+        sourceBookingRec?.priceInclVatMain ??
+        sourceBookingRec?.booking?.price_incl_vat_main ??
+        sourceBookingRec?.booking?.priceInclVatMain,
+    ) ??
+    _parsePositivePaymentAmount(quote?.price_incl_vat ?? quote?.priceInclVat);
+  const returnIncl = _parsePositivePaymentAmount(
+    quote?.price_incl_vat_return ??
+      quote?.priceInclVatReturn ??
+      quote?.return?.price_incl_vat ??
+      quote?.return?.priceInclVat ??
+      quote?.return?.pricing?.price_incl_vat ??
+      quote?.return?.pricing?.priceInclVat ??
+      quote?.pricing_return?.price_incl_vat ??
+      quote?.pricing_return?.priceInclVat ??
+      sourceBookingRec?.price_incl_vat_return ??
+      sourceBookingRec?.priceInclVatReturn ??
+      sourceBookingRec?.booking?.price_incl_vat_return ??
+      sourceBookingRec?.booking?.priceInclVatReturn,
+  );
+  const quoteRoundtripTotal = _parsePositivePaymentAmount(
+    quote?.total_price_incl_vat ??
+      quote?.totalPriceInclVat ??
+      quote?.price_incl_vat_total ??
+      quote?.priceInclVatTotal,
+  );
+  const authoritativeCandidates = [
+    ["payload.total_incl_vat", payload?.total_incl_vat ?? payload?.totalInclVat],
+    ["payload.total_price_incl_vat", payload?.total_price_incl_vat ?? payload?.totalPriceInclVat],
+    ["payload.amount_due", payload?.amount_due ?? payload?.amountDue],
+    ["payload.amount", payload?.amount],
+    ["source_booking.total_price_incl_vat", sourceBookingRec?.total_price_incl_vat ?? sourceBookingRec?.totalPriceInclVat],
+    ["source_booking.price_incl_vat", sourceBookingRec?.price_incl_vat ?? sourceBookingRec?.priceInclVat],
+    ["quote.total_price_incl_vat", quoteRoundtripTotal],
+    ["quote.pricing.price_incl_vat", quote?.pricing?.price_incl_vat ?? quote?.pricing?.priceInclVat],
+  ];
+  for (const [source, raw] of authoritativeCandidates) {
+    const amount = _parsePositivePaymentAmount(raw);
+    if (amount != null) {
+      return {
+        ok: true,
+        amount,
+        source,
+        strategy: "authoritative_total",
+        bookingId,
+        service,
+        isRoundtrip,
+        fixedFare,
+        outboundIncl,
+        returnIncl,
+      };
+    }
+  }
+  const explicitMain = _parsePositivePaymentAmount(
+    quote?.price_incl_vat_main ??
+      quote?.priceInclVatMain ??
+      quote?.pricing_main?.price_incl_vat ??
+      quote?.pricing_main?.priceInclVat,
+  );
+  if (isRoundtrip && explicitMain != null && returnIncl != null) {
+    return {
+      ok: true,
+      amount: round2(explicitMain + returnIncl),
+      source: "quote_leg_sum",
+      strategy: "leg_sum",
+      bookingId,
+      service,
+      isRoundtrip,
+      fixedFare,
+      outboundIncl: explicitMain,
+      returnIncl,
+    };
+  }
+  const loneMain = _parsePositivePaymentAmount(quote?.price_incl_vat ?? quote?.priceInclVat);
+  if (loneMain != null && (!isRoundtrip || returnIncl == null)) {
+    return {
+      ok: true,
+      amount: loneMain,
+      source: "quote.price_incl_vat",
+      strategy: "leg_sum",
+      bookingId,
+      service,
+      isRoundtrip,
+      fixedFare,
+      outboundIncl: loneMain,
+      returnIncl,
+    };
+  }
+  return {
+    ok: false,
+    amount: 0,
+    source: "none",
+    strategy: "missing",
+    bookingId,
+    service,
+    isRoundtrip,
+    fixedFare,
+    outboundIncl,
+    returnIncl,
+  };
+}
+
+function _logMollieCheckoutPaymentAmountResolution(resolution, { phase = "INITIAL" } = {}) {
+  const tag = safeStr(phase, 24).toUpperCase() || "INITIAL";
+  const booking = _bookingIntentMask(resolution?.bookingId);
+  const service = safeStr(resolution?.service, 64) || "-";
+  const isRoundtrip = resolution?.isRoundtrip === true;
+  const fixedFare = resolution?.fixedFare === true;
+  const outbound =
+    resolution?.outboundIncl != null ? money2(resolution.outboundIncl) : "-";
+  const ret =
+    resolution?.returnIncl != null ? money2(resolution.returnIncl) : "-";
+  const amount =
+    resolution?.ok === true ? money2(resolution.amount) : "-";
+  console.log(
+    `[PAYMENT_AMOUNT][${tag}] booking=${booking} service=${service} is_roundtrip=${isRoundtrip} fixed_fare=${fixedFare} strategy=${safeStr(resolution?.strategy, 32) || "-"} source=${safeStr(resolution?.source, 48) || "-"}`,
+  );
+  console.log(
+    `[PAYMENT_AMOUNT][BOOKING_TOTAL] booking=${booking} authoritative=${amount} source=${safeStr(resolution?.source, 48) || "-"}`,
+  );
+  console.log(
+    `[PAYMENT_AMOUNT][ROUNDTRIP_LEGS] booking=${booking} outbound=${outbound} return=${ret} is_roundtrip=${isRoundtrip}`,
+  );
+  console.log(
+    `[PAYMENT_AMOUNT][MOLLIE_CREATE] booking=${booking} amount=${amount} strategy=${safeStr(resolution?.strategy, 32) || "-"} source=${safeStr(resolution?.source, 48) || "-"}`,
+  );
+}
+
 
 async function mollieCreatePayment(payload, env, request, options = {}) {
   try {
@@ -33685,11 +33916,13 @@ async function mollieCreatePayment(payload, env, request, options = {}) {
     );
     let sourceBookingLoaded = false;
     let sourceBookingLookup = "not_requested";
+    let sourceBookingRec = null;
     if (sourceBookingId) {
       sourceBookingLookup = "requested";
       try {
         const loaded = await loadBookingRecord(env, sourceBookingId);
-        sourceBookingLoaded = !!loaded?.rec;
+        sourceBookingRec = loaded?.rec && typeof loaded.rec === "object" ? loaded.rec : null;
+        sourceBookingLoaded = !!sourceBookingRec;
         sourceBookingLookup = sourceBookingLoaded ? "loaded" : "missing";
         if (!bookingMatchesRequestedTenantScope(loaded?.rec, requestedScope)) {
           return { ok: false, error: "forbidden" };
@@ -33699,6 +33932,7 @@ async function mollieCreatePayment(payload, env, request, options = {}) {
           // /book may request checkout before canonical booking persistence.
           sourceBookingLookup = "missing_prepersist_ok";
           sourceBookingLoaded = false;
+          sourceBookingRec = null;
         } else {
           throw loadErr;
         }
@@ -33759,13 +33993,22 @@ async function mollieCreatePayment(payload, env, request, options = {}) {
       }
     }
 
-    // ✅ Amount must include return trip if enabled.
-    // /quote returns the return leg as a separate object: quote.return.price_incl_vat
-    const mainIncl = Number(quote?.price_incl_vat || 0);
-    const retIncl = Number(quote?.return?.price_incl_vat || 0);
-    const totalIncl = (Number.isFinite(mainIncl) ? mainIncl : 0) + (Number.isFinite(retIncl) ? retIncl : 0);
+    // ✅ Amount must match the authoritative booking total when present.
+    // Never combine an already-total price with per-leg return amounts.
+    const amountResolution = _resolveMollieCheckoutPaymentAmount({
+      payload: payloadClean,
+      quote,
+      sourceBookingRec,
+    });
+    _logMollieCheckoutPaymentAmountResolution(amountResolution, { phase: "INITIAL" });
+    if (amountResolution?.ok !== true || !(Number(amountResolution.amount) > 0)) {
+      console.log(
+        `[PAYMENT_AMOUNT][BLOCK] booking=${_bookingIntentMask(amountResolution?.bookingId || sourceBookingId)} reason=missing_authoritative_amount`,
+      );
+      return { ok: false, error: "payment_amount_unavailable" };
+    }
+    const amountValue = money2(amountResolution.amount);
 
-    const amountValue = money2(totalIncl);
     const initialPaymentFields = paymentFieldsFromPayload(payload);
 
     // 3) store booking as PENDING
@@ -43806,7 +44049,7 @@ function _flattenOperationalLegForRidesList(parentBookingId, rec, leg, options =
       _pick(rec, ["booking", "planningReference"], null),
     120,
   );
-  return {
+  const row = {
     ...parentRow,
     booking_id: parentBookingId,
     parent_booking_id: parentBookingId,
@@ -43866,6 +44109,39 @@ function _flattenOperationalLegForRidesList(parentBookingId, rec, leg, options =
     planning_reference: planningReference || null,
     planningReference: planningReference || null,
   };
+  const legRefundStatus = safeStr(leg?.refund_status ?? leg?.refundStatus, 64);
+  const legCreditStatus = safeStr(leg?.credit_status ?? leg?.creditStatus, 64);
+  const legRefundRequired =
+    leg?.refund_required === true || leg?.refundRequired === true;
+  const legCreditDecision = safeStr(leg?.credit_decision ?? leg?.creditDecision, 64);
+  if (legStatusUpper === "CANCELLED") {
+    if (legRefundStatus || legCreditStatus || legRefundRequired) {
+      row.refund_status = legRefundStatus || row.refund_status || null;
+      row.refundStatus = row.refund_status;
+      row.credit_status = legCreditStatus || row.credit_status || null;
+      row.creditStatus = row.credit_status;
+      row.refund_required = legRefundRequired || row.refund_required === true;
+      row.refundRequired = row.refund_required;
+      if (legCreditDecision) {
+        row.credit_decision = legCreditDecision;
+        row.creditDecision = legCreditDecision;
+      }
+    }
+  } else if (parentStatusUpper !== "CANCELLED") {
+    row.refund_status = null;
+    row.refundStatus = null;
+    row.credit_status = null;
+    row.creditStatus = null;
+    row.refund_required = false;
+    row.refundRequired = false;
+    row.credit_decision = null;
+    row.creditDecision = null;
+    row.credited_amount_cents = null;
+    row.creditedAmountCents = null;
+    row.credited_at = null;
+    row.creditedAt = null;
+  }
+  return row;
 }
 
 function _flattenBookingForRidesListWithOperationalLegs(bookingId, rec, options = {}) {
@@ -54046,6 +54322,7 @@ async function updateBookingOperationalLegStatusAuthoritative(
         next.cancelled_at = safeStr(entry?.cancelled_at, 80) || nowIso;
         next.cancelledAt = safeStr(entry?.cancelledAt, 80) || next.cancelled_at;
       }
+      applyPendingCreditStateOnPaidLegCancellation(next, rec, nowIso);
     }
     selectedLegStatus = _normLifecycleStatus(next?.status ?? normalizedLegStatus);
     return next;
@@ -54271,6 +54548,14 @@ async function updateBookingOperationalLegStatusAuthoritative(
     console.log("[COMPLIANCE_EMIT][booking_leg_status_parent_derivation] failed error=internal_error");
   }
 
+  const selectedLegType = safeStr(
+    allLegs.find((entry) => safeStr(entry?.leg_id ?? entry?.legId, 200) === safeLegId)?.leg_type ??
+      allLegs.find((entry) => safeStr(entry?.leg_id ?? entry?.legId, 200) === safeLegId)?.legType,
+    24,
+  ) || "-";
+  console.log(
+    `[BOOKING_CANCEL][LEG] booking=${_bookingIntentMask(safeBookingId)} leg=${_bookingIntentMask(safeLegId)} leg_type=${selectedLegType} scope=single_leg status=${selectedLegStatus} parent=${derivedParentStatus} progress=${progressState}`,
+  );
   console.log(
     `[BOOKING][OPERATIONAL_LEGS][LEG_STATUS] booking=${_bookingIntentMask(safeBookingId)} leg=${_bookingIntentMask(safeLegId)} status=${selectedLegStatus} parent=${derivedParentStatus} progress=${progressState}`,
   );

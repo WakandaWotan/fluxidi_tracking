@@ -1,5 +1,7 @@
 part of '../main.dart';
 
+enum _AdminCancelPaidScope { singleLeg, fullRoundtrip }
+
 enum _CompanyBookingsFilter { open, completed, cancelled, toCredit }
 
 class _CompanyBookingsLoadException implements Exception {
@@ -142,92 +144,126 @@ class _CompanyBookingOverviewItem {
     return normalized.contains('CANCEL') || normalized == 'DELETED';
   }
 
+  static bool isExplicitNotPaidPaymentStatus(String paymentStatus) {
+    final normalized = _normStatus(paymentStatus);
+    if (normalized.isEmpty) return false;
+    return normalized == 'PENDING' ||
+        normalized == 'OPEN' ||
+        normalized == 'CHECKOUT_OPEN' ||
+        normalized == 'ONLINE_PENDING' ||
+        normalized == 'CREATED' ||
+        normalized == 'WAITING' ||
+        normalized == 'FAILED' ||
+        normalized == 'CANCELLED' ||
+        normalized == 'CANCELED' ||
+        normalized == 'EXPIRED' ||
+        normalized == 'ABANDONED' ||
+        normalized == 'NOT_CONFIRMED' ||
+        normalized == 'UNKNOWN' ||
+        normalized == 'UNPAID' ||
+        normalized == 'NOT_PAID' ||
+        normalized == 'INITIALIZING' ||
+        normalized == 'PAYMENT_CHECKOUT_FAILED' ||
+        normalized == 'PROCESSING' ||
+        normalized == 'AUTHORIZED';
+  }
+
   static bool isPaidPaymentStatus(String paymentStatus) {
+    if (isExplicitNotPaidPaymentStatus(paymentStatus)) return false;
     final normalized = _normStatus(paymentStatus);
     return normalized == 'PAID' ||
         normalized == 'SUCCESS' ||
         normalized == 'CONFIRMED' ||
         normalized == 'COMPLETED' ||
-        normalized == 'SETTLED';
+        normalized == 'SETTLED' ||
+        normalized == 'SUCCEEDED' ||
+        normalized == 'CAPTURED';
+  }
+
+  static const List<String> _paymentStatusFieldPaths = <String>[
+    'payment_status',
+    'paymentStatus',
+    'record.payment_status',
+    'record.paymentStatus',
+    'booking.payment_status',
+    'booking.paymentStatus',
+    'record.booking.payment_status',
+    'record.booking.paymentStatus',
+    'quote.payment_status',
+    'quote.paymentStatus',
+    'record.quote.payment_status',
+    'record.quote.paymentStatus',
+    'payload.payment_status',
+    'payload.paymentStatus',
+    'record.payload.payment_status',
+    'record.payload.paymentStatus',
+    'mollie.status',
+    'record.mollie.status',
+    'booking.mollie.status',
+    'payload.mollie.status',
+  ];
+
+  static String _safeBookingRefForDiag(String value) {
+    final text = value.trim();
+    if (text.isEmpty) return '-';
+    if (text.length <= 8) return text;
+    return '${text.substring(0, 4)}…${text.substring(text.length - 2)}';
+  }
+
+  static void _logBookingPaymentClassify({
+    required Map<String, dynamic> raw,
+    required String bookingRef,
+    required String parentRef,
+    required String legType,
+    required String rawPaymentStatus,
+    required String normalizedPaymentStatus,
+    required bool isPaid,
+    required bool isCreditEligible,
+  }) {
+    debugPrint(
+      '[BOOKING_PAYMENT_CLASSIFY] booking=${_safeBookingRefForDiag(bookingRef)} '
+      'parent=${_safeBookingRefForDiag(parentRef)} leg=${legType.isEmpty ? "-" : legType} '
+      'raw_status=${rawPaymentStatus.isEmpty ? "-" : rawPaymentStatus} '
+      'normalized_status=${normalizedPaymentStatus.isEmpty ? "-" : normalizedPaymentStatus} '
+      'isPaid=$isPaid isCreditEligible=$isCreditEligible',
+    );
+  }
+
+  static void _logCreditClassify({
+    required String bookingRef,
+    required String parentRef,
+    required String legType,
+    required bool isPaid,
+    required bool isCreditEligible,
+    required String reason,
+  }) {
+    debugPrint(
+      '[CREDIT_CLASSIFY] booking=${_safeBookingRefForDiag(bookingRef)} '
+      'parent=${_safeBookingRefForDiag(parentRef)} leg=${legType.isEmpty ? "-" : legType} '
+      'isPaid=$isPaid isCreditEligible=$isCreditEligible reason=$reason',
+    );
+    if (!isPaid && reason == 'skip_unpaid') {
+      debugPrint(
+        '[CREDIT_CLASSIFY][SKIP_UNPAID] booking=${_safeBookingRefForDiag(bookingRef)} '
+        'parent=${_safeBookingRefForDiag(parentRef)} leg=${legType.isEmpty ? "-" : legType}',
+      );
+    }
   }
 
   static bool _inferPaidFromRawMap(Map<String, dynamic> raw) {
-    if (isPaidPaymentStatus(
-      _firstText(raw, const <String>[
-        'payment_status',
-        'paymentStatus',
-        'record.payment_status',
-        'record.paymentStatus',
-        'booking.payment_status',
-        'booking.paymentStatus',
-        'record.booking.payment_status',
-        'record.booking.paymentStatus',
-        'quote.payment_status',
-        'quote.paymentStatus',
-        'record.quote.payment_status',
-        'record.quote.paymentStatus',
-        'payload.payment_status',
-        'payload.paymentStatus',
-        'record.payload.payment_status',
-        'record.payload.paymentStatus',
-        'mollie.status',
-        'record.mollie.status',
-        'booking.mollie.status',
-        'payload.mollie.status',
-      ]),
-    )) {
-      return true;
+    final status = _firstText(raw, _paymentStatusFieldPaths);
+    if (status.isNotEmpty) {
+      if (isExplicitNotPaidPaymentStatus(status)) return false;
+      if (isPaidPaymentStatus(status)) return true;
     }
-    final paidAt = _firstText(raw, const <String>[
-      'paid_at',
-      'paidAt',
-      'record.paid_at',
-      'record.paidAt',
-      'booking.paid_at',
-      'booking.paidAt',
-      'record.booking.paid_at',
-      'record.booking.paidAt',
-      'payload.paid_at',
-      'payload.paidAt',
-      'record.payload.paid_at',
-      'record.payload.paidAt',
+    final molliePaid = _firstBool(raw, const <String>[
+      '__mollie_paid',
+      'record.__mollie_paid',
+      'booking.__mollie_paid',
+      'payload.__mollie_paid',
     ]);
-    if (paidAt.isEmpty) return false;
-    final provider = _normStatus(
-      _firstText(raw, const <String>[
-        'payment_provider',
-        'paymentProvider',
-        'payment_mode',
-        'paymentMode',
-        'record.payment_provider',
-        'record.paymentProvider',
-        'record.payment_mode',
-        'record.paymentMode',
-        'booking.payment_provider',
-        'booking.paymentProvider',
-        'booking.payment_mode',
-        'booking.paymentMode',
-        'record.booking.payment_provider',
-        'record.booking.paymentProvider',
-        'payload.payment_provider',
-        'payload.paymentProvider',
-      ]),
-    );
-    return provider == 'MOLLIE' ||
-        provider == 'ONLINE' ||
-        provider == 'ONLINE_PAYMENT' ||
-        provider == 'ONLINE_PAYMENTS' ||
-        provider == 'PREPAID' ||
-        _firstText(raw, const <String>[
-          'payment_id',
-          'paymentId',
-          'record.payment_id',
-          'record.paymentId',
-          'booking.payment_id',
-          'booking.paymentId',
-          'record.booking.payment_id',
-          'record.booking.paymentId',
-        ]).isNotEmpty;
+    if (molliePaid == true) return true;
+    return false;
   }
 
   static bool _isPaidPaymentStatus(String paymentStatus) =>
@@ -453,14 +489,37 @@ class _CompanyBookingOverviewItem {
     required String creditStatus,
     required String refundStatus,
     required bool refundRequired,
+    required String bookingRef,
+    required String parentRef,
+    required String legType,
   }) {
     if (!_isCancelledStatus(statusRaw)) return false;
-    if (!_isPaidPaymentStatus(paymentStatus) && !_inferPaidFromRawMap(raw)) {
+    final isPaid =
+        isPaidPaymentStatus(paymentStatus) || _inferPaidFromRawMap(raw);
+    if (!isPaid) {
+      _logCreditClassify(
+        bookingRef: bookingRef,
+        parentRef: parentRef,
+        legType: legType,
+        isPaid: false,
+        isCreditEligible: false,
+        reason: 'skip_unpaid',
+      );
       return false;
     }
-    return _isPendingCreditToken(creditStatus) ||
+    final isCreditEligible =
+        _isPendingCreditToken(creditStatus) ||
         _isPendingCreditToken(refundStatus) ||
         refundRequired;
+    _logCreditClassify(
+      bookingRef: bookingRef,
+      parentRef: parentRef,
+      legType: legType,
+      isPaid: true,
+      isCreditEligible: isCreditEligible,
+      reason: isCreditEligible ? 'pending_credit' : 'paid_not_creditable',
+    );
+    return isCreditEligible;
   }
 
   static _CompanyBookingsFilter _bucketFromStatus({required String statusRaw}) {
@@ -986,11 +1045,27 @@ class _CompanyBookingOverviewItem {
       creditStatus: creditStatus,
       refundStatus: refundStatus,
       refundRequired: refundRequired,
+      bookingRef: referenceText.isEmpty ? bookingId : referenceText,
+      parentRef: parentRef.isEmpty ? referenceText : parentRef,
+      legType: legType,
     );
-    final normalizedPaymentStatus =
-        isPaidPaymentStatus(paymentStatus) || _inferPaidFromRawMap(raw)
+    final isPaid =
+        isPaidPaymentStatus(paymentStatus) || _inferPaidFromRawMap(raw);
+    final normalizedPaymentStatus = isPaid
         ? 'PAID'
-        : _normStatus(paymentStatus);
+        : (_normStatus(paymentStatus).isNotEmpty
+              ? _normStatus(paymentStatus)
+              : 'UNPAID');
+    _logBookingPaymentClassify(
+      raw: raw,
+      bookingRef: referenceText.isEmpty ? bookingId : referenceText,
+      parentRef: parentRef.isEmpty ? referenceText : parentRef,
+      legType: legType,
+      rawPaymentStatus: paymentStatus,
+      normalizedPaymentStatus: normalizedPaymentStatus,
+      isPaid: isPaid,
+      isCreditEligible: isPendingCredit,
+    );
     return _CompanyBookingOverviewItem(
       bookingId: bookingId,
       parentBookingId: parentBookingId.isEmpty ? bookingId : parentBookingId,
