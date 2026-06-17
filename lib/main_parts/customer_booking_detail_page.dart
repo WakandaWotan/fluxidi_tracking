@@ -9,6 +9,13 @@ part of '../main.dart';
 /// the list cards delegate to it so we never duplicate that logic.
 const String kCustomerDetailPendingActionCancel = 'cancel';
 
+enum _CustomerRoundtripCancelChoice {
+  keep,
+  outboundOnly,
+  returnOnly,
+  fullRoundtrip,
+}
+
 class CustomerBookingDetailPage extends StatefulWidget {
   const CustomerBookingDetailPage({
     super.key,
@@ -16,11 +23,13 @@ class CustomerBookingDetailPage extends StatefulWidget {
     required this.initialView,
     this.startsFromLocalCache = false,
     this.pendingAction,
+    this.initialLegType,
   });
 
   final String bookingId;
   final CustomerBookingView initialView;
   final bool startsFromLocalCache;
+  final String? initialLegType;
 
   /// Optional one-shot action to invoke automatically after first frame.
   /// Currently only [kCustomerDetailPendingActionCancel] is supported.
@@ -69,6 +78,13 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
 
   CustomerThemePalette get _themePalette =>
       paletteForCustomerTheme(customerThemeNotifier.value);
+
+  String? get _focusedRoundtripLegType {
+    final token = widget.initialLegType?.trim().toLowerCase();
+    if (token == 'return') return 'return';
+    if (token == 'outbound') return 'outbound';
+    return null;
+  }
 
   @override
   void initState() {
@@ -267,7 +283,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
             from: _view.fromAddress,
             to: _view.toAddress,
             pickupIso: _view.pickupIso,
-            price: _view.totalAmount,
+            price: _view.customerDisplayCardAmount ?? _view.totalAmount,
             currency: _view.currency,
             service: _view.service,
             tier: _view.tier,
@@ -284,10 +300,12 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
             fallback: localFallback,
           );
           await CustomerBookingsStore.instance.upsert(
-            _hydrateStoredCustomerBookingFromView(
-              stored: stored,
-              view: view,
-              source: 'customer_detail_refresh',
+            view.mergeRoundtripSnapshotIntoStored(
+              _hydrateStoredCustomerBookingFromView(
+                stored: stored,
+                view: view,
+                source: 'customer_detail_refresh',
+              ),
             ),
           );
           final derivedPaymentToken = await _derivePaymentDisplayToken(
@@ -535,6 +553,51 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
     final symbol = cur.isEmpty || cur == 'EUR' ? '€' : '$cur ';
     final formatted = amount.toStringAsFixed(2).replaceAll('.', ',');
     return '$symbol$formatted';
+  }
+
+  String _formatRoundtripLegPrice({
+    required double? amount,
+    required String currency,
+    required bool cancelled,
+  }) {
+    final base = _formatPrice(amount, currency);
+    if (!cancelled) return base;
+    return '$base — ${_t(nl: 'Geannuleerd', en: 'Cancelled', fr: 'Annule', es: 'Cancelado')}';
+  }
+
+  String _formatNegativePrice(double? amount, String currency) {
+    if (amount == null) return '-';
+    final base = _formatPrice(amount, currency);
+    if (base == '-') return base;
+    return '-$base';
+  }
+
+  String _cancelledLegNotChargedLabel() => _t(
+    nl: 'Geannuleerd — niet aangerekend',
+    en: 'Cancelled — not charged',
+    fr: 'Annule — non facture',
+    es: 'Cancelado — no cobrado',
+  );
+
+  String _roundtripLegTitleLabel(String legType, {required bool includeVat}) {
+    if (legType == 'return') {
+      return includeVat
+          ? _t(
+              nl: 'Terugrit prijs incl. btw',
+              en: 'Return price incl. VAT',
+              fr: 'Prix retour TVAC',
+              es: 'Precio regreso con IVA',
+            )
+          : _t(nl: 'Terugrit', en: 'Return trip', fr: 'Retour', es: 'Regreso');
+    }
+    return includeVat
+        ? _t(
+            nl: 'Heenrit prijs incl. btw',
+            en: 'Outbound price incl. VAT',
+            fr: "Prix aller TVAC",
+            es: 'Precio ida con IVA',
+          )
+        : _t(nl: 'Heenrit', en: 'Outbound trip', fr: 'Aller', es: 'Ida');
   }
 
   String _notFilled() => _t(
@@ -1224,6 +1287,47 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
     setRef('receipt_reference', receiptRef);
     setRef('receiptReference', receiptRef);
 
+    final roundtripProjection = _view.roundtripPriceProjection;
+    final focusedLegType = _focusedRoundtripLegType;
+    final focusedLegCard = focusedLegType == null
+        ? null
+        : _view.roundtripLegCardViews
+              .where((leg) => leg.legType == focusedLegType)
+              .cast<CustomerRoundtripLegCardView?>()
+              .firstWhere((leg) => leg != null, orElse: () => null);
+    final receiptTotal =
+        focusedLegCard?.priceInclVat ??
+        roundtripProjection?.customerReceiptTotal ??
+        _view.customerDisplayPayableAmount ??
+        _view.totalAmount;
+    final activeRoute = focusedLegType != null
+        ? _view.roundtripLegRoute(focusedLegType)
+        : (roundtripProjection != null
+              ? _view.roundtripLegRoute(roundtripProjection.activeLegType)
+              : null);
+    if (roundtripProjection != null) {
+      debugPrint(
+        '[ROUNDTRIP_PRICE][RECEIPT] booking=${_safeRefPreview(_view.bookingId)} original=${roundtripProjection.originalTotal?.toStringAsFixed(2) ?? "-"} active=${roundtripProjection.activeTotal?.toStringAsFixed(2) ?? "-"} payable=${roundtripProjection.payableTotal?.toStringAsFixed(2) ?? "-"} credit=${roundtripProjection.creditDueTotal?.toStringAsFixed(2) ?? "-"} mode=${roundtripProjection.paid ? "paid_credit_breakdown" : "unpaid_simple"}',
+      );
+    }
+    if (focusedLegType != null) {
+      debugPrint(
+        '[ROUNDTRIP_LEG_UI][RECEIPT_LEG_ONLY] booking=${_safeRefPreview(_view.bookingId)} leg_type=$focusedLegType amount=${receiptTotal?.toStringAsFixed(2) ?? "-"}',
+      );
+    }
+
+    final receiptFrom =
+        activeRoute != null && activeRoute.from.trim().isNotEmpty
+        ? activeRoute.from
+        : _view.fromAddress;
+    final receiptTo = activeRoute != null && activeRoute.to.trim().isNotEmpty
+        ? activeRoute.to
+        : _view.toAddress;
+    final receiptPickup =
+        activeRoute != null && activeRoute.pickupIso.trim().isNotEmpty
+        ? activeRoute.pickupIso
+        : _view.pickupIso;
+
     final bookingDetails = <String, dynamic>{
       ..._view.source,
       'booking_id': _view.bookingId,
@@ -1232,15 +1336,38 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
       'customer_name': _view.customerName,
       'customer_phone': _view.customerPhone,
       'customer_email': _view.customerEmail,
-      'from': _view.fromAddress,
-      'to': _view.toAddress,
+      'from': receiptFrom,
+      'to': receiptTo,
       'service_type': _view.service,
       'tier': _view.tier,
       'passengers': _view.pax,
       'luggage_count': _view.bags,
       'distance_km': _view.distanceKm,
       'duration_min': _view.durationMin,
-      'booking_total_eur': _view.totalAmount,
+      'booking_total_eur': receiptTotal,
+      if (roundtripProjection?.paid == true) ...{
+        'booking_original_total_eur':
+            roundtripProjection?.originalTotal ??
+            _view.priceInclVatTotal ??
+            _view.totalAmount,
+        'booking_cancelled_total_eur': roundtripProjection?.cancelledTotal,
+        'booking_credit_due_total_eur': roundtripProjection?.creditDueTotal,
+      },
+      'price_incl_vat_main':
+          roundtripProjection?.outbound.priceInclVat ?? _view.priceInclVatMain,
+      'price_incl_vat_return':
+          roundtripProjection?.returnLeg.priceInclVat ??
+          _view.priceInclVatReturn,
+      if (focusedLegType != null) ...{
+        'leg_type': focusedLegType,
+        'legType': focusedLegType,
+        'leg_price_incl_vat': focusedLegCard?.priceInclVat,
+        'legPriceInclVat': focusedLegCard?.priceInclVat,
+      },
+      if (roundtripProjection != null)
+        'roundtrip_price_projection': roundtripProjection.toReceiptPayload(
+          view: _view,
+        ),
       'currency': _view.currency,
       'payment_status': _view.rawPaymentStatus,
       'payment_method': _view.paymentMethod,
@@ -1249,7 +1376,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
       'invoice_email': _view.invoiceEmail,
       'invoice_address': _view.invoiceAddress,
       'extras': _view.extraOptions,
-      'scheduled_pickup_at': _view.pickupIso,
+      'scheduled_pickup_at': receiptPickup,
       'references': refs,
       'booking': <String, dynamic>{
         ...refs,
@@ -1258,11 +1385,12 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
         'customer_name': _view.customerName,
         'customer_phone': _view.customerPhone,
         'customer_email': _view.customerEmail,
-        'from': _view.fromAddress,
-        'to': _view.toAddress,
+        'from': receiptFrom,
+        'to': receiptTo,
         'service_type': _view.service,
         'tier': _view.tier,
         'payment_status': _view.rawPaymentStatus,
+        'scheduled_pickup_at': receiptPickup,
       },
     };
 
@@ -1271,12 +1399,12 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
       'booking_id': _view.bookingId,
       'kind': 'planned',
       'status': _view.lifecycleStatus,
-      'started_at': _view.pickupIso,
-      'stopped_at': _view.pickupIso,
-      'origin': _view.fromAddress,
-      'destination': _view.toAddress,
+      'started_at': receiptPickup,
+      'stopped_at': receiptPickup,
+      'origin': receiptFrom,
+      'destination': receiptTo,
       'wait_seconds_total': 0,
-      'total_eur': _view.totalAmount,
+      'total_eur': receiptTotal,
       'currency': _view.currency,
       'booking_details': bookingDetails,
     });
@@ -1640,11 +1768,29 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
   }
 
   bool get _canCancelBooking {
+    final focusedLegType = _focusedRoundtripLegType;
+    if (focusedLegType != null) {
+      final focusedLeg = _focusedRoundtripLegCard(_view, focusedLegType);
+      if (focusedLeg == null) return false;
+      return !_isCustomerBookingTerminalStatus(focusedLeg.status) &&
+          !focusedLeg.isCancelled;
+    }
     return !_isCustomerBookingTerminalStatus(_view.lifecycleStatus);
   }
 
   bool get _canLocalRemoveBookingOnly {
     return _isCustomerBookingTerminalStatus(_view.lifecycleStatus);
+  }
+
+  CustomerRoundtripLegCardView? _focusedRoundtripLegCard(
+    CustomerBookingView view,
+    String legType,
+  ) {
+    final normalized = legType == 'return' ? 'return' : 'outbound';
+    for (final leg in view.roundtripLegCardViews) {
+      if (leg.legType == normalized) return leg;
+    }
+    return null;
   }
 
   List<String> _cancelBookingIdCandidates(String primaryBookingId) {
@@ -2082,55 +2228,232 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
     }
   }
 
-  Future<void> _cancelBookingServerSide() async {
-    final bookingId = widget.bookingId.trim();
-    if (bookingId.isEmpty || _cancelling || !_canCancelBooking) return;
-    final confirm = await showDialog<bool>(
+  Future<_CustomerRoundtripCancelChoice?> _showCustomerRoundtripCancelDialog() {
+    final outboundLeg = _view.customerOutboundLeg;
+    final returnLeg = _view.customerReturnLeg;
+    final outboundActive =
+        outboundLeg != null &&
+        outboundLeg.legId.trim().isNotEmpty &&
+        !outboundLeg.isTerminal;
+    final returnActive =
+        returnLeg != null &&
+        returnLeg.legId.trim().isNotEmpty &&
+        !returnLeg.isTerminal;
+    return showDialog<_CustomerRoundtripCancelChoice>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: Text(
           _t(
-            nl: 'Boeking annuleren',
-            en: 'Cancel booking',
-            fr: 'Annuler la réservation',
-            es: 'Cancelar reserva',
+            nl: 'Wat wil je annuleren?',
+            en: 'What would you like to cancel?',
+            fr: 'Que souhaitez-vous annuler ?',
+            es: '¿Qué deseas cancelar?',
           ),
         ),
         content: Text(
           _t(
-            nl: 'Deze boeking wordt geannuleerd. De chauffeur en agenda worden bijgewerkt.',
-            en: 'This booking will be cancelled. The driver and calendar will be updated.',
-            fr: 'Cette réservation sera annulée. Le chauffeur et l’agenda seront mis à jour.',
-            es: 'Esta reserva se cancelará. El conductor y el calendario se actualizarán.',
+            nl: 'Kies of je alleen de heenrit, alleen de terugrit of de volledige heen-en-terug boeking wilt annuleren.',
+            en: 'Choose whether to cancel only the outbound leg, only the return leg, or the full roundtrip booking.',
+            fr: 'Choisissez d’annuler uniquement l’aller, uniquement le retour ou l’aller-retour complet.',
+            es: 'Elige si cancelar solo la ida, solo la vuelta o la reserva completa de ida y vuelta.',
           ),
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.of(ctx).pop(false),
+            onPressed: () =>
+                Navigator.of(ctx).pop(_CustomerRoundtripCancelChoice.keep),
             child: Text(
-              _t(
-                nl: 'Niet annuleren',
-                en: 'Keep booking',
-                fr: 'Garder',
-                es: 'Mantener',
-              ),
+              _t(nl: 'Sluiten', en: 'Close', fr: 'Fermer', es: 'Cerrar'),
             ),
           ),
+          if (outboundActive)
+            TextButton(
+              onPressed: () => Navigator.of(
+                ctx,
+              ).pop(_CustomerRoundtripCancelChoice.outboundOnly),
+              child: Text(
+                _t(
+                  nl: 'Alleen heenrit annuleren',
+                  en: 'Cancel outbound only',
+                  fr: 'Annuler uniquement l’aller',
+                  es: 'Cancelar solo ida',
+                ),
+              ),
+            ),
+          if (returnActive)
+            TextButton(
+              onPressed: () => Navigator.of(
+                ctx,
+              ).pop(_CustomerRoundtripCancelChoice.returnOnly),
+              child: Text(
+                _t(
+                  nl: 'Alleen terugrit annuleren',
+                  en: 'Cancel return only',
+                  fr: 'Annuler uniquement le retour',
+                  es: 'Cancelar solo vuelta',
+                ),
+              ),
+            ),
           FilledButton(
-            onPressed: () => Navigator.of(ctx).pop(true),
+            onPressed: () => Navigator.of(
+              ctx,
+            ).pop(_CustomerRoundtripCancelChoice.fullRoundtrip),
             child: Text(
               _t(
-                nl: 'Annuleren',
-                en: 'Cancel booking',
-                fr: 'Annuler',
-                es: 'Cancelar',
+                nl: 'Volledige heen-en-terug annuleren',
+                en: 'Cancel full roundtrip',
+                fr: 'Annuler l’aller-retour complet',
+                es: 'Cancelar ida y vuelta completa',
               ),
             ),
           ),
         ],
       ),
     );
-    if (confirm != true || !mounted) return;
+  }
+
+  Future<void> _cancelBookingServerSide() async {
+    final bookingId = widget.bookingId.trim();
+    if (bookingId.isEmpty || _cancelling || !_canCancelBooking) return;
+
+    final isRoundtrip = _view.isCustomerRoundtripBooking;
+    final outboundLeg = _view.customerOutboundLeg;
+    final returnLeg = _view.customerReturnLeg;
+    debugPrint(
+      '[CUSTOMER_ROUNDTRIP_CANCEL][DETECT] booking=${_safeRefPreview(bookingId)} '
+      'isRoundtrip=$isRoundtrip outboundLeg=${outboundLeg?.legId.trim().isEmpty ?? true ? "-" : _safeRefPreview(outboundLeg!.legId)} '
+      'returnLeg=${returnLeg?.legId.trim().isEmpty ?? true ? "-" : _safeRefPreview(returnLeg!.legId)}',
+    );
+
+    _CustomerRoundtripCancelChoice? roundtripChoice;
+    if (isRoundtrip) {
+      final focusedLegType = _focusedRoundtripLegType;
+      if (focusedLegType == 'outbound') {
+        roundtripChoice = _CustomerRoundtripCancelChoice.outboundOnly;
+      } else if (focusedLegType == 'return') {
+        roundtripChoice = _CustomerRoundtripCancelChoice.returnOnly;
+      } else {
+        roundtripChoice = await _showCustomerRoundtripCancelDialog();
+      }
+      if (roundtripChoice == null ||
+          roundtripChoice == _CustomerRoundtripCancelChoice.keep ||
+          !mounted) {
+        return;
+      }
+      debugPrint(
+        '[CUSTOMER_ROUNDTRIP_CANCEL][CHOICE] booking=${_safeRefPreview(bookingId)} '
+        'choice=${roundtripChoice.name}',
+      );
+    } else {
+      final confirm = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: Text(
+            _t(
+              nl: 'Boeking annuleren',
+              en: 'Cancel booking',
+              fr: 'Annuler la réservation',
+              es: 'Cancelar reserva',
+            ),
+          ),
+          content: Text(
+            _t(
+              nl: 'Deze boeking wordt geannuleerd. De chauffeur en agenda worden bijgewerkt.',
+              en: 'This booking will be cancelled. The driver and calendar will be updated.',
+              fr: 'Cette réservation sera annulée. Le chauffeur et l’agenda seront mis à jour.',
+              es: 'Esta reserva se cancelará. El conductor y el calendario se actualizarán.',
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: Text(
+                _t(
+                  nl: 'Niet annuleren',
+                  en: 'Keep booking',
+                  fr: 'Garder',
+                  es: 'Mantener',
+                ),
+              ),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(ctx).pop(true),
+              child: Text(
+                _t(
+                  nl: 'Annuleren',
+                  en: 'Cancel booking',
+                  fr: 'Annuler',
+                  es: 'Cancelar',
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+      if (confirm != true || !mounted) return;
+      roundtripChoice = _CustomerRoundtripCancelChoice.fullRoundtrip;
+    }
+
+    String? targetLegId;
+    String? targetLegType;
+    var cancelSingleLeg = false;
+    if (isRoundtrip &&
+        roundtripChoice != _CustomerRoundtripCancelChoice.fullRoundtrip) {
+      CustomerOperationalLegView? targetLeg;
+      if (roundtripChoice == _CustomerRoundtripCancelChoice.outboundOnly) {
+        targetLeg = _view.customerOutboundLeg;
+      } else if (roundtripChoice == _CustomerRoundtripCancelChoice.returnOnly) {
+        targetLeg = _view.customerReturnLeg;
+      }
+      if (targetLeg == null || targetLeg.legId.trim().isEmpty) {
+        if (!mounted) return;
+        debugPrint(
+          '[CUSTOMER_ROUNDTRIP_CANCEL][RESULT] booking=${_safeRefPreview(bookingId)} ok=false error=missing_leg_id',
+        );
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              _t(
+                nl: 'Deze rit kan nu niet apart geannuleerd worden. Probeer opnieuw of neem contact op met het taxibedrijf.',
+                en: 'This leg cannot be cancelled separately right now. Try again or contact the taxi company.',
+                fr: 'Ce trajet ne peut pas être annulé séparément pour l’instant. Réessayez ou contactez la société.',
+                es: 'Este tramo no puede cancelarse por separado ahora. Vuelve a intentarlo o contacta con la empresa.',
+              ),
+            ),
+          ),
+        );
+        return;
+      }
+      if (targetLeg.isTerminal) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              _t(
+                nl: 'Deze rit is al geannuleerd of afgerond.',
+                en: 'This leg is already cancelled or completed.',
+                fr: 'Ce trajet est déjà annulé ou terminé.',
+                es: 'Este tramo ya está cancelado o completado.',
+              ),
+            ),
+          ),
+        );
+        return;
+      }
+      targetLegId = targetLeg.legId;
+      targetLegType = targetLeg.legType;
+      cancelSingleLeg = true;
+      debugPrint(
+        '[CUSTOMER_ROUNDTRIP_CANCEL][LEG_REQUEST] booking=${_safeRefPreview(bookingId)} '
+        'leg=$targetLegId leg_type=$targetLegType',
+      );
+    } else if (roundtripChoice ==
+            _CustomerRoundtripCancelChoice.fullRoundtrip &&
+        isRoundtrip) {
+      debugPrint(
+        '[CUSTOMER_ROUNDTRIP_CANCEL][FULL_REQUEST] booking=${_safeRefPreview(bookingId)}',
+      );
+    }
 
     setState(() {
       _cancelling = true;
@@ -2165,14 +2488,19 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
     );
     final cancelCandidates = _cancelBookingIdCandidates(bookingId);
     debugPrint(
-      '[CUSTOMER_BOOKING][CANCEL_REQ] booking=${_safeRefPreview(bookingId)} candidates=${cancelCandidates.map(_safeRefPreview).join(",")}',
+      '[CUSTOMER_BOOKING][CANCEL_REQ] booking=${_safeRefPreview(bookingId)} candidates=${cancelCandidates.map(_safeRefPreview).join(",")} single_leg=$cancelSingleLeg',
     );
     try {
       String? successfulBookingId;
       String strongestFailureReason = 'unknown_failure';
-      for (final candidateId in cancelCandidates) {
+      final candidateIds = cancelSingleLeg && cancelCandidates.isNotEmpty
+          ? <String>[cancelCandidates.first]
+          : cancelCandidates;
+      for (final candidateId in candidateIds) {
         final payload = <String, dynamic>{
           'booking_id': candidateId,
+          'parent_booking_id': candidateId,
+          'parentBookingId': candidateId,
           'status': 'CANCELLED',
           'tenant_id': scope['tenant_id'],
           'company_id': scope['company_id'],
@@ -2180,14 +2508,30 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
           'companyId': scope['companyId'],
           'actor_role': 'customer',
           'actorRole': 'customer',
+          if (cancelSingleLeg && targetLegId != null) ...<String, dynamic>{
+            'leg_id': targetLegId,
+            'legId': targetLegId,
+            if (targetLegType != null && targetLegType.isNotEmpty)
+              'leg_type': targetLegType,
+            if (targetLegType != null && targetLegType.isNotEmpty)
+              'legType': targetLegType,
+            'cancel_scope': 'single_leg',
+            'cancelScope': 'single_leg',
+          } else ...<String, dynamic>{
+            'cancel_scope': 'full_roundtrip',
+            'cancelScope': 'full_roundtrip',
+          },
           if (proof['customer_email'] != null)
             'customer_email': proof['customer_email'],
           if (proof['customer_phone'] != null)
             'customer_phone': proof['customer_phone'],
         };
         final scopedQuery = <String, String>{...scope, ...proof};
+        final path = cancelSingleLeg && targetLegId != null
+            ? '$kUpdateBookingStatusPath/${Uri.encodeComponent(candidateId)}/legs/${Uri.encodeComponent(targetLegId)}/status'
+            : '$kUpdateBookingStatusPath/${Uri.encodeComponent(candidateId)}/status';
         final uri = Uri.parse(
-          '$kBookingBaseUrl$kUpdateBookingStatusPath/${Uri.encodeComponent(candidateId)}/status',
+          '$kBookingBaseUrl$path',
         ).replace(queryParameters: scopedQuery);
         final res = await http
             .post(uri, headers: _cancelHeaders(), body: jsonEncode(payload))
@@ -2215,7 +2559,9 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
             .trim()
             .toLowerCase();
         debugPrint(
-          '[CUSTOMER_BOOKING][CANCEL_RES] candidate=${_safeRefPreview(candidateId)} code=${res.statusCode} ok=$ok error=${(reasonCode.isNotEmpty ? reasonCode : errorCode).isEmpty ? "-" : (reasonCode.isNotEmpty ? reasonCode : errorCode)}',
+          '[CUSTOMER_ROUNDTRIP_CANCEL][RESULT] booking=${_safeRefPreview(candidateId)} '
+          'ok=$ok scope=${cancelSingleLeg ? "leg" : "full"} '
+          'error=${(reasonCode.isNotEmpty ? reasonCode : errorCode).isEmpty ? "-" : (reasonCode.isNotEmpty ? reasonCode : errorCode)}',
         );
         if (res.statusCode >= 200 && res.statusCode < 300 && ok) {
           successfulBookingId = candidateId;
@@ -2264,6 +2610,32 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
         await _showCustomerCancellationFailureDialog(
           reason: strongestFailureReason,
         );
+        return;
+      }
+      if (cancelSingleLeg) {
+        if (mounted) {
+          setState(() => _cancelling = false);
+        }
+        await _refresh();
+        if (!mounted) return;
+        debugPrint(
+          '[CUSTOMER_ROUNDTRIP_CANCEL][RESULT] booking=${_safeRefPreview(bookingId)} ok=true scope=leg',
+        );
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              _t(
+                nl: 'Deze rit is geannuleerd. De andere rit blijft gepland.',
+                en: 'This leg was cancelled. The other leg remains scheduled.',
+                fr: 'Ce trajet a été annulé. L’autre trajet reste planifié.',
+                es: 'Este tramo se canceló. El otro tramo sigue programado.',
+              ),
+            ),
+          ),
+        );
+        Navigator.of(context).pop(<String, dynamic>{
+          'action': _customerDetailResultLegCancelledServer,
+        });
         return;
       }
       final bookingIdForRemoval = successfulBookingId;
@@ -2684,11 +3056,46 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                               )));
             final business = v.businessCustomer;
             final isRoundtrip = v.isRoundtrip;
+            final focusedLegType = _focusedRoundtripLegType;
+            final focusedLegRoute = focusedLegType == null
+                ? null
+                : v.roundtripLegRoute(focusedLegType);
+            final focusedLegCard = focusedLegType == null
+                ? null
+                : _focusedRoundtripLegCard(v, focusedLegType);
+            final canShowCancelAction = _canCancelBooking;
+            final cancelActionLabel = focusedLegType == null
+                ? _t(
+                    nl: 'Boeking annuleren',
+                    en: 'Cancel booking',
+                    fr: 'Annuler la réservation',
+                    es: 'Cancelar reserva',
+                  )
+                : _t(
+                    nl: 'Rit annuleren',
+                    en: 'Cancel ride',
+                    fr: 'Annuler le trajet',
+                    es: 'Cancelar viaje',
+                  );
+            final displayAsRoundtrip = isRoundtrip && focusedLegType == null;
+            final effectiveFrom =
+                focusedLegRoute?.from.trim().isNotEmpty == true
+                ? focusedLegRoute!.from
+                : v.fromAddress;
+            final effectiveTo = focusedLegRoute?.to.trim().isNotEmpty == true
+                ? focusedLegRoute!.to
+                : v.toAddress;
+            final effectivePickup =
+                focusedLegRoute?.pickupIso.trim().isNotEmpty == true
+                ? focusedLegRoute!.pickupIso
+                : v.pickupIso;
             final showRoundtripPricing =
-                isRoundtrip &&
+                displayAsRoundtrip &&
                 (v.priceInclVatMain != null ||
                     v.priceInclVatReturn != null ||
                     v.priceInclVatTotal != null);
+            final roundtripProjection = v.roundtripPriceProjection;
+            final showPartialRoundtripPricing = roundtripProjection != null;
             final serviceText = _serviceLabel(v.service);
             final tierText = _tierLabel(v.tier);
             final hasServiceText =
@@ -2727,35 +3134,25 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                   ),
                 ),
                 actions: [
-                  IconButton(
-                    style: IconButton.styleFrom(
-                      backgroundColor: iconButtonBg,
-                      foregroundColor: _canCancelBooking
-                          ? palette.danger.withOpacity(0.9)
-                          : palette.textMuted.withOpacity(0.55),
-                      side: BorderSide(
-                        color: _canCancelBooking
-                            ? palette.danger.withOpacity(0.6)
-                            : subtleBorder.withOpacity(0.6),
+                  if (canShowCancelAction)
+                    IconButton(
+                      style: IconButton.styleFrom(
+                        backgroundColor: iconButtonBg,
+                        foregroundColor: palette.danger.withOpacity(0.9),
+                        side: BorderSide(
+                          color: palette.danger.withOpacity(0.6),
+                        ),
                       ),
+                      tooltip: cancelActionLabel,
+                      onPressed: _cancelling ? null : _cancelBookingServerSide,
+                      icon: _cancelling
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.cancel_outlined),
                     ),
-                    tooltip: _t(
-                      nl: 'Boeking annuleren',
-                      en: 'Cancel booking',
-                      fr: 'Annuler la réservation',
-                      es: 'Cancelar reserva',
-                    ),
-                    onPressed: (!_canCancelBooking || _cancelling)
-                        ? null
-                        : _cancelBookingServerSide,
-                    icon: _cancelling
-                        ? const SizedBox(
-                            width: 18,
-                            height: 18,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Icon(Icons.cancel_outlined),
-                  ),
                   if (_canLocalRemoveBookingOnly)
                     IconButton(
                       style: IconButton.styleFrom(
@@ -2890,7 +3287,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                           ),
                         ),
                       ],
-                      if (_canCancelBooking) ...[
+                      if (canShowCancelAction) ...[
                         Container(
                           margin: const EdgeInsets.only(bottom: 12),
                           width: double.infinity,
@@ -2920,14 +3317,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                                     ),
                                   )
                                 : const Icon(Icons.cancel_outlined),
-                            label: Text(
-                              _t(
-                                nl: 'Boeking annuleren',
-                                en: 'Cancel booking',
-                                fr: 'Annuler la réservation',
-                                es: 'Cancelar reserva',
-                              ),
-                            ),
+                            label: Text(cancelActionLabel),
                           ),
                         ),
                       ],
@@ -3111,7 +3501,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                           ],
                         ),
                       ),
-                      if (isRoundtrip)
+                      if (displayAsRoundtrip)
                         Container(
                           margin: const EdgeInsets.only(bottom: 12),
                           padding: const EdgeInsets.symmetric(
@@ -3197,7 +3587,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                           es: 'Ruta',
                         ),
                         children: [
-                          if (!isRoundtrip) ...[
+                          if (!displayAsRoundtrip) ...[
                             Row(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
@@ -3246,9 +3636,9 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                                       ),
                                       const SizedBox(height: 2),
                                       Text(
-                                        v.fromAddress.trim().isEmpty
+                                        effectiveFrom.trim().isEmpty
                                             ? _notFilled()
-                                            : v.fromAddress.trim(),
+                                            : effectiveFrom.trim(),
                                         style: TextStyle(
                                           color: palette.textPrimary,
                                           fontSize: 12.8,
@@ -3273,9 +3663,9 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                                       ),
                                       const SizedBox(height: 2),
                                       Text(
-                                        v.toAddress.trim().isEmpty
+                                        effectiveTo.trim().isEmpty
                                             ? _notFilled()
-                                            : v.toAddress.trim(),
+                                            : effectiveTo.trim(),
                                         style: TextStyle(
                                           color: palette.textPrimary,
                                           fontSize: 12.8,
@@ -3295,8 +3685,20 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                                 fr: 'Prise en charge prevue',
                                 es: 'Recogida programada',
                               ),
-                              _formatPickup(v.pickupIso),
+                              _formatPickup(effectivePickup),
                             ),
+                            if (focusedLegType != null &&
+                                roundtripProjection != null &&
+                                roundtripProjection.cancelledLegType !=
+                                    focusedLegType)
+                              _kv(
+                                _roundtripLegTitleLabel(
+                                  roundtripProjection.cancelledLegType,
+                                  includeVat: false,
+                                ),
+                                _cancelledLegNotChargedLabel(),
+                                stacked: true,
+                              ),
                           ] else ...[
                             _kv(
                               _t(
@@ -3474,7 +3876,37 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                           es: 'Precio',
                         ),
                         children: [
-                          if (!showRoundtripPricing) ...[
+                          if (focusedLegType != null) ...[
+                            _kv(
+                              _roundtripLegTitleLabel(
+                                focusedLegType,
+                                includeVat:
+                                    !(focusedLegCard?.isCancelled ?? false),
+                              ),
+                              (focusedLegCard?.isCancelled ?? false)
+                                  ? _cancelledLegNotChargedLabel()
+                                  : _formatPrice(
+                                      focusedLegCard?.priceInclVat ??
+                                          (focusedLegType == 'return'
+                                              ? v.priceInclVatReturn
+                                              : v.priceInclVatMain) ??
+                                          v.customerDisplayPayableAmount,
+                                      v.currency,
+                                    ),
+                              stacked: true,
+                            ),
+                            if (roundtripProjection != null &&
+                                roundtripProjection.cancelledLegType !=
+                                    focusedLegType)
+                              _kv(
+                                _roundtripLegTitleLabel(
+                                  roundtripProjection.cancelledLegType,
+                                  includeVat: false,
+                                ),
+                                _cancelledLegNotChargedLabel(),
+                                stacked: true,
+                              ),
+                          ] else if (!showRoundtripPricing) ...[
                             _kv(
                               _t(
                                 nl: 'Totaal',
@@ -3485,39 +3917,180 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                               _formatPrice(v.totalAmount, v.currency),
                             ),
                           ] else ...[
-                            _kv(
-                              _t(
-                                nl: 'Heenrit prijs incl. btw',
-                                en: 'Outbound price incl. VAT',
-                                fr: "Prix aller TVAC",
-                                es: 'Precio ida con IVA',
+                            if (showPartialRoundtripPricing) ...[
+                              if (roundtripProjection.showUnpaidSimpleUx) ...[
+                                _kv(
+                                  _roundtripLegTitleLabel(
+                                    roundtripProjection.activeLegType,
+                                    includeVat: true,
+                                  ),
+                                  _formatPrice(
+                                    roundtripProjection
+                                            .activeLeg
+                                            .priceInclVat ??
+                                        (roundtripProjection.activeLegType ==
+                                                'return'
+                                            ? v.priceInclVatReturn
+                                            : v.priceInclVatMain),
+                                    v.currency,
+                                  ),
+                                  stacked: true,
+                                ),
+                                _kv(
+                                  _roundtripLegTitleLabel(
+                                    roundtripProjection.cancelledLegType,
+                                    includeVat: false,
+                                  ),
+                                  _cancelledLegNotChargedLabel(),
+                                  stacked: true,
+                                ),
+                                _kv(
+                                  _t(
+                                    nl: 'Te betalen in de wagen',
+                                    en: 'Amount due',
+                                    fr: 'A payer dans le vehicule',
+                                    es: 'A pagar en el vehiculo',
+                                  ),
+                                  _formatPrice(
+                                    roundtripProjection.payableTotal,
+                                    v.currency,
+                                  ),
+                                  stacked: true,
+                                ),
+                              ] else ...[
+                                _kv(
+                                  _t(
+                                    nl: 'Heenrit prijs incl. btw',
+                                    en: 'Outbound price incl. VAT',
+                                    fr: "Prix aller TVAC",
+                                    es: 'Precio ida con IVA',
+                                  ),
+                                  _formatRoundtripLegPrice(
+                                    amount:
+                                        roundtripProjection
+                                            .outbound
+                                            .priceInclVat ??
+                                        v.priceInclVatMain,
+                                    currency: v.currency,
+                                    cancelled: roundtripProjection
+                                        .outbound
+                                        .isCancelled,
+                                  ),
+                                  stacked: true,
+                                ),
+                                _kv(
+                                  _t(
+                                    nl: 'Terugrit prijs incl. btw',
+                                    en: 'Return price incl. VAT',
+                                    fr: 'Prix retour TVAC',
+                                    es: 'Precio regreso con IVA',
+                                  ),
+                                  _formatRoundtripLegPrice(
+                                    amount:
+                                        roundtripProjection
+                                            .returnLeg
+                                            .priceInclVat ??
+                                        v.priceInclVatReturn,
+                                    currency: v.currency,
+                                    cancelled: roundtripProjection
+                                        .returnLeg
+                                        .isCancelled,
+                                  ),
+                                  stacked: true,
+                                ),
+                                _kv(
+                                  _t(
+                                    nl: 'Totaal oorspronkelijk',
+                                    en: 'Original total',
+                                    fr: 'Total original',
+                                    es: 'Total original',
+                                  ),
+                                  _formatPrice(
+                                    roundtripProjection.originalTotal,
+                                    v.currency,
+                                  ),
+                                  stacked: true,
+                                ),
+                                _kv(
+                                  _t(
+                                    nl: 'Geannuleerd bedrag',
+                                    en: 'Cancelled amount',
+                                    fr: 'Montant annule',
+                                    es: 'Importe cancelado',
+                                  ),
+                                  _formatNegativePrice(
+                                    roundtripProjection.cancelledTotal,
+                                    v.currency,
+                                  ),
+                                  stacked: true,
+                                ),
+                                if ((roundtripProjection.creditDueTotal ?? 0) >
+                                    0)
+                                  _kv(
+                                    _t(
+                                      nl: 'Te crediteren',
+                                      en: 'Credit due',
+                                      fr: 'A crediter',
+                                      es: 'A acreditar',
+                                    ),
+                                    _formatPrice(
+                                      roundtripProjection.creditDueTotal,
+                                      v.currency,
+                                    ),
+                                    stacked: true,
+                                  )
+                                else if ((roundtripProjection.activeTotal ??
+                                        0) >
+                                    0)
+                                  _kv(
+                                    _t(
+                                      nl: 'Resterende ritwaarde',
+                                      en: 'Remaining ride value',
+                                      fr: 'Valeur restante du trajet',
+                                      es: 'Valor restante del viaje',
+                                    ),
+                                    _formatPrice(
+                                      roundtripProjection.activeTotal,
+                                      v.currency,
+                                    ),
+                                    stacked: true,
+                                  ),
+                              ],
+                            ] else ...[
+                              _kv(
+                                _t(
+                                  nl: 'Heenrit prijs incl. btw',
+                                  en: 'Outbound price incl. VAT',
+                                  fr: "Prix aller TVAC",
+                                  es: 'Precio ida con IVA',
+                                ),
+                                _formatPrice(v.priceInclVatMain, v.currency),
+                                stacked: true,
                               ),
-                              _formatPrice(v.priceInclVatMain, v.currency),
-                              stacked: true,
-                            ),
-                            _kv(
-                              _t(
-                                nl: 'Terugrit prijs incl. btw',
-                                en: 'Return price incl. VAT',
-                                fr: 'Prix retour TVAC',
-                                es: 'Precio regreso con IVA',
+                              _kv(
+                                _t(
+                                  nl: 'Terugrit prijs incl. btw',
+                                  en: 'Return price incl. VAT',
+                                  fr: 'Prix retour TVAC',
+                                  es: 'Precio regreso con IVA',
+                                ),
+                                _formatPrice(v.priceInclVatReturn, v.currency),
+                                stacked: true,
                               ),
-                              _formatPrice(v.priceInclVatReturn, v.currency),
-                              stacked: true,
-                            ),
-                            _kv(
-                              _t(
-                                nl: 'Totaal heen-en-terug incl. btw',
-                                en: 'Roundtrip total incl. VAT',
-                                fr: 'Total aller-retour TVAC',
-                                es: 'Total ida y vuelta con IVA',
+                              _kv(
+                                _t(
+                                  nl: 'Totaal heen-en-terug incl. btw',
+                                  en: 'Roundtrip total incl. VAT',
+                                  fr: 'Total aller-retour TVAC',
+                                  es: 'Total ida y vuelta con IVA',
+                                ),
+                                _formatPrice(
+                                  v.priceInclVatTotal ?? v.totalAmount,
+                                  v.currency,
+                                ),
+                                stacked: true,
                               ),
-                              _formatPrice(
-                                v.priceInclVatTotal ?? v.totalAmount,
-                                v.currency,
-                              ),
-                              stacked: true,
-                            ),
+                            ],
                             if (v.fixedFareAppliedMain &&
                                 v.fixedFareAppliedReturn)
                               Container(

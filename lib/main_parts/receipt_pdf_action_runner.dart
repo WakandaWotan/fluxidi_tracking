@@ -803,19 +803,27 @@ class _ReceiptPdfActionRunner {
           paymentProvider: paymentProviderRaw,
         ),
       );
-      final rideDateText =
-          _firstPathText(item, const [
-                ['scheduled_pickup_at'],
-                ['booking', 'scheduled_pickup_at'],
-              ]) !=
-              null
-          ? _formatDate(
-              _firstPathText(item, const [
-                ['scheduled_pickup_at'],
-                ['booking', 'scheduled_pickup_at'],
-              ]),
-            )
-          : _formatDate(item.startedAt);
+      final projection = _detailMap(item, 'roundtrip_price_projection');
+      final rideDateText = () {
+        final activePickup = projection?['active_pickup_iso']
+            ?.toString()
+            .trim();
+        if (activePickup != null && activePickup.isNotEmpty) {
+          return _formatDate(activePickup);
+        }
+        return _firstPathText(item, const [
+                  ['scheduled_pickup_at'],
+                  ['booking', 'scheduled_pickup_at'],
+                ]) !=
+                null
+            ? _formatDate(
+                _firstPathText(item, const [
+                  ['scheduled_pickup_at'],
+                  ['booking', 'scheduled_pickup_at'],
+                ]),
+              )
+            : _formatDate(item.startedAt);
+      }();
       final serviceText = _displayServiceToken(
         _firstPathText(item, const [
           ['service_type'],
@@ -834,6 +842,19 @@ class _ReceiptPdfActionRunner {
                 _firstPathDouble(item, 'route_minutes'),
           ) ??
           _receiptText('notAvailable');
+      final receiptLegType =
+          _firstPathText(item, const [
+            ['leg_type'],
+            ['legType'],
+            ['booking_details', 'leg_type'],
+            ['booking_details', 'legType'],
+          ]) ??
+          '';
+      if (receiptLegType.trim().isNotEmpty) {
+        debugPrint(
+          '[ROUNDTRIP_LEG_UI][RECEIPT_LEG_ONLY] booking=${_safeRefPreview(item.bookingId ?? item.tripId)} leg_type=${receiptLegType.trim()} route_source=${route.source}',
+        );
+      }
       final businessFields = _resolveBusinessFields(item);
       debugPrint(
         '[RECEIPT][BUSINESS_FIELDS] source=static_pdf booking=${_safeRefPreview(item.bookingId ?? item.tripId)} business=${businessFields.isBusinessDocument} invoiceRequested=${businessFields.invoiceRequested} companyFound=${businessFields.companyName.isNotEmpty} vatFound=${businessFields.vatNumber.isNotEmpty} invoiceEmailFound=${businessFields.invoiceEmail.isNotEmpty} invoiceAddressFound=${businessFields.invoiceAddress.isNotEmpty}',
@@ -953,6 +974,7 @@ class _ReceiptPdfActionRunner {
             _pdfInfoRow(_receiptText('tier'), tierText),
             _pdfInfoRow(_receiptText('from'), route.from),
             _pdfInfoRow(_receiptText('to'), route.to),
+            ..._roundtripRouteNotePdfRows(item),
             _pdfInfoRow(_receiptText('distance'), _kmText(item)),
             _pdfInfoRow(_receiptText('duration'), durationText),
             pw.SizedBox(height: 12),
@@ -1054,6 +1076,7 @@ class _ReceiptPdfActionRunner {
             ),
             _pdfInfoRow(_receiptText('paymentMethod'), paymentMethod),
             _pdfInfoRow(_receiptText('paymentSource'), paymentSource),
+            ..._roundtripProjectionPdfRows(item, boldFont),
             pw.Divider(color: PdfColors.grey400),
             _pdfInfoRow(
               _receiptText('subtotalExVat'),
@@ -1172,6 +1195,15 @@ class _ReceiptPdfActionRunner {
         if (text != null) return text;
       }
       return null;
+    }
+
+    final roundtripProjection = _detailMap(item, 'roundtrip_price_projection');
+    if (roundtripProjection != null && roundtripProjection.isNotEmpty) {
+      final activeFrom = routeFromValue(roundtripProjection['active_from']);
+      final activeTo = routeFromValue(roundtripProjection['active_to']);
+      if (activeFrom != null && activeTo != null) {
+        return (from: activeFrom, to: activeTo, source: 'roundtrip_active_leg');
+      }
     }
 
     final normalizedFrom = isPlaceholder(item.origin)
@@ -1857,6 +1889,187 @@ class _ReceiptPdfActionRunner {
         normalized == 'true' ||
         normalized == 'yes' ||
         normalized == 'ja';
+  }
+
+  static List<pw.Widget> _roundtripRouteNotePdfRows(_TripHistoryItem item) {
+    final projection = _detailMap(item, 'roundtrip_price_projection');
+    if (projection == null || projection.isEmpty) return const <pw.Widget>[];
+    final cancelledLeg = (projection['cancelled_leg_type'] ?? '')
+        .toString()
+        .trim()
+        .toLowerCase();
+    if (cancelledLeg != 'outbound' && cancelledLeg != 'return') {
+      return const <pw.Widget>[];
+    }
+    final note = cancelledLeg == 'return'
+        ? _tr(
+            nl: 'Terugrit geannuleerd — niet aangerekend',
+            en: 'Return trip cancelled — not charged',
+            fr: 'Retour annule — non facture',
+            es: 'Regreso cancelado — no cobrado',
+          )
+        : _tr(
+            nl: 'Heenrit geannuleerd — niet aangerekend',
+            en: 'Outbound trip cancelled — not charged',
+            fr: 'Aller annule — non facture',
+            es: 'Ida cancelada — no cobrado',
+          );
+    return <pw.Widget>[
+      pw.SizedBox(height: 4),
+      pw.Text(
+        note,
+        style: const pw.TextStyle(color: PdfColors.grey700, fontSize: 10),
+      ),
+    ];
+  }
+
+  static List<pw.Widget> _roundtripProjectionPdfRows(
+    _TripHistoryItem item,
+    pw.Font boldFont,
+  ) {
+    final projection = _detailMap(item, 'roundtrip_price_projection');
+    if (projection == null || projection.isEmpty) return const <pw.Widget>[];
+
+    double? readAmount(String key) {
+      final raw = projection[key];
+      if (raw is num) return raw.toDouble();
+      return double.tryParse((raw ?? '').toString().replaceAll(',', '.'));
+    }
+
+    bool readBool(String key) {
+      final raw = (projection[key] ?? '').toString().trim().toLowerCase();
+      return raw == 'true' || raw == '1';
+    }
+
+    final displayMode = (projection['display_mode'] ?? '')
+        .toString()
+        .trim()
+        .toLowerCase();
+    final outbound = readAmount('outbound_price_incl_vat');
+    final returnPrice = readAmount('return_price_incl_vat');
+    final original = readAmount('original_total_eur');
+    final cancelled = readAmount('cancelled_total_eur');
+    final payable = readAmount('payable_total_eur');
+    final active = readAmount('active_total_eur');
+    final credit = readAmount('credit_due_total_eur');
+    final paid = readBool('paid');
+    final outboundCancelled = readBool('outbound_cancelled');
+    final returnCancelled = readBool('return_cancelled');
+    final activeLegType = (projection['active_leg_type'] ?? 'outbound')
+        .toString()
+        .trim()
+        .toLowerCase();
+    final activeLegPrice = activeLegType == 'return' ? returnPrice : outbound;
+
+    if (displayMode == 'unpaid_simple') {
+      return <pw.Widget>[
+        pw.SizedBox(height: 8),
+        if (activeLegPrice != null)
+          _pdfInfoRow(
+            activeLegType == 'return'
+                ? _tr(
+                    nl: 'Terugrit prijs incl. btw',
+                    en: 'Return price incl. VAT',
+                    fr: 'Prix retour TVAC',
+                    es: 'Precio regreso con IVA',
+                  )
+                : _tr(
+                    nl: 'Heenrit prijs incl. btw',
+                    en: 'Outbound price incl. VAT',
+                    fr: "Prix aller TVAC",
+                    es: 'Precio ida con IVA',
+                  ),
+            _moneyText(activeLegPrice),
+          ),
+        _pdfInfoRow(
+          _tr(
+            nl: 'Te betalen in de wagen',
+            en: 'Amount due',
+            fr: 'A payer dans le vehicule',
+            es: 'A pagar en el vehiculo',
+          ),
+          _moneyText(payable ?? active),
+        ),
+      ];
+    }
+
+    String amountWithCancelled(double? amount, bool cancelledLeg) {
+      final base = _moneyText(amount);
+      if (!cancelledLeg) return base;
+      return '$base (${_tr(nl: 'Geannuleerd', en: 'Cancelled', fr: 'Annule', es: 'Cancelado')})';
+    }
+
+    return <pw.Widget>[
+      pw.SizedBox(height: 8),
+      pw.Text(
+        _tr(
+          nl: 'Heen-en-terug prijsopbouw',
+          en: 'Roundtrip price breakdown',
+          fr: 'Detail prix aller-retour',
+          es: 'Desglose ida y vuelta',
+        ),
+        style: pw.TextStyle(
+          fontSize: 12,
+          fontWeight: pw.FontWeight.bold,
+          font: boldFont,
+        ),
+      ),
+      pw.SizedBox(height: 4),
+      _pdfInfoRow(
+        _tr(nl: 'Heenrit', en: 'Outbound', fr: 'Aller', es: 'Ida'),
+        amountWithCancelled(outbound, outboundCancelled),
+      ),
+      _pdfInfoRow(
+        _tr(nl: 'Terugrit', en: 'Return', fr: 'Retour', es: 'Regreso'),
+        amountWithCancelled(returnPrice, returnCancelled),
+      ),
+      if (original != null)
+        _pdfInfoRow(
+          _tr(
+            nl: 'Totaal oorspronkelijk',
+            en: 'Original total',
+            fr: 'Total original',
+            es: 'Total original',
+          ),
+          _moneyText(original),
+        ),
+      if (cancelled != null && cancelled > 0)
+        _pdfInfoRow(
+          _tr(
+            nl: 'Geannuleerd bedrag',
+            en: 'Cancelled amount',
+            fr: 'Montant annule',
+            es: 'Importe cancelado',
+          ),
+          '- ${_moneyText(cancelled)}',
+        ),
+      if (paid && credit != null && credit > 0)
+        _pdfInfoRow(
+          _tr(
+            nl: 'Te crediteren',
+            en: 'Credit due',
+            fr: 'A crediter',
+            es: 'A acreditar',
+          ),
+          _moneyText(credit),
+        )
+      else if ((active ?? 0) > 0)
+        _pdfInfoRow(
+          _tr(
+            nl: 'Resterende ritwaarde',
+            en: 'Remaining ride value',
+            fr: 'Valeur restante du trajet',
+            es: 'Valor restante del viaje',
+          ),
+          _moneyText(active),
+        ),
+    ];
+  }
+
+  static Map<String, dynamic>? _detailMap(_TripHistoryItem item, String key) {
+    final raw = item.bookingDetails[key];
+    if (raw is Map) return Map<String, dynamic>.from(raw);
+    return null;
   }
 
   static ({double subtotal, double vatAmount, double total, double vatRate})

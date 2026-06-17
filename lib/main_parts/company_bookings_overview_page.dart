@@ -693,17 +693,24 @@ class _CompanyBookingsOverviewPageState
     return item.bookingId.trim();
   }
 
-  num? _creditDecisionFullAmount(_CompanyBookingOverviewItem item) {
-    return item.parentAmount ?? item.amount;
-  }
+  String _creditDecisionBusyKey(_CompanyBookingOverviewItem item) =>
+      _CompanyBookingOverviewItem.creditDecisionBusyKey(item);
+
+  num? _creditDecisionFullAmount(_CompanyBookingOverviewItem item) =>
+      _CompanyBookingOverviewItem.creditDecisionMaxAmount(item);
 
   Future<({bool ok, String error})> _applyCreditDecisionById({
     required String bookingId,
     required String creditDecision,
     int? partialAmountCents,
+    String? legId,
+    String? legType,
+    _AdminCreditScope creditScope = _AdminCreditScope.fullParent,
   }) async {
     final id = bookingId.trim();
     if (id.isEmpty) return (ok: false, error: 'missing_booking_id');
+    final safeLegId = (legId ?? '').trim();
+    final safeLegType = (legType ?? '').trim();
     final scopeQuery = _activeBookingScopeQuery();
     final uri = _withActiveBookingScope(
       kBookingBaseUrl,
@@ -711,21 +718,34 @@ class _CompanyBookingsOverviewPageState
     );
     final useAdminToken = kAdminToken.trim().isNotEmpty;
     final actorRole = useAdminToken ? 'admin' : 'company';
+    final scopeToken = creditScope == _AdminCreditScope.legOnly
+        ? 'leg_only'
+        : 'full_parent';
     final payload = <String, dynamic>{
       'booking_id': id,
       'credit_decision': creditDecision,
       'creditDecision': creditDecision,
       'actor_role': actorRole,
       'actorRole': actorRole,
+      'credit_scope': scopeToken,
+      'creditScope': scopeToken,
       if (partialAmountCents != null)
         'partial_amount_cents': partialAmountCents,
       if (partialAmountCents != null) 'partialAmountCents': partialAmountCents,
+      if (safeLegId.isNotEmpty) 'leg_id': safeLegId,
+      if (safeLegId.isNotEmpty) 'legId': safeLegId,
+      if (safeLegType.isNotEmpty) 'leg_type': safeLegType,
+      if (safeLegType.isNotEmpty) 'legType': safeLegType,
       if (scopeQuery['tenant_id'] != null) 'tenant_id': scopeQuery['tenant_id'],
       if (scopeQuery['company_id'] != null)
         'company_id': scopeQuery['company_id'],
       if (scopeQuery['tenantId'] != null) 'tenantId': scopeQuery['tenantId'],
       if (scopeQuery['companyId'] != null) 'companyId': scopeQuery['companyId'],
     };
+    debugPrint(
+      '[CREDIT_SCOPE][${creditScope == _AdminCreditScope.legOnly ? "LEG_ONLY" : "FULL_PARENT"}] booking=$id leg=${safeLegId.isEmpty ? "-" : safeLegId} '
+      'leg_type=${safeLegType.isEmpty ? "-" : safeLegType} decision=$creditDecision',
+    );
     try {
       final res = await http
           .post(
@@ -766,18 +786,23 @@ class _CompanyBookingsOverviewPageState
       return;
     }
     final bookingId = _creditDecisionTargetBookingId(item);
-    if (bookingId.isEmpty || _isDecidingCredit(bookingId)) return;
+    final busyKey = _creditDecisionBusyKey(item);
+    if (bookingId.isEmpty || _isDecidingCredit(busyKey)) return;
+    final creditScope = _CompanyBookingOverviewItem.creditScopeForItem(item);
     setState(() {
-      _decidingCreditBookingIds.add(bookingId);
+      _decidingCreditBookingIds.add(busyKey);
     });
     final out = await _applyCreditDecisionById(
       bookingId: bookingId,
       creditDecision: creditDecision,
       partialAmountCents: partialAmountCents,
+      legId: item.legId,
+      legType: item.legType,
+      creditScope: creditScope,
     );
     if (!mounted) return;
     setState(() {
-      _decidingCreditBookingIds.remove(bookingId);
+      _decidingCreditBookingIds.remove(busyKey);
     });
     if (out.ok) {
       await _loadBookings();
@@ -831,6 +856,10 @@ class _CompanyBookingsOverviewPageState
       );
       return;
     }
+    final legScoped = _CompanyBookingOverviewItem.isRoundtripOperationalLegRow(
+      item,
+    );
+    final legLabel = legScoped ? _companyLegLabel(item) : '';
     final controller = TextEditingController();
     final tokens = _themeTokensFor(businessThemeNotifier.value);
     final confirmed = await showDialog<bool>(
@@ -852,12 +881,19 @@ class _CompanyBookingsOverviewPageState
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              _t(
-                nl: 'Maximaal ${_moneyLabelFromAmount(fullAmount, item.currency)}. Voer een lager bedrag in.',
-                en: 'Maximum ${_moneyLabelFromAmount(fullAmount, item.currency)}. Enter a lower amount.',
-                fr: 'Maximum ${_moneyLabelFromAmount(fullAmount, item.currency)}. Saisissez un montant inférieur.',
-                es: 'Máximo ${_moneyLabelFromAmount(fullAmount, item.currency)}. Introduce un importe menor.',
-              ),
+              legScoped
+                  ? _t(
+                      nl: 'Maximaal ${_moneyLabelFromAmount(fullAmount, item.currency)} voor $legLabel. Voer een lager bedrag in.',
+                      en: 'Maximum ${_moneyLabelFromAmount(fullAmount, item.currency)} for $legLabel. Enter a lower amount.',
+                      fr: 'Maximum ${_moneyLabelFromAmount(fullAmount, item.currency)} pour $legLabel. Saisissez un montant inférieur.',
+                      es: 'Máximo ${_moneyLabelFromAmount(fullAmount, item.currency)} para $legLabel. Introduce un importe menor.',
+                    )
+                  : _t(
+                      nl: 'Maximaal ${_moneyLabelFromAmount(fullAmount, item.currency)}. Voer een lager bedrag in.',
+                      en: 'Maximum ${_moneyLabelFromAmount(fullAmount, item.currency)}. Enter a lower amount.',
+                      fr: 'Maximum ${_moneyLabelFromAmount(fullAmount, item.currency)}. Saisissez un montant inférieur.',
+                      es: 'Máximo ${_moneyLabelFromAmount(fullAmount, item.currency)}. Introduce un importe menor.',
+                    ),
               style: TextStyle(color: tokens.textSecondary, height: 1.35),
             ),
             const SizedBox(height: 12),
@@ -866,6 +902,12 @@ class _CompanyBookingsOverviewPageState
               keyboardType: const TextInputType.numberWithOptions(
                 decimal: true,
               ),
+              style: TextStyle(
+                color: tokens.textPrimary,
+                fontSize: 16,
+                fontWeight: FontWeight.w600,
+              ),
+              cursorColor: tokens.accent,
               decoration: InputDecoration(
                 labelText: _t(
                   nl: 'Creditbedrag',
@@ -873,6 +915,19 @@ class _CompanyBookingsOverviewPageState
                   fr: 'Montant crédit',
                   es: 'Importe crédito',
                 ),
+                labelStyle: TextStyle(color: tokens.textSecondary),
+                filled: true,
+                fillColor: tokens.palette.surfaceAlt,
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(10),
+                  borderSide: BorderSide(color: tokens.cardBorder),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(10),
+                  borderSide: BorderSide(color: tokens.accent, width: 1.4),
+                ),
+                hintText: _moneyLabelFromAmount(fullAmount, item.currency),
+                hintStyle: TextStyle(color: tokens.textTertiary),
               ),
             ),
           ],
@@ -917,6 +972,11 @@ class _CompanyBookingsOverviewPageState
       return;
     }
     final partialAmountCents = (parsed * 100).round();
+    debugPrint(
+      '[CREDIT_AMOUNT][${_CompanyBookingOverviewItem.isRoundtripOperationalLegRow(item) ? "LEG" : "PARENT"}] '
+      'booking=${_creditDecisionTargetBookingId(item)} leg=${item.legId.trim().isEmpty ? "-" : item.legId.trim()} '
+      'cents=$partialAmountCents',
+    );
     await _runCreditDecision(
       item,
       'partial_credit',
@@ -1100,9 +1160,9 @@ class _CompanyBookingsOverviewPageState
       if (scopeQuery['companyId'] != null) 'companyId': scopeQuery['companyId'],
     };
     debugPrint(
-      '[BOOKING_CANCEL][LEG] parent=$id leg=${cancelSingleLeg ? safeLegId : "-"} '
-      'leg_type=${safeLegType.isEmpty ? "-" : safeLegType} '
-      'scope=${cancelSingleLeg ? "single_leg" : "full_roundtrip"}',
+      '[ROUNDTRIP_CANCEL][${cancelSingleLeg ? "LEG_ONLY" : "FULL_PARENT"}] parent=$id '
+      'leg=${cancelSingleLeg ? safeLegId : "-"} '
+      'leg_type=${safeLegType.isEmpty ? "-" : safeLegType}',
     );
     try {
       final res = await http
@@ -1218,6 +1278,12 @@ class _CompanyBookingsOverviewPageState
     if (isRoundtripLeg) {
       roundtripScope = await _showRoundtripCancelPaidDialog(item, tokens);
       if (roundtripScope == null || !mounted) return;
+      debugPrint(
+        '[ROUNDTRIP_CANCEL][CHOICE] parent=${item.parentBookingId.trim().isNotEmpty ? item.parentBookingId.trim() : bookingId} '
+        'leg=${item.legId.trim().isEmpty ? "-" : item.legId.trim()} '
+        'leg_type=${item.legType.trim().isEmpty ? "-" : item.legType.trim()} '
+        'choice=${roundtripScope == _AdminCancelPaidScope.singleLeg ? "single_leg" : "full_roundtrip"}',
+      );
     } else {
       final confirmed = await showDialog<bool>(
         context: context,
@@ -1697,6 +1763,23 @@ class _CompanyBookingsOverviewPageState
           .map((entry) => _CompanyBookingOverviewItem.fromMap(entry))
           .where((entry) => entry.bookingId.trim().isNotEmpty)
           .toList(growable: false);
+      final roundtripLegRows = parsed.where((item) => item.isOperationalLeg);
+      final roundtripOpenLegs = roundtripLegRows
+          .where((item) => item.bucket == _CompanyBookingsFilter.open)
+          .length;
+      final roundtripCancelledLegs = roundtripLegRows
+          .where((item) => item.bucket == _CompanyBookingsFilter.cancelled)
+          .length;
+      debugPrint(
+        '[ROUNDTRIP_LEG_UI][COMPANY_FILTER] total=${parsed.length} operational_legs=${roundtripLegRows.length} open_legs=$roundtripOpenLegs cancelled_legs=$roundtripCancelledLegs',
+      );
+      for (final item in roundtripLegRows) {
+        if (item.bucket == _CompanyBookingsFilter.open) {
+          debugPrint(
+            '[ROUNDTRIP_LEG_UI][ACTIVE_LEG_VISIBLE] parent=${_safeRefPreview(item.parentBookingId)} leg=${_safeRefPreview(item.legId)} type=${item.legType.isEmpty ? "-" : item.legType} status=${item.statusText}',
+          );
+        }
+      }
       for (final item in parsed) {
         if (item.bucket != _CompanyBookingsFilter.cancelled) continue;
         if (_CompanyBookingOverviewItem.shouldShowMollieRefundStatus(item)) {
@@ -2017,14 +2100,30 @@ class _CompanyBookingsOverviewPageState
     _CompanyBookingsThemeTokens tokens,
   ) {
     final isToCredit = item.isPendingCredit;
+    final legScopedCredit =
+        _CompanyBookingOverviewItem.isRoundtripOperationalLegRow(item);
     final creditDecisionLabel = _localizedCreditDecision(item.creditDecision);
+    final fullCreditButtonLabel = legScopedCredit && item.amount != null
+        ? _t(
+            nl: 'Volledige credit (${_moneyLabelFromAmount(item.amount, item.currency)})',
+            en: 'Full credit (${_moneyLabelFromAmount(item.amount, item.currency)})',
+            fr: 'Crédit complet (${_moneyLabelFromAmount(item.amount, item.currency)})',
+            es: 'Crédito total (${_moneyLabelFromAmount(item.amount, item.currency)})',
+          )
+        : _t(
+            nl: 'Volledige credit',
+            en: 'Full credit',
+            fr: 'Crédit complet',
+            es: 'Crédito total',
+          );
     final creditedAmountLabel = item.creditedAmountCents != null
         ? _moneyLabelFromAmount(item.creditedAmountCents! / 100, item.currency)
         : '';
     final showCreditDecisionBadge =
         !isToCredit && item.creditDecision.trim().isNotEmpty;
     final creditTargetId = _creditDecisionTargetBookingId(item);
-    final creditBusy = _isDecidingCredit(creditTargetId);
+    final creditBusyKey = _creditDecisionBusyKey(item);
+    final creditBusy = _isDecidingCredit(creditBusyKey);
     final creditActionsEnabled =
         _canApplyCreditDecisions() &&
         !creditBusy &&
@@ -2483,12 +2582,7 @@ class _CompanyBookingsOverviewPageState
                               fr: 'En cours...',
                               es: 'Procesando...',
                             )
-                          : _t(
-                              nl: 'Volledige credit',
-                              en: 'Full credit',
-                              fr: 'Crédit complet',
-                              es: 'Crédito total',
-                            ),
+                          : fullCreditButtonLabel,
                       style: const TextStyle(
                         fontSize: 11.1,
                         fontWeight: FontWeight.w700,

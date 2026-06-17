@@ -23004,6 +23004,11 @@ GET /oauth/callback
           const actorRole = _scopeText(body?.actor_role ?? body?.actorRole, 32).toLowerCase();
           const adminAuthorized = hasValidAdminToken(request, url, env);
           const statusActorRole = actorRole || (adminAuthorized ? "admin" : "system");
+          const rawRequestedStatus = safeStr(body?.status ?? body?.stage, 80);
+          const normalizedRequestedStatus = _normLifecycleStatus(rawRequestedStatus);
+          const shouldEvaluateCustomerCancelPolicy =
+            _isCustomerCancellationStatus(rawRequestedStatus) ||
+            _isCustomerCancellationStatus(normalizedRequestedStatus);
           if (!adminAuthorized) {
             if (actorRole === "driver") {
               const ownershipBlock = await enforceDriverOwnershipForMutation({
@@ -23017,20 +23022,56 @@ GET /oauth/callback
               if (ownershipBlock) {
                 return json({ ok: false, error: "booking_not_assigned_to_driver" }, 403);
               }
+            } else if (actorRole === "customer") {
+              const proof = _requestCustomerContactProof({ url, body });
+              const ownershipPassed = customerProofMatchesBooking(rec, proof);
+              if (!ownershipPassed) {
+                return json({ ok: false, error: "customer ownership verification failed" }, 403);
+              }
+              if (shouldEvaluateCustomerCancelPolicy) {
+                const cancellationPolicyProfile = await loadCancellationPolicyProfile(env, tenantScope, {
+                  allowTenantLegacyFallback: false,
+                });
+                const policyDecision = _evaluateCustomerCancellationPolicy(
+                  rec,
+                  new Date(),
+                  cancellationPolicyProfile,
+                );
+                if (!policyDecision.allowed) {
+                  const decisionReason = safeStr(policyDecision.reason, 80) || "cancellation_requires_review";
+                  return json(
+                    {
+                      ok: false,
+                      error: decisionReason,
+                      message: _customerCancellationPolicyMessage(decisionReason),
+                      reason: decisionReason,
+                    },
+                    409,
+                  );
+                }
+              }
             } else {
               return json({ ok: false, error: "Unauthorized" }, 401);
             }
           }
-          const ownershipBlock = await enforceDriverOwnershipForMutation({
-            request,
-            url,
-            body,
-            rec,
-            tenantScope,
-            env,
-          });
-          if (ownershipBlock) {
-            return json({ ok: false, error: "booking_not_assigned_to_driver" }, 403);
+          if (actorRole !== "customer") {
+            const ownershipBlock = await enforceDriverOwnershipForMutation({
+              request,
+              url,
+              body,
+              rec,
+              tenantScope,
+              env,
+            });
+            if (ownershipBlock) {
+              return json({ ok: false, error: "booking_not_assigned_to_driver" }, 403);
+            }
+          }
+          const cancelScope = safeStr(body?.cancel_scope ?? body?.cancelScope, 32).toLowerCase();
+          if (cancelScope === "single_leg" || cancelScope === "leg_only") {
+            console.log(
+              `[ROUNDTRIP_CANCEL][LEG_ONLY] booking=${_bookingIntentMask(bookingId)} leg=${_bookingIntentMask(legId)} leg_type=${safeStr(body?.leg_type ?? body?.legType, 24) || "-"}`,
+            );
           }
           const out = await updateBookingOperationalLegStatusAuthoritative(
             bookingId,
@@ -23286,6 +23327,9 @@ GET /oauth/callback
               partial_amount_cents: partialAmountCentsRaw,
               actor_role: actorRole,
               source_endpoint: "/bookings/:id/credit-decision",
+              leg_id: body?.leg_id ?? body?.legId,
+              leg_type: body?.leg_type ?? body?.legType,
+              credit_scope: body?.credit_scope ?? body?.creditScope,
             },
           );
           const statusCode =
@@ -23300,7 +23344,8 @@ GET /oauth/callback
                     out?.error === "partial_amount_required" ||
                     out?.error === "invalid_credit_decision" ||
                     out?.error === "missing_booking_amount" ||
-                    out?.error === "credit_decision_persist_failed"
+                    out?.error === "credit_decision_persist_failed" ||
+                    out?.error === "operational_leg_not_found"
                   ? 400
                   : out.ok
                     ? 200
@@ -31423,6 +31468,141 @@ function _applyCreditDecisionFieldsToRecord(rec, fields) {
   writeLayer(rec.payload);
 }
 
+function _applyCreditDecisionFieldsToLeg(legEntry, fields) {
+  if (!legEntry || typeof legEntry !== "object" || !fields || typeof fields !== "object") return;
+  const {
+    creditStatus,
+    refundStatus,
+    refundRequired,
+    creditedAmountCents,
+    creditDecision,
+    creditedAt,
+    creditedBy,
+  } = fields;
+  legEntry.credit_status = creditStatus;
+  legEntry.creditStatus = creditStatus;
+  legEntry.refund_status = refundStatus;
+  legEntry.refundStatus = refundStatus;
+  legEntry.refund_required = refundRequired;
+  legEntry.refundRequired = refundRequired;
+  legEntry.credit_decision = creditDecision;
+  legEntry.creditDecision = creditDecision;
+  legEntry.credited_amount_cents = creditedAmountCents;
+  legEntry.creditedAmountCents = creditedAmountCents;
+  legEntry.credited_at = creditedAt;
+  legEntry.creditedAt = creditedAt;
+  legEntry.credited_by = creditedBy;
+  legEntry.creditedBy = creditedBy;
+}
+
+function _operationalLegCreditStatusRaw(legEntry) {
+  return safeStr(legEntry?.credit_status ?? legEntry?.creditStatus, 64)
+    .toLowerCase()
+    .replaceAll("-", "_");
+}
+
+function _operationalLegCreditDecisionRaw(legEntry) {
+  return safeStr(legEntry?.credit_decision ?? legEntry?.creditDecision, 64)
+    .toLowerCase()
+    .replaceAll("-", "_");
+}
+
+function _operationalLegHasPendingCreditState(legEntry) {
+  if (!legEntry || typeof legEntry !== "object") return false;
+  const refundStatus = safeStr(legEntry?.refund_status ?? legEntry?.refundStatus, 64);
+  const creditStatus = safeStr(legEntry?.credit_status ?? legEntry?.creditStatus, 64);
+  return (
+    _isPendingCreditRefundStatusToken(refundStatus) ||
+    _isPendingCreditRefundStatusToken(creditStatus) ||
+    legEntry?.refund_required === true ||
+    legEntry?.refundRequired === true
+  );
+}
+
+function _operationalLegHasResolvedCreditDecision(legEntry) {
+  if (!legEntry || typeof legEntry !== "object") return false;
+  const decision = _operationalLegCreditDecisionRaw(legEntry);
+  if (decision && BOOKING_CREDIT_DECISION_TYPES.has(decision)) return true;
+  const creditStatus = _operationalLegCreditStatusRaw(legEntry);
+  if (RESOLVED_BOOKING_CREDIT_STATUSES.has(creditStatus)) return true;
+  const creditedAt = safeStr(legEntry?.credited_at ?? legEntry?.creditedAt, 80);
+  return !!creditedAt;
+}
+
+function _operationalLegIsCancelledForCreditDecision(legEntry) {
+  return _operationalLegStatusUpperFromEntry(legEntry) === "CANCELLED";
+}
+
+function _resolveOperationalLegFinanceAmountCents(legEntry, rec) {
+  const legPriceRaw =
+    legEntry?.price_incl_vat ??
+    legEntry?.priceInclVat ??
+    legEntry?.leg_price_incl_vat ??
+    legEntry?.legPriceInclVat;
+  const legPrice = Number(legPriceRaw);
+  if (Number.isFinite(legPrice) && legPrice > 0) {
+    return Math.max(0, Math.round(legPrice * 100));
+  }
+  const amountResolution = _trackingSyncResolveBookingFinanceAmountFromRecord(rec);
+  const parentCents = Number.isFinite(Number(amountResolution?.cents))
+    ? Math.max(0, Math.round(Number(amountResolution.cents)))
+    : 0;
+  const legs = _bookingOperationalLegsFromRecord(rec);
+  if (legs.length > 1 && parentCents > 0) {
+    return Math.max(0, Math.round(parentCents / legs.length));
+  }
+  return parentCents;
+}
+
+function _findOperationalLegEntryById(rec, legId) {
+  const safeLegId = safeStr(legId, 200);
+  if (!safeLegId) return null;
+  return (
+    _bookingOperationalLegsFromRecord(rec).find(
+      (entry) => safeStr(entry?.leg_id ?? entry?.legId, 200) === safeLegId,
+    ) || null
+  );
+}
+
+function _mutateOperationalLegEntryInRecord(rec, legId, mutator) {
+  if (!rec || typeof rec !== "object" || typeof mutator !== "function") return false;
+  const safeLegId = safeStr(legId, 200);
+  if (!safeLegId) return false;
+  const containers = [];
+  if (Array.isArray(rec?.operational_legs)) containers.push({ owner: rec, key: "operational_legs" });
+  if (Array.isArray(rec?.operationalLegs)) containers.push({ owner: rec, key: "operationalLegs" });
+  if (rec?.booking && typeof rec.booking === "object") {
+    if (Array.isArray(rec.booking.operational_legs)) {
+      containers.push({ owner: rec.booking, key: "operational_legs" });
+    }
+    if (Array.isArray(rec.booking.operationalLegs)) {
+      containers.push({ owner: rec.booking, key: "operationalLegs" });
+    }
+  }
+  let matchedAny = false;
+  for (const container of containers) {
+    const source = Array.isArray(container?.owner?.[container.key]) ? container.owner[container.key] : [];
+    container.owner[container.key] = source.map((entry) => {
+      const currentLegId = safeStr(entry?.leg_id ?? entry?.legId, 200);
+      if (!currentLegId || currentLegId !== safeLegId) return entry;
+      matchedAny = true;
+      const next = mutator(entry);
+      return next && typeof next === "object" ? next : entry;
+    });
+  }
+  return matchedAny;
+}
+
+function _operationalLegCreditPersistedOk(rec, legId, creditStatus) {
+  const legEntry = _findOperationalLegEntryById(rec, legId);
+  if (!legEntry) return false;
+  if (_operationalLegHasPendingCreditState(legEntry)) return false;
+  return (
+    _operationalLegCreditStatusRaw(legEntry) ===
+    safeStr(creditStatus, 64).toLowerCase().replaceAll("-", "_")
+  );
+}
+
 function _bookingCreditDecisionFinanceBuckets(rec) {
   const decision = safeStr(rec?.credit_decision ?? rec?.creditDecision, 64)
     .toLowerCase()
@@ -31622,6 +31802,9 @@ async function applyBookingCreditDecisionAuthoritative(
     partial_amount_cents: partialAmountCentsRaw = null,
     actor_role: actorRoleRaw = "admin",
     source_endpoint = "/bookings/:id/credit-decision",
+    leg_id: legIdRaw = "",
+    leg_type: legTypeRaw = "",
+    credit_scope: creditScopeRaw = "",
   } = {},
 ) {
   if (!tenantScope?.hasScope) {
@@ -31632,10 +31815,152 @@ async function applyBookingCreditDecisionAuthoritative(
   if (!BOOKING_CREDIT_DECISION_TYPES.has(creditDecision)) {
     return { ok: false, error: "invalid_credit_decision" };
   }
+  const safeLegId = safeStr(legIdRaw, 200);
+  const safeLegType = safeStr(legTypeRaw, 24).toLowerCase();
+  const creditScopeToken = safeStr(creditScopeRaw, 32).toLowerCase().replaceAll("-", "_");
+  const useLegScope =
+    safeLegId &&
+    creditScopeToken !== "full_parent" &&
+    creditScopeToken !== "full_roundtrip" &&
+    creditScopeToken !== "parent";
   const { key, rec } = await loadBookingRecord(env, bookingId);
   if (!bookingMatchesRequiredTenantCompanyScope(rec, tenantScope)) {
     return { ok: false, error: "forbidden" };
   }
+
+  if (useLegScope) {
+    const legEntry = _findOperationalLegEntryById(rec, safeLegId);
+    if (!legEntry) {
+      console.log(
+        `[CREDIT_SCOPE][BLOCK] booking=${_bookingIntentMask(bookingId)} leg=${_bookingIntentMask(safeLegId)} reason=operational_leg_not_found`,
+      );
+      return { ok: false, error: "operational_leg_not_found" };
+    }
+    if (!_operationalLegIsCancelledForCreditDecision(legEntry)) {
+      console.log(
+        `[CREDIT_SCOPE][BLOCK] booking=${_bookingIntentMask(bookingId)} leg=${_bookingIntentMask(safeLegId)} reason=leg_not_cancelled`,
+      );
+      return { ok: false, error: "booking_not_cancelled" };
+    }
+    if (!_bookingRecordIsPaidForCredit(rec)) {
+      return { ok: false, error: "booking_not_paid" };
+    }
+    if (!_operationalLegHasPendingCreditState(legEntry)) {
+      console.log(
+        `[CREDIT_SCOPE][BLOCK] booking=${_bookingIntentMask(bookingId)} leg=${_bookingIntentMask(safeLegId)} reason=credit_decision_not_pending`,
+      );
+      return { ok: false, error: "credit_decision_not_pending" };
+    }
+    const fullAmountCents = _resolveOperationalLegFinanceAmountCents(legEntry, rec);
+    if (fullAmountCents <= 0) {
+      return { ok: false, error: "missing_booking_amount" };
+    }
+    console.log(
+      `[CREDIT_SCOPE][LEG_ONLY] booking=${_bookingIntentMask(bookingId)} leg=${_bookingIntentMask(safeLegId)} leg_type=${safeLegType || safeStr(legEntry?.leg_type ?? legEntry?.legType, 24) || "-"}`,
+    );
+    console.log(
+      `[CREDIT_AMOUNT][LEG] booking=${_bookingIntentMask(bookingId)} leg=${_bookingIntentMask(safeLegId)} cents=${fullAmountCents}`,
+    );
+
+    const previousRefundStatus =
+      safeStr(legEntry?.refund_status ?? legEntry?.refundStatus, 64) || "pending_credit";
+    let creditedAmountCents = 0;
+    let creditStatus = "";
+    let refundStatus = "";
+
+    if (creditDecision === "full_credit") {
+      creditedAmountCents = fullAmountCents;
+      creditStatus = "credited";
+      refundStatus = "manual_credit_approved";
+    } else if (creditDecision === "partial_credit") {
+      const partialCents = Number(partialAmountCentsRaw);
+      if (!Number.isFinite(partialCents)) {
+        return { ok: false, error: "partial_amount_required" };
+      }
+      const roundedPartial = Math.round(partialCents);
+      if (roundedPartial <= 0 || roundedPartial >= fullAmountCents) {
+        return { ok: false, error: "partial_amount_invalid" };
+      }
+      creditedAmountCents = roundedPartial;
+      creditStatus = "partial_credit";
+      refundStatus = "manual_partial_credit_approved";
+    } else if (creditDecision === "no_refund") {
+      creditedAmountCents = 0;
+      creditStatus = "no_refund";
+      refundStatus = "no_refund";
+    } else if (creditDecision === "handled_manually") {
+      creditedAmountCents = 0;
+      creditStatus = "handled_manually";
+      refundStatus = "handled_manually";
+    }
+
+    const nowIso = new Date().toISOString();
+    const creditedBy =
+      safeStr(actorRoleRaw, 32).toLowerCase() === "company" ? "company" : "admin";
+    const matched = _mutateOperationalLegEntryInRecord(rec, safeLegId, (entry) => {
+      const next = { ...(entry && typeof entry === "object" ? entry : {}) };
+      _applyCreditDecisionFieldsToLeg(next, {
+        creditStatus,
+        refundStatus,
+        refundRequired: false,
+        creditedAmountCents,
+        creditDecision,
+        creditedAt: nowIso,
+        creditedBy,
+      });
+      return next;
+    });
+    if (!matched) {
+      return { ok: false, error: "operational_leg_not_found" };
+    }
+    rec.updatedAt = nowIso;
+    rec.updated_at = nowIso;
+    if (rec.booking && typeof rec.booking === "object") {
+      rec.booking.updatedAt = nowIso;
+      rec.booking.updated_at = nowIso;
+    }
+    await env.BOOKING_KV.put(key, JSON.stringify(rec));
+    const persisted = await env.BOOKING_KV.get(key, { type: "json" });
+    if (!persisted || typeof persisted !== "object" || !_operationalLegCreditPersistedOk(persisted, safeLegId, creditStatus)) {
+      console.log(
+        `[BOOKING][CREDIT_DECISION][PERSIST_FAIL] booking=${_bookingIntentMask(bookingId)} leg=${_bookingIntentMask(safeLegId)} decision=${creditDecision} expected_credit_status=${creditStatus}`,
+      );
+      return { ok: false, error: "credit_decision_persist_failed" };
+    }
+    await upsertCompanyBookingsListIndexBestEffort(env, bookingId, rec, tenantScope);
+    await syncScopedTrackingTripKpiBestEffort({
+      env,
+      bookingId,
+      rec,
+      tenantScope,
+      source: "booking_leg_credit_decision",
+    });
+    console.log(
+      `[BOOKING][CREDIT_DECISION] booking=${_bookingIntentMask(bookingId)} leg=${_bookingIntentMask(safeLegId)} decision=${creditDecision} credit_status=${creditStatus} credited_cents=${creditedAmountCents} full_cents=${fullAmountCents} scope=leg_only`,
+    );
+    return {
+      ok: true,
+      booking_id: bookingId,
+      leg_id: safeLegId,
+      legId: safeLegId,
+      credit_scope: "leg_only",
+      creditScope: "leg_only",
+      credit_decision: creditDecision,
+      credit_status: creditStatus,
+      creditStatus,
+      refund_status: refundStatus,
+      refundStatus,
+      refund_required: false,
+      refundRequired: false,
+      credited_amount_cents: creditedAmountCents,
+      creditedAmountCents: creditedAmountCents,
+      credited_at: nowIso,
+      creditedAt: nowIso,
+      credited_by: creditedBy,
+      creditedBy: creditedBy,
+    };
+  }
+
   if (!_bookingRecordIsCancelledForCreditDecision(rec)) {
     return { ok: false, error: "booking_not_cancelled" };
   }
@@ -31645,6 +31970,10 @@ async function applyBookingCreditDecisionAuthoritative(
   if (!_bookingHasPendingCreditState(rec)) {
     return { ok: false, error: "credit_decision_not_pending" };
   }
+
+  console.log(
+    `[CREDIT_SCOPE][FULL_PARENT] booking=${_bookingIntentMask(bookingId)} leg_type=${safeLegType || "-"}`,
+  );
 
   const previousRefundStatus =
     safeStr(
@@ -31664,6 +31993,9 @@ async function applyBookingCreditDecisionAuthoritative(
   if (fullAmountCents <= 0) {
     return { ok: false, error: "missing_booking_amount" };
   }
+  console.log(
+    `[CREDIT_AMOUNT][PARENT] booking=${_bookingIntentMask(bookingId)} cents=${fullAmountCents}`,
+  );
 
   let creditedAmountCents = 0;
   let creditStatus = "";
@@ -31758,12 +32090,14 @@ async function applyBookingCreditDecisionAuthoritative(
   }
 
   console.log(
-    `[BOOKING][CREDIT_DECISION] booking=${_bookingIntentMask(bookingId)} decision=${creditDecision} credit_status=${creditStatus} refund_required=false credited_cents=${creditedAmountCents} full_cents=${fullAmountCents} source=${safeStr(source_endpoint, 80) || "credit_decision"}`,
+    `[BOOKING][CREDIT_DECISION] booking=${_bookingIntentMask(bookingId)} decision=${creditDecision} credit_status=${creditStatus} refund_required=false credited_cents=${creditedAmountCents} full_cents=${fullAmountCents} scope=full_parent source=${safeStr(source_endpoint, 80) || "credit_decision"}`,
   );
 
   return {
     ok: true,
     booking_id: bookingId,
+    credit_scope: "full_parent",
+    creditScope: "full_parent",
     credit_decision: creditDecision,
     credit_status: creditStatus,
     creditStatus,
@@ -44009,9 +44343,12 @@ function _flattenOperationalLegForRidesList(parentBookingId, rec, leg, options =
   );
   const parentStatusUpper = _normLifecycleStatus(parentRow?.status || null);
   const legStatusUpper = _normLifecycleStatus(legStatusRaw || parentStatusUpper || "PENDING");
-  const projectedStatusUpper = isTerminalLifecycleStatus(parentStatusUpper)
-    ? parentStatusUpper
-    : legStatusUpper;
+  // Operational rows are leg-first. A parent may be an audit/payment container
+  // in a partial cancellation state; it must not make an active sibling leg
+  // look cancelled in company/customer operational lists.
+  const projectedStatusUpper = legStatusRaw
+    ? legStatusUpper
+    : (isTerminalLifecycleStatus(parentStatusUpper) ? parentStatusUpper : legStatusUpper);
   const assignedDriverId = safeStr(
     leg?.assigned_driver_id ??
       leg?.assignedDriverId ??
@@ -44109,13 +44446,28 @@ function _flattenOperationalLegForRidesList(parentBookingId, rec, leg, options =
     planning_reference: planningReference || null,
     planningReference: planningReference || null,
   };
+  if (isRoundtripParent) {
+    console.log(
+      `[ROUNDTRIP_LEG_UI][COMPANY_FILTER] parent=${_bookingIntentMask(parentBookingId)} leg=${_bookingIntentMask(legId)} leg_type=${legType || "-"} parent_status=${parentStatusUpper || "-"} leg_status=${legStatusUpper || "-"} projected_status=${projectedStatusUpper || "-"}`,
+    );
+    if (projectedStatusUpper !== "CANCELLED") {
+      console.log(
+        `[ROUNDTRIP_LEG_UI][ACTIVE_LEG_VISIBLE] parent=${_bookingIntentMask(parentBookingId)} leg=${_bookingIntentMask(legId)} leg_type=${legType || "-"} projected_status=${projectedStatusUpper || "-"}`,
+      );
+    }
+  }
   const legRefundStatus = safeStr(leg?.refund_status ?? leg?.refundStatus, 64);
   const legCreditStatus = safeStr(leg?.credit_status ?? leg?.creditStatus, 64);
   const legRefundRequired =
     leg?.refund_required === true || leg?.refundRequired === true;
   const legCreditDecision = safeStr(leg?.credit_decision ?? leg?.creditDecision, 64);
+  const legCreditedAmountCentsRaw =
+    leg?.credited_amount_cents ?? leg?.creditedAmountCents;
+  const legCreditedAmountCents = Number.isFinite(Number(legCreditedAmountCentsRaw))
+    ? Math.max(0, Math.round(Number(legCreditedAmountCentsRaw)))
+    : null;
   if (legStatusUpper === "CANCELLED") {
-    if (legRefundStatus || legCreditStatus || legRefundRequired) {
+    if (legRefundStatus || legCreditStatus || legRefundRequired || legCreditDecision) {
       row.refund_status = legRefundStatus || row.refund_status || null;
       row.refundStatus = row.refund_status;
       row.credit_status = legCreditStatus || row.credit_status || null;
@@ -44125,6 +44477,10 @@ function _flattenOperationalLegForRidesList(parentBookingId, rec, leg, options =
       if (legCreditDecision) {
         row.credit_decision = legCreditDecision;
         row.creditDecision = legCreditDecision;
+      }
+      if (legCreditedAmountCents != null) {
+        row.credited_amount_cents = legCreditedAmountCents;
+        row.creditedAmountCents = legCreditedAmountCents;
       }
     }
   } else if (parentStatusUpper !== "CANCELLED") {
@@ -54425,6 +54781,11 @@ async function updateBookingOperationalLegStatusAuthoritative(
   rec.operationalLegsCount = operationalLegsCount;
   rec.updatedAt = nowIso;
   rec.updated_at = nowIso;
+  if (progressState === "partially_cancelled" || progressState === "mixed_terminal") {
+    console.log(
+      `[ROUNDTRIP_LEG_UI][PARENT_PARTIAL_STATUS] booking=${_bookingIntentMask(safeBookingId)} parent_status=${derivedParentStatus} progress_state=${progressState} completed=${completedLegsCount} cancelled=${cancelledLegsCount} pending=${pendingLegsCount} total=${operationalLegsCount}`,
+    );
+  }
   if (derivedParentStatus === "COMPLETED") {
     rec.completed_at = rec.completed_at || nowIso;
     rec.completedAt = rec.completedAt || rec.completed_at;

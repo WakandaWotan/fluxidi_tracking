@@ -239,6 +239,7 @@ Set<String> _customerBookingAliasesFromStored(StoredCustomerBooking booking) {
 
 const String _customerDetailResultRemovedLocal = 'removed_local';
 const String _customerDetailResultCancelledServer = 'cancelled_server';
+const String _customerDetailResultLegCancelledServer = 'leg_cancelled_server';
 
 String? _customerDetailResultAction(dynamic result) {
   if (result == true) return _customerDetailResultRemovedLocal;

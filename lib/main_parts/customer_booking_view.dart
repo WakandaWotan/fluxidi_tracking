@@ -174,6 +174,7 @@ class CustomerBookingView {
       },
     );
     booking.addAll(businessPayload);
+    final quoteSnapshot = Map<String, dynamic>.from(stored.quote);
     final record = <String, dynamic>{
       'tenant_id': stored.tenantId,
       'tenantId': stored.tenantId,
@@ -197,7 +198,36 @@ class CustomerBookingView {
         ...businessPayload,
       },
       ...businessPayload,
+      if (quoteSnapshot['operational_legs'] is List)
+        'operational_legs': quoteSnapshot['operational_legs'],
+      if (quoteSnapshot['operationalLegs'] is List)
+        'operationalLegs': quoteSnapshot['operationalLegs'],
+      if (quoteSnapshot['price_incl_vat_main'] != null)
+        'price_incl_vat_main': quoteSnapshot['price_incl_vat_main'],
+      if (quoteSnapshot['priceInclVatMain'] != null)
+        'priceInclVatMain': quoteSnapshot['priceInclVatMain'],
+      if (quoteSnapshot['price_incl_vat_return'] != null)
+        'price_incl_vat_return': quoteSnapshot['price_incl_vat_return'],
+      if (quoteSnapshot['priceInclVatReturn'] != null)
+        'priceInclVatReturn': quoteSnapshot['priceInclVatReturn'],
+      if (quoteSnapshot['price_incl_vat'] != null)
+        'price_incl_vat': quoteSnapshot['price_incl_vat'],
+      if (quoteSnapshot['priceInclVat'] != null)
+        'priceInclVat': quoteSnapshot['priceInclVat'],
     };
+    for (final key in const <String>[
+      'price_incl_vat_main',
+      'priceInclVatMain',
+      'price_incl_vat_return',
+      'priceInclVatReturn',
+      'price_incl_vat',
+      'priceInclVat',
+    ]) {
+      final value = quoteSnapshot[key];
+      if (value != null) {
+        booking[key] = value;
+      }
+    }
     final source = <String, dynamic>{
       'tenant_id': stored.tenantId,
       'tenantId': stored.tenantId,
@@ -1489,5 +1519,670 @@ class CustomerBookingView {
     final payloadListValue = normalizeList(_valueAtPath('payload.extras'));
     if (payloadListValue.isNotEmpty) return payloadListValue;
     return '';
+  }
+
+  List<CustomerOperationalLegView> get operationalLegs {
+    final byType = <String, CustomerOperationalLegView>{};
+
+    CustomerOperationalLegView? legFromMap(Map<String, dynamic> map) {
+      final legId = _firstNonEmpty([
+        map['leg_id']?.toString(),
+        map['legId']?.toString(),
+      ]);
+      if (legId.isEmpty) return null;
+      final legTypeRaw = (map['leg_type'] ?? map['legType'] ?? '')
+          .toString()
+          .trim()
+          .toLowerCase();
+      final legType = legTypeRaw == 'return' ? 'return' : 'outbound';
+      final status =
+          (map['status'] ??
+                  map['lifecycle_status'] ??
+                  map['lifecycleStatus'] ??
+                  lifecycleStatus)
+              .toString()
+              .trim();
+      return CustomerOperationalLegView(
+        legId: legId,
+        legType: legType,
+        status: status,
+        priceInclVat: _roundtripLegPriceFromMap(map),
+      );
+    }
+
+    void absorbLeg(CustomerOperationalLegView? leg) {
+      if (leg == null || leg.legId.trim().isEmpty) return;
+      byType[leg.legType] = leg;
+    }
+
+    final rawLists = <dynamic>[
+      _valueAtPath('record.operational_legs'),
+      _valueAtPath('record.operationalLegs'),
+      _valueAtPath('record.booking.operational_legs'),
+      _valueAtPath('record.booking.operationalLegs'),
+      _valueAtPath('record.payload.operational_legs'),
+      _valueAtPath('record.payload.operationalLegs'),
+      _valueAtPath('operational_legs'),
+      _valueAtPath('operationalLegs'),
+      _valueAtPath('booking.operational_legs'),
+      _valueAtPath('booking.operationalLegs'),
+      _valueAtPath('payload.operational_legs'),
+      _valueAtPath('payload.operationalLegs'),
+      _valueAtPath('legs'),
+      _valueAtPath('record.legs'),
+      _valueAtPath('quote.legs'),
+      _valueAtPath('record.quote.legs'),
+    ];
+    for (final raw in rawLists) {
+      if (raw is! List) continue;
+      for (final entry in raw) {
+        if (entry is! Map) continue;
+        absorbLeg(legFromMap(Map<String, dynamic>.from(entry)));
+      }
+    }
+
+    String directLegId(List<String> paths) => _firstPathValue(paths);
+
+    absorbLeg(
+      directLegId(const [
+            'record.outbound_leg_id',
+            'record.outboundLegId',
+            'outbound_leg_id',
+            'outboundLegId',
+            'booking.outbound_leg_id',
+            'booking.outboundLegId',
+            'record.booking.outbound_leg_id',
+            'record.booking.outboundLegId',
+            'payload.outbound_leg_id',
+            'payload.outboundLegId',
+          ]).isEmpty
+          ? null
+          : CustomerOperationalLegView(
+              legId: directLegId(const [
+                'record.outbound_leg_id',
+                'record.outboundLegId',
+                'outbound_leg_id',
+                'outboundLegId',
+                'booking.outbound_leg_id',
+                'booking.outboundLegId',
+                'record.booking.outbound_leg_id',
+                'record.booking.outboundLegId',
+                'payload.outbound_leg_id',
+                'payload.outboundLegId',
+              ]),
+              legType: 'outbound',
+              status: lifecycleStatus,
+            ),
+    );
+    absorbLeg(
+      directLegId(const [
+            'record.return_leg_id',
+            'record.returnLegId',
+            'return_leg_id',
+            'returnLegId',
+            'booking.return_leg_id',
+            'booking.returnLegId',
+            'record.booking.return_leg_id',
+            'record.booking.returnLegId',
+            'payload.return_leg_id',
+            'payload.returnLegId',
+          ]).isEmpty
+          ? null
+          : CustomerOperationalLegView(
+              legId: directLegId(const [
+                'record.return_leg_id',
+                'record.returnLegId',
+                'return_leg_id',
+                'returnLegId',
+                'booking.return_leg_id',
+                'booking.returnLegId',
+                'record.booking.return_leg_id',
+                'record.booking.returnLegId',
+                'payload.return_leg_id',
+                'payload.returnLegId',
+              ]),
+              legType: 'return',
+              status: lifecycleStatus,
+            ),
+    );
+
+    final parentId = bookingId.trim();
+    if (isRoundtrip && parentId.isNotEmpty) {
+      byType.putIfAbsent(
+        'outbound',
+        () => CustomerOperationalLegView(
+          legId: '$parentId:OUTBOUND',
+          legType: 'outbound',
+          status: lifecycleStatus,
+        ),
+      );
+      byType.putIfAbsent(
+        'return',
+        () => CustomerOperationalLegView(
+          legId: '$parentId:RETURN',
+          legType: 'return',
+          status: lifecycleStatus,
+        ),
+      );
+    }
+
+    return byType.values.toList(growable: false);
+  }
+
+  bool get isCustomerRoundtripBooking {
+    if (isRoundtrip) return true;
+    final serviceToken = service.trim().toLowerCase();
+    if (serviceToken.contains('roundtrip') ||
+        serviceToken.contains('round_trip') ||
+        serviceToken == 'airport_transfer_roundtrip') {
+      return true;
+    }
+    return operationalLegs.length > 1;
+  }
+
+  bool get hasRoundtripOperationalLegs => isCustomerRoundtripBooking;
+
+  CustomerOperationalLegView? get customerOutboundLeg {
+    for (final leg in operationalLegs) {
+      if (leg.legType == 'outbound') return leg;
+    }
+    return null;
+  }
+
+  CustomerOperationalLegView? get customerReturnLeg {
+    for (final leg in operationalLegs) {
+      if (leg.legType == 'return') return leg;
+    }
+    return null;
+  }
+
+  bool get isConfirmedPaidForRoundtripProjection {
+    final token = rawPaymentStatus.trim().toLowerCase();
+    return token == 'paid' ||
+        token == 'confirmed' ||
+        token == 'completed' ||
+        token == 'success' ||
+        token == 'partially_paid';
+  }
+
+  List<Map<String, dynamic>> get _operationalLegMaps {
+    final maps = <Map<String, dynamic>>[];
+    final rawLists = <dynamic>[
+      _valueAtPath('record.operational_legs'),
+      _valueAtPath('record.operationalLegs'),
+      _valueAtPath('record.booking.operational_legs'),
+      _valueAtPath('record.booking.operationalLegs'),
+      _valueAtPath('operational_legs'),
+      _valueAtPath('operationalLegs'),
+      _valueAtPath('booking.operational_legs'),
+      _valueAtPath('booking.operationalLegs'),
+      _valueAtPath('payload.operational_legs'),
+      _valueAtPath('payload.operationalLegs'),
+      _valueAtPath('legs'),
+      _valueAtPath('record.legs'),
+      _valueAtPath('quote.legs'),
+      _valueAtPath('record.quote.legs'),
+    ];
+    for (final raw in rawLists) {
+      if (raw is! List) continue;
+      for (final entry in raw) {
+        if (entry is! Map) continue;
+        maps.add(Map<String, dynamic>.from(entry));
+      }
+    }
+    return maps;
+  }
+
+  CustomerRoundtripPriceProjection? get roundtripPriceProjection {
+    if (!isCustomerRoundtripBooking) return null;
+
+    final rawLegMaps = _operationalLegMaps;
+    double? outboundPrice;
+    double? returnPrice;
+    var outboundCancelled = false;
+    var returnCancelled = false;
+
+    for (final map in rawLegMaps) {
+      final legTypeRaw = (map['leg_type'] ?? map['legType'] ?? '')
+          .toString()
+          .trim()
+          .toLowerCase();
+      final legType = legTypeRaw == 'return' ? 'return' : 'outbound';
+      final legPrice = _roundtripLegPriceFromMap(map);
+      final legStatus =
+          (map['status'] ??
+                  map['lifecycle_status'] ??
+                  map['lifecycleStatus'] ??
+                  '')
+              .toString();
+      final cancelled = _roundtripLegStatusIsCancelled(legStatus);
+      if (legType == 'return') {
+        returnPrice = legPrice ?? returnPrice;
+        returnCancelled = cancelled || returnCancelled;
+      } else {
+        outboundPrice = legPrice ?? outboundPrice;
+        outboundCancelled = cancelled || outboundCancelled;
+      }
+    }
+
+    if (rawLegMaps.isEmpty) {
+      for (final leg in operationalLegs) {
+        if (leg.legType == 'return') {
+          returnCancelled = leg.isCancelledLeg;
+        } else {
+          outboundCancelled = leg.isCancelledLeg;
+        }
+      }
+    }
+
+    outboundPrice ??= priceInclVatMain;
+    returnPrice ??= priceInclVatReturn;
+
+    final originalTotal = _roundtripResolveOriginalTotal(
+      outboundPrice: outboundPrice,
+      returnPrice: returnPrice,
+    );
+    if (originalTotal == null) return null;
+
+    if (outboundPrice == null && returnPrice != null) {
+      outboundPrice = (originalTotal - returnPrice).clamp(0, originalTotal);
+    } else if (returnPrice == null && outboundPrice != null) {
+      returnPrice = (originalTotal - outboundPrice).clamp(0, originalTotal);
+    }
+
+    outboundPrice ??= originalTotal / 2;
+    returnPrice ??= originalTotal - outboundPrice;
+
+    final resolvedOutboundPrice = outboundPrice;
+    final resolvedReturnPrice = returnPrice;
+
+    final outboundAmount = outboundCancelled ? 0.0 : resolvedOutboundPrice;
+    final returnAmount = returnCancelled ? 0.0 : resolvedReturnPrice;
+    final cancelledOutboundAmount = outboundCancelled
+        ? resolvedOutboundPrice
+        : 0.0;
+    final cancelledReturnAmount = returnCancelled ? resolvedReturnPrice : 0.0;
+
+    final activeTotal = outboundAmount + returnAmount;
+    final cancelledTotal = cancelledOutboundAmount + cancelledReturnAmount;
+    final hasLegCancellation = cancelledTotal > 0.009;
+
+    if (!hasLegCancellation) return null;
+
+    final paid = isConfirmedPaidForRoundtripProjection;
+    final payableTotal = paid ? 0.0 : activeTotal;
+    final creditDueTotal = paid ? cancelledTotal : 0.0;
+
+    final projection = CustomerRoundtripPriceProjection(
+      originalTotal: originalTotal,
+      activeTotal: activeTotal,
+      cancelledTotal: cancelledTotal,
+      payableTotal: payableTotal,
+      creditDueTotal: creditDueTotal,
+      paid: paid,
+      outbound: CustomerRoundtripLegPriceView(
+        legType: 'outbound',
+        priceInclVat: resolvedOutboundPrice,
+        isCancelled: outboundCancelled,
+      ),
+      returnLeg: CustomerRoundtripLegPriceView(
+        legType: 'return',
+        priceInclVat: resolvedReturnPrice,
+        isCancelled: returnCancelled,
+      ),
+    );
+
+    debugPrint(
+      '[ROUNDTRIP_PRICE][PROJECT] booking=${_safeRefPreview(bookingId)} original=${projection.originalTotal?.toStringAsFixed(2) ?? "-"} active=${projection.activeTotal?.toStringAsFixed(2) ?? "-"} cancelled=${projection.cancelledTotal?.toStringAsFixed(2) ?? "-"} payable=${projection.payableTotal?.toStringAsFixed(2) ?? "-"} credit=${projection.creditDueTotal?.toStringAsFixed(2) ?? "-"} paid=$paid',
+    );
+    debugPrint(
+      '[ROUNDTRIP_PRICE][LEG] booking=${_safeRefPreview(bookingId)} outbound=${resolvedOutboundPrice.toStringAsFixed(2)} cancelled=$outboundCancelled return=${resolvedReturnPrice.toStringAsFixed(2)} cancelled=$returnCancelled',
+    );
+    debugPrint(
+      '[ROUNDTRIP_PRICE][ACTIVE_TOTAL] booking=${_safeRefPreview(bookingId)} active=${projection.activeTotal?.toStringAsFixed(2) ?? "-"} payable=${projection.payableTotal?.toStringAsFixed(2) ?? "-"}',
+    );
+    if (paid) {
+      debugPrint(
+        '[ROUNDTRIP_PRICE][PAID_CREDIT_BREAKDOWN] booking=${_safeRefPreview(bookingId)} original=${projection.originalTotal?.toStringAsFixed(2) ?? "-"} cancelled=${projection.cancelledTotal?.toStringAsFixed(2) ?? "-"} credit=${projection.creditDueTotal?.toStringAsFixed(2) ?? "-"} active=${projection.activeTotal?.toStringAsFixed(2) ?? "-"}',
+      );
+    } else {
+      debugPrint(
+        '[ROUNDTRIP_PRICE][UNPAID_SIMPLE] booking=${_safeRefPreview(bookingId)} active=${projection.activeTotal?.toStringAsFixed(2) ?? "-"} payable=${projection.payableTotal?.toStringAsFixed(2) ?? "-"} outboundCancelled=$outboundCancelled returnCancelled=$returnCancelled',
+      );
+    }
+    return projection;
+  }
+
+  ({String from, String to, String pickupIso}) roundtripLegRoute(
+    String legType,
+  ) {
+    final normalizedType = legType == 'return' ? 'return' : 'outbound';
+    for (final map in _operationalLegMaps) {
+      final legTypeRaw = (map['leg_type'] ?? map['legType'] ?? '')
+          .toString()
+          .trim()
+          .toLowerCase();
+      final mapType = legTypeRaw == 'return' ? 'return' : 'outbound';
+      if (mapType != normalizedType) continue;
+      final from = _firstNonEmpty([
+        map['from']?.toString(),
+        map['pickup_address']?.toString(),
+        map['pickupAddress']?.toString(),
+      ]);
+      final to = _firstNonEmpty([
+        map['to']?.toString(),
+        map['destination']?.toString(),
+        map['destination_address']?.toString(),
+        map['destinationAddress']?.toString(),
+      ]);
+      final pickup = _firstNonEmpty([
+        map['pickup_iso']?.toString(),
+        map['pickupIso']?.toString(),
+        map['scheduled_pickup_at']?.toString(),
+      ]);
+      if (from.isNotEmpty || to.isNotEmpty || pickup.isNotEmpty) {
+        return (from: from, to: to, pickupIso: pickup);
+      }
+    }
+    if (normalizedType == 'outbound') {
+      return (from: fromAddress, to: toAddress, pickupIso: pickupIso);
+    }
+    return (
+      from: _isMeaningful(returnFrom) ? returnFrom : toAddress,
+      to: _isMeaningful(returnTo) ? returnTo : fromAddress,
+      pickupIso: returnPickupIso,
+    );
+  }
+
+  double? get customerDisplayCardAmount {
+    final projection = roundtripPriceProjection;
+    if (projection == null) {
+      return totalAmount ?? priceInclVatTotal;
+    }
+    final amount = projection.customerCardAmount;
+    debugPrint(
+      '[ROUNDTRIP_PRICE][CARD] booking=${_safeRefPreview(bookingId)} amount=${amount?.toStringAsFixed(2) ?? "-"} paid=${projection.paid}',
+    );
+    return amount;
+  }
+
+  double? get customerDisplayPayableAmount {
+    final projection = roundtripPriceProjection;
+    if (projection == null) {
+      return totalAmount ?? priceInclVatTotal;
+    }
+    return projection.paid ? projection.activeTotal : projection.payableTotal;
+  }
+
+  String? get roundtripCancelledLegChipToken {
+    final projection = roundtripPriceProjection;
+    if (projection == null) return null;
+    if (projection.outbound.isCancelled && !projection.returnLeg.isCancelled) {
+      return 'outbound';
+    }
+    if (projection.returnLeg.isCancelled && !projection.outbound.isCancelled) {
+      return 'return';
+    }
+    return null;
+  }
+
+  List<CustomerRoundtripLegCardView> get roundtripLegCardViews {
+    if (!isCustomerRoundtripBooking) {
+      return const <CustomerRoundtripLegCardView>[];
+    }
+    final projection = roundtripPriceProjection;
+
+    CustomerRoundtripLegCardView buildLeg(String legType) {
+      final route = roundtripLegRoute(legType);
+      final leg = legType == 'return' ? customerReturnLeg : customerOutboundLeg;
+      final projectedLeg = legType == 'return'
+          ? projection?.returnLeg
+          : projection?.outbound;
+      final fallbackPrice = legType == 'return'
+          ? priceInclVatReturn
+          : priceInclVatMain;
+      final status = (leg?.status.trim().isNotEmpty ?? false)
+          ? leg!.status
+          : lifecycleStatus;
+      return CustomerRoundtripLegCardView(
+        legType: legType,
+        legId: leg?.legId ?? '',
+        status: status,
+        from: route.from,
+        to: route.to,
+        pickupIso: route.pickupIso,
+        priceInclVat:
+            projectedLeg?.priceInclVat ?? leg?.priceInclVat ?? fallbackPrice,
+        isCancelled:
+            projectedLeg?.isCancelled ?? (leg?.isCancelledLeg ?? false),
+      );
+    }
+
+    final legs = <CustomerRoundtripLegCardView>[
+      buildLeg('outbound'),
+      buildLeg('return'),
+    ];
+    debugPrint(
+      '[ROUNDTRIP_LEG_UI][CUSTOMER_SPLIT] booking=${_safeRefPreview(bookingId)} legs=${legs.map((leg) => "${leg.legType}:${leg.status}:${leg.isCancelled ? "cancelled" : "active"}").join("|")}',
+    );
+    return legs;
+  }
+
+  StoredCustomerBooking mergeRoundtripSnapshotIntoStored(
+    StoredCustomerBooking stored,
+  ) {
+    final quotePatch = Map<String, dynamic>.from(stored.quote);
+    final ops = record['operational_legs'] ?? record['operationalLegs'];
+    if (ops is List) {
+      quotePatch['operational_legs'] = ops;
+    }
+    for (final key in const <String>[
+      'price_incl_vat_main',
+      'priceInclVatMain',
+      'price_incl_vat_return',
+      'priceInclVatReturn',
+      'price_incl_vat',
+      'priceInclVat',
+    ]) {
+      final value = _valueAtPath('record.$key');
+      if (value == null) continue;
+      quotePatch[key] = value;
+      final bookingValue = _valueAtPath('record.booking.$key');
+      if (bookingValue != null) {
+        quotePatch['booking_$key'] = bookingValue;
+      }
+    }
+    final cardAmount = customerDisplayCardAmount;
+    return stored.copyWith(
+      price: cardAmount ?? stored.price,
+      quote: quotePatch,
+    );
+  }
+
+  double? _roundtripResolveOriginalTotal({
+    required double? outboundPrice,
+    required double? returnPrice,
+  }) {
+    final totalFromFields = priceInclVatTotal ?? totalAmount;
+    if (totalFromFields != null && totalFromFields > 0) {
+      return totalFromFields;
+    }
+    if (outboundPrice != null &&
+        returnPrice != null &&
+        outboundPrice > 0 &&
+        returnPrice > 0) {
+      return outboundPrice + returnPrice;
+    }
+    return null;
+  }
+
+  double? _roundtripLegPriceFromMap(Map<String, dynamic> map) {
+    return _firstPathNumFromMap(map, const <String>[
+      'price_incl_vat',
+      'priceInclVat',
+      'leg_price_incl_vat',
+      'legPriceInclVat',
+      'amount',
+      'total',
+    ]);
+  }
+
+  double? _firstPathNumFromMap(Map<String, dynamic> map, List<String> keys) {
+    for (final key in keys) {
+      final raw = map[key];
+      if (raw == null) continue;
+      final parsed = double.tryParse(raw.toString().replaceAll(',', '.'));
+      if (parsed != null && parsed.isFinite) return parsed;
+    }
+    return null;
+  }
+
+  bool _roundtripLegStatusIsCancelled(String statusRaw) {
+    final normalized = statusRaw.trim().toUpperCase();
+    if (normalized.isEmpty) return false;
+    return normalized.contains('CANCEL') || normalized == 'DELETED';
+  }
+}
+
+class CustomerRoundtripLegPriceView {
+  const CustomerRoundtripLegPriceView({
+    required this.legType,
+    required this.priceInclVat,
+    required this.isCancelled,
+  });
+
+  final String legType;
+  final double? priceInclVat;
+  final bool isCancelled;
+}
+
+class CustomerRoundtripLegCardView {
+  const CustomerRoundtripLegCardView({
+    required this.legType,
+    required this.legId,
+    required this.status,
+    required this.from,
+    required this.to,
+    required this.pickupIso,
+    required this.priceInclVat,
+    required this.isCancelled,
+  });
+
+  final String legType;
+  final String legId;
+  final String status;
+  final String from;
+  final String to;
+  final String pickupIso;
+  final double? priceInclVat;
+  final bool isCancelled;
+
+  bool get isActive => !isCancelled;
+}
+
+class CustomerRoundtripPriceProjection {
+  const CustomerRoundtripPriceProjection({
+    required this.originalTotal,
+    required this.activeTotal,
+    required this.cancelledTotal,
+    required this.payableTotal,
+    required this.creditDueTotal,
+    required this.paid,
+    required this.outbound,
+    required this.returnLeg,
+  });
+
+  final double? originalTotal;
+  final double? activeTotal;
+  final double? cancelledTotal;
+  final double? payableTotal;
+  final double? creditDueTotal;
+  final bool paid;
+  final CustomerRoundtripLegPriceView outbound;
+  final CustomerRoundtripLegPriceView returnLeg;
+
+  bool get showUnpaidSimpleUx => !paid;
+
+  bool get showPaidCreditBreakdown => paid;
+
+  String get activeLegType =>
+      outbound.isCancelled && !returnLeg.isCancelled ? 'return' : 'outbound';
+
+  String get cancelledLegType => outbound.isCancelled ? 'outbound' : 'return';
+
+  CustomerRoundtripLegPriceView get activeLeg =>
+      activeLegType == 'return' ? returnLeg : outbound;
+
+  CustomerRoundtripLegPriceView get cancelledLeg =>
+      cancelledLegType == 'return' ? returnLeg : outbound;
+
+  double? get customerCardAmount => paid ? activeTotal : payableTotal;
+
+  double? get customerReceiptTotal => paid ? activeTotal : payableTotal;
+
+  Map<String, dynamic> toReceiptPayload({required CustomerBookingView view}) {
+    final outboundRoute = view.roundtripLegRoute('outbound');
+    final returnRoute = view.roundtripLegRoute('return');
+    final activeRoute = activeLegType == 'return' ? returnRoute : outboundRoute;
+    final displayMode = paid ? 'paid_credit_breakdown' : 'unpaid_simple';
+
+    debugPrint(
+      '[ROUNDTRIP_RECEIPT][ACTIVE_LEG] booking=${_safeRefPreview(view.bookingId)} type=$activeLegType from=${activeRoute.from} to=${activeRoute.to} pickup=${activeRoute.pickupIso}',
+    );
+    debugPrint(
+      '[ROUNDTRIP_RECEIPT][CANCELLED_LEG_NOTE] booking=${_safeRefPreview(view.bookingId)} leg=$cancelledLegType mode=$displayMode',
+    );
+
+    return <String, dynamic>{
+      'display_mode': displayMode,
+      'original_total_eur': originalTotal,
+      'active_total_eur': activeTotal,
+      'cancelled_total_eur': cancelledTotal,
+      'payable_total_eur': payableTotal,
+      'credit_due_total_eur': creditDueTotal,
+      'paid': paid,
+      'active_leg_type': activeLegType,
+      'cancelled_leg_type': cancelledLegType,
+      'active_from': activeRoute.from,
+      'active_to': activeRoute.to,
+      'active_pickup_iso': activeRoute.pickupIso,
+      'outbound_from': outboundRoute.from,
+      'outbound_to': outboundRoute.to,
+      'outbound_pickup_iso': outboundRoute.pickupIso,
+      'return_from': returnRoute.from,
+      'return_to': returnRoute.to,
+      'return_pickup_iso': returnRoute.pickupIso,
+      'outbound_price_incl_vat': outbound.priceInclVat,
+      'outbound_cancelled': outbound.isCancelled,
+      'return_price_incl_vat': returnLeg.priceInclVat,
+      'return_cancelled': returnLeg.isCancelled,
+    };
+  }
+}
+
+class CustomerOperationalLegView {
+  const CustomerOperationalLegView({
+    required this.legId,
+    required this.legType,
+    required this.status,
+    this.priceInclVat,
+  });
+
+  final String legId;
+  final String legType;
+  final String status;
+  final double? priceInclVat;
+
+  bool get isCancelledLeg {
+    final normalized = status.trim().toUpperCase();
+    return normalized.contains('CANCEL') || normalized == 'DELETED';
+  }
+
+  bool get isTerminal {
+    final normalized = status.trim().toUpperCase();
+    return normalized.contains('CANCEL') ||
+        normalized.contains('COMPLETE') ||
+        normalized == 'DONE' ||
+        normalized == 'FINISHED';
   }
 }

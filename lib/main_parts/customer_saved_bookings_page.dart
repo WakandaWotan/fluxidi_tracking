@@ -219,11 +219,209 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
   }
 
   String _formatPrice(CustomerSavedBooking booking) {
-    final amount = booking.price;
+    final amount =
+        _savedBookingView(booking).customerDisplayCardAmount ?? booking.price;
     if (amount == null) return '-';
     final currency = booking.currency.toUpperCase().trim();
     final symbol = currency.isEmpty || currency == 'EUR' ? '€' : '$currency ';
     return '$symbol${amount.toStringAsFixed(2).replaceAll('.', ',')}';
+  }
+
+  CustomerBookingView _savedBookingView(CustomerSavedBooking booking) {
+    final snapshotQuote = booking.rawSnapshot['quote'];
+    final quote = snapshotQuote is Map
+        ? Map<String, dynamic>.from(snapshotQuote)
+        : Map<String, dynamic>.from(booking.rawSnapshot);
+    return CustomerBookingView.fromStored(
+      StoredCustomerBooking(
+        bookingId: booking.bookingId,
+        from: booking.from,
+        to: booking.to,
+        pickupIso: booking.pickupIso,
+        price: booking.price,
+        currency: booking.currency,
+        paymentStatus: booking.paymentStatus,
+        status: booking.bookingStatus,
+        quote: quote,
+      ),
+    );
+  }
+
+  String _roundtripCancelledLegChipLabel(String legToken) {
+    if (legToken == 'return') {
+      return _t(
+        nl: 'Terugrit geannuleerd',
+        en: 'Return cancelled',
+        fr: 'Retour annule',
+        es: 'Regreso cancelado',
+      );
+    }
+    return _t(
+      nl: 'Heenrit geannuleerd',
+      en: 'Outbound cancelled',
+      fr: 'Aller annule',
+      es: 'Ida cancelada',
+    );
+  }
+
+  Widget? _roundtripCancelledLegChip(CustomerSavedBooking booking) {
+    final token = _savedBookingView(booking).roundtripCancelledLegChipToken;
+    if (token == null) return null;
+    return Container(
+      margin: const EdgeInsets.only(top: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+      decoration: BoxDecoration(
+        color: _palette.gold.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: _palette.gold.withOpacity(0.35)),
+      ),
+      child: Text(
+        _roundtripCancelledLegChipLabel(token),
+        style: TextStyle(
+          color: _palette.gold.withOpacity(0.95),
+          fontSize: 10.8,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+    );
+  }
+
+  String _roundtripLegTitle(String legType) {
+    if (legType == 'return') {
+      return _t(nl: 'Terugrit', en: 'Return', fr: 'Retour', es: 'Regreso');
+    }
+    return _t(nl: 'Heenrit', en: 'Outbound', fr: 'Aller', es: 'Ida');
+  }
+
+  String _formatCardAmount(double? amount, String currency) {
+    if (amount == null) return '-';
+    final normalizedCurrency = currency.toUpperCase().trim();
+    final symbol = normalizedCurrency.isEmpty || normalizedCurrency == 'EUR'
+        ? '€'
+        : '$normalizedCurrency ';
+    return '$symbol${amount.toStringAsFixed(2).replaceAll('.', ',')}';
+  }
+
+  Widget _roundtripLegCard({
+    required CustomerSavedBooking booking,
+    required CustomerRoundtripLegCardView leg,
+  }) {
+    final statusColor = leg.isCancelled ? _palette.bronze : _palette.gold;
+    return Container(
+      margin: const EdgeInsets.only(top: 8),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: _palette.surfaceAlt.withOpacity(_palette.isDark ? 0.48 : 0.72),
+        borderRadius: BorderRadius.circular(13),
+        border: Border.all(color: _palette.border.withOpacity(0.55)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Text(
+                _roundtripLegTitle(leg.legType),
+                style: TextStyle(
+                  color: _palette.textPrimary,
+                  fontSize: 12.4,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                decoration: BoxDecoration(
+                  color: statusColor.withOpacity(0.14),
+                  borderRadius: BorderRadius.circular(999),
+                  border: Border.all(color: statusColor.withOpacity(0.34)),
+                ),
+                child: Text(
+                  leg.isCancelled
+                      ? _t(
+                          nl: 'Geannuleerd',
+                          en: 'Cancelled',
+                          fr: 'Annule',
+                          es: 'Cancelado',
+                        )
+                      : _t(
+                          nl: 'Gepland',
+                          en: 'Scheduled',
+                          fr: 'Planifie',
+                          es: 'Programado',
+                        ),
+                  style: TextStyle(
+                    color: statusColor.withOpacity(0.98),
+                    fontSize: 10.2,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+              const Spacer(),
+              Text(
+                _formatCardAmount(leg.priceInclVat, booking.currency),
+                style: TextStyle(
+                  color: _palette.gold.withOpacity(0.96),
+                  fontSize: 12.4,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            '${_formatPickup(leg.pickupIso)} · ${leg.from.isEmpty ? '-' : leg.from} → ${leg.to.isEmpty ? '-' : leg.to}',
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: _palette.textMuted.withOpacity(0.9),
+              fontSize: 11.1,
+              height: 1.25,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Row(
+            children: [
+              if (leg.isActive)
+                OutlinedButton(
+                  onPressed: () =>
+                      _cancelSavedFromCard(booking, legType: leg.legType),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: _palette.danger.withOpacity(0.95),
+                    side: BorderSide(color: _palette.danger.withOpacity(0.45)),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 7,
+                    ),
+                    minimumSize: const Size(48, 38),
+                  ),
+                  child: Text(
+                    _t(
+                      nl: 'Rit annuleren',
+                      en: 'Cancel leg',
+                      fr: 'Annuler trajet',
+                      es: 'Cancelar tramo',
+                    ),
+                  ),
+                ),
+              const Spacer(),
+              TextButton(
+                onPressed: () =>
+                    _openSavedBooking(booking, legType: leg.legType),
+                child: Text(
+                  _t(
+                    nl: 'Rit bekijken',
+                    en: 'View leg',
+                    fr: 'Voir trajet',
+                    es: 'Ver tramo',
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
   }
 
   String _displayPaymentStatusToken(CustomerSavedBooking booking) {
@@ -555,6 +753,8 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
     final hasFrom = booking.from.trim().isNotEmpty;
     final hasTo = booking.to.trim().isNotEmpty;
     final hasPrice = booking.price != null;
+    final cancelledLegChip = _roundtripCancelledLegChip(booking);
+    final roundtripLegs = _savedBookingView(booking).roundtripLegCardViews;
     final showPartialLoading = hasIdentity && (!hasFrom || !hasTo || !hasPrice);
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
@@ -624,6 +824,7 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
                   fontWeight: FontWeight.w600,
                 ),
               ),
+              if (cancelledLegChip != null) cancelledLegChip,
               if (showPartialLoading) ...[
                 const SizedBox(height: 8),
                 Text(
@@ -739,6 +940,12 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
                   ),
                 ],
               ),
+              if (roundtripLegs.isNotEmpty) ...[
+                const SizedBox(height: 10),
+                ...roundtripLegs.map(
+                  (leg) => _roundtripLegCard(booking: booking, leg: leg),
+                ),
+              ],
               const SizedBox(height: 10),
               _CustomerBookingCardActionsLayout(
                 children: [
@@ -765,7 +972,7 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
                         ),
                       ),
                     )
-                  else
+                  else if (roundtripLegs.isEmpty)
                     OutlinedButton(
                       onPressed: () => _cancelSavedFromCard(booking),
                       style: OutlinedButton.styleFrom(
@@ -817,11 +1024,14 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
     );
   }
 
-  Future<void> _cancelSavedFromCard(CustomerSavedBooking booking) async {
+  Future<void> _cancelSavedFromCard(
+    CustomerSavedBooking booking, {
+    String? legType,
+  }) async {
     final id = booking.bookingId.trim();
     if (id.isEmpty) return;
     debugPrint(
-      '[CUSTOMER_BOOKING_CARD][ACTION] action=cancel booking=${_safeRefPreview(id)} status=${booking.bookingStatus.isEmpty ? "-" : booking.bookingStatus}',
+      '[CUSTOMER_BOOKING_CARD][ACTION] action=cancel booking=${_safeRefPreview(id)} leg=${legType ?? "-"} status=${booking.bookingStatus.isEmpty ? "-" : booking.bookingStatus}',
     );
     debugPrint(
       '[CUSTOMER_BOOKING_CANCEL][CARD_ROUTE] booking=${_safeRefPreview(id)} route=detail_pending_action',
@@ -829,6 +1039,7 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
     await _openSavedBooking(
       booking,
       pendingAction: kCustomerDetailPendingActionCancel,
+      legType: legType,
     );
   }
 
@@ -913,6 +1124,7 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
   Future<void> _openSavedBooking(
     CustomerSavedBooking booking, {
     String? pendingAction,
+    String? legType,
   }) async {
     final id = booking.bookingId.trim();
     if (id.isEmpty) return;
@@ -947,6 +1159,7 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
                 initialView: view,
                 startsFromLocalCache: false,
                 pendingAction: pendingAction,
+                initialLegType: legType,
               ),
             ),
           );
@@ -1000,10 +1213,20 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
           initialView: CustomerBookingView.fromStored(fallback),
           startsFromLocalCache: true,
           pendingAction: pendingAction,
+          initialLegType: legType,
         ),
       ),
     );
     final action = _customerDetailResultAction(result);
+    if (action == _customerDetailResultLegCancelledServer) {
+      await _loadLocal(showLoading: false, runBootstrap: false);
+      if (mounted) {
+        debugPrint(
+          '[CUSTOMER_BOOKINGS][DETAIL_RETURN] action=$action beforeCount=$beforeCount afterCount=${_bookings.length}',
+        );
+      }
+      return;
+    }
     if (action == _customerDetailResultRemovedLocal ||
         action == _customerDetailResultCancelledServer) {
       _applySavedBookingListRemoval(

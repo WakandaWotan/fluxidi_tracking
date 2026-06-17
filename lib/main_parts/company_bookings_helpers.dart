@@ -2,6 +2,8 @@ part of '../main.dart';
 
 enum _AdminCancelPaidScope { singleLeg, fullRoundtrip }
 
+enum _AdminCreditScope { legOnly, fullParent }
+
 enum _CompanyBookingsFilter { open, completed, cancelled, toCredit }
 
 class _CompanyBookingsLoadException implements Exception {
@@ -417,6 +419,37 @@ class _CompanyBookingOverviewItem {
     if (from.isEmpty || from == '—') return false;
     if (to.isEmpty || to == '—') return false;
     return true;
+  }
+
+  static bool isRoundtripOperationalLegRow(_CompanyBookingOverviewItem item) {
+    return item.isOperationalLeg &&
+        item.isRoundtripParent &&
+        item.legId.trim().isNotEmpty;
+  }
+
+  static _AdminCreditScope creditScopeForItem(
+    _CompanyBookingOverviewItem item,
+  ) {
+    if (isRoundtripOperationalLegRow(item)) {
+      return _AdminCreditScope.legOnly;
+    }
+    return _AdminCreditScope.fullParent;
+  }
+
+  static num? creditDecisionMaxAmount(_CompanyBookingOverviewItem item) {
+    if (isRoundtripOperationalLegRow(item)) {
+      return item.amount;
+    }
+    return item.parentAmount ?? item.amount;
+  }
+
+  static String creditDecisionBusyKey(_CompanyBookingOverviewItem item) {
+    final bookingId = item.parentBookingId.trim().isNotEmpty
+        ? item.parentBookingId.trim()
+        : item.bookingId.trim();
+    final legId = item.legId.trim();
+    if (legId.isEmpty) return bookingId;
+    return '$bookingId::$legId';
   }
 
   /// Gate for credit decisions and Mollie refund/money actions in Company Bookings.
@@ -1066,6 +1099,12 @@ class _CompanyBookingOverviewItem {
       isPaid: isPaid,
       isCreditEligible: isPendingCredit,
     );
+    final bucket = _bucketFromStatus(statusRaw: statusRaw);
+    if (isOperationalLeg) {
+      debugPrint(
+        '[ROUNDTRIP_LEG_UI][COMPANY_FILTER] parent=${_safeBookingRefForDiag(parentBookingId.isEmpty ? bookingId : parentBookingId)} leg=${_safeBookingRefForDiag(legId)} type=${legType.isEmpty ? "-" : legType} status=${_normStatus(statusRaw)} bucket=${bucket.name} parentStatus=${_firstText(raw, const <String>['parent_status', 'parentStatus', 'record.parent_status', 'record.parentStatus']).trim().isEmpty ? "-" : _firstText(raw, const <String>['parent_status', 'parentStatus', 'record.parent_status', 'record.parentStatus'])}',
+      );
+    }
     return _CompanyBookingOverviewItem(
       bookingId: bookingId,
       parentBookingId: parentBookingId.isEmpty ? bookingId : parentBookingId,
@@ -1102,7 +1141,7 @@ class _CompanyBookingOverviewItem {
       amount: amount,
       parentAmount: parentAmount,
       currency: currency,
-      bucket: _bucketFromStatus(statusRaw: statusRaw),
+      bucket: bucket,
     );
   }
 }
