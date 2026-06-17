@@ -2034,18 +2034,58 @@ class _DriverHomePageState extends State<DriverHomePage>
     }
   }
 
+  void _logDriverNavDiag({
+    required String tag,
+    required String action,
+    String? bookingId,
+  }) {
+    final mode = _isBusinessPreviewMode ? 'business_preview' : 'standalone';
+    final previewScope = _activeBusinessPreviewScope();
+    final strictScope = _strictActiveBookingScopeQuery();
+    final tenantPresent =
+        (previewScope?.tenantId ?? strictScope?['tenant_id'] ?? '')
+            .trim()
+            .isNotEmpty;
+    final companyPresent =
+        (previewScope?.companyId ?? strictScope?['company_id'] ?? '')
+            .trim()
+            .isNotEmpty;
+    final driverId = _resolvedActiveDriverIdForScope().trim();
+    final safeBookingId = (bookingId ?? '').trim();
+    debugPrint(
+      '[DRIVER_NAV][$tag] action=$action mode=$mode '
+      'booking_id=${safeBookingId.isNotEmpty ? _shortDriverIdForDiag(safeBookingId) : 'missing'} '
+      'tenant=${tenantPresent ? 'present' : 'missing'} '
+      'company=${companyPresent ? 'present' : 'missing'} '
+      'driver_id=${driverId.isNotEmpty ? _shortDriverIdForDiag(driverId) : 'missing'}',
+    );
+  }
+
   /// Open a booking in "ride preview" mode:
   /// - show route in OVERVIEW
   /// - do NOT create a trip_id yet
   /// - driver presses START on the map to begin tracking + streetview/follow cam
   Future<void> _goToRide(BookingItem b) async {
     try {
+      final bookingId = b.bookingId.trim();
       if (!_canOperateBookingWithGuard(
         _bookingScopeViewFor(b),
         action: 'open_ride',
       )) {
+        _logDriverNavDiag(
+          tag: 'BLOCK',
+          action: 'open_ride',
+          bookingId: bookingId,
+        );
         return;
       }
+      _logDriverNavDiag(
+        tag: 'OPEN_RIDE',
+        action: 'open_ride',
+        bookingId: bookingId,
+      );
+
+      final fromBookingsHub = _bookingsHubVisible;
       // Prevent old bookings-hub optimized panel from flashing during
       // route pop/transition back to map/cockpit.
       if (_bookingsHubVisible) {
@@ -2057,7 +2097,18 @@ class _DriverHomePageState extends State<DriverHomePage>
       }
       // We are typically called from the Bookings Hub page.
       // UX: return to the main map/cockpit immediately.
-      if (Navigator.of(context).canPop()) {
+      if (_isBusinessPreviewMode) {
+        // DriverHome sits on BusinessHome — never pop past the cockpit route.
+        if (fromBookingsHub && Navigator.of(context).canPop()) {
+          Navigator.of(context).pop();
+        }
+        _logDriverNavDiag(
+          tag: 'BUSINESS_PREVIEW_KEEP_DRIVER',
+          action:
+              'open_ride_pop=${fromBookingsHub ? 'bookings_hub_only' : 'none'}',
+          bookingId: bookingId,
+        );
+      } else if (Navigator.of(context).canPop()) {
         Navigator.of(context).popUntil((r) => r.isFirst);
       }
 
@@ -5692,7 +5743,24 @@ class _DriverHomePageState extends State<DriverHomePage>
           _bookingScopeViewFor(booking),
           action: 'open_navigation',
         )) {
+      _logDriverNavDiag(
+        tag: 'BLOCK',
+        action: 'open_navigation',
+        bookingId: booking.bookingId,
+      );
       return;
+    }
+    _logDriverNavDiag(
+      tag: 'OPEN_RIDE',
+      action: 'open_navigation',
+      bookingId: booking?.bookingId,
+    );
+    if (_isBusinessPreviewMode) {
+      _logDriverNavDiag(
+        tag: 'BUSINESS_PREVIEW_KEEP_DRIVER',
+        action: 'open_navigation',
+        bookingId: booking?.bookingId,
+      );
     }
 
     setState(() {
