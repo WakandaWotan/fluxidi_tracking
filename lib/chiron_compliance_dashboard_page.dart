@@ -4796,6 +4796,16 @@ class _RemoteComplianceEventsSectionState
   }
 }
 
+// Patch LR-1: client-side category filter for the local ride register.
+enum _LocalRideRegisterCategoryFilter {
+  alles,
+  straatritten,
+  geplandeRitten,
+  betaald,
+  nogTeBetalen,
+  geannuleerd,
+}
+
 class _LocalComplianceLedgerSection extends StatefulWidget {
   const _LocalComplianceLedgerSection({required this.lang});
 
@@ -4813,11 +4823,22 @@ class _LocalComplianceLedgerSectionState
   bool _isLoading = true;
   bool _isClearingLocalTestData = false;
   bool _isClearingLocalCustomerBookings = false;
+  // Patch LR-1: local-only search + category filter for the ride register.
+  final TextEditingController _searchController = TextEditingController();
+  String _searchQuery = '';
+  _LocalRideRegisterCategoryFilter _categoryFilter =
+      _LocalRideRegisterCategoryFilter.alles;
 
   @override
   void initState() {
     super.initState();
     unawaited(_loadRegister());
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
   }
 
   Future<void> _loadRegister() async {
@@ -6770,6 +6791,253 @@ class _LocalComplianceLedgerSectionState
     return '${trimmed.substring(0, 2)}…${trimmed.substring(trimmed.length - 2)}';
   }
 
+  bool get _hasActiveLedgerFilter =>
+      _searchQuery.trim().isNotEmpty ||
+      _categoryFilter != _LocalRideRegisterCategoryFilter.alles;
+
+  void _resetLedgerSearchAndCategory() {
+    setState(() {
+      _searchController.clear();
+      _searchQuery = '';
+      _categoryFilter = _LocalRideRegisterCategoryFilter.alles;
+    });
+  }
+
+  bool _isLedgerPaidPaymentToken(String raw) {
+    switch (_ledgerToken(raw)) {
+      case 'paid':
+      case 'succeeded':
+      case 'success':
+      case 'completed':
+      case 'settled':
+      case 'confirmed':
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  void _appendLedgerCustomerNameSearchTokens(
+    List<String> tokens,
+    Map<String, dynamic> raw,
+  ) {
+    String s(String? v) => (v ?? '').trim().toLowerCase();
+    void add(String? v) {
+      final token = s(v);
+      if (token.isNotEmpty) tokens.add(token);
+    }
+
+    for (final path in const <List<String>>[
+      ['customer_name'],
+      ['customerName'],
+      ['custName'],
+      ['passenger_name'],
+      ['passengerName'],
+      ['client_name'],
+      ['clientName'],
+      ['customer', 'name'],
+      ['customer', 'customer_name'],
+      ['customer', 'customerName'],
+      ['passenger', 'name'],
+      ['client', 'name'],
+      ['booking', 'customer_name'],
+      ['booking', 'customerName'],
+      ['booking', 'custName'],
+      ['booking', 'customer', 'name'],
+      ['booking_details', 'customer_name'],
+      ['booking_details', 'customerName'],
+      ['booking_details', 'custName'],
+      ['booking_details', 'name'],
+      ['booking_details', 'customer', 'name'],
+      ['payload', 'customer_name'],
+      ['payload', 'customerName'],
+      ['payload', 'custName'],
+    ]) {
+      add(_rawPathText(raw, path));
+    }
+  }
+
+  String _buildLedgerEntrySearchHaystack(ComplianceLedgerEntry entry) {
+    String s(dynamic v) => (v ?? '').toString().trim().toLowerCase();
+    final tokens = <String>[
+      s(entry.tripId),
+      s(entry.bookingId),
+      s(entry.rideId),
+      s(entry.sessionId),
+      s(entry.publicBookingReference),
+      s(entry.planningReference),
+      s(entry.receiptReference),
+      s(entry.invoiceReference),
+      s(entry.pickupLabel),
+      s(entry.dropoffLabel),
+      s(entry.paymentStatus),
+      s(entry.paymentMethod),
+      s(entry.paymentSource),
+      s(entry.paymentProvider),
+      s(entry.paymentId),
+      s(entry.eventType),
+      s(entry.rideType),
+      s(entry.lifecycleStatus),
+      s(entry.driverId),
+      s(entry.vehicleId),
+      s(entry.currency),
+      s(_paymentStatusLabel(entry.paymentStatus)),
+      s(_paymentMethodLabel(entry.paymentMethod)),
+      s(_paymentSourceLabel(entry.paymentSource)),
+      s(_paymentProviderLabel(entry.paymentProvider)),
+    ];
+    if (entry.fareTotalEur != null) {
+      tokens
+        ..add(entry.fareTotalEur!.toStringAsFixed(2))
+        ..add(s(entry.fareTotalEur));
+    }
+    final method = s(entry.paymentMethod);
+    switch (method) {
+      case 'cash':
+      case 'contant':
+        tokens
+          ..add('contant')
+          ..add('cash');
+        break;
+      case 'qr':
+      case 'qr_code':
+        tokens
+          ..add('qr')
+          ..add('qr_code');
+        break;
+      case 'card':
+      case 'pin':
+      case 'bancontact':
+        tokens
+          ..add('kaart')
+          ..add('bancontact');
+        break;
+    }
+    final driver = _driverDisplay(entry);
+    if (driver != _driverNotLinkedLabel() &&
+        driver != _driverProfileNotFoundLabel()) {
+      tokens.add(s(driver));
+    }
+    final vehicle = _vehicleDisplay(entry);
+    if (vehicle != _vehicleNotLinkedLabel() &&
+        vehicle != _vehicleProfileNotFoundLabel()) {
+      tokens.add(s(vehicle));
+    }
+    _appendLedgerCustomerNameSearchTokens(tokens, entry.raw);
+    return tokens.where((t) => t.isNotEmpty).join(' ');
+  }
+
+  String _buildLedgerGroupSearchHaystack(List<ComplianceLedgerEntry> group) {
+    return group.map(_buildLedgerEntrySearchHaystack).join(' ');
+  }
+
+  bool _ledgerGroupMatchesSearch(
+    List<ComplianceLedgerEntry> group,
+    String query,
+  ) {
+    if (query.isEmpty) return true;
+    final haystack = _buildLedgerGroupSearchHaystack(group);
+    final tokens = query
+        .toLowerCase()
+        .split(RegExp(r'\s+'))
+        .where((t) => t.isNotEmpty)
+        .toList();
+    if (tokens.isEmpty) return true;
+    for (final token in tokens) {
+      if (!haystack.contains(token)) return false;
+    }
+    return true;
+  }
+
+  bool _ledgerGroupMatchesCategory(List<ComplianceLedgerEntry> group) {
+    if (_categoryFilter == _LocalRideRegisterCategoryFilter.alles) {
+      return true;
+    }
+    final summary = _summaryLedgerEntry(group);
+    final latestPaymentUpdate = _latestPaymentUpdateInGroup(group);
+    final effectivePayment = latestPaymentUpdate ?? summary;
+    final lifecycle = _ledgerToken(_resolveLedgerLifecycleToken(group));
+    final rideType = _ledgerToken(summary.rideType);
+    final paymentStatus = _ledgerToken(effectivePayment.paymentStatus);
+    final hasRideStop = group.any(
+      (entry) => _ledgerToken(entry.eventType) == 'ride_stop',
+    );
+
+    switch (_categoryFilter) {
+      case _LocalRideRegisterCategoryFilter.alles:
+        return true;
+      case _LocalRideRegisterCategoryFilter.straatritten:
+        return rideType == 'direct' || hasRideStop;
+      case _LocalRideRegisterCategoryFilter.geplandeRitten:
+        if (rideType == 'planned' || rideType == 'booking') return true;
+        return group.any((entry) {
+          final token = _ledgerToken(entry.rideType);
+          return token == 'planned' || token == 'booking';
+        });
+      case _LocalRideRegisterCategoryFilter.betaald:
+        return _isLedgerPaidPaymentToken(paymentStatus);
+      case _LocalRideRegisterCategoryFilter.nogTeBetalen:
+        if (lifecycle == 'cancelled' || lifecycle == 'canceled') return false;
+        return !_isLedgerPaidPaymentToken(paymentStatus);
+      case _LocalRideRegisterCategoryFilter.geannuleerd:
+        return lifecycle == 'cancelled' || lifecycle == 'canceled';
+    }
+  }
+
+  List<List<ComplianceLedgerEntry>> _applyLedgerGroupFilters(
+    List<List<ComplianceLedgerEntry>> groups,
+  ) {
+    final query = _searchQuery.trim();
+    if (query.isEmpty &&
+        _categoryFilter == _LocalRideRegisterCategoryFilter.alles) {
+      return groups;
+    }
+    return groups
+        .where(
+          (group) =>
+              _ledgerGroupMatchesCategory(group) &&
+              _ledgerGroupMatchesSearch(group, query),
+        )
+        .toList(growable: false);
+  }
+
+  String _ledgerCategoryFilterLabel(_LocalRideRegisterCategoryFilter cat) {
+    switch (cat) {
+      case _LocalRideRegisterCategoryFilter.alles:
+        return _t(nl: 'Alles', en: 'All', fr: 'Tous', es: 'Todos');
+      case _LocalRideRegisterCategoryFilter.straatritten:
+        return _t(
+          nl: 'Straatritten',
+          en: 'Street rides',
+          fr: 'Courses directes',
+          es: 'Viajes directos',
+        );
+      case _LocalRideRegisterCategoryFilter.geplandeRitten:
+        return _t(
+          nl: 'Geplande ritten',
+          en: 'Planned rides',
+          fr: 'Trajets planifiés',
+          es: 'Viajes planificados',
+        );
+      case _LocalRideRegisterCategoryFilter.betaald:
+        return _t(nl: 'Betaald', en: 'Paid', fr: 'Payé', es: 'Pagado');
+      case _LocalRideRegisterCategoryFilter.nogTeBetalen:
+        return _t(
+          nl: 'Nog te betalen',
+          en: 'Unpaid',
+          fr: 'À payer',
+          es: 'Por pagar',
+        );
+      case _LocalRideRegisterCategoryFilter.geannuleerd:
+        return _t(
+          nl: 'Geannuleerd',
+          en: 'Cancelled',
+          fr: 'Annulé',
+          es: 'Cancelado',
+        );
+    }
+  }
+
   String _routeDisplay(ComplianceLedgerEntry entry) {
     final pickup = entry.pickupLabel.trim();
     final dropoff = entry.dropoffLabel.trim();
@@ -7338,6 +7606,121 @@ class _LocalComplianceLedgerSectionState
               style: TextStyle(color: _chironTextSecondary, fontSize: 12),
             ),
             const SizedBox(height: 10),
+            TextField(
+              controller: _searchController,
+              onChanged: (value) {
+                setState(() {
+                  _searchQuery = value;
+                });
+              },
+              style: TextStyle(color: _chironTextPrimary, fontSize: 13),
+              cursorColor: _chironGold,
+              decoration: InputDecoration(
+                isDense: true,
+                filled: true,
+                fillColor: _chironPanel,
+                hintText: _t(
+                  nl: 'Zoek op rit-id, boekingsnummer, klant, chauffeur, kenteken, route...',
+                  en: 'Search by trip id, booking reference, customer, driver, plate, route...',
+                  fr: 'Rechercher par id trajet, référence, client, chauffeur, plaque, route...',
+                  es: 'Buscar por id viaje, referencia, cliente, conductor, matrícula, ruta...',
+                ),
+                hintStyle: TextStyle(color: _chironTextMuted, fontSize: 12),
+                prefixIcon: Icon(
+                  Icons.search,
+                  size: 18,
+                  color: _chironTextSecondary,
+                ),
+                suffixIcon: _searchQuery.isEmpty
+                    ? null
+                    : IconButton(
+                        tooltip: _t(
+                          nl: 'Zoekopdracht wissen',
+                          en: 'Clear search',
+                          fr: 'Effacer la recherche',
+                          es: 'Borrar búsqueda',
+                        ),
+                        icon: Icon(
+                          Icons.close,
+                          size: 18,
+                          color: _chironTextSecondary,
+                        ),
+                        onPressed: () {
+                          setState(() {
+                            _searchController.clear();
+                            _searchQuery = '';
+                          });
+                        },
+                      ),
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 10,
+                ),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8),
+                  borderSide: BorderSide(color: _chironBorder),
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8),
+                  borderSide: BorderSide(color: _chironBorder),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8),
+                  borderSide: BorderSide(color: _chironGold.withOpacity(0.7)),
+                ),
+              ),
+            ),
+            const SizedBox(height: 8),
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: _LocalRideRegisterCategoryFilter.values
+                    .map((cat) {
+                      final selected = _categoryFilter == cat;
+                      return Padding(
+                        padding: const EdgeInsets.only(right: 6),
+                        child: ChoiceChip(
+                          label: Text(
+                            _ledgerCategoryFilterLabel(cat),
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: selected
+                                  ? _chironGold
+                                  : _chironTextSecondary,
+                              fontWeight: selected
+                                  ? FontWeight.w600
+                                  : FontWeight.normal,
+                            ),
+                          ),
+                          selected: selected,
+                          showCheckmark: false,
+                          backgroundColor: _chironPanel,
+                          selectedColor: _chironGold.withOpacity(0.16),
+                          side: BorderSide(
+                            color: selected
+                                ? _chironGold.withOpacity(0.6)
+                                : _chironBorder,
+                          ),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(16),
+                            side: BorderSide(
+                              color: selected
+                                  ? _chironGold.withOpacity(0.6)
+                                  : _chironBorder,
+                            ),
+                          ),
+                          onSelected: (_) {
+                            setState(() {
+                              _categoryFilter = cat;
+                            });
+                          },
+                        ),
+                      );
+                    })
+                    .toList(growable: false),
+              ),
+            ),
+            const SizedBox(height: 12),
             Builder(
               builder: (context) {
                 if (_isLoading && _result == null) {
@@ -7399,7 +7782,8 @@ class _LocalComplianceLedgerSectionState
                   );
                 }
 
-                final groupedEntries = _groupedLedgerEntries(result.entries);
+                final allGroups = _groupedLedgerEntries(result.entries);
+                final filteredGroups = _applyLedgerGroupFilters(allGroups);
                 return Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -7476,22 +7860,116 @@ class _LocalComplianceLedgerSectionState
                           style: TextStyle(color: _chironWarning, fontSize: 11),
                         ),
                       ),
-                    // Rebuilds the card list whenever the in-memory
-                    // assignment cache is updated (receipt opened or
-                    // background prewarm completed). Pure listener — does
-                    // not change layout; the children are the same cards
-                    // we'd build without the wrapper.
-                    ValueListenableBuilder<int>(
-                      valueListenable: localRideAssignmentCacheRevision,
-                      builder: (context, _, __) {
-                        return Column(
+                    if (allGroups.isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: Text(
+                          _hasActiveLedgerFilter
+                              ? _t(
+                                  nl: '${filteredGroups.length} van ${allGroups.length} ritten',
+                                  en: '${filteredGroups.length} of ${allGroups.length} rides',
+                                  fr: '${filteredGroups.length} sur ${allGroups.length} trajets',
+                                  es: '${filteredGroups.length} de ${allGroups.length} viajes',
+                                )
+                              : _t(
+                                  nl: '${allGroups.length} ritten',
+                                  en: '${allGroups.length} rides',
+                                  fr: '${allGroups.length} trajets',
+                                  es: '${allGroups.length} viajes',
+                                ),
+                          style: TextStyle(
+                            color: _chironTextMuted,
+                            fontSize: 11,
+                          ),
+                        ),
+                      ),
+                    if (filteredGroups.isEmpty && allGroups.isNotEmpty)
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: _chironPanel,
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(color: _chironBorder),
+                        ),
+                        child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
-                          children: groupedEntries
-                              .map(_groupCard)
-                              .toList(growable: false),
-                        );
-                      },
-                    ),
+                          children: [
+                            Text(
+                              _t(
+                                nl: 'Geen ritten gevonden',
+                                en: 'No rides found',
+                                fr: 'Aucun trajet trouvé',
+                                es: 'No se encontraron viajes',
+                              ),
+                              style: TextStyle(
+                                color: _chironTextPrimary,
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              _t(
+                                nl: 'Pas je zoekopdracht of filter aan.',
+                                en: 'Adjust your search or filter.',
+                                fr: 'Ajustez votre recherche ou votre filtre.',
+                                es: 'Ajusta tu búsqueda o filtro.',
+                              ),
+                              style: TextStyle(
+                                color: _chironTextMuted,
+                                fontSize: 12,
+                              ),
+                            ),
+                            if (_hasActiveLedgerFilter) ...[
+                              const SizedBox(height: 8),
+                              Align(
+                                alignment: Alignment.centerLeft,
+                                child: TextButton.icon(
+                                  onPressed: _resetLedgerSearchAndCategory,
+                                  icon: Icon(
+                                    Icons.filter_alt_off,
+                                    size: 16,
+                                    color: _chironGold,
+                                  ),
+                                  label: Text(
+                                    _t(
+                                      nl: 'Filters wissen',
+                                      en: 'Clear filters',
+                                      fr: 'Effacer les filtres',
+                                      es: 'Borrar filtros',
+                                    ),
+                                    style: TextStyle(
+                                      color: _chironGold,
+                                      fontSize: 12,
+                                    ),
+                                  ),
+                                  style: TextButton.styleFrom(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 8,
+                                    ),
+                                    minimumSize: const Size(0, 32),
+                                    tapTargetSize:
+                                        MaterialTapTargetSize.shrinkWrap,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                      )
+                    else
+                      ValueListenableBuilder<int>(
+                        valueListenable: localRideAssignmentCacheRevision,
+                        builder: (context, _, __) {
+                          return Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: filteredGroups
+                                .map(_groupCard)
+                                .toList(growable: false),
+                          );
+                        },
+                      ),
                   ],
                 );
               },
