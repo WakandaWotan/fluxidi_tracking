@@ -1863,6 +1863,17 @@ class _ChironRemoteCompliancePage extends StatelessWidget {
   }
 }
 
+// Patch 4A: client-side category filter for the Chiron/Backendmeldingen
+// list. Strictly UI-local. No backend semantics depend on these tokens.
+enum _RemoteComplianceCategoryFilter {
+  alles,
+  gepland,
+  straatritten,
+  betaald,
+  geannuleerd,
+  creditRefund,
+}
+
 class _RemoteComplianceEventsSection extends StatefulWidget {
   const _RemoteComplianceEventsSection({required this.lang});
 
@@ -1877,6 +1888,13 @@ class _RemoteComplianceEventsSectionState
     extends State<_RemoteComplianceEventsSection> {
   late Future<RemoteComplianceEventsResponse> _future;
   bool _isResettingRemoteEvents = false;
+  // Patch 4A: local-only search + category filter for the
+  // Backendmeldingen list. State is reset on widget disposal; nothing
+  // persists outside this section.
+  final TextEditingController _searchController = TextEditingController();
+  String _searchQuery = '';
+  _RemoteComplianceCategoryFilter _categoryFilter =
+      _RemoteComplianceCategoryFilter.alles;
 
   @override
   void initState() {
@@ -1884,9 +1902,296 @@ class _RemoteComplianceEventsSectionState
     _future = _loadRemoteEvents();
   }
 
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
   void _refresh() {
     setState(() {
       _future = _loadRemoteEvents();
+    });
+  }
+
+  // Patch 4A: build a lowercased haystack of every field the search
+  // bar can match. Strictly read-only over already-loaded events.
+  void _appendMapCustomerNameSearchTokens(
+    List<String> tokens,
+    Map<String, dynamic> map,
+  ) {
+    if (map.isEmpty) return;
+    String s(dynamic v) => (v ?? '').toString().trim().toLowerCase();
+    void add(dynamic v) {
+      final token = s(v);
+      if (token.isNotEmpty) tokens.add(token);
+    }
+
+    for (final key in const <String>[
+      'customer_name',
+      'customerName',
+      'passenger_name',
+      'passengerName',
+      'client_name',
+      'clientName',
+      'custName',
+    ]) {
+      add(map[key]);
+    }
+
+    for (final parentKey in const <String>['customer', 'passenger', 'client']) {
+      final nested = map[parentKey];
+      if (nested is Map) {
+        add(nested['name']);
+        add(nested['customer_name']);
+        add(nested['customerName']);
+        add(nested['passenger_name']);
+        add(nested['passengerName']);
+      }
+    }
+
+    final booking = map['booking'];
+    if (booking is Map) {
+      add(booking['customer_name']);
+      add(booking['customerName']);
+      add(booking['custName']);
+      final customer = booking['customer'];
+      if (customer is Map) {
+        add(customer['name']);
+        add(customer['customer_name']);
+        add(customer['customerName']);
+      }
+    }
+
+    final bookingDetails = map['booking_details'] ?? map['bookingDetails'];
+    if (bookingDetails is Map) {
+      add(bookingDetails['customer_name']);
+      add(bookingDetails['customerName']);
+      add(bookingDetails['custName']);
+      // In booking_details, bare `name` is the customer/passenger label.
+      add(bookingDetails['name']);
+      final customer = bookingDetails['customer'];
+      if (customer is Map) {
+        add(customer['name']);
+        add(customer['customer_name']);
+        add(customer['customerName']);
+      }
+    }
+  }
+
+  String _buildSearchHaystack(RemoteComplianceEvent e) {
+    String s(dynamic v) => (v ?? '').toString().trim().toLowerCase();
+    final tokens = <String>[
+      s(e.eventType),
+      s(e.bookingId),
+      s(e.publicBookingReference),
+      s(e.planningReference),
+      s(e.receiptReference),
+      s(e.tripId),
+      s(e.refundId),
+      s(e.refundStatus),
+      s(e.refundProvider),
+      s(e.creditDecision),
+      s(e.creditStatus),
+      s(e.lifecycleStatus),
+      s(e.status),
+      s(e.bookingStatus),
+      s(e.rideStatus),
+      s(e.previousStatus),
+      s(e.actorRole),
+      s(e.source),
+      s(e.rideType),
+      s(e.payment['method']),
+      s(e.payment['provider']),
+      s(e.payment['source']),
+      s(e.payment['payment_id']),
+      s(e.payment['paymentId']),
+      s(e.payment['mollie_refund_id']),
+      s(e.payment['mollieRefundId']),
+      s(e.payment['refund_id']),
+      s(e.payment['refundId']),
+      s(e.payment['refund_status']),
+      s(e.payment['credit_status']),
+      s(e.payment['credit_decision']),
+    ];
+    _appendMapCustomerNameSearchTokens(tokens, e.payment);
+    _appendMapCustomerNameSearchTokens(tokens, e.fare);
+    _appendMapCustomerNameSearchTokens(tokens, e.provenance);
+    // Localised aliases for common payment-method tokens so a Dutch
+    // search like "contant" or "qr" still matches backend tokens.
+    final method = s(e.payment['method']);
+    final source = s(e.payment['source']);
+    for (final value in <String>[method, source]) {
+      switch (value) {
+        case 'cash':
+          tokens
+            ..add('contant')
+            ..add('cash');
+          break;
+        case 'qr_code':
+        case 'qrcode':
+        case 'qr':
+          tokens
+            ..add('qr')
+            ..add('qr_code');
+          break;
+        case 'card':
+        case 'creditcard':
+        case 'credit_card':
+          tokens
+            ..add('kaart')
+            ..add('card');
+          break;
+        case 'pin':
+          tokens
+            ..add('pin')
+            ..add('bancontact');
+          break;
+      }
+    }
+    return tokens.where((t) => t.isNotEmpty).join(' ');
+  }
+
+  bool _eventMatchesSearch(RemoteComplianceEvent e, String query) {
+    if (query.isEmpty) return true;
+    final haystack = _buildSearchHaystack(e);
+    final tokens = query
+        .toLowerCase()
+        .split(RegExp(r'\s+'))
+        .where((t) => t.isNotEmpty)
+        .toList();
+    if (tokens.isEmpty) return true;
+    for (final token in tokens) {
+      if (!haystack.contains(token)) return false;
+    }
+    return true;
+  }
+
+  bool _eventMatchesCategory(
+    RemoteComplianceEvent e,
+    _RemoteComplianceCategoryFilter cat,
+  ) {
+    if (cat == _RemoteComplianceCategoryFilter.alles) return true;
+    String s(dynamic v) => (v ?? '').toString().trim().toLowerCase();
+    final eventType = s(e.eventType);
+    final rideType = s(e.rideType);
+    final lifecycle = s(e.lifecycleStatus);
+    final status = s(e.status);
+    final bookingStatus = s(e.bookingStatus);
+    final rideStatus = s(e.rideStatus);
+    final paymentStatus = s(e.payment['status']);
+    final refundStatus = s(e.refundStatus);
+    final creditDecision = s(e.creditDecision);
+    final creditStatus = s(e.creditStatus);
+    final refundId = s(e.refundId);
+
+    bool isCancelled(String v) {
+      return v == 'cancelled' ||
+          v == 'canceled' ||
+          v == 'geannuleerd' ||
+          v == 'partially_cancelled' ||
+          v == 'partially-cancelled';
+    }
+
+    switch (cat) {
+      case _RemoteComplianceCategoryFilter.alles:
+        return true;
+      case _RemoteComplianceCategoryFilter.gepland:
+        if (rideType == 'planned' || rideType == 'booking') return true;
+        // Booking-scoped event types imply a planned dossier when the
+        // ride_type is unknown. A direct ride is excluded explicitly.
+        const bookingEventTypes = <String>{
+          'booking_status_update',
+          'booking_credit_decision',
+          'booking_mollie_refund',
+          'payment_update',
+        };
+        return bookingEventTypes.contains(eventType) && rideType != 'direct';
+      case _RemoteComplianceCategoryFilter.straatritten:
+        return rideType == 'direct' || eventType == 'ride_stop';
+      case _RemoteComplianceCategoryFilter.betaald:
+        return paymentStatus == 'paid' ||
+            (eventType == 'payment_update' && paymentStatus.isEmpty);
+      case _RemoteComplianceCategoryFilter.geannuleerd:
+        return isCancelled(lifecycle) ||
+            isCancelled(status) ||
+            isCancelled(bookingStatus) ||
+            isCancelled(rideStatus);
+      case _RemoteComplianceCategoryFilter.creditRefund:
+        if (eventType == 'booking_credit_decision' ||
+            eventType == 'booking_mollie_refund') {
+          return true;
+        }
+        return refundStatus.isNotEmpty ||
+            creditDecision.isNotEmpty ||
+            creditStatus.isNotEmpty ||
+            refundId.isNotEmpty;
+    }
+  }
+
+  List<RemoteComplianceEvent> _applyFilters(
+    List<RemoteComplianceEvent> events,
+  ) {
+    final query = _searchQuery.trim();
+    if (query.isEmpty &&
+        _categoryFilter == _RemoteComplianceCategoryFilter.alles) {
+      return events;
+    }
+    return events
+        .where(
+          (e) =>
+              _eventMatchesCategory(e, _categoryFilter) &&
+              _eventMatchesSearch(e, query),
+        )
+        .toList(growable: false);
+  }
+
+  String _categoryFilterLabel(_RemoteComplianceCategoryFilter cat) {
+    switch (cat) {
+      case _RemoteComplianceCategoryFilter.alles:
+        return _t(nl: 'Alles', en: 'All', fr: 'Tous', es: 'Todos');
+      case _RemoteComplianceCategoryFilter.gepland:
+        return _t(
+          nl: 'Gepland',
+          en: 'Planned',
+          fr: 'Planifié',
+          es: 'Planificado',
+        );
+      case _RemoteComplianceCategoryFilter.straatritten:
+        return _t(
+          nl: 'Straatritten',
+          en: 'Street rides',
+          fr: 'Courses directes',
+          es: 'Viajes directos',
+        );
+      case _RemoteComplianceCategoryFilter.betaald:
+        return _t(nl: 'Betaald', en: 'Paid', fr: 'Payé', es: 'Pagado');
+      case _RemoteComplianceCategoryFilter.geannuleerd:
+        return _t(
+          nl: 'Geannuleerd',
+          en: 'Cancelled',
+          fr: 'Annulé',
+          es: 'Cancelado',
+        );
+      case _RemoteComplianceCategoryFilter.creditRefund:
+        return _t(
+          nl: 'Credit/terugbetaling',
+          en: 'Credit/refund',
+          fr: 'Crédit/remb.',
+          es: 'Crédito/reemb.',
+        );
+    }
+  }
+
+  bool get _hasActiveFilter =>
+      _searchQuery.trim().isNotEmpty ||
+      _categoryFilter != _RemoteComplianceCategoryFilter.alles;
+
+  void _resetSearchAndCategory() {
+    setState(() {
+      _searchController.clear();
+      _searchQuery = '';
+      _categoryFilter = _RemoteComplianceCategoryFilter.alles;
     });
   }
 
@@ -4134,6 +4439,123 @@ class _RemoteComplianceEventsSectionState
             ),
           ],
         ),
+        // Patch 4A: search field + horizontal category chips. Both
+        // operate on already-loaded events; no network calls and no
+        // change to the fetched event limit.
+        const SizedBox(height: 8),
+        TextField(
+          controller: _searchController,
+          onChanged: (value) {
+            setState(() {
+              _searchQuery = value;
+            });
+          },
+          style: TextStyle(color: _chironTextPrimary, fontSize: 13),
+          cursorColor: _chironGold,
+          decoration: InputDecoration(
+            isDense: true,
+            filled: true,
+            fillColor: _chironPanel,
+            hintText: _t(
+              nl: 'Zoek op boekingsnummer, interne boeking, terugbetalings-ID, betaalmethode...',
+              en: 'Search by booking reference, booking id, refund id, payment method...',
+              fr: 'Rechercher par référence, id de réservation, id de remboursement...',
+              es: 'Buscar por referencia, id de reserva, id de reembolso...',
+            ),
+            hintStyle: TextStyle(color: _chironTextMuted, fontSize: 12),
+            prefixIcon: Icon(
+              Icons.search,
+              size: 18,
+              color: _chironTextSecondary,
+            ),
+            suffixIcon: _searchQuery.isEmpty
+                ? null
+                : IconButton(
+                    tooltip: _t(
+                      nl: 'Zoekopdracht wissen',
+                      en: 'Clear search',
+                      fr: 'Effacer la recherche',
+                      es: 'Borrar búsqueda',
+                    ),
+                    icon: Icon(
+                      Icons.close,
+                      size: 18,
+                      color: _chironTextSecondary,
+                    ),
+                    onPressed: () {
+                      setState(() {
+                        _searchController.clear();
+                        _searchQuery = '';
+                      });
+                    },
+                  ),
+            contentPadding: const EdgeInsets.symmetric(
+              horizontal: 12,
+              vertical: 10,
+            ),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(8),
+              borderSide: BorderSide(color: _chironBorder),
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(8),
+              borderSide: BorderSide(color: _chironBorder),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(8),
+              borderSide: BorderSide(color: _chironGold.withOpacity(0.7)),
+            ),
+          ),
+        ),
+        const SizedBox(height: 8),
+        SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            children: _RemoteComplianceCategoryFilter.values
+                .map((cat) {
+                  final selected = _categoryFilter == cat;
+                  return Padding(
+                    padding: const EdgeInsets.only(right: 6),
+                    child: ChoiceChip(
+                      label: Text(
+                        _categoryFilterLabel(cat),
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: selected ? _chironGold : _chironTextSecondary,
+                          fontWeight: selected
+                              ? FontWeight.w600
+                              : FontWeight.normal,
+                        ),
+                      ),
+                      selected: selected,
+                      showCheckmark: false,
+                      backgroundColor: _chironPanel,
+                      selectedColor: _chironGold.withOpacity(0.16),
+                      side: BorderSide(
+                        color: selected
+                            ? _chironGold.withOpacity(0.6)
+                            : _chironBorder,
+                      ),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(16),
+                        side: BorderSide(
+                          color: selected
+                              ? _chironGold.withOpacity(0.6)
+                              : _chironBorder,
+                        ),
+                      ),
+                      onSelected: (_) {
+                        setState(() {
+                          _categoryFilter = cat;
+                        });
+                      },
+                    ),
+                  );
+                })
+                .toList(growable: false),
+          ),
+        ),
+        const SizedBox(height: 12),
         FutureBuilder<RemoteComplianceEventsResponse>(
           future: _future,
           builder: (context, snapshot) {
@@ -4225,11 +4647,18 @@ class _RemoteComplianceEventsSectionState
               );
             }
 
+            // Patch 4A: apply local search + category filter to the
+            // already-loaded event list. The total `result.count` is
+            // preserved for the header so the filter scope is clear
+            // ("X van Y meldingen"). When the active filter yields
+            // zero matches we render a friendly empty state instead
+            // of the dossier list.
+            final filteredEvents = _applyFilters(result.events);
             final latestPaymentUpdates = _latestPaymentUpdatesByKey(
-              result.events,
+              filteredEvents,
             );
             final grouped = <String, List<RemoteComplianceEvent>>{};
-            for (final entry in result.events.asMap().entries) {
+            for (final entry in filteredEvents.asMap().entries) {
               final index = entry.key;
               final event = entry.value;
               final groupKey = _dossierGroupKey(event, index);
@@ -4246,6 +4675,19 @@ class _RemoteComplianceEventsSectionState
                   newestB.first,
                 );
               });
+            final headerText = _hasActiveFilter
+                ? _t(
+                    nl: 'Tenant ${result.tenantId} • Bedrijf ${result.companyId} • ${filteredEvents.length} van ${result.count} meldingen',
+                    en: 'Tenant ${result.tenantId} • Company ${result.companyId} • ${filteredEvents.length} of ${result.count} events',
+                    fr: 'Tenant ${result.tenantId} • Société ${result.companyId} • ${filteredEvents.length} sur ${result.count} événements',
+                    es: 'Tenant ${result.tenantId} • Empresa ${result.companyId} • ${filteredEvents.length} de ${result.count} eventos',
+                  )
+                : _t(
+                    nl: 'Tenant ${result.tenantId} • Bedrijf ${result.companyId} • ${result.count} meldingen',
+                    en: 'Tenant ${result.tenantId} • Company ${result.companyId} • ${result.count} events',
+                    fr: 'Tenant ${result.tenantId} • Société ${result.companyId} • ${result.count} événements',
+                    es: 'Tenant ${result.tenantId} • Empresa ${result.companyId} • ${result.count} eventos',
+                  );
             return Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -4263,18 +4705,88 @@ class _RemoteComplianceEventsSectionState
                     ),
                   ),
                 Text(
-                  _t(
-                    nl: 'Tenant ${result.tenantId} • Bedrijf ${result.companyId} • ${result.count} meldingen',
-                    en: 'Tenant ${result.tenantId} • Company ${result.companyId} • ${result.count} events',
-                    fr: 'Tenant ${result.tenantId} • Société ${result.companyId} • ${result.count} événements',
-                    es: 'Tenant ${result.tenantId} • Empresa ${result.companyId} • ${result.count} eventos',
-                  ),
+                  headerText,
                   style: TextStyle(color: _chironTextMuted, fontSize: 11),
                 ),
                 const SizedBox(height: 8),
-                ...dossiers.map(
-                  (events) => _dossierCard(events, latestPaymentUpdates),
-                ),
+                if (filteredEvents.isEmpty)
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: _chironPanel,
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: _chironBorder),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          _t(
+                            nl: 'Geen meldingen gevonden',
+                            en: 'No messages found',
+                            fr: 'Aucun message trouvé',
+                            es: 'No se encontraron mensajes',
+                          ),
+                          style: TextStyle(
+                            color: _chironTextPrimary,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          _t(
+                            nl: 'Pas je zoekopdracht of filter aan om meer resultaten te zien.',
+                            en: 'Adjust your search or filter to see more results.',
+                            fr: 'Ajustez votre recherche ou votre filtre pour voir plus de résultats.',
+                            es: 'Ajusta tu búsqueda o filtro para ver más resultados.',
+                          ),
+                          style: TextStyle(
+                            color: _chironTextMuted,
+                            fontSize: 12,
+                          ),
+                        ),
+                        if (_hasActiveFilter) ...[
+                          const SizedBox(height: 8),
+                          Align(
+                            alignment: Alignment.centerLeft,
+                            child: TextButton.icon(
+                              onPressed: _resetSearchAndCategory,
+                              icon: Icon(
+                                Icons.filter_alt_off,
+                                size: 16,
+                                color: _chironGold,
+                              ),
+                              label: Text(
+                                _t(
+                                  nl: 'Filters wissen',
+                                  en: 'Clear filters',
+                                  fr: 'Effacer les filtres',
+                                  es: 'Borrar filtros',
+                                ),
+                                style: TextStyle(
+                                  color: _chironGold,
+                                  fontSize: 12,
+                                ),
+                              ),
+                              style: TextButton.styleFrom(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 8,
+                                ),
+                                minimumSize: const Size(0, 32),
+                                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  )
+                else
+                  ...dossiers.map(
+                    (events) => _dossierCard(events, latestPaymentUpdates),
+                  ),
               ],
             );
           },
