@@ -46333,6 +46333,28 @@ function _flattenBookingForRidesList(bookingId, rec) {
     _pick(rec, ["payload", "complianceMollieRefundFinalEmittedAt"], null);
   const assignedDriverId = bookingAssignedDriverId(rec);
   const assignedVehicleId = bookingAssignedVehicleId(rec);
+  // Read-model enrichment (Patch 2): pull additive parent-level fields
+  // from the record. Strictly additive — every field below is included
+  // only when an actual value exists on the record (or, for vehicle
+  // metadata, on a matching operational leg). Never invents a value and
+  // never overrides any existing field above.
+  const planningReferenceForRow = safeStr(
+    rec?.planning_reference ??
+      rec?.planningReference ??
+      _pick(rec, ["booking", "planning_reference"], null) ??
+      _pick(rec, ["booking", "planningReference"], null) ??
+      _pick(rec, ["payload", "planning_reference"], null) ??
+      _pick(rec, ["payload", "planningReference"], null),
+    120,
+  );
+  const roundtripDispatchModeForRow = _roundtripDispatchModeFromRecord(rec);
+  const parentAssignmentModeForRow = _parentAssignmentModeFromRecord(rec);
+  const waitMinForRow = _bookingWaitMinFromRecord(rec);
+  const parentDriverContact = _bookingAssignedDriverContactFromRecord(rec);
+  const parentVehicleEnrichment = _parentAssignmentEnrichmentFromLegs(
+    rec,
+    assignedVehicleId,
+  );
 
   return {
     booking_id: bookingId,
@@ -46404,6 +46426,43 @@ function _flattenBookingForRidesList(bookingId, rec) {
     complianceMollieRefundEmittedAt,
     compliance_mollie_refund_final_emitted_at: complianceMollieRefundFinalEmittedAt,
     complianceMollieRefundFinalEmittedAt,
+    ...(planningReferenceForRow
+      ? {
+          planning_reference: planningReferenceForRow,
+          planningReference: planningReferenceForRow,
+        }
+      : {}),
+    ...(roundtripDispatchModeForRow
+      ? {
+          roundtrip_dispatch_mode: roundtripDispatchModeForRow,
+          roundtripDispatchMode: roundtripDispatchModeForRow,
+        }
+      : {}),
+    ...(parentAssignmentModeForRow
+      ? {
+          parent_assignment_mode: parentAssignmentModeForRow,
+          parentAssignmentMode: parentAssignmentModeForRow,
+        }
+      : {}),
+    ...(waitMinForRow != null
+      ? {
+          wait_min: waitMinForRow,
+          waitMin: waitMinForRow,
+        }
+      : {}),
+    ...(parentDriverContact?.name
+      ? {
+          assigned_driver_name: parentDriverContact.name,
+          assignedDriverName: parentDriverContact.name,
+        }
+      : {}),
+    ...(parentDriverContact?.phone
+      ? {
+          assigned_driver_phone: parentDriverContact.phone,
+          assignedDriverPhone: parentDriverContact.phone,
+        }
+      : {}),
+    ...(parentVehicleEnrichment || {}),
   };
 }
 
@@ -46421,6 +46480,159 @@ function _bookingOperationalLegsFromRecord(rec) {
   return source
     .map((entry) => (entry && typeof entry === "object" ? entry : null))
     .filter((entry) => !!entry);
+}
+
+// Read-model helper: extracts the additive vehicle enrichment fields that
+// _stampOperationalLegFleetAssignment writes onto an operational leg.
+// Returns an object whose keys are intended to be Object.assign-ed onto a
+// rides-list row, or null when the leg carries no extra metadata beyond
+// its id. Strictly readonly; never mutates the input leg.
+function _operationalLegFleetEnrichmentFields(leg) {
+  if (!leg || typeof leg !== "object") return null;
+  const vehicleName = safeStr(leg.assigned_vehicle_name ?? leg.assignedVehicleName, 160);
+  const brandModel = safeStr(
+    leg.assigned_vehicle_brand_model ?? leg.assignedVehicleBrandModel,
+    160,
+  );
+  const licensePlate = safeStr(
+    leg.assigned_vehicle_license_plate ??
+      leg.assignedVehicleLicensePlate ??
+      leg.license_plate ??
+      leg.licensePlate,
+    64,
+  );
+  const color = safeStr(leg.assigned_vehicle_color ?? leg.assignedVehicleColor, 80);
+  const exploitationLicenseNumber = safeStr(
+    leg.assigned_vehicle_exploitation_license_number ??
+      leg.assignedVehicleExploitationLicenseNumber,
+    120,
+  );
+  const vehicleRegistrationNumber = safeStr(
+    leg.assigned_vehicle_registration_number ??
+      leg.assignedVehicleRegistrationNumber,
+    120,
+  );
+  const assignedVehicle =
+    leg.assigned_vehicle && typeof leg.assigned_vehicle === "object"
+      ? leg.assigned_vehicle
+      : (leg.assignedVehicle && typeof leg.assignedVehicle === "object"
+        ? leg.assignedVehicle
+        : null);
+  const out = {};
+  if (assignedVehicle) {
+    out.assigned_vehicle = assignedVehicle;
+    out.assignedVehicle = assignedVehicle;
+  }
+  if (vehicleName) {
+    out.assigned_vehicle_name = vehicleName;
+    out.assignedVehicleName = vehicleName;
+  }
+  if (brandModel) {
+    out.assigned_vehicle_brand_model = brandModel;
+    out.assignedVehicleBrandModel = brandModel;
+  }
+  if (licensePlate) {
+    out.assigned_vehicle_license_plate = licensePlate;
+    out.assignedVehicleLicensePlate = licensePlate;
+    out.license_plate = licensePlate;
+    out.licensePlate = licensePlate;
+  }
+  if (color) {
+    out.assigned_vehicle_color = color;
+    out.assignedVehicleColor = color;
+  }
+  if (exploitationLicenseNumber) {
+    out.assigned_vehicle_exploitation_license_number = exploitationLicenseNumber;
+    out.assignedVehicleExploitationLicenseNumber = exploitationLicenseNumber;
+  }
+  if (vehicleRegistrationNumber) {
+    out.assigned_vehicle_registration_number = vehicleRegistrationNumber;
+    out.assignedVehicleRegistrationNumber = vehicleRegistrationNumber;
+  }
+  return Object.keys(out).length === 0 ? null : out;
+}
+
+// Resolves the parent's vehicle enrichment by finding an operational leg
+// whose assigned_vehicle_id matches `parentVehicleId`. For one-way
+// bookings the single leg's enrichment is the parent's. For
+// continuous_wait the legs share the vehicle. For split_no_wait the
+// parent's "summary" assignment maps to the outbound leg's vehicle and
+// its enrichment is the correct one to surface alongside the parent's id.
+// Returns null when no match exists or when the matching leg carries no
+// metadata beyond its id.
+function _parentAssignmentEnrichmentFromLegs(rec, parentVehicleId) {
+  const wantedVehicleId = safeStr(parentVehicleId, 128);
+  if (!wantedVehicleId) return null;
+  const legs = _bookingOperationalLegsFromRecord(rec);
+  if (!legs.length) return null;
+  const match = legs.find((leg) => {
+    const legVehicleId = safeStr(leg?.assigned_vehicle_id ?? leg?.assignedVehicleId, 128);
+    return legVehicleId && legVehicleId === wantedVehicleId;
+  });
+  if (!match) return null;
+  return _operationalLegFleetEnrichmentFields(match);
+}
+
+// Reads the {name, phone} contact for the parent's assigned driver from
+// the record, preferring whichever layer (rec, rec.booking) carries the
+// richer summary. Returns null when nothing usable is present so the
+// flattener can omit the field rather than emit empty strings.
+function _bookingAssignedDriverContactFromRecord(rec) {
+  if (!rec || typeof rec !== "object") return null;
+  const candidates = [
+    rec.assigned_driver,
+    rec.assignedDriver,
+    _pick(rec, ["booking", "assigned_driver"], null),
+    _pick(rec, ["booking", "assignedDriver"], null),
+  ];
+  for (const candidate of candidates) {
+    const summary = _normalizeAssignedDriverSummaryForLeg(candidate);
+    if (summary && (summary.name || summary.phone)) return summary;
+  }
+  return null;
+}
+
+// Reads the dispatch-mode token stamped by
+// _applySplitRoundtripLegAssignmentsToRecord / ensurePaidOpenBookingAuto
+// Dispatched. Returns "" when nothing is stamped (e.g. legacy records or
+// single-leg bookings whose mode is implicit). Never invents a mode.
+function _roundtripDispatchModeFromRecord(rec) {
+  return safeStr(
+    rec?.roundtrip_dispatch_mode ??
+      rec?.roundtripDispatchMode ??
+      _pick(rec, ["booking", "roundtrip_dispatch_mode"], null) ??
+      _pick(rec, ["booking", "roundtripDispatchMode"], null) ??
+      _pick(rec, ["payload", "roundtrip_dispatch_mode"], null) ??
+      _pick(rec, ["payload", "roundtripDispatchMode"], null),
+    24,
+  );
+}
+
+function _parentAssignmentModeFromRecord(rec) {
+  return safeStr(
+    rec?.parent_assignment_mode ??
+      rec?.parentAssignmentMode ??
+      _pick(rec, ["booking", "parent_assignment_mode"], null) ??
+      _pick(rec, ["booking", "parentAssignmentMode"], null) ??
+      _pick(rec, ["payload", "parent_assignment_mode"], null) ??
+      _pick(rec, ["payload", "parentAssignmentMode"], null),
+    24,
+  );
+}
+
+function _bookingWaitMinFromRecord(rec) {
+  const raw =
+    _pick(rec, ["booking", "wait_min"], null) ??
+    _pick(rec, ["booking", "waitMin"], null) ??
+    rec?.wait_min ??
+    rec?.waitMin ??
+    _pick(rec, ["payload", "wait_min"], null) ??
+    _pick(rec, ["payload", "waitMin"], null) ??
+    _pick(rec, ["quote", "wait_min"], null);
+  if (raw == null || raw === "") return null;
+  const num = Number(raw);
+  if (!Number.isFinite(num) || num < 0) return null;
+  return Math.max(0, Math.trunc(num));
 }
 
 function _operationalLegTypeFromEntry(leg) {
@@ -46856,6 +47068,106 @@ function _flattenOperationalLegForRidesList(parentBookingId, rec, leg, options =
         `[ROUNDTRIP_LEG_UI][ACTIVE_LEG_VISIBLE] parent=${_bookingIntentMask(parentBookingId)} leg=${_bookingIntentMask(legId)} leg_type=${legType || "-"} projected_status=${projectedStatusUpper || "-"}`,
       );
     }
+  }
+  // Read-model enrichment (Patch 2): leg-first override of the additive
+  // fields that may have leaked in via the `...parentRow` spread. Vehicle
+  // and driver enrichment are stamped per-leg by Patch 1; when the leg's
+  // assignment matches the parent's summary the inherited row already
+  // shows the correct values, but split_no_wait legs with their OWN
+  // different vehicle/driver must show their own metadata (and clear the
+  // parent's "summary" metadata that would otherwise mislead the UI).
+  const legOwnDriverId = safeStr(leg?.assigned_driver_id ?? leg?.assignedDriverId, 96);
+  const legOwnVehicleId = safeStr(leg?.assigned_vehicle_id ?? leg?.assignedVehicleId, 128);
+  const parentRowDriverId = safeStr(
+    parentRow?.assigned_driver_id ?? parentRow?.assignedDriverId,
+    96,
+  );
+  const parentRowVehicleId = safeStr(
+    parentRow?.assigned_vehicle_id ?? parentRow?.assignedVehicleId,
+    128,
+  );
+  const legDriverContact =
+    _normalizeAssignedDriverSummaryForLeg(leg?.assigned_driver ?? leg?.assignedDriver);
+  const legDriverNameOwn =
+    (legDriverContact && legDriverContact.name) ||
+    safeStr(leg?.assigned_driver_name ?? leg?.assignedDriverName, 160) ||
+    "";
+  const legDriverPhoneOwn =
+    (legDriverContact && legDriverContact.phone) ||
+    safeStr(leg?.assigned_driver_phone ?? leg?.assignedDriverPhone, 64) ||
+    "";
+  if (legDriverNameOwn) {
+    row.assigned_driver_name = legDriverNameOwn;
+    row.assignedDriverName = legDriverNameOwn;
+  } else if (legOwnDriverId && legOwnDriverId !== parentRowDriverId) {
+    // Different driver, no leg-own name available: do not let parent's
+    // summary driver name mislead the UI for this leg.
+    row.assigned_driver_name = null;
+    row.assignedDriverName = null;
+  }
+  if (legDriverPhoneOwn) {
+    row.assigned_driver_phone = legDriverPhoneOwn;
+    row.assignedDriverPhone = legDriverPhoneOwn;
+  } else if (legOwnDriverId && legOwnDriverId !== parentRowDriverId) {
+    row.assigned_driver_phone = null;
+    row.assignedDriverPhone = null;
+  }
+  const legVehicleEnrichment = _operationalLegFleetEnrichmentFields(leg);
+  if (legVehicleEnrichment) {
+    Object.assign(row, legVehicleEnrichment);
+  } else if (legOwnVehicleId && legOwnVehicleId !== parentRowVehicleId) {
+    // Different vehicle, no leg-own metadata available: clear the
+    // parent's vehicle metadata that bled in via the spread so the leg
+    // never displays the other leg's vehicle name / plate.
+    const VEHICLE_ENRICHMENT_KEYS = [
+      "assigned_vehicle",
+      "assignedVehicle",
+      "assigned_vehicle_name",
+      "assignedVehicleName",
+      "assigned_vehicle_brand_model",
+      "assignedVehicleBrandModel",
+      "assigned_vehicle_license_plate",
+      "assignedVehicleLicensePlate",
+      "license_plate",
+      "licensePlate",
+      "assigned_vehicle_color",
+      "assignedVehicleColor",
+      "assigned_vehicle_exploitation_license_number",
+      "assignedVehicleExploitationLicenseNumber",
+      "assigned_vehicle_registration_number",
+      "assignedVehicleRegistrationNumber",
+    ];
+    for (const key of VEHICLE_ENRICHMENT_KEYS) {
+      if (key in row) row[key] = null;
+    }
+  }
+  // Allocator diagnostics are per-leg. Parent diagnostics inherited via
+  // the spread refer to the summary allocation and must not bleed into
+  // a leg that has its own allocator decision recorded.
+  const legAllocatorDiagnostics =
+    (leg && typeof leg.allocator_diagnostics === "object" && leg.allocator_diagnostics) ||
+    (leg && typeof leg.allocatorDiagnostics === "object" && leg.allocatorDiagnostics) ||
+    null;
+  if (legAllocatorDiagnostics) {
+    row.allocator_diagnostics = legAllocatorDiagnostics;
+    row.allocatorDiagnostics = legAllocatorDiagnostics;
+  } else {
+    if ("allocator_diagnostics" in row) row.allocator_diagnostics = null;
+    if ("allocatorDiagnostics" in row) row.allocatorDiagnostics = null;
+  }
+  // Roundtrip dispatch mode and wait_min are parent-scoped. They may
+  // already be present via the spread when _flattenBookingForRidesList
+  // emitted them, but make them explicit here so the leg row always
+  // exposes the parent context regardless of evaluation order.
+  const legRowRoundtripMode = _roundtripDispatchModeFromRecord(rec);
+  if (legRowRoundtripMode) {
+    row.roundtrip_dispatch_mode = legRowRoundtripMode;
+    row.roundtripDispatchMode = legRowRoundtripMode;
+  }
+  const legRowWaitMin = _bookingWaitMinFromRecord(rec);
+  if (legRowWaitMin != null) {
+    row.wait_min = legRowWaitMin;
+    row.waitMin = legRowWaitMin;
   }
   const legRefundStatus = safeStr(leg?.refund_status ?? leg?.refundStatus, 64);
   const legCreditStatus = safeStr(leg?.credit_status ?? leg?.creditStatus, 64);
