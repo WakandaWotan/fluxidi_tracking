@@ -1044,6 +1044,37 @@ class CustomerBookingView {
         );
   }
 
+  double? get waitMin {
+    return _firstPathNum(const <String>[
+      'wait_min',
+      'waitMin',
+      'booked_wait_minutes',
+      'bookedWaitMinutes',
+      'booking.wait_min',
+      'booking.waitMin',
+      'booking.booked_wait_minutes',
+      'booking.bookedWaitMinutes',
+      'record.wait_min',
+      'record.waitMin',
+      'record.booking.wait_min',
+      'record.booking.waitMin',
+      'record.booking.booked_wait_minutes',
+      'record.booking.bookedWaitMinutes',
+      'record.payload.wait_min',
+      'record.payload.waitMin',
+      'record.quote.wait_min',
+      'record.quote.waitMin',
+      'record.quote.inputs.wait_min',
+      'record.quote.inputs.waitMin',
+      'quote.wait_min',
+      'quote.waitMin',
+      'quote.inputs.wait_min',
+      'quote.inputs.waitMin',
+      'payload.wait_min',
+      'payload.waitMin',
+    ]);
+  }
+
   String get companyName => _firstNonEmpty([
     _firstPathValue(const <String>[
       'company_name',
@@ -1264,6 +1295,23 @@ class CustomerBookingView {
         'record.booking.paymentMethod',
         'record.booking_details.payment_method',
         'record.booking_details.paymentMethod',
+      ]),
+    ]).toLowerCase();
+  }
+
+  String get paymentSource {
+    return _firstNonEmpty([
+      _firstPathValue(const <String>[
+        'payment_source',
+        'paymentSource',
+        'booking.payment_source',
+        'booking.paymentSource',
+        'record.payment_source',
+        'record.paymentSource',
+        'record.booking.payment_source',
+        'record.booking.paymentSource',
+        'record.booking_details.payment_source',
+        'record.booking_details.paymentSource',
       ]),
     ]).toLowerCase();
   }
@@ -1937,16 +1985,63 @@ class CustomerBookingView {
     );
   }
 
-  double? get customerDisplayCardAmount {
-    final projection = roundtripPriceProjection;
-    if (projection == null) {
-      return totalAmount ?? priceInclVatTotal;
+  double? _customerRoundtripParentCardTotal() {
+    final outbound = priceInclVatMain;
+    final ret = priceInclVatReturn;
+    final legSum = (outbound != null && ret != null && outbound > 0 && ret > 0)
+        ? outbound + ret
+        : null;
+
+    final parentTotal = priceInclVatTotal ?? totalAmount;
+
+    if (legSum != null) {
+      if (parentTotal == null || parentTotal <= 0) return legSum;
+      if (parentTotal + 0.009 < legSum) return legSum;
+      // Stored parent totals on airport roundtrips sometimes hold outbound-only.
+      if (outbound != null &&
+          (parentTotal - outbound).abs() < 0.01 &&
+          ret != null &&
+          ret > 0.009) {
+        return legSum;
+      }
+      return parentTotal;
     }
-    final amount = projection.customerCardAmount;
-    debugPrint(
-      '[ROUNDTRIP_PRICE][CARD] booking=${_safeRefPreview(bookingId)} amount=${amount?.toStringAsFixed(2) ?? "-"} paid=${projection.paid}',
-    );
-    return amount;
+
+    final legs = roundtripLegCardViews;
+    if (legs.length >= 2) {
+      final fromCards = legs
+          .map((leg) => leg.priceInclVat)
+          .whereType<double>()
+          .where((value) => value > 0)
+          .fold<double>(0, (sum, value) => sum + value);
+      if (fromCards > 0 &&
+          (parentTotal == null ||
+              parentTotal <= 0 ||
+              parentTotal + 0.009 < fromCards)) {
+        return fromCards;
+      }
+    }
+
+    return parentTotal;
+  }
+
+  double? get customerDisplayCardAmount {
+    if (isCustomerRoundtripBooking) {
+      final projection = roundtripPriceProjection;
+      if (projection != null) {
+        final amount = projection.customerCardAmount;
+        debugPrint(
+          '[ROUNDTRIP_PRICE][CARD] booking=${_safeRefPreview(bookingId)} amount=${amount?.toStringAsFixed(2) ?? "-"} paid=${projection.paid} mode=projection',
+        );
+        return amount;
+      }
+      final amount = _customerRoundtripParentCardTotal();
+      debugPrint(
+        '[ROUNDTRIP_PRICE][CARD] booking=${_safeRefPreview(bookingId)} amount=${amount?.toStringAsFixed(2) ?? "-"} mode=roundtrip_total',
+      );
+      return amount;
+    }
+    return totalAmount ?? priceInclVatTotal;
   }
 
   double? get customerDisplayPayableAmount {
@@ -2028,6 +2123,90 @@ class CustomerBookingView {
       '[ROUNDTRIP_LEG_UI][CUSTOMER_SPLIT] booking=${_safeRefPreview(bookingId)} legs=${legs.map((leg) => "${leg.legType}:${leg.status}:${leg.isCancelled ? "cancelled" : "active"}").join("|")}',
     );
     return legs;
+  }
+
+  Map<String, dynamic>? get completedRoundtripReceiptPayload {
+    if (!isCustomerRoundtripBooking) return null;
+    final parentCompleted =
+        _normalizeCustomerLifecycleStatus(lifecycleStatus) == 'COMPLETED';
+    if (!parentCompleted || !isConfirmedPaidForRoundtripProjection) {
+      return null;
+    }
+
+    final legs = roundtripLegCardViews;
+    final outboundLeg = legs
+        .where((leg) => leg.legType == 'outbound')
+        .cast<CustomerRoundtripLegCardView?>()
+        .firstWhere((leg) => leg != null, orElse: () => null);
+    final returnLeg = legs
+        .where((leg) => leg.legType == 'return')
+        .cast<CustomerRoundtripLegCardView?>()
+        .firstWhere((leg) => leg != null, orElse: () => null);
+    if (outboundLeg == null || returnLeg == null) return null;
+    if (outboundLeg.isCancelled || returnLeg.isCancelled) return null;
+
+    final outboundPrice = outboundLeg.priceInclVat ?? priceInclVatMain;
+    final returnPrice = returnLeg.priceInclVat ?? priceInclVatReturn;
+    final legTotal = (outboundPrice != null && returnPrice != null)
+        ? outboundPrice + returnPrice
+        : null;
+    final total = legTotal ?? priceInclVatTotal ?? totalAmount;
+    if (total == null || total <= 0) return null;
+    final waitingMinutes = waitMin;
+
+    String statusFor(CustomerRoundtripLegCardView leg) {
+      final normalized = _normalizeCustomerLifecycleStatus(leg.status);
+      return normalized.isEmpty ? lifecycleStatus : normalized;
+    }
+
+    final payload = <String, dynamic>{
+      'display_mode': 'completed_roundtrip',
+      'original_total_eur': total,
+      'active_total_eur': total,
+      'payable_total_eur': total,
+      'paid': true,
+      'active_leg_type': 'outbound',
+      'outbound_from': outboundLeg.from,
+      'outbound_to': outboundLeg.to,
+      'outbound_pickup_iso': outboundLeg.pickupIso,
+      'outbound_price_incl_vat': outboundPrice,
+      'outbound_status': statusFor(outboundLeg),
+      'outbound_distance_km': distanceKm,
+      'outbound_duration_min': durationMin,
+      'return_from': returnLeg.from,
+      'return_to': returnLeg.to,
+      'return_pickup_iso': returnLeg.pickupIso,
+      'return_price_incl_vat': returnPrice,
+      'return_status': statusFor(returnLeg),
+      'return_distance_km': null,
+      'return_duration_min': null,
+      'booked_wait_minutes': waitingMinutes,
+      'waiting_package': waitingMinutes != null && waitingMinutes > 0,
+      'legs': <Map<String, dynamic>>[
+        <String, dynamic>{
+          'leg_type': 'outbound',
+          'from': outboundLeg.from,
+          'to': outboundLeg.to,
+          'pickup_iso': outboundLeg.pickupIso,
+          'status': statusFor(outboundLeg),
+          'price_incl_vat': outboundPrice,
+          'distance_km': distanceKm,
+          'duration_min': durationMin,
+        },
+        <String, dynamic>{
+          'leg_type': 'return',
+          'from': returnLeg.from,
+          'to': returnLeg.to,
+          'pickup_iso': returnLeg.pickupIso,
+          'status': statusFor(returnLeg),
+          'price_incl_vat': returnPrice,
+        },
+      ],
+    };
+    debugPrint(
+      '[ROUNDTRIP_RECEIPT][COMPLETED] booking=${_safeRefPreview(bookingId)} total=${total.toStringAsFixed(2)} wait=${waitingMinutes?.round() ?? 0}',
+    );
+    return payload;
   }
 
   StoredCustomerBooking mergeRoundtripSnapshotIntoStored(

@@ -803,7 +803,10 @@ class _ReceiptPdfActionRunner {
           paymentProvider: paymentProviderRaw,
         ),
       );
-      final projection = _detailMap(item, 'roundtrip_price_projection');
+      final projection = _roundtripProjectionForPdf(item);
+      final completedRoundtripReceipt = _isCompletedRoundtripProjection(
+        projection,
+      );
       final rideDateText = () {
         final activePickup = projection?['active_pickup_iso']
             ?.toString()
@@ -972,11 +975,15 @@ class _ReceiptPdfActionRunner {
             _pdfInfoRow(_receiptText('type'), item.kindLabel),
             _pdfInfoRow(_receiptText('service'), serviceText),
             _pdfInfoRow(_receiptText('tier'), tierText),
-            _pdfInfoRow(_receiptText('from'), route.from),
-            _pdfInfoRow(_receiptText('to'), route.to),
-            ..._roundtripRouteNotePdfRows(item),
-            _pdfInfoRow(_receiptText('distance'), _kmText(item)),
-            _pdfInfoRow(_receiptText('duration'), durationText),
+            if (completedRoundtripReceipt)
+              ..._completedRoundtripPdfRows(item, boldFont)
+            else ...[
+              _pdfInfoRow(_receiptText('from'), route.from),
+              _pdfInfoRow(_receiptText('to'), route.to),
+              ..._roundtripRouteNotePdfRows(item),
+              _pdfInfoRow(_receiptText('distance'), _kmText(item)),
+              _pdfInfoRow(_receiptText('duration'), durationText),
+            ],
             pw.SizedBox(height: 12),
             pw.Text(
               _receiptText('customerDetails'),
@@ -1891,8 +1898,402 @@ class _ReceiptPdfActionRunner {
         normalized == 'ja';
   }
 
+  static Map<String, dynamic>? _roundtripProjectionForPdf(
+    _TripHistoryItem item,
+  ) {
+    final explicit = _detailMap(item, 'roundtrip_price_projection');
+    if (explicit != null && explicit.isNotEmpty) return explicit;
+    return _deriveCompletedRoundtripProjectionForPdf(item);
+  }
+
+  static Map<String, dynamic>? _deriveCompletedRoundtripProjectionForPdf(
+    _TripHistoryItem item,
+  ) {
+    String? pickText(List<List<String>> paths) => _firstPathText(item, paths);
+
+    double? pickAmount(List<List<String>> paths) {
+      for (final path in paths) {
+        final raw = _detailAt(item, path);
+        if (raw is num) return raw.toDouble();
+        final text = _cleanContactText(raw);
+        if (text == null) continue;
+        final parsed = double.tryParse(text.replaceAll(',', '.'));
+        if (parsed != null && parsed.isFinite) return parsed;
+      }
+      return null;
+    }
+
+    bool paidValue(String? raw) {
+      final token = raw?.trim().toLowerCase() ?? '';
+      return token == 'paid' ||
+          token == 'settled' ||
+          token == 'confirmed' ||
+          token == 'completed' ||
+          token == 'success' ||
+          token == 'true';
+    }
+
+    final statusRaw = item.status.trim().isNotEmpty
+        ? item.status
+        : (pickText(const [
+                ['status'],
+                ['booking_status'],
+                ['bookingStatus'],
+                ['booking', 'status'],
+                ['record', 'status'],
+                ['record', 'booking', 'status'],
+              ]) ??
+              '');
+    final statusToken = statusRaw.trim().toUpperCase();
+    final completed =
+        statusToken == 'COMPLETED' ||
+        statusToken == 'STOPPED' ||
+        statusToken == 'FINISHED';
+    final paid = paidValue(
+      pickText(const [
+        ['payment_status'],
+        ['paymentStatus'],
+        ['payment_state'],
+        ['paymentState'],
+        ['paid'],
+        ['is_paid'],
+        ['isPaid'],
+        ['booking', 'payment_status'],
+        ['booking', 'paymentStatus'],
+        ['record', 'payment_status'],
+        ['record', 'paymentStatus'],
+        ['record', 'booking', 'payment_status'],
+        ['record', 'booking', 'paymentStatus'],
+      ]),
+    );
+    if (!completed || !paid) return null;
+
+    final outboundPrice = pickAmount(const [
+      ['price_incl_vat_main'],
+      ['priceInclVatMain'],
+      ['outbound_price_eur'],
+      ['booking', 'price_incl_vat_main'],
+      ['booking', 'outbound_price_eur'],
+      ['record', 'price_incl_vat_main'],
+      ['record', 'outbound_price_eur'],
+      ['record', 'booking', 'price_incl_vat_main'],
+    ]);
+    final returnPrice = pickAmount(const [
+      ['price_incl_vat_return'],
+      ['priceInclVatReturn'],
+      ['return_price_eur'],
+      ['booking', 'price_incl_vat_return'],
+      ['booking', 'return_price_eur'],
+      ['record', 'price_incl_vat_return'],
+      ['record', 'return_price_eur'],
+      ['record', 'booking', 'price_incl_vat_return'],
+    ]);
+    if (outboundPrice == null || returnPrice == null || returnPrice <= 0) {
+      return null;
+    }
+
+    Map<String, dynamic>? routeSegment(int index) {
+      final raw = _detailAt(item, const ['route_segments']);
+      if (raw is List && raw.length > index && raw[index] is Map) {
+        return Map<String, dynamic>.from(raw[index] as Map);
+      }
+      return null;
+    }
+
+    String cleanRoute(dynamic raw) => _cleanContactText(raw) ?? '';
+    ({String from, String to}) parseRouteText(String? raw) {
+      final text = raw?.trim() ?? '';
+      if (text.isEmpty) return (from: '', to: '');
+      final parts = text
+          .split(RegExp(r'\s*(?:→|->|=>| - )\s*'))
+          .map((part) => part.trim())
+          .where((part) => part.isNotEmpty)
+          .toList(growable: false);
+      if (parts.length >= 2) return (from: parts.first, to: parts.last);
+      return (from: text, to: '');
+    }
+
+    final route = _resolveRoute(item);
+    final outboundSegment = routeSegment(0);
+    final returnSegment = routeSegment(1);
+    final returnRouteText = parseRouteText(
+      pickText(const [
+        ['return_route'],
+        ['returnRoute'],
+        ['booking', 'return_route'],
+        ['booking', 'returnRoute'],
+        ['record', 'return_route'],
+        ['record', 'returnRoute'],
+        ['record', 'booking', 'return_route'],
+        ['record', 'booking', 'returnRoute'],
+      ]),
+    );
+    final outboundFrom = cleanRoute(outboundSegment?['from']).isNotEmpty
+        ? cleanRoute(outboundSegment?['from'])
+        : route.from;
+    final outboundTo = cleanRoute(outboundSegment?['to']).isNotEmpty
+        ? cleanRoute(outboundSegment?['to'])
+        : route.to;
+    final returnFrom = cleanRoute(returnSegment?['from']).isNotEmpty
+        ? cleanRoute(returnSegment?['from'])
+        : (returnRouteText.from.isNotEmpty ? returnRouteText.from : outboundTo);
+    final returnTo = cleanRoute(returnSegment?['to']).isNotEmpty
+        ? cleanRoute(returnSegment?['to'])
+        : (returnRouteText.to.isNotEmpty ? returnRouteText.to : outboundFrom);
+    if (outboundFrom.isEmpty ||
+        outboundTo.isEmpty ||
+        returnFrom.isEmpty ||
+        returnTo.isEmpty) {
+      return null;
+    }
+
+    double? segmentAmount(Map<String, dynamic>? segment, String key) {
+      final raw = segment?[key];
+      if (raw is num) return raw.toDouble();
+      return double.tryParse((raw ?? '').toString().replaceAll(',', '.'));
+    }
+
+    final bookedWait = pickAmount(const [
+      ['booked_wait_minutes'],
+      ['bookedWaitMinutes'],
+      ['wait_min'],
+      ['waitMin'],
+      ['booking', 'booked_wait_minutes'],
+      ['booking', 'wait_min'],
+      ['record', 'booking', 'booked_wait_minutes'],
+      ['record', 'booking', 'wait_min'],
+    ]);
+    final total =
+        pickAmount(const [
+          ['booking_total_eur'],
+          ['total_eur'],
+          ['total'],
+          ['price_incl_vat'],
+          ['booking', 'booking_total_eur'],
+          ['booking', 'price_incl_vat'],
+          ['record', 'booking', 'price_incl_vat'],
+        ]) ??
+        _receiptTotalAmount(item) ??
+        (outboundPrice + returnPrice);
+    final outboundPickup =
+        pickText(const [
+          ['scheduled_pickup_at'],
+          ['booking', 'scheduled_pickup_at'],
+        ]) ??
+        item.startedAt;
+
+    return <String, dynamic>{
+      'display_mode': 'completed_roundtrip',
+      'original_total_eur': total,
+      'active_total_eur': total,
+      'payable_total_eur': total,
+      'paid': true,
+      'active_leg_type': 'outbound',
+      'active_from': outboundFrom,
+      'active_to': outboundTo,
+      'active_pickup_iso': outboundPickup,
+      'outbound_from': outboundFrom,
+      'outbound_to': outboundTo,
+      'outbound_pickup_iso': outboundPickup,
+      'outbound_price_incl_vat': outboundPrice,
+      'outbound_status': 'COMPLETED',
+      'outbound_distance_km': segmentAmount(outboundSegment, 'distance_km'),
+      'outbound_duration_min': segmentAmount(outboundSegment, 'duration_min'),
+      'return_from': returnFrom,
+      'return_to': returnTo,
+      'return_pickup_iso': pickText(const [
+        ['return_scheduled_pickup_at'],
+        ['return_pickup_iso'],
+        ['returnPickupIso'],
+        ['booking', 'return_scheduled_pickup_at'],
+        ['booking', 'return_pickup_iso'],
+        ['record', 'booking', 'return_scheduled_pickup_at'],
+      ]),
+      'return_price_incl_vat': returnPrice,
+      'return_status': 'COMPLETED',
+      'return_distance_km': segmentAmount(returnSegment, 'distance_km'),
+      'return_duration_min': segmentAmount(returnSegment, 'duration_min'),
+      'booked_wait_minutes': bookedWait,
+      'waiting_package': bookedWait != null && bookedWait > 0,
+    };
+  }
+
+  static bool _isCompletedRoundtripProjection(
+    Map<String, dynamic>? projection,
+  ) {
+    final mode = (projection?['display_mode'] ?? '')
+        .toString()
+        .trim()
+        .toLowerCase();
+    return mode == 'completed_roundtrip';
+  }
+
+  static String _projectionText(Map<String, dynamic> projection, String key) {
+    final text = (projection[key] ?? '').toString().trim();
+    return text.isEmpty ? _receiptText('notAvailable') : text;
+  }
+
+  static double? _projectionAmount(
+    Map<String, dynamic> projection,
+    String key,
+  ) {
+    final raw = projection[key];
+    if (raw is num) return raw.toDouble();
+    return double.tryParse((raw ?? '').toString().replaceAll(',', '.'));
+  }
+
+  static String _roundtripReceiptStatusText(String raw) {
+    final token = raw.trim().toUpperCase();
+    if (token == 'COMPLETED' || token == 'COMPLETE' || token == 'FINISHED') {
+      return _tr(
+        nl: 'Voltooid',
+        en: 'Completed',
+        fr: 'Termine',
+        es: 'Completado',
+      );
+    }
+    if (token == 'CANCELLED' || token == 'CANCELED' || token == 'DELETED') {
+      return _tr(
+        nl: 'Geannuleerd',
+        en: 'Cancelled',
+        fr: 'Annule',
+        es: 'Cancelado',
+      );
+    }
+    if (token == 'PENDING' || token == 'PLANNED') {
+      return _tr(
+        nl: 'Gepland',
+        en: 'Planned',
+        fr: 'Planifie',
+        es: 'Planificado',
+      );
+    }
+    return raw.trim().isEmpty
+        ? _receiptText('notAvailable')
+        : _titleCaseToken(raw);
+  }
+
+  static List<pw.Widget> _completedRoundtripPdfRows(
+    _TripHistoryItem item,
+    pw.Font boldFont,
+  ) {
+    final projection = _roundtripProjectionForPdf(item);
+    if (!_isCompletedRoundtripProjection(projection)) {
+      return const <pw.Widget>[];
+    }
+    final p = projection!;
+    final bookedWait = _projectionAmount(p, 'booked_wait_minutes');
+    final outboundDistance = _projectionAmount(p, 'outbound_distance_km');
+    final outboundDuration = _projectionAmount(p, 'outbound_duration_min');
+    final returnDistance = _projectionAmount(p, 'return_distance_km');
+    final returnDuration = _projectionAmount(p, 'return_duration_min');
+
+    List<pw.Widget> legRows({
+      required String title,
+      required String pickupKey,
+      required String fromKey,
+      required String toKey,
+      required String priceKey,
+      required String statusKey,
+      required double? distanceKm,
+      required double? durationMin,
+    }) {
+      return <pw.Widget>[
+        pw.SizedBox(height: 10),
+        pw.Text(
+          title,
+          style: pw.TextStyle(
+            fontSize: 13,
+            fontWeight: pw.FontWeight.bold,
+            font: boldFont,
+          ),
+        ),
+        pw.SizedBox(height: 4),
+        _pdfInfoRow(
+          _receiptText('date'),
+          _formatDate(_projectionText(p, pickupKey)),
+        ),
+        _pdfInfoRow(_receiptText('from'), _projectionText(p, fromKey)),
+        _pdfInfoRow(_receiptText('to'), _projectionText(p, toKey)),
+        if (distanceKm != null)
+          _pdfInfoRow(
+            _receiptText('distance'),
+            '${distanceKm.toStringAsFixed(2)} km',
+          ),
+        if (durationMin != null)
+          _pdfInfoRow(_receiptText('duration'), _minutesText(durationMin)!),
+        _pdfInfoRow(
+          _tr(
+            nl: 'Prijs incl. btw',
+            en: 'Price incl. VAT',
+            fr: 'Prix TVAC',
+            es: 'Precio con IVA',
+          ),
+          _moneyText(_projectionAmount(p, priceKey)),
+        ),
+        _pdfInfoRow(
+          _receiptText('rideStatus'),
+          _roundtripReceiptStatusText(_projectionText(p, statusKey)),
+        ),
+      ];
+    }
+
+    return <pw.Widget>[
+      pw.SizedBox(height: 12),
+      pw.Text(
+        _tr(
+          nl: 'Heen-en-terug rit',
+          en: 'Roundtrip ride',
+          fr: 'Trajet aller-retour',
+          es: 'Viaje de ida y vuelta',
+        ),
+        style: pw.TextStyle(
+          fontSize: 14,
+          fontWeight: pw.FontWeight.bold,
+          font: boldFont,
+        ),
+      ),
+      ...legRows(
+        title: _tr(nl: 'Heenrit', en: 'Outbound', fr: 'Aller', es: 'Ida'),
+        pickupKey: 'outbound_pickup_iso',
+        fromKey: 'outbound_from',
+        toKey: 'outbound_to',
+        priceKey: 'outbound_price_incl_vat',
+        statusKey: 'outbound_status',
+        distanceKm: outboundDistance,
+        durationMin: outboundDuration,
+      ),
+      ...legRows(
+        title: _tr(nl: 'Terugrit', en: 'Return', fr: 'Retour', es: 'Regreso'),
+        pickupKey: 'return_pickup_iso',
+        fromKey: 'return_from',
+        toKey: 'return_to',
+        priceKey: 'return_price_incl_vat',
+        statusKey: 'return_status',
+        distanceKm: returnDistance,
+        durationMin: returnDuration,
+      ),
+      if (bookedWait != null && bookedWait > 0) ...[
+        pw.SizedBox(height: 8),
+        _pdfInfoRow(
+          _receiptText('bookedWaitingTime'),
+          _minutesText(bookedWait)!,
+        ),
+        _pdfInfoRow(
+          _tr(nl: 'Pakket', en: 'Package', fr: 'Forfait', es: 'Paquete'),
+          _tr(
+            nl: 'Heen-terug met geboekte wachttijd',
+            en: 'Roundtrip with booked waiting time',
+            fr: 'Aller-retour avec attente reservee',
+            es: 'Ida y vuelta con espera reservada',
+          ),
+        ),
+      ],
+    ];
+  }
+
   static List<pw.Widget> _roundtripRouteNotePdfRows(_TripHistoryItem item) {
-    final projection = _detailMap(item, 'roundtrip_price_projection');
+    final projection = _roundtripProjectionForPdf(item);
     if (projection == null || projection.isEmpty) return const <pw.Widget>[];
     final cancelledLeg = (projection['cancelled_leg_type'] ?? '')
         .toString()
@@ -1927,7 +2328,7 @@ class _ReceiptPdfActionRunner {
     _TripHistoryItem item,
     pw.Font boldFont,
   ) {
-    final projection = _detailMap(item, 'roundtrip_price_projection');
+    final projection = _roundtripProjectionForPdf(item);
     if (projection == null || projection.isEmpty) return const <pw.Widget>[];
 
     double? readAmount(String key) {
@@ -1960,6 +2361,10 @@ class _ReceiptPdfActionRunner {
         .trim()
         .toLowerCase();
     final activeLegPrice = activeLegType == 'return' ? returnPrice : outbound;
+
+    if (displayMode == 'completed_roundtrip') {
+      return const <pw.Widget>[];
+    }
 
     if (displayMode == 'unpaid_simple') {
       return <pw.Widget>[

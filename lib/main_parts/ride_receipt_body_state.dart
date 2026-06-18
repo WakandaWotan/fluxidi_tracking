@@ -1618,7 +1618,9 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
   }
 
   bool get _hasReturnPriceSplit {
-    final outbound = _detailDouble('outbound_price_eur');
+    final outbound =
+        _detailDouble('outbound_price_eur') ??
+        _detailDouble('price_incl_vat_main');
     final ret = _detailDouble('return_price_eur');
     return outbound != null &&
         ret != null &&
@@ -2613,6 +2615,12 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
           _minutesText('duration_route_min') ??
           _minutesText('route_minutes') ??
           _receiptText('notAvailable');
+      final roundtripProjection =
+          _ReceiptPdfActionRunner._roundtripProjectionForPdf(item);
+      final completedRoundtripReceipt =
+          _ReceiptPdfActionRunner._isCompletedRoundtripProjection(
+            roundtripProjection,
+          );
       final businessFields = _resolvedReceiptBusinessFields();
       debugPrint(
         '[RECEIPT][BUSINESS_FIELDS] source=stateful_pdf booking=${_safeRefPreview(item.bookingId ?? item.tripId)} business=${businessFields.isBusinessDocument} invoiceRequested=${businessFields.invoiceRequested} companyFound=${businessFields.companyName.isNotEmpty} vatFound=${businessFields.vatNumber.isNotEmpty} invoiceEmailFound=${businessFields.invoiceEmail.isNotEmpty} invoiceAddressFound=${businessFields.invoiceAddress.isNotEmpty}',
@@ -2730,10 +2738,17 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
             _pdfInfoRow(_receiptText('type'), item.kindLabel),
             _pdfInfoRow(_receiptText('service'), serviceText),
             _pdfInfoRow(_receiptText('tier'), tierText),
-            _pdfInfoRow(_receiptText('from'), route.from),
-            _pdfInfoRow(_receiptText('to'), route.to),
-            _pdfInfoRow(_receiptText('distance'), _kmText()),
-            _pdfInfoRow(_receiptText('duration'), durationText),
+            if (completedRoundtripReceipt)
+              ..._ReceiptPdfActionRunner._completedRoundtripPdfRows(
+                item,
+                boldFont,
+              )
+            else ...[
+              _pdfInfoRow(_receiptText('from'), route.from),
+              _pdfInfoRow(_receiptText('to'), route.to),
+              _pdfInfoRow(_receiptText('distance'), _kmText()),
+              _pdfInfoRow(_receiptText('duration'), durationText),
+            ],
             pw.SizedBox(height: 12),
             pw.Text(
               _receiptText('customerDetails'),
@@ -3569,11 +3584,49 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
     if (explicit != null) return _localizedRideSubtype(explicit);
     if ((item.bookingId ?? '').endsWith('-R'))
       return _receiptText('returnRide');
+    if (_isParentCompletedRoundtripReceipt()) {
+      return _tr(
+        nl: 'Heen-en-terug',
+        en: 'Roundtrip',
+        fr: 'Aller-retour',
+        es: 'Ida y vuelta',
+      );
+    }
     if (_detailText('return_scheduled_pickup_at') != null ||
         _detailText('return_route') != null) {
       return _receiptText('outboundRide');
     }
     return null;
+  }
+
+  bool _isParentCompletedRoundtripReceipt() {
+    final projection = _detailAt(const ['roundtrip_price_projection']);
+    if (projection is Map) {
+      final mode = (projection['display_mode'] ?? '')
+          .toString()
+          .trim()
+          .toLowerCase();
+      if (mode == 'completed_roundtrip') return true;
+    }
+    final status = item.status.trim().toUpperCase();
+    final completed = status == 'COMPLETED' || status == 'STOPPED';
+    final package = _detailDouble('booking_total_eur') ?? item.totalEur;
+    final outbound = _detailDouble('outbound_price_eur');
+    final ret =
+        _detailDouble('return_price_eur') ??
+        _detailDouble('price_incl_vat_return');
+    final packageMatchesSplit =
+        package != null &&
+        outbound != null &&
+        ret != null &&
+        (package - (outbound + ret)).abs() < 0.01;
+    return completed &&
+        packageMatchesSplit &&
+        (_detailText('return_scheduled_pickup_at') != null ||
+            _detailText('return_route') != null ||
+            _detailText('return_pickup_iso') != null ||
+            _detailText('price_incl_vat_return') != null ||
+            _detailText('return_price_eur') != null);
   }
 
   String? _operationalLegTypeTokenForReceipt() {
@@ -3598,6 +3651,14 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
   String? _operationalLegLabelForReceipt() {
     final token = _operationalLegTypeTokenForReceipt();
     if (token == null || token.isEmpty) return null;
+    if (_isParentCompletedRoundtripReceipt()) {
+      return _tr(
+        nl: 'Heen-en-terug',
+        en: 'Roundtrip',
+        fr: 'Aller-retour',
+        es: 'Ida y vuelta',
+      );
+    }
     if (token == 'return') {
       return _tr(nl: 'Terugrit', en: 'Return', fr: 'Retour', es: 'Vuelta');
     }

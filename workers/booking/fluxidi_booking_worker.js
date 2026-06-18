@@ -31551,6 +31551,20 @@ async function _maybeGenerateBusinessInvoiceForPaidBooking({
       pax: parseNum(booking?.pax, 0),
       bags: parseNum(booking?.bags, 0),
       waitMinutes: parseNum(booking?.wait_min, 0),
+      rideStatus: _bookingLifecycleStatusUpperFromRecord(rec),
+      paymentStatus: paymentStatus || safeStr(rec?.payment_status ?? rec?.paymentStatus),
+      paymentMethod: safeStr(
+        booking?.payment_method ??
+          booking?.paymentMethod ??
+          rec?.payment_method ??
+          rec?.paymentMethod,
+      ),
+      paymentSource: safeStr(
+        booking?.payment_source ??
+          booking?.paymentSource ??
+          rec?.payment_source ??
+          rec?.paymentSource,
+      ),
       customerName: safeStr(booking?.custName || booking?.customer_name || booking?.name),
       customerEmail,
       customerPhone: safeStr(booking?.custPhone || booking?.customer_phone || booking?.phone),
@@ -31572,6 +31586,7 @@ async function _maybeGenerateBusinessInvoiceForPaidBooking({
       ),
       priceMainIncl: parseNum(booking?.price_incl_vat_main, 0),
       priceReturnIncl: parseNum(booking?.price_incl_vat_return, 0),
+      legs: _invoiceRoundtripLegsForReceiptPdf(rec, booking),
     },
     emailPolicy: {
       sendCustomerEmail: true,
@@ -56827,6 +56842,134 @@ async function handleBookingInvoicePdfGet(request, url, env, bookingId, tenantSc
   }
 }
 
+function _invoiceRoundtripLegsForReceiptPdf(rec, booking = {}) {
+  const bookingObj = booking && typeof booking === "object" ? booking : {};
+  const amount = (value) => {
+    const n = Number(value);
+    return Number.isFinite(n) ? round2(n) : null;
+  };
+  const displayPickup = (iso) => {
+    const text = safeStr(iso);
+    if (!text) return "";
+    const parts = brusselsDateTimePartsFromIso(text);
+    return safeStr(`${parts.date || ""} ${parts.time || ""}`) || text;
+  };
+  const parentStatus = _bookingLifecycleStatusUpperFromRecord(rec);
+  const legs = _bookingOperationalLegsFromRecord(rec);
+  const byType = new Map();
+  for (const leg of legs) {
+    const type = _operationalLegTypeFromEntry(leg);
+    if (!byType.has(type)) byType.set(type, leg);
+  }
+  const outbound = byType.get("outbound") || null;
+  const ret = byType.get("return") || null;
+  const returnEnabled =
+    !!bookingObj?.return_enabled ||
+    !!bookingObj?.returnEnabled ||
+    !!rec?.return_enabled ||
+    !!rec?.returnEnabled ||
+    !!_bookingReturnEnabledFromRecord(rec) ||
+    _bookingHasReturnDisplayData(rec) ||
+    amount(bookingObj?.price_incl_vat_return ?? rec?.price_incl_vat_return) != null;
+  if (!outbound && !ret && !returnEnabled) return [];
+
+  const buildLeg = (type, leg, fallback = {}) => {
+    const status = _normLifecycleStatus(
+      leg?.status ??
+        leg?.lifecycle_status ??
+        leg?.lifecycleStatus ??
+        parentStatus,
+    );
+    const pickupIso = safeStr(
+      leg?.pickup_iso ??
+        leg?.pickupIso ??
+        leg?.pickupStartIso ??
+        fallback.pickupIso,
+    );
+    return {
+      leg_type: type,
+      label: type === "return" ? "Terugrit" : "Heenrit",
+      pickup_iso: pickupIso || "",
+      pickup_text: displayPickup(pickupIso),
+      from: safeStr(
+        leg?.from ??
+          leg?.pickup_address ??
+          leg?.pickupAddress ??
+          fallback.from,
+      ),
+      to: safeStr(
+        leg?.to ??
+          leg?.destination ??
+          leg?.destination_address ??
+          leg?.destinationAddress ??
+          fallback.to,
+      ),
+      distance_km: amount(
+        leg?.distance_km ??
+          leg?.distanceKm ??
+          fallback.distanceKm,
+      ),
+      duration_min: amount(
+        leg?.duration_min ??
+          leg?.durationMin ??
+          fallback.durationMin,
+      ),
+      price_incl_vat: amount(
+        leg?.price_incl_vat ??
+          leg?.priceInclVat ??
+          leg?.leg_price_incl_vat ??
+          leg?.legPriceInclVat ??
+          fallback.priceInclVat,
+      ),
+      status,
+    };
+  };
+
+  const pickupIso = safeStr(bookingObj?.pickupStartIso || bookingObj?.pickup_iso);
+  const outboundLeg = buildLeg("outbound", outbound, {
+    pickupIso,
+    from: bookingObj?.from ?? rec?.from ?? rec?.quote?.from,
+    to: bookingObj?.to ?? rec?.to ?? rec?.quote?.to,
+    distanceKm: bookingObj?.distance_km ?? bookingObj?.distanceKm ?? rec?.quote?.distance_km,
+    durationMin: bookingObj?.duration_route_min ?? bookingObj?.durationRouteMin ?? rec?.quote?.duration_min,
+    priceInclVat:
+      bookingObj?.price_incl_vat_main ??
+      rec?.price_incl_vat_main ??
+      _bookingMainPriceInclVatFromRecord(rec),
+  });
+  const returnLeg = buildLeg("return", ret, {
+    pickupIso:
+      safeStr(bookingObj?.return_pickup_iso || bookingObj?.returnPickupIso) ||
+      _bookingReturnPickupIsoFromRecord(rec),
+    from:
+      safeStr(bookingObj?.return_from || bookingObj?.returnFrom) ||
+      _bookingReturnFromFromRecord(rec),
+    to:
+      safeStr(bookingObj?.return_to || bookingObj?.returnTo) ||
+      _bookingReturnToFromRecord(rec),
+    distanceKm:
+      bookingObj?.return_distance_km ??
+      bookingObj?.returnDistanceKm ??
+      rec?.return_distance_km ??
+      rec?.returnDistanceKm ??
+      _pick(rec, ["quote", "return", "distance_km"], null),
+    durationMin:
+      bookingObj?.return_duration_min ??
+      bookingObj?.returnDurationMin ??
+      rec?.return_duration_min ??
+      rec?.returnDurationMin ??
+      _pick(rec, ["quote", "return", "duration_min"], null),
+    priceInclVat:
+      bookingObj?.price_incl_vat_return ??
+      rec?.price_incl_vat_return ??
+      _bookingReturnPriceInclVatFromRecord(rec),
+  });
+  if (!outboundLeg.from && !outboundLeg.to && !returnLeg.from && !returnLeg.to) {
+    return [];
+  }
+  return [outboundLeg, returnLeg];
+}
+
 async function updateBookingStatusAuthoritative(
   bookingId,
   status,
@@ -57850,6 +57993,25 @@ async function handleManualReceiptEmail(
       pax: parseNum(booking?.pax, 0),
       bags: parseNum(booking?.bags, 0),
       waitMinutes: parseNum(booking?.wait_min, 0),
+      rideStatus: _bookingLifecycleStatusUpperFromRecord(rec),
+      paymentStatus: safeStr(
+        rec?.payment_status ??
+          rec?.paymentStatus ??
+          booking?.payment_status ??
+          booking?.paymentStatus,
+      ),
+      paymentMethod: safeStr(
+        booking?.payment_method ??
+          booking?.paymentMethod ??
+          rec?.payment_method ??
+          rec?.paymentMethod,
+      ),
+      paymentSource: safeStr(
+        booking?.payment_source ??
+          booking?.paymentSource ??
+          rec?.payment_source ??
+          rec?.paymentSource,
+      ),
       customerName: safeStr(booking?.custName || booking?.customer_name || booking?.name),
       customerEmail,
       customerPhone: safeStr(booking?.custPhone || booking?.customer_phone || booking?.phone),
@@ -57871,6 +58033,7 @@ async function handleManualReceiptEmail(
       ),
       priceMainIncl: parseNum(booking?.price_incl_vat_main, 0),
       priceReturnIncl: parseNum(booking?.price_incl_vat_return, 0),
+      legs: _invoiceRoundtripLegsForReceiptPdf(rec, booking),
     };
     const needsArtifactBackfillWithoutResend = businessInvoiceContext && !!existingSentAt && !existingArtifact.exists;
     const invoiceResult = await generateAndSendInvoice({
@@ -59981,12 +60144,88 @@ function renderInvoiceHtml(env, data, commProfile = null) {
   const splitLines = (safeStr(d.priceReturnIncl) && money2(d.priceReturnIncl) !== "0.00")
     ? `<tr><td class="muted">Retourdeel</td><td class="right">${eur(d.priceReturnIncl)}</td></tr>`
     : "";
+  const statusNl = (value) => {
+    const token = safeStr(value).toUpperCase();
+    if (token === "COMPLETED" || token === "COMPLETE" || token === "FINISHED") return "Voltooid";
+    if (token === "PAID" || token === "SETTLED" || token === "SUCCESS") return "Betaald";
+    if (token === "PENDING" || token === "PLANNED") return "Gepland";
+    if (token === "CANCELLED" || token === "CANCELED" || token === "DELETED") return "Geannuleerd";
+    return safeStr(value) || "—";
+  };
+  const paymentLine = safeStr(d.paymentStatus)
+    ? `<strong>Betaalstatus:</strong> ${escapeHtml(statusNl(d.paymentStatus))}<br>`
+    : "";
+  const paymentMethodLine = safeStr(d.paymentMethod)
+    ? `<strong>Betaalmethode:</strong> ${escapeHtml(safeStr(d.paymentMethod))}<br>`
+    : "";
+  const paymentSourceLine = safeStr(d.paymentSource)
+    ? `<strong>Betaalbron:</strong> ${escapeHtml(safeStr(d.paymentSource))}<br>`
+    : "";
+  const rideStatusLine = safeStr(d.rideStatus)
+    ? `<strong>Status:</strong> ${escapeHtml(statusNl(d.rideStatus))}<br>`
+    : "";
+  const fallbackOutboundPrice = Number.isFinite(Number(d.priceMainIncl)) ? Number(d.priceMainIncl) : null;
+  const fallbackReturnPrice = Number.isFinite(Number(d.priceReturnIncl)) ? Number(d.priceReturnIncl) : null;
+  const structuredLegs = Array.isArray(d.legs)
+    ? d.legs
+        .filter((leg) => leg && typeof leg === "object")
+        .map((leg) => {
+          const legType = safeStr(leg.leg_type || leg.legType).toLowerCase() === "return" ? "return" : "outbound";
+          const rawPrice = Number(leg.price_incl_vat ?? leg.priceInclVat);
+          const priceInclVat = Number.isFinite(rawPrice)
+            ? rawPrice
+            : (legType === "return" ? fallbackReturnPrice : fallbackOutboundPrice);
+          return {
+            legType,
+            label: safeStr(leg.label) || (legType === "return" ? "Terugrit" : "Heenrit"),
+            pickupText: safeStr(leg.pickup_text || leg.pickupText || leg.pickup_iso || leg.pickupIso),
+            from: safeStr(leg.from),
+            to: safeStr(leg.to),
+            distanceKm: Number.isFinite(Number(leg.distance_km ?? leg.distanceKm)) ? Number(leg.distance_km ?? leg.distanceKm) : null,
+            durationMin: Number.isFinite(Number(leg.duration_min ?? leg.durationMin)) ? Number(leg.duration_min ?? leg.durationMin) : null,
+            priceInclVat,
+            status: safeStr(leg.status || leg.lifecycle_status || leg.lifecycleStatus || d.rideStatus),
+          };
+        })
+    : [];
+  const hasStructuredRoundtripLegs =
+    (d.returnTrip || structuredLegs.some((leg) => leg.legType === "return")) &&
+    structuredLegs.some((leg) => leg.legType === "outbound") &&
+    structuredLegs.some((leg) => leg.legType === "return") &&
+    structuredLegs.some((leg) => leg.from || leg.to);
+  const legRows = hasStructuredRoundtripLegs
+    ? structuredLegs
+        .filter((leg) => leg.legType === "outbound" || leg.legType === "return")
+        .sort((a, b) => (a.legType === b.legType ? 0 : (a.legType === "outbound" ? -1 : 1)))
+        .map((leg) => {
+          const distanceLine = leg.distanceKm != null ? `<span class="muted">Afstand: ${escapeHtml(String(Math.round(leg.distanceKm * 10) / 10))} km</span>` : "";
+          const durationLine = leg.durationMin != null ? `<span class="muted">${distanceLine ? " • " : ""}Duur: ${escapeHtml(String(Math.round(leg.durationMin)))} min</span>` : "";
+          const pickupLine = leg.pickupText ? `<span class="muted">Ophaaltijd: ${escapeHtml(leg.pickupText)}</span><br>` : "";
+          return `<tr>
+        <td>
+          <strong>${escapeHtml(leg.label)}</strong><br>
+          ${pickupLine}
+          ${escapeHtml(leg.from || "—")} → ${escapeHtml(leg.to || "—")}<br>
+          ${distanceLine}${durationLine}${distanceLine || durationLine ? "<br>" : ""}
+          <span class="muted">Status: ${escapeHtml(statusNl(leg.status))}</span>
+        </td>
+        <td class="right">${leg.priceInclVat != null ? eur(leg.priceInclVat) : "—"}</td>
+      </tr>`;
+        })
+        .join("")
+    : "";
+  const waitingPackageRow = hasStructuredRoundtripLegs && toInt(d.waitMinutes, 0) > 0
+    ? `<tr><td class="muted">Heen-terug met geboekte wachttijd (${escapeHtml(String(toInt(d.waitMinutes, 0)))} min)</td><td class="right">Inbegrepen</td></tr>`
+    : "";
+  const documentTitle = safeStr(d.customerCompany) || safeStr(d.customerVat)
+    ? "Factuur"
+    : "Betaalbewijs / Ritbon";
 
   return `<!DOCTYPE html>
 <html lang="nl">
 <head>
   <meta charset="UTF-8" />
-  <title>Factuur ${escapeHtml(d.invoiceNumber || "")}</title>
+  <title>${escapeHtml(documentTitle)} ${escapeHtml(d.invoiceNumber || "")}</title>
 </head>
 <body>
 <p>&nbsp;</p>
@@ -60106,7 +60345,7 @@ function renderInvoiceHtml(env, data, commProfile = null) {
     </div>
   </div>
 
-  <h1>Factuur</h1>
+  <h1>${escapeHtml(documentTitle)}</h1>
 
   <div class="meta">
     <div class="box">
@@ -60126,6 +60365,10 @@ function renderInvoiceHtml(env, data, commProfile = null) {
 
       <small>
         <strong>Booking ID:</strong> <span class="mono">${escapeHtml(safeStr(d.bookingPublicId) || safeStr(d.bookingId) || "—")}</span><br>
+        ${rideStatusLine}
+        ${paymentLine}
+        ${paymentMethodLine}
+        ${paymentSourceLine}
         <strong>Ritniveau:</strong> ${escapeHtml(safeStr(d.tier) || "—")}${safeStr(d.service) ? ` <span class="pill">${escapeHtml(d.service)}</span>` : ""}<br>
         <strong>Ophaaltijd:</strong> ${escapeHtml(safeStr(d.pickupTime) || "—")}<br>
         <strong>Passagiers / Koffers:</strong> ${escapeHtml(String(toInt(d.pax, 0)))} / ${escapeHtml(String(toInt(d.bags, 0)))}<br>
@@ -60143,6 +60386,7 @@ function renderInvoiceHtml(env, data, commProfile = null) {
       </tr>
     </thead>
     <tbody>
+      ${hasStructuredRoundtripLegs ? `${legRows}${waitingPackageRow}` : `
       <tr>
         <td>
           <strong>Taxidienst</strong> <span class="muted">(${escapeHtml(safeStr(d.tier) || "—")})</span><br>
@@ -60154,6 +60398,7 @@ function renderInvoiceHtml(env, data, commProfile = null) {
         <td class="right">${eur(d.total)}</td>
       </tr>
       ${splitLines}
+      `}
     </tbody>
   </table>
 
@@ -60543,6 +60788,10 @@ async function generateAndSendInvoice({
       service: bookingInput.service || "",
       pax: toInt(bookingInput.pax, 0),
       bags: toInt(bookingInput.bags, 0),
+      rideStatus: bookingInput.rideStatus || "",
+      paymentStatus: bookingInput.paymentStatus || "",
+      paymentMethod: bookingInput.paymentMethod || "",
+      paymentSource: bookingInput.paymentSource || "",
 
       // customer
       customerName: bookingInput.customerName || "",
@@ -60561,7 +60810,8 @@ async function generateAndSendInvoice({
 
       // optional split (display only)
       priceMainIncl: bookingInput.priceMainIncl ?? "",
-      priceReturnIncl: bookingInput.priceReturnIncl ?? ""
+      priceReturnIncl: bookingInput.priceReturnIncl ?? "",
+      legs: Array.isArray(bookingInput.legs) ? bookingInput.legs : []
     };
 
     const htmlOut = renderInvoiceHtml(env, data, commProfile);

@@ -1296,6 +1296,11 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
     setRef('receiptReference', receiptRef);
 
     final roundtripProjection = _view.roundtripPriceProjection;
+    final completedRoundtripReceiptPayload =
+        _view.completedRoundtripReceiptPayload;
+    final roundtripReceiptPayload =
+        roundtripProjection?.toReceiptPayload(view: _view) ??
+        completedRoundtripReceiptPayload;
     final focusedLegType = _focusedRoundtripLegType;
     final focusedLegCard = focusedLegType == null
         ? null
@@ -1304,6 +1309,8 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
               .cast<CustomerRoundtripLegCardView?>()
               .firstWhere((leg) => leg != null, orElse: () => null);
     final receiptTotal =
+        (completedRoundtripReceiptPayload?['active_total_eur'] as num?)
+            ?.toDouble() ??
         focusedLegCard?.priceInclVat ??
         roundtripProjection?.customerReceiptTotal ??
         _view.customerDisplayPayableAmount ??
@@ -1323,6 +1330,11 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
         '[ROUNDTRIP_LEG_UI][RECEIPT_LEG_ONLY] booking=${_safeRefPreview(_view.bookingId)} leg_type=$focusedLegType amount=${receiptTotal?.toStringAsFixed(2) ?? "-"}',
       );
     }
+    if (completedRoundtripReceiptPayload != null) {
+      debugPrint(
+        '[ROUNDTRIP_RECEIPT][COMPLETED_PAYLOAD] booking=${_safeRefPreview(_view.bookingId)} total=${receiptTotal?.toStringAsFixed(2) ?? "-"} wait=${_view.waitMin?.round() ?? 0}',
+      );
+    }
 
     final receiptFrom =
         activeRoute != null && activeRoute.from.trim().isNotEmpty
@@ -1335,6 +1347,10 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
         activeRoute != null && activeRoute.pickupIso.trim().isNotEmpty
         ? activeRoute.pickupIso
         : _view.pickupIso;
+    final bookedWaitMinutes = _view.waitMin;
+    final waitSecondsTotal = bookedWaitMinutes == null
+        ? 0
+        : (bookedWaitMinutes * 60).round();
 
     final bookingDetails = <String, dynamic>{
       ..._view.source,
@@ -1353,6 +1369,11 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
       'distance_km': _view.distanceKm,
       'duration_min': _view.durationMin,
       'booking_total_eur': receiptTotal,
+      if (bookedWaitMinutes != null) ...{
+        'booked_wait_minutes': bookedWaitMinutes,
+        'wait_min': bookedWaitMinutes,
+        'waitMin': bookedWaitMinutes,
+      },
       if (roundtripProjection?.paid == true) ...{
         'booking_original_total_eur':
             roundtripProjection?.originalTotal ??
@@ -1372,13 +1393,12 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
         'leg_price_incl_vat': focusedLegCard?.priceInclVat,
         'legPriceInclVat': focusedLegCard?.priceInclVat,
       },
-      if (roundtripProjection != null)
-        'roundtrip_price_projection': roundtripProjection.toReceiptPayload(
-          view: _view,
-        ),
+      if (roundtripReceiptPayload != null)
+        'roundtrip_price_projection': roundtripReceiptPayload,
       'currency': _view.currency,
       'payment_status': _view.rawPaymentStatus,
       'payment_method': _view.paymentMethod,
+      'payment_source': _view.paymentSource,
       'company_name': _view.companyName,
       'vat_number': _view.vatNumber,
       'invoice_email': _view.invoiceEmail,
@@ -1398,7 +1418,14 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
         'service_type': _view.service,
         'tier': _view.tier,
         'payment_status': _view.rawPaymentStatus,
+        'payment_method': _view.paymentMethod,
+        'payment_source': _view.paymentSource,
         'scheduled_pickup_at': receiptPickup,
+        if (bookedWaitMinutes != null) ...{
+          'booked_wait_minutes': bookedWaitMinutes,
+          'wait_min': bookedWaitMinutes,
+          'waitMin': bookedWaitMinutes,
+        },
       },
     };
 
@@ -1411,7 +1438,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
       'stopped_at': receiptPickup,
       'origin': receiptFrom,
       'destination': receiptTo,
-      'wait_seconds_total': 0,
+      'wait_seconds_total': waitSecondsTotal,
       'total_eur': receiptTotal,
       'currency': _view.currency,
       'booking_details': bookingDetails,
