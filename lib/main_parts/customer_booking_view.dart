@@ -1474,6 +1474,49 @@ class CustomerBookingView {
         _methodImpliesPaid;
   }
 
+  /// True when the customer paid online (Mollie/online) and must contact the
+  /// company instead of cancelling directly from "Mijn boekingen".
+  bool blocksCustomerPaidOnlineCancellation({String? classifiedPaymentToken}) {
+    final token = _normalizeCustomerPaymentDisplayToken(
+      classifiedPaymentToken ?? rawPaymentStatus,
+    );
+    if (_isPayInCarCustomerPaymentDisplayToken(token)) return false;
+    if (_isOnlinePendingCustomerPaymentDisplayToken(token)) return false;
+    if (!_isPaidCustomerPaymentDisplayToken(token) &&
+        !_isPartialCustomerPaymentDisplayToken(token)) {
+      return false;
+    }
+    if (_methodImpliesPaid) return false;
+    if (_isManualCustomerPaymentChannel(
+      provider: paymentProvider,
+      mode: paymentMode,
+    )) {
+      return false;
+    }
+    if (_isMollieCustomerPaymentChannel(
+      provider: paymentProvider,
+      mode: paymentMode,
+    )) {
+      return true;
+    }
+    const onlineTokens = <String>{
+      'online',
+      'online_payment',
+      'online_payments',
+      'online-payments',
+      'prepaid',
+    };
+    final providerToken = _normalizeCustomerPaymentDisplayToken(
+      paymentProvider,
+    );
+    final modeToken = _normalizeCustomerPaymentDisplayToken(paymentMode);
+    if (onlineTokens.contains(providerToken) ||
+        onlineTokens.contains(modeToken)) {
+      return true;
+    }
+    return false;
+  }
+
   String get extraOptions {
     final direct = _firstPathValue(const <String>[
       'extras',

@@ -1630,6 +1630,7 @@ const DEFAULT_CANCELLATION_POLICY_PROFILE = {
   airport_cutoff_minutes: 1440,
   business_cutoff_minutes: 1440,
   paid_booking_cancellation_mode: "review_required",
+  allow_automatic_paid_customer_cancellation: false,
   block_when_driver_en_route: false,
   driver_en_route_eta_cutoff_minutes: 15,
   driver_en_route_distance_cutoff_km: 10,
@@ -2092,6 +2093,8 @@ function _customerCancellationPolicyDefaults() {
     business_cutoff_minutes: DEFAULT_CANCELLATION_POLICY_PROFILE.business_cutoff_minutes,
     paid_booking_cancellation_mode:
       DEFAULT_CANCELLATION_POLICY_PROFILE.paid_booking_cancellation_mode,
+    allow_automatic_paid_customer_cancellation:
+      DEFAULT_CANCELLATION_POLICY_PROFILE.allow_automatic_paid_customer_cancellation === true,
     block_when_driver_en_route:
       DEFAULT_CANCELLATION_POLICY_PROFILE.block_when_driver_en_route === true,
     driver_en_route_eta_cutoff_minutes:
@@ -2211,6 +2214,16 @@ function _normalizeCancellationPolicyProfile(raw = {}) {
       defaults.business_cutoff_minutes,
     ),
     paid_booking_cancellation_mode: paidMode,
+    allow_automatic_paid_customer_cancellation: boolish(
+      readAny(
+        [
+          "allow_automatic_paid_customer_cancellation",
+          "allowAutomaticPaidCustomerCancellation",
+        ],
+        defaults.allow_automatic_paid_customer_cancellation,
+      ),
+      defaults.allow_automatic_paid_customer_cancellation,
+    ),
     block_when_driver_en_route: boolish(
       readAny(
         [
@@ -23009,7 +23022,101 @@ GET /oauth/callback
           const shouldEvaluateCustomerCancelPolicy =
             _isCustomerCancellationStatus(rawRequestedStatus) ||
             _isCustomerCancellationStatus(normalizedRequestedStatus);
-          if (!adminAuthorized) {
+          // SECURITY: customer-declared requests must run through ownership +
+          // cancellation policy even if a leaked admin token is present. A
+          // build that accidentally sends x-admin-token from a customer
+          // surface must not bypass paid_booking_customer_cancel_blocked,
+          // airport cutoff, or driver-en-route blocks. True operator
+          // overrides use actor_role admin/company/owner/operator or no
+          // actor_role at all.
+          console.log(
+            `[CUSTOMER_CANCEL_AUTH][ROLE] route=leg booking=${_bookingIntentMask(bookingId)} leg=${_bookingIntentMask(legId)} actor_role=${actorRole || "-"} admin_authorized=${adminAuthorized ? "true" : "false"} should_evaluate_customer_policy=${shouldEvaluateCustomerCancelPolicy ? "true" : "false"}`,
+          );
+          if (actorRole === "customer") {
+            const proof = _requestCustomerContactProof({ url, body });
+            const ownershipPassed = customerProofMatchesBooking(rec, proof);
+            if (!ownershipPassed) {
+              return json({ ok: false, error: "customer ownership verification failed" }, 403);
+            }
+            if (shouldEvaluateCustomerCancelPolicy) {
+              const cancellationPolicyProfile = await loadCancellationPolicyProfile(env, tenantScope, {
+                allowTenantLegacyFallback: false,
+              });
+              const legEntry = _findOperationalLegEntryById(rec, legId);
+              const legPickupDetails = _resolveOperationalLegCancellationPickupDetails(rec, legId);
+              console.log(
+                `[CANCEL_POLICY][LEG_PICKUP] booking=${_bookingIntentMask(bookingId)} leg=${_bookingIntentMask(legId)} leg_type=${safeStr(body?.leg_type ?? body?.legType, 24) || "-"} pickup_source=${legPickupDetails.pickup_source} pickup_present=${legPickupDetails.pickup_iso ? "true" : "false"}`,
+              );
+              const policyDecision = _evaluateCustomerCancellationPolicy(
+                rec,
+                new Date(),
+                cancellationPolicyProfile,
+                {
+                  pickupDetailsOverride: legPickupDetails,
+                  legEntry,
+                },
+              );
+              console.log(
+                `[CUSTOMER_CANCEL_AUTH][POLICY_EVALUATED] route=leg booking=${_bookingIntentMask(bookingId)} leg=${_bookingIntentMask(legId)} actor_role=customer admin_authorized=${adminAuthorized ? "true" : "false"} policy_evaluated=true allowed=${policyDecision.allowed ? "true" : "false"} reason=${safeStr(policyDecision.reason, 80) || "-"}`,
+              );
+              console.log(
+                `[CANCEL_POLICY][LEG_BUCKET] booking=${_bookingIntentMask(bookingId)} leg=${_bookingIntentMask(legId)} bucket=${policyDecision.bucket || "-"} bucket_source=${policyDecision.bucket_source || "-"} cutoff_minutes=${policyDecision.cutoff_minutes ?? "-"}`,
+              );
+              console.log(
+                `[CANCEL_POLICY][LEG_DECISION] booking=${_bookingIntentMask(bookingId)} leg=${_bookingIntentMask(legId)} allowed=${policyDecision.allowed ? "true" : "false"} reason=${safeStr(policyDecision.reason, 80) || "-"} bucket=${policyDecision.bucket || "-"} bucket_source=${policyDecision.bucket_source || "-"} payment_class=${policyDecision.payment_class || "-"} cutoff_minutes=${policyDecision.cutoff_minutes ?? "-"} minutes_until_pickup=${policyDecision.minutes_until_pickup ?? "-"} pickup_source=${policyDecision.pickup_source || "-"}`,
+              );
+              if (!policyDecision.allowed) {
+                const decisionReason = safeStr(policyDecision.reason, 80) || "cancellation_requires_review";
+                return json(
+                  {
+                    ok: false,
+                    error: decisionReason,
+                    message: _customerCancellationPolicyMessage(decisionReason),
+                    reason: decisionReason,
+                    bucket: policyDecision.bucket || "private",
+                    payment_class: policyDecision.payment_class || "unpaid",
+                  },
+                  409,
+                );
+              }
+              if (cancellationPolicyProfile?.block_when_driver_en_route === true) {
+                const enRouteDecision = await _evaluateDriverEnRouteCancellationBlock(
+                  env,
+                  tenantScope,
+                  rec,
+                  cancellationPolicyProfile,
+                  new Date(),
+                );
+                if (enRouteDecision?.would_block === true) {
+                  const enRouteOriginSource = safeStr(enRouteDecision?.origin_source, 80) || "-";
+                  const enRouteDistanceKm = Number.isFinite(Number(enRouteDecision?.distance_km))
+                    ? Number(Number(enRouteDecision.distance_km).toFixed(3))
+                    : -1;
+                  const enRouteEtaMinutes = Number.isFinite(Number(enRouteDecision?.eta_minutes))
+                    ? Math.max(0, Math.round(Number(enRouteDecision.eta_minutes)))
+                    : -1;
+                  console.log(
+                    `[CANCEL_POLICY][LEG_DRIVER_EN_ROUTE_BLOCK] booking=${_bookingIntentMask(bookingId)} leg=${_bookingIntentMask(legId)} enabled=true would_block=true reason=driver_already_en_route origin_source=${enRouteOriginSource} distance_km=${enRouteDistanceKm} eta_minutes=${enRouteEtaMinutes}`,
+                  );
+                  return json(
+                    {
+                      ok: false,
+                      error: "driver_already_en_route",
+                      message: _customerCancellationPolicyMessage("driver_already_en_route"),
+                      reason: "driver_already_en_route",
+                      bucket: policyDecision.bucket || "private",
+                      payment_class: policyDecision.payment_class || "unpaid",
+                    },
+                    409,
+                  );
+                }
+              }
+            } else {
+              console.log(
+                `[CUSTOMER_CANCEL_AUTH][POLICY_EVALUATED] route=leg booking=${_bookingIntentMask(bookingId)} leg=${_bookingIntentMask(legId)} actor_role=customer admin_authorized=${adminAuthorized ? "true" : "false"} policy_evaluated=false reason=status_not_cancellation_like raw_status=${safeStr(rawRequestedStatus, 40) || "-"}`,
+              );
+            }
+          } else if (!adminAuthorized) {
             if (actorRole === "driver") {
               const ownershipBlock = await enforceDriverOwnershipForMutation({
                 request,
@@ -23021,34 +23128,6 @@ GET /oauth/callback
               });
               if (ownershipBlock) {
                 return json({ ok: false, error: "booking_not_assigned_to_driver" }, 403);
-              }
-            } else if (actorRole === "customer") {
-              const proof = _requestCustomerContactProof({ url, body });
-              const ownershipPassed = customerProofMatchesBooking(rec, proof);
-              if (!ownershipPassed) {
-                return json({ ok: false, error: "customer ownership verification failed" }, 403);
-              }
-              if (shouldEvaluateCustomerCancelPolicy) {
-                const cancellationPolicyProfile = await loadCancellationPolicyProfile(env, tenantScope, {
-                  allowTenantLegacyFallback: false,
-                });
-                const policyDecision = _evaluateCustomerCancellationPolicy(
-                  rec,
-                  new Date(),
-                  cancellationPolicyProfile,
-                );
-                if (!policyDecision.allowed) {
-                  const decisionReason = safeStr(policyDecision.reason, 80) || "cancellation_requires_review";
-                  return json(
-                    {
-                      ok: false,
-                      error: decisionReason,
-                      message: _customerCancellationPolicyMessage(decisionReason),
-                      reason: decisionReason,
-                    },
-                    409,
-                  );
-                }
               }
             } else {
               return json({ ok: false, error: "Unauthorized" }, 401);
@@ -23378,8 +23457,20 @@ GET /oauth/callback
             auth.auth_mode === "company_session"
               ? "company"
               : (actorRoleBody === "company" ? "company" : "admin");
+          const refundScopeBodyRaw = safeStr(
+            body?.refund_scope ?? body?.refundScope,
+            24,
+          )
+            .toLowerCase()
+            .replaceAll("-", "_");
+          const legIdBody = safeStr(body?.leg_id ?? body?.legId, 200);
+          const legTypeBody = safeStr(body?.leg_type ?? body?.legType, 24);
+          const refundIdBody = safeStr(
+            body?.mollie_refund_id ?? body?.mollieRefundId,
+            120,
+          );
           console.log(
-            `[BOOKING][MOLLIE_REFUND_STATUS][REQ] booking=${_bookingIntentMask(bookingId)} actor_role=${actorRole} auth_mode=${safeStr(auth.auth_mode, 32) || "-"}`,
+            `[BOOKING][MOLLIE_REFUND_STATUS][REQ] booking=${_bookingIntentMask(bookingId)} actor_role=${actorRole} auth_mode=${safeStr(auth.auth_mode, 32) || "-"} refund_scope=${refundScopeBodyRaw || "-"} leg=${_bookingIntentMask(legIdBody) || "-"} refund_id_in_body=${refundIdBody ? "present" : "empty"}`,
           );
           const out = await refreshMollieRefundStatusForBooking(
             bookingId,
@@ -23388,6 +23479,10 @@ GET /oauth/callback
             {
               actor_role: actorRole,
               source_endpoint: "/bookings/:id/mollie-refund/status-refresh",
+              refund_scope: refundScopeBodyRaw,
+              leg_id: legIdBody,
+              leg_type: legTypeBody,
+              mollie_refund_id: refundIdBody,
             },
           );
           console.log(
@@ -23398,15 +23493,17 @@ GET /oauth/callback
               ? 400
               : out?.error === "forbidden"
                 ? 403
-                : out?.error === "missing_mollie_refund_id" ||
-                    out?.error === "missing_mollie_payment_id" ||
-                    out?.error === "mollie_config_unavailable"
-                  ? 400
-                  : out?.error === "mollie_refund_lookup_failed"
-                    ? 502
-                    : out.ok
-                      ? 200
-                      : 404;
+                : out?.error === "operational_leg_not_found"
+                  ? 404
+                  : out?.error === "missing_mollie_refund_id" ||
+                      out?.error === "missing_mollie_payment_id" ||
+                      out?.error === "mollie_config_unavailable"
+                    ? 400
+                    : out?.error === "mollie_refund_lookup_failed"
+                      ? 502
+                      : out.ok
+                        ? 200
+                        : 404;
           return json(out, statusCode);
         }
 
@@ -23454,6 +23551,9 @@ GET /oauth/callback
               partial_amount_cents: partialAmountCentsRaw,
               actor_role: actorRole,
               source_endpoint: "/bookings/:id/mollie-refund",
+              leg_id: body?.leg_id ?? body?.legId,
+              leg_type: body?.leg_type ?? body?.legType,
+              refund_scope: body?.refund_scope ?? body?.refundScope,
             },
           );
           console.log(
@@ -27121,6 +27221,9 @@ function _customerCancellationPolicyMessage(reason) {
   if (token === "cancellation_requires_review") {
     return "Deze boeking kan niet direct online geannuleerd worden. Neem contact op met support.";
   }
+  if (token === "paid_booking_customer_cancel_blocked") {
+    return "Deze rit is al online betaald. Neem contact op met het bedrijf voor annulatie of terugbetaling.";
+  }
   if (token === "customer_cancellation_disabled") {
     return "Deze boeking kan momenteel niet online geannuleerd worden. Neem contact op met support.";
   }
@@ -28848,118 +28951,418 @@ function _isCustomerCancellationStatus(value) {
   );
 }
 
-function _classifyCustomerCancellationBucket(rec) {
+function _normalizeCustomerCancellationServiceBucket(value) {
+  const token = safeStr(value, 64).toLowerCase().replace(/[^a-z0-9_]+/g, "_");
+  if (!token) return null;
+  if (token === "airport" || token === "luchthaven" || token === "airport_transfer") return "airport";
+  if (token === "business" || token === "zakelijk") return "business";
+  if (
+    token === "private" ||
+    token === "taxi" ||
+    token === "passenger" ||
+    token === "personenvervoer"
+  ) {
+    return "private";
+  }
+  return null;
+}
+
+function _cancellationPolicyBoolish(value) {
+  if (value === true) return true;
+  if (value === false || value == null) return false;
+  const raw = safeStr(value, 40).toLowerCase();
+  return raw === "1" || raw === "true" || raw === "yes" || raw === "on";
+}
+
+function _cancellationPolicyTextAny(...values) {
+  for (const value of values) {
+    const text = safeStr(value, 120);
+    if (text) return text;
+  }
+  return "";
+}
+
+function _cancellationPolicyHasAnyValue(...values) {
+  return values.some((value) => !!safeStr(value, 120));
+}
+
+function _readCancellationPolicyAirportTransferSignal(source) {
+  if (!source || typeof source !== "object") return { active: false, object: null };
+  const raw = source?.airport_transfer ?? source?.airportTransfer;
+  if (raw === true) return { active: true, object: null };
+  if (raw && typeof raw === "object") return { active: true, object: raw };
+  const text = safeStr(raw, 40).toLowerCase();
+  if (text === "1" || text === "true" || text === "yes" || text === "on") {
+    return { active: true, object: null };
+  }
+  return { active: false, object: null };
+}
+
+function _flipAirportCancellationDirection(directionRaw) {
+  const direction = safeStr(directionRaw, 24).toLowerCase();
+  if (direction === "to_airport") return "from_airport";
+  if (direction === "from_airport") return "to_airport";
+  return direction || null;
+}
+
+function _deriveCustomerCancellationServiceContext({
+  service = "",
+  payload = null,
+  quote = null,
+  rec = null,
+  legEntry = null,
+  business_detected = null,
+  booking_source = "",
+  entry_channel = "",
+  fixed_fare_applied = null,
+  fixed_fare_rule_id = null,
+  serviceBucketOverride = null,
+} = {}) {
   const booking = rec?.booking && typeof rec.booking === "object" ? rec.booking : {};
-  const payload = rec?.payload && typeof rec.payload === "object" ? rec.payload : {};
-  const boolish = (value) => {
-    if (value === true) return true;
-    if (value === false || value == null) return false;
-    const raw = safeStr(value, 40).toLowerCase();
-    return raw === "1" || raw === "true" || raw === "yes" || raw === "on";
-  };
-  const textAny = (...values) => {
-    for (const value of values) {
-      const text = safeStr(value, 120);
-      if (text) return text;
-    }
-    return "";
-  };
-  const hasAnyValue = (...values) => values.some((value) => !!safeStr(value, 120));
+  const payloadObj = payload && typeof payload === "object" ? payload : {};
+  const quoteObj = quote && typeof quote === "object" ? quote : {};
+  const legObj = legEntry && typeof legEntry === "object" ? legEntry : null;
+  const legTransfer = legObj ? _readCancellationPolicyAirportTransferSignal(legObj) : { active: false, object: null };
+  const payloadTransfer = _readCancellationPolicyAirportTransferSignal(payloadObj);
+  const recTransfer = _readCancellationPolicyAirportTransferSignal(rec || {});
+  const bookingTransfer = _readCancellationPolicyAirportTransferSignal(booking);
+
+  const explicitOverride = _normalizeCustomerCancellationServiceBucket(serviceBucketOverride);
+  const explicitLegBucket = _normalizeCustomerCancellationServiceBucket(
+    legObj?.service_bucket ?? legObj?.serviceBucket,
+  );
+  const explicitRecordBucket = _normalizeCustomerCancellationServiceBucket(
+    rec?.service_bucket ??
+      rec?.serviceBucket ??
+      booking?.service_bucket ??
+      booking?.serviceBucket,
+  );
+  const explicitBucket = explicitOverride || explicitLegBucket || explicitRecordBucket;
+  if (explicitBucket) {
+    const airportDirection = _cancellationPolicyTextAny(
+      legObj?.airport_direction,
+      legObj?.airportDirection,
+      rec?.airport_direction,
+      rec?.airportDirection,
+      booking?.airport_direction,
+      booking?.airportDirection,
+      payloadObj?.airport_direction,
+      payloadObj?.airportDirection,
+    ) || null;
+    const bucketSource = explicitOverride
+      ? "service_bucket_override"
+      : (explicitLegBucket ? "leg.service_bucket" : "record.service_bucket");
+    return {
+      service_bucket: explicitBucket,
+      bucket_source: bucketSource,
+      bucket_confidence: "explicit",
+      is_airport: explicitBucket === "airport",
+      is_business: explicitBucket === "business",
+      has_ambiguous_higher_tier_signals: false,
+      airport_direction: airportDirection,
+      airport_transfer:
+        legTransfer.active ||
+        recTransfer.active ||
+        bookingTransfer.active ||
+        payloadTransfer.active ||
+        explicitBucket === "airport",
+      service_type: _cancellationPolicyTextAny(
+        legObj?.service_type,
+        legObj?.serviceType,
+        legObj?.service,
+        rec?.service_type,
+        rec?.serviceType,
+        rec?.service,
+        booking?.service_type,
+        booking?.serviceType,
+        booking?.service,
+        payloadObj?.service_type,
+        payloadObj?.serviceType,
+        payloadObj?.service,
+        service,
+      ) || null,
+    };
+  }
 
   const serviceTokens = [
+    safeStr(service, 64),
     safeStr(rec?.service, 64),
+    safeStr(rec?.service_type, 64),
+    safeStr(rec?.serviceType, 64),
     safeStr(rec?.extra_service, 64),
     safeStr(rec?.extra_service_key, 64),
     safeStr(rec?.booking_type, 64),
     safeStr(rec?.bookingType, 64),
+    safeStr(rec?.trip_type, 64),
+    safeStr(rec?.tripType, 64),
     safeStr(booking?.service, 64),
+    safeStr(booking?.service_type, 64),
+    safeStr(booking?.serviceType, 64),
     safeStr(booking?.extra_service, 64),
     safeStr(booking?.extra_service_key, 64),
     safeStr(booking?.booking_type, 64),
     safeStr(booking?.bookingType, 64),
-    safeStr(payload?.service, 64),
-    safeStr(payload?.extra_service, 64),
-    safeStr(payload?.extra_service_key, 64),
-    safeStr(payload?.booking_type, 64),
-    safeStr(payload?.bookingType, 64),
-  ].map((value) => value.toLowerCase()).filter((value) => !!value);
-  const hasAirportToken = serviceTokens.some((token) =>
-    token === "airport" ||
-    token === "airport_transfer" ||
-    token.includes("airport") ||
-    token.includes("luchthaven")
+    safeStr(booking?.trip_type, 64),
+    safeStr(booking?.tripType, 64),
+    safeStr(payloadObj?.service, 64),
+    safeStr(payloadObj?.service_type, 64),
+    safeStr(payloadObj?.serviceType, 64),
+    safeStr(payloadObj?.extra_service, 64),
+    safeStr(payloadObj?.extra_service_key, 64),
+    safeStr(payloadObj?.booking_type, 64),
+    safeStr(payloadObj?.bookingType, 64),
+    safeStr(payloadObj?.trip_type, 64),
+    safeStr(payloadObj?.tripType, 64),
+    safeStr(quoteObj?.service, 64),
+    safeStr(legObj?.service, 64),
+    safeStr(legObj?.service_type, 64),
+    safeStr(legObj?.serviceType, 64),
+  ]
+    .map((value) => value.toLowerCase())
+    .filter((value) => !!value);
+  const normalizedService = normalizeService(
+    _cancellationPolicyTextAny(
+      legObj?.service,
+      service,
+      rec?.service,
+      booking?.service,
+      payloadObj?.service,
+      quoteObj?.service,
+    ) || "passenger",
   );
-  const hasAirportDirection = !!textAny(
+  const hasAirportToken = serviceTokens.some(
+    (token) =>
+      token === "airport" ||
+      token === "airport_transfer" ||
+      token.includes("airport") ||
+      token.includes("luchthaven"),
+  );
+  const airportDirection = _cancellationPolicyTextAny(
+    legObj?.airport_direction,
+    legObj?.airportDirection,
     rec?.airport_direction,
     rec?.airportDirection,
     booking?.airport_direction,
     booking?.airportDirection,
-    payload?.airport_direction,
-    payload?.airportDirection,
+    payloadObj?.airport_direction,
+    payloadObj?.airportDirection,
+    legTransfer.object?.airport_direction,
+    legTransfer.object?.airportDirection,
+    payloadTransfer.object?.airport_direction,
+    payloadTransfer.object?.airportDirection,
   );
-  const hasFixedFareSignal = boolish(
-    rec?.fixed_fare_applied ??
-      rec?.fixedFareApplied ??
-      booking?.fixed_fare_applied ??
-      booking?.fixedFareApplied,
-  ) || hasAnyValue(
-    rec?.fixed_fare_rule_id,
-    rec?.fixedFareRuleId,
-    booking?.fixed_fare_rule_id,
-    booking?.fixedFareRuleId,
+  const hasAirportMeta = _cancellationPolicyHasAnyValue(
+    rec?.airport_iata,
+    rec?.airportIata,
+    rec?.airport_id,
+    rec?.airportId,
+    rec?.airport_code,
+    rec?.airportCode,
+    rec?.airport_name,
+    rec?.airportName,
+    booking?.airport_iata,
+    booking?.airportIata,
+    booking?.airport_id,
+    booking?.airportId,
+    booking?.airport_code,
+    booking?.airportCode,
+    booking?.airport_name,
+    booking?.airportName,
+    payloadObj?.airport_iata,
+    payloadObj?.airportIata,
+    payloadObj?.airport_id,
+    payloadObj?.airportId,
+    payloadObj?.airport_code,
+    payloadObj?.airportCode,
+    payloadObj?.airport_name,
+    payloadObj?.airportName,
+    legTransfer.object?.airport_iata,
+    legTransfer.object?.airportIata,
+    payloadTransfer.object?.airport_iata,
+    payloadTransfer.object?.airportIata,
   );
-  const isAirport = boolish(
-    rec?.airport_transfer ??
-      rec?.airportTransfer ??
-      booking?.airport_transfer ??
-      booking?.airportTransfer ??
-      payload?.airport_transfer ??
-      payload?.airportTransfer,
-  ) || hasAirportDirection || hasAirportToken || hasFixedFareSignal;
+  const bookingSourceToken = _cancellationPolicyTextAny(
+    booking_source,
+    entry_channel,
+    rec?.booking_source,
+    rec?.bookingSource,
+    rec?.entry_channel,
+    rec?.entryChannel,
+    booking?.booking_source,
+    booking?.bookingSource,
+    booking?.entry_channel,
+    booking?.entryChannel,
+    payloadObj?.booking_source,
+    payloadObj?.bookingSource,
+    payloadObj?.entry_channel,
+    payloadObj?.entryChannel,
+  ).toLowerCase();
+  const hasFixedFareSignal =
+    _cancellationPolicyBoolish(
+      fixed_fare_applied ??
+        legObj?.fixed_fare_applied ??
+        legObj?.fixedFareApplied ??
+        rec?.fixed_fare_applied ??
+        rec?.fixedFareApplied ??
+        booking?.fixed_fare_applied ??
+        booking?.fixedFareApplied,
+    ) ||
+    _cancellationPolicyHasAnyValue(
+      fixed_fare_rule_id,
+      legObj?.fixed_fare_rule_id,
+      legObj?.fixedFareRuleId,
+      rec?.fixed_fare_rule_id,
+      rec?.fixedFareRuleId,
+      booking?.fixed_fare_rule_id,
+      booking?.fixedFareRuleId,
+    );
+  const hasAirportTransferSignal =
+    legTransfer.active ||
+    recTransfer.active ||
+    bookingTransfer.active ||
+    payloadTransfer.active;
+  const hasAirportIntent =
+    normalizedService === "airport" ||
+    hasAirportToken ||
+    !!airportDirection ||
+    hasAirportMeta ||
+    hasAirportTransferSignal ||
+    bookingSourceToken === "airport_module" ||
+    serviceTokens.includes("airport_transfer") ||
+    hasFixedFareSignal;
+  const partialAirportSignals =
+    hasAirportToken ||
+    !!airportDirection ||
+    hasAirportMeta ||
+    hasAirportTransferSignal ||
+    bookingSourceToken === "airport_module" ||
+    normalizedService === "airport";
+  const isBusinessExplicit =
+    business_detected === true ||
+    _cancellationPolicyBoolish(
+      rec?.business_detected ??
+        rec?.businessDetected ??
+        rec?.invoice_requested ??
+        rec?.invoiceRequested ??
+        booking?.business_detected ??
+        booking?.businessDetected ??
+        booking?.invoice_requested ??
+        booking?.invoiceRequested,
+    ) ||
+    _cancellationPolicyHasAnyValue(
+      rec?.vat_number,
+      rec?.vatNumber,
+      rec?.company_name,
+      rec?.companyName,
+      booking?.vat_number,
+      booking?.vatNumber,
+      booking?.company_name,
+      booking?.companyName,
+      booking?.customer_vat_number,
+      booking?.customerVatNumber,
+      booking?.customer_company_name,
+      booking?.customerCompanyName,
+    ) ||
+    normalizedService === "business" ||
+    serviceTokens.includes("business") ||
+    serviceTokens.includes("zakelijk");
+  const partialBusinessSignals =
+    normalizedService === "business" ||
+    serviceTokens.includes("business") ||
+    serviceTokens.includes("zakelijk") ||
+    _cancellationPolicyBoolish(rec?.invoice_requested ?? booking?.invoice_requested);
+  const service_bucket = hasAirportIntent
+    ? "airport"
+    : (isBusinessExplicit ? "business" : "private");
+  let bucket_source = "default_private";
+  let bucket_confidence = "default";
+  if (hasAirportIntent) {
+    bucket_confidence = "inferred";
+    if (explicitLegBucket) bucket_source = "leg.service_bucket";
+    else if (normalizedService === "airport") bucket_source = "service.airport";
+    else if (hasAirportToken) bucket_source = "service_token.airport";
+    else if (airportDirection) bucket_source = "airport_direction";
+    else if (hasAirportMeta) bucket_source = "airport_meta";
+    else if (bookingSourceToken === "airport_module") bucket_source = "booking_source.airport_module";
+    else if (hasAirportTransferSignal) bucket_source = "airport_transfer";
+    else if (hasFixedFareSignal) bucket_source = "fixed_fare_signal";
+    else bucket_source = "inferred.airport";
+  } else if (isBusinessExplicit) {
+    bucket_confidence = "inferred";
+    bucket_source = normalizedService === "business" ? "service.business" : "business_fields";
+  } else if (normalizedService === "passenger" || normalizedService === "taxi" || serviceTokens.includes("taxi")) {
+    bucket_confidence = "inferred";
+    bucket_source = "service.private";
+  }
+  const has_ambiguous_higher_tier_signals =
+    service_bucket === "private" && (partialAirportSignals || partialBusinessSignals);
+  return {
+    service_bucket,
+    bucket_source,
+    bucket_confidence,
+    is_airport: service_bucket === "airport",
+    is_business: service_bucket === "business",
+    has_ambiguous_higher_tier_signals,
+    airport_direction: airportDirection || null,
+    airport_transfer: hasAirportTransferSignal || hasAirportIntent,
+    service_type: normalizedService,
+  };
+}
 
-  const isBusiness = boolish(
-    rec?.business_detected ??
-      rec?.businessDetected ??
-      rec?.invoice_requested ??
-      rec?.invoiceRequested ??
-      booking?.business_detected ??
-      booking?.businessDetected ??
-      booking?.invoice_requested ??
-      booking?.invoiceRequested,
-  ) || hasAnyValue(
-    rec?.vat_number,
-    rec?.vatNumber,
-    rec?.company_name,
-    rec?.companyName,
-    booking?.vat_number,
-    booking?.vatNumber,
-    booking?.company_name,
-    booking?.companyName,
-    booking?.customer_vat_number,
-    booking?.customerVatNumber,
-    booking?.customer_company_name,
-    booking?.customerCompanyName,
-  );
-
-  const paymentStatus = textAny(
+function _classifyCustomerCancellationBucket(rec, options = null) {
+  const booking = rec?.booking && typeof rec.booking === "object" ? rec.booking : {};
+  const payload = rec?.payload && typeof rec.payload === "object" ? rec.payload : {};
+  const legEntry =
+    options &&
+    typeof options === "object" &&
+    options.legEntry &&
+    typeof options.legEntry === "object"
+      ? options.legEntry
+      : null;
+  const serviceBucketOverride =
+    options &&
+    typeof options === "object" &&
+    _normalizeCustomerCancellationServiceBucket(options.serviceBucketOverride)
+      ? options.serviceBucketOverride
+      : null;
+  const bucketContext = _deriveCustomerCancellationServiceContext({
+    rec,
+    payload,
+    quote: rec?.quote,
+    legEntry,
+    serviceBucketOverride,
+    business_detected: booking?.business_detected ?? rec?.business_detected,
+    booking_source: rec?.booking_source ?? booking?.booking_source,
+    entry_channel: rec?.entry_channel ?? booking?.entry_channel,
+    fixed_fare_applied: rec?.fixed_fare_applied ?? booking?.fixed_fare_applied,
+    fixed_fare_rule_id: rec?.fixed_fare_rule_id ?? booking?.fixed_fare_rule_id,
+    service: _cancellationPolicyTextAny(
+      legEntry?.service,
+      rec?.service,
+      booking?.service,
+      payload?.service,
+      rec?.quote?.service,
+    ),
+  });
+  const paymentStatus = _cancellationPolicyTextAny(
     rec?.payment_status,
     rec?.paymentStatus,
     booking?.payment_status,
     booking?.paymentStatus,
   ).toLowerCase();
-  const paymentMode = textAny(
+  const paymentMode = _cancellationPolicyTextAny(
     rec?.payment_mode,
     rec?.paymentMode,
     booking?.payment_mode,
     booking?.paymentMode,
   ).toLowerCase();
-  const paymentProvider = textAny(
+  const paymentProvider = _cancellationPolicyTextAny(
     rec?.payment_provider,
     rec?.paymentProvider,
     booking?.payment_provider,
     booking?.paymentProvider,
   ).toLowerCase();
-  const requiresPayment = boolish(
+  const requiresPayment = _cancellationPolicyBoolish(
     rec?.requiresPayment ??
       rec?.requires_payment ??
       rec?.payment_required ??
@@ -28972,8 +29375,8 @@ function _classifyCustomerCancellationBucket(rec) {
   const isMollieLike =
     paymentMode === "mollie" ||
     paymentProvider === "mollie" ||
-    boolish(rec?.mollie) ||
-    boolish(booking?.mollie);
+    _cancellationPolicyBoolish(rec?.mollie) ||
+    _cancellationPolicyBoolish(booking?.mollie);
   const isOpenMollieCheckout =
     !paymentStatus ||
     paymentStatus === "unpaid" ||
@@ -29007,11 +29410,14 @@ function _classifyCustomerCancellationBucket(rec) {
     paymentClass = "manual";
   }
 
-  const bucket = isAirport ? "airport" : (isBusiness ? "business" : "private");
+  const bucket = bucketContext.service_bucket;
   return {
     bucket,
-    isBusiness,
-    isAirport,
+    bucket_source: bucketContext.bucket_source,
+    bucket_confidence: bucketContext.bucket_confidence,
+    has_ambiguous_higher_tier_signals: bucketContext.has_ambiguous_higher_tier_signals,
+    isBusiness: bucketContext.is_business,
+    isAirport: bucketContext.is_airport,
     paymentClass,
   };
 }
@@ -29042,6 +29448,28 @@ function _resolveCustomerCancellationPickupDetails(rec) {
 
 function _resolveCustomerCancellationPickupIso(rec) {
   return _resolveCustomerCancellationPickupDetails(rec).pickup_iso;
+}
+
+// Resolves the pickup details for a specific operational leg so leg-scoped customer
+// cancellation can be evaluated against the correct leg pickup (OUTBOUND uses outbound
+// pickup, RETURN uses return pickup). When the leg or its pickup cannot be resolved we
+// return a null pickup so the policy evaluator keeps the safe
+// cancellation_requires_review behavior instead of falling back to the parent pickup.
+function _resolveOperationalLegCancellationPickupDetails(rec, legId) {
+  const legEntry = _findOperationalLegEntryById(rec, legId);
+  if (!legEntry) {
+    return {
+      pickup_iso: null,
+      pickup_source: "leg_not_found",
+      pickup_candidates_present: [],
+    };
+  }
+  const legPickupIso = safeStr(operationalLegPickupIsoFromEntry(legEntry), 80);
+  return {
+    pickup_iso: legPickupIso || null,
+    pickup_source: legPickupIso ? "operational_leg.pickup_iso" : "leg_pickup_unresolved",
+    pickup_candidates_present: legPickupIso ? ["operational_leg.pickup_iso"] : [],
+  };
 }
 
 function _parseCustomerCancellationPickupMs(pickupIso) {
@@ -29078,17 +29506,41 @@ function _parseCustomerCancellationPickupMs(pickupIso) {
   return Number.isFinite(parsed) ? parsed : Number.NaN;
 }
 
-function _evaluateCustomerCancellationPolicy(rec, now = new Date(), policyProfile = null) {
+function _evaluateCustomerCancellationPolicy(rec, now = new Date(), policyProfile = null, options = null) {
   const normalizedPolicy = _normalizeCancellationPolicyProfile(
     policyProfile && typeof policyProfile === "object"
       ? policyProfile
       : _customerCancellationPolicyDefaults(),
   );
-  const classification = _classifyCustomerCancellationBucket(rec);
-  const pickupDetails = _resolveCustomerCancellationPickupDetails(rec);
+  const policyOptions = options && typeof options === "object" ? options : null;
+  const classification = _classifyCustomerCancellationBucket(rec, policyOptions);
+  // When a leg-scoped cancellation is evaluated, callers pass pickupDetailsOverride
+  // so the cutoff is measured against the focused leg pickup (e.g. RETURN pickup),
+  // not only the parent/outbound pickup. If the override is supplied but its pickup
+  // could not be resolved, we intentionally do NOT fall back to the parent pickup so
+  // the policy keeps the safe cancellation_requires_review behavior.
+  const pickupOverride =
+    policyOptions &&
+    policyOptions.pickupDetailsOverride &&
+    typeof policyOptions.pickupDetailsOverride === "object"
+      ? policyOptions.pickupDetailsOverride
+      : null;
+  const pickupDetails = pickupOverride
+    ? {
+        pickup_iso: safeStr(pickupOverride.pickup_iso, 80) || null,
+        pickup_source: safeStr(pickupOverride.pickup_source, 80) || "leg_override",
+        pickup_candidates_present: Array.isArray(pickupOverride.pickup_candidates_present)
+          ? pickupOverride.pickup_candidates_present
+          : [],
+      }
+    : _resolveCustomerCancellationPickupDetails(rec);
   const pickupIso = pickupDetails.pickup_iso;
   const bucket = classification.bucket;
+  const bucketSource = classification.bucket_source || "unknown";
   const paymentClass = classification.paymentClass;
+  console.log(
+    `[CANCEL_POLICY][BUCKET] bucket=${bucket || "-"} bucket_source=${bucketSource} bucket_confidence=${classification.bucket_confidence || "-"} payment_class=${paymentClass || "-"}`,
+  );
   if (normalizedPolicy.allow_customer_online_cancellation !== true) {
     return {
       allowed: false,
@@ -29109,27 +29561,28 @@ function _evaluateCustomerCancellationPolicy(rec, now = new Date(), policyProfil
     : (bucket === "business"
       ? normalizedPolicy.business_cutoff_minutes
       : normalizedPolicy.taxi_cutoff_minutes);
-  const paidCancelReason =
-    normalizedPolicy.paid_booking_cancellation_mode === "refund_required"
-      ? "cancellation_refund_required"
-      : (normalizedPolicy.paid_booking_cancellation_mode === "disabled"
-        ? "customer_cancellation_disabled"
-        : "cancellation_requires_review");
 
   if (new Set(["paid", "prepaid", "mollie"]).has(paymentClass)) {
-    return {
-      allowed: false,
-      reason: paidCancelReason,
-      bucket,
-      payment_class: paymentClass,
-      cutoff_minutes: cutoffMinutes,
-      pickup_iso: pickupIso,
-      minutes_until_pickup: null,
-      pickup_source: pickupDetails.pickup_source || "none",
-      pickup_candidates_present: pickupDetails.pickup_candidates_present || [],
-      parsed_pickup_ms: null,
-      now_ms: now instanceof Date ? now.getTime() : null,
-    };
+    const allowAutomaticPaidCancel =
+      normalizedPolicy.allow_automatic_paid_customer_cancellation === true;
+    if (!allowAutomaticPaidCancel) {
+      console.log(
+        `[PAID_CANCEL_GUARD][WORKER] payment_class=${paymentClass || "-"} allowed=false reason=paid_booking_customer_cancel_blocked automatic_paid_cancel=false`,
+      );
+      return {
+        allowed: false,
+        reason: "paid_booking_customer_cancel_blocked",
+        bucket,
+        payment_class: paymentClass,
+        cutoff_minutes: cutoffMinutes,
+        pickup_iso: pickupIso,
+        minutes_until_pickup: null,
+        pickup_source: pickupDetails.pickup_source || "none",
+        pickup_candidates_present: pickupDetails.pickup_candidates_present || [],
+        parsed_pickup_ms: null,
+        now_ms: now instanceof Date ? now.getTime() : null,
+      };
+    }
   }
 
   if (!pickupIso) {
@@ -29188,6 +29641,35 @@ function _evaluateCustomerCancellationPolicy(rec, now = new Date(), policyProfil
       allowed: false,
       reason: "cancellation_window_closed",
       bucket,
+      bucket_source: bucketSource,
+      payment_class: paymentClass,
+      cutoff_minutes: safeCutoffMinutes,
+      pickup_iso: pickupIso,
+      minutes_until_pickup: minutesUntilPickup,
+      pickup_source: pickupDetails.pickup_source || "none",
+      pickup_candidates_present: pickupDetails.pickup_candidates_present || [],
+      parsed_pickup_ms: pickupMs,
+      now_ms: nowMs,
+    };
+  }
+  const maxConfiguredCutoffMinutes = Math.max(
+    Math.max(0, Number(normalizedPolicy.taxi_cutoff_minutes) || 0),
+    Math.max(0, Number(normalizedPolicy.airport_cutoff_minutes) || 0),
+    Math.max(0, Number(normalizedPolicy.business_cutoff_minutes) || 0),
+  );
+  if (
+    bucket === "private" &&
+    classification.has_ambiguous_higher_tier_signals === true &&
+    minutesUntilPickup < maxConfiguredCutoffMinutes
+  ) {
+    console.log(
+      `[CANCEL_POLICY][BUCKET] fail_safe=true reason=ambiguous_higher_tier_within_max_cutoff bucket=${bucket} bucket_source=${bucketSource} minutes_until_pickup=${minutesUntilPickup} max_cutoff_minutes=${maxConfiguredCutoffMinutes}`,
+    );
+    return {
+      allowed: false,
+      reason: "cancellation_requires_review",
+      bucket,
+      bucket_source: bucketSource,
       payment_class: paymentClass,
       cutoff_minutes: safeCutoffMinutes,
       pickup_iso: pickupIso,
@@ -29202,6 +29684,7 @@ function _evaluateCustomerCancellationPolicy(rec, now = new Date(), policyProfil
     allowed: true,
     reason: "allowed",
     bucket,
+    bucket_source: bucketSource,
     payment_class: paymentClass,
     cutoff_minutes: safeCutoffMinutes,
     pickup_iso: pickupIso,
@@ -31409,6 +31892,73 @@ function _ensurePendingCreditStateOnCancelledPaidRecord(rec, nowIso = new Date()
   return applyPendingCreditStateOnPaidCancellation(rec, nowIso);
 }
 
+// Legacy self-repair for paid roundtrip bookings cancelled via the parent
+// route **before** the cancel cascade learned to propagate pending_credit to
+// each leg. Those records carry parent-level pending_credit but the leg
+// entries themselves are empty, which makes the company overview project a
+// "pending credit" row whose leg-scoped credit decision endpoint then refuses
+// with `credit_decision_not_pending`. We walk every operational-legs array
+// living on the record and apply the same per-leg helper the leg-status
+// route uses. The helper is idempotent: it no-ops on unpaid records and on
+// legs that already carry a resolved credit decision, so re-running on
+// healthy data is safe.
+function _ensurePendingCreditStateOnCancelledPaidLegs(
+  rec,
+  nowIso = new Date().toISOString(),
+) {
+  if (!rec || typeof rec !== "object") return false;
+  if (!_bookingRecordIsPaidForCredit(rec)) return false;
+  const bookingIdForLog = safeStr(
+    rec?.booking_id ?? rec?.bookingId ?? rec?.booking?.booking_id,
+    160,
+  ) || "-";
+  const containers = [];
+  if (Array.isArray(rec?.operational_legs)) {
+    containers.push({ owner: rec, key: "operational_legs" });
+  }
+  if (Array.isArray(rec?.operationalLegs)) {
+    containers.push({ owner: rec, key: "operationalLegs" });
+  }
+  if (rec?.booking && typeof rec.booking === "object") {
+    if (Array.isArray(rec.booking.operational_legs)) {
+      containers.push({ owner: rec.booking, key: "operational_legs" });
+    }
+    if (Array.isArray(rec.booking.operationalLegs)) {
+      containers.push({ owner: rec.booking, key: "operationalLegs" });
+    }
+  }
+  if (!containers.length) return false;
+  let mutated = false;
+  for (const container of containers) {
+    const source = Array.isArray(container?.owner?.[container.key])
+      ? container.owner[container.key]
+      : [];
+    container.owner[container.key] = source.map((entry) => {
+      if (!entry || typeof entry !== "object") return entry;
+      const legStatusUpper = _normLifecycleStatus(
+        entry?.status ??
+          entry?.lifecycle_status ??
+          entry?.lifecycleStatus ??
+          "PENDING",
+      );
+      if (legStatusUpper !== "CANCELLED") return entry;
+      if (_operationalLegHasPendingCreditState(entry)) return entry;
+      if (_operationalLegHasResolvedCreditDecision(entry)) return entry;
+      const next = { ...entry };
+      const applied = applyPendingCreditStateOnPaidLegCancellation(next, rec, nowIso);
+      if (!applied) return entry;
+      mutated = true;
+      const legIdForLog = safeStr(next?.leg_id ?? next?.legId, 200) || "-";
+      const legTypeForLog = safeStr(next?.leg_type ?? next?.legType, 24) || "-";
+      console.log(
+        `[CREDIT_CLASSIFY][LEG_REPAIR] booking=${_bookingIntentMask(bookingIdForLog)} leg=${_bookingIntentMask(legIdForLog)} leg_type=${legTypeForLog} source=company_bookings_list_legacy_repair`,
+      );
+      return next;
+    });
+  }
+  return mutated;
+}
+
 function _bookingRecordIsCancelledForCreditDecision(rec) {
   if (!rec || typeof rec !== "object") return false;
   return (
@@ -31938,6 +32488,9 @@ async function applyBookingCreditDecisionAuthoritative(
     console.log(
       `[BOOKING][CREDIT_DECISION] booking=${_bookingIntentMask(bookingId)} leg=${_bookingIntentMask(safeLegId)} decision=${creditDecision} credit_status=${creditStatus} credited_cents=${creditedAmountCents} full_cents=${fullAmountCents} scope=leg_only`,
     );
+    console.log(
+      `[BOOKING_FINANCE_KPI][TODO] booking=${_bookingIntentMask(bookingId)} leg=${_bookingIntentMask(safeLegId)} reason=cancelled_paid_leg_credit_decision_kpi_reconcile_pending`,
+    );
     return {
       ok: true,
       booking_id: bookingId,
@@ -32397,6 +32950,10 @@ async function refreshMollieRefundStatusForBooking(
   {
     actor_role: actorRoleRaw = "admin",
     source_endpoint = "/bookings/:id/mollie-refund/status-refresh",
+    leg_id: legIdRaw = "",
+    leg_type: legTypeRaw = "",
+    refund_scope: refundScopeRaw = "",
+    mollie_refund_id: mollieRefundIdOverrideRaw = "",
   } = {},
 ) {
   if (!tenantScope?.hasScope) {
@@ -32409,8 +32966,51 @@ async function refreshMollieRefundStatusForBooking(
     return { ok: false, error: "forbidden" };
   }
 
-  const mollieRefundId = _readMollieRefundIdFromRecord(rec);
+  // Leg-scoped refund target resolution.
+  //
+  // Company overview is leg-first: each row represents one operational leg.
+  // When the row was the cancelled half of a roundtrip, the refund id lives
+  // on the leg entry (not on the parent record). Without this branch we
+  // would always read the parent's `mollie_refund_id`, which is empty for a
+  // leg-only refund and surfaces as `missing_mollie_refund_id` in the UI.
+  const safeLegId = safeStr(legIdRaw, 200);
+  const refundScopeNormalized = safeStr(refundScopeRaw, 24)
+    .toLowerCase()
+    .replaceAll("-", "_");
+  const mollieRefundIdOverride = safeStr(mollieRefundIdOverrideRaw, 120);
+  const isLegOnlyScope = refundScopeNormalized === "leg_only" && safeLegId !== "";
+
+  let legEntry = null;
+  let mollieRefundId = "";
+  let refundIdSource = "parent_record";
+  if (isLegOnlyScope) {
+    legEntry = _findOperationalLegEntryById(rec, safeLegId);
+    if (!legEntry) {
+      console.log(
+        `[BOOKING][MOLLIE_REFUND_STATUS][LEG_TARGET] booking=${_bookingIntentMask(bookingId)} leg=${_bookingIntentMask(safeLegId)} reason=operational_leg_not_found`,
+      );
+      return { ok: false, error: "operational_leg_not_found" };
+    }
+    const legRefundId = _readMollieRefundIdFromLeg(legEntry);
+    if (legRefundId) {
+      mollieRefundId = legRefundId;
+      refundIdSource = "leg_entry";
+    } else if (mollieRefundIdOverride) {
+      mollieRefundId = mollieRefundIdOverride;
+      refundIdSource = "body_override";
+    }
+    console.log(
+      `[BOOKING][MOLLIE_REFUND_STATUS][LEG_TARGET] booking=${_bookingIntentMask(bookingId)} leg=${_bookingIntentMask(safeLegId)} leg_type=${safeStr(legTypeRaw, 24) || safeStr(legEntry?.leg_type ?? legEntry?.legType, 24) || "-"} refund_id_present=${!!mollieRefundId} refund_id_source=${refundIdSource}`,
+    );
+  } else {
+    mollieRefundId = _readMollieRefundIdFromRecord(rec);
+    refundIdSource = mollieRefundId ? "parent_record" : "none";
+  }
+
   if (!mollieRefundId) {
+    console.log(
+      `[BOOKING][MOLLIE_REFUND_STATUS][MISSING_REFUND_ID] booking=${_bookingIntentMask(bookingId)} leg=${isLegOnlyScope ? _bookingIntentMask(safeLegId) : "-"} scope=${isLegOnlyScope ? "leg_only" : "full_parent"} source=${refundIdSource}`,
+    );
     return { ok: false, error: "missing_mollie_refund_id" };
   }
 
@@ -32479,14 +33079,33 @@ async function refreshMollieRefundStatusForBooking(
     paymentStatus,
     paymentContextSource: paymentContext.source,
   });
-  _applyMollieRefundFieldsToRecord(rec, {
-    mollieRefundId: mapped.mollieRefundId || mollieRefundId,
-    mollieRefundStatus: mapped.mollieRefundStatus,
-    refundStatus: mapped.refundStatus,
-    refundedAmountCents: mapped.refundedAmountCents,
-    refundedAt: mapped.refundedAt,
-    mollieRefundError: mapped.mollieRefundError,
-  });
+  if (isLegOnlyScope) {
+    // Persist refreshed Mollie refund fields **on the leg entry only**. The
+    // parent record's refund identity must remain untouched because a
+    // sibling leg may still need its own refund cycle and parent-level
+    // compliance has its own emission lifecycle.
+    _mutateOperationalLegEntryInRecord(rec, safeLegId, (entry) => {
+      const next = { ...(entry && typeof entry === "object" ? entry : {}) };
+      _applyMollieRefundFieldsToLeg(next, {
+        mollieRefundId: mapped.mollieRefundId || mollieRefundId,
+        mollieRefundStatus: mapped.mollieRefundStatus,
+        refundStatus: mapped.refundStatus,
+        refundedAmountCents: mapped.refundedAmountCents,
+        refundedAt: mapped.refundedAt,
+        mollieRefundError: mapped.mollieRefundError,
+      });
+      return next;
+    });
+  } else {
+    _applyMollieRefundFieldsToRecord(rec, {
+      mollieRefundId: mapped.mollieRefundId || mollieRefundId,
+      mollieRefundStatus: mapped.mollieRefundStatus,
+      refundStatus: mapped.refundStatus,
+      refundedAmountCents: mapped.refundedAmountCents,
+      refundedAt: mapped.refundedAt,
+      mollieRefundError: mapped.mollieRefundError,
+    });
+  }
   const nowIso = new Date().toISOString();
   rec.updatedAt = nowIso;
   rec.updated_at = nowIso;
@@ -32497,17 +33116,17 @@ async function refreshMollieRefundStatusForBooking(
 
   await env.BOOKING_KV.put(key, JSON.stringify(rec));
   console.log(
-    `[BOOKING][MOLLIE_REFUND_STATUS][PERSIST] booking=${_bookingIntentMask(bookingId)} refund_status=${safeStr(mapped.refundStatus, 64) || "-"} mollie_refund_status=${safeStr(mapped.mollieRefundStatus, 64) || "-"}`,
+    `[BOOKING][MOLLIE_REFUND_STATUS][PERSIST] booking=${_bookingIntentMask(bookingId)} scope=${isLegOnlyScope ? "leg_only" : "full_parent"} leg=${isLegOnlyScope ? _bookingIntentMask(safeLegId) : "-"} refund_status=${safeStr(mapped.refundStatus, 64) || "-"} mollie_refund_status=${safeStr(mapped.mollieRefundStatus, 64) || "-"}`,
   );
 
   const actorRole =
     safeStr(actorRoleRaw, 32).toLowerCase() === "company" ? "company" : "admin";
   let complianceEmitOk = false;
-  let complianceFinalEmitReason = "not_terminal";
+  let complianceFinalEmitReason = isLegOnlyScope ? "leg_only_scope" : "not_terminal";
   const isFinalRefunded =
     mapped.refundStatus === "refunded" ||
     _mollieRefundApiStatusIsTerminalRefunded(mapped.mollieRefundStatus);
-  if (isFinalRefunded) {
+  if (isFinalRefunded && !isLegOnlyScope) {
     const finalEmitOut = await _emitMollieRefundFinalComplianceIfNeeded(env, key, rec, bookingId, {
       actorRole,
       sourceEndpoint: source_endpoint,
@@ -32518,6 +33137,13 @@ async function refreshMollieRefundStatusForBooking(
     });
     complianceEmitOk = finalEmitOut?.emitted === true;
     complianceFinalEmitReason = safeStr(finalEmitOut?.reason, 64) || "unknown";
+  } else if (isFinalRefunded && isLegOnlyScope) {
+    // Parent-level compliance final emit is owned by the leg-refund apply
+    // path. The status-refresh endpoint must not double-emit a parent
+    // compliance event from a leg-only refresh.
+    console.log(
+      `[BOOKING][MOLLIE_REFUND_FINAL_EMIT] booking=${_bookingIntentMask(bookingId)} emitted=false reason=leg_only_scope leg=${_bookingIntentMask(safeLegId)}`,
+    );
   } else {
     console.log(
       `[BOOKING][MOLLIE_REFUND_FINAL_EMIT] booking=${_bookingIntentMask(bookingId)} emitted=false reason=not_terminal`,
@@ -32545,6 +33171,12 @@ async function refreshMollieRefundStatusForBooking(
     indexUpserted,
     refund_id_present: !!mollieRefundId,
     refundIdPresent: !!mollieRefundId,
+    refund_scope: isLegOnlyScope ? "leg_only" : "full_parent",
+    refundScope: isLegOnlyScope ? "leg_only" : "full_parent",
+    leg_id: isLegOnlyScope ? safeLegId : null,
+    legId: isLegOnlyScope ? safeLegId : null,
+    refund_id_source: refundIdSource,
+    refundIdSource,
     refund_status: mapped.refundStatus,
     refundStatus: mapped.refundStatus,
     mollie_refund_status: mapped.mollieRefundStatus,
@@ -33101,6 +33733,271 @@ async function _emitMollieRefundFinalComplianceIfNeeded(
   return { ok: false, emitted: false, reason: failReason, error: failReason };
 }
 
+function _applyMollieRefundFieldsToLeg(legEntry, fields) {
+  if (!legEntry || typeof legEntry !== "object" || !fields || typeof fields !== "object") return;
+  const {
+    mollieRefundId,
+    mollieRefundStatus,
+    refundStatus,
+    refundedAmountCents,
+    refundedAt,
+    mollieRefundError,
+  } = fields;
+  if (mollieRefundId != null) {
+    legEntry.mollie_refund_id = mollieRefundId;
+    legEntry.mollieRefundId = mollieRefundId;
+  }
+  if (mollieRefundStatus != null) {
+    legEntry.mollie_refund_status = mollieRefundStatus;
+    legEntry.mollieRefundStatus = mollieRefundStatus;
+  }
+  if (refundStatus != null) {
+    legEntry.refund_status = refundStatus;
+    legEntry.refundStatus = refundStatus;
+  }
+  if (refundedAmountCents != null) {
+    legEntry.refunded_amount_cents = refundedAmountCents;
+    legEntry.refundedAmountCents = refundedAmountCents;
+  }
+  if (refundedAt != null) {
+    legEntry.refunded_at = refundedAt;
+    legEntry.refundedAt = refundedAt;
+  }
+  if (mollieRefundError != null) {
+    legEntry.mollie_refund_error = mollieRefundError;
+    legEntry.mollieRefundError = mollieRefundError;
+  }
+  legEntry.refund_provider = "mollie";
+  legEntry.refundProvider = "mollie";
+}
+
+function _operationalLegHasMollieRefundEligibleCreditDecision(legEntry) {
+  const decision = _operationalLegCreditDecisionRaw(legEntry);
+  return MOLLIE_REFUND_ELIGIBLE_CREDIT_DECISIONS.has(decision);
+}
+
+function _readMollieRefundIdFromLeg(legEntry) {
+  return safeStr(legEntry?.mollie_refund_id ?? legEntry?.mollieRefundId, 120);
+}
+
+async function _applyMollieRefundForOperationalLegAuthoritative(
+  bookingId,
+  env,
+  tenantScope,
+  key,
+  rec,
+  {
+    leg_id: legIdRaw = "",
+    leg_type: legTypeRaw = "",
+    actor_role: actorRoleRaw = "admin",
+    source_endpoint = "/bookings/:id/mollie-refund",
+  } = {},
+) {
+  const safeLegId = safeStr(legIdRaw, 200);
+  const legEntry = _findOperationalLegEntryById(rec, safeLegId);
+  if (!legEntry) {
+    console.log(
+      `[LEG_REFUND][BLOCKED] booking=${_bookingIntentMask(bookingId)} leg=${_bookingIntentMask(safeLegId)} reason=operational_leg_not_found`,
+    );
+    return { ok: false, error: "operational_leg_not_found" };
+  }
+  if (!_operationalLegIsCancelledForCreditDecision(legEntry)) {
+    console.log(
+      `[LEG_REFUND][BLOCKED] booking=${_bookingIntentMask(bookingId)} leg=${_bookingIntentMask(safeLegId)} reason=leg_not_cancelled`,
+    );
+    _logMollieRefundGate(bookingId, false, "booking_not_cancelled");
+    return { ok: false, error: "booking_not_cancelled" };
+  }
+  if (!_bookingRecordIsPaidForCredit(rec)) {
+    _logMollieRefundGate(bookingId, false, "booking_not_paid");
+    return { ok: false, error: "booking_not_paid" };
+  }
+  if (!_bookingRecordIsMollieOnlinePayment(rec)) {
+    _logMollieRefundGate(bookingId, false, "booking_not_mollie_payment");
+    return { ok: false, error: "booking_not_mollie_payment" };
+  }
+  if (!_operationalLegHasMollieRefundEligibleCreditDecision(legEntry)) {
+    _logMollieRefundGate(bookingId, false, "credit_decision_required");
+    return { ok: false, error: "credit_decision_required" };
+  }
+  const existingLegRefundId = _readMollieRefundIdFromLeg(legEntry);
+  if (existingLegRefundId) {
+    _logMollieRefundGate(bookingId, false, "already_refunded_or_refund_pending");
+    return { ok: false, error: "already_refunded_or_refund_pending", refund_id: existingLegRefundId };
+  }
+
+  const actorRole =
+    safeStr(actorRoleRaw, 32).toLowerCase() === "company" ? "company" : "admin";
+  const creditedAmountCents = Number.isFinite(
+    Number(legEntry?.credited_amount_cents ?? legEntry?.creditedAmountCents),
+  )
+    ? Math.max(0, Math.round(Number(legEntry?.credited_amount_cents ?? legEntry?.creditedAmountCents)))
+    : 0;
+  if (creditedAmountCents <= 0) {
+    _logMollieRefundGate(bookingId, false, "missing_booking_amount");
+    return { ok: false, error: "missing_booking_amount" };
+  }
+
+  console.log(
+    `[LEG_REFUND][TARGET] booking=${_bookingIntentMask(bookingId)} leg=${_bookingIntentMask(safeLegId)} leg_type=${safeStr(legTypeRaw, 24) || safeStr(legEntry?.leg_type ?? legEntry?.legType, 24) || "-"} credited_cents=${creditedAmountCents}`,
+  );
+
+  const paymentContext = await resolveMolliePaymentContextForBooking(env, bookingId, rec);
+  if (!paymentContext?.ok) {
+    const paymentContextError = paymentContext?.error || "missing_mollie_payment_id";
+    _logMollieRefundGate(bookingId, false, paymentContextError);
+    return { ok: false, error: paymentContextError };
+  }
+
+  const paidAmountCents = paymentContext.paid_amount_cents;
+  const alreadyRefundedCents = paymentContext.refunded_amount_cents;
+  const remainingCap = Math.max(0, paidAmountCents - alreadyRefundedCents);
+  const refundAmountCents = Math.min(creditedAmountCents, remainingCap);
+  if (refundAmountCents <= 0) {
+    _logMollieRefundGate(bookingId, false, "already_refunded_or_refund_pending");
+    return { ok: false, error: "already_refunded_or_refund_pending" };
+  }
+
+  const currency = paymentContext.currency || "EUR";
+  const molliePaymentId = paymentContext.mollie_payment_id;
+  const rideCredentials = await resolveRideMollieCredentialsForPaymentContext(
+    env,
+    paymentContext,
+    rec,
+  );
+  if (!rideCredentials.ok) {
+    _logMollieRefundGate(bookingId, false, safeStr(rideCredentials.error, 80) || "mollie_config_unavailable");
+    return { ok: false, error: rideCredentials.error || "mollie_config_unavailable" };
+  }
+
+  let paymentSnapshot = null;
+  try {
+    paymentSnapshot = await mollieFetchPaymentJson(molliePaymentId, env, rideCredentials);
+  } catch (fetchErr) {
+    const safeErr = safeStr(fetchErr?.message || fetchErr, 160) || "mollie_payment_lookup_failed";
+    _logMollieRefundGate(bookingId, false, "mollie_payment_lookup_failed");
+    return { ok: false, error: "mollie_payment_lookup_failed" };
+  }
+  const paymentStatus = safeStr(paymentSnapshot?.status, 32).toLowerCase();
+  if (paymentStatus !== "paid") {
+    _logMollieRefundGate(bookingId, false, "payment_not_refundable");
+    return { ok: false, error: "payment_not_refundable" };
+  }
+
+  const persistLegFailure = async (failureFields) => {
+    _mutateOperationalLegEntryInRecord(rec, safeLegId, (entry) => {
+      const next = { ...(entry && typeof entry === "object" ? entry : {}) };
+      _applyMollieRefundFieldsToLeg(next, failureFields);
+      return next;
+    });
+    rec.updatedAt = new Date().toISOString();
+    rec.updated_at = rec.updatedAt;
+    await env.BOOKING_KV.put(key, JSON.stringify(rec));
+  };
+
+  let mollieRefund = null;
+  try {
+    const refundRes = await fetch(
+      `https://api.mollie.com/v2/payments/${encodeURIComponent(molliePaymentId)}/refunds`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${rideCredentials.apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          amount: {
+            currency,
+            value: _centsToMollieAmountValue(refundAmountCents),
+          },
+        }),
+      },
+    );
+    mollieRefund = await refundRes.json().catch(() => ({}));
+    if (!refundRes.ok || !mollieRefund?.id) {
+      const mollieErrorCode = safeStr(
+        mollieRefund?.detail || mollieRefund?.title || mollieRefund?.message || mollieRefund?.error,
+        120,
+      );
+      await persistLegFailure({
+        mollieRefundStatus: "failed",
+        mollieRefundError: mollieErrorCode || `http_${refundRes.status}`,
+      });
+      _logMollieRefundGate(bookingId, false, "mollie_refund_failed");
+      return { ok: false, error: "mollie_refund_failed", mollie_error: mollieErrorCode || null };
+    }
+  } catch (refundErr) {
+    const safeErr = safeStr(refundErr?.message || refundErr, 160) || "mollie_refund_failed";
+    await persistLegFailure({
+      mollieRefundStatus: "failed",
+      mollieRefundError: safeErr,
+    });
+    _logMollieRefundGate(bookingId, false, "mollie_refund_failed");
+    return { ok: false, error: "mollie_refund_failed" };
+  }
+
+  const mollieRefundId = safeStr(mollieRefund?.id, 120);
+  const mollieRefundStatusRaw = safeStr(mollieRefund?.status, 40).toLowerCase();
+  const mappedRefundStatus = _mollieRefundStatusIsTerminalRefunded(mollieRefundStatusRaw)
+    ? "refunded"
+    : _mollieRefundStatusIsPending(mollieRefundStatusRaw)
+      ? "mollie_refund_pending"
+      : mollieRefundStatusRaw || "mollie_refund_pending";
+  const refundedAt =
+    safeStr(mollieRefund?.createdAt ?? mollieRefund?.created_at, 80) ||
+    new Date().toISOString();
+
+  _mutateOperationalLegEntryInRecord(rec, safeLegId, (entry) => {
+    const next = { ...(entry && typeof entry === "object" ? entry : {}) };
+    _applyMollieRefundFieldsToLeg(next, {
+      mollieRefundId,
+      mollieRefundStatus: mollieRefundStatusRaw || mappedRefundStatus,
+      refundStatus: mappedRefundStatus,
+      refundedAmountCents: refundAmountCents,
+      refundedAt,
+      mollieRefundError: null,
+    });
+    next.refund_required = false;
+    next.refundRequired = false;
+    return next;
+  });
+
+  const parentRefunded = Math.max(0, alreadyRefundedCents + refundAmountCents);
+  _applyMollieRefundFieldsToRecord(rec, {
+    refundedAmountCents: parentRefunded,
+  });
+
+  rec.updatedAt = new Date().toISOString();
+  rec.updated_at = rec.updatedAt;
+  if (rec.booking && typeof rec.booking === "object") {
+    rec.booking.updatedAt = rec.updatedAt;
+    rec.booking.updated_at = rec.updatedAt;
+  }
+  await env.BOOKING_KV.put(key, JSON.stringify(rec));
+  await upsertCompanyBookingsListIndexBestEffort(env, bookingId, rec, tenantScope);
+
+  console.log(
+    `[BOOKING][MOLLIE_REFUND] booking=${_bookingIntentMask(bookingId)} leg=${_bookingIntentMask(safeLegId)} refund_id_present=${!!mollieRefundId} amount_cents=${refundAmountCents} scope=leg_only`,
+  );
+  console.log(
+    `[BOOKING_FINANCE_KPI][TODO] booking=${_bookingIntentMask(bookingId)} leg=${_bookingIntentMask(safeLegId)} reason=cancelled_paid_leg_refund_kpi_reconcile_pending`,
+  );
+  _logMollieRefundGate(bookingId, true, "refund_applied");
+
+  return {
+    ok: true,
+    booking_id: bookingId,
+    leg_id: safeLegId,
+    legId: safeLegId,
+    credit_scope: "leg_only",
+    creditScope: "leg_only",
+    refund_id: mollieRefundId,
+    refund_status: mappedRefundStatus,
+    refund_amount_cents: refundAmountCents,
+    currency,
+  };
+}
+
 async function applyMollieRefundAuthoritative(
   bookingId,
   env,
@@ -33110,6 +34007,9 @@ async function applyMollieRefundAuthoritative(
     partial_amount_cents: partialAmountCentsRaw = null,
     actor_role: actorRoleRaw = "admin",
     source_endpoint = "/bookings/:id/mollie-refund",
+    leg_id: legIdRaw = "",
+    leg_type: legTypeRaw = "",
+    refund_scope: refundScopeRaw = "",
   } = {},
 ) {
   if (!tenantScope?.hasScope) {
@@ -33132,6 +34032,30 @@ async function applyMollieRefundAuthoritative(
     _logMollieRefundGate(bookingId, false, "forbidden");
     return { ok: false, error: "forbidden" };
   }
+
+  const safeLegId = safeStr(legIdRaw, 200);
+  const refundScopeToken = safeStr(refundScopeRaw, 32).toLowerCase().replaceAll("-", "_");
+  const useLegScope =
+    safeLegId &&
+    refundScopeToken !== "full_parent" &&
+    refundScopeToken !== "full_roundtrip" &&
+    refundScopeToken !== "parent";
+  if (useLegScope) {
+    return _applyMollieRefundForOperationalLegAuthoritative(
+      bookingId,
+      env,
+      tenantScope,
+      key,
+      rec,
+      {
+        leg_id: safeLegId,
+        leg_type: legTypeRaw,
+        actor_role: actorRoleRaw,
+        source_endpoint,
+      },
+    );
+  }
+
   if (!_bookingRecordIsCancelledForCreditDecision(rec)) {
     _logMollieRefundGate(bookingId, false, "booking_not_cancelled");
     return { ok: false, error: "booking_not_cancelled" };
@@ -36037,6 +36961,29 @@ async function handleBooking(payload, env, request, options = {}) {
         ? `${bookingMainFixedFareRuleId} + ${bookingReturnFixedFareRuleId}`
         : (bookingMainFixedFareRuleId || bookingReturnFixedFareRuleId || null))
       : bookingMainFixedFareRuleId;
+    const persistedCancellationServiceContext = _deriveCustomerCancellationServiceContext({
+      service,
+      payload,
+      business_detected,
+      booking_source: tenantContext.booking_source,
+      entry_channel: tenantContext.entry_channel,
+      fixed_fare_applied: bookingFixedFareApplied,
+      fixed_fare_rule_id: bookingFixedFareRuleId,
+    });
+    const outboundAirportDirection = safeStr(
+      payload?.airport_direction ?? payload?.airportDirection,
+      24,
+    ) || persistedCancellationServiceContext.airport_direction || null;
+    const returnAirportDirection = outboundAirportDirection
+      ? _flipAirportCancellationDirection(outboundAirportDirection)
+      : null;
+    const operationalLegCancellationFields = {
+      serviceBucket: persistedCancellationServiceContext.service_bucket,
+      serviceType: persistedCancellationServiceContext.service_type,
+      airportDirection: outboundAirportDirection,
+      returnAirportDirection,
+      airportTransfer: persistedCancellationServiceContext.airport_transfer,
+    };
 
     // Calendar availability + creation (if configured)
     const calendarAuthConfig = await loadGoogleCalendarAuthConfig(env, tenantContext);
@@ -36301,6 +37248,7 @@ async function handleBooking(payload, env, request, options = {}) {
           const provisionalOperationalLegs = _buildOperationalLegsFoundation({
             parentBookingId: canonicalBookingId,
             service,
+            ...operationalLegCancellationFields,
             from,
             to,
             pickupIso: pickup_iso,
@@ -37214,6 +38162,7 @@ Retour route: ${return_from || to} → ${return_to || from}`,
       const provisionalOperationalLegs = _buildOperationalLegsFoundation({
         parentBookingId: canonicalBookingId,
         service,
+        ...operationalLegCancellationFields,
         from,
         to,
         pickupIso: pickup_iso,
@@ -37583,6 +38532,7 @@ Retour route: ${return_from || to} → ${return_to || from}`,
     const bookingOperationalLegs = _buildOperationalLegsFoundation({
       parentBookingId: canonicalBookingId,
       service,
+      ...operationalLegCancellationFields,
       from,
       to,
       pickupIso: pickup_iso,
@@ -37674,6 +38624,22 @@ Retour route: ${return_from || to} → ${return_to || from}`,
       bags,
       tier,
       service,
+      service_type: persistedCancellationServiceContext.service_type,
+      serviceType: persistedCancellationServiceContext.service_type,
+      service_bucket: persistedCancellationServiceContext.service_bucket,
+      serviceBucket: persistedCancellationServiceContext.service_bucket,
+      ...(outboundAirportDirection
+        ? {
+            airport_direction: outboundAirportDirection,
+            airportDirection: outboundAirportDirection,
+          }
+        : {}),
+      ...(persistedCancellationServiceContext.airport_transfer
+        ? {
+            airport_transfer: true,
+            airportTransfer: true,
+          }
+        : {}),
       pickupStartIso: pickup_iso,
       returnPickupIso: return_pickup_iso,
 
@@ -37764,6 +38730,24 @@ Retour route: ${return_from || to} → ${return_to || from}`,
       source_context: tenantContext.source_context,
       tenant_resolution_mode: tenantContext.tenant_resolution_mode,
       tenant_resolved_at: tenantContext.tenant_resolved_at,
+      service: booking.service,
+      service_type: booking.service_type,
+      serviceType: booking.serviceType,
+      service_bucket: booking.service_bucket,
+      serviceBucket: booking.serviceBucket,
+      ...(booking.airport_direction
+        ? {
+            airport_direction: booking.airport_direction,
+            airportDirection: booking.airportDirection,
+          }
+        : {}),
+      ...(booking.airport_transfer
+        ? {
+            airport_transfer: true,
+            airportTransfer: true,
+          }
+        : {}),
+      business_detected,
       roundtrip_dispatch_mode: handleBookingDispatchMode,
       roundtripDispatchMode: handleBookingDispatchMode,
       ...(handleBookingDispatchMode === "split_no_wait"
@@ -37827,6 +38811,24 @@ Retour route: ${return_from || to} → ${return_to || from}`,
         },
         pickupStartIso: booking.pickupStartIso,
         pickup_iso: booking.pickupStartIso,
+        service: booking.service,
+        service_type: booking.service_type,
+        serviceType: booking.serviceType,
+        service_bucket: booking.service_bucket,
+        serviceBucket: booking.serviceBucket,
+        ...(booking.airport_direction
+          ? {
+              airport_direction: booking.airport_direction,
+              airportDirection: booking.airportDirection,
+            }
+          : {}),
+        ...(booking.airport_transfer
+          ? {
+              airport_transfer: true,
+              airportTransfer: true,
+            }
+          : {}),
+        business_detected: booking.business_detected === true,
         tier: booking.tier,
         pax: booking.pax,
         bags: booking.bags,
@@ -37874,6 +38876,7 @@ Retour route: ${return_from || to} → ${return_to || from}`,
       quote: {
         ok: true,
         pickup_iso: booking.pickupStartIso,
+        service: booking.service,
         from,
         to,
         stops,
@@ -40921,6 +41924,10 @@ function _buildOperationalLegRecord({
   legKey,
   legType,
   service,
+  serviceBucket = null,
+  serviceType = null,
+  airportDirection = null,
+  airportTransfer = null,
   pickupIso,
   from,
   to,
@@ -40944,6 +41951,17 @@ function _buildOperationalLegRecord({
   const safeLifecycle = safeStr(lifecycleStatus, 24).toLowerCase() || "pending";
   const normalizedLegType = legType === "return" ? "return" : "outbound";
   const normalizedService = _operationalLegServiceValue(service);
+  const normalizedServiceBucket =
+    _normalizeCustomerCancellationServiceBucket(serviceBucket) ||
+    (normalizedService === "airport"
+      ? "airport"
+      : (normalizedService === "business" ? "business" : "private"));
+  const normalizedServiceType = safeStr(serviceType, 64) || normalizedService;
+  const normalizedAirportDirection = safeStr(airportDirection, 24) || null;
+  const normalizedAirportTransfer =
+    airportTransfer === true ||
+    (airportTransfer && typeof airportTransfer === "object") ||
+    normalizedServiceBucket === "airport";
   return {
     leg_id: legId || null,
     legId: legId || null,
@@ -40952,6 +41970,22 @@ function _buildOperationalLegRecord({
     leg_type: normalizedLegType,
     legType: normalizedLegType,
     service: normalizedService,
+    service_type: normalizedServiceType,
+    serviceType: normalizedServiceType,
+    service_bucket: normalizedServiceBucket,
+    serviceBucket: normalizedServiceBucket,
+    ...(normalizedAirportDirection
+      ? {
+          airport_direction: normalizedAirportDirection,
+          airportDirection: normalizedAirportDirection,
+        }
+      : {}),
+    ...(normalizedAirportTransfer
+      ? {
+          airport_transfer: airportTransfer === true ? true : (airportTransfer || true),
+          airportTransfer: airportTransfer === true ? true : (airportTransfer || true),
+        }
+      : {}),
     pickup_iso: safeStr(pickupIso, 80) || null,
     pickupIso: safeStr(pickupIso, 80) || null,
     from: safeStr(from, 320) || "",
@@ -40991,6 +42025,11 @@ function _buildOperationalLegRecord({
 function _buildOperationalLegsFoundation({
   parentBookingId,
   service,
+  serviceBucket = null,
+  serviceType = null,
+  airportDirection = null,
+  returnAirportDirection = null,
+  airportTransfer = null,
   from,
   to,
   pickupIso,
@@ -41026,6 +42065,16 @@ function _buildOperationalLegsFoundation({
   const lifecycleUpper = _normalizedOperationalLegLifecycle(parentStatus, parentLifecycle);
   const lifecycleLower = lifecycleUpper.toLowerCase();
   const normalizedService = _operationalLegServiceValue(service);
+  const normalizedServiceBucket =
+    _normalizeCustomerCancellationServiceBucket(serviceBucket) ||
+    (normalizedService === "airport"
+      ? "airport"
+      : (normalizedService === "business" ? "business" : "private"));
+  const normalizedServiceType = safeStr(serviceType, 64) || normalizedService;
+  const outboundAirportDirection = safeStr(airportDirection, 24) || null;
+  const resolvedReturnAirportDirection =
+    safeStr(returnAirportDirection, 24) ||
+    _flipAirportCancellationDirection(outboundAirportDirection);
   const legs = [];
   legs.push(
     _buildOperationalLegRecord({
@@ -41033,6 +42082,10 @@ function _buildOperationalLegsFoundation({
       legKey: "OUTBOUND",
       legType: "outbound",
       service: normalizedService,
+      serviceBucket: normalizedServiceBucket,
+      serviceType: normalizedServiceType,
+      airportDirection: outboundAirportDirection,
+      airportTransfer,
       pickupIso,
       from,
       to,
@@ -41064,6 +42117,10 @@ function _buildOperationalLegsFoundation({
       legKey: "RETURN",
       legType: "return",
       service: normalizedService,
+      serviceBucket: normalizedServiceBucket,
+      serviceType: normalizedServiceType,
+      airportDirection: resolvedReturnAirportDirection,
+      airportTransfer,
       pickupIso: returnPickupIso || "",
       from: returnFrom || to || "",
       to: returnTo || from || "",
@@ -44467,12 +45524,23 @@ function _flattenOperationalLegForRidesList(parentBookingId, rec, leg, options =
     ? Math.max(0, Math.round(Number(legCreditedAmountCentsRaw)))
     : null;
   if (legStatusUpper === "CANCELLED") {
-    if (legRefundStatus || legCreditStatus || legRefundRequired || legCreditDecision) {
-      row.refund_status = legRefundStatus || row.refund_status || null;
+    const legHasOwnCreditState =
+      !!(legRefundStatus || legCreditStatus || legCreditDecision || legRefundRequired);
+    const legMollieRefundId = safeStr(leg?.mollie_refund_id ?? leg?.mollieRefundId, 120);
+    const legMollieRefundStatus = safeStr(
+      leg?.mollie_refund_status ?? leg?.mollieRefundStatus,
+      64,
+    );
+    const legRefundedAmountCentsRaw = leg?.refunded_amount_cents ?? leg?.refundedAmountCents;
+    const legRefundedAmountCents = Number.isFinite(Number(legRefundedAmountCentsRaw))
+      ? Math.max(0, Math.round(Number(legRefundedAmountCentsRaw)))
+      : null;
+    if (legHasOwnCreditState) {
+      row.refund_status = legRefundStatus || null;
       row.refundStatus = row.refund_status;
-      row.credit_status = legCreditStatus || row.credit_status || null;
+      row.credit_status = legCreditStatus || null;
       row.creditStatus = row.credit_status;
-      row.refund_required = legRefundRequired || row.refund_required === true;
+      row.refund_required = legRefundRequired === true;
       row.refundRequired = row.refund_required;
       if (legCreditDecision) {
         row.credit_decision = legCreditDecision;
@@ -44482,6 +45550,65 @@ function _flattenOperationalLegForRidesList(parentBookingId, rec, leg, options =
         row.credited_amount_cents = legCreditedAmountCents;
         row.creditedAmountCents = legCreditedAmountCents;
       }
+      if (legMollieRefundId) {
+        row.mollie_refund_id = legMollieRefundId;
+        row.mollieRefundId = legMollieRefundId;
+      }
+      if (legMollieRefundStatus) {
+        row.mollie_refund_status = legMollieRefundStatus;
+        row.mollieRefundStatus = legMollieRefundStatus;
+      }
+      if (legRefundedAmountCents != null) {
+        row.refunded_amount_cents = legRefundedAmountCents;
+        row.refundedAmountCents = legRefundedAmountCents;
+      }
+    } else {
+      // Defensive: when a cancelled leg row has no own credit/refund state,
+      // strip any credit/refund fields that the `...parentRow` spread above
+      // inherited from the parent record. Without this, the parent's
+      // pending_credit (set by applyPendingCreditStateOnPaidCancellation)
+      // leaks into a leg row whose leg entry is empty, the company overview
+      // projects "pending credit", and the leg-scoped credit-decision
+      // endpoint then correctly refuses with `credit_decision_not_pending`.
+      // Steps 1 and 2 of this patch ensure healthy data always has leg-own
+      // state; this clear is a safety net for any future projection drift.
+      row.refund_status = null;
+      row.refundStatus = null;
+      row.credit_status = null;
+      row.creditStatus = null;
+      row.refund_required = false;
+      row.refundRequired = false;
+      row.credit_decision = null;
+      row.creditDecision = null;
+      row.credited_amount_cents = null;
+      row.creditedAmountCents = null;
+      row.credited_at = null;
+      row.creditedAt = null;
+      console.log(
+        `[CREDIT_CLASSIFY][CLEAR_PARENT_CREDIT_INHERITANCE] booking=${_bookingIntentMask(parentBookingId)} leg=${_bookingIntentMask(legId)} reason=leg_cancelled_without_own_credit_state`,
+      );
+    }
+    // Leg-truthful refund identity:
+    // An operational leg row must only expose a mollie_refund_id/status when
+    // the leg itself owns it. Without this normalization the parent's refund
+    // id (inherited via the `...parentRow` spread above) leaks into a leg row
+    // that was never refunded, which causes the company UI to show
+    // "Controleer terugbetalingsstatus" and then fail with
+    // missing_mollie_refund_id when the leg-only refund target is resolved.
+    if (!legMollieRefundId) {
+      row.mollie_refund_id = null;
+      row.mollieRefundId = null;
+      console.log(
+        `[LEG_REFUND_FLATTEN][CLEARED_PARENT_REFUND_ID] parent=${_bookingIntentMask(parentBookingId)} leg=${_bookingIntentMask(legId)} reason=leg_has_no_own_refund_id`,
+      );
+    }
+    if (!legMollieRefundStatus) {
+      row.mollie_refund_status = null;
+      row.mollieRefundStatus = null;
+    }
+    if (legRefundedAmountCents == null) {
+      row.refunded_amount_cents = null;
+      row.refundedAmountCents = null;
     }
   } else if (parentStatusUpper !== "CANCELLED") {
     row.refund_status = null;
@@ -51058,9 +52185,11 @@ async function listBookingsAuthoritative(
       staleIds.add(bookingId);
       continue;
     }
-    if (_ensurePendingCreditStateOnCancelledPaidRecord(rec)) {
+    const parentCreditRepaired = _ensurePendingCreditStateOnCancelledPaidRecord(rec);
+    const legCreditRepaired = _ensurePendingCreditStateOnCancelledPaidLegs(rec);
+    if (parentCreditRepaired || legCreditRepaired) {
       console.log(
-        `[BOOKING][CREDIT_STATE_REPAIR] booking=${_bookingIntentMask(bookingId)} applied=true paid=true source=company_bookings_list`,
+        `[BOOKING][CREDIT_STATE_REPAIR] booking=${_bookingIntentMask(bookingId)} applied=true paid=true source=company_bookings_list parent_repair=${parentCreditRepaired} leg_repair=${legCreditRepaired}`,
       );
       try {
         await env.BOOKING_KV.put(`booking:${bookingId}`, JSON.stringify(rec));
@@ -54470,6 +55599,27 @@ async function updateBookingStatusAuthoritative(
           }
           if (Object.prototype.hasOwnProperty.call(entry, "updatedAt")) {
             next.updatedAt = nowIso;
+          }
+        }
+        // When the parent cancel cascades each leg to CANCELLED on a paid
+        // booking, also materialize the leg's own pending_credit state so the
+        // company overview projection and the leg-scoped credit-decision
+        // endpoint see a consistent picture. Without this, the parent record
+        // carries `pending_credit` via applyPendingCreditStateOnPaidCancellation
+        // (set above), the leg row inherits those fields through the flatten
+        // spread, but `_operationalLegHasPendingCreditState(legEntry)` reads
+        // the leg's own (empty) fields and the credit-decision endpoint
+        // returns `credit_decision_not_pending`. The helper below is the same
+        // one the leg-status route uses; it is idempotent, no-ops on unpaid
+        // records, and short-circuits on already-decided legs.
+        if (normalized === "CANCELLED") {
+          const legType = safeStr(next?.leg_type ?? next?.legType, 24) || "-";
+          const legIdForLog = safeStr(next?.leg_id ?? next?.legId, 200) || "-";
+          const applied = applyPendingCreditStateOnPaidLegCancellation(next, rec, nowIso);
+          if (applied) {
+            console.log(
+              `[CREDIT_CLASSIFY][LEG_PENDING_APPLIED] booking=${_bookingIntentMask(bookingId)} leg=${_bookingIntentMask(legIdForLog)} leg_type=${legType} reason=parent_cancel_cascade`,
+            );
           }
         }
         return next;

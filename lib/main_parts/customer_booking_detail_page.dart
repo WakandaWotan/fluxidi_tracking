@@ -109,7 +109,15 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
         debugPrint(
           '[CUSTOMER_BOOKING_CANCEL][CARD_ROUTE] booking=${_safeRefPreview(widget.bookingId)} route=detail_pending_action',
         );
-        unawaited(_cancelBookingServerSide());
+        if (_blocksPaidOnlineCustomerCancellation()) {
+          unawaited(
+            _showCustomerCancellationFailureDialog(
+              reason: 'paid_cancellation_requires_contact',
+            ),
+          );
+        } else {
+          unawaited(_cancelBookingServerSide());
+        }
       }
     });
   }
@@ -1542,12 +1550,19 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
     );
   }
 
+  // Customer-surface requests must NEVER carry the global admin token. The
+  // backend customer-cancellation policy block (paid online guard, airport
+  // 1440-min cutoff, driver-en-route block) is bypassed when adminAuthorized
+  // is true; sending kAdminToken here would silently turn every customer
+  // cancellation into an operator override. Operator surfaces (company /
+  // driver / business pages) keep their own admin-token wiring.
   Map<String, String> _cancelHeaders() {
-    final h = <String, String>{'Content-Type': 'application/json'};
-    if (kAdminToken.trim().isNotEmpty) {
-      h['x-admin-token'] = kAdminToken.trim();
-    }
-    return h;
+    final headers = <String, String>{'Content-Type': 'application/json'};
+    debugPrint(
+      '[CUSTOMER_CANCEL_AUTH][HEADERS] surface=customer_detail booking=${_safeRefPreview(widget.bookingId)} '
+      'admin_token=omitted reason=customer_surface',
+    );
+    return headers;
   }
 
   dynamic _cancelScopeValueAtPath(Map<String, dynamic> source, String path) {
@@ -1767,7 +1782,53 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
     return null;
   }
 
+  String _effectiveCustomerPaymentToken({CustomerBookingView? view}) {
+    final sourceView = view ?? _view;
+    var paymentToken = _classifyCustomerPaymentDisplayToken(
+      aliases: _paymentAliasesForView(sourceView),
+      fallbackToken: _derivedPaymentDisplayToken.isNotEmpty
+          ? _derivedPaymentDisplayToken
+          : sourceView.rawPaymentStatus,
+      paymentProvider: sourceView.paymentProvider,
+      paymentMode: sourceView.paymentMode,
+      paymentMethod: sourceView.paymentMethod,
+    );
+    if (_optimisticPaidApplied &&
+        !_isPaidCustomerPaymentDisplayToken(paymentToken)) {
+      paymentToken = 'paid';
+    }
+    return paymentToken;
+  }
+
+  bool _blocksPaidOnlineCustomerCancellation({CustomerBookingView? view}) {
+    final sourceView = view ?? _view;
+    final paymentToken = _effectiveCustomerPaymentToken(view: sourceView);
+    final blocked = sourceView.blocksCustomerPaidOnlineCancellation(
+      classifiedPaymentToken: paymentToken,
+    );
+    // Temporary safe diagnostic so we can confirm in runtime logs why the
+    // detail-page cancel button is or is not hidden for a paid booking.
+    // Logs only classified token/provider/mode/method tokens — no secrets.
+    debugPrint(
+      '[PAID_CANCEL_GUARD][CUSTOMER_UI_DIAG] booking=${_safeRefPreview(widget.bookingId)} '
+      'token=${paymentToken.isEmpty ? "-" : paymentToken} '
+      'provider=${sourceView.paymentProvider.isEmpty ? "-" : sourceView.paymentProvider} '
+      'mode=${sourceView.paymentMode.isEmpty ? "-" : sourceView.paymentMode} '
+      'method=${sourceView.paymentMethod.isEmpty ? "-" : sourceView.paymentMethod} '
+      'blocked=$blocked',
+    );
+    if (blocked) {
+      debugPrint(
+        '[PAID_CANCEL_GUARD][CUSTOMER_UI] booking=${_safeRefPreview(widget.bookingId)} '
+        'blocked=paid_online payment=$paymentToken '
+        'provider=${sourceView.paymentProvider.isEmpty ? "-" : sourceView.paymentProvider}',
+      );
+    }
+    return blocked;
+  }
+
   bool get _canCancelBooking {
+    if (_blocksPaidOnlineCustomerCancellation()) return false;
     final focusedLegType = _focusedRoundtripLegType;
     if (focusedLegType != null) {
       final focusedLeg = _focusedRoundtripLegCard(_view, focusedLegType);
@@ -1853,7 +1914,8 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
     final token = raw.trim().toLowerCase().replaceAll('-', '_');
     if (token.isEmpty) return 'unknown_failure';
     if (token == 'cancellation_requires_review' ||
-        token == 'cancellation_refund_required') {
+        token == 'cancellation_refund_required' ||
+        token == 'paid_booking_customer_cancel_blocked') {
       return 'paid_cancellation_requires_contact';
     }
     if (token == 'cancellation_window_closed') return token;
@@ -1913,7 +1975,8 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
       message,
     ].join(' ').toLowerCase().replaceAll('-', '_');
     return merged.contains('cancellation_requires_review') ||
-        merged.contains('cancellation_refund_required');
+        merged.contains('cancellation_refund_required') ||
+        merged.contains('paid_booking_customer_cancel_blocked');
   }
 
   bool _looksLikeCancellationWindowClosed({
@@ -1953,10 +2016,10 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
             es: 'Cancelacion online no disponible',
           ),
           message: _t(
-            nl: 'Deze boeking werd al betaald. Neem contact op met het taxibedrijf voor beoordeling van de annulatie en eventuele terugbetaling.',
-            en: 'This booking has already been paid. Please contact the taxi company to review the cancellation and any possible refund.',
-            fr: 'Cette réservation a déjà été payée. Contactez la société de taxi pour examiner l’annulation et un éventuel remboursement.',
-            es: 'Esta reserva ya ha sido pagada. Contacta con la empresa de taxi para revisar la cancelación y un posible reembolso.',
+            nl: 'Deze rit is al online betaald. Neem contact op met het bedrijf voor annulatie of terugbetaling.',
+            en: 'This ride has already been paid online. Please contact the company for cancellation or refund.',
+            fr: 'Ce trajet a déjà été payé en ligne. Contactez l’entreprise pour l’annulation ou le remboursement.',
+            es: 'Este viaje ya se ha pagado online. Contacta con la empresa para la cancelación o el reembolso.',
           ),
           allowRefresh: false,
           accent: _themePalette.gold,
@@ -2315,6 +2378,12 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
   Future<void> _cancelBookingServerSide() async {
     final bookingId = widget.bookingId.trim();
     if (bookingId.isEmpty || _cancelling || !_canCancelBooking) return;
+    if (_blocksPaidOnlineCustomerCancellation()) {
+      await _showCustomerCancellationFailureDialog(
+        reason: 'paid_cancellation_requires_contact',
+      );
+      return;
+    }
 
     final isRoundtrip = _view.isCustomerRoundtripBooking;
     final outboundLeg = _view.customerOutboundLeg;

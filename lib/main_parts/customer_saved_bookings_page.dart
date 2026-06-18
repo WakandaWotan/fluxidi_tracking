@@ -305,8 +305,10 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
   Widget _roundtripLegCard({
     required CustomerSavedBooking booking,
     required CustomerRoundtripLegCardView leg,
+    bool blocksPaidOnlineCancel = false,
   }) {
     final statusColor = leg.isCancelled ? _palette.bronze : _palette.gold;
+    final showCancelLeg = leg.isActive && !blocksPaidOnlineCancel;
     return Container(
       margin: const EdgeInsets.only(top: 8),
       padding: const EdgeInsets.all(10),
@@ -382,7 +384,7 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
           const SizedBox(height: 6),
           Row(
             children: [
-              if (leg.isActive)
+              if (showCancelLeg)
                 OutlinedButton(
                   onPressed: () =>
                       _cancelSavedFromCard(booking, legType: leg.legType),
@@ -754,7 +756,19 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
     final hasTo = booking.to.trim().isNotEmpty;
     final hasPrice = booking.price != null;
     final cancelledLegChip = _roundtripCancelledLegChip(booking);
-    final roundtripLegs = _savedBookingView(booking).roundtripLegCardViews;
+    final bookingView = _savedBookingView(booking);
+    final roundtripLegs = bookingView.roundtripLegCardViews;
+    // Hide the direct cancel shortcut for paid online/Mollie/prepaid bookings; the
+    // backend remains the authoritative gate for cancellation.
+    final blocksPaidOnlineCancel = bookingView
+        .blocksCustomerPaidOnlineCancellation(
+          classifiedPaymentToken: _displayPaymentStatusToken(booking),
+        );
+    if (blocksPaidOnlineCancel) {
+      debugPrint(
+        '[CANCEL_POLICY][CUSTOMER_CARD_VISIBILITY] page=saved_bookings booking=${booking.bookingId} cancel_button=hidden reason=paid_online',
+      );
+    }
     final showPartialLoading = hasIdentity && (!hasFrom || !hasTo || !hasPrice);
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
@@ -943,7 +957,11 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
               if (roundtripLegs.isNotEmpty) ...[
                 const SizedBox(height: 10),
                 ...roundtripLegs.map(
-                  (leg) => _roundtripLegCard(booking: booking, leg: leg),
+                  (leg) => _roundtripLegCard(
+                    booking: booking,
+                    leg: leg,
+                    blocksPaidOnlineCancel: blocksPaidOnlineCancel,
+                  ),
                 ),
               ],
               const SizedBox(height: 10),
@@ -972,7 +990,7 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
                         ),
                       ),
                     )
-                  else if (roundtripLegs.isEmpty)
+                  else if (roundtripLegs.isEmpty && !blocksPaidOnlineCancel)
                     OutlinedButton(
                       onPressed: () => _cancelSavedFromCard(booking),
                       style: OutlinedButton.styleFrom(

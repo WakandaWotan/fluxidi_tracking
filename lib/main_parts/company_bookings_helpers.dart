@@ -457,25 +457,110 @@ class _CompanyBookingOverviewItem {
     _CompanyBookingOverviewItem item,
   ) => hasCanonicalBookingIdentity(item) && hasMinimumOperationalContext(item);
 
+  static bool hasCreditDecisionRecorded(_CompanyBookingOverviewItem item) {
+    final decision = _normStatus(item.creditDecision);
+    if (decision == 'FULL_CREDIT' ||
+        decision == 'PARTIAL_CREDIT' ||
+        decision == 'NO_REFUND' ||
+        decision == 'HANDLED_MANUALLY') {
+      return true;
+    }
+    final creditStatus = _normStatus(item.creditStatus);
+    return creditStatus == 'CREDITED' ||
+        creditStatus == 'PARTIAL_CREDIT' ||
+        creditStatus == 'NO_REFUND' ||
+        creditStatus == 'HANDLED_MANUALLY';
+  }
+
+  static bool canShowCreditDecisionActions(_CompanyBookingOverviewItem item) {
+    if (!canExecuteCompanyBookingMoneyAction(item)) return false;
+    if (!_isCancelledStatus(item.statusText)) return false;
+    if (!isPaidPaymentStatus(item.paymentStatus)) return false;
+    if (hasCreditDecisionRecorded(item)) return false;
+    final pendingDecision =
+        _isPendingCreditToken(item.creditStatus) ||
+        _isPendingCreditToken(item.refundStatus) ||
+        item.refundRequired;
+    final visible = pendingDecision;
+    debugPrint(
+      '[CREDIT_DECISION][ACTION_VISIBILITY] booking=${_safeBookingRefForDiag(item.referenceText.isEmpty ? item.bookingId : item.referenceText)} '
+      'leg=${item.legId.trim().isEmpty ? "-" : _safeBookingRefForDiag(item.legId)} '
+      'show_decision_actions=$visible credit_decision=${item.creditDecision.isEmpty ? "-" : item.creditDecision}',
+    );
+    return visible;
+  }
+
+  static bool isMollieRefundEligibleCreditDecision(String creditDecision) {
+    final normalized = _normStatus(creditDecision);
+    return normalized == 'FULL_CREDIT' || normalized == 'PARTIAL_CREDIT';
+  }
+
   static bool shouldShowMollieRefundStatus(_CompanyBookingOverviewItem item) {
-    if (item.isPendingCredit) return false;
+    if (canShowCreditDecisionActions(item)) return false;
     if (!_isCancelledStatus(item.statusText)) return false;
     if (!isPaidPaymentStatus(item.paymentStatus)) return false;
     if (isManualPaymentProvider(item.paymentProvider)) return false;
     if (!isMolliePaymentProvider(item.paymentProvider)) return false;
-    return hasMollieRefundEligibleCreditStatus(item.creditStatus);
+    final decision = _normStatus(item.creditDecision);
+    if (decision == 'NO_REFUND' || decision == 'HANDLED_MANUALLY') {
+      return false;
+    }
+    if (hasMollieRefundEligibleCreditStatus(item.creditStatus)) return true;
+    return isMollieRefundEligibleCreditDecision(item.creditDecision);
   }
 
   static bool canShowMollieRefundAction(_CompanyBookingOverviewItem item) {
     if (!canExecuteCompanyBookingMoneyAction(item)) return false;
     if (!shouldShowMollieRefundStatus(item)) return false;
-    if (item.refundRequired) return false;
+    if (item.refundRequired && !hasCreditDecisionRecorded(item)) return false;
     if (item.creditDecision == 'NO_REFUND' ||
         item.creditDecision == 'HANDLED_MANUALLY') {
       return false;
     }
     if (hasMollieRefundAlreadyApplied(item)) return false;
     return true;
+  }
+
+  static ({
+    String bookingId,
+    String legId,
+    String legType,
+    String refundScope,
+    bool blocked,
+    String blockReason,
+  })
+  resolveMollieRefundTarget(_CompanyBookingOverviewItem item) {
+    final parentId = item.parentBookingId.trim().isNotEmpty
+        ? item.parentBookingId.trim()
+        : item.bookingId.trim();
+    final legId = item.legId.trim();
+    if (isRoundtripOperationalLegRow(item) && legId.isNotEmpty) {
+      final target = (
+        bookingId: parentId,
+        legId: legId,
+        legType: item.legType.trim(),
+        refundScope: 'leg_only',
+        blocked: false,
+        blockReason: '',
+      );
+      debugPrint(
+        '[LEG_REFUND][TARGET] booking=$parentId leg=$legId scope=leg_only '
+        'ref=${_safeBookingRefForDiag(item.referenceText.isEmpty ? item.bookingId : item.referenceText)}',
+      );
+      return target;
+    }
+    debugPrint(
+      '[LEG_REFUND][TARGET] booking=$parentId leg=- scope=full_parent '
+      'ref=${_safeBookingRefForDiag(item.referenceText.isEmpty ? item.bookingId : item.referenceText)}',
+    );
+    return (
+      bookingId: parentId,
+      legId: '',
+      legType: '',
+      refundScope: 'full_parent',
+      blocked: false,
+      blockReason: '',
+    );
   }
 
   static bool canShowMollieRefundAuditResyncAction(
@@ -485,6 +570,16 @@ class _CompanyBookingOverviewItem {
     if (!shouldShowMollieRefundStatus(item)) return false;
     if (item.creditDecision == 'NO_REFUND' ||
         item.creditDecision == 'HANDLED_MANUALLY') {
+      return false;
+    }
+    // Leg-only refunds intentionally never emit a parent-level compliance
+    // final event from the status-refresh path. Surfacing the audit-resync
+    // CTA on a refunded leg row would only re-trigger that suppressed parent
+    // emission and confuse operators ("the leg is refunded, why does it
+    // still want resync?"). Operator-level resync of parent compliance
+    // belongs on the parent booking detail, not on a leg row.
+    if (isRoundtripOperationalLegRow(item) &&
+        isMollieRefundDisplayRefunded(item)) {
       return false;
     }
     if (item.complianceMollieRefundFinalEmittedAt.trim().isEmpty &&
@@ -500,19 +595,230 @@ class _CompanyBookingOverviewItem {
   static bool canShowMollieRefundStatusRefreshAction(
     _CompanyBookingOverviewItem item,
   ) {
+    final bookingRef = item.referenceText.trim().isNotEmpty
+        ? item.referenceText.trim()
+        : item.bookingId.trim();
+    final legLabel = item.legId.trim().isEmpty ? '-' : item.legId.trim();
     if (!canExecuteCompanyBookingMoneyAction(item)) return false;
     if (!shouldShowMollieRefundStatus(item)) return false;
-    if (item.mollieRefundId.trim().isEmpty) return false;
+    // Hard guard: never expose the "Controleer terugbetalingsstatus" button when
+    // the row does not carry a refund id we can actually refresh. This is the
+    // primary protection against backend missing_mollie_refund_id.
+    if (item.mollieRefundId.trim().isEmpty) {
+      debugPrint(
+        '[REFUND_STATUS_BUTTON][HIDDEN_NO_REFUND_ID] booking=${_safeBookingRefForDiag(bookingRef)} '
+        'leg=$legLabel mollie_refund_id=empty',
+      );
+      return false;
+    }
+    // Final refunded display = settled from the row's perspective.
+    //
+    // The previous gate kept the button visible while the parent record's
+    // `compliance_mollie_refund_final_emitted_at` was empty so an operator
+    // could nudge compliance forward. That worked for full-parent refunds,
+    // but for **leg-only** refunds the worker intentionally skips parent
+    // compliance final emit (the leg-refund apply path owns it). As a
+    // result a fully refunded leg row kept showing "Check refund status"
+    // forever. Final refund state on the leg's own fields is the source of
+    // truth here, so we hide the button as soon as the row reports
+    // refunded/completed/success on either `mollie_refund_status` or
+    // `refund_status`.
     if (isMollieRefundDisplayRefunded(item)) {
-      return item.complianceMollieRefundFinalEmittedAt.trim().isEmpty;
+      debugPrint(
+        '[REFUND_STATUS_BUTTON][HIDDEN_FINAL_REFUND] booking=${_safeBookingRefForDiag(bookingRef)} '
+        'leg=$legLabel mollie_refund_status=${item.mollieRefundStatus.isEmpty ? "-" : item.mollieRefundStatus} '
+        'refund_status=${item.refundStatus.isEmpty ? "-" : item.refundStatus} '
+        'compliance_final_emitted_at=${item.complianceMollieRefundFinalEmittedAt.trim().isEmpty ? "empty" : "present"}',
+      );
+      return false;
     }
     if (isMollieRefundStatusFailed(item.mollieRefundStatus)) return false;
-    return isMollieRefundDisplayPending(item) ||
+    final pending =
+        isMollieRefundDisplayPending(item) ||
         isRefundStatusPending(item.refundStatus);
+    if (pending) {
+      debugPrint(
+        '[REFUND_STATUS_BUTTON][VISIBLE] booking=${_safeBookingRefForDiag(bookingRef)} '
+        'leg=$legLabel reason=refund_pending '
+        'mollie_refund_status=${item.mollieRefundStatus.isEmpty ? "-" : item.mollieRefundStatus} '
+        'refund_status=${item.refundStatus.isEmpty ? "-" : item.refundStatus}',
+      );
+    }
+    return pending;
   }
 
   static bool _isPendingCreditToken(String raw) {
     return _normStatus(raw) == 'PENDING_CREDIT';
+  }
+
+  static bool _isRefundBucketSettledFromRaw(Map<String, dynamic> raw) {
+    final mollieRefundStatus = _firstText(raw, const <String>[
+      'mollie_refund_status',
+      'mollieRefundStatus',
+      'record.mollie_refund_status',
+      'record.mollieRefundStatus',
+      'booking.mollie_refund_status',
+      'booking.mollieRefundStatus',
+      'record.booking.mollie_refund_status',
+      'record.booking.mollieRefundStatus',
+      'payload.mollie_refund_status',
+      'payload.mollieRefundStatus',
+      'record.payload.mollie_refund_status',
+      'record.payload.mollieRefundStatus',
+    ]);
+    final refundStatus = _firstText(raw, const <String>[
+      'refund_status',
+      'refundStatus',
+      'record.refund_status',
+      'record.refundStatus',
+      'booking.refund_status',
+      'booking.refundStatus',
+      'record.booking.refund_status',
+      'record.booking.refundStatus',
+      'payload.refund_status',
+      'payload.refundStatus',
+      'record.payload.refund_status',
+      'record.payload.refundStatus',
+    ]);
+    final mollieRefundId = _firstText(raw, const <String>[
+      'mollie_refund_id',
+      'mollieRefundId',
+      'record.mollie_refund_id',
+      'record.mollieRefundId',
+      'booking.mollie_refund_id',
+      'booking.mollieRefundId',
+      'record.booking.mollie_refund_id',
+      'record.booking.mollieRefundId',
+      'payload.mollie_refund_id',
+      'payload.mollieRefundId',
+      'record.payload.mollie_refund_id',
+      'record.payload.mollieRefundId',
+    ]);
+    final refundedAmountRaw = _firstNum(raw, const <String>[
+      'refunded_amount_cents',
+      'refundedAmountCents',
+      'record.refunded_amount_cents',
+      'record.refundedAmountCents',
+      'booking.refunded_amount_cents',
+      'booking.refundedAmountCents',
+      'record.booking.refunded_amount_cents',
+      'record.booking.refundedAmountCents',
+      'payload.refunded_amount_cents',
+      'payload.refundedAmountCents',
+      'record.payload.refunded_amount_cents',
+      'record.payload.refundedAmountCents',
+    ]);
+    final complianceFinal = _firstText(raw, const <String>[
+      'compliance_mollie_refund_final_emitted_at',
+      'complianceMollieRefundFinalEmittedAt',
+      'record.compliance_mollie_refund_final_emitted_at',
+      'record.complianceMollieRefundFinalEmittedAt',
+      'booking.compliance_mollie_refund_final_emitted_at',
+      'booking.complianceMollieRefundFinalEmittedAt',
+      'record.booking.compliance_mollie_refund_final_emitted_at',
+      'record.booking.complianceMollieRefundFinalEmittedAt',
+      'payload.compliance_mollie_refund_final_emitted_at',
+      'payload.complianceMollieRefundFinalEmittedAt',
+      'record.payload.compliance_mollie_refund_final_emitted_at',
+      'record.payload.complianceMollieRefundFinalEmittedAt',
+    ]);
+    if (isMollieRefundStatusRefunded(mollieRefundStatus)) return true;
+    if (isRefundStatusRefundedOrComplete(refundStatus)) return true;
+    if (complianceFinal.trim().isNotEmpty && mollieRefundId.trim().isNotEmpty) {
+      return true;
+    }
+    if ((refundedAmountRaw ?? 0) > 0 &&
+        !isRefundStatusPending(refundStatus) &&
+        !isMollieRefundStatusPending(mollieRefundStatus)) {
+      return true;
+    }
+    return false;
+  }
+
+  /// True when this row should be visible inside the **Geannuleerd** tab.
+  ///
+  /// Mutually exclusive with [isPendingCredit]: a paid cancelled leg that still
+  /// requires credit decision or refund follow-up belongs in **Te crediteren**
+  /// only. Settled paid cancelled legs (refunded / partially refunded / no
+  /// refund / handled manually) and all unpaid cancelled legs land here with
+  /// their settlement chip.
+  static bool isCancelledBucketVisible(_CompanyBookingOverviewItem item) {
+    if (item.bucket != _CompanyBookingsFilter.cancelled) return false;
+    return !item.isPendingCredit;
+  }
+
+  /// True when this row should be visible inside the **Te crediteren** tab.
+  static bool isToCreditBucketVisible(_CompanyBookingOverviewItem item) {
+    return item.isPendingCredit;
+  }
+
+  /// Settlement label for a paid cancelled row that no longer needs refund
+  /// follow-up. Used by the Cancelled tab to render a clear status chip.
+  /// Returns an empty string when no settlement state is applicable yet.
+  static String settledRefundChipToken(_CompanyBookingOverviewItem item) {
+    if (item.bucket != _CompanyBookingsFilter.cancelled) return '';
+    if (item.isPendingCredit) return '';
+    if (!isPaidPaymentStatus(item.paymentStatus)) return '';
+    final decision = _normStatus(item.creditDecision);
+    if (decision == 'NO_REFUND') return 'NO_REFUND';
+    if (decision == 'HANDLED_MANUALLY') return 'HANDLED_MANUALLY';
+    if (isMollieRefundDisplayRefunded(item)) {
+      if (decision == 'PARTIAL_CREDIT') return 'PARTIAL_REFUNDED';
+      return 'REFUNDED';
+    }
+    if (decision == 'FULL_CREDIT') return 'REFUNDED';
+    if (decision == 'PARTIAL_CREDIT') return 'PARTIAL_REFUNDED';
+    final creditStatus = _normStatus(item.creditStatus);
+    if (creditStatus == 'NO_REFUND') return 'NO_REFUND';
+    if (creditStatus == 'HANDLED_MANUALLY') return 'HANDLED_MANUALLY';
+    return '';
+  }
+
+  static void logRefundQueueDiagnostic(_CompanyBookingOverviewItem item) {
+    final bookingLabel = item.referenceText.trim().isNotEmpty
+        ? item.referenceText.trim()
+        : item.bookingId.trim();
+    if (bookingLabel.isEmpty) return;
+    final legLabel = item.legId.trim().isEmpty ? '-' : item.legId.trim();
+    final inCancelled = isCancelledBucketVisible(item);
+    final inToCredit = isToCreditBucketVisible(item);
+    debugPrint(
+      '[REFUND_BUCKET][QUEUE] booking=${_safeBookingRefForDiag(bookingLabel)} '
+      'leg=$legLabel cancelled_visible=$inCancelled to_credit=$inToCredit '
+      'status=${item.statusText.isEmpty ? "-" : item.statusText} '
+      'payment=${item.paymentStatus.isEmpty ? "-" : item.paymentStatus} '
+      'credit_decision=${item.creditDecision.isEmpty ? "-" : item.creditDecision} '
+      'mollie_refund_id=${item.mollieRefundId.trim().isEmpty ? "empty" : "present"} '
+      'mollie_refund_status=${item.mollieRefundStatus.isEmpty ? "-" : item.mollieRefundStatus}',
+    );
+    if (inCancelled &&
+        isPaidPaymentStatus(item.paymentStatus) &&
+        settledRefundChipToken(item).isNotEmpty) {
+      debugPrint(
+        '[REFUND_BUCKET][CANCELLED_VISIBLE] booking=${_safeBookingRefForDiag(bookingLabel)} '
+        'leg=$legLabel settlement=${settledRefundChipToken(item)}',
+      );
+    }
+  }
+
+  static void logRefundBucketStateDiagnostic(_CompanyBookingOverviewItem item) {
+    final bookingLabel = item.referenceText.trim().isNotEmpty
+        ? item.referenceText.trim()
+        : item.bookingId.trim();
+    if (bookingLabel.isEmpty) return;
+    final inCancelled = item.bucket == _CompanyBookingsFilter.cancelled;
+    final inToCredit = item.isPendingCredit;
+    final refundSettled =
+        isMollieRefundDisplayRefunded(item) ||
+        (hasMollieRefundAlreadyApplied(item) &&
+            !isMollieRefundDisplayPending(item));
+    debugPrint(
+      '[REFUND_BUCKET][STATE] booking=$bookingLabel '
+      'cancelled_bucket=$inCancelled to_credit=$inToCredit '
+      'refund_settled=$refundSettled refund_status=${item.refundStatus.isEmpty ? "-" : item.refundStatus} '
+      'mollie_refund_status=${item.mollieRefundStatus.isEmpty ? "-" : item.mollieRefundStatus} '
+      'can_refund=${canShowMollieRefundAction(item)}',
+    );
   }
 
   static bool _deriveIsPendingCredit({
@@ -522,6 +828,8 @@ class _CompanyBookingOverviewItem {
     required String creditStatus,
     required String refundStatus,
     required bool refundRequired,
+    required String creditDecision,
+    required String paymentProvider,
     required String bookingRef,
     required String parentRef,
     required String legType,
@@ -540,19 +848,74 @@ class _CompanyBookingOverviewItem {
       );
       return false;
     }
-    final isCreditEligible =
+    if (_isRefundBucketSettledFromRaw(raw)) {
+      debugPrint(
+        '[REFUND_BUCKET][SETTLED] booking=${_safeBookingRefForDiag(bookingRef)} '
+        'leg=${legType.isEmpty ? "-" : legType} reason=mollie_refund_complete',
+      );
+      _logCreditClassify(
+        bookingRef: bookingRef,
+        parentRef: parentRef,
+        legType: legType,
+        isPaid: true,
+        isCreditEligible: false,
+        reason: 'refund_settled',
+      );
+      return false;
+    }
+    final decision = _normStatus(creditDecision);
+    if (decision == 'NO_REFUND' || decision == 'HANDLED_MANUALLY') {
+      debugPrint(
+        '[CREDIT_DECISION][STATE] booking=${_safeBookingRefForDiag(bookingRef)} '
+        'leg=${legType.isEmpty ? "-" : legType} decision=$decision to_credit=false reason=settled_manual',
+      );
+      return false;
+    }
+    if (decision == 'FULL_CREDIT' || decision == 'PARTIAL_CREDIT') {
+      if (isManualPaymentProvider(paymentProvider)) {
+        debugPrint(
+          '[CREDIT_DECISION][STATE] booking=${_safeBookingRefForDiag(bookingRef)} '
+          'leg=${legType.isEmpty ? "-" : legType} decision=$decision to_credit=false reason=manual_provider',
+        );
+        return false;
+      }
+      if (_isRefundBucketSettledFromRaw(raw)) {
+        return false;
+      }
+      debugPrint(
+        '[CREDIT_DECISION][STATE] booking=${_safeBookingRefForDiag(bookingRef)} '
+        'leg=${legType.isEmpty ? "-" : legType} decision=$decision to_credit=true reason=awaiting_mollie_refund',
+      );
+      return true;
+    }
+    final resolvedCreditStatus = _normStatus(creditStatus);
+    if (resolvedCreditStatus == 'NO_REFUND' ||
+        resolvedCreditStatus == 'HANDLED_MANUALLY') {
+      return false;
+    }
+    if (resolvedCreditStatus == 'CREDITED' ||
+        resolvedCreditStatus == 'PARTIAL_CREDIT') {
+      if (isManualPaymentProvider(paymentProvider)) return false;
+      if (_isRefundBucketSettledFromRaw(raw)) return false;
+      return true;
+    }
+    final needsDecision =
         _isPendingCreditToken(creditStatus) ||
         _isPendingCreditToken(refundStatus) ||
         refundRequired;
+    debugPrint(
+      '[CREDIT_DECISION][STATE] booking=${_safeBookingRefForDiag(bookingRef)} '
+      'leg=${legType.isEmpty ? "-" : legType} to_credit=$needsDecision reason=${needsDecision ? "pending_decision" : "paid_not_creditable"}',
+    );
     _logCreditClassify(
       bookingRef: bookingRef,
       parentRef: parentRef,
       legType: legType,
       isPaid: true,
-      isCreditEligible: isCreditEligible,
-      reason: isCreditEligible ? 'pending_credit' : 'paid_not_creditable',
+      isCreditEligible: needsDecision,
+      reason: needsDecision ? 'pending_credit' : 'paid_not_creditable',
     );
-    return isCreditEligible;
+    return needsDecision;
   }
 
   static _CompanyBookingsFilter _bucketFromStatus({required String statusRaw}) {
@@ -1078,6 +1441,8 @@ class _CompanyBookingOverviewItem {
       creditStatus: creditStatus,
       refundStatus: refundStatus,
       refundRequired: refundRequired,
+      creditDecision: creditDecision,
+      paymentProvider: paymentProvider,
       bookingRef: referenceText.isEmpty ? bookingId : referenceText,
       parentRef: parentRef.isEmpty ? referenceText : parentRef,
       legType: legType,

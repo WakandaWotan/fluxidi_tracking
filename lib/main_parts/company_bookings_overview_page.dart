@@ -237,11 +237,16 @@ class _CompanyBookingsOverviewPageState
 
   Future<({bool ok, String error, bool auditResync})> _applyMollieRefundById({
     required String bookingId,
+    String? legId,
+    String? legType,
+    String refundScope = 'full_parent',
   }) async {
     final id = bookingId.trim();
     if (id.isEmpty) {
       return (ok: false, error: 'missing_booking_id', auditResync: false);
     }
+    final safeLegId = (legId ?? '').trim();
+    final safeLegType = (legType ?? '').trim();
     final scopeQuery = _activeBookingScopeQuery();
     final uri = _withActiveBookingScope(
       kBookingBaseUrl,
@@ -253,6 +258,12 @@ class _CompanyBookingsOverviewPageState
       'booking_id': id,
       'actor_role': actorRole,
       'actorRole': actorRole,
+      'refund_scope': refundScope,
+      'refundScope': refundScope,
+      if (safeLegId.isNotEmpty) 'leg_id': safeLegId,
+      if (safeLegId.isNotEmpty) 'legId': safeLegId,
+      if (safeLegType.isNotEmpty) 'leg_type': safeLegType,
+      if (safeLegType.isNotEmpty) 'legType': safeLegType,
       if (scopeQuery['tenant_id'] != null) 'tenant_id': scopeQuery['tenant_id'],
       if (scopeQuery['company_id'] != null)
         'company_id': scopeQuery['company_id'],
@@ -260,7 +271,12 @@ class _CompanyBookingsOverviewPageState
       if (scopeQuery['companyId'] != null) 'companyId': scopeQuery['companyId'],
     };
     try {
-      debugPrint('[COMPANY_BOOKINGS][MOLLIE_REFUND][REQ] booking=$id');
+      debugPrint(
+        '[COMPANY_BOOKINGS][MOLLIE_REFUND][REQ] booking=$id leg=${safeLegId.isEmpty ? "-" : safeLegId} scope=$refundScope',
+      );
+      debugPrint(
+        '[LEG_REFUND][TARGET] booking=$id leg=${safeLegId.isEmpty ? "-" : safeLegId} scope=$refundScope',
+      );
       final res = await http
           .post(
             uri,
@@ -331,7 +347,13 @@ class _CompanyBookingsOverviewPageState
       bool complianceEmitOk,
     })
   >
-  _applyMollieRefundStatusRefreshById({required String bookingId}) async {
+  _applyMollieRefundStatusRefreshById({
+    required String bookingId,
+    String? legId,
+    String? legType,
+    String refundScope = 'full_parent',
+    String? mollieRefundId,
+  }) async {
     final id = bookingId.trim();
     if (id.isEmpty) {
       return (
@@ -342,6 +364,9 @@ class _CompanyBookingsOverviewPageState
         complianceEmitOk: false,
       );
     }
+    final safeLegId = (legId ?? '').trim();
+    final safeLegType = (legType ?? '').trim();
+    final safeRefundId = (mollieRefundId ?? '').trim();
     final scopeQuery = _activeBookingScopeQuery();
     final uri = _withActiveBookingScope(
       kBookingBaseUrl,
@@ -353,6 +378,14 @@ class _CompanyBookingsOverviewPageState
       'booking_id': id,
       'actor_role': actorRole,
       'actorRole': actorRole,
+      'refund_scope': refundScope,
+      'refundScope': refundScope,
+      if (safeLegId.isNotEmpty) 'leg_id': safeLegId,
+      if (safeLegId.isNotEmpty) 'legId': safeLegId,
+      if (safeLegType.isNotEmpty) 'leg_type': safeLegType,
+      if (safeLegType.isNotEmpty) 'legType': safeLegType,
+      if (safeRefundId.isNotEmpty) 'mollie_refund_id': safeRefundId,
+      if (safeRefundId.isNotEmpty) 'mollieRefundId': safeRefundId,
       if (scopeQuery['tenant_id'] != null) 'tenant_id': scopeQuery['tenant_id'],
       if (scopeQuery['company_id'] != null)
         'company_id': scopeQuery['company_id'],
@@ -361,6 +394,20 @@ class _CompanyBookingsOverviewPageState
     };
     try {
       debugPrint('[COMPANY_BOOKINGS][MOLLIE_REFUND_STATUS][REQ] booking=$id');
+      debugPrint(
+        '[LEG_REFUND_STATUS][TARGET] booking=$id leg=${safeLegId.isEmpty ? "-" : safeLegId} '
+        'scope=$refundScope refund_id=${safeRefundId.isEmpty ? "empty" : "present"}',
+      );
+      // Visibility into what we actually transmit — useful when triaging
+      // missing_mollie_refund_id without leaking PII because the masked id
+      // presence is enough for diagnosis.
+      debugPrint(
+        '[LEG_REFUND_STATUS][PAYLOAD] booking=$id leg=${safeLegId.isEmpty ? "-" : safeLegId} '
+        'leg_type=${safeLegType.isEmpty ? "-" : safeLegType} '
+        'scope=$refundScope refund_id=${safeRefundId.isEmpty ? "empty" : "present"} '
+        'actor_role=$actorRole '
+        'body_keys=${payload.keys.toList()}',
+      );
       final res = await http
           .post(
             uri,
@@ -400,6 +447,13 @@ class _CompanyBookingsOverviewPageState
       debugPrint(
         '[COMPANY_BOOKINGS][MOLLIE_REFUND_STATUS][RES] booking=$id status=${res.statusCode} ok=$ok error=${err.isEmpty ? "-" : err} refund_status=${refundStatus.isEmpty ? "-" : refundStatus} mollie_refund_status=${mollieRefundStatus.isEmpty ? "-" : mollieRefundStatus} compliance_emit_ok=$complianceEmitOk',
       );
+      debugPrint(
+        '[LEG_REFUND_STATUS][RES] booking=$id leg=${safeLegId.isEmpty ? "-" : safeLegId} '
+        'scope=$refundScope http=${res.statusCode} ok=$ok '
+        'error=${err.isEmpty ? "-" : err} '
+        'refund_status=${refundStatus.isEmpty ? "-" : refundStatus} '
+        'mollie_refund_status=${mollieRefundStatus.isEmpty ? "-" : mollieRefundStatus}',
+      );
       if (decoded is! Map<String, dynamic>) {
         return (
           ok: false,
@@ -438,6 +492,10 @@ class _CompanyBookingsOverviewPageState
       debugPrint(
         '[COMPANY_BOOKINGS][MOLLIE_REFUND_STATUS][RES] booking=$id status=- ok=false error=request_failed refund_status=- mollie_refund_status=- compliance_emit_ok=false',
       );
+      debugPrint(
+        '[LEG_REFUND_STATUS][RES] booking=$id leg=${safeLegId.isEmpty ? "-" : safeLegId} '
+        'scope=$refundScope http=- ok=false error=request_failed',
+      );
       return (
         ok: false,
         error: 'request_failed',
@@ -452,12 +510,49 @@ class _CompanyBookingsOverviewPageState
     _CompanyBookingOverviewItem item,
   ) async {
     if (!_canShowMollieRefundStatusRefreshAction(item)) return;
-    final bookingId = _creditDecisionTargetBookingId(item);
+    // Hard runtime guard: never POST to the status-refresh endpoint when this
+    // exact row/leg has no refund id we can refresh. The helper already hides
+    // the button when [mollieRefundId] is empty; this defends against stale
+    // taps (e.g. background refresh after the id was cleared).
+    if (item.mollieRefundId.trim().isEmpty) {
+      final bookingRefDiag = item.referenceText.trim().isNotEmpty
+          ? item.referenceText.trim()
+          : item.bookingId.trim();
+      debugPrint(
+        '[REFUND_STATUS_BUTTON][HIDDEN_NO_REFUND_ID] booking=$bookingRefDiag '
+        'leg=${item.legId.trim().isEmpty ? "-" : item.legId.trim()} '
+        'reason=runtime_guard',
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Geen geldig terugbetaal-ID gevonden voor deze rit.',
+              en: 'No valid refund id available for this ride.',
+              fr: 'Aucun identifiant de remboursement valide pour ce trajet.',
+              es: 'No hay un identificador de reembolso válido para este viaje.',
+            ),
+          ),
+        ),
+      );
+      return;
+    }
+    final target = _CompanyBookingOverviewItem.resolveMollieRefundTarget(item);
+    final bookingId = target.bookingId.isNotEmpty
+        ? target.bookingId
+        : _creditDecisionTargetBookingId(item);
     if (bookingId.isEmpty || _isRefundingBooking(bookingId)) return;
     setState(() {
       _refundingBookingIds.add(bookingId);
     });
-    final out = await _applyMollieRefundStatusRefreshById(bookingId: bookingId);
+    final out = await _applyMollieRefundStatusRefreshById(
+      bookingId: bookingId,
+      legId: target.legId.isEmpty ? null : target.legId,
+      legType: target.legType.isEmpty ? null : target.legType,
+      refundScope: target.refundScope,
+      mollieRefundId: item.mollieRefundId,
+    );
     if (!mounted) return;
     setState(() {
       _refundingBookingIds.remove(bookingId);
@@ -544,15 +639,21 @@ class _CompanyBookingsOverviewPageState
     required String successMessage,
   }) async {
     if (!_canShowMollieRefundAction(item)) return;
-    final bookingId = _creditDecisionTargetBookingId(item);
-    if (bookingId.isEmpty || _isRefundingBooking(bookingId)) return;
+    final target = _CompanyBookingOverviewItem.resolveMollieRefundTarget(item);
+    if (target.bookingId.isEmpty || _isRefundingBooking(target.bookingId))
+      return;
     setState(() {
-      _refundingBookingIds.add(bookingId);
+      _refundingBookingIds.add(target.bookingId);
     });
-    final out = await _applyMollieRefundById(bookingId: bookingId);
+    final out = await _applyMollieRefundById(
+      bookingId: target.bookingId,
+      legId: target.legId.isEmpty ? null : target.legId,
+      legType: target.legType.isEmpty ? null : target.legType,
+      refundScope: target.refundScope,
+    );
     if (!mounted) return;
     setState(() {
-      _refundingBookingIds.remove(bookingId);
+      _refundingBookingIds.remove(target.bookingId);
     });
     if (out.ok) {
       await _loadBookings();
@@ -561,6 +662,11 @@ class _CompanyBookingsOverviewPageState
         context,
       ).showSnackBar(SnackBar(content: Text(successMessage)));
       return;
+    }
+    if (out.error == 'booking_not_cancelled' && target.legId.isNotEmpty) {
+      debugPrint(
+        '[LEG_REFUND][BLOCKED] booking=${target.bookingId} leg=${target.legId} reason=${out.error}',
+      );
     }
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -580,15 +686,21 @@ class _CompanyBookingsOverviewPageState
     _CompanyBookingOverviewItem item,
   ) async {
     if (!_canShowMollieRefundAuditResyncAction(item)) return;
-    final bookingId = _creditDecisionTargetBookingId(item);
-    if (bookingId.isEmpty || _isRefundingBooking(bookingId)) return;
+    final target = _CompanyBookingOverviewItem.resolveMollieRefundTarget(item);
+    if (target.bookingId.isEmpty || _isRefundingBooking(target.bookingId))
+      return;
     setState(() {
-      _refundingBookingIds.add(bookingId);
+      _refundingBookingIds.add(target.bookingId);
     });
-    final out = await _applyMollieRefundById(bookingId: bookingId);
+    final out = await _applyMollieRefundById(
+      bookingId: target.bookingId,
+      legId: target.legId.isEmpty ? null : target.legId,
+      legType: target.legType.isEmpty ? null : target.legType,
+      refundScope: target.refundScope,
+    );
     if (!mounted) return;
     setState(() {
-      _refundingBookingIds.remove(bookingId);
+      _refundingBookingIds.remove(target.bookingId);
     });
     if (out.ok && out.auditResync) {
       await _loadBookings();
@@ -805,11 +917,43 @@ class _CompanyBookingsOverviewPageState
       _decidingCreditBookingIds.remove(busyKey);
     });
     if (out.ok) {
+      debugPrint(
+        '[CREDIT_DECISION][STATE] booking=$bookingId leg=${item.legId.trim().isEmpty ? "-" : item.legId.trim()} '
+        'decision=$creditDecision ok=true',
+      );
       await _loadBookings();
       if (!mounted) return;
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text(successMessage)));
+      return;
+    }
+    // Stale UI race: the row was tapped after the backend (or another
+    // operator) already recorded a credit decision for this booking/leg.
+    // The backend signals this via `credit_decision_not_pending`. Treat it
+    // as a benign already-recorded outcome: refresh the list so the row
+    // re-renders with its current decision and show a passive confirmation
+    // instead of a scary failure dialog.
+    if (out.error == 'credit_decision_not_pending') {
+      debugPrint(
+        '[CREDIT_DECISION][ALREADY_RECORDED_REFRESH] booking=$bookingId '
+        'leg=${item.legId.trim().isEmpty ? "-" : item.legId.trim()} '
+        'attempted_decision=$creditDecision existing_decision=${item.creditDecision.trim().isEmpty ? "-" : item.creditDecision.trim()}',
+      );
+      await _loadBookings();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Creditbeslissing is al geregistreerd.',
+              en: 'Credit decision is already recorded.',
+              fr: 'La décision de crédit est déjà enregistrée.',
+              es: 'La decisión de crédito ya está registrada.',
+            ),
+          ),
+        ),
+      );
       return;
     }
     ScaffoldMessenger.of(context).showSnackBar(
@@ -897,37 +1041,15 @@ class _CompanyBookingsOverviewPageState
               style: TextStyle(color: tokens.textSecondary, height: 1.35),
             ),
             const SizedBox(height: 12),
-            TextField(
+            _buildPartialCreditAmountInputField(
               controller: controller,
-              keyboardType: const TextInputType.numberWithOptions(
-                decimal: true,
-              ),
-              style: TextStyle(
-                color: tokens.textPrimary,
-                fontSize: 16,
-                fontWeight: FontWeight.w600,
-              ),
-              cursorColor: tokens.accent,
-              decoration: InputDecoration(
-                labelText: _t(
-                  nl: 'Creditbedrag',
-                  en: 'Credit amount',
-                  fr: 'Montant crédit',
-                  es: 'Importe crédito',
-                ),
-                labelStyle: TextStyle(color: tokens.textSecondary),
-                filled: true,
-                fillColor: tokens.palette.surfaceAlt,
-                enabledBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(10),
-                  borderSide: BorderSide(color: tokens.cardBorder),
-                ),
-                focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(10),
-                  borderSide: BorderSide(color: tokens.accent, width: 1.4),
-                ),
-                hintText: _moneyLabelFromAmount(fullAmount, item.currency),
-                hintStyle: TextStyle(color: tokens.textTertiary),
+              tokens: tokens,
+              hintText: _moneyLabelFromAmount(fullAmount, item.currency),
+              labelText: _t(
+                nl: 'Creditbedrag',
+                en: 'Credit amount',
+                fr: 'Montant crédit',
+                es: 'Importe crédito',
               ),
             ),
           ],
@@ -956,15 +1078,57 @@ class _CompanyBookingsOverviewPageState
     );
     if (confirmed != true || !mounted) return;
     final parsed = num.tryParse(controller.text.trim().replaceAll(',', '.'));
-    if (parsed == null || parsed <= 0 || parsed >= fullAmount) {
+    if (parsed == null) {
+      debugPrint(
+        '[CREDIT_DECISION][VALIDATION] booking=${_creditDecisionTargetBookingId(item)} '
+        'leg=${item.legId.trim().isEmpty ? "-" : item.legId.trim()} result=invalid_parse',
+      );
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
             _t(
-              nl: 'Voer een bedrag groter dan 0 en kleiner dan het volledige bedrag in.',
-              en: 'Enter an amount greater than 0 and less than the full amount.',
-              fr: 'Saisissez un montant supérieur à 0 et inférieur au montant total.',
-              es: 'Introduce un importe mayor que 0 y menor que el importe total.',
+              nl: 'Voer een geldig bedrag in.',
+              en: 'Enter a valid amount.',
+              fr: 'Saisissez un montant valide.',
+              es: 'Introduce un importe válido.',
+            ),
+          ),
+        ),
+      );
+      return;
+    }
+    if (parsed <= 0) {
+      debugPrint(
+        '[CREDIT_DECISION][VALIDATION] booking=${_creditDecisionTargetBookingId(item)} '
+        'leg=${item.legId.trim().isEmpty ? "-" : item.legId.trim()} result=invalid_non_positive',
+      );
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Voer een bedrag groter dan 0 in.',
+              en: 'Enter an amount greater than 0.',
+              fr: 'Saisissez un montant supérieur à 0.',
+              es: 'Introduce un importe mayor que 0.',
+            ),
+          ),
+        ),
+      );
+      return;
+    }
+    if (parsed >= fullAmount) {
+      debugPrint(
+        '[CREDIT_DECISION][VALIDATION] booking=${_creditDecisionTargetBookingId(item)} '
+        'leg=${item.legId.trim().isEmpty ? "-" : item.legId.trim()} amount=$parsed max=$fullAmount result=use_full_credit',
+      );
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Gebruik volledige terugbetaling voor het volledige bedrag.',
+              en: 'Use full credit for the full amount.',
+              fr: 'Utilisez le crédit complet pour le montant total.',
+              es: 'Usa el crédito total para el importe completo.',
             ),
           ),
         ),
@@ -1187,40 +1351,51 @@ class _CompanyBookingsOverviewPageState
     }
   }
 
-  Future<_AdminCancelPaidScope?> _showRoundtripCancelPaidDialog(
+  /// Leg-row cancellation confirmation.
+  ///
+  /// Company overview is now leg-first: each row represents one operational
+  /// leg. We therefore only confirm cancellation of the selected leg. Full
+  /// roundtrip cancellation must be triggered from the parent booking detail
+  /// surface, not from a row action, so we no longer offer that option here.
+  Future<bool> _showLegCancelPaidDialog(
     _CompanyBookingOverviewItem item,
     _CompanyBookingsThemeTokens tokens,
-  ) {
-    final legLabel = _companyLegLabel(item);
-    return showDialog<_AdminCancelPaidScope>(
+  ) async {
+    debugPrint(
+      '[COMPANY_LEG_CANCEL][DIALOG] parent=${item.parentBookingId.trim().isNotEmpty ? item.parentBookingId.trim() : item.bookingId.trim()} '
+      'leg=${item.legId.trim().isEmpty ? "-" : item.legId.trim()} '
+      'leg_type=${item.legType.trim().isEmpty ? "-" : item.legType.trim()} '
+      'mode=leg_only',
+    );
+    final result = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: tokens.palette.surface,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
         title: Text(
           _t(
-            nl: 'Rondrit annuleren?',
-            en: 'Cancel roundtrip ride?',
-            fr: 'Annuler le trajet aller-retour ?',
-            es: '¿Cancelar viaje de ida y vuelta?',
+            nl: 'Deze rit annuleren?',
+            en: 'Cancel this ride?',
+            fr: 'Annuler ce trajet ?',
+            es: '¿Cancelar este viaje?',
           ),
           style: TextStyle(color: tokens.textPrimary),
         ),
         content: Text(
           _t(
-            nl: 'Deze boeking heeft meerdere ritten. Kies of je alleen $legLabel annuleert of de volledige rondrit.',
-            en: 'This booking has multiple legs. Choose whether to cancel only $legLabel or the full roundtrip.',
-            fr: 'Cette réservation comporte plusieurs trajets. Choisissez d’annuler uniquement $legLabel ou l’aller-retour complet.',
-            es: 'Esta reserva tiene varios tramos. Elige si cancelar solo $legLabel o la ida y vuelta completa.',
+            nl: 'Alleen deze rit wordt geannuleerd. De andere rit blijft ongewijzigd.',
+            en: 'Only this ride will be cancelled. The other ride remains unchanged.',
+            fr: 'Seul ce trajet sera annulé. L’autre trajet reste inchangé.',
+            es: 'Solo se cancelará este viaje. El otro viaje permanece sin cambios.',
           ),
           style: TextStyle(color: tokens.textSecondary, height: 1.35),
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.of(ctx).pop(null),
+            onPressed: () => Navigator.of(ctx).pop(false),
             child: Text(
               _t(
-                nl: 'Boeking behouden',
+                nl: 'Behouden',
                 en: 'Keep booking',
                 fr: 'Conserver la réservation',
                 es: 'Mantener reserva',
@@ -1228,41 +1403,25 @@ class _CompanyBookingsOverviewPageState
               style: TextStyle(color: tokens.textSecondary),
             ),
           ),
-          OutlinedButton(
-            onPressed: () =>
-                Navigator.of(ctx).pop(_AdminCancelPaidScope.singleLeg),
-            style: OutlinedButton.styleFrom(
-              foregroundColor: tokens.danger.withOpacity(0.96),
-              side: BorderSide(color: tokens.danger.withOpacity(0.45)),
-            ),
-            child: Text(
-              _t(
-                nl: 'Alleen deze rit annuleren',
-                en: 'Cancel only this leg',
-                fr: 'Annuler uniquement ce trajet',
-                es: 'Cancelar solo este tramo',
-              ),
-            ),
-          ),
           FilledButton(
             style: FilledButton.styleFrom(
               backgroundColor: tokens.danger,
               foregroundColor: Colors.white,
             ),
-            onPressed: () =>
-                Navigator.of(ctx).pop(_AdminCancelPaidScope.fullRoundtrip),
+            onPressed: () => Navigator.of(ctx).pop(true),
             child: Text(
               _t(
-                nl: 'Volledige rondrit annuleren',
-                en: 'Cancel full roundtrip',
-                fr: 'Annuler l’aller-retour complet',
-                es: 'Cancelar ida y vuelta completa',
+                nl: 'Rit annuleren',
+                en: 'Cancel ride',
+                fr: 'Annuler le trajet',
+                es: 'Cancelar viaje',
               ),
             ),
           ),
         ],
       ),
     );
+    return result == true;
   }
 
   Future<void> _cancelPaidBookingAsAdmin(
@@ -1274,16 +1433,9 @@ class _CompanyBookingsOverviewPageState
     if (bookingId.isEmpty || _isCancellingBooking(busyKey)) return;
     final tokens = _themeTokensFor(businessThemeNotifier.value);
     final isRoundtripLeg = _isRoundtripLegCancelEligible(item);
-    _AdminCancelPaidScope? roundtripScope;
     if (isRoundtripLeg) {
-      roundtripScope = await _showRoundtripCancelPaidDialog(item, tokens);
-      if (roundtripScope == null || !mounted) return;
-      debugPrint(
-        '[ROUNDTRIP_CANCEL][CHOICE] parent=${item.parentBookingId.trim().isNotEmpty ? item.parentBookingId.trim() : bookingId} '
-        'leg=${item.legId.trim().isEmpty ? "-" : item.legId.trim()} '
-        'leg_type=${item.legType.trim().isEmpty ? "-" : item.legType.trim()} '
-        'choice=${roundtripScope == _AdminCancelPaidScope.singleLeg ? "single_leg" : "full_roundtrip"}',
-      );
+      final confirmed = await _showLegCancelPaidDialog(item, tokens);
+      if (!confirmed || !mounted) return;
     } else {
       final confirmed = await showDialog<bool>(
         context: context,
@@ -1344,8 +1496,14 @@ class _CompanyBookingsOverviewPageState
       if (confirmed != true || !mounted) return;
     }
     final cancelScope = isRoundtripLeg
-        ? roundtripScope!
+        ? _AdminCancelPaidScope.singleLeg
         : _AdminCancelPaidScope.fullRoundtrip;
+    debugPrint(
+      '[COMPANY_LEG_CANCEL][TARGET] parent=${item.parentBookingId.trim().isNotEmpty ? item.parentBookingId.trim() : bookingId} '
+      'leg=${item.legId.trim().isEmpty ? "-" : item.legId.trim()} '
+      'leg_type=${item.legType.trim().isEmpty ? "-" : item.legType.trim()} '
+      'scope=${cancelScope == _AdminCancelPaidScope.singleLeg ? "single_leg" : "full_parent"}',
+    );
     setState(() {
       _cancellingBookingIds.add(busyKey);
     });
@@ -1785,6 +1943,12 @@ class _CompanyBookingsOverviewPageState
         if (_CompanyBookingOverviewItem.shouldShowMollieRefundStatus(item)) {
           _CompanyBookingOverviewItem.logRefundStateDiagnostic(item);
         }
+        if (_CompanyBookingOverviewItem.isPaidPaymentStatus(
+          item.paymentStatus,
+        )) {
+          _CompanyBookingOverviewItem.logRefundBucketStateDiagnostic(item);
+        }
+        _CompanyBookingOverviewItem.logRefundQueueDiagnostic(item);
         if (!item.isPendingCredit &&
             _CompanyBookingOverviewItem.isPaidPaymentStatus(
               item.paymentStatus,
@@ -1852,21 +2016,34 @@ class _CompanyBookingsOverviewPageState
             .where((item) => item.bucket == _CompanyBookingsFilter.completed)
             .toList(growable: false);
       case _CompanyBookingsFilter.cancelled:
+        // Paid cancelled legs that still need a credit decision or refund
+        // follow-up live in **Te crediteren** only. Settled paid cancelled
+        // legs and unpaid cancelled legs surface here with a settlement chip.
         return _all
-            .where((item) => item.bucket == _CompanyBookingsFilter.cancelled)
+            .where(_CompanyBookingOverviewItem.isCancelledBucketVisible)
             .toList(growable: false);
       case _CompanyBookingsFilter.toCredit:
         return _all
-            .where((item) => item.isPendingCredit)
+            .where(_CompanyBookingOverviewItem.isToCreditBucketVisible)
             .toList(growable: false);
     }
   }
 
   String _countText(_CompanyBookingsFilter filter) {
-    if (filter == _CompanyBookingsFilter.toCredit) {
-      return _all.where((item) => item.isPendingCredit).length.toString();
+    switch (filter) {
+      case _CompanyBookingsFilter.cancelled:
+        return _all
+            .where(_CompanyBookingOverviewItem.isCancelledBucketVisible)
+            .length
+            .toString();
+      case _CompanyBookingsFilter.toCredit:
+        return _all
+            .where(_CompanyBookingOverviewItem.isToCreditBucketVisible)
+            .length
+            .toString();
+      default:
+        return _all.where((item) => item.bucket == filter).length.toString();
     }
-    return _all.where((item) => item.bucket == filter).length.toString();
   }
 
   String _formatPickup(String raw) {
@@ -2008,6 +2185,48 @@ class _CompanyBookingsOverviewPageState
     return normalized.replaceAll('_', ' ');
   }
 
+  String _localizedCreditDecisionRecordedChip(
+    _CompanyBookingOverviewItem item,
+  ) {
+    final amountLabel = item.creditedAmountCents != null
+        ? _moneyLabelFromAmount(item.creditedAmountCents! / 100, item.currency)
+        : '';
+    switch (item.creditDecision.trim().toUpperCase()) {
+      case 'FULL_CREDIT':
+        final base = _t(
+          nl: 'Volledige credit geregistreerd',
+          en: 'Full credit recorded',
+          fr: 'Crédit complet enregistré',
+          es: 'Crédito total registrado',
+        );
+        return amountLabel.isNotEmpty ? '$base · $amountLabel' : base;
+      case 'PARTIAL_CREDIT':
+        final base = _t(
+          nl: 'Gedeeltelijke credit geregistreerd',
+          en: 'Partial credit recorded',
+          fr: 'Crédit partiel enregistré',
+          es: 'Crédito parcial registrado',
+        );
+        return amountLabel.isNotEmpty ? '$base · $amountLabel' : base;
+      case 'NO_REFUND':
+        return _t(
+          nl: 'Geen terugbetaling',
+          en: 'No refund',
+          fr: 'Pas de remboursement',
+          es: 'Sin reembolso',
+        );
+      case 'HANDLED_MANUALLY':
+        return _t(
+          nl: 'Handmatig afgehandeld',
+          en: 'Handled manually',
+          fr: 'Traité manuellement',
+          es: 'Gestionado manualmente',
+        );
+      default:
+        return _localizedCreditDecision(item.creditDecision);
+    }
+  }
+
   String _localizedCreditDecision(String raw) {
     switch (raw.trim().toUpperCase()) {
       case 'FULL_CREDIT':
@@ -2074,6 +2293,78 @@ class _CompanyBookingsOverviewPageState
     return _moneyLabelFromAmount(item.amount, item.currency);
   }
 
+  Widget _buildPartialCreditAmountInputField({
+    required TextEditingController controller,
+    required _CompanyBookingsThemeTokens tokens,
+    required String hintText,
+    required String labelText,
+  }) {
+    final variant = businessThemeNotifier.value;
+    final isClean = variant == BusinessThemeVariant.cleanProfessional;
+    final inputTextColor = isClean
+        ? const Color(0xFF1C2430)
+        : tokens.textPrimary;
+    final inputLabelColor = isClean
+        ? const Color(0xFF2D3A4C)
+        : tokens.textSecondary;
+    final inputHintColor = isClean
+        ? const Color(0xFF5F6B7A)
+        : tokens.textTertiary;
+    final inputFillColor = isClean
+        ? const Color(0xFFFFFFFF)
+        : tokens.palette.surfaceAlt;
+    final inputBorderColor = isClean
+        ? const Color(0xFFB7C4D3)
+        : tokens.cardBorder;
+    final inputFocusColor = isClean ? const Color(0xFF3B82F6) : tokens.accent;
+    debugPrint(
+      '[REFUND_INPUT_THEME][CONTRAST] variant=${variant.name} is_clean=$isClean '
+      'text=0x${inputTextColor.value.toRadixString(16)} '
+      'fill=0x${inputFillColor.value.toRadixString(16)} '
+      'border=0x${inputBorderColor.value.toRadixString(16)}',
+    );
+    return Theme(
+      data: Theme.of(context).copyWith(
+        brightness: tokens.palette.isDark ? Brightness.dark : Brightness.light,
+        textSelectionTheme: TextSelectionThemeData(
+          cursorColor: inputFocusColor,
+          selectionColor: inputFocusColor.withOpacity(0.28),
+          selectionHandleColor: inputFocusColor,
+        ),
+        inputDecorationTheme: InputDecorationTheme(
+          filled: true,
+          fillColor: inputFillColor,
+        ),
+      ),
+      child: TextField(
+        controller: controller,
+        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+        style: TextStyle(
+          color: inputTextColor,
+          fontSize: 16,
+          fontWeight: FontWeight.w600,
+        ),
+        cursorColor: inputFocusColor,
+        decoration: InputDecoration(
+          labelText: labelText,
+          labelStyle: TextStyle(color: inputLabelColor),
+          hintText: hintText,
+          hintStyle: TextStyle(color: inputHintColor),
+          filled: true,
+          fillColor: inputFillColor,
+          enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(10),
+            borderSide: BorderSide(color: inputBorderColor),
+          ),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(10),
+            borderSide: BorderSide(color: inputFocusColor, width: 1.4),
+          ),
+        ),
+      ),
+    );
+  }
+
   String _companyLegLabel(_CompanyBookingOverviewItem item) {
     final type = item.legType.trim().toLowerCase();
     if (type == 'return') {
@@ -2100,9 +2391,14 @@ class _CompanyBookingsOverviewPageState
     _CompanyBookingsThemeTokens tokens,
   ) {
     final isToCredit = item.isPendingCredit;
+    final showCreditDecisionActions =
+        _CompanyBookingOverviewItem.canShowCreditDecisionActions(item);
     final legScopedCredit =
         _CompanyBookingOverviewItem.isRoundtripOperationalLegRow(item);
-    final creditDecisionLabel = _localizedCreditDecision(item.creditDecision);
+    final creditDecisionRecordedChip =
+        _CompanyBookingOverviewItem.hasCreditDecisionRecorded(item)
+        ? _localizedCreditDecisionRecordedChip(item)
+        : '';
     final fullCreditButtonLabel = legScopedCredit && item.amount != null
         ? _t(
             nl: 'Volledige credit (${_moneyLabelFromAmount(item.amount, item.currency)})',
@@ -2116,11 +2412,7 @@ class _CompanyBookingsOverviewPageState
             fr: 'Crédit complet',
             es: 'Crédito total',
           );
-    final creditedAmountLabel = item.creditedAmountCents != null
-        ? _moneyLabelFromAmount(item.creditedAmountCents! / 100, item.currency)
-        : '';
-    final showCreditDecisionBadge =
-        !isToCredit && item.creditDecision.trim().isNotEmpty;
+    final showCreditDecisionBadge = creditDecisionRecordedChip.isNotEmpty;
     final creditTargetId = _creditDecisionTargetBookingId(item);
     final creditBusyKey = _creditDecisionBusyKey(item);
     final creditBusy = _isDecidingCredit(creditBusyKey);
@@ -2418,9 +2710,7 @@ class _CompanyBookingsOverviewPageState
                       ),
                     ),
                     child: Text(
-                      creditedAmountLabel.isNotEmpty
-                          ? '$creditDecisionLabel · $creditedAmountLabel'
-                          : creditDecisionLabel,
+                      creditDecisionRecordedChip,
                       style: TextStyle(
                         color: tokens.textSecondary.withOpacity(0.98),
                         fontSize: 11.1,
@@ -2554,7 +2844,7 @@ class _CompanyBookingsOverviewPageState
                 ),
               ),
             ],
-            if (isToCredit) ...[
+            if (showCreditDecisionActions) ...[
               const SizedBox(height: 10),
               Wrap(
                 spacing: 8,
