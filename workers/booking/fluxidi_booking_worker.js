@@ -32552,6 +32552,7 @@ function buildBookingCreditDecisionComplianceEvent(
     creditedAmountCents = 0,
     actorRole = "admin",
     sourceEndpoint = "/bookings/:id/credit-decision",
+    leg = null,
   } = {},
 ) {
   const rec = recordOrBooking && typeof recordOrBooking === "object" ? recordOrBooking : {};
@@ -32605,11 +32606,11 @@ function buildBookingCreditDecisionComplianceEvent(
     64,
   );
   const rideType = _resolveComplianceRideTypeFromRecord(rec);
-  // Patch 3: additive assignment + context (parent-scope today — leg
-  // scoped credit decisions skip this builder entirely and will be
-  // addressed in Patch 3B). Spread at the end so existing required
-  // fields are unaffected.
-  const assignmentContext = _bookingComplianceAssignmentContext(rec);
+  // Patch 3B-payload: forward optional leg context to the assignment
+  // helper. Existing callers omit `leg` and continue to receive the
+  // parent-scope assignment block unchanged. Future leg-scoped emits
+  // (Patch 3B-emit) can pass the originating operational leg here.
+  const assignmentContext = _bookingComplianceAssignmentContext(rec, { leg });
   return {
     event_type: "booking_credit_decision",
     tenant_id: tenantId,
@@ -33641,6 +33642,7 @@ function buildBookingMollieRefundComplianceEvent(
     refundedAt = "",
     sourceEndpoint = "/bookings/:id/mollie-refund",
     sourceOverride = "",
+    leg = null,
   } = {},
 ) {
   const rec = recordOrBooking && typeof recordOrBooking === "object" ? recordOrBooking : {};
@@ -33701,10 +33703,11 @@ function buildBookingMollieRefundComplianceEvent(
     normalizedRefundStatus === "refunded"
       ? "refunded"
       : "cancelled";
-  // Patch 3: additive assignment + context. Parent-scope today; spread
-  // at the end so refund_id / refund_status / payment block remain the
-  // authoritative top-level fields.
-  const assignmentContext = _bookingComplianceAssignmentContext(rec);
+  // Patch 3B-payload: forward optional leg context to the assignment
+  // helper. Existing callers omit `leg` and continue to receive the
+  // parent-scope assignment block unchanged. Future leg-scoped emits
+  // (Patch 3B-emit) can pass the originating operational leg here.
+  const assignmentContext = _bookingComplianceAssignmentContext(rec, { leg });
   return {
     event_type: "booking_mollie_refund",
     tenant_id: tenantId,
@@ -34979,6 +34982,7 @@ function buildBookingStatusUpdateComplianceEvent(
     previousStatus = null,
     actorRole = "",
     sourceEndpoint = "/bookings/:id/status",
+    leg = null,
   } = {},
 ) {
   const rec = recordOrBooking && typeof recordOrBooking === "object" ? recordOrBooking : {};
@@ -35064,7 +35068,10 @@ function buildBookingStatusUpdateComplianceEvent(
   // is intentionally overridden below with newStatusLower so the event's
   // parent_status always equals the transition's new status, regardless
   // of the record's persisted-at-call-time lifecycle_status.
-  const assignmentContext = _bookingComplianceAssignmentContext(rec);
+  // Patch 3B-payload: forward optional originating-leg context so a
+  // parent-status transition derived from a single leg's mutation can
+  // carry leg_id / leg_type / leg_status / assignment for that leg.
+  const assignmentContext = _bookingComplianceAssignmentContext(rec, { leg });
   const complianceEvent = {
     event_type: "booking_status_update",
     tenant_id: tenantId,
@@ -58380,6 +58387,12 @@ async function updateBookingOperationalLegStatusAuthoritative(
     });
   }
 
+  // Patch 3B-payload: resolve the originating operational leg once so it
+  // can both enrich the parent-derived status compliance event and be
+  // reused for the existing selectedLegType log without a second find().
+  const matchedLeg = allLegs.find((entry) =>
+    safeStr(entry?.leg_id ?? entry?.legId, 200) === safeLegId,
+  ) || null;
   try {
     if (previousParentStatus !== derivedParentStatus) {
       const complianceEvent = buildBookingStatusUpdateComplianceEvent(rec, safeBookingId, {
@@ -58388,6 +58401,7 @@ async function updateBookingOperationalLegStatusAuthoritative(
         actorRole: options?.actor_role,
         sourceEndpoint:
           options?.source_endpoint || "/bookings/:bookingId/legs/:legId/status",
+        leg: matchedLeg,
       });
       if (complianceEvent) {
         emitComplianceEventBestEffort(env, complianceEvent, {
@@ -58401,8 +58415,7 @@ async function updateBookingOperationalLegStatusAuthoritative(
   }
 
   const selectedLegType = safeStr(
-    allLegs.find((entry) => safeStr(entry?.leg_id ?? entry?.legId, 200) === safeLegId)?.leg_type ??
-      allLegs.find((entry) => safeStr(entry?.leg_id ?? entry?.legId, 200) === safeLegId)?.legType,
+    matchedLeg?.leg_type ?? matchedLeg?.legType,
     24,
   ) || "-";
   console.log(
