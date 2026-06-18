@@ -38882,6 +38882,8 @@ Retour route: ${return_from || to} → ${return_to || from}`,
           driver: legResult.assignedDriver,
           driverId: legResult.assignedDriverId,
           nowIso: bookingCreatedAt,
+          vehicleSummary: legResult.vehicleSummary || null,
+          diagnostics: legResult.diagnostics || null,
         });
         console.log(
           `[ROUNDTRIP_DISPATCH][LEG_ASSIGNMENT_WRITE] leg=${legType || "leg"} booking=${_bookingIntentMask(canonicalBookingId)} assigned_vehicle=${_bookingIntentMask(legResult.assignedVehicleId)} assigned_driver=${_bookingIntentMask(legResult.assignedDriverId)}`,
@@ -42766,7 +42768,17 @@ function _buildSplitRoundtripLegDispatchSpecs({
   );
 }
 
-function _stampOperationalLegFleetAssignment(leg, { vehicleId, driver, driverId, nowIso }) {
+function _stampOperationalLegFleetAssignment(
+  leg,
+  {
+    vehicleId,
+    driver,
+    driverId,
+    nowIso,
+    vehicleSummary = null,
+    diagnostics = null,
+  } = {},
+) {
   if (!leg || typeof leg !== "object") return leg;
   const safeVehicleId = safeStr(vehicleId, 128) || null;
   const safeDriverId =
@@ -42782,6 +42794,86 @@ function _stampOperationalLegFleetAssignment(leg, { vehicleId, driver, driverId,
   if (driver && typeof driver === "object") {
     leg.assigned_driver = driver;
     leg.assignedDriver = driver;
+    // Additive flat aliases so downstream readers do not need to dereference
+    // assigned_driver.{name,phone}. Existing readers that only look at
+    // assigned_driver_id keep working unchanged.
+    const driverSummary = _normalizeAssignedDriverSummaryForLeg(driver);
+    if (driverSummary) {
+      if (driverSummary.name) {
+        leg.assigned_driver_name = driverSummary.name;
+        leg.assignedDriverName = driverSummary.name;
+      }
+      if (driverSummary.phone) {
+        leg.assigned_driver_phone = driverSummary.phone;
+        leg.assignedDriverPhone = driverSummary.phone;
+      }
+    }
+  }
+  // Vehicle metadata is purely additive — `assigned_vehicle_id` already
+  // exists and continues to be the authoritative id. The flat fields below
+  // make Chiron / local register / search-index work without a separate
+  // inventory lookup. Missing values are silently skipped so the leg is
+  // never polluted with null placeholders.
+  if (vehicleSummary && typeof vehicleSummary === "object") {
+    const summaryVehicleId = safeStr(vehicleSummary.vehicle_id ?? vehicleSummary.vehicleId, 128);
+    const matchesAssignedVehicleId =
+      !safeVehicleId || !summaryVehicleId || summaryVehicleId === safeVehicleId;
+    if (matchesAssignedVehicleId) {
+      leg.assigned_vehicle = vehicleSummary;
+      leg.assignedVehicle = vehicleSummary;
+      const vehicleName = safeStr(vehicleSummary.vehicle_name ?? vehicleSummary.vehicleName, 160);
+      const brandModel = safeStr(vehicleSummary.brand_model ?? vehicleSummary.brandModel, 160);
+      const licensePlate = safeStr(
+        vehicleSummary.license_plate ?? vehicleSummary.licensePlate,
+        64,
+      );
+      const color = safeStr(vehicleSummary.color, 80);
+      const exploitationLicenseNumber = safeStr(
+        vehicleSummary.exploitation_license_number ??
+          vehicleSummary.exploitationLicenseNumber,
+        120,
+      );
+      const vehicleRegistrationNumber = safeStr(
+        vehicleSummary.vehicle_registration_number ??
+          vehicleSummary.vehicleRegistrationNumber,
+        120,
+      );
+      if (vehicleName) {
+        leg.assigned_vehicle_name = vehicleName;
+        leg.assignedVehicleName = vehicleName;
+      }
+      if (brandModel) {
+        leg.assigned_vehicle_brand_model = brandModel;
+        leg.assignedVehicleBrandModel = brandModel;
+      }
+      if (licensePlate) {
+        leg.assigned_vehicle_license_plate = licensePlate;
+        leg.assignedVehicleLicensePlate = licensePlate;
+        // Stable alias under the more compact name used by downstream
+        // readers (Chiron / Flutter ledger / search index).
+        leg.license_plate = licensePlate;
+        leg.licensePlate = licensePlate;
+      }
+      if (color) {
+        leg.assigned_vehicle_color = color;
+        leg.assignedVehicleColor = color;
+      }
+      if (exploitationLicenseNumber) {
+        leg.assigned_vehicle_exploitation_license_number = exploitationLicenseNumber;
+        leg.assignedVehicleExploitationLicenseNumber = exploitationLicenseNumber;
+      }
+      if (vehicleRegistrationNumber) {
+        leg.assigned_vehicle_registration_number = vehicleRegistrationNumber;
+        leg.assignedVehicleRegistrationNumber = vehicleRegistrationNumber;
+      }
+    }
+  }
+  // Allocator diagnostics block. Strictly informational, never used to
+  // gate dispatch decisions. Only stamped when there is something
+  // meaningful to record. Old records without this block keep working.
+  if (diagnostics && typeof diagnostics === "object") {
+    leg.allocator_diagnostics = diagnostics;
+    leg.allocatorDiagnostics = diagnostics;
   }
   if (nowIso) {
     leg.updated_at = nowIso;
@@ -42810,6 +42902,8 @@ function _applySplitRoundtripLegAssignmentsToRecord(rec, legResults, nowIso) {
         driver: result.assignedDriver,
         driverId: result.assignedDriverId,
         nowIso,
+        vehicleSummary: result.vehicleSummary || null,
+        diagnostics: result.diagnostics || null,
       });
     }
     return legs;
@@ -51451,6 +51545,202 @@ function _assignedDriverFromVehicle(vehicle) {
     name: name || null,
     phone: phone || null,
   };
+}
+
+// Normalizes any "driver" shape (allocator result, vehicle inventory entry,
+// stamped leg field) into a stable {driver_id,name,phone} summary. Strictly
+// readonly; returns null when no usable identity is present so callers can
+// detect "no enrichment available" without inventing values.
+function _normalizeAssignedDriverSummaryForLeg(driver) {
+  if (!driver || typeof driver !== "object") return null;
+  const driverId = safeStr(
+    driver.driver_id ?? driver.driverId ?? driver.id,
+    96,
+  );
+  const name = safeStr(
+    driver.name ?? driver.full_name ?? driver.fullName ?? driver.display_name,
+    160,
+  );
+  const phone = safeStr(driver.phone ?? driver.phone_number ?? driver.phoneNumber, 64);
+  if (!driverId && !name && !phone) return null;
+  return {
+    driver_id: driverId || null,
+    name: name || null,
+    phone: phone || null,
+  };
+}
+
+// Extracts the public-safe vehicle metadata fields from a vehicle inventory
+// entry (the shape returned by _normalizeVehicleEntry). Returns null when
+// the entry carries nothing usable beyond the id; never throws. Strictly
+// additive — callers may stamp this onto the operational leg without
+// touching the existing flat `assigned_vehicle_id` field.
+function _normalizeAssignedVehicleSummaryFromInventoryEntry(vehicle) {
+  if (!vehicle || typeof vehicle !== "object") return null;
+  const vehicleId = safeStr(vehicle.vehicle_id ?? vehicle.vehicleId ?? vehicle.id, 128);
+  if (!vehicleId) return null;
+  const vehicleName = safeStr(vehicle.vehicle_name ?? vehicle.vehicleName ?? vehicle.name, 160);
+  const brandModel = safeStr(vehicle.brand_model ?? vehicle.brandModel, 160);
+  const licensePlate = safeStr(vehicle.license_plate ?? vehicle.licensePlate, 64);
+  const color = safeStr(vehicle.color, 80);
+  const exploitationLicenseNumber = safeStr(
+    vehicle.exploitation_license_number ?? vehicle.exploitationLicenseNumber,
+    120,
+  );
+  const vehicleRegistrationNumber = safeStr(
+    vehicle.vehicle_registration_number ?? vehicle.vehicleRegistrationNumber,
+    120,
+  );
+  // If only the id is known there is nothing additive to stamp; signal
+  // "no enrichment" instead of polluting the leg with nulls.
+  if (
+    !vehicleName &&
+    !brandModel &&
+    !licensePlate &&
+    !color &&
+    !exploitationLicenseNumber &&
+    !vehicleRegistrationNumber
+  ) {
+    return null;
+  }
+  return {
+    vehicle_id: vehicleId,
+    vehicle_name: vehicleName || null,
+    brand_model: brandModel || null,
+    license_plate: licensePlate || null,
+    color: color || null,
+    exploitation_license_number: exploitationLicenseNumber || null,
+    vehicle_registration_number: vehicleRegistrationNumber || null,
+  };
+}
+
+// Best-effort vehicle metadata lookup keyed by vehicle_id and the leg's
+// fleet scope. Mirrors _driverSummaryForVehicleId so that enrichment costs
+// at most one extra inventory read per allocation (and is cache-hot when
+// allocation already happened a moment ago). Returns null on any failure
+// or when the entry is missing; never throws.
+async function _vehicleSummaryForVehicleId(env, vehicleId, scope = null) {
+  const wanted = safeStr(vehicleId, 128);
+  if (!wanted || !env?.BOOKING_KV) return null;
+  try {
+    const normalizedScope = normalizeFleetTenantScope(scope);
+    const vehicles = await _loadVehicleInventory(env, { scope: normalizedScope });
+    const hit = vehicles.find((v) => v?.vehicle_id === wanted);
+    return _normalizeAssignedVehicleSummaryFromInventoryEntry(hit || null);
+  } catch (_) {
+    return null;
+  }
+}
+
+// Builds a small informational diagnostics block for an operational leg,
+// based ONLY on values already returned by the allocator (`alloc`) and the
+// dispatch trigger label. Never invents reasons: every field is omitted
+// when the underlying value is missing. Used for audit, never for any
+// dispatch decision. Backward compatible: legs that already exist without
+// this block must keep working unchanged.
+function _buildLegAllocatorDiagnostics({
+  alloc = null,
+  sourceLabel = "",
+  nowIso = "",
+  vehicleId = "",
+  driverId = "",
+} = {}) {
+  const safeAlloc = alloc && typeof alloc === "object" ? alloc : null;
+  const safeNowIso = safeStr(nowIso, 80);
+  const safeVehicleId = safeStr(vehicleId, 128);
+  const safeDriverId = safeStr(driverId, 96);
+  const safeSourceLabel = safeStr(sourceLabel, 64);
+  const allocSource = safeAlloc ? safeStr(safeAlloc.source, 40) : "";
+  const allocReason = safeAlloc ? safeStr(safeAlloc.reason, 80) : "";
+  const allocReasonCode = safeAlloc ? safeStr(safeAlloc.reason_code, 80) : "";
+  const allocBlockReason = safeAlloc ? safeStr(safeAlloc.block_reason, 80) : "";
+  const suitableVehicleCount = safeAlloc
+    && Number.isFinite(Number(safeAlloc.suitable_vehicle_count))
+    ? Math.max(0, Math.trunc(Number(safeAlloc.suitable_vehicle_count)))
+    : null;
+  const occupiedAssignedCount = safeAlloc
+    && Number.isFinite(Number(safeAlloc.occupied_assigned_count))
+    ? Math.max(0, Math.trunc(Number(safeAlloc.occupied_assigned_count)))
+    : null;
+  const overlappingUnassignedDemand = safeAlloc
+    && Number.isFinite(Number(safeAlloc.overlapping_unassigned_demand))
+    ? Math.max(0, Math.trunc(Number(safeAlloc.overlapping_unassigned_demand)))
+    : null;
+  const availableSlots = safeAlloc
+    && Number.isFinite(Number(safeAlloc.available_slots))
+    ? Math.max(0, Math.trunc(Number(safeAlloc.available_slots)))
+    : null;
+  // Free vehicle count is not currently returned by the allocator on the
+  // success path. Surface it only if a caller ever does start including it,
+  // otherwise leave it absent so we never invent a value.
+  const freeVehicleCount = safeAlloc
+    && Number.isFinite(Number(safeAlloc.free_vehicle_count))
+    ? Math.max(0, Math.trunc(Number(safeAlloc.free_vehicle_count)))
+    : null;
+  // The allocator only emits a single `reason` token. We surface it under
+  // a stable `rejected_reason_summary` field for symmetry with future,
+  // richer payloads but only when one is actually present.
+  const rejectedReasonSummary = allocBlockReason || allocReasonCode || allocReason || "";
+  const out = {};
+  if (safeNowIso) {
+    out.allocator_run_at = safeNowIso;
+    out.allocatorRunAt = safeNowIso;
+  }
+  if (safeVehicleId) {
+    out.selected_vehicle_id = safeVehicleId;
+    out.selectedVehicleId = safeVehicleId;
+  }
+  if (safeDriverId) {
+    out.selected_driver_id = safeDriverId;
+    out.selectedDriverId = safeDriverId;
+  }
+  if (allocSource) {
+    out.source = allocSource;
+  }
+  if (safeSourceLabel) {
+    out.dispatch_trigger = safeSourceLabel;
+    out.dispatchTrigger = safeSourceLabel;
+  }
+  if (freeVehicleCount !== null) {
+    out.free_vehicle_count = freeVehicleCount;
+    out.freeVehicleCount = freeVehicleCount;
+  }
+  if (suitableVehicleCount !== null) {
+    out.suitable_vehicle_count = suitableVehicleCount;
+    out.suitableVehicleCount = suitableVehicleCount;
+  }
+  if (occupiedAssignedCount !== null) {
+    out.occupied_assigned_count = occupiedAssignedCount;
+    out.occupiedAssignedCount = occupiedAssignedCount;
+  }
+  if (overlappingUnassignedDemand !== null) {
+    out.overlapping_unassigned_demand = overlappingUnassignedDemand;
+    out.overlappingUnassignedDemand = overlappingUnassignedDemand;
+  }
+  if (availableSlots !== null) {
+    out.available_slots = availableSlots;
+    out.availableSlots = availableSlots;
+  }
+  if (rejectedReasonSummary) {
+    out.rejected_reason_summary = rejectedReasonSummary;
+    out.rejectedReasonSummary = rejectedReasonSummary;
+  }
+  // If nothing besides `dispatch_trigger`/`allocator_run_at` is known and no
+  // vehicle was even selected, there is no meaningful diagnostic to stamp.
+  const keys = Object.keys(out);
+  if (keys.length === 0) return null;
+  const hasMeaningfulContent =
+    !!safeVehicleId ||
+    !!safeDriverId ||
+    !!allocSource ||
+    !!rejectedReasonSummary ||
+    suitableVehicleCount !== null ||
+    occupiedAssignedCount !== null ||
+    overlappingUnassignedDemand !== null ||
+    availableSlots !== null ||
+    freeVehicleCount !== null;
+  if (!hasMeaningfulContent) return null;
+  return out;
 }
 
 async function _pickVehicleAssignmentForRequest(env, req) {
@@ -61262,6 +61552,26 @@ async function _requestFleetLegAllocation(env, spec, fleetScope, sourceLabel = "
   console.log(
     `[ROUNDTRIP_DISPATCH][LEG_ALLOCATE_RESULT] leg=${legKey} booking=${maskedAllocatorId} allowed=${allowed ? "true" : "false"} vehicle=${_bookingIntentMask(vehicleId)} driver=${_bookingIntentMask(driverId)} reason=${safeStr(alloc?.reason, 80) || "-"}`,
   );
+  // Resolve vehicle metadata (license plate, name, brand_model, ...) from
+  // the same fleet inventory the allocator just consulted. Best-effort:
+  // never blocks or fails leg allocation; if the lookup errors, the leg
+  // is simply stamped without the enrichment block as before.
+  let vehicleSummary = null;
+  if (vehicleId) {
+    try {
+      vehicleSummary = await _vehicleSummaryForVehicleId(env, vehicleId, fleetScope);
+    } catch (_) {
+      vehicleSummary = null;
+    }
+  }
+  const stampNowIso = new Date().toISOString();
+  const diagnostics = _buildLegAllocatorDiagnostics({
+    alloc,
+    sourceLabel,
+    nowIso: stampNowIso,
+    vehicleId,
+    driverId,
+  });
   return {
     ok: allowed && !!vehicleId,
     allowed,
@@ -61271,6 +61581,8 @@ async function _requestFleetLegAllocation(env, spec, fleetScope, sourceLabel = "
     assignedVehicleId: vehicleId,
     assignedDriverId: driverId,
     assignedDriver,
+    vehicleSummary,
+    diagnostics,
     alloc,
     pickupIso: spec.pickupIso,
   };
@@ -61717,6 +62029,26 @@ async function _dispatchFleetAssignmentForBooking(
       `[ROUNDTRIP_DISPATCH][PARENT_ASSIGNMENT] mode=continuous_wait booking=${maskedParentId} vehicle=${_bookingIntentMask(vehicleId)} driver=${_bookingIntentMask(driverId)}`,
     );
   }
+  // Best-effort vehicle metadata + allocator diagnostics enrichment for
+  // the single / continuous_wait path. Mirrors the per-leg enrichment in
+  // _requestFleetLegAllocation so downstream stamping is uniform across
+  // dispatch modes. Lookup failures degrade silently.
+  let parentVehicleSummary = null;
+  if (vehicleId) {
+    try {
+      parentVehicleSummary = await _vehicleSummaryForVehicleId(env, vehicleId, fleetScope);
+    } catch (_) {
+      parentVehicleSummary = null;
+    }
+  }
+  const parentStampNowIso = new Date().toISOString();
+  const parentDiagnostics = _buildLegAllocatorDiagnostics({
+    alloc,
+    sourceLabel,
+    nowIso: parentStampNowIso,
+    vehicleId,
+    driverId,
+  });
   return {
     ok: alloc?.allowed === true && !!vehicleId,
     mode,
@@ -61727,6 +62059,8 @@ async function _dispatchFleetAssignmentForBooking(
     assignedVehicleId: vehicleId,
     assignedDriverId: driverId,
     assignedDriver,
+    vehicleSummary: parentVehicleSummary,
+    diagnostics: parentDiagnostics,
     reservations: vehicleId
       ? [{ bookingId: safeParentId, pickupIso: outboundPickupIso }]
       : [],
@@ -62015,6 +62349,14 @@ async function ensurePaidOpenBookingAutoDispatched(
         rec.booking.updated_at = nowIso;
         rec.booking.updatedAt = nowIso;
       }
+      const parentVehicleSummary =
+        dispatchOutcome?.vehicleSummary && typeof dispatchOutcome.vehicleSummary === "object"
+          ? dispatchOutcome.vehicleSummary
+          : null;
+      const parentDiagnostics =
+        dispatchOutcome?.diagnostics && typeof dispatchOutcome.diagnostics === "object"
+          ? dispatchOutcome.diagnostics
+          : null;
       const stampLegs = (legs) => {
         if (!Array.isArray(legs)) return legs;
         for (const leg of legs) {
@@ -62023,6 +62365,8 @@ async function ensurePaidOpenBookingAutoDispatched(
             driver: assignedDriver,
             driverId: assignedDriverId,
             nowIso,
+            vehicleSummary: parentVehicleSummary,
+            diagnostics: parentDiagnostics,
           });
         }
         return legs;
