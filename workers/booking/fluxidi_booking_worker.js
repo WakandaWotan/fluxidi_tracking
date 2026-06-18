@@ -32797,6 +32797,59 @@ async function applyBookingCreditDecisionAuthoritative(
     console.log(
       `[BOOKING_FINANCE_KPI][TODO] booking=${_bookingIntentMask(bookingId)} leg=${_bookingIntentMask(safeLegId)} reason=cancelled_paid_leg_credit_decision_kpi_reconcile_pending`,
     );
+
+    // Patch 3C: leg-only credit-decision compliance emit. Runs only
+    // after the authoritative mutation has been persisted and
+    // verified above. Dedupes via a per-leg timestamp marker so a
+    // retried credit decision on the same leg cannot emit twice.
+    // Marker persistence is best-effort and never alters the return.
+    const persistedLeg =
+      _findOperationalLegEntryById(rec, safeLegId) || legEntry || null;
+    let complianceEventEmitted = false;
+    if (_legCreditDecisionComplianceAlreadyEmitted(persistedLeg)) {
+      console.log(
+        `[BOOKING][CREDIT_DECISION][COMPLIANCE_SKIP] booking=${_bookingIntentMask(bookingId)} leg=${_bookingIntentMask(safeLegId)} reason=leg_marker_present`,
+      );
+    } else {
+      try {
+        const complianceEvent = buildBookingCreditDecisionComplianceEvent(
+          rec,
+          bookingId,
+          {
+            creditDecision,
+            previousRefundStatus,
+            newRefundStatus: refundStatus,
+            creditedAmountCents,
+            actorRole: creditedBy,
+            sourceEndpoint: source_endpoint,
+            leg: persistedLeg,
+          },
+        );
+        if (complianceEvent) {
+          const emitOut = await emitComplianceEventBestEffort(env, complianceEvent, {
+            logLabel: "credit_decision",
+          });
+          if (emitOut?.ok === true) {
+            complianceEventEmitted = true;
+            await _persistLegCreditDecisionComplianceMarker(
+              env,
+              key,
+              rec,
+              safeLegId,
+            );
+          }
+        } else {
+          console.log(
+            `[BOOKING][CREDIT_DECISION][COMPLIANCE_EMIT] booking=${_bookingIntentMask(bookingId)} leg=${_bookingIntentMask(safeLegId)} skipped reason=builder_null`,
+          );
+        }
+      } catch (_) {
+        console.log(
+          `[BOOKING][CREDIT_DECISION][COMPLIANCE_EMIT_ERROR] booking=${_bookingIntentMask(bookingId)} leg=${_bookingIntentMask(safeLegId)} error=internal_error`,
+        );
+      }
+    }
+
     return {
       ok: true,
       booking_id: bookingId,
@@ -32817,6 +32870,8 @@ async function applyBookingCreditDecisionAuthoritative(
       creditedAt: nowIso,
       credited_by: creditedBy,
       creditedBy: creditedBy,
+      compliance_event_emitted: complianceEventEmitted,
+      complianceEventEmitted: complianceEventEmitted,
     };
   }
 
@@ -33906,6 +33961,102 @@ async function _persistMollieRefundComplianceEmitMarker(env, key, rec) {
   }
 }
 
+// Patch 3C: leg-level compliance dedupe markers. These mirror the
+// parent helpers above but live on the operational leg entry so a
+// retried leg-only credit decision or leg-only Mollie refund cannot
+// emit the same Chiron event twice. All four helpers are strictly
+// additive; absence is treated as "never emitted" so old records
+// without these markers continue to behave exactly as before.
+
+function _legCreditDecisionComplianceAlreadyEmitted(leg) {
+  if (!leg || typeof leg !== "object") return false;
+  return !!safeStr(
+    leg.compliance_credit_decision_emitted_at ?? leg.complianceCreditDecisionEmittedAt,
+    64,
+  );
+}
+
+async function _persistLegCreditDecisionComplianceMarker(env, key, rec, legId) {
+  if (!env?.BOOKING_KV || !key || !rec) return;
+  const safeLegId = safeStr(legId, 200);
+  if (!safeLegId) return;
+  const nowIso = new Date().toISOString();
+  const mutated = _mutateOperationalLegEntryInRecord(rec, safeLegId, (entry) => {
+    const next = { ...(entry && typeof entry === "object" ? entry : {}) };
+    next.compliance_credit_decision_emitted_at = nowIso;
+    next.complianceCreditDecisionEmittedAt = nowIso;
+    return next;
+  });
+  if (!mutated) return;
+  rec.updatedAt = nowIso;
+  rec.updated_at = nowIso;
+  if (rec.booking && typeof rec.booking === "object") {
+    rec.booking.updatedAt = nowIso;
+    rec.booking.updated_at = nowIso;
+  }
+  try {
+    await env.BOOKING_KV.put(key, JSON.stringify(rec));
+  } catch (_) {
+    // Best-effort audit marker only. The compliance event was already
+    // emitted successfully; a marker-persist failure only risks one
+    // potential redundant emit on a future retry.
+  }
+}
+
+function _legMollieRefundComplianceAlreadyEmittedForRefundId(leg, mollieRefundId) {
+  if (!leg || typeof leg !== "object") return false;
+  const wantedRefundId = safeStr(mollieRefundId, 120);
+  const markerTs = safeStr(
+    leg.compliance_mollie_refund_emitted_at ?? leg.complianceMollieRefundEmittedAt,
+    64,
+  );
+  if (!markerTs) return false;
+  if (!wantedRefundId) {
+    // No refund id supplied — fall back to timestamp-only dedupe so a
+    // bare retry without a refund id still skips a duplicate emit.
+    return true;
+  }
+  const markerRefundId = safeStr(
+    leg.compliance_mollie_refund_id ?? leg.complianceMollieRefundId,
+    120,
+  );
+  // Refund-id-scoped dedupe: only skip when the marker refers to the
+  // same Mollie refund id. A different refund id means the leg was
+  // refunded again (e.g. after a failed first attempt) and should
+  // emit a fresh compliance event.
+  return !!markerRefundId && markerRefundId === wantedRefundId;
+}
+
+async function _persistLegMollieRefundComplianceMarker(env, key, rec, legId, mollieRefundId) {
+  if (!env?.BOOKING_KV || !key || !rec) return;
+  const safeLegId = safeStr(legId, 200);
+  if (!safeLegId) return;
+  const nowIso = new Date().toISOString();
+  const safeRefundId = safeStr(mollieRefundId, 120);
+  const mutated = _mutateOperationalLegEntryInRecord(rec, safeLegId, (entry) => {
+    const next = { ...(entry && typeof entry === "object" ? entry : {}) };
+    next.compliance_mollie_refund_emitted_at = nowIso;
+    next.complianceMollieRefundEmittedAt = nowIso;
+    if (safeRefundId) {
+      next.compliance_mollie_refund_id = safeRefundId;
+      next.complianceMollieRefundId = safeRefundId;
+    }
+    return next;
+  });
+  if (!mutated) return;
+  rec.updatedAt = nowIso;
+  rec.updated_at = nowIso;
+  if (rec.booking && typeof rec.booking === "object") {
+    rec.booking.updatedAt = nowIso;
+    rec.booking.updated_at = nowIso;
+  }
+  try {
+    await env.BOOKING_KV.put(key, JSON.stringify(rec));
+  } catch (_) {
+    // Best-effort audit marker only.
+  }
+}
+
 async function _emitMollieRefundComplianceFromRecordBestEffort(
   env,
   rec,
@@ -34297,6 +34448,62 @@ async function _applyMollieRefundForOperationalLegAuthoritative(
   );
   _logMollieRefundGate(bookingId, true, "refund_applied");
 
+  // Patch 3C: leg-only Mollie-refund compliance emit. Runs only after
+  // the leg-scoped refund mutation has persisted above. Dedupes via
+  // a per-leg marker keyed by mollieRefundId so a retried refund for
+  // the same leg + refund id cannot emit twice, while a follow-up
+  // refund with a different refund id still emits a fresh event.
+  // Marker persistence is best-effort and never alters the return.
+  // The leg-only refund status-refresh branch in the status endpoint
+  // remains intentionally silent (reason=leg_only_scope); leg-scoped
+  // emit is owned exclusively here.
+  const persistedLeg =
+    _findOperationalLegEntryById(rec, safeLegId) || legEntry || null;
+  let complianceEventEmitted = false;
+  if (_legMollieRefundComplianceAlreadyEmittedForRefundId(persistedLeg, mollieRefundId)) {
+    console.log(
+      `[BOOKING][MOLLIE_REFUND][COMPLIANCE_SKIP] booking=${_bookingIntentMask(bookingId)} leg=${_bookingIntentMask(safeLegId)} reason=leg_marker_present`,
+    );
+  } else {
+    try {
+      const complianceEvent = buildBookingMollieRefundComplianceEvent(rec, bookingId, {
+        refundStatus: mappedRefundStatus,
+        mollieRefundStatus: mollieRefundStatusRaw || mappedRefundStatus,
+        refundAmountCents,
+        creditDecision: _bookingCreditDecisionRaw(rec),
+        mollieRefundId,
+        actorRole,
+        refundedAt,
+        sourceEndpoint: source_endpoint,
+        sourceOverride: "leg_refund",
+        leg: persistedLeg,
+      });
+      if (complianceEvent) {
+        const emitOut = await emitComplianceEventBestEffort(env, complianceEvent, {
+          logLabel: "mollie_refund",
+        });
+        if (emitOut?.ok === true) {
+          complianceEventEmitted = true;
+          await _persistLegMollieRefundComplianceMarker(
+            env,
+            key,
+            rec,
+            safeLegId,
+            mollieRefundId,
+          );
+        }
+      } else {
+        console.log(
+          `[BOOKING][MOLLIE_REFUND][COMPLIANCE_EMIT] booking=${_bookingIntentMask(bookingId)} leg=${_bookingIntentMask(safeLegId)} skipped reason=builder_null`,
+        );
+      }
+    } catch (_) {
+      console.log(
+        `[BOOKING][MOLLIE_REFUND][COMPLIANCE_EMIT_ERROR] booking=${_bookingIntentMask(bookingId)} leg=${_bookingIntentMask(safeLegId)} error=internal_error`,
+      );
+    }
+  }
+
   return {
     ok: true,
     booking_id: bookingId,
@@ -34308,6 +34515,8 @@ async function _applyMollieRefundForOperationalLegAuthoritative(
     refund_status: mappedRefundStatus,
     refund_amount_cents: refundAmountCents,
     currency,
+    compliance_event_emitted: complianceEventEmitted,
+    complianceEventEmitted: complianceEventEmitted,
   };
 }
 
