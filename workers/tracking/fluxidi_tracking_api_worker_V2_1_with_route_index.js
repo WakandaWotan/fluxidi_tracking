@@ -4148,6 +4148,73 @@ async function handleStartDirectTrip(req, url, env, origin) {
   );
 }
 
+async function _notifyBookingWorkerPlannedTripCompletionBestEffort(env, scope, trip, ctx) {
+  const adminToken = safeStr(env?.ADMIN_TOKEN, 512);
+  if (!adminToken) {
+    console.log("[TRACKING][PLANNED_STOP][BOOKING_SYNC] skipped reason=missing_admin_token");
+    return;
+  }
+  const bookingId = safeStr(
+    trip?.parent_booking_id ??
+      trip?.parentBookingId ??
+      trip?.booking_id ??
+      trip?.bookingId,
+    160,
+  );
+  if (!bookingId) {
+    console.log("[TRACKING][PLANNED_STOP][BOOKING_SYNC] skipped reason=missing_booking_id");
+    return;
+  }
+  const payload = {
+    tenant_id: scope?.tenant_id,
+    company_id: scope?.company_id,
+    booking_id: bookingId,
+    leg_id: safeStr(trip?.leg_id ?? trip?.legId, 200) || null,
+    trip_id: safeStr(trip?.trip_id ?? trip?.tripId, 160) || null,
+    stopped_at: safeStr(trip?.stopped_at ?? trip?.stoppedAt, 80) || null,
+    source: "planned_trip_stop",
+  };
+  const requestInit = {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${adminToken}`,
+    },
+    body: JSON.stringify(payload),
+  };
+  const serviceBinding = env?.BOOKING_API;
+  const baseUrl = safeStr(env?.BOOKING_API_URL, 200)?.replace(/\/+$/, "");
+  const targetUrl = `${baseUrl || "https://fluxidi-booking-api.fluxidi.workers.dev"}/track/booking/complete-from-planned-stop`;
+  const syncTask = (async () => {
+    try {
+      let res;
+      if (serviceBinding && typeof serviceBinding.fetch === "function") {
+        res = await serviceBinding.fetch(
+          new Request(`https://booking.internal/track/booking/complete-from-planned-stop`, requestInit),
+        );
+      } else if (baseUrl) {
+        res = await fetch(targetUrl, requestInit);
+      } else {
+        console.log("[TRACKING][PLANNED_STOP][BOOKING_SYNC] skipped reason=missing_booking_api_target");
+        return;
+      }
+      const bodyText = await res.text().catch(() => "");
+      console.log(
+        `[TRACKING][PLANNED_STOP][BOOKING_SYNC] booking=${bookingId} leg=${safeStr(trip?.leg_id ?? trip?.legId, 200) || "-"} trip=${safeStr(trip?.trip_id ?? trip?.tripId, 160) || "-"} http=${res.status} body=${safeStr(bodyText, 160) || "-"}`,
+      );
+    } catch (err) {
+      console.log(
+        `[TRACKING][PLANNED_STOP][BOOKING_SYNC] booking=${bookingId} failed reason=${safeStr(err?.message || err, 120) || "unknown"}`,
+      );
+    }
+  })();
+  if (ctx && typeof ctx.waitUntil === "function") {
+    ctx.waitUntil(syncTask);
+  } else {
+    await syncTask;
+  }
+}
+
 async function handleRecordPlannedStopTrip(req, url, env, origin, ctx) {
   requireAdmin(req, url, env);
 
@@ -4341,6 +4408,7 @@ async function handleRecordPlannedStopTrip(req, url, env, origin, ctx) {
     trip,
     "planned_trip_stop",
   );
+  await _notifyBookingWorkerPlannedTripCompletionBestEffort(env, scope, trip, ctx);
   if (actor.actor_role === "driver") {
     await _rememberVehicleOwnerBestEffort(env, {
       tenant_id,

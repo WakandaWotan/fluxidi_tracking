@@ -1984,9 +1984,28 @@ class CustomerBookingView {
       final fallbackPrice = legType == 'return'
           ? priceInclVatReturn
           : priceInclVatMain;
-      final status = (leg?.status.trim().isNotEmpty ?? false)
-          ? leg!.status
-          : lifecycleStatus;
+      // Backend leg status wins when terminal; otherwise inherit a terminal
+      // parent lifecycle so a completed/cancelled parent booking propagates to
+      // legs whose snapshot still carries a stale non-terminal status. This
+      // keeps the customer card chips honest when the backend has marked the
+      // parent COMPLETED but a cached leg row still says PENDING.
+      final rawLegStatus = leg?.status.trim() ?? '';
+      final legIsTerminal =
+          rawLegStatus.isNotEmpty &&
+          _isCustomerBookingTerminalStatus(rawLegStatus);
+      final parentIsTerminal = _isCustomerBookingTerminalStatus(
+        lifecycleStatus,
+      );
+      final String status;
+      if (legIsTerminal) {
+        status = rawLegStatus;
+      } else if (parentIsTerminal) {
+        status = lifecycleStatus;
+      } else if (rawLegStatus.isNotEmpty) {
+        status = rawLegStatus;
+      } else {
+        status = lifecycleStatus;
+      }
       return CustomerRoundtripLegCardView(
         legType: legType,
         legId: leg?.legId ?? '',
@@ -2121,6 +2140,16 @@ class CustomerRoundtripLegCardView {
   final bool isCancelled;
 
   bool get isActive => !isCancelled;
+
+  bool get isCompleted {
+    if (isCancelled) return false;
+    return _normalizeCustomerLifecycleStatus(status) == 'COMPLETED';
+  }
+
+  bool get isTerminal {
+    if (isCancelled) return true;
+    return _isCustomerBookingTerminalStatus(status);
+  }
 }
 
 class CustomerRoundtripPriceProjection {

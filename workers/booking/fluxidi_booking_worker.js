@@ -10450,7 +10450,7 @@ async function hydrateCustomerBookingsFromScopedIndex(
       if (out.length >= lim) break;
       const bookingId = safeStr(entry?.booking_id ?? entry?.bookingId, 160);
       if (!bookingId) continue;
-      const rec = await env.BOOKING_KV.get(`booking:${bookingId}`, { type: "json" });
+      let rec = await env.BOOKING_KV.get(`booking:${bookingId}`, { type: "json" });
       if (!rec || typeof rec !== "object") {
         console.log(
           `[CUSTOMER_BOOTSTRAP][HYDRATE][SKIP] tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} customer=${safeCustomerMask || "-"} booking=${_bookingIntentMask(bookingId)} bucket=missing_booking`,
@@ -10474,6 +10474,17 @@ async function hydrateCustomerBookingsFromScopedIndex(
         );
         continue;
       }
+      const plannedTripCompletionRepair = await repairBookingCompletionFromStoppedPlannedTripsBestEffort(
+        env,
+        tenantScope,
+        bookingId,
+        rec,
+        { source: "customer_bootstrap_hydrate_planned_trip_repair" },
+      );
+      if (plannedTripCompletionRepair?.changed === true && plannedTripCompletionRepair?.rec) {
+        rec = plannedTripCompletionRepair.rec;
+      }
+      enrichBookingRecordOperationalLegsForReadModel(rec, bookingId);
       out.push(_projectSafeCustomerBookingSummary(bookingId, rec, tenantScope));
     }
     out.sort((a, b) => Number(b?._sort_ts || 0) - Number(a?._sort_ts || 0));
@@ -23893,6 +23904,44 @@ GET /oauth/callback
                   out?.error === "future_completion_not_allowed"
                 ? 409
                 : out.ok
+                  ? 200
+                  : 400,
+        );
+      }
+
+      if (
+        url.pathname === "/track/booking/complete-from-planned-stop" &&
+        request.method === "POST"
+      ) {
+        _requireAdmin(request, url, env);
+        const body = await safeJson(request);
+        const scopedRoute = requireExplicitBookingRouteScope({ request, url, body });
+        if (!scopedRoute.ok) return scopedRoute.response;
+        const tenantScope = scopedRoute.scope;
+        const bookingId = safeStr(body?.booking_id ?? body?.bookingId, 160);
+        if (!bookingId) {
+          return json({ ok: false, error: "booking_id is required" }, 400);
+        }
+        const out = await applyBookingCompletionFromPlannedTripStopBestEffort(
+          env,
+          tenantScope,
+          {
+            bookingId,
+            legId: safeStr(body?.leg_id ?? body?.legId, 200) || null,
+            tripId: safeStr(body?.trip_id ?? body?.tripId, 160) || null,
+            stoppedAt: safeStr(body?.stopped_at ?? body?.stoppedAt, 80) || null,
+            source: safeStr(body?.source, 80) || "planned_trip_stop",
+          },
+        );
+        return json(
+          out,
+          out?.error === "missing_tenant_scope"
+            ? 400
+            : out?.error === "forbidden"
+              ? 403
+              : out?.error === "booking_not_found"
+                ? 404
+                : out?.ok
                   ? 200
                   : 400,
         );
@@ -42049,6 +42098,179 @@ async function syncScopedTrackingTripKpiBestEffort({
   }
 }
 
+async function _collectStoppedPlannedTripsForBookingBestEffort(env, scope, bookingId) {
+  const resolvedBookingId = safeStr(_trackingSyncCanonicalBookingId(bookingId, null), 160) || safeStr(bookingId, 160);
+  const plannedPrefix = _trackingSyncScopedPlannedTripPrefix(scope, resolvedBookingId);
+  if (!env?.FLUXIDI_TRACKING || !plannedPrefix) return [];
+  const stoppedTrips = [];
+  let listCursor;
+  try {
+    do {
+      const page = await env.FLUXIDI_TRACKING.list({
+        prefix: plannedPrefix,
+        limit: 200,
+        cursor: listCursor,
+      });
+      for (const item of page?.keys || []) {
+        const tripKey = safeStr(item?.name, 320);
+        if (!tripKey) continue;
+        if (tripKey !== plannedPrefix && !tripKey.startsWith(`${plannedPrefix}_`)) continue;
+        const trip = await _trackingSyncGetJson(env, tripKey);
+        if (!trip || typeof trip !== "object") continue;
+        const tripStatus = safeStr(trip?.status, 32).toLowerCase();
+        const stoppedAt = safeStr(trip?.stopped_at ?? trip?.stoppedAt, 80) || null;
+        if (tripStatus === "stopped" || tripStatus === "completed" || stoppedAt) {
+          stoppedTrips.push(trip);
+        }
+      }
+      listCursor = page?.cursor;
+      if (page?.list_complete !== false) break;
+      if (!listCursor) break;
+    } while (listCursor);
+  } catch (listErr) {
+    console.log(
+      `[BOOKING][PLANNED_TRIP_COMPLETION][WARN] reason=planned_prefix_list_failed booking=${_bookingIntentMask(resolvedBookingId)} err=${safeStr(listErr?.message || listErr, 120) || "unknown"}`,
+    );
+  }
+  return stoppedTrips.sort((a, b) => {
+    const aMs = Date.parse(safeStr(a?.stopped_at ?? a?.stoppedAt, 80) || "") || 0;
+    const bMs = Date.parse(safeStr(b?.stopped_at ?? b?.stoppedAt, 80) || "") || 0;
+    return bMs - aMs;
+  });
+}
+
+async function applyBookingCompletionFromPlannedTripStopBestEffort(
+  env,
+  tenantScope,
+  { bookingId, legId = null, tripId = null, stoppedAt = null, source = "planned_trip_stop" } = {},
+) {
+  const safeBookingId = safeStr(bookingId, 160);
+  if (!safeBookingId) return { ok: false, error: "booking_id is required" };
+  if (!tenantScope?.hasScope) return missingTenantScopeError();
+  let rec;
+  try {
+    rec = (await loadBookingRecord(env, safeBookingId)).rec;
+  } catch (_) {
+    return { ok: false, error: "booking_not_found" };
+  }
+  if (!bookingMatchesRequiredTenantCompanyScope(rec, tenantScope)) {
+    return { ok: false, error: "forbidden" };
+  }
+  const currentStatus = _normLifecycleStatus(rec?.status ?? rec?.stage ?? "PENDING");
+  if (currentStatus === "CANCELLED") {
+    return { ok: true, skipped: true, reason: "parent_cancelled" };
+  }
+  if (currentStatus === "COMPLETED") {
+    return { ok: true, skipped: true, reason: "already_completed" };
+  }
+  const completionOptions = {
+    actor_role: "system",
+    source_endpoint: "/track/booking/complete-from-planned-stop",
+    bypass_future_pickup_guard: true,
+  };
+  // Driver cockpit planned-trip stop completes the authoritative booking as a
+  // whole. Leg-first updates leave package/continuous-wait parents PENDING
+  // when display legs outnumber the single operational planned execution.
+  const result = await updateBookingStatusAuthoritative(
+    safeBookingId,
+    "COMPLETED",
+    env,
+    tenantScope,
+    completionOptions,
+  );
+  if (result?.ok !== true) return result;
+  const safeTripId = safeStr(tripId, 160) || null;
+  const safeStoppedAt = safeStr(stoppedAt, 80) || null;
+  if (safeTripId || safeStoppedAt) {
+    try {
+      const reloaded = await loadBookingRecord(env, safeBookingId);
+      const nextRec = reloaded.rec;
+      if (safeTripId) {
+        nextRec.tracking_trip_id = safeTripId;
+        nextRec.trackingTripId = safeTripId;
+        nextRec.last_planned_trip_id = safeTripId;
+        nextRec.lastPlannedTripId = safeTripId;
+      }
+      if (safeStoppedAt) {
+        nextRec.completed_at = safeStr(nextRec?.completed_at ?? nextRec?.completedAt, 80) || safeStoppedAt;
+        nextRec.completedAt = safeStr(nextRec?.completedAt, 80) || nextRec.completed_at;
+      }
+      await env.BOOKING_KV.put(reloaded.key, JSON.stringify(nextRec));
+    } catch (_) {
+      // best effort metadata only
+    }
+  }
+  console.log(
+    `[BOOKING][PLANNED_TRIP_COMPLETION] booking=${_bookingIntentMask(safeBookingId)} leg=${_bookingIntentMask(safeStr(legId, 200) || null)} trip=${_bookingIntentMask(safeTripId)} status=COMPLETED source=${safeStr(source, 80) || "planned_trip_stop"}`,
+  );
+  return { ok: true, booking_id: safeBookingId, status: "COMPLETED" };
+}
+
+async function repairBookingCompletionFromStoppedPlannedTripsBestEffort(
+  env,
+  tenantScope,
+  bookingId,
+  rec,
+  { source = "planned_trip_completion_repair" } = {},
+) {
+  if (!env?.FLUXIDI_TRACKING || !rec || typeof rec !== "object") {
+    return { ok: false, changed: false, rec };
+  }
+  const resolvedBookingId = safeStr(_trackingSyncCanonicalBookingId(bookingId, rec), 160);
+  if (!resolvedBookingId) return { ok: false, changed: false, rec };
+  const recordScope = _trackingSyncScopeFromBookingRecord(rec);
+  const effectiveScope = tenantScope?.hasScope ? tenantScope : recordScope;
+  if (!effectiveScope?.hasScope) return { ok: false, changed: false, rec };
+  const currentStatus = _normLifecycleStatus(rec?.status ?? rec?.stage ?? "PENDING");
+  if (currentStatus === "COMPLETED" || currentStatus === "CANCELLED") {
+    return { ok: true, changed: false, rec, reason: "already_terminal" };
+  }
+  const stoppedTrips = await _collectStoppedPlannedTripsForBookingBestEffort(
+    env,
+    effectiveScope,
+    resolvedBookingId,
+  );
+  if (!stoppedTrips.length) {
+    return { ok: true, changed: false, rec, reason: "no_stopped_planned_trip" };
+  }
+  let changed = false;
+  for (const trip of stoppedTrips) {
+    const applyResult = await applyBookingCompletionFromPlannedTripStopBestEffort(
+      env,
+      effectiveScope,
+      {
+        bookingId: resolvedBookingId,
+        legId: safeStr(trip?.leg_id ?? trip?.legId, 200) || null,
+        tripId: safeStr(trip?.trip_id ?? trip?.tripId, 160) || null,
+        stoppedAt: safeStr(trip?.stopped_at ?? trip?.stoppedAt, 80) || null,
+        source,
+      },
+    );
+    if (applyResult?.ok === true && applyResult?.skipped !== true) {
+      try {
+        const verifyReload = await loadBookingRecord(env, resolvedBookingId);
+        const verifiedStatus = _normLifecycleStatus(
+          verifyReload?.rec?.status ?? verifyReload?.rec?.stage ?? "PENDING",
+        );
+        if (verifiedStatus === "COMPLETED") {
+          changed = true;
+        }
+      } catch (_) {
+        changed = true;
+      }
+    }
+  }
+  if (!changed) {
+    return { ok: true, changed: false, rec, reason: "no_completion_applied" };
+  }
+  try {
+    const reloaded = await loadBookingRecord(env, resolvedBookingId);
+    return { ok: true, changed: true, rec: reloaded.rec };
+  } catch (_) {
+    return { ok: true, changed: true, rec };
+  }
+}
+
 function brusselsIsoFromDateTime(dateStr, timeStr) {
   try {
     const d = safeStr(dateStr);
@@ -46030,7 +46252,7 @@ function _flattenBookingForRidesList(bookingId, rec) {
       phone: customerPhone || "",
       email: customerEmail || "",
     },
-    status: _normLifecycleStatus(rec?.status || rec?.stage || null),
+    status: _projectionLifecycleStatusFromRecord(rec, bookingId),
     price,
     currency: _pick(rec, ["booking", "currency"], "EUR") || "EUR",
     payment_status: paymentStatus,
@@ -46092,6 +46314,287 @@ function _bookingOperationalLegsFromRecord(rec) {
     .filter((entry) => !!entry);
 }
 
+function _operationalLegTypeFromEntry(leg) {
+  return safeStr(leg?.leg_type ?? leg?.legType, 24).toLowerCase() === "return"
+    ? "return"
+    : "outbound";
+}
+
+function _bookingReturnEnabledFromRecord(rec) {
+  return !!_roundtripDispatchContextFromAny(rec).returnEnabled;
+}
+
+function _bookingReturnFromFromRecord(rec) {
+  const booking = rec?.booking && typeof rec.booking === "object" ? rec.booking : {};
+  return (
+    safeStr(
+      rec?.return_from ??
+        rec?.returnFrom ??
+        booking?.return_from ??
+        booking?.returnFrom ??
+        _pick(rec, ["quote", "return", "from"], null) ??
+        _pick(rec, ["quote", "return_from"], null) ??
+        _pick(rec, ["payload", "return_from"], null) ??
+        _pick(rec, ["payload", "returnFrom"], null),
+      320,
+    ) ||
+    safeStr(booking?.to ?? _pick(rec, ["quote", "to"], null), 320)
+  );
+}
+
+function _bookingReturnToFromRecord(rec) {
+  const booking = rec?.booking && typeof rec.booking === "object" ? rec.booking : {};
+  return (
+    safeStr(
+      rec?.return_to ??
+        rec?.returnTo ??
+        booking?.return_to ??
+        booking?.returnTo ??
+        _pick(rec, ["quote", "return", "to"], null) ??
+        _pick(rec, ["quote", "return_to"], null) ??
+        _pick(rec, ["payload", "return_to"], null) ??
+        _pick(rec, ["payload", "returnTo"], null),
+      320,
+    ) ||
+    safeStr(booking?.from ?? _pick(rec, ["quote", "from"], null), 320)
+  );
+}
+
+function _bookingReturnPickupIsoFromRecord(rec) {
+  const booking = rec?.booking && typeof rec.booking === "object" ? rec.booking : {};
+  return safeStr(
+    rec?.return_pickup_iso ??
+      rec?.returnPickupIso ??
+      booking?.return_pickup_iso ??
+      booking?.returnPickupIso ??
+      _pick(rec, ["quote", "return", "pickup_iso"], null) ??
+      _pick(rec, ["payload", "return_pickup_iso"], null) ??
+      _pick(rec, ["payload", "returnPickupIso"], null),
+    80,
+  );
+}
+
+function _bookingReturnPriceInclVatFromRecord(rec) {
+  const booking = rec?.booking && typeof rec.booking === "object" ? rec.booking : {};
+  const raw =
+    rec?.price_incl_vat_return ??
+    rec?.priceInclVatReturn ??
+    booking?.price_incl_vat_return ??
+    booking?.priceInclVatReturn ??
+    _pick(rec, ["quote", "price_incl_vat_return"], null) ??
+    _pick(rec, ["quote", "pricing_return", "price_incl_vat"], null) ??
+    _pick(rec, ["quote", "return", "price_incl_vat"], null) ??
+    _pick(rec, ["payload", "price_incl_vat_return"], null);
+  const num = Number(raw);
+  return Number.isFinite(num) ? num : null;
+}
+
+function _bookingMainPriceInclVatFromRecord(rec) {
+  const booking = rec?.booking && typeof rec.booking === "object" ? rec.booking : {};
+  const raw =
+    rec?.price_incl_vat_main ??
+    rec?.priceInclVatMain ??
+    booking?.price_incl_vat_main ??
+    booking?.priceInclVatMain ??
+    _pick(rec, ["quote", "price_incl_vat_main"], null) ??
+    _pick(rec, ["quote", "pricing_main", "price_incl_vat"], null) ??
+    _pick(rec, ["payload", "price_incl_vat_main"], null) ??
+    booking?.price_incl_vat ??
+    _pick(rec, ["quote", "pricing", "price_incl_vat"], null);
+  const num = Number(raw);
+  return Number.isFinite(num) ? num : null;
+}
+
+function _bookingHasReturnDisplayData(rec) {
+  if (_bookingReturnEnabledFromRecord(rec)) return true;
+  const returnPrice = _bookingReturnPriceInclVatFromRecord(rec);
+  if (returnPrice != null && returnPrice > 0) return true;
+  const returnFrom = _bookingReturnFromFromRecord(rec);
+  const returnTo = _bookingReturnToFromRecord(rec);
+  return !!(returnFrom && returnTo);
+}
+
+function _estimateReturnPickupIsoForReadModel(rec, outboundPickupIso) {
+  const explicit = _bookingReturnPickupIsoFromRecord(rec);
+  if (explicit) return explicit;
+  const waitMin = _roundtripDispatchContextFromAny(rec).normalizedWaitMin;
+  if (!outboundPickupIso || waitMin <= 0) return "";
+  const baseMs = Date.parse(outboundPickupIso);
+  if (!Number.isFinite(baseMs)) return "";
+  return new Date(baseMs + waitMin * 60 * 1000).toISOString();
+}
+
+function _synthesizeOutboundOperationalLegForReadModel(rec, bookingId) {
+  const booking = rec?.booking && typeof rec.booking === "object" ? rec.booking : {};
+  const pickupIso = bookingPickupIsoFromRecord(rec);
+  const from = _pick(rec, ["quote", "from"], null) ?? booking?.from ?? "";
+  const to = _pick(rec, ["quote", "to"], null) ?? booking?.to ?? "";
+  if (!from || !to) return null;
+  const parentStatus = _normLifecycleStatus(rec?.status ?? rec?.stage ?? "PENDING");
+  return _buildOperationalLegRecord({
+    parentBookingId: bookingId,
+    legKey: "OUTBOUND",
+    legType: "outbound",
+    service: booking?.service ?? rec?.service,
+    pickupIso,
+    from,
+    to,
+    priceInclVat: _bookingMainPriceInclVatFromRecord(rec),
+    assignedDriverId: bookingAssignedDriverId(rec),
+    assignedVehicleId: bookingAssignedVehicleId(rec),
+    lifecycleStatus: parentStatus.toLowerCase(),
+    createdAt: safeStr(rec?.created_at ?? rec?.createdAt ?? booking?.created_at, 80),
+    updatedAt: safeStr(rec?.updated_at ?? rec?.updatedAt ?? booking?.updated_at, 80),
+  });
+}
+
+function _synthesizeReturnOperationalLegForReadModel(rec, bookingId, existingLegs = []) {
+  if (!_bookingHasReturnDisplayData(rec)) return null;
+  const outboundLeg = (existingLegs || []).find(
+    (leg) => _operationalLegTypeFromEntry(leg) === "outbound",
+  );
+  const booking = rec?.booking && typeof rec.booking === "object" ? rec.booking : {};
+  const outboundPickup =
+    safeStr(outboundLeg?.pickup_iso ?? outboundLeg?.pickupIso, 80) ||
+    bookingPickupIsoFromRecord(rec);
+  const returnFrom = _bookingReturnFromFromRecord(rec);
+  const returnTo = _bookingReturnToFromRecord(rec);
+  if (!returnFrom || !returnTo) return null;
+  const ctx = _roundtripDispatchContextFromAny(rec);
+  const parentStatus = _normLifecycleStatus(rec?.status ?? rec?.stage ?? "PENDING");
+  let returnLifecycle = parentStatus.toLowerCase();
+  if (ctx.normalizedWaitMin > 0 && outboundLeg) {
+    returnLifecycle =
+      safeStr(
+        outboundLeg?.lifecycle_status ??
+          outboundLeg?.lifecycleStatus ??
+          outboundLeg?.status,
+        24,
+      ).toLowerCase() || returnLifecycle;
+  }
+  return _buildOperationalLegRecord({
+    parentBookingId: bookingId,
+    legKey: "RETURN",
+    legType: "return",
+    service: outboundLeg?.service ?? booking?.service ?? rec?.service,
+    pickupIso: _estimateReturnPickupIsoForReadModel(rec, outboundPickup),
+    from: returnFrom,
+    to: returnTo,
+    priceInclVat: _bookingReturnPriceInclVatFromRecord(rec),
+    assignedDriverId:
+      safeStr(outboundLeg?.assigned_driver_id ?? outboundLeg?.assignedDriverId, 96) ||
+      bookingAssignedDriverId(rec),
+    assignedVehicleId:
+      safeStr(outboundLeg?.assigned_vehicle_id ?? outboundLeg?.assignedVehicleId, 128) ||
+      bookingAssignedVehicleId(rec),
+    lifecycleStatus: returnLifecycle,
+    createdAt: safeStr(rec?.created_at ?? rec?.createdAt ?? booking?.created_at, 80),
+    updatedAt: safeStr(rec?.updated_at ?? rec?.updatedAt ?? booking?.updated_at, 80),
+  });
+}
+
+function _bookingOperationalLegsForReadModel(rec, bookingId) {
+  const resolvedBookingId =
+    safeStr(_trackingSyncCanonicalBookingId(bookingId, rec), 160) ||
+    safeStr(bookingId, 160);
+  let stored = _bookingOperationalLegsFromRecord(rec).map((entry) => ({ ...entry }));
+  if (!stored.length) {
+    if (!_bookingHasReturnDisplayData(rec)) return [];
+    const outbound = _synthesizeOutboundOperationalLegForReadModel(rec, resolvedBookingId);
+    if (!outbound) return [];
+    stored = [outbound];
+  }
+  const hasReturn = stored.some((leg) => _operationalLegTypeFromEntry(leg) === "return");
+  if (!hasReturn && _bookingHasReturnDisplayData(rec)) {
+    const returnLeg = _synthesizeReturnOperationalLegForReadModel(
+      rec,
+      resolvedBookingId,
+      stored,
+    );
+    if (returnLeg) stored.push(returnLeg);
+  }
+  return stored;
+}
+
+function enrichBookingRecordOperationalLegsForReadModel(rec, bookingId) {
+  const legs = _bookingOperationalLegsForReadModel(rec, bookingId);
+  if (!legs.length || !rec || typeof rec !== "object") return rec;
+  rec.operational_legs = legs;
+  rec.operationalLegs = legs;
+  rec.is_roundtrip_parent = legs.length > 1;
+  rec.isRoundtripParent = legs.length > 1;
+  if (rec.booking && typeof rec.booking === "object") {
+    rec.booking.operational_legs = legs;
+    rec.booking.operationalLegs = legs;
+    rec.booking.is_roundtrip_parent = legs.length > 1;
+    rec.booking.isRoundtripParent = legs.length > 1;
+  }
+  return rec;
+}
+
+function _materializeOperationalLegIfMissingFromReadModel(rec, bookingId, legId) {
+  const safeLegId = safeStr(legId, 200);
+  if (!rec || typeof rec !== "object" || !safeLegId) {
+    return { changed: false, rec };
+  }
+  const stored = _bookingOperationalLegsFromRecord(rec);
+  if (
+    stored.some((leg) => safeStr(leg?.leg_id ?? leg?.legId, 200) === safeLegId)
+  ) {
+    return { changed: false, rec };
+  }
+  const projected = _bookingOperationalLegsForReadModel(rec, bookingId);
+  const match = projected.find(
+    (leg) => safeStr(leg?.leg_id ?? leg?.legId, 200) === safeLegId,
+  );
+  if (!match) return { changed: false, rec };
+  const appendLeg = (target, key) => {
+    const current = Array.isArray(target?.[key]) ? target[key].slice() : [];
+    current.push({ ...match });
+    target[key] = current;
+  };
+  appendLeg(rec, "operational_legs");
+  appendLeg(rec, "operationalLegs");
+  if (rec.booking && typeof rec.booking === "object") {
+    appendLeg(rec.booking, "operational_legs");
+    appendLeg(rec.booking, "operationalLegs");
+  }
+  rec.is_roundtrip_parent = _bookingOperationalLegsFromRecord(rec).length > 1;
+  rec.isRoundtripParent = rec.is_roundtrip_parent;
+  if (rec.booking && typeof rec.booking === "object") {
+    rec.booking.is_roundtrip_parent = rec.is_roundtrip_parent;
+    rec.booking.isRoundtripParent = rec.is_roundtrip_parent;
+  }
+  console.log(
+    `[BOOKING][OPERATIONAL_LEGS][MATERIALIZE] booking=${_bookingIntentMask(bookingId)} leg=${_bookingIntentMask(safeLegId)} reason=read_model_leg`,
+  );
+  return { changed: true, rec };
+}
+
+function _projectionLifecycleStatusFromRecord(rec, bookingId = null) {
+  const parentStatus = _normLifecycleStatus(rec?.status ?? rec?.stage ?? null);
+  if (parentStatus === "COMPLETED" || parentStatus === "CANCELLED") {
+    return parentStatus;
+  }
+  const operationalLegs = _bookingOperationalLegsFromRecord(rec);
+  if (!operationalLegs.length) return parentStatus;
+  const legStatuses = operationalLegs.map((legEntry) =>
+    _normLifecycleStatus(
+      legEntry?.status ??
+        legEntry?.lifecycle_status ??
+        legEntry?.lifecycleStatus ??
+        null,
+    ),
+  );
+  if (legStatuses.length > 0 && legStatuses.every((status) => status === "COMPLETED")) {
+    return "COMPLETED";
+  }
+  if (legStatuses.length > 0 && legStatuses.every((status) => status === "CANCELLED")) {
+    return "CANCELLED";
+  }
+  return parentStatus;
+}
+
 function _flattenOperationalLegForRidesList(parentBookingId, rec, leg, options = {}) {
   const parentRow = _flattenBookingForRidesList(parentBookingId, rec);
   const isRoundtripParent = options?.isRoundtripParent === true;
@@ -46128,9 +46631,16 @@ function _flattenOperationalLegForRidesList(parentBookingId, rec, leg, options =
   // Operational rows are leg-first. A parent may be an audit/payment container
   // in a partial cancellation state; it must not make an active sibling leg
   // look cancelled in company/customer operational lists.
-  const projectedStatusUpper = legStatusRaw
-    ? legStatusUpper
-    : (isTerminalLifecycleStatus(parentStatusUpper) ? parentStatusUpper : legStatusUpper);
+  let projectedStatusUpper;
+  if (parentStatusUpper === "COMPLETED" && legStatusUpper !== "CANCELLED") {
+    projectedStatusUpper = "COMPLETED";
+  } else if (legStatusRaw) {
+    projectedStatusUpper = legStatusUpper;
+  } else if (isTerminalLifecycleStatus(parentStatusUpper)) {
+    projectedStatusUpper = parentStatusUpper;
+  } else {
+    projectedStatusUpper = legStatusUpper;
+  }
   const assignedDriverId = safeStr(
     leg?.assigned_driver_id ??
       leg?.assignedDriverId ??
@@ -46353,7 +46863,7 @@ function _flattenOperationalLegForRidesList(parentBookingId, rec, leg, options =
 }
 
 function _flattenBookingForRidesListWithOperationalLegs(bookingId, rec, options = {}) {
-  const operationalLegs = _bookingOperationalLegsFromRecord(rec);
+  const operationalLegs = _bookingOperationalLegsForReadModel(rec, bookingId);
   if (!operationalLegs.length) {
     return [_flattenBookingForRidesList(bookingId, rec)];
   }
@@ -52890,6 +53400,17 @@ async function listBookingsAuthoritative(
       staleIds.add(bookingId);
       continue;
     }
+    const plannedTripCompletionRepair = await repairBookingCompletionFromStoppedPlannedTripsBestEffort(
+      env,
+      tenantScope,
+      bookingId,
+      rec,
+      { source: "company_bookings_list_planned_trip_repair" },
+    );
+    if (plannedTripCompletionRepair?.changed === true && plannedTripCompletionRepair?.rec) {
+      rec = plannedTripCompletionRepair.rec;
+      recordCache.set(bookingId, rec);
+    }
     const hiddenFlags = [
       rec?.company_bookings_hidden,
       rec?.hidden_from_company_bookings,
@@ -52945,8 +53466,20 @@ async function listBookingsAuthoritative(
         const pickupTs = row.pickup_iso ? Date.parse(row.pickup_iso) : Number.NaN;
         // For "available rides", require a valid pickup datetime.
         // Historical/debug records with missing/invalid pickup should stay out of operational list.
-        if (!Number.isFinite(pickupTs)) continue;
-        if (Number.isFinite(pickupTs) && pickupTs < cutoffMs) continue;
+        if (!Number.isFinite(pickupTs)) {
+          const legType = safeStr(row?.leg_type ?? row?.legType, 24).toLowerCase();
+          const hasRoute =
+            !!safeStr(row?.from, 240).trim() && !!safeStr(row?.to, 240).trim();
+          if (
+            !(
+              legType === "return" &&
+              hasRoute &&
+              (row?.is_operational_leg === true || row?.isOperationalLeg === true)
+            )
+          ) {
+            continue;
+          }
+        } else if (Number.isFinite(pickupTs) && pickupTs < cutoffMs) continue;
       }
       if (!_companyBookingsListShouldEmitRow(bookingId, rec, row)) continue;
       out.push(row);
@@ -53136,6 +53669,11 @@ function _resolveCanonicalBookingIdFromShadow(rec, recordKeyId = "") {
 // operational ride even if their booking_id differs (canonical vs UUID
 // shadow). Empty string means "not enough information to dedupe".
 function _driverBookingTripSignatureKey(row) {
+  const legId = safeStr(row?.leg_id ?? row?.legId, 200);
+  const bookingId = safeStr(row?.booking_id ?? row?.bookingId, 160);
+  if (legId && bookingId) {
+    return `${bookingId}::${legId}`;
+  }
   const pickup = safeStr(row?.pickup_iso ?? row?.pickupIso, 80);
   const from = safeStr(row?.from, 240).toLowerCase().trim();
   const to = safeStr(row?.to, 240).toLowerCase().trim();
@@ -56162,14 +56700,25 @@ async function getBookingAuthoritative(bookingId, env, tenantScope = null, prelo
   if (!tenantScope?.hasScope) {
     return missingTenantScopeError();
   }
-  const rec = preloadedRec || (await loadBookingRecord(env, bookingId)).rec;
+  let rec = preloadedRec || (await loadBookingRecord(env, bookingId)).rec;
   if (!bookingMatchesRequestedTenantScope(rec, tenantScope)) {
     return { ok: false, error: "forbidden" };
   }
+  const plannedTripCompletionRepair = await repairBookingCompletionFromStoppedPlannedTripsBestEffort(
+    env,
+    tenantScope,
+    bookingId,
+    rec,
+    { source: "get_booking_planned_trip_repair" },
+  );
+  if (plannedTripCompletionRepair?.changed === true && plannedTripCompletionRepair?.rec) {
+    rec = plannedTripCompletionRepair.rec;
+  }
+  enrichBookingRecordOperationalLegsForReadModel(rec, bookingId);
   return {
     ok: true,
     booking_id: bookingId,
-    status: _normLifecycleStatus(rec?.status || rec?.stage || null),
+    status: _projectionLifecycleStatusFromRecord(rec, bookingId),
     record: rec,
   };
 }
@@ -56303,7 +56852,7 @@ async function updateBookingStatusAuthoritative(
     rec?.booking?.stage,
   );
   const nowIso = new Date().toISOString();
-  if (normalized === "COMPLETED") {
+  if (normalized === "COMPLETED" && options?.bypass_future_pickup_guard !== true) {
     const nowMs = Date.now();
     const operationalLegs = _bookingOperationalLegsFromRecord(rec)
       .map((entry) => (entry && typeof entry === "object" ? entry : null))
@@ -56564,6 +57113,7 @@ async function updateBookingOperationalLegStatusAuthoritative(
   if (!bookingMatchesRequiredTenantCompanyScope(rec, tenantScope)) {
     return { ok: false, error: "forbidden" };
   }
+  _materializeOperationalLegIfMissingFromReadModel(rec, safeBookingId, safeLegId);
 
   const containers = [];
   if (Array.isArray(rec?.operational_legs)) containers.push({ owner: rec, key: "operational_legs" });
@@ -56580,7 +57130,7 @@ async function updateBookingOperationalLegStatusAuthoritative(
     return { ok: false, error: "operational_legs_not_found" };
   }
 
-  if (normalizedLegStatus === "COMPLETED") {
+  if (normalizedLegStatus === "COMPLETED" && options?.bypass_future_pickup_guard !== true) {
     const nowMs = Date.now();
     const targetLeg = _bookingOperationalLegsFromRecord(rec)
       .map((entry) => (entry && typeof entry === "object" ? entry : null))

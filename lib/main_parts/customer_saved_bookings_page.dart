@@ -306,9 +306,55 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
     required CustomerSavedBooking booking,
     required CustomerRoundtripLegCardView leg,
     bool blocksPaidOnlineCancel = false,
+    bool bookingKnownPaid = false,
   }) {
-    final statusColor = leg.isCancelled ? _palette.bronze : _palette.gold;
-    final showCancelLeg = leg.isActive && !blocksPaidOnlineCancel;
+    final Color statusColor;
+    if (leg.isCancelled) {
+      statusColor = _palette.bronze;
+    } else if (leg.isCompleted) {
+      statusColor = _palette.gold;
+    } else {
+      statusColor = _palette.gold;
+    }
+    final showCancelLeg =
+        !leg.isCancelled && !leg.isTerminal && !blocksPaidOnlineCancel;
+    final showReceiptAction = leg.isCompleted && bookingKnownPaid;
+    final String chipLabel;
+    if (leg.isCancelled) {
+      chipLabel = _t(
+        nl: 'Geannuleerd',
+        en: 'Cancelled',
+        fr: 'Annule',
+        es: 'Cancelado',
+      );
+    } else if (leg.isCompleted) {
+      chipLabel = _t(
+        nl: 'Voltooid',
+        en: 'Completed',
+        fr: 'Terminee',
+        es: 'Finalizada',
+      );
+    } else {
+      chipLabel = _t(
+        nl: 'Gepland',
+        en: 'Scheduled',
+        fr: 'Planifie',
+        es: 'Programado',
+      );
+    }
+    final String viewActionLabel = showReceiptAction
+        ? _t(
+            nl: 'Ritbon bekijken',
+            en: 'View receipt',
+            fr: 'Voir le ticket',
+            es: 'Ver recibo',
+          )
+        : _t(
+            nl: 'Rit bekijken',
+            en: 'View leg',
+            fr: 'Voir trajet',
+            es: 'Ver tramo',
+          );
     return Container(
       margin: const EdgeInsets.only(top: 8),
       padding: const EdgeInsets.all(10),
@@ -339,19 +385,7 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
                   border: Border.all(color: statusColor.withOpacity(0.34)),
                 ),
                 child: Text(
-                  leg.isCancelled
-                      ? _t(
-                          nl: 'Geannuleerd',
-                          en: 'Cancelled',
-                          fr: 'Annule',
-                          es: 'Cancelado',
-                        )
-                      : _t(
-                          nl: 'Gepland',
-                          en: 'Scheduled',
-                          fr: 'Planifie',
-                          es: 'Programado',
-                        ),
+                  chipLabel,
                   style: TextStyle(
                     color: statusColor.withOpacity(0.98),
                     fontSize: 10.2,
@@ -410,14 +444,7 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
               TextButton(
                 onPressed: () =>
                     _openSavedBooking(booking, legType: leg.legType),
-                child: Text(
-                  _t(
-                    nl: 'Rit bekijken',
-                    en: 'View leg',
-                    fr: 'Voir trajet',
-                    es: 'Ver tramo',
-                  ),
-                ),
+                child: Text(viewActionLabel),
               ),
             ],
           ),
@@ -961,6 +988,7 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
                     booking: booking,
                     leg: leg,
                     blocksPaidOnlineCancel: blocksPaidOnlineCancel,
+                    bookingKnownPaid: paid,
                   ),
                 ),
               ],

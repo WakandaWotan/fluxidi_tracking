@@ -4,10 +4,15 @@ compatibility_date = "2026-04-23"
 
 [vars]
 COMPLIANCE_API_URL = "https://fluxidi-compliance-api.fluxidi.workers.dev"
+BOOKING_API_URL = "https://fluxidi-booking-api.fluxidi.workers.dev"
 
 [[services]]
 binding = "COMPLIANCE_WORKER"
 service = "fluxidi-compliance-api"
+
+[[services]]
+binding = "BOOKING_API"
+service = "fluxidi-booking-api"
 
 [[kv_namespaces]]
 binding = "FLUXIDI_TRACKING"
