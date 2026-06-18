@@ -32605,6 +32605,11 @@ function buildBookingCreditDecisionComplianceEvent(
     64,
   );
   const rideType = _resolveComplianceRideTypeFromRecord(rec);
+  // Patch 3: additive assignment + context (parent-scope today — leg
+  // scoped credit decisions skip this builder entirely and will be
+  // addressed in Patch 3B). Spread at the end so existing required
+  // fields are unaffected.
+  const assignmentContext = _bookingComplianceAssignmentContext(rec);
   return {
     event_type: "booking_credit_decision",
     tenant_id: tenantId,
@@ -32639,6 +32644,7 @@ function buildBookingCreditDecisionComplianceEvent(
       validation_state: "credit_decision",
       ride_type: rideType,
     },
+    ...assignmentContext,
   };
 }
 
@@ -33695,6 +33701,10 @@ function buildBookingMollieRefundComplianceEvent(
     normalizedRefundStatus === "refunded"
       ? "refunded"
       : "cancelled";
+  // Patch 3: additive assignment + context. Parent-scope today; spread
+  // at the end so refund_id / refund_status / payment block remain the
+  // authoritative top-level fields.
+  const assignmentContext = _bookingComplianceAssignmentContext(rec);
   return {
     event_type: "booking_mollie_refund",
     tenant_id: tenantId,
@@ -33749,6 +33759,7 @@ function buildBookingMollieRefundComplianceEvent(
       backend_confirmed: true,
       validation_state: "mollie_refund",
     },
+    ...assignmentContext,
   };
 }
 
@@ -34905,6 +34916,10 @@ function buildBookingPaymentUpdateComplianceEvent(recordOrBooking, bookingId, pa
       booking?.receipt_reference ||
       booking?.receiptReference,
   ) || publicBookingReference || undefined;
+  // Patch 3: additive assignment + context (parent-scope; leg-only
+  // emission is deferred to Patch 3B). Spread at the end so it can only
+  // add new top-level keys, never override existing required fields.
+  const assignmentContext = _bookingComplianceAssignmentContext(rec);
 
   return {
     event_type: "payment_update",
@@ -34952,6 +34967,7 @@ function buildBookingPaymentUpdateComplianceEvent(recordOrBooking, bookingId, pa
       backend_confirmed: true,
       validation_state: "payment_update",
     },
+    ...assignmentContext,
   };
 }
 
@@ -35044,6 +35060,11 @@ function buildBookingStatusUpdateComplianceEvent(
   const eventActorRole = ["customer", "admin", "driver", "system"].includes(eventActorRoleRaw)
     ? eventActorRoleRaw
     : "system";
+  // Patch 3: additive assignment + context. The helper's parent_status
+  // is intentionally overridden below with newStatusLower so the event's
+  // parent_status always equals the transition's new status, regardless
+  // of the record's persisted-at-call-time lifecycle_status.
+  const assignmentContext = _bookingComplianceAssignmentContext(rec);
   const complianceEvent = {
     event_type: "booking_status_update",
     tenant_id: tenantId,
@@ -35088,6 +35109,9 @@ function buildBookingStatusUpdateComplianceEvent(
       backend_confirmed: true,
       validation_state: "status_update",
     },
+    ...assignmentContext,
+    parent_status: newStatusLower,
+    parentStatus: newStatusLower,
   };
   if (newStatusLower === "cancelled") {
     if (refundStatus) {
@@ -46633,6 +46657,228 @@ function _bookingWaitMinFromRecord(rec) {
   const num = Number(raw);
   if (!Number.isFinite(num) || num < 0) return null;
   return Math.max(0, Math.trunc(num));
+}
+
+// Compliance-event helper (Patch 3): builds the additive assignment +
+// context block that Chiron event builders spread onto their payload.
+// Returns an object whose keys never collide with the existing required
+// top-level fields of any builder (booking_id, tenant_id, company_id,
+// public_booking_reference, ride_type, lifecycle_status, status,
+// booking_status, ride_status, payment, fare, provenance, timestamps,
+// refund_*, credit_*, mollie_*, source, actor_role, sync_state). Every
+// field is included only when present on the record/leg — never invents
+// data. When `options.leg` is provided, leg-scoped values win over the
+// parent's summary (mirroring the read-model leg-first override from
+// Patch 2). When no leg is provided, parent-summary values are used.
+function _bookingComplianceAssignmentContext(rec, options = {}) {
+  if (!rec || typeof rec !== "object") return {};
+  const leg = options?.leg && typeof options.leg === "object" ? options.leg : null;
+  const result = {};
+
+  // Assignment IDs (leg-first when a leg is provided, otherwise parent).
+  const parentVehicleId = safeStr(bookingAssignedVehicleId(rec), 128);
+  const parentDriverId = safeStr(bookingAssignedDriverId(rec), 96);
+  let assignedDriverId = parentDriverId;
+  let assignedVehicleId = parentVehicleId;
+  if (leg) {
+    const legDriverId = safeStr(leg.assigned_driver_id ?? leg.assignedDriverId, 96);
+    const legVehicleId = safeStr(leg.assigned_vehicle_id ?? leg.assignedVehicleId, 128);
+    if (legDriverId) assignedDriverId = legDriverId;
+    if (legVehicleId) assignedVehicleId = legVehicleId;
+  }
+
+  // Driver name/phone resolution.
+  let driverName = "";
+  let driverPhone = "";
+  if (leg) {
+    const legContact = _normalizeAssignedDriverSummaryForLeg(
+      leg.assigned_driver ?? leg.assignedDriver,
+    );
+    driverName =
+      (legContact && legContact.name) ||
+      safeStr(leg.assigned_driver_name ?? leg.assignedDriverName, 160) ||
+      "";
+    driverPhone =
+      (legContact && legContact.phone) ||
+      safeStr(leg.assigned_driver_phone ?? leg.assignedDriverPhone, 64) ||
+      "";
+    // Only fall back to parent's driver summary when the leg's driver
+    // matches the parent's. A different leg driver (split_no_wait) must
+    // never inherit the other driver's name/phone.
+    if ((!driverName || !driverPhone) && assignedDriverId && assignedDriverId === parentDriverId) {
+      const parentContact = _bookingAssignedDriverContactFromRecord(rec);
+      if (!driverName && parentContact?.name) driverName = parentContact.name;
+      if (!driverPhone && parentContact?.phone) driverPhone = parentContact.phone;
+    }
+  } else {
+    const parentContact = _bookingAssignedDriverContactFromRecord(rec);
+    if (parentContact?.name) driverName = parentContact.name;
+    if (parentContact?.phone) driverPhone = parentContact.phone;
+  }
+
+  // Vehicle metadata resolution (leg-first, then parent summary).
+  let vehicleEnrichment = null;
+  if (leg) {
+    vehicleEnrichment = _operationalLegFleetEnrichmentFields(leg);
+    if (!vehicleEnrichment && assignedVehicleId && assignedVehicleId === parentVehicleId) {
+      vehicleEnrichment = _parentAssignmentEnrichmentFromLegs(rec, parentVehicleId);
+    }
+  } else {
+    vehicleEnrichment = _parentAssignmentEnrichmentFromLegs(rec, parentVehicleId);
+  }
+
+  // Nested assignment block — only fields actually present.
+  const assignment = {};
+  if (assignedDriverId) assignment.driver_id = assignedDriverId;
+  if (driverName) assignment.driver_name = driverName;
+  if (driverPhone) assignment.driver_phone = driverPhone;
+  if (assignedVehicleId) assignment.vehicle_id = assignedVehicleId;
+  if (vehicleEnrichment) {
+    if (vehicleEnrichment.assigned_vehicle_name) {
+      assignment.vehicle_name = vehicleEnrichment.assigned_vehicle_name;
+    }
+    if (vehicleEnrichment.assigned_vehicle_brand_model) {
+      assignment.vehicle_brand_model = vehicleEnrichment.assigned_vehicle_brand_model;
+    }
+    if (vehicleEnrichment.assigned_vehicle_license_plate) {
+      assignment.license_plate = vehicleEnrichment.assigned_vehicle_license_plate;
+    }
+    if (vehicleEnrichment.assigned_vehicle_color) {
+      assignment.vehicle_color = vehicleEnrichment.assigned_vehicle_color;
+    }
+    if (vehicleEnrichment.assigned_vehicle_exploitation_license_number) {
+      assignment.vehicle_exploitation_license_number =
+        vehicleEnrichment.assigned_vehicle_exploitation_license_number;
+    }
+    if (vehicleEnrichment.assigned_vehicle_registration_number) {
+      assignment.vehicle_registration_number =
+        vehicleEnrichment.assigned_vehicle_registration_number;
+    }
+  }
+  if (Object.keys(assignment).length > 0) {
+    result.assignment = assignment;
+  }
+  // Top-level driver_id / vehicle_id mirror — ComplianceLedgerEntry on
+  // the Flutter side already reads these flat aliases.
+  if (assignedDriverId) {
+    result.driver_id = assignedDriverId;
+    result.driverId = assignedDriverId;
+  }
+  if (assignedVehicleId) {
+    result.vehicle_id = assignedVehicleId;
+    result.vehicleId = assignedVehicleId;
+  }
+
+  // References (planning reference).
+  const planningReference = safeStr(
+    rec?.planning_reference ??
+      rec?.planningReference ??
+      _pick(rec, ["booking", "planning_reference"], null) ??
+      _pick(rec, ["booking", "planningReference"], null) ??
+      _pick(rec, ["payload", "planning_reference"], null) ??
+      _pick(rec, ["payload", "planningReference"], null),
+    120,
+  );
+  if (planningReference) {
+    result.references = {
+      planning_reference: planningReference,
+      planningReference,
+    };
+    result.planning_reference = planningReference;
+    result.planningReference = planningReference;
+  }
+
+  // Leg context (only when a leg is supplied).
+  if (leg) {
+    const legId = safeStr(leg.leg_id ?? leg.legId, 200);
+    const legTypeRaw = safeStr(leg.leg_type ?? leg.legType, 24).toLowerCase();
+    const legType =
+      legTypeRaw === "return"
+        ? "return"
+        : legTypeRaw === "outbound"
+          ? "outbound"
+          : "";
+    if (legId) {
+      result.leg_id = legId;
+      result.legId = legId;
+    }
+    if (legType) {
+      result.leg_type = legType;
+      result.legType = legType;
+    }
+    const legStatusToken = safeStr(
+      leg.status ?? leg.lifecycle_status ?? leg.lifecycleStatus,
+      40,
+    );
+    const legStatus = _normLifecycleStatus(legStatusToken);
+    if (legStatus) {
+      const legStatusLower = legStatus.toLowerCase();
+      result.leg_status = legStatusLower;
+      result.legStatus = legStatusLower;
+    }
+    const legPriceRaw = leg.price_incl_vat ?? leg.priceInclVat;
+    const legPriceNum = Number(legPriceRaw);
+    if (Number.isFinite(legPriceNum)) {
+      result.leg_price_incl_vat = legPriceNum;
+      result.legPriceInclVat = legPriceNum;
+    }
+    // Allocator diagnostics are forwarded only when already stamped on
+    // the leg as an object. Strings or absent values are skipped so a
+    // malformed diagnostics blob can never reach Chiron.
+    const diag =
+      (leg.allocator_diagnostics && typeof leg.allocator_diagnostics === "object"
+        ? leg.allocator_diagnostics
+        : null) ||
+      (leg.allocatorDiagnostics && typeof leg.allocatorDiagnostics === "object"
+        ? leg.allocatorDiagnostics
+        : null);
+    if (diag) {
+      result.allocator_diagnostics = diag;
+      result.allocatorDiagnostics = diag;
+    }
+  }
+
+  // Parent-scope context (always include when known).
+  const parentLifecycleToken = safeStr(
+    rec?.status ??
+      rec?.lifecycle_status ??
+      rec?.lifecycleStatus ??
+      _pick(rec, ["booking", "status"], null) ??
+      _pick(rec, ["booking", "lifecycle_status"], null) ??
+      _pick(rec, ["booking", "lifecycleStatus"], null),
+    40,
+  );
+  const parentStatus = _normLifecycleStatus(parentLifecycleToken);
+  if (parentStatus) {
+    const parentStatusLower = parentStatus.toLowerCase();
+    result.parent_status = parentStatusLower;
+    result.parentStatus = parentStatusLower;
+  }
+
+  const roundtripDispatchMode = _roundtripDispatchModeFromRecord(rec);
+  if (roundtripDispatchMode) {
+    result.roundtrip_dispatch_mode = roundtripDispatchMode;
+    result.roundtripDispatchMode = roundtripDispatchMode;
+  }
+  const parentAssignmentMode = _parentAssignmentModeFromRecord(rec);
+  if (parentAssignmentMode) {
+    result.parent_assignment_mode = parentAssignmentMode;
+    result.parentAssignmentMode = parentAssignmentMode;
+  }
+  const waitMin = _bookingWaitMinFromRecord(rec);
+  if (waitMin != null) {
+    result.wait_min = waitMin;
+    result.waitMin = waitMin;
+  }
+
+  // Parent total — only when safely readable.
+  const parentTotal = _bookingMainPriceInclVatFromRecord(rec);
+  if (parentTotal != null) {
+    result.parent_price_incl_vat = parentTotal;
+    result.parentPriceInclVat = parentTotal;
+  }
+
+  return result;
 }
 
 function _operationalLegTypeFromEntry(leg) {
