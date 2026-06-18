@@ -172,6 +172,15 @@ function maskScopeForTripKpiLog(value) {
   return `${text.substring(0, 2)}…${text.substring(text.length - 2)}`;
 }
 
+function _pickFinanceMonthCents(financeMonth, ...keys) {
+  const obj = financeMonth && typeof financeMonth === "object" && !Array.isArray(financeMonth) ? financeMonth : {};
+  for (const key of keys) {
+    const n = Number(obj[key]);
+    if (Number.isFinite(n)) return Math.max(0, Math.round(n));
+  }
+  return null;
+}
+
 async function requireAdminOrCompanySessionForScope(req, url, env, scope, origin) {
   if (hasValidAdminToken(req, url, env)) {
     console.log("[TRIP_KPIS][AUTH] auth_mode=admin_token");
@@ -3381,15 +3390,39 @@ async function handleDashboardTripKpis(req, url, env, origin) {
     : 0;
   const pendingCreditCents = monthPendingCreditCents;
   const creditedCents = monthCreditedCents;
-  // Booking-finance net is kept as a diagnostic only. It applies the
-  // historical credit-subtraction model (gross − pending_credit − credited)
-  // to the booking-finance gross. It is NOT used as the dashboard display
-  // value unless trip-KPI is empty, because cancelled/credited bookings are
-  // already excluded from completed-trip revenue.
-  const bookingFinanceNetIncomeCents = Math.max(
-    0,
-    monthBookingPaidIncomeCents - pendingCreditCents - creditedCents,
+  const bookingFinanceNetCents = _pickFinanceMonthCents(
+    financeMonth,
+    "monthly_net_revenue_cents",
+    "monthly_net_income_cents",
+    "booking_finance_monthly_net_revenue_cents",
+    "booking_finance_monthly_net_income_cents",
   );
+  const bookingFinanceGrossCents =
+    _pickFinanceMonthCents(
+      financeMonth,
+      "monthly_gross_paid_income_cents",
+      "monthly_paid_bookings_income_cents",
+      "booking_finance_monthly_gross_income_cents",
+    ) ?? monthBookingPaidIncomeCents;
+  const bookingFinanceCreditedCents =
+    _pickFinanceMonthCents(financeMonth, "monthly_credited_cents", "booking_finance_monthly_credited_cents") ??
+    creditedCents;
+  const bookingFinanceRefundedCents =
+    _pickFinanceMonthCents(financeMonth, "monthly_refunded_cents", "booking_finance_monthly_refunded_cents") ?? 0;
+  const bookingFinanceRetainedCents =
+    _pickFinanceMonthCents(financeMonth, "monthly_retained_cents", "booking_finance_monthly_retained_cents") ?? 0;
+  const bookingFinanceAmbiguousManualCents =
+    _pickFinanceMonthCents(
+      financeMonth,
+      "monthly_ambiguous_manual_cents",
+      "booking_finance_monthly_ambiguous_manual_cents",
+    ) ?? 0;
+  const bookingFinanceManualUnresolvedCount =
+    _pickFinanceMonthCents(financeMonth, "manual_unresolved_count", "booking_finance_manual_unresolved_count") ?? 0;
+  const bookingFinanceNetIncomeCents =
+    bookingFinanceNetCents != null
+      ? bookingFinanceNetCents
+      : Math.max(0, monthBookingPaidIncomeCents - pendingCreditCents - creditedCents);
   // Dashboard revenue source selection:
   //   Prefer completed-paid trip revenue (trip-KPI per-month aggregate)
   //   because it matches `completed_rides_count` 1:1 and cannot include
@@ -3413,7 +3446,23 @@ async function handleDashboardTripKpis(req, url, env, origin) {
   const dashboardMonthlyIncomeCents = selectedMonthlyIncomeCents;
   const blendedMonthlyIncomeCents = dashboardMonthlyIncomeCents;
   const grossMonthlyIncomeCents = dashboardMonthlyIncomeCents;
-  const netMonthlyIncomeCents = dashboardMonthlyIncomeCents;
+  let netMonthlyIncomeCents = dashboardMonthlyIncomeCents;
+  let monthlyNetIncomeCents = dashboardMonthlyIncomeCents;
+  let monthlyNetRevenueCents = dashboardMonthlyIncomeCents;
+  let selectedNetRevenueSource = selectedMonthlyIncomeSource;
+  if (bookingFinanceNetCents != null) {
+    netMonthlyIncomeCents = bookingFinanceNetCents;
+    monthlyNetIncomeCents = bookingFinanceNetCents;
+    monthlyNetRevenueCents = bookingFinanceNetCents;
+    selectedNetRevenueSource = "booking_finance_net";
+    console.log(
+      `[TRIP_KPI][NET_REVENUE_SOURCE] tenant=${maskScopeForTripKpiLog(normalizedScope.tenant_id)} company=${maskScopeForTripKpiLog(normalizedScope.company_id)} month=${selectedMonth} source=booking_finance_net net_cents=${bookingFinanceNetCents} gross_cents=${bookingFinanceGrossCents} credited_cents=${bookingFinanceCreditedCents} refunded_cents=${bookingFinanceRefundedCents}`,
+    );
+  } else {
+    console.log(
+      `[TRIP_KPI][NET_REVENUE_SOURCE] tenant=${maskScopeForTripKpiLog(normalizedScope.tenant_id)} company=${maskScopeForTripKpiLog(normalizedScope.company_id)} month=${selectedMonth} source=gross_fallback reason=missing_booking_finance_net`,
+    );
+  }
   console.log(
     `[DASHBOARD_REVENUE][DISPLAY_SOURCE] tenant=${maskScopeForTripKpiLog(normalizedScope.tenant_id)} company=${maskScopeForTripKpiLog(normalizedScope.company_id)} month=${selectedMonth} source=${selectedMonthlyIncomeSource} trip_cents=${monthIncomeCents} booking_finance_cents=${monthBookingPaidIncomeCents} booking_finance_net_cents=${bookingFinanceNetIncomeCents} selected_cents=${selectedMonthlyIncomeCents}`,
   );
@@ -3446,6 +3495,10 @@ async function handleDashboardTripKpis(req, url, env, origin) {
     credited_eur: creditedCents / 100,
     net_monthly_income_cents: netMonthlyIncomeCents,
     net_monthly_income_eur: netMonthlyIncomeCents / 100,
+    monthly_net_income_cents: monthlyNetIncomeCents,
+    monthly_net_income_eur: monthlyNetIncomeCents / 100,
+    monthly_net_revenue_cents: monthlyNetRevenueCents,
+    monthly_net_revenue_eur: monthlyNetRevenueCents / 100,
     monthly_paid_bookings_count: monthBookingPaidCount,
     monthly_paid_bookings_income_cents: monthBookingPaidIncomeCents,
     monthly_paid_bookings_income_eur: monthBookingPaidIncomeCents / 100,
@@ -3455,9 +3508,17 @@ async function handleDashboardTripKpis(req, url, env, origin) {
     booking_finance_monthly_income_eur: monthBookingPaidIncomeCents / 100,
     booking_finance_net_income_cents: bookingFinanceNetIncomeCents,
     booking_finance_net_income_eur: bookingFinanceNetIncomeCents / 100,
+    booking_finance_net_monthly_income_cents: bookingFinanceNetCents ?? bookingFinanceNetIncomeCents,
+    booking_finance_net_monthly_revenue_cents: bookingFinanceNetCents ?? bookingFinanceNetIncomeCents,
+    booking_finance_gross_monthly_income_cents: bookingFinanceGrossCents,
+    booking_finance_credited_cents: bookingFinanceCreditedCents,
+    booking_finance_refunded_cents: bookingFinanceRefundedCents,
+    booking_finance_retained_cents: bookingFinanceRetainedCents,
+    booking_finance_ambiguous_manual_cents: bookingFinanceAmbiguousManualCents,
+    booking_finance_manual_unresolved_count: bookingFinanceManualUnresolvedCount,
     dashboard_monthly_income_cents: dashboardMonthlyIncomeCents,
     dashboard_monthly_income_eur: dashboardMonthlyIncomeCents / 100,
-    selected_monthly_income_source: selectedMonthlyIncomeSource,
+    selected_monthly_income_source: selectedNetRevenueSource,
     trip_kpi_reconcile_scanned: Number.isFinite(Number(reconcileResult?.trip_kpi_reconcile_scanned))
       ? Math.max(0, Math.round(Number(reconcileResult.trip_kpi_reconcile_scanned)))
       : 0,

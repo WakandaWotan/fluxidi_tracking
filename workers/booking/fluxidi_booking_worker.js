@@ -20606,6 +20606,8 @@ GET /oauth/callback
         ).toLowerCase();
         const debugBookingFinance =
           debugBookingFinanceRaw === "1" || debugBookingFinanceRaw === "true";
+        const debugFinanceItemsEnabled =
+          debugEnabled && safeStr(auth?.auth_mode, 32) === "admin_token";
         const monthParam = safeStr(url.searchParams.get("month"), 16);
         if (monthParam && !_dashboardBookingsKpiNormalizeMonth(monthParam)) {
           return json({ ok: false, error: "month must be YYYY-MM" }, 400);
@@ -20644,6 +20646,7 @@ GET /oauth/callback
             source: "dashboard_bookings_kpis_route_read",
             includeDebugRows: debugBookingFinance,
             debugRowLimit: 20,
+            includeDebugItems: debugFinanceItemsEnabled,
           },
         );
         if (routeReconcileFinance?.ok) {
@@ -20668,6 +20671,10 @@ GET /oauth/callback
         );
         console.log(
           `[DASHBOARD_BOOKINGS_KPI][MONTHLY_INCOME_MERGE] tenant=${_maskPublicDriverLoginValue(scopedRoute.scope?.tenant_id)} company=${_maskPublicDriverLoginValue(scopedRoute.scope?.company_id)} month=${selectedMonth} projection_income_cents=0 booking_finance_income_cents=${bookingFinanceMonthIncomeCents} merged_income_cents=${bookingFinanceMonthIncomeCents} source=route_precompute`,
+        );
+        const routeBookingFinanceNetFields = _dashboardBookingFinanceNetAggregateFields(
+          bookingFinanceMonth,
+          routeReconcileFinance,
         );
         const listIndexRead = await readCompanyBookingsListIndex(
           env,
@@ -20711,6 +20718,7 @@ GET /oauth/callback
               booking_finance_monthly_income_cents: bookingFinanceMonthIncomeCents,
               booking_finance_monthly_income_eur: bookingFinanceMonthIncomeCents / 100,
               booking_finance_monthly_paid_bookings_count: bookingFinanceMonthPaidCount,
+              ...routeBookingFinanceNetFields,
               booking_finance_reconcile_scanned: Number.isFinite(Number(routeReconcileFinance?.booking_finance_reconcile_scanned))
                 ? Math.max(0, Math.round(Number(routeReconcileFinance.booking_finance_reconcile_scanned)))
                 : 0,
@@ -20746,6 +20754,13 @@ GET /oauth/callback
                 ? {
                     booking_finance_debug_rows: Array.isArray(routeReconcileFinance?.booking_finance_reconcile_debug_rows)
                       ? routeReconcileFinance.booking_finance_reconcile_debug_rows
+                      : [],
+                  }
+                : {}),
+              ...(debugFinanceItemsEnabled
+                ? {
+                    booking_finance_debug_items: Array.isArray(routeReconcileFinance?.booking_finance_debug_items)
+                      ? routeReconcileFinance.booking_finance_debug_items
                       : [],
                   }
                 : {}),
@@ -20800,6 +20815,7 @@ GET /oauth/callback
           month: monthParam || null,
           debug: debugEnabled,
           debugBookingFinance,
+          debugFinanceItems: debugFinanceItemsEnabled,
           debugLimit: 50,
         });
         if (!out?.ok) {
@@ -20856,6 +20872,7 @@ GET /oauth/callback
                   booking_finance_monthly_income_cents: bookingFinanceMonthIncomeCents,
                   booking_finance_monthly_income_eur: bookingFinanceMonthIncomeCents / 100,
                   booking_finance_monthly_paid_bookings_count: bookingFinanceMonthPaidCount,
+                  ...routeBookingFinanceNetFields,
                   booking_finance_reconcile_scanned: Number.isFinite(Number(routeReconcileFinance?.booking_finance_reconcile_scanned))
                     ? Math.max(0, Math.round(Number(routeReconcileFinance.booking_finance_reconcile_scanned)))
                     : 0,
@@ -20891,6 +20908,13 @@ GET /oauth/callback
                     ? {
                         booking_finance_debug_rows: Array.isArray(routeReconcileFinance?.booking_finance_reconcile_debug_rows)
                           ? routeReconcileFinance.booking_finance_reconcile_debug_rows
+                          : [],
+                      }
+                    : {}),
+                  ...(debugFinanceItemsEnabled
+                    ? {
+                        booking_finance_debug_items: Array.isArray(routeReconcileFinance?.booking_finance_debug_items)
+                          ? routeReconcileFinance.booking_finance_debug_items
                           : [],
                       }
                     : {}),
@@ -20953,6 +20977,7 @@ GET /oauth/callback
                 month: monthParam || null,
                 debug: debugEnabled,
                 debugBookingFinance,
+                debugFinanceItems: debugFinanceItemsEnabled,
                 debugLimit: 50,
               });
               if (repaired?.ok) {
@@ -20980,6 +21005,7 @@ GET /oauth/callback
                 booking_finance_monthly_income_cents: bookingFinanceMonthIncomeCents,
                 booking_finance_monthly_income_eur: bookingFinanceMonthIncomeCents / 100,
                 booking_finance_monthly_paid_bookings_count: bookingFinanceMonthPaidCount,
+                ...routeBookingFinanceNetFields,
                 booking_finance_reconcile_scanned: Number.isFinite(Number(routeReconcileFinance?.booking_finance_reconcile_scanned))
                   ? Math.max(0, Math.round(Number(routeReconcileFinance.booking_finance_reconcile_scanned)))
                   : 0,
@@ -21015,6 +21041,13 @@ GET /oauth/callback
                   ? {
                       booking_finance_debug_rows: Array.isArray(routeReconcileFinance?.booking_finance_reconcile_debug_rows)
                         ? routeReconcileFinance.booking_finance_reconcile_debug_rows
+                        : [],
+                    }
+                  : {}),
+                ...(debugFinanceItemsEnabled
+                  ? {
+                      booking_finance_debug_items: Array.isArray(routeReconcileFinance?.booking_finance_debug_items)
+                        ? routeReconcileFinance.booking_finance_debug_items
                         : [],
                     }
                   : {}),
@@ -21091,6 +21124,7 @@ GET /oauth/callback
                 booking_finance_monthly_income_cents: bookingFinanceMonthIncomeCents,
                 booking_finance_monthly_income_eur: bookingFinanceMonthIncomeCents / 100,
                 booking_finance_monthly_paid_bookings_count: bookingFinanceMonthPaidCount,
+                ...routeBookingFinanceNetFields,
                 booking_finance_reconcile_scanned: Number.isFinite(Number(routeReconcileFinance?.booking_finance_reconcile_scanned))
                   ? Math.max(0, Math.round(Number(routeReconcileFinance.booking_finance_reconcile_scanned)))
                   : 0,
@@ -21126,6 +21160,13 @@ GET /oauth/callback
                   ? {
                       booking_finance_debug_rows: Array.isArray(routeReconcileFinance?.booking_finance_reconcile_debug_rows)
                         ? routeReconcileFinance.booking_finance_reconcile_debug_rows
+                        : [],
+                    }
+                  : {}),
+                ...(debugFinanceItemsEnabled
+                  ? {
+                      booking_finance_debug_items: Array.isArray(routeReconcileFinance?.booking_finance_debug_items)
+                        ? routeReconcileFinance.booking_finance_debug_items
                         : [],
                     }
                   : {}),
@@ -32186,6 +32227,200 @@ function _bookingCreditDecisionFinanceBuckets(rec) {
   return { credited_cents, no_refund_cents, partial_credit_cents };
 }
 
+function _readFinanceLayerNumericCents(layer, ...keys) {
+  if (!layer || typeof layer !== "object") return 0;
+  for (const key of keys) {
+    const raw = layer?.[key];
+    if (Number.isFinite(Number(raw))) {
+      return Math.max(0, Math.round(Number(raw)));
+    }
+  }
+  return 0;
+}
+
+function _operationalLegHasFinanceCreditState(legEntry) {
+  if (!legEntry || typeof legEntry !== "object") return false;
+  if (_operationalLegHasPendingCreditState(legEntry)) return true;
+  if (_operationalLegHasResolvedCreditDecision(legEntry)) return true;
+  const credited = _readFinanceLayerNumericCents(
+    legEntry,
+    "credited_amount_cents",
+    "creditedAmountCents",
+  );
+  const refunded = _readFinanceLayerNumericCents(
+    legEntry,
+    "refunded_amount_cents",
+    "refundedAmountCents",
+  );
+  if (credited > 0 || refunded > 0) return true;
+  const mollieRefundStatus = safeStr(
+    legEntry?.mollie_refund_status ?? legEntry?.mollieRefundStatus,
+    64,
+  );
+  const refundStatus = safeStr(legEntry?.refund_status ?? legEntry?.refundStatus, 64);
+  return (
+    _mollieRefundApiStatusIsTerminalRefunded(mollieRefundStatus) ||
+    safeStr(refundStatus, 64).toLowerCase().replaceAll("-", "_") === "refunded"
+  );
+}
+
+function _bookingFinanceLayerNetAccounting(layer, grossCents, logContext = {}) {
+  const gross = Math.max(0, Math.round(Number(grossCents) || 0));
+  const decision = safeStr(layer?.credit_decision ?? layer?.creditDecision, 64)
+    .toLowerCase()
+    .replaceAll("-", "_");
+  const creditedRaw = _readFinanceLayerNumericCents(
+    layer,
+    "credited_amount_cents",
+    "creditedAmountCents",
+  );
+  const refundedRaw = _readFinanceLayerNumericCents(
+    layer,
+    "refunded_amount_cents",
+    "refundedAmountCents",
+  );
+  const refundStatus = safeStr(layer?.refund_status ?? layer?.refundStatus, 64)
+    .toLowerCase()
+    .replaceAll("-", "_");
+  const mollieRefundStatus = safeStr(
+    layer?.mollie_refund_status ?? layer?.mollieRefundStatus,
+    64,
+  )
+    .toLowerCase()
+    .replaceAll("-", "_");
+  const mollieRefunded =
+    _mollieRefundApiStatusIsTerminalRefunded(mollieRefundStatus) ||
+    refundStatus === "refunded";
+
+  let credited_cents = 0;
+  let refunded_cents = 0;
+  let ambiguous_manual_cents = 0;
+  let manual_unresolved_count = 0;
+  let deduction_cents = 0;
+
+  if (decision === "full_credit") {
+    credited_cents = creditedRaw > 0 ? creditedRaw : gross;
+    deduction_cents = credited_cents;
+  } else if (decision === "partial_credit") {
+    credited_cents = creditedRaw;
+    deduction_cents = credited_cents;
+  } else if (decision === "no_refund") {
+    deduction_cents = 0;
+  } else if (decision === "handled_manually") {
+    if (creditedRaw > 0 || refundedRaw > 0) {
+      credited_cents = creditedRaw;
+      refunded_cents = refundedRaw;
+      deduction_cents = Math.max(creditedRaw, refundedRaw);
+    } else {
+      ambiguous_manual_cents = gross;
+      manual_unresolved_count = 1;
+      deduction_cents = 0;
+      console.log(
+        `[BOOKING_FINANCE_KPI][MANUAL_AMBIGUOUS] booking=${_bookingIntentMask(logContext?.bookingId || "-")} leg=${_bookingIntentMask(logContext?.legId || "-")} leg_type=${safeStr(logContext?.legType, 24) || "-"} gross_cents=${gross} reason=no_settled_amount`,
+      );
+    }
+  } else if (mollieRefunded) {
+    refunded_cents = refundedRaw > 0 ? refundedRaw : creditedRaw > 0 ? creditedRaw : gross;
+    deduction_cents = refunded_cents;
+  } else if (creditedRaw > 0 || refundedRaw > 0) {
+    credited_cents = creditedRaw;
+    refunded_cents = refundedRaw;
+    deduction_cents = Math.max(creditedRaw, refundedRaw);
+  }
+
+  if (deduction_cents > gross) deduction_cents = gross;
+  const net_revenue_cents = Math.max(0, gross - deduction_cents);
+  const retained_cents = net_revenue_cents;
+  return {
+    gross_paid_cents: gross,
+    credited_cents,
+    refunded_cents,
+    retained_cents,
+    net_revenue_cents,
+    ambiguous_manual_cents,
+    manual_unresolved_count,
+    deduction_cents,
+  };
+}
+
+function _bookingFinanceNetAccountingBuckets(rec, bookingId) {
+  const safeBookingId = safeStr(bookingId, 160) || "-";
+  const legs = _bookingOperationalLegsFromRecord(rec);
+  const useLegAggregate =
+    legs.length > 0 && legs.some((legEntry) => _operationalLegHasFinanceCreditState(legEntry));
+
+  const emptyTotals = () => ({
+    gross_paid_cents: 0,
+    credited_cents: 0,
+    refunded_cents: 0,
+    retained_cents: 0,
+    net_revenue_cents: 0,
+    ambiguous_manual_cents: 0,
+    manual_unresolved_count: 0,
+    accounting_source: useLegAggregate ? "leg_aggregate" : "parent",
+  });
+
+  if (useLegAggregate) {
+    const totals = emptyTotals();
+    totals.accounting_source = "leg_aggregate";
+    for (const legEntry of legs) {
+      const legId = safeStr(legEntry?.leg_id ?? legEntry?.legId, 200) || "-";
+      const legType = safeStr(legEntry?.leg_type ?? legEntry?.legType, 24) || "-";
+      const legGross = _resolveOperationalLegFinanceAmountCents(legEntry, rec);
+      const legNet = _bookingFinanceLayerNetAccounting(legEntry, legGross, {
+        bookingId: safeBookingId,
+        legId,
+        legType,
+        scope: "leg",
+      });
+      totals.gross_paid_cents += legNet.gross_paid_cents;
+      totals.credited_cents += legNet.credited_cents;
+      totals.refunded_cents += legNet.refunded_cents;
+      totals.retained_cents += legNet.retained_cents;
+      totals.net_revenue_cents += legNet.net_revenue_cents;
+      totals.ambiguous_manual_cents += legNet.ambiguous_manual_cents;
+      totals.manual_unresolved_count += legNet.manual_unresolved_count;
+      console.log(
+        `[BOOKING_FINANCE_KPI][LEG_NET] booking=${_bookingIntentMask(safeBookingId)} leg=${_bookingIntentMask(legId)} leg_type=${legType} gross_cents=${legNet.gross_paid_cents} credited_cents=${legNet.credited_cents} refunded_cents=${legNet.refunded_cents} net_cents=${legNet.net_revenue_cents} ambiguous_manual_cents=${legNet.ambiguous_manual_cents}`,
+      );
+    }
+    if (totals.gross_paid_cents <= 0) {
+      const amountResolution = _trackingSyncResolveBookingFinanceAmountFromRecord(rec);
+      const parentGross = Number.isFinite(Number(amountResolution?.cents))
+        ? Math.max(0, Math.round(Number(amountResolution.cents)))
+        : 0;
+      if (parentGross > 0) {
+        totals.gross_paid_cents = parentGross;
+        totals.net_revenue_cents = parentGross;
+        totals.retained_cents = parentGross;
+      }
+    }
+    console.log(
+      `[BOOKING_FINANCE_KPI][NET_ACCOUNTING] booking=${_bookingIntentMask(safeBookingId)} source=leg_aggregate gross_cents=${totals.gross_paid_cents} credited_cents=${totals.credited_cents} refunded_cents=${totals.refunded_cents} net_cents=${totals.net_revenue_cents} ambiguous_manual_cents=${totals.ambiguous_manual_cents} manual_unresolved_count=${totals.manual_unresolved_count}`,
+    );
+    return totals;
+  }
+
+  const amountResolution = _trackingSyncResolveBookingFinanceAmountFromRecord(rec);
+  const parentGross = Number.isFinite(Number(amountResolution?.cents))
+    ? Math.max(0, Math.round(Number(amountResolution.cents)))
+    : 0;
+  const parentNet = _bookingFinanceLayerNetAccounting(rec, parentGross, {
+    bookingId: safeBookingId,
+    scope: "parent",
+  });
+  console.log(
+    `[BOOKING_FINANCE_KPI][PARENT_NET] booking=${_bookingIntentMask(safeBookingId)} gross_cents=${parentNet.gross_paid_cents} credited_cents=${parentNet.credited_cents} refunded_cents=${parentNet.refunded_cents} net_cents=${parentNet.net_revenue_cents} ambiguous_manual_cents=${parentNet.ambiguous_manual_cents}`,
+  );
+  console.log(
+    `[BOOKING_FINANCE_KPI][NET_ACCOUNTING] booking=${_bookingIntentMask(safeBookingId)} source=parent gross_cents=${parentNet.gross_paid_cents} credited_cents=${parentNet.credited_cents} refunded_cents=${parentNet.refunded_cents} net_cents=${parentNet.net_revenue_cents} ambiguous_manual_cents=${parentNet.ambiguous_manual_cents} manual_unresolved_count=${parentNet.manual_unresolved_count}`,
+  );
+  return {
+    ...parentNet,
+    accounting_source: "parent",
+  };
+}
+
 function _resolveComplianceRideTypeFromRecord(rec) {
   if (!rec || typeof rec !== "object") return "booking";
   const booking = rec?.booking && typeof rec.booking === "object" ? rec.booking : {};
@@ -39550,27 +39785,41 @@ function _trackingSyncDeriveBookingFinanceContribution(bookingId, rec) {
       rec?.booking?.refund_required === true ||
       rec?.booking?.refundRequired === true);
   const creditBuckets = _bookingCreditDecisionFinanceBuckets(rec);
+  const netAccounting = _bookingFinanceNetAccountingBuckets(rec, safeBookingId);
   const financeMonth =
     monthlyPaid
       ? paidAtMonth
       : (pendingCredit && amountCents > 0 ? (paidAtMonth ?? cancelledAtMonth) : null);
-  const paidCents = monthlyPaid ? amountCents : 0;
-  const creditedCents = creditBuckets.credited_cents;
+  const grossPaidCents = monthlyPaid
+    ? Math.max(amountCents, netAccounting.gross_paid_cents)
+    : 0;
+  const creditedCents = monthlyPaid ? netAccounting.credited_cents : 0;
+  const refundedCents = monthlyPaid ? netAccounting.refunded_cents : 0;
+  const retainedCents = monthlyPaid ? netAccounting.retained_cents : 0;
+  const netRevenueCents = monthlyPaid ? netAccounting.net_revenue_cents : 0;
+  const ambiguousManualCents = monthlyPaid ? netAccounting.ambiguous_manual_cents : 0;
+  const manualUnresolvedCount = monthlyPaid ? netAccounting.manual_unresolved_count : 0;
   const pendingCents = pendingCredit && amountCents > 0 ? amountCents : 0;
-  const netCents = Math.max(0, paidCents - pendingCents - creditedCents);
   console.log(
-    `[BOOKING_FINANCE] booking=${_bookingIntentMask(safeBookingId)} paid_cents=${paidCents} credited_cents=${creditedCents} net_cents=${netCents}`,
+    `[BOOKING_FINANCE] booking=${_bookingIntentMask(safeBookingId)} paid_cents=${grossPaidCents} credited_cents=${creditedCents} refunded_cents=${refundedCents} net_cents=${netRevenueCents} accounting_source=${safeStr(netAccounting.accounting_source, 32) || "parent"}`,
   );
   return {
     booking_id: safeBookingId,
     paid_month: financeMonth,
     monthly_paid_bookings_count: monthlyPaid ? 1 : 0,
-    monthly_paid_bookings_income_cents: monthlyPaid ? amountCents : 0,
-    monthly_cancelled_paid_bookings_cents: monthlyPaid && cancelled ? amountCents : 0,
-    monthly_pending_credit_cents: pendingCredit && amountCents > 0 ? amountCents : 0,
-    credited_cents: creditBuckets.credited_cents,
+    monthly_paid_bookings_income_cents: monthlyPaid ? grossPaidCents : 0,
+    monthly_cancelled_paid_bookings_cents: monthlyPaid && cancelled ? grossPaidCents : 0,
+    monthly_pending_credit_cents: pendingCents,
+    credited_cents: creditedCents,
     no_refund_cents: creditBuckets.no_refund_cents,
     partial_credit_cents: creditBuckets.partial_credit_cents,
+    gross_paid_cents: grossPaidCents,
+    refunded_cents: refundedCents,
+    retained_cents: retainedCents,
+    net_revenue_cents: netRevenueCents,
+    ambiguous_manual_cents: ambiguousManualCents,
+    manual_unresolved_count: manualUnresolvedCount,
+    accounting_source: safeStr(netAccounting.accounting_source, 32) || "parent",
     paid: paid === true,
     amount_source: safeStr(amountResolution?.source, 80) || "none",
     amount_cents_raw: amountCents,
@@ -39630,6 +39879,34 @@ function _trackingSyncReadBookingFinanceContribShape(value, fallbackBookingId = 
   )
     ? Math.max(0, Math.round(Number(obj.partial_credit_cents ?? obj.partialCreditCents)))
     : 0;
+  const grossPaidCents = Number.isFinite(Number(obj.gross_paid_cents ?? obj.grossPaidCents))
+    ? Math.max(0, Math.round(Number(obj.gross_paid_cents ?? obj.grossPaidCents)))
+    : Math.max(0, paidIncome);
+  const refundedCents = Number.isFinite(Number(obj.refunded_cents ?? obj.refundedCents))
+    ? Math.max(0, Math.round(Number(obj.refunded_cents ?? obj.refundedCents)))
+    : 0;
+  const retainedCents = Number.isFinite(Number(obj.retained_cents ?? obj.retainedCents))
+    ? Math.max(0, Math.round(Number(obj.retained_cents ?? obj.retainedCents)))
+    : 0;
+  const netRevenueCents = Number.isFinite(
+    Number(obj.net_revenue_cents ?? obj.netRevenueCents ?? obj.net_revenueCents),
+  )
+    ? Math.max(
+      0,
+      Math.round(Number(obj.net_revenue_cents ?? obj.netRevenueCents ?? obj.net_revenueCents)),
+    )
+    : Math.max(0, grossPaidCents - creditedCents - refundedCents);
+  const ambiguousManualCents = Number.isFinite(
+    Number(obj.ambiguous_manual_cents ?? obj.ambiguousManualCents),
+  )
+    ? Math.max(0, Math.round(Number(obj.ambiguous_manual_cents ?? obj.ambiguousManualCents)))
+    : 0;
+  const manualUnresolvedCount = Number.isFinite(
+    Number(obj.manual_unresolved_count ?? obj.manualUnresolvedCount),
+  )
+    ? Math.max(0, Math.round(Number(obj.manual_unresolved_count ?? obj.manualUnresolvedCount)))
+    : 0;
+  const accountingSource = safeStr(obj.accounting_source ?? obj.accountingSource, 32) || null;
   const paymentStatus = safeStr(
     obj.payment_status ??
     obj.paymentStatus ??
@@ -39646,6 +39923,13 @@ function _trackingSyncReadBookingFinanceContribShape(value, fallbackBookingId = 
     credited_cents: creditedCents,
     no_refund_cents: noRefundCents,
     partial_credit_cents: partialCreditCents,
+    gross_paid_cents: grossPaidCents,
+    refunded_cents: refundedCents,
+    retained_cents: retainedCents > 0 ? retainedCents : netRevenueCents,
+    net_revenue_cents: netRevenueCents,
+    ambiguous_manual_cents: ambiguousManualCents,
+    manual_unresolved_count: manualUnresolvedCount,
+    accounting_source: accountingSource,
     payment_status: paymentStatus,
   };
 }
@@ -39870,44 +40154,55 @@ async function _trackingSyncMaterializeBookingFinanceKpiBestEffort({
     await _trackingSyncGetJson(env, contribKey),
     next.booking_id,
   );
+  const _emptyBookingFinanceMonthDelta = () => ({
+    monthly_paid_bookings_count: 0,
+    monthly_paid_bookings_income_cents: 0,
+    monthly_cancelled_paid_bookings_cents: 0,
+    monthly_pending_credit_cents: 0,
+    monthly_credited_cents: 0,
+    monthly_refunded_cents: 0,
+    monthly_net_revenue_cents: 0,
+    monthly_retained_cents: 0,
+    monthly_ambiguous_manual_cents: 0,
+    manual_unresolved_count: 0,
+  });
+  const _bookingFinanceContribHasMonthEffect = (contrib) =>
+    !!(
+      contrib?.paid_month &&
+      (contrib.monthly_paid_bookings_count > 0 ||
+        contrib.monthly_pending_credit_cents > 0 ||
+        contrib.credited_cents > 0 ||
+        contrib.refunded_cents > 0 ||
+        contrib.net_revenue_cents > 0 ||
+        contrib.ambiguous_manual_cents > 0 ||
+        contrib.manual_unresolved_count > 0)
+    );
   const monthDeltas = {};
-  if (
-    prev.paid_month &&
-    (prev.monthly_paid_bookings_count > 0 ||
-      prev.monthly_pending_credit_cents > 0 ||
-      prev.credited_cents > 0)
-  ) {
-    monthDeltas[prev.paid_month] = monthDeltas[prev.paid_month] || {
-      monthly_paid_bookings_count: 0,
-      monthly_paid_bookings_income_cents: 0,
-      monthly_cancelled_paid_bookings_cents: 0,
-      monthly_pending_credit_cents: 0,
-      monthly_credited_cents: 0,
-    };
+  if (_bookingFinanceContribHasMonthEffect(prev)) {
+    monthDeltas[prev.paid_month] = _emptyBookingFinanceMonthDelta();
     monthDeltas[prev.paid_month].monthly_paid_bookings_count -= prev.monthly_paid_bookings_count;
     monthDeltas[prev.paid_month].monthly_paid_bookings_income_cents -= prev.monthly_paid_bookings_income_cents;
     monthDeltas[prev.paid_month].monthly_cancelled_paid_bookings_cents -= prev.monthly_cancelled_paid_bookings_cents;
     monthDeltas[prev.paid_month].monthly_pending_credit_cents -= prev.monthly_pending_credit_cents;
     monthDeltas[prev.paid_month].monthly_credited_cents -= prev.credited_cents;
+    monthDeltas[prev.paid_month].monthly_refunded_cents -= prev.refunded_cents;
+    monthDeltas[prev.paid_month].monthly_net_revenue_cents -= prev.net_revenue_cents;
+    monthDeltas[prev.paid_month].monthly_retained_cents -= prev.retained_cents;
+    monthDeltas[prev.paid_month].monthly_ambiguous_manual_cents -= prev.ambiguous_manual_cents;
+    monthDeltas[prev.paid_month].manual_unresolved_count -= prev.manual_unresolved_count;
   }
-  if (
-    next.paid_month &&
-    (next.monthly_paid_bookings_count > 0 ||
-      next.monthly_pending_credit_cents > 0 ||
-      next.credited_cents > 0)
-  ) {
-    monthDeltas[next.paid_month] = monthDeltas[next.paid_month] || {
-      monthly_paid_bookings_count: 0,
-      monthly_paid_bookings_income_cents: 0,
-      monthly_cancelled_paid_bookings_cents: 0,
-      monthly_pending_credit_cents: 0,
-      monthly_credited_cents: 0,
-    };
+  if (_bookingFinanceContribHasMonthEffect(next)) {
+    monthDeltas[next.paid_month] = monthDeltas[next.paid_month] || _emptyBookingFinanceMonthDelta();
     monthDeltas[next.paid_month].monthly_paid_bookings_count += next.monthly_paid_bookings_count;
     monthDeltas[next.paid_month].monthly_paid_bookings_income_cents += next.monthly_paid_bookings_income_cents;
     monthDeltas[next.paid_month].monthly_cancelled_paid_bookings_cents += next.monthly_cancelled_paid_bookings_cents;
     monthDeltas[next.paid_month].monthly_pending_credit_cents += next.monthly_pending_credit_cents;
     monthDeltas[next.paid_month].monthly_credited_cents += next.credited_cents;
+    monthDeltas[next.paid_month].monthly_refunded_cents += next.refunded_cents;
+    monthDeltas[next.paid_month].monthly_net_revenue_cents += next.net_revenue_cents;
+    monthDeltas[next.paid_month].monthly_retained_cents += next.retained_cents;
+    monthDeltas[next.paid_month].monthly_ambiguous_manual_cents += next.ambiguous_manual_cents;
+    monthDeltas[next.paid_month].manual_unresolved_count += next.manual_unresolved_count;
   }
   for (const [month, delta] of Object.entries(monthDeltas)) {
     if (!delta) continue;
@@ -39916,7 +40211,12 @@ async function _trackingSyncMaterializeBookingFinanceKpiBestEffort({
       !delta.monthly_paid_bookings_income_cents &&
       !delta.monthly_cancelled_paid_bookings_cents &&
       !delta.monthly_pending_credit_cents &&
-      !delta.monthly_credited_cents
+      !delta.monthly_credited_cents &&
+      !delta.monthly_refunded_cents &&
+      !delta.monthly_net_revenue_cents &&
+      !delta.monthly_retained_cents &&
+      !delta.monthly_ambiguous_manual_cents &&
+      !delta.manual_unresolved_count
     ) {
       continue;
     }
@@ -39937,15 +40237,30 @@ async function _trackingSyncMaterializeBookingFinanceKpiBestEffort({
     const currentCredited = Number.isFinite(Number(current.monthly_credited_cents))
       ? Math.round(Number(current.monthly_credited_cents))
       : 0;
+    const currentRefunded = Number.isFinite(Number(current.monthly_refunded_cents))
+      ? Math.round(Number(current.monthly_refunded_cents))
+      : 0;
+    const currentNetRevenue = Number.isFinite(Number(current.monthly_net_revenue_cents))
+      ? Math.round(Number(current.monthly_net_revenue_cents))
+      : 0;
+    const currentRetained = Number.isFinite(Number(current.monthly_retained_cents))
+      ? Math.round(Number(current.monthly_retained_cents))
+      : 0;
+    const currentAmbiguousManual = Number.isFinite(Number(current.monthly_ambiguous_manual_cents))
+      ? Math.round(Number(current.monthly_ambiguous_manual_cents))
+      : 0;
+    const currentManualUnresolved = Number.isFinite(Number(current.manual_unresolved_count))
+      ? Math.round(Number(current.manual_unresolved_count))
+      : 0;
+    const nextIncome = Math.max(0, currentIncome + delta.monthly_paid_bookings_income_cents);
+    const nextNetRevenue = Math.max(0, currentNetRevenue + delta.monthly_net_revenue_cents);
     try {
       await _trackingSyncPutJson(env, monthKey, {
         month,
         currency: "EUR",
         monthly_paid_bookings_count: Math.max(0, currentCount + delta.monthly_paid_bookings_count),
-        monthly_paid_bookings_income_cents: Math.max(
-          0,
-          currentIncome + delta.monthly_paid_bookings_income_cents,
-        ),
+        monthly_paid_bookings_income_cents: nextIncome,
+        monthly_gross_paid_income_cents: nextIncome,
         monthly_cancelled_paid_bookings_cents: Math.max(
           0,
           currentCancelled + delta.monthly_cancelled_paid_bookings_cents,
@@ -39958,10 +40273,31 @@ async function _trackingSyncMaterializeBookingFinanceKpiBestEffort({
           0,
           currentCredited + delta.monthly_credited_cents,
         ),
+        monthly_refunded_cents: Math.max(
+          0,
+          currentRefunded + delta.monthly_refunded_cents,
+        ),
+        monthly_net_revenue_cents: nextNetRevenue,
+        monthly_net_income_cents: nextNetRevenue,
+        monthly_retained_cents: Math.max(
+          0,
+          currentRetained + delta.monthly_retained_cents,
+        ),
+        monthly_ambiguous_manual_cents: Math.max(
+          0,
+          currentAmbiguousManual + delta.monthly_ambiguous_manual_cents,
+        ),
+        manual_unresolved_count: Math.max(
+          0,
+          currentManualUnresolved + delta.manual_unresolved_count,
+        ),
         updated_at: new Date().toISOString(),
       });
       console.log(
-        `[BOOKING_FINANCE_KPI][AGG_PUT] tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} month=${safeStr(month, 16) || "-"} booking=${_bookingIntentMask(next.booking_id)} agg_key=${_bookingIntentMask(monthKey)} ok=true income_cents=${Math.max(0, currentIncome + delta.monthly_paid_bookings_income_cents)}`,
+        `[BOOKING_FINANCE_KPI][AGG_PUT] tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} month=${safeStr(month, 16) || "-"} booking=${_bookingIntentMask(next.booking_id)} agg_key=${_bookingIntentMask(monthKey)} ok=true income_cents=${nextIncome} net_revenue_cents=${nextNetRevenue}`,
+      );
+      console.log(
+        `[BOOKING_FINANCE_KPI][MONTH_NET_AGGREGATE] tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} month=${safeStr(month, 16) || "-"} gross_cents=${nextIncome} credited_cents=${Math.max(0, currentCredited + delta.monthly_credited_cents)} refunded_cents=${Math.max(0, currentRefunded + delta.monthly_refunded_cents)} net_cents=${nextNetRevenue} ambiguous_manual_cents=${Math.max(0, currentAmbiguousManual + delta.monthly_ambiguous_manual_cents)} manual_unresolved_count=${Math.max(0, currentManualUnresolved + delta.manual_unresolved_count)}`,
       );
     } catch (aggPutErr) {
       console.log(
@@ -39969,11 +40305,12 @@ async function _trackingSyncMaterializeBookingFinanceKpiBestEffort({
       );
     }
     console.log(
-      `[BOOKING_FINANCE_KPI][AGG_WRITE] tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} month=${safeStr(month, 16) || "-"} booking=${_bookingIntentMask(next.booking_id)} agg_key=${_bookingIntentMask(monthKey)} income_cents=${Math.max(0, currentIncome + delta.monthly_paid_bookings_income_cents)}`,
+      `[BOOKING_FINANCE_KPI][AGG_WRITE] tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} month=${safeStr(month, 16) || "-"} booking=${_bookingIntentMask(next.booking_id)} agg_key=${_bookingIntentMask(monthKey)} income_cents=${nextIncome} net_revenue_cents=${nextNetRevenue}`,
     );
   }
   try {
     await _trackingSyncPutJson(env, contribKey, {
+      ...nextRaw,
       ...next,
       updated_at: new Date().toISOString(),
       source,
@@ -39988,11 +40325,283 @@ async function _trackingSyncMaterializeBookingFinanceKpiBestEffort({
   }
 }
 
+function _trackingSyncAccumulateParsedBookingFinanceNetTotals(parsed, grossIncomeCents) {
+  const gross = Math.max(0, Math.round(Number(grossIncomeCents) || 0));
+  const credited = Number.isFinite(Number(parsed?.credited_cents))
+    ? Math.max(0, Math.round(Number(parsed.credited_cents)))
+    : 0;
+  const refunded = Number.isFinite(Number(parsed?.refunded_cents))
+    ? Math.max(0, Math.round(Number(parsed.refunded_cents)))
+    : 0;
+  const net = Number.isFinite(Number(parsed?.net_revenue_cents))
+    ? Math.max(0, Math.round(Number(parsed.net_revenue_cents)))
+    : Math.max(0, gross - credited - refunded);
+  const retained = Number.isFinite(Number(parsed?.retained_cents))
+    ? Math.max(0, Math.round(Number(parsed.retained_cents)))
+    : net;
+  return {
+    gross,
+    credited,
+    refunded,
+    net,
+    retained,
+    ambiguous: Number.isFinite(Number(parsed?.ambiguous_manual_cents))
+      ? Math.max(0, Math.round(Number(parsed.ambiguous_manual_cents)))
+      : 0,
+    manual: Number.isFinite(Number(parsed?.manual_unresolved_count))
+      ? Math.max(0, Math.round(Number(parsed.manual_unresolved_count)))
+      : 0,
+  };
+}
+
+function _trackingSyncBuildBookingFinanceDebugItem(
+  parsed,
+  contrib,
+  {
+    month = null,
+    included = false,
+    skipReason = null,
+    grossIncomeCents = null,
+    recordFound = null,
+    staleCandidate = null,
+    reconcileSource = null,
+    oldNetRevenueCents = null,
+    rederivedNetRevenueCents = null,
+    oldCreditedCents = null,
+    rederivedCreditedCents = null,
+    oldRefundedCents = null,
+    rederivedRefundedCents = null,
+    authoritativeRec = null,
+  } = {},
+) {
+  const gross = Number.isFinite(Number(grossIncomeCents))
+    ? Math.max(0, Math.round(Number(grossIncomeCents)))
+    : Math.max(
+      0,
+      Number(parsed?.gross_paid_cents ?? parsed?.monthly_paid_bookings_income_cents) || 0,
+    );
+  const netTotals = _trackingSyncAccumulateParsedBookingFinanceNetTotals(parsed, gross);
+  const rec = authoritativeRec && typeof authoritativeRec === "object" ? authoritativeRec : null;
+  return {
+    booking_id: parsed?.booking_id || null,
+    public_reference:
+      safeStr(
+        rec?.public_booking_reference ??
+          rec?.publicBookingReference ??
+          rec?.public_reference ??
+          rec?.publicReference ??
+          contrib?.public_booking_reference ??
+          contrib?.publicBookingReference ??
+          contrib?.public_reference ??
+          contrib?.publicReference,
+        120,
+      ) || null,
+    month: month || parsed?.paid_month || null,
+    included: included === true,
+    skip_reason: skipReason || null,
+    record_found: recordFound === true ? true : recordFound === false ? false : null,
+    stale_candidate: staleCandidate === true,
+    reconcile_source: reconcileSource || null,
+    old_net_revenue_cents:
+      Number.isFinite(Number(oldNetRevenueCents)) ? Math.max(0, Math.round(Number(oldNetRevenueCents))) : null,
+    rederived_net_revenue_cents:
+      Number.isFinite(Number(rederivedNetRevenueCents))
+        ? Math.max(0, Math.round(Number(rederivedNetRevenueCents)))
+        : null,
+    old_credited_cents:
+      Number.isFinite(Number(oldCreditedCents)) ? Math.max(0, Math.round(Number(oldCreditedCents))) : null,
+    rederived_credited_cents:
+      Number.isFinite(Number(rederivedCreditedCents))
+        ? Math.max(0, Math.round(Number(rederivedCreditedCents)))
+        : null,
+    old_refunded_cents:
+      Number.isFinite(Number(oldRefundedCents)) ? Math.max(0, Math.round(Number(oldRefundedCents))) : null,
+    rederived_refunded_cents:
+      Number.isFinite(Number(rederivedRefundedCents))
+        ? Math.max(0, Math.round(Number(rederivedRefundedCents)))
+        : null,
+    payment_status:
+      parsed?.payment_status ||
+      safeStr(rec?.payment_status ?? rec?.paymentStatus, 32) ||
+      safeStr(contrib?.payment_status ?? contrib?.paymentStatus, 32) ||
+      null,
+    status:
+      safeStr(
+        rec?.status ??
+          rec?.booking_status ??
+          rec?.lifecycle_status ??
+          rec?.lifecycleStatus ??
+          contrib?.status ??
+          contrib?.booking_status ??
+          contrib?.lifecycle_status ??
+          contrib?.lifecycleStatus,
+        64,
+      ) || null,
+    gross_paid_cents: netTotals.gross,
+    credited_cents: netTotals.credited,
+    refunded_cents: netTotals.refunded,
+    net_revenue_cents: netTotals.net,
+    retained_cents: netTotals.retained,
+    ambiguous_manual_cents: netTotals.ambiguous,
+    manual_unresolved_count: netTotals.manual,
+    accounting_source:
+      safeStr(
+        parsed?.accounting_source ?? contrib?.accounting_source ?? contrib?.accountingSource,
+        32,
+      ) || null,
+    credit_decision:
+      safeStr(rec?.credit_decision ?? rec?.creditDecision ?? contrib?.credit_decision ?? contrib?.creditDecision, 64) ||
+      null,
+    refund_status:
+      safeStr(rec?.refund_status ?? rec?.refundStatus ?? contrib?.refund_status ?? contrib?.refundStatus, 64) ||
+      null,
+    mollie_refund_status:
+      safeStr(
+        rec?.mollie_refund_status ??
+          rec?.mollieRefundStatus ??
+          contrib?.mollie_refund_status ??
+          contrib?.mollieRefundStatus,
+        64,
+      ) || null,
+  };
+}
+
+async function _trackingSyncReconcileApplyAuthoritativeBookingFinanceContrib(
+  env,
+  scope,
+  {
+    bookingId = null,
+    contribKey = null,
+    contrib = null,
+    parsed = null,
+    storedGrossCents = 0,
+    itemPaidCount = 0,
+    safeMonth = null,
+    scopeMask = null,
+    persist = true,
+  } = {},
+) {
+  const candidateBookingId = safeStr(bookingId, 160);
+  const storedGross = Math.max(0, Math.round(Number(storedGrossCents) || 0));
+  const storedParsed =
+    parsed && typeof parsed === "object" ? parsed : _trackingSyncReadBookingFinanceContribShape(contrib, bookingId);
+  const oldNetTotals = _trackingSyncAccumulateParsedBookingFinanceNetTotals(storedParsed, storedGross);
+  const storedFallback = {
+    record_found: false,
+    stale_candidate: true,
+    reconcile_source: "stored_contrib_fallback",
+    old_net_revenue_cents: null,
+    rederived_net_revenue_cents: null,
+    old_credited_cents: null,
+    rederived_credited_cents: null,
+    old_refunded_cents: null,
+    rederived_refunded_cents: null,
+    sumParsed: storedParsed,
+    sumGrossCents: storedGross,
+    sumPaidCountDelta: itemPaidCount > 0 ? itemPaidCount : 1,
+    sumCancelledCents: Number.isFinite(Number(storedParsed?.monthly_cancelled_paid_bookings_cents))
+      ? Math.max(0, Math.round(Number(storedParsed.monthly_cancelled_paid_bookings_cents)))
+      : 0,
+    sumPendingCreditCents: Number.isFinite(Number(storedParsed?.monthly_pending_credit_cents))
+      ? Math.max(0, Math.round(Number(storedParsed.monthly_pending_credit_cents)))
+      : 0,
+    authoritativeRec: null,
+  };
+  const logStoredFallback = (reason) => {
+    console.log(
+      `[BOOKING_FINANCE_KPI][RECONCILE_STORED_FALLBACK] tenant=${scopeMask?.tenant || "-"} company=${scopeMask?.company || "-"} month=${safeMonth || "-"} booking=${_bookingIntentMask(candidateBookingId)} reason=${reason || "authoritative_record_not_found"}`,
+    );
+  };
+  if (!candidateBookingId) {
+    logStoredFallback("authoritative_record_not_found");
+    return storedFallback;
+  }
+  try {
+    const loadedBooking = await loadBookingRecord(env, candidateBookingId);
+    if (!loadedBooking?.rec || !bookingMatchesRequestedTenantScope(loadedBooking.rec, scope)) {
+      logStoredFallback("authoritative_record_not_found");
+      return storedFallback;
+    }
+    const derived = _trackingSyncDeriveBookingFinanceContribution(candidateBookingId, loadedBooking.rec);
+    if (!derived || typeof derived !== "object") {
+      logStoredFallback("derive_failed");
+      return { ...storedFallback, record_found: true, stale_candidate: false };
+    }
+    const derivedGross = Math.max(
+      0,
+      Number(derived.gross_paid_cents ?? derived.monthly_paid_bookings_income_cents) || 0,
+    );
+    const sumGrossCents = derivedGross > 0 ? derivedGross : storedGross;
+    const newNetTotals = _trackingSyncAccumulateParsedBookingFinanceNetTotals(derived, sumGrossCents);
+    console.log(
+      `[BOOKING_FINANCE_KPI][RECONCILE_REDERIVED] tenant=${scopeMask?.tenant || "-"} company=${scopeMask?.company || "-"} month=${safeMonth || "-"} booking=${_bookingIntentMask(candidateBookingId)} source=authoritative_booking_record old_net=${oldNetTotals.net} new_net=${newNetTotals.net} old_credited=${oldNetTotals.credited} new_credited=${newNetTotals.credited}`,
+    );
+    if (persist === true && contribKey) {
+      try {
+        await _trackingSyncPutJson(env, contribKey, {
+          ...(contrib && typeof contrib === "object" ? contrib : {}),
+          ...derived,
+          paid_month: safeMonth,
+          monthly_paid_bookings_count:
+            Number(derived.monthly_paid_bookings_count) > 0
+              ? Math.max(0, Math.round(Number(derived.monthly_paid_bookings_count)))
+              : itemPaidCount > 0
+                ? itemPaidCount
+                : 1,
+          payment_status:
+            safeStr(loadedBooking.rec?.payment_status ?? loadedBooking.rec?.paymentStatus, 32) ||
+            safeStr(contrib?.payment_status ?? contrib?.paymentStatus, 32) ||
+            "paid",
+          reconciled_at: new Date().toISOString(),
+          reconciled_source: "authoritative_booking_record",
+        });
+      } catch (_) {
+        // best effort contrib refresh
+      }
+    }
+    return {
+      record_found: true,
+      stale_candidate: false,
+      reconcile_source: "authoritative_record",
+      old_net_revenue_cents: oldNetTotals.net,
+      rederived_net_revenue_cents: newNetTotals.net,
+      old_credited_cents: oldNetTotals.credited,
+      rederived_credited_cents: newNetTotals.credited,
+      old_refunded_cents: oldNetTotals.refunded,
+      rederived_refunded_cents: newNetTotals.refunded,
+      sumParsed: derived,
+      sumGrossCents,
+      sumPaidCountDelta:
+        Number(derived.monthly_paid_bookings_count) > 0
+          ? Math.max(0, Math.round(Number(derived.monthly_paid_bookings_count)))
+          : itemPaidCount > 0
+            ? itemPaidCount
+            : 1,
+      sumCancelledCents: Number.isFinite(Number(derived.monthly_cancelled_paid_bookings_cents))
+        ? Math.max(0, Math.round(Number(derived.monthly_cancelled_paid_bookings_cents)))
+        : 0,
+      sumPendingCreditCents: Number.isFinite(Number(derived.monthly_pending_credit_cents))
+        ? Math.max(0, Math.round(Number(derived.monthly_pending_credit_cents)))
+        : 0,
+      authoritativeRec: loadedBooking.rec,
+    };
+  } catch (_) {
+    logStoredFallback("authoritative_record_not_found");
+    return storedFallback;
+  }
+}
+
 async function _trackingSyncReconcileBookingFinanceMonthFromContribsBestEffort(
   env,
   scope,
   month,
-  { persist = true, source = "dashboard_bookings_kpis_read", includeDebugRows = false, debugRowLimit = 20 } = {},
+  {
+    persist = true,
+    source = "dashboard_bookings_kpis_read",
+    includeDebugRows = false,
+    debugRowLimit = 20,
+    includeDebugItems = false,
+  } = {},
 ) {
   const safeMonth = _trackingSyncSafeKeyPart(month, 16);
   const scopeMask = _bookingIntentScopeMask(scope);
@@ -40016,6 +40625,7 @@ async function _trackingSyncReconcileBookingFinanceMonthFromContribsBestEffort(
       booking_finance_reconcile_skipped_missing_amount_unrecoverable: 0,
       booking_finance_reconcile_prefix_preview: null,
       booking_finance_reconcile_debug_rows: [],
+      booking_finance_debug_items: [],
       reconciled: false,
       key: null,
     };
@@ -40041,6 +40651,7 @@ async function _trackingSyncReconcileBookingFinanceMonthFromContribsBestEffort(
       booking_finance_reconcile_skipped_missing_amount_unrecoverable: 0,
       booking_finance_reconcile_prefix_preview: null,
       booking_finance_reconcile_debug_rows: [],
+      booking_finance_debug_items: [],
       reconciled: false,
       key: null,
     };
@@ -40056,6 +40667,11 @@ async function _trackingSyncReconcileBookingFinanceMonthFromContribsBestEffort(
   let sumCancelled = 0;
   let sumPendingCredit = 0;
   let sumCredited = 0;
+  let sumRefunded = 0;
+  let sumNetRevenue = 0;
+  let sumRetained = 0;
+  let sumAmbiguousManual = 0;
+  let sumManualUnresolved = 0;
   let skippedWrongMonth = 0;
   let skippedUnpaid = 0;
   let skippedMissingAmount = 0;
@@ -40064,6 +40680,7 @@ async function _trackingSyncReconcileBookingFinanceMonthFromContribsBestEffort(
   let recoveredAmountCentsTotal = 0;
   const maxDebugRows = Math.max(1, Math.min(100, Number(debugRowLimit) || 20));
   const debugRows = [];
+  const debugItems = [];
   do {
     const page = await env.FLUXIDI_TRACKING.list({
       prefix: contribPrefix,
@@ -40135,6 +40752,9 @@ async function _trackingSyncReconcileBookingFinanceMonthFromContribsBestEffort(
       let recovered = false;
       let recoveredAmountCents = 0;
       let recoverySource = null;
+      let itemReconcileMeta = null;
+      let itemSumParsed = parsed;
+      let itemSumGrossCents = itemAmountCents;
       if (!itemMonth || itemMonth !== safeMonth) {
         skippedWrongMonth += 1;
         skipReason = "wrong_month";
@@ -40197,17 +40817,50 @@ async function _trackingSyncReconcileBookingFinanceMonthFromContribsBestEffort(
                     sumPendingCredit += Number.isFinite(Number(parsed?.monthly_pending_credit_cents))
                       ? Math.max(0, Math.round(Number(parsed.monthly_pending_credit_cents)))
                       : 0;
-                    sumCredited += Number.isFinite(Number(parsed?.credited_cents))
-                      ? Math.max(0, Math.round(Number(parsed.credited_cents)))
-                      : 0;
+                    const derivedRecoveredContrib = _trackingSyncDeriveBookingFinanceContribution(
+                      candidateBookingId,
+                      loadedBooking.rec,
+                    );
+                    const recoveredNetTotals = _trackingSyncAccumulateParsedBookingFinanceNetTotals(
+                      derivedRecoveredContrib || parsed,
+                      derivedRecoveredContrib?.monthly_paid_bookings_income_cents ?? recoveredAmountCents,
+                    );
+                    const recoveredOldNetTotals = _trackingSyncAccumulateParsedBookingFinanceNetTotals(
+                      parsed,
+                      itemAmountCents,
+                    );
+                    sumCredited += recoveredNetTotals.credited;
+                    sumRefunded += recoveredNetTotals.refunded;
+                    sumNetRevenue += recoveredNetTotals.net;
+                    sumRetained += recoveredNetTotals.retained;
+                    sumAmbiguousManual += recoveredNetTotals.ambiguous;
+                    sumManualUnresolved += recoveredNetTotals.manual;
+                    itemSumParsed = derivedRecoveredContrib || parsed;
+                    itemSumGrossCents = recoveredNetTotals.gross;
+                    itemReconcileMeta = {
+                      record_found: true,
+                      stale_candidate: false,
+                      reconcile_source: "authoritative_record",
+                      old_net_revenue_cents: recoveredOldNetTotals.net,
+                      rederived_net_revenue_cents: recoveredNetTotals.net,
+                      old_credited_cents: recoveredOldNetTotals.credited,
+                      rederived_credited_cents: recoveredNetTotals.credited,
+                      old_refunded_cents: recoveredOldNetTotals.refunded,
+                      rederived_refunded_cents: recoveredNetTotals.refunded,
+                      authoritativeRec: loadedBooking.rec,
+                    };
                     try {
                       const correctedContrib = {
                         ...contrib,
+                        ...(derivedRecoveredContrib && typeof derivedRecoveredContrib === "object"
+                          ? derivedRecoveredContrib
+                          : {}),
                         booking_id: safeStr(parsed?.booking_id ?? candidateBookingId, 160) || candidateBookingId,
                         paid_month: safeMonth,
                         monthly_paid_bookings_count: itemPaidCount > 0 ? itemPaidCount : 1,
-                        monthly_paid_bookings_income_cents: recoveredAmountCents,
-                        amount_cents: recoveredAmountCents,
+                        monthly_paid_bookings_income_cents: recoveredNetTotals.gross,
+                        gross_paid_cents: recoveredNetTotals.gross,
+                        amount_cents: recoveredNetTotals.gross,
                         amount_source: recoverySource,
                         recovered_amount_at: new Date().toISOString(),
                         payment_status:
@@ -40242,17 +40895,42 @@ async function _trackingSyncReconcileBookingFinanceMonthFromContribsBestEffort(
           }
         } else {
           include = true;
-          sumCount += itemPaidCount > 0 ? itemPaidCount : 1;
-          sumIncome += itemAmountCents;
-          sumCancelled += Number.isFinite(Number(parsed?.monthly_cancelled_paid_bookings_cents))
-            ? Math.max(0, Math.round(Number(parsed.monthly_cancelled_paid_bookings_cents)))
-            : 0;
-          sumPendingCredit += Number.isFinite(Number(parsed?.monthly_pending_credit_cents))
-            ? Math.max(0, Math.round(Number(parsed.monthly_pending_credit_cents)))
-            : 0;
-          sumCredited += Number.isFinite(Number(parsed?.credited_cents))
-            ? Math.max(0, Math.round(Number(parsed.credited_cents)))
-            : 0;
+          const candidateBookingId = safeStr(
+            parsed?.booking_id ?? contrib?.booking_id ?? contrib?.bookingId,
+            160,
+          );
+          const applied = await _trackingSyncReconcileApplyAuthoritativeBookingFinanceContrib(
+            env,
+            scope,
+            {
+              bookingId: candidateBookingId,
+              contribKey,
+              contrib,
+              parsed,
+              storedGrossCents: itemAmountCents,
+              itemPaidCount,
+              safeMonth,
+              scopeMask,
+              persist,
+            },
+          );
+          itemReconcileMeta = applied;
+          itemSumParsed = applied.sumParsed;
+          itemSumGrossCents = applied.sumGrossCents;
+          sumCount += applied.sumPaidCountDelta;
+          sumIncome += applied.sumGrossCents;
+          sumCancelled += applied.sumCancelledCents;
+          sumPendingCredit += applied.sumPendingCreditCents;
+          const netTotals = _trackingSyncAccumulateParsedBookingFinanceNetTotals(
+            applied.sumParsed,
+            applied.sumGrossCents,
+          );
+          sumCredited += netTotals.credited;
+          sumRefunded += netTotals.refunded;
+          sumNetRevenue += netTotals.net;
+          sumRetained += netTotals.retained;
+          sumAmbiguousManual += netTotals.ambiguous;
+          sumManualUnresolved += netTotals.manual;
         }
       }
       if (includeDebugRows && debugRows.length < maxDebugRows) {
@@ -40267,6 +40945,28 @@ async function _trackingSyncReconcileBookingFinanceMonthFromContribsBestEffort(
           recovered_amount_cents: recoveredAmountCents > 0 ? recoveredAmountCents : 0,
           recovery_source: recoverySource,
         });
+      }
+      if (includeDebugItems) {
+        const debugItemGrossCents =
+          recovered && recoveredAmountCents > 0 ? recoveredAmountCents : itemSumGrossCents;
+        debugItems.push(
+          _trackingSyncBuildBookingFinanceDebugItem(itemSumParsed, contrib, {
+            month: itemMonth,
+            included: include,
+            skipReason,
+            grossIncomeCents: debugItemGrossCents,
+            recordFound: itemReconcileMeta?.record_found,
+            staleCandidate: itemReconcileMeta?.stale_candidate === true,
+            reconcileSource: itemReconcileMeta?.reconcile_source || null,
+            oldNetRevenueCents: itemReconcileMeta?.old_net_revenue_cents,
+            rederivedNetRevenueCents: itemReconcileMeta?.rederived_net_revenue_cents,
+            oldCreditedCents: itemReconcileMeta?.old_credited_cents,
+            rederivedCreditedCents: itemReconcileMeta?.rederived_credited_cents,
+            oldRefundedCents: itemReconcileMeta?.old_refunded_cents,
+            rederivedRefundedCents: itemReconcileMeta?.rederived_refunded_cents,
+            authoritativeRec: itemReconcileMeta?.authoritativeRec || null,
+          }),
+        );
       }
       console.log(
         `[BOOKING_FINANCE_KPI][RECONCILE_ITEM] tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} month=${safeMonth} booking=${_bookingIntentMask(parsed?.booking_id)} item_month=${itemMonth || "-"} amount_cents=${itemAmountCents} status=${statusToken || "-"} included=${include ? "true" : "false"} skip_reason=${skipReason || "-"} recovered=${recovered ? "true" : "false"} recovered_amount_cents=${recoveredAmountCents} recovery_source=${recoverySource || "-"}`,
@@ -40285,15 +40985,25 @@ async function _trackingSyncReconcileBookingFinanceMonthFromContribsBestEffort(
         currency: "EUR",
         monthly_paid_bookings_count: Math.max(0, sumCount),
         monthly_paid_bookings_income_cents: Math.max(0, sumIncome),
+        monthly_gross_paid_income_cents: Math.max(0, sumIncome),
         monthly_cancelled_paid_bookings_cents: Math.max(0, sumCancelled),
         monthly_pending_credit_cents: Math.max(0, sumPendingCredit),
         monthly_credited_cents: Math.max(0, sumCredited),
+        monthly_refunded_cents: Math.max(0, sumRefunded),
+        monthly_net_revenue_cents: Math.max(0, sumNetRevenue),
+        monthly_net_income_cents: Math.max(0, sumNetRevenue),
+        monthly_retained_cents: Math.max(0, sumRetained),
+        monthly_ambiguous_manual_cents: Math.max(0, sumAmbiguousManual),
+        manual_unresolved_count: Math.max(0, sumManualUnresolved),
         updated_at: new Date().toISOString(),
         source,
         reconciled_from_contrib: true,
       });
       console.log(
-        `[BOOKING_FINANCE_KPI][AGG_PUT] tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} month=${safeMonth} agg_key=${_bookingIntentMask(monthKey)} ok=true income_cents=${Math.max(0, sumIncome)}`,
+        `[BOOKING_FINANCE_KPI][AGG_PUT] tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} month=${safeMonth} agg_key=${_bookingIntentMask(monthKey)} ok=true income_cents=${Math.max(0, sumIncome)} net_revenue_cents=${Math.max(0, sumNetRevenue)}`,
+      );
+      console.log(
+        `[BOOKING_FINANCE_KPI][MONTH_NET_AGGREGATE] tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} month=${safeMonth} gross_cents=${Math.max(0, sumIncome)} credited_cents=${Math.max(0, sumCredited)} refunded_cents=${Math.max(0, sumRefunded)} net_cents=${Math.max(0, sumNetRevenue)} ambiguous_manual_cents=${Math.max(0, sumAmbiguousManual)} manual_unresolved_count=${Math.max(0, sumManualUnresolved)} source=reconcile`,
       );
     } catch (reconcileAggErr) {
       console.log(
@@ -40301,17 +41011,31 @@ async function _trackingSyncReconcileBookingFinanceMonthFromContribsBestEffort(
       );
     }
   }
+  if (includeDebugItems) {
+    const debugIncludedCount = debugItems.filter((item) => item?.included === true).length;
+    const debugSkippedCount = Math.max(0, debugItems.length - debugIncludedCount);
+    console.log(
+      `[BOOKING_FINANCE_KPI][DEBUG_ITEMS] count=${debugItems.length} included_count=${debugIncludedCount} skipped_count=${debugSkippedCount}`,
+    );
+  }
   console.log(
-    `[BOOKING_FINANCE_KPI][RECONCILE_RESULT] tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} month=${safeMonth} scanned=${scanned} matched_month=${matchedMonth} sum_cents=${Math.max(0, sumIncome)} paid_count=${Math.max(0, sumCount)} recovered_count=${recoveredAmountCount} recovered_cents=${Math.max(0, recoveredAmountCentsTotal)} skipped_wrong_month=${skippedWrongMonth} skipped_unpaid=${skippedUnpaid} skipped_missing_amount=${skippedMissingAmount} skipped_missing_amount_unrecoverable=${skippedMissingAmountUnrecoverable} prefix=${_bookingIntentMask(contribPrefix)} agg_key=${_bookingIntentMask(monthKey)}`,
+    `[BOOKING_FINANCE_KPI][RECONCILE_RESULT] tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} month=${safeMonth} scanned=${scanned} matched_month=${matchedMonth} sum_cents=${Math.max(0, sumIncome)} net_revenue_cents=${Math.max(0, sumNetRevenue)} paid_count=${Math.max(0, sumCount)} recovered_count=${recoveredAmountCount} recovered_cents=${Math.max(0, recoveredAmountCentsTotal)} skipped_wrong_month=${skippedWrongMonth} skipped_unpaid=${skippedUnpaid} skipped_missing_amount=${skippedMissingAmount} skipped_missing_amount_unrecoverable=${skippedMissingAmountUnrecoverable} prefix=${_bookingIntentMask(contribPrefix)} agg_key=${_bookingIntentMask(monthKey)}`,
   );
   return {
     ok: true,
     month: safeMonth,
     monthly_paid_bookings_count: Math.max(0, sumCount),
     monthly_paid_bookings_income_cents: Math.max(0, sumIncome),
+    monthly_gross_paid_income_cents: Math.max(0, sumIncome),
     monthly_cancelled_paid_bookings_cents: Math.max(0, sumCancelled),
     monthly_pending_credit_cents: Math.max(0, sumPendingCredit),
     monthly_credited_cents: Math.max(0, sumCredited),
+    monthly_refunded_cents: Math.max(0, sumRefunded),
+    monthly_net_revenue_cents: Math.max(0, sumNetRevenue),
+    monthly_net_income_cents: Math.max(0, sumNetRevenue),
+    monthly_retained_cents: Math.max(0, sumRetained),
+    monthly_ambiguous_manual_cents: Math.max(0, sumAmbiguousManual),
+    manual_unresolved_count: Math.max(0, sumManualUnresolved),
     booking_finance_reconcile_scanned: scanned,
     booking_finance_reconcile_matched_month: matchedMonth,
     booking_finance_reconcile_sum_cents: Math.max(0, sumIncome),
@@ -40324,6 +41048,7 @@ async function _trackingSyncReconcileBookingFinanceMonthFromContribsBestEffort(
     booking_finance_reconcile_skipped_missing_amount_unrecoverable: skippedMissingAmountUnrecoverable,
     booking_finance_reconcile_prefix_preview: _bookingIntentMask(contribPrefix),
     booking_finance_reconcile_debug_rows: includeDebugRows ? debugRows : [],
+    booking_finance_debug_items: includeDebugItems ? debugItems : [],
     reconciled: persist === true,
     key: monthKey || null,
   };
@@ -54583,9 +55308,71 @@ async function computeDashboardOpenBookingsKpiFallback(
   };
 }
 
+function _dashboardBookingFinanceNetAggregateFields(bookingFinanceMonth, reconciledFinance) {
+  const month =
+    bookingFinanceMonth && typeof bookingFinanceMonth === "object" && !Array.isArray(bookingFinanceMonth)
+      ? bookingFinanceMonth
+      : {};
+  const reconcile = reconciledFinance?.ok === true ? reconciledFinance : null;
+  const pickCents = (...keys) => {
+    for (const key of keys) {
+      if (reconcile && Number.isFinite(Number(reconcile[key]))) {
+        return Math.max(0, Math.round(Number(reconcile[key])));
+      }
+    }
+    for (const key of keys) {
+      if (Number.isFinite(Number(month[key]))) {
+        return Math.max(0, Math.round(Number(month[key])));
+      }
+    }
+    return 0;
+  };
+  const grossCents = pickCents("monthly_gross_paid_income_cents", "monthly_paid_bookings_income_cents");
+  const netRevenueCents = pickCents("monthly_net_revenue_cents", "monthly_net_income_cents");
+  const netIncomeCents = pickCents("monthly_net_income_cents", "monthly_net_revenue_cents");
+  const creditedCents = pickCents("monthly_credited_cents");
+  const refundedCents = pickCents("monthly_refunded_cents");
+  const retainedCents = pickCents("monthly_retained_cents");
+  const ambiguousManualCents = pickCents("monthly_ambiguous_manual_cents");
+  const manualUnresolvedCount = pickCents("manual_unresolved_count");
+  const hasNetAggregate =
+    reconcile != null ||
+    Number.isFinite(Number(month.monthly_net_revenue_cents)) ||
+    Number.isFinite(Number(month.monthly_net_income_cents));
+  const monthlyNetIncomeCents = hasNetAggregate ? netIncomeCents : 0;
+  const monthlyNetRevenueCents = hasNetAggregate ? netRevenueCents : 0;
+  return {
+    booking_finance_monthly_gross_income_cents: grossCents,
+    booking_finance_monthly_gross_income_eur: grossCents / 100,
+    booking_finance_monthly_net_revenue_cents: netRevenueCents,
+    booking_finance_monthly_net_revenue_eur: netRevenueCents / 100,
+    booking_finance_monthly_net_income_cents: netIncomeCents,
+    booking_finance_monthly_net_income_eur: netIncomeCents / 100,
+    booking_finance_monthly_credited_cents: creditedCents,
+    booking_finance_monthly_credited_eur: creditedCents / 100,
+    booking_finance_monthly_refunded_cents: refundedCents,
+    booking_finance_monthly_refunded_eur: refundedCents / 100,
+    booking_finance_monthly_retained_cents: retainedCents,
+    booking_finance_monthly_retained_eur: retainedCents / 100,
+    booking_finance_monthly_ambiguous_manual_cents: ambiguousManualCents,
+    booking_finance_manual_unresolved_count: manualUnresolvedCount,
+    monthly_net_income_cents: monthlyNetIncomeCents,
+    monthly_net_income_eur: monthlyNetIncomeCents / 100,
+    monthly_net_revenue_cents: monthlyNetRevenueCents,
+    monthly_net_revenue_eur: monthlyNetRevenueCents / 100,
+  };
+}
+
 async function computeDashboardBookingsKpis(
   env,
-  { tenantScope, month = null, debug = false, debugBookingFinance = false, debugLimit = 50 } = {},
+  {
+    tenantScope,
+    month = null,
+    debug = false,
+    debugBookingFinance = false,
+    debugFinanceItems = false,
+    debugLimit = 50,
+  } = {},
 ) {
   if (!tenantScope?.hasScope) return missingTenantScopeError();
   if (!env?.BOOKING_KV) throw new Error("BOOKING_KV binding is missing");
@@ -54683,6 +55470,7 @@ async function computeDashboardBookingsKpis(
       source: "dashboard_bookings_kpis_compute_read",
       includeDebugRows: debugBookingFinance === true,
       debugRowLimit: 20,
+      includeDebugItems: debugFinanceItems === true,
     },
   );
   if (reconciledFinance?.ok) {
@@ -54743,6 +55531,10 @@ async function computeDashboardBookingsKpis(
   console.log(
     `[DASHBOARD_BOOKINGS_KPI][MONTHLY_INCOME_MERGE] tenant=${_maskPublicDriverLoginValue(tenantScope.tenant_id)} company=${_maskPublicDriverLoginValue(tenantScope.company_id)} month=${selectedMonth} projection_income_cents=${projectionIncomeCents} booking_finance_income_cents=${bookingFinanceMonthIncomeCents} merged_income_cents=${monthlyIncomeMergedCents}`,
   );
+  const bookingFinanceNetAggregateFields = _dashboardBookingFinanceNetAggregateFields(
+    bookingFinanceMonth,
+    reconciledFinance,
+  );
 
   const response = {
     ok: true,
@@ -54779,6 +55571,7 @@ async function computeDashboardBookingsKpis(
     booking_finance_monthly_income_cents: bookingFinanceMonthIncomeCents,
     booking_finance_monthly_income_eur: bookingFinanceMonthIncomeCents / 100,
     booking_finance_monthly_paid_bookings_count: bookingFinanceMonthPaidCount,
+    ...bookingFinanceNetAggregateFields,
     booking_finance_reconcile_scanned: Number.isFinite(Number(reconciledFinance?.booking_finance_reconcile_scanned))
       ? Math.max(0, Math.round(Number(reconciledFinance.booking_finance_reconcile_scanned)))
       : 0,
@@ -54856,6 +55649,13 @@ async function computeDashboardBookingsKpis(
         ? reconciledFinance.booking_finance_reconcile_debug_rows
         : [];
     }
+  }
+  if (debugFinanceItems === true) {
+    response.booking_finance_debug_items = Array.isArray(
+      reconciledFinance?.booking_finance_debug_items,
+    )
+      ? reconciledFinance.booking_finance_debug_items
+      : [];
   }
   console.log(
     `[DASHBOARD_KPI][PROJECTION_USED] tenant=${_maskPublicDriverLoginValue(tenantScope.tenant_id)} company=${_maskPublicDriverLoginValue(tenantScope.company_id)} open=${consideredOpen}`,
