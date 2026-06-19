@@ -20739,6 +20739,21 @@ export default {
           );
           return json({ ok: false, error: code, code }, 400);
         }
+        const companyMollieProfileId = _companyMollieProfileId(credentials);
+        if (!_isCompanyMollieOAuthCredentials(credentials) || !companyMollieProfileId) {
+          credentials = null;
+          console.log(
+            `[MOLLIE_CONNECT][TEST_PAYMENT_BLOCK] tenant=${tenantId} company=${companyId} reason=missing_company_mollie_profile_id`,
+          );
+          return json(
+            {
+              ok: false,
+              error: "missing_company_mollie_profile_id",
+              code: "missing_company_mollie_profile_id",
+            },
+            400,
+          );
+        }
 
         const livePaymentsEnabled = mollieCompanyLivePaymentsEnabled(env);
         const description = _sanitizeAdminMollieConnectTestPaymentDescription(body?.description);
@@ -20753,6 +20768,7 @@ export default {
           description,
           redirectUrl,
           testmode: true,
+          profileId: companyMollieProfileId,
           metadata: {
             source: "admin_mollie_connect_test_payment",
             testPaymentId,
@@ -32369,10 +32385,49 @@ function _molliePaymentFetchTestMode(rideCredentials = null, options = {}) {
   return null;
 }
 
-function _molliePaymentApiUrl(paymentId, { includeQrCode = false, testMode = null } = {}) {
+function _isCompanyMollieOAuthCredentials(creds = null) {
+  const source = creds && typeof creds === "object" ? creds : {};
+  const ownerMode = normalizePaymentOwnerMode(
+    source.payment_owner_mode ?? source.paymentOwnerMode,
+  );
+  const credentialSource = safeStr(
+    source.payment_credential_source ?? source.paymentCredentialSource,
+    40,
+  ).toLowerCase();
+  const keyKind = safeStr(source.keyKind ?? source.key_kind, 40).toLowerCase();
+  return ownerMode === "company_mollie" && credentialSource === "company_mollie" && keyKind === "oauth";
+}
+
+function _companyMollieProfileId(source = null) {
+  const src = source && typeof source === "object" ? source : {};
+  return (
+    safeStr(
+      src.mollie_profile_id ??
+        src.mollieProfileId ??
+        src.profile_id ??
+        src.profileId,
+      80,
+    ) || ""
+  );
+}
+
+function _molliePaymentFetchProfileId(rideCredentials = null, options = {}) {
+  if (!_isCompanyMollieOAuthCredentials(rideCredentials)) return "";
+  return (
+    _companyMollieProfileId(options?.paymentRecord ?? options?.record) ||
+    _companyMollieProfileId(rideCredentials)
+  );
+}
+
+function _molliePaymentApiUrl(
+  paymentId,
+  { includeQrCode = false, testMode = null, profileId = "" } = {},
+) {
   const url = new URL(`https://api.mollie.com/v2/payments/${encodeURIComponent(paymentId)}`);
   if (includeQrCode) url.searchParams.set("include", "details.qrCode");
   if (typeof testMode === "boolean") url.searchParams.set("testmode", testMode ? "true" : "false");
+  const safeProfileId = safeStr(profileId, 80);
+  if (safeProfileId) url.searchParams.set("profileId", safeProfileId);
   return url.toString();
 }
 
@@ -38823,6 +38878,17 @@ async function mollieCreatePayment(payload, env, request, options = {}) {
         rideCredentials.mollieMode = "test";
       }
     }
+    const companyMollieProfileId = _isCompanyMollieOAuthCredentials(rideCredentials)
+      ? _companyMollieProfileId(rideCredentials)
+      : "";
+    if (_isCompanyMollieOAuthCredentials(rideCredentials) && !companyMollieProfileId) {
+      return {
+        ok: false,
+        error: "missing_company_mollie_profile_id",
+        code: "missing_company_mollie_profile_id",
+        ...paymentOwnershipApiFields(rideCredentials),
+      };
+    }
     payloadClean.tenant_id = paymentTenantId;
     payloadClean.tenantId = paymentTenantId;
     payloadClean.company_id = paymentCompanyId;
@@ -39010,6 +39076,9 @@ async function mollieCreatePayment(payload, env, request, options = {}) {
     if (companyMollieCreateTestMode) {
       mollieCreateBody.testmode = true;
     }
+    if (companyMollieProfileId) {
+      mollieCreateBody.profileId = companyMollieProfileId;
+    }
     if (mollieMethod) {
       mollieCreateBody.method = mollieMethod;
     }
@@ -39162,10 +39231,24 @@ async function mollieFetchPayment(molliePaymentId, env, rideCredentials = null, 
     }
   }
   const paymentFetchTestMode = _molliePaymentFetchTestMode(creds, options);
-  const r = await fetch(_molliePaymentApiUrl(molliePaymentId, { testMode: paymentFetchTestMode }), {
+  const paymentFetchProfileId = _molliePaymentFetchProfileId(creds, options);
+  if (_isCompanyMollieOAuthCredentials(creds) && !paymentFetchProfileId) {
+    return {
+      ok: false,
+      status: 403,
+      data: { error: "missing_company_mollie_profile_id" },
+    };
+  }
+  const r = await fetch(
+    _molliePaymentApiUrl(molliePaymentId, {
+      testMode: paymentFetchTestMode,
+      profileId: paymentFetchProfileId,
+    }),
+    {
     method: "GET",
     headers: { "Authorization": `Bearer ${creds.apiKey}` }
-  });
+    },
+  );
   const j = await r.json().catch(() => ({}));
   return { ok: r.ok, status: r.status, data: j };
 }
@@ -67292,7 +67375,14 @@ async function mollieFetchPaymentJson(paymentId, env, rideCredentials = null, op
     }
   }
   const paymentFetchTestMode = _molliePaymentFetchTestMode(creds, options);
-  const url = _molliePaymentApiUrl(paymentId, { testMode: paymentFetchTestMode });
+  const paymentFetchProfileId = _molliePaymentFetchProfileId(creds, options);
+  if (_isCompanyMollieOAuthCredentials(creds) && !paymentFetchProfileId) {
+    throw new Error("missing_company_mollie_profile_id");
+  }
+  const url = _molliePaymentApiUrl(paymentId, {
+    testMode: paymentFetchTestMode,
+    profileId: paymentFetchProfileId,
+  });
   const res = await fetch(url, {
     headers: {
       Authorization: `Bearer ${creds.apiKey}`,
