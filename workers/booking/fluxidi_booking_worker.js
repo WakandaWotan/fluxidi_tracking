@@ -32437,6 +32437,26 @@ function _mollieCreatePaymentApiUrl({ includeQrCode = false } = {}) {
   return url.toString();
 }
 
+// Phase 4B: refund-family testmode propagation for company_mollie OAuth.
+// Mirrors `_molliePaymentFetchTestMode` for the refund POST/GET/LIST helpers
+// but restricts the truthy path to company_mollie OAuth credentials so that
+// API-key (central/demo) flows and any future live OAuth records are
+// untouched. ProfileId is intentionally NOT added on refund endpoints --
+// Mollie inherits the profile from the underlying payment for refunds.
+function _mollieRefundFetchTestMode(rideCredentials = null, options = {}) {
+  if (!_isCompanyMollieOAuthCredentials(rideCredentials)) return null;
+  const resolved = _molliePaymentFetchTestMode(rideCredentials, options);
+  return resolved === true ? true : null;
+}
+
+function _mollieRefundApiUrl(baseUrl, { testMode = null } = {}) {
+  const url = new URL(baseUrl);
+  if (testMode === true) {
+    url.searchParams.set("testmode", "true");
+  }
+  return url.toString();
+}
+
 function readPaymentOwnershipFromRecord(rec) {
   const source = rec && typeof rec === "object" ? rec : {};
   const paymentDemoRaw = source.payment_demo_mode ?? source.paymentDemoMode;
@@ -35204,7 +35224,10 @@ function _mapMollieRefundSnapshotToBookingFields(mollieRefund, rec) {
 
 async function mollieFetchRefundJson(molliePaymentId, mollieRefundId, env, rideCredentials = null) {
   if (!rideCredentials?.ok) throw new Error("ride_mollie_credentials_required");
-  const url = `https://api.mollie.com/v2/payments/${encodeURIComponent(molliePaymentId)}/refunds/${encodeURIComponent(mollieRefundId)}`;
+  const baseUrl = `https://api.mollie.com/v2/payments/${encodeURIComponent(molliePaymentId)}/refunds/${encodeURIComponent(mollieRefundId)}`;
+  const url = _mollieRefundApiUrl(baseUrl, {
+    testMode: _mollieRefundFetchTestMode(rideCredentials),
+  });
   const res = await fetch(url, {
     headers: {
       Authorization: `Bearer ${rideCredentials.apiKey}`,
@@ -35224,9 +35247,12 @@ async function mollieFetchRefundJson(molliePaymentId, mollieRefundId, env, rideC
 
 async function mollieFetchRefundsListPageJson(molliePaymentId, env, { fromUrl = null, rideCredentials = null } = {}) {
   if (!rideCredentials?.ok) throw new Error("ride_mollie_credentials_required");
-  const url =
+  const baseUrl =
     fromUrl ||
     `https://api.mollie.com/v2/payments/${encodeURIComponent(molliePaymentId)}/refunds?limit=250`;
+  const url = _mollieRefundApiUrl(baseUrl, {
+    testMode: _mollieRefundFetchTestMode(rideCredentials),
+  });
   const res = await fetch(url, {
     headers: {
       Authorization: `Bearer ${rideCredentials.apiKey}`,
@@ -37525,6 +37551,15 @@ async function _applyMollieRefundForOperationalLegAuthoritative(
 
   let mollieRefund = null;
   try {
+    const refundCreateBody = {
+      amount: {
+        currency,
+        value: _centsToMollieAmountValue(refundAmountCents),
+      },
+    };
+    if (_mollieRefundFetchTestMode(rideCredentials) === true) {
+      refundCreateBody.testmode = true;
+    }
     const refundRes = await fetch(
       `https://api.mollie.com/v2/payments/${encodeURIComponent(molliePaymentId)}/refunds`,
       {
@@ -37533,12 +37568,7 @@ async function _applyMollieRefundForOperationalLegAuthoritative(
           Authorization: `Bearer ${rideCredentials.apiKey}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({
-          amount: {
-            currency,
-            value: _centsToMollieAmountValue(refundAmountCents),
-          },
-        }),
+        body: JSON.stringify(refundCreateBody),
       },
     );
     mollieRefund = await refundRes.json().catch(() => ({}));
@@ -37900,6 +37930,15 @@ async function applyMollieRefundAuthoritative(
 
   let mollieRefund = null;
   try {
+    const refundCreateBody = {
+      amount: {
+        currency,
+        value: _centsToMollieAmountValue(refundAmountCents),
+      },
+    };
+    if (_mollieRefundFetchTestMode(rideCredentials) === true) {
+      refundCreateBody.testmode = true;
+    }
     const refundRes = await fetch(
       `https://api.mollie.com/v2/payments/${encodeURIComponent(molliePaymentId)}/refunds`,
       {
@@ -37908,12 +37947,7 @@ async function applyMollieRefundAuthoritative(
           Authorization: `Bearer ${rideCredentials.apiKey}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({
-          amount: {
-            currency,
-            value: _centsToMollieAmountValue(refundAmountCents),
-          },
-        }),
+        body: JSON.stringify(refundCreateBody),
       },
     );
     mollieRefund = await refundRes.json().catch(() => ({}));
