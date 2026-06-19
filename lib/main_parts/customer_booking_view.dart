@@ -2064,6 +2064,122 @@ class CustomerBookingView {
     return null;
   }
 
+  /// Customer-safe refund/credit row for the paid roundtrip Prijs breakdown.
+  /// Reads cancelled-leg operational fields first, then parent record layers.
+  CustomerRoundtripRefundDisplay? get customerRoundtripRefundDisplay {
+    final projection = roundtripPriceProjection;
+    if (projection == null || !projection.paid) return null;
+
+    final cancelledLegType = projection.cancelledLegType;
+    Map<String, dynamic>? cancelledLegMap;
+    for (final map in _operationalLegMaps) {
+      final legTypeRaw = (map['leg_type'] ?? map['legType'] ?? '')
+          .toString()
+          .trim()
+          .toLowerCase();
+      final legType = legTypeRaw == 'return' ? 'return' : 'outbound';
+      if (legType == cancelledLegType) {
+        cancelledLegMap = map;
+        break;
+      }
+    }
+
+    String readRefundText(String snake, String camel) {
+      final fromLeg = _customerRefundTextFromMap(cancelledLegMap, snake, camel);
+      if (fromLeg.isNotEmpty) return fromLeg;
+      return _firstPathValue([
+        'record.$snake',
+        'record.$camel',
+        'record.booking.$snake',
+        'record.booking.$camel',
+        'record.payload.$snake',
+        'record.payload.$camel',
+        'booking.$snake',
+        'booking.$camel',
+        'payload.$snake',
+        'payload.$camel',
+        snake,
+        camel,
+      ]);
+    }
+
+    int? readRefundCents(String snake, String camel) {
+      final fromLeg = _customerRefundCentsFromMap(
+        cancelledLegMap,
+        snake,
+        camel,
+      );
+      if (fromLeg != null && fromLeg > 0) return fromLeg;
+      for (final path in <String>[
+        'record.$snake',
+        'record.$camel',
+        'record.booking.$snake',
+        'record.booking.$camel',
+        'record.payload.$snake',
+        'record.payload.$camel',
+        'booking.$snake',
+        'booking.$camel',
+        'payload.$snake',
+        'payload.$camel',
+        snake,
+        camel,
+      ]) {
+        final cents = _customerRefundCentsFromDynamic(_valueAtPath(path));
+        if (cents != null && cents > 0) return cents;
+      }
+      return null;
+    }
+
+    final refundStatus = readRefundText('refund_status', 'refundStatus');
+    final mollieRefundStatus = readRefundText(
+      'mollie_refund_status',
+      'mollieRefundStatus',
+    );
+    final mollieRefundId = readRefundText('mollie_refund_id', 'mollieRefundId');
+    final refundedAt = readRefundText('refunded_at', 'refundedAt');
+    final creditDecision = readRefundText('credit_decision', 'creditDecision');
+    final refundedAmountCents = readRefundCents(
+      'refunded_amount_cents',
+      'refundedAmountCents',
+    );
+    final creditedAmountCents = readRefundCents(
+      'credited_amount_cents',
+      'creditedAmountCents',
+    );
+
+    final creditDueTotal = projection.creditDueTotal ?? 0;
+    final hasCreditDueAmount = creditDueTotal > 0.009;
+    final manualHandled = _customerCreditDecisionIsManual(creditDecision);
+
+    final phase = classifyCustomerRefundDisplayPhase(
+      refundStatus: refundStatus,
+      mollieRefundStatus: mollieRefundStatus,
+      mollieRefundId: mollieRefundId,
+      refundedAmountCents: refundedAmountCents,
+      refundedAt: refundedAt,
+      creditDecision: creditDecision,
+      hasCreditDueAmount: hasCreditDueAmount,
+    );
+
+    double? amountEur;
+    if (phase == CustomerRefundDisplayPhase.refunded &&
+        refundedAmountCents != null &&
+        refundedAmountCents > 0) {
+      amountEur = refundedAmountCents / 100;
+    } else if (creditedAmountCents != null && creditedAmountCents > 0) {
+      amountEur = creditedAmountCents / 100;
+    } else if (hasCreditDueAmount) {
+      amountEur = creditDueTotal;
+    }
+
+    return CustomerRoundtripRefundDisplay(
+      phase: phase,
+      amountEur: amountEur,
+      refundedAt: refundedAt,
+      manualHandled: manualHandled,
+    );
+  }
+
   List<CustomerRoundtripLegCardView> get roundtripLegCardViews {
     if (!isCustomerRoundtripBooking) {
       return const <CustomerRoundtripLegCardView>[];
@@ -2329,6 +2445,20 @@ class CustomerRoundtripLegCardView {
     if (isCancelled) return true;
     return _isCustomerBookingTerminalStatus(status);
   }
+}
+
+class CustomerRoundtripRefundDisplay {
+  const CustomerRoundtripRefundDisplay({
+    required this.phase,
+    required this.amountEur,
+    this.refundedAt = '',
+    this.manualHandled = false,
+  });
+
+  final CustomerRefundDisplayPhase phase;
+  final double? amountEur;
+  final String refundedAt;
+  final bool manualHandled;
 }
 
 class CustomerRoundtripPriceProjection {

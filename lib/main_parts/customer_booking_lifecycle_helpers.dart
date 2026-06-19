@@ -449,3 +449,216 @@ _removeLocalCustomerBookingEverywhere({
     remaining: result.remaining,
   );
 }
+
+// Customer-facing refund lifecycle labels for paid roundtrip leg cancellations.
+// Mirrors CR-1 provider-status semantics without importing company/admin helpers.
+
+enum CustomerRefundDisplayPhase {
+  creditDue,
+  refundPending,
+  refunded,
+  refundFailed,
+  noRefundNeeded,
+  unknown,
+}
+
+String _normCustomerRefundToken(String raw) {
+  return raw.trim().toUpperCase().replaceAll('-', '_').replaceAll(' ', '_');
+}
+
+bool _customerRefundStatusIsRefunded(String token) {
+  switch (_normCustomerRefundToken(token)) {
+    case 'REFUNDED':
+    case 'SUCCEEDED':
+    case 'SUCCESS':
+    case 'COMPLETED':
+    case 'PAID':
+    case 'PAID_OUT':
+    case 'SETTLED':
+    case 'PAID_BACK':
+    case 'RETURNED':
+      return true;
+    default:
+      return false;
+  }
+}
+
+bool _customerRefundStatusIsPending(String token) {
+  switch (_normCustomerRefundToken(token)) {
+    case 'QUEUED':
+    case 'PENDING':
+    case 'PROCESSING':
+    case 'IN_PROGRESS':
+    case 'OPEN':
+    case 'REQUESTED':
+    case 'CREATED':
+    case 'MOLLIE_REFUND_PENDING':
+    case 'IN_BEHANDELING':
+      return true;
+    default:
+      return false;
+  }
+}
+
+bool _customerRefundStatusIsFailed(String token) {
+  switch (_normCustomerRefundToken(token)) {
+    case 'FAILED':
+    case 'FAILURE':
+    case 'ERROR':
+    case 'REJECTED':
+    case 'CANCELLED':
+    case 'CANCELED':
+    case 'EXPIRED':
+    case 'MOLLIE_REFUND_FAILED':
+      return true;
+    default:
+      return false;
+  }
+}
+
+bool _customerCreditDecisionIsNoRefund(String creditDecision) {
+  switch (_normCustomerRefundToken(creditDecision)) {
+    case 'NO_REFUND':
+    case 'NONE':
+      return true;
+    default:
+      return false;
+  }
+}
+
+bool _customerCreditDecisionIsManual(String creditDecision) {
+  switch (_normCustomerRefundToken(creditDecision)) {
+    case 'HANDLED_MANUALLY':
+    case 'MANUALLY_HANDLED':
+      return true;
+    default:
+      return false;
+  }
+}
+
+/// Classifies the customer-safe refund row in the Prijs card. Refund identifiers
+/// and amounts prove a refund was requested; explicit final provider status is
+/// required for [CustomerRefundDisplayPhase.refunded].
+CustomerRefundDisplayPhase classifyCustomerRefundDisplayPhase({
+  required String refundStatus,
+  required String mollieRefundStatus,
+  required String mollieRefundId,
+  required int? refundedAmountCents,
+  required String refundedAt,
+  required String creditDecision,
+  required bool hasCreditDueAmount,
+}) {
+  if (_customerCreditDecisionIsNoRefund(creditDecision)) {
+    return CustomerRefundDisplayPhase.noRefundNeeded;
+  }
+  if (_customerCreditDecisionIsManual(creditDecision)) {
+    return CustomerRefundDisplayPhase.noRefundNeeded;
+  }
+
+  final refundTok = refundStatus.trim();
+  final mollieTok = mollieRefundStatus.trim();
+
+  if (_customerRefundStatusIsFailed(refundTok) ||
+      _customerRefundStatusIsFailed(mollieTok)) {
+    return CustomerRefundDisplayPhase.refundFailed;
+  }
+  if (_customerRefundStatusIsRefunded(refundTok) ||
+      _customerRefundStatusIsRefunded(mollieTok)) {
+    return CustomerRefundDisplayPhase.refunded;
+  }
+
+  final hasRefundRequestSignal =
+      mollieRefundId.trim().isNotEmpty ||
+      (refundedAmountCents ?? 0) > 0 ||
+      refundedAt.trim().isNotEmpty;
+  if (hasRefundRequestSignal) {
+    return CustomerRefundDisplayPhase.refundPending;
+  }
+
+  if (hasCreditDueAmount) {
+    return CustomerRefundDisplayPhase.creditDue;
+  }
+  return CustomerRefundDisplayPhase.unknown;
+}
+
+String localizedCustomerRefundPriceLabel(
+  CustomerRefundDisplayPhase phase, {
+  bool manualHandled = false,
+}) {
+  switch (phase) {
+    case CustomerRefundDisplayPhase.refunded:
+      return _tr(
+        nl: 'Terugbetaald aan klant',
+        en: 'Refunded to customer',
+        fr: 'Rembourse au client',
+        es: 'Reembolsado al cliente',
+      );
+    case CustomerRefundDisplayPhase.refundPending:
+      return _tr(
+        nl: 'Terugbetaling in behandeling',
+        en: 'Refund in progress',
+        fr: 'Remboursement en cours',
+        es: 'Reembolso en curso',
+      );
+    case CustomerRefundDisplayPhase.refundFailed:
+      return _tr(
+        nl: 'Terugbetaling mislukt',
+        en: 'Refund failed',
+        fr: 'Remboursement echoue',
+        es: 'Reembolso fallido',
+      );
+    case CustomerRefundDisplayPhase.noRefundNeeded:
+      if (manualHandled) {
+        return _tr(
+          nl: 'Handmatig afgehandeld',
+          en: 'Handled manually',
+          fr: 'Traite manuellement',
+          es: 'Gestionado manualmente',
+        );
+      }
+      return _tr(
+        nl: 'Geen terugbetaling',
+        en: 'No refund',
+        fr: 'Pas de remboursement',
+        es: 'Sin reembolso',
+      );
+    case CustomerRefundDisplayPhase.creditDue:
+    case CustomerRefundDisplayPhase.unknown:
+      return _tr(
+        nl: 'Te crediteren',
+        en: 'Credit due',
+        fr: 'A crediter',
+        es: 'A acreditar',
+      );
+  }
+}
+
+int? _customerRefundCentsFromDynamic(dynamic raw) {
+  if (raw == null) return null;
+  final asInt = int.tryParse(raw.toString());
+  if (asInt != null && asInt > 0) return asInt;
+  final asDouble = double.tryParse(raw.toString().replaceAll(',', '.'));
+  if (asDouble != null && asDouble > 0) return asDouble.round();
+  return null;
+}
+
+String _customerRefundTextFromMap(
+  Map<String, dynamic>? map,
+  String snakeKey,
+  String camelKey,
+) {
+  if (map == null) return '';
+  final raw = map[snakeKey] ?? map[camelKey];
+  final text = raw?.toString().trim() ?? '';
+  if (text.isEmpty || text.toLowerCase() == 'null') return '';
+  return text;
+}
+
+int? _customerRefundCentsFromMap(
+  Map<String, dynamic>? map,
+  String snakeKey,
+  String camelKey,
+) {
+  if (map == null) return null;
+  return _customerRefundCentsFromDynamic(map[snakeKey] ?? map[camelKey]);
+}

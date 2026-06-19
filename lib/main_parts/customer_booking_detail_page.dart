@@ -4121,16 +4121,27 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                                   stacked: true,
                                 ),
                                 if ((roundtripProjection.creditDueTotal ?? 0) >
-                                    0)
+                                        0 ||
+                                    (v.customerRoundtripRefundDisplay != null &&
+                                        v
+                                                .customerRoundtripRefundDisplay!
+                                                .phase !=
+                                            CustomerRefundDisplayPhase.unknown))
                                   _kv(
-                                    _t(
-                                      nl: 'Te crediteren',
-                                      en: 'Credit due',
-                                      fr: 'A crediter',
-                                      es: 'A acreditar',
+                                    localizedCustomerRefundPriceLabel(
+                                      v.customerRoundtripRefundDisplay?.phase ??
+                                          CustomerRefundDisplayPhase.creditDue,
+                                      manualHandled:
+                                          v
+                                              .customerRoundtripRefundDisplay
+                                              ?.manualHandled ??
+                                          false,
                                     ),
                                     _formatPrice(
-                                      roundtripProjection.creditDueTotal,
+                                      v
+                                              .customerRoundtripRefundDisplay
+                                              ?.amountEur ??
+                                          roundtripProjection.creditDueTotal,
                                       v.currency,
                                     ),
                                     stacked: true,
