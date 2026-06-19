@@ -24,9 +24,11 @@ class PaymentOwnershipGate {
       case 'manual_only':
         return false;
       case 'company_mollie':
-        // Backend company Mollie credentials are not available yet; do not
-        // advertise online checkout until that owner mode is implemented.
-        return false;
+        // UX gate only. Surface online Mollie checkout options once Mollie
+        // Connect is linked for this company. The backend worker remains
+        // authoritative for the actual payment create and will block when
+        // MOLLIE_COMPANY_PAYMENTS_ENABLED is not enabled.
+        return mollieConnected;
       case 'fluxidi_central_demo':
         return true;
       default:
@@ -38,15 +40,16 @@ class PaymentOwnershipGate {
     if (onlinePaymentsAvailable) return null;
     final mode = paymentOwnerMode.trim().toLowerCase();
     if (mode == 'company_mollie') {
+      // Reached only when Mollie Connect is not linked yet for this company.
       switch (languageCode.toLowerCase()) {
         case 'en':
-          return 'Online payments with the company Mollie account are not available yet.';
+          return 'Online payments require linking the company Mollie account first.';
         case 'fr':
-          return 'Les paiements en ligne avec le compte Mollie de l’entreprise ne sont pas encore disponibles.';
+          return 'Les paiements en ligne nécessitent d’abord la liaison du compte Mollie de l’entreprise.';
         case 'es':
-          return 'Los pagos online con la cuenta Mollie de la empresa aún no están disponibles.';
+          return 'Los pagos en línea requieren vincular primero la cuenta Mollie de la empresa.';
         default:
-          return 'Online betalingen via het eigen Mollie-account zijn nog niet beschikbaar.';
+          return 'Online betalingen vereisen eerst dat het Mollie-account van het bedrijf gekoppeld wordt.';
       }
     }
     switch (languageCode.toLowerCase()) {
