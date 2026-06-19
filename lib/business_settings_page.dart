@@ -22,7 +22,13 @@ import 'package:qr_flutter/qr_flutter.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 
-enum _SetupStatus { complete, attention, incomplete, comingSoon }
+enum _SetupStatus {
+  complete,
+  attention,
+  incomplete,
+  activationPending,
+  comingSoon,
+}
 
 class _SetupItem {
   const _SetupItem({
@@ -1991,6 +1997,14 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
   Widget _paymentOwnershipCard() {
     final demoActive = _paymentOwnerMode == 'fluxidi_central_demo';
     final mollieConnected = _mollieConnectConnected;
+    final mollieStatusCode = _mollieConnectStatusCode();
+    final cardStatus = mollieConnected
+        ? _SetupStatus.activationPending
+        : (mollieStatusCode == 'failed' || mollieStatusCode == 'auth_required')
+        ? _SetupStatus.incomplete
+        : demoActive
+        ? _SetupStatus.attention
+        : _SetupStatus.incomplete;
     final mollieMode = _mollieConnectStatusField('mollie_mode');
     final onboardingStatus = _mollieConnectStatusField('onboarding_status');
     final lastConnectedAt = _mollieConnectStatusField('last_connected_at');
@@ -2005,7 +2019,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         es: 'Recibir pagos',
       ),
       subtitle: _paymentOwnerModeLabel(_paymentOwnerMode),
-      status: demoActive ? _SetupStatus.attention : _SetupStatus.incomplete,
+      status: cardStatus,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -6540,6 +6554,13 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
           fr: 'Incomplet',
           es: 'Incompleto',
         );
+      case _SetupStatus.activationPending:
+        return _t(
+          nl: 'Activering volgt',
+          en: 'Activation pending',
+          fr: 'Activation à venir',
+          es: 'Activación pendiente',
+        );
       case _SetupStatus.comingSoon:
         return _t(
           nl: 'Binnenkort',
@@ -6558,6 +6579,8 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         return const Color(0xFFE5B641);
       case _SetupStatus.incomplete:
         return const Color(0xFFF87171);
+      case _SetupStatus.activationPending:
+        return const Color(0xFFE5B641);
       case _SetupStatus.comingSoon:
         return Colors.grey.shade500;
     }
@@ -6731,6 +6754,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         );
       case _SetupStatus.attention:
       case _SetupStatus.incomplete:
+      case _SetupStatus.activationPending:
       case _SetupStatus.comingSoon:
         return _t(
           nl: 'Publieke code of link ontbreekt',
