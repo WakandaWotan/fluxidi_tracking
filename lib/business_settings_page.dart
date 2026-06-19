@@ -250,6 +250,11 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
   bool _blockWhenDriverEnRoute = false;
   String? _googleCalendarStatusError;
   Map<String, dynamic>? _googleCalendarStatus;
+  bool _mollieConnectLoading = false;
+  bool _mollieConnectStartLoading = false;
+  bool _mollieConnectDisconnectLoading = false;
+  String? _mollieConnectStatusError;
+  Map<String, dynamic>? _mollieConnectStatus;
   bool _showAdvancedLogoPath = false;
   bool _showAdvancedPublicMediaUrls = false;
   final ImagePicker _imagePicker = ImagePicker();
@@ -473,6 +478,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     _mergeLocalIntoGeneralControllersIfEligible();
     _loadBackendProfiles();
     _loadGoogleCalendarStatus();
+    _loadMollieConnectStatus();
     _loadAirportFixedFareRules();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
@@ -1319,6 +1325,90 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     return raw.isEmpty ? null : raw;
   }
 
+  String? _mollieConnectStatusField(String key) {
+    final raw = (_mollieConnectStatus?[key] ?? '').toString().trim();
+    return raw.isEmpty ? null : raw;
+  }
+
+  bool get _mollieConnectConnected => _mollieConnectStatus?['connected'] is bool
+      ? _mollieConnectStatus!['connected'] as bool
+      : _mollieConnected;
+
+  String _mollieConnectStatusCode() {
+    final raw = (_mollieConnectStatus?['status'] ?? '').toString().trim();
+    if (raw.isNotEmpty) return raw.toLowerCase();
+    return _mollieConnectConnected ? 'connected' : 'not_configured';
+  }
+
+  String _mollieConnectStatusLabel() {
+    switch (_mollieConnectStatusCode()) {
+      case 'connected':
+        return _t(
+          nl: 'Mollie-account gekoppeld',
+          en: 'Mollie account connected',
+          fr: 'Compte Mollie connecte',
+          es: 'Cuenta Mollie conectada',
+        );
+      case 'disconnected':
+        return _t(
+          nl: 'Mollie-account losgekoppeld',
+          en: 'Mollie account disconnected',
+          fr: 'Compte Mollie deconnecte',
+          es: 'Cuenta Mollie desconectada',
+        );
+      case 'failed':
+      case 'auth_required':
+        return _t(
+          nl: 'Mollie-koppeling vraagt aandacht',
+          en: 'Mollie connection needs attention',
+          fr: 'La connexion Mollie demande attention',
+          es: 'La conexión de Mollie requiere atención',
+        );
+      case 'not_configured':
+      default:
+        return _t(
+          nl: 'Mollie nog niet gekoppeld',
+          en: 'Mollie not connected yet',
+          fr: 'Mollie pas encore connecte',
+          es: 'Mollie aún no conectado',
+        );
+    }
+  }
+
+  String _mollieConnectDescription() {
+    if (_mollieConnectConnected) {
+      return _t(
+        nl: 'Je Mollie-account is gekoppeld. Online betalingen via je eigen Mollie-account worden in een volgende stap geactiveerd.',
+        en: 'Your Mollie account is connected. Online payments through your own Mollie account will be activated in a next step.',
+        fr: 'Votre compte Mollie est connecte. Les paiements en ligne via votre propre compte Mollie seront actives dans une prochaine etape.',
+        es: 'Tu cuenta de Mollie esta conectada. Los pagos online a traves de tu propia cuenta Mollie se activaran en un siguiente paso.',
+      );
+    }
+    return _t(
+      nl: 'Je kunt je Mollie-account alvast koppelen. Online betalingen via je eigen Mollie-account worden in een volgende stap geactiveerd.',
+      en: 'You can connect your Mollie account now. Online payments through your own Mollie account will be activated in a next step.',
+      fr: 'Vous pouvez deja connecter votre compte Mollie. Les paiements en ligne via votre propre compte Mollie seront actives dans une prochaine etape.',
+      es: 'Ya puedes conectar tu cuenta de Mollie. Los pagos online a traves de tu propia cuenta Mollie se activaran en un siguiente paso.',
+    );
+  }
+
+  String _mollieModeLabel(String? raw) {
+    final token = (raw ?? '').trim().toLowerCase();
+    switch (token) {
+      case 'test':
+        return 'TEST';
+      case 'live':
+        return 'LIVE';
+      default:
+        return _t(
+          nl: 'Onbekend',
+          en: 'Unknown',
+          fr: 'Inconnu',
+          es: 'Desconocido',
+        );
+    }
+  }
+
   Future<void> _loadGoogleCalendarStatus({bool showErrorSnack = false}) async {
     setState(() {
       _googleCalendarLoading = true;
@@ -1362,6 +1452,210 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     } finally {
       if (mounted) {
         setState(() => _googleCalendarLoading = false);
+      }
+    }
+  }
+
+  Future<void> _loadMollieConnectStatus({bool showErrorSnack = false}) async {
+    setState(() {
+      _mollieConnectLoading = true;
+      _mollieConnectStatusError = null;
+    });
+    try {
+      final scope = _activeSettingsScopeStrict();
+      if (scope == null) {
+        debugPrint(
+          '[BUSINESS_SETTINGS_SCOPE][SKIP] reason=missing_strict_company_scope action=load_mollie_connect_status',
+        );
+        return;
+      }
+      final data = await fetchBackendMollieConnectStatus(
+        tenantId: scope.tenantId,
+        companyId: scope.companyId,
+      );
+      if (!mounted) return;
+      setState(() {
+        _mollieConnectStatus = data;
+        if (data['connected'] is bool) {
+          _mollieConnected = data['connected'] as bool;
+        }
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _mollieConnectStatusError = e.toString();
+      });
+      if (showErrorSnack) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              _t(
+                nl: 'Mollie-status kon niet geladen worden.',
+                en: 'Mollie status could not be loaded.',
+                fr: 'Le statut Mollie n’a pas pu etre charge.',
+                es: 'No se pudo cargar el estado de Mollie.',
+              ),
+            ),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _mollieConnectLoading = false);
+      }
+    }
+  }
+
+  Future<void> _startMollieConnect() async {
+    setState(() => _mollieConnectStartLoading = true);
+    try {
+      final scope = _strictSettingsScopeForAction(
+        action: 'start_mollie_connect',
+      );
+      if (scope == null) return;
+      final data = await startBackendMollieConnect(
+        tenantId: scope.tenantId,
+        companyId: scope.companyId,
+      );
+      final authUrl = (data['auth_url'] ?? data['authUrl'] ?? '')
+          .toString()
+          .trim();
+      if (authUrl.isEmpty) throw Exception('missing_auth_url');
+      final launched = await launchUrl(
+        Uri.parse(authUrl),
+        mode: LaunchMode.externalApplication,
+      );
+      if (!launched) throw Exception('launch_failed');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Mollie geopend. Rond de koppeling af in je browser en vernieuw daarna de status.',
+              en: 'Mollie opened. Finish the connection in your browser, then refresh the status.',
+              fr: 'Mollie est ouvert. Terminez la connexion dans votre navigateur, puis actualisez le statut.',
+              es: 'Mollie abierto. Termina la conexión en tu navegador y luego actualiza el estado.',
+            ),
+          ),
+        ),
+      );
+      unawaited(_loadMollieConnectStatus());
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Mollie-koppeling kon niet gestart worden.',
+              en: 'Mollie connection could not be started.',
+              fr: 'La connexion Mollie n’a pas pu etre demarree.',
+              es: 'No se pudo iniciar la conexión de Mollie.',
+            ),
+          ),
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _mollieConnectStartLoading = false);
+      }
+    }
+  }
+
+  Future<bool> _confirmMollieConnectDisconnect() async {
+    final decision = await showDialog<bool>(
+      context: context,
+      builder: (ctx) {
+        return AlertDialog(
+          title: Text(
+            _t(
+              nl: 'Mollie loskoppelen?',
+              en: 'Disconnect Mollie?',
+              fr: 'Deconnecter Mollie ?',
+              es: '¿Desconectar Mollie?',
+            ),
+          ),
+          content: Text(
+            _t(
+              nl: 'Je kunt later opnieuw koppelen. Online betalingen via het eigen Mollie-account zijn in deze fase nog niet actief.',
+              en: 'You can reconnect later. Online payments through the own Mollie account are not active in this phase yet.',
+              fr: 'Vous pourrez reconnecter plus tard. Les paiements en ligne via le compte Mollie propre ne sont pas encore actifs dans cette phase.',
+              es: 'Puedes volver a conectar más tarde. Los pagos online mediante la cuenta Mollie propia aún no están activos en esta fase.',
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: Text(
+                _t(
+                  nl: 'Annuleren',
+                  en: 'Cancel',
+                  fr: 'Annuler',
+                  es: 'Cancelar',
+                ),
+              ),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(ctx).pop(true),
+              child: Text(
+                _t(
+                  nl: 'Loskoppelen',
+                  en: 'Disconnect',
+                  fr: 'Deconnecter',
+                  es: 'Desconectar',
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+    return decision == true;
+  }
+
+  Future<void> _disconnectMollieConnect() async {
+    final confirmed = await _confirmMollieConnectDisconnect();
+    if (!confirmed || !mounted) return;
+    setState(() => _mollieConnectDisconnectLoading = true);
+    try {
+      final scope = _strictSettingsScopeForAction(
+        action: 'disconnect_mollie_connect',
+      );
+      if (scope == null) return;
+      await disconnectBackendMollieConnect(
+        tenantId: scope.tenantId,
+        companyId: scope.companyId,
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Mollie is losgekoppeld.',
+              en: 'Mollie is disconnected.',
+              fr: 'Mollie est deconnecte.',
+              es: 'Mollie está desconectado.',
+            ),
+          ),
+        ),
+      );
+      unawaited(_loadMollieConnectStatus());
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Mollie kon niet worden losgekoppeld.',
+              en: 'Mollie could not be disconnected.',
+              fr: 'Mollie n’a pas pu etre deconnecte.',
+              es: 'No se pudo desconectar Mollie.',
+            ),
+          ),
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _mollieConnectDisconnectLoading = false);
       }
     }
   }
@@ -1696,6 +1990,11 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
 
   Widget _paymentOwnershipCard() {
     final demoActive = _paymentOwnerMode == 'fluxidi_central_demo';
+    final mollieConnected = _mollieConnectConnected;
+    final mollieMode = _mollieConnectStatusField('mollie_mode');
+    final onboardingStatus = _mollieConnectStatusField('onboarding_status');
+    final lastConnectedAt = _mollieConnectStatusField('last_connected_at');
+    final lastErrorCode = _mollieConnectStatusField('last_error_code');
     return _collapsibleSettingsCard(
       id: 'payment_ownership',
       icon: Icons.account_balance_wallet_outlined,
@@ -1720,6 +2019,29 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
               ),
               style: TextStyle(color: _textSecondary, height: 1.45),
             ),
+          if (_mollieConnectLoading && _mollieConnectStatus == null)
+            const Padding(
+              padding: EdgeInsets.only(top: 10),
+              child: SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+            ),
+          const SizedBox(height: 12),
+          Text(
+            _mollieConnectStatusLabel(),
+            style: TextStyle(
+              color: _textPrimary,
+              fontWeight: FontWeight.w800,
+              fontSize: 13.5,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            _mollieConnectDescription(),
+            style: TextStyle(color: _textSecondary, fontSize: 12, height: 1.35),
+          ),
           const SizedBox(height: 12),
           _paymentOwnershipInfoRow(
             _t(
@@ -1737,10 +2059,54 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
               fr: 'Mollie connecte',
               es: 'Mollie conectado',
             ),
-            _mollieConnected
+            mollieConnected
                 ? _t(nl: 'Ja', en: 'Yes', fr: 'Oui', es: 'Si')
                 : _t(nl: 'Nee', en: 'No', fr: 'Non', es: 'No'),
           ),
+          _paymentOwnershipInfoRow(
+            _t(nl: 'Status', en: 'Status', fr: 'Statut', es: 'Estado'),
+            _mollieConnectStatusCode(),
+          ),
+          if (mollieMode != null)
+            _paymentOwnershipInfoRow(
+              _t(
+                nl: 'Mollie-modus',
+                en: 'Mollie mode',
+                fr: 'Mode Mollie',
+                es: 'Modo Mollie',
+              ),
+              _mollieModeLabel(mollieMode),
+            ),
+          if (onboardingStatus != null)
+            _paymentOwnershipInfoRow(
+              _t(
+                nl: 'Onboarding',
+                en: 'Onboarding',
+                fr: 'Onboarding',
+                es: 'Onboarding',
+              ),
+              onboardingStatus,
+            ),
+          if (lastConnectedAt != null)
+            _paymentOwnershipInfoRow(
+              _t(
+                nl: 'Laatst gekoppeld',
+                en: 'Last connected',
+                fr: 'Derniere connexion',
+                es: 'Última conexión',
+              ),
+              lastConnectedAt,
+            ),
+          if (lastErrorCode != null)
+            _paymentOwnershipInfoRow(
+              _t(
+                nl: 'Laatste fout',
+                en: 'Last error',
+                fr: 'Derniere erreur',
+                es: 'Último error',
+              ),
+              lastErrorCode,
+            ),
           _paymentOwnershipInfoRow(
             _t(
               nl: 'Demomodus',
@@ -1753,20 +2119,94 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                 : _t(nl: 'Nee', en: 'No', fr: 'Non', es: 'No'),
           ),
           const SizedBox(height: 12),
-          Align(
-            alignment: Alignment.centerLeft,
-            child: OutlinedButton.icon(
-              onPressed: null,
-              icon: const Icon(Icons.link_off_outlined),
-              label: Text(
+          if (_mollieConnectStatusError != null)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Text(
                 _t(
-                  nl: 'Mollie koppelen komt later',
-                  en: 'Connect Mollie coming later',
-                  fr: 'Connexion Mollie a venir',
-                  es: 'Conexion Mollie proximamente',
+                  nl: 'Mollie-status kon niet geladen worden.',
+                  en: 'Mollie status could not be loaded.',
+                  fr: 'Le statut Mollie n’a pas pu etre charge.',
+                  es: 'No se pudo cargar el estado de Mollie.',
                 ),
+                style: TextStyle(color: _danger, fontSize: 12),
               ),
             ),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              FilledButton.icon(
+                onPressed:
+                    (_mollieConnectStartLoading ||
+                        _mollieConnectDisconnectLoading)
+                    ? null
+                    : _startMollieConnect,
+                icon: _mollieConnectStartLoading
+                    ? const SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.link_outlined),
+                label: Text(
+                  mollieConnected
+                      ? _t(
+                          nl: 'Opnieuw koppelen',
+                          en: 'Reconnect',
+                          fr: 'Reconnecter',
+                          es: 'Volver a conectar',
+                        )
+                      : _t(
+                          nl: 'Mollie koppelen',
+                          en: 'Connect Mollie',
+                          fr: 'Connecter Mollie',
+                          es: 'Conectar Mollie',
+                        ),
+                ),
+              ),
+              if (mollieConnected)
+                OutlinedButton.icon(
+                  onPressed: _mollieConnectDisconnectLoading
+                      ? null
+                      : _disconnectMollieConnect,
+                  icon: _mollieConnectDisconnectLoading
+                      ? const SizedBox(
+                          width: 14,
+                          height: 14,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.link_off_outlined),
+                  label: Text(
+                    _t(
+                      nl: 'Mollie ontkoppelen',
+                      en: 'Disconnect Mollie',
+                      fr: 'Deconnecter Mollie',
+                      es: 'Desconectar Mollie',
+                    ),
+                  ),
+                ),
+              OutlinedButton.icon(
+                onPressed: _mollieConnectLoading
+                    ? null
+                    : () => _loadMollieConnectStatus(showErrorSnack: true),
+                icon: _mollieConnectLoading
+                    ? const SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.refresh_outlined),
+                label: Text(
+                  _t(
+                    nl: 'Status vernieuwen',
+                    en: 'Refresh status',
+                    fr: 'Actualiser le statut',
+                    es: 'Actualizar estado',
+                  ),
+                ),
+              ),
+            ],
           ),
         ],
       ),

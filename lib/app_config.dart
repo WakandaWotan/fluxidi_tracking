@@ -6754,6 +6754,149 @@ Future<Map<String, dynamic>> disconnectBackendGoogleCalendar({
   return Map<String, dynamic>.from(decoded);
 }
 
+Map<String, dynamic> _safeMollieConnectMap(Map<dynamic, dynamic> raw) {
+  String textAny(List<String> keys) {
+    for (final key in keys) {
+      final value = raw[key];
+      if (value == null) continue;
+      final text = value.toString().trim();
+      if (text.isNotEmpty) return text;
+    }
+    return '';
+  }
+
+  bool boolAny(List<String> keys) {
+    for (final key in keys) {
+      final value = raw[key];
+      if (value is bool) return value;
+      if (value is String) {
+        final token = value.trim().toLowerCase();
+        if (token == 'true') return true;
+        if (token == 'false') return false;
+      }
+    }
+    return false;
+  }
+
+  return <String, dynamic>{
+    'connected': boolAny(const ['connected']),
+    'status': textAny(const ['status']),
+    'mollie_organization_id': textAny(const [
+      'mollie_organization_id',
+      'mollieOrganizationId',
+    ]),
+    'mollieOrganizationId': textAny(const [
+      'mollieOrganizationId',
+      'mollie_organization_id',
+    ]),
+    'mollie_profile_id': textAny(const [
+      'mollie_profile_id',
+      'mollieProfileId',
+    ]),
+    'mollieProfileId': textAny(const ['mollieProfileId', 'mollie_profile_id']),
+    'mollie_mode': textAny(const ['mollie_mode', 'mollieMode']),
+    'mollieMode': textAny(const ['mollieMode', 'mollie_mode']),
+    'onboarding_status': textAny(const [
+      'onboarding_status',
+      'onboardingStatus',
+    ]),
+    'onboardingStatus': textAny(const [
+      'onboardingStatus',
+      'onboarding_status',
+    ]),
+    'last_connected_at': textAny(const [
+      'last_connected_at',
+      'lastConnectedAt',
+    ]),
+    'lastConnectedAt': textAny(const ['lastConnectedAt', 'last_connected_at']),
+    'updated_at': textAny(const ['updated_at', 'updatedAt']),
+    'updatedAt': textAny(const ['updatedAt', 'updated_at']),
+    'last_error_code': textAny(const ['last_error_code', 'lastErrorCode']),
+    'lastErrorCode': textAny(const ['lastErrorCode', 'last_error_code']),
+    'auth_url': textAny(const ['auth_url', 'authUrl']),
+    'authUrl': textAny(const ['authUrl', 'auth_url']),
+  };
+}
+
+Future<Map<String, dynamic>> fetchBackendMollieConnectStatus({
+  String? tenantId,
+  String? companyId,
+}) async {
+  final endpoint = _withAdminTenantCompanyScope(
+    Uri.parse('${appConfig.bookingBaseUrl}/admin/mollie/connect/status'),
+    tenantId: tenantId,
+    companyId: companyId,
+  );
+  final auth = await resolveCompanyOwnerAuthHeaders();
+  final res = await http
+      .get(endpoint, headers: auth.headers)
+      .timeout(const Duration(seconds: 12));
+  if (res.statusCode < 200 || res.statusCode >= 300) {
+    throw Exception('HTTP ${res.statusCode}: ${res.body}');
+  }
+  final decoded = jsonDecode(res.body);
+  if (decoded is! Map) throw Exception('Invalid response');
+  return _safeMollieConnectMap(decoded);
+}
+
+Future<Map<String, dynamic>> startBackendMollieConnect({
+  String? tenantId,
+  String? companyId,
+}) async {
+  final endpoint = _withAdminTenantCompanyScope(
+    Uri.parse('${appConfig.bookingBaseUrl}/admin/mollie/connect/start'),
+    tenantId: tenantId,
+    companyId: companyId,
+  );
+  final scope = _resolveAdminTenantCompanyScope(
+    tenantId: tenantId,
+    companyId: companyId,
+  );
+  final auth = await resolveCompanyOwnerAuthHeaders();
+  final res = await http
+      .post(
+        endpoint,
+        headers: auth.headers,
+        body: jsonEncode(<String, dynamic>{...scope}),
+      )
+      .timeout(const Duration(seconds: 12));
+  if (res.statusCode < 200 || res.statusCode >= 300) {
+    throw Exception('HTTP ${res.statusCode}: ${res.body}');
+  }
+  final decoded = jsonDecode(res.body);
+  if (decoded is! Map) throw Exception('Invalid response');
+  return _safeMollieConnectMap(decoded);
+}
+
+Future<Map<String, dynamic>> disconnectBackendMollieConnect({
+  String? tenantId,
+  String? companyId,
+}) async {
+  final endpoint = _withAdminTenantCompanyScope(
+    Uri.parse('${appConfig.bookingBaseUrl}/admin/mollie/connect/disconnect'),
+    tenantId: tenantId,
+    companyId: companyId,
+  );
+  final scope = _resolveAdminTenantCompanyScope(
+    tenantId: tenantId,
+    companyId: companyId,
+  );
+  final auth = await resolveCompanyOwnerAuthHeaders();
+  final res = await http
+      .post(
+        endpoint,
+        headers: auth.headers,
+        body: jsonEncode(<String, dynamic>{...scope}),
+      )
+      .timeout(const Duration(seconds: 12));
+  if (res.statusCode < 200 || res.statusCode >= 300) {
+    throw Exception('HTTP ${res.statusCode}: ${res.body}');
+  }
+  final decoded = jsonDecode(res.body);
+  if (decoded is! Map) throw Exception('Invalid response');
+  return _safeMollieConnectMap(decoded);
+}
+
 Future<void> loadLocalTenantState() async {
   try {
     _deletedDriverIdsByScope.clear();
