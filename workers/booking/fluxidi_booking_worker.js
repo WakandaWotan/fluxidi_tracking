@@ -33579,6 +33579,24 @@ function _pickBestMollieRefundFromList(
   return { refund: null, ambiguous: true, candidateCount: refunds.length };
 }
 
+function _buildMollieRefundPaymentSafetyFromCredentials(rideCredentials) {
+  const modeRaw = safeStr(rideCredentials?.mode, 16).toLowerCase();
+  const keyKindRaw = safeStr(rideCredentials?.keyKind, 16).toLowerCase();
+  let mollieMode = "unknown";
+  if (modeRaw === "test" || modeRaw === "live") {
+    mollieMode = modeRaw;
+  } else if (keyKindRaw === "test" || keyKindRaw === "live") {
+    mollieMode = keyKindRaw;
+  }
+  return {
+    mollie_mode: mollieMode,
+    payment_credential_source:
+      safeStr(rideCredentials?.payment_credential_source, 40) || null,
+    payment_owner_mode: safeStr(rideCredentials?.payment_owner_mode, 40) || null,
+    payment_demo_mode: rideCredentials?.payment_demo_mode === true,
+  };
+}
+
 // READ-ONLY orchestrator for the status-snapshot endpoint. Returns a plain
 // JSON-serialisable result. NEVER writes to BOOKING_KV. NEVER emits any
 // Chiron / compliance event. Reuses existing identifier/credential helpers
@@ -33901,6 +33919,7 @@ async function buildMollieRefundStatusSnapshot(
       is_stale: isStale,
       recommended_next_action: recommendedNextAction,
     },
+    payment_safety: _buildMollieRefundPaymentSafetyFromCredentials(rideCredentials),
     warnings,
   };
 }

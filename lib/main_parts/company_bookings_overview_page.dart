@@ -733,10 +733,172 @@ class _CompanyBookingsOverviewPageState
     );
   }
 
+  Future<
+    ({
+      String mollieMode,
+      String paymentCredentialSource,
+      String paymentOwnerMode,
+      bool paymentDemoMode,
+    })
+  >
+  _fetchMollieRefundSafetyContext(_CompanyBookingOverviewItem item) async {
+    const unknown = (
+      mollieMode: 'unknown',
+      paymentCredentialSource: '',
+      paymentOwnerMode: '',
+      paymentDemoMode: false,
+    );
+    final target = _CompanyBookingOverviewItem.resolveMollieRefundTarget(item);
+    final id = target.bookingId.trim();
+    if (id.isEmpty) return unknown;
+    final safeLegId = target.legId.trim();
+    final safeLegType = target.legType.trim();
+    final scopeQuery = _activeBookingScopeQuery();
+    final uri = _withActiveBookingScope(
+      kBookingBaseUrl,
+      '$kBookingMollieRefundPath/${Uri.encodeComponent(id)}/mollie-refund/status-snapshot',
+    );
+    final useAdminToken = kAdminToken.trim().isNotEmpty;
+    final actorRole = useAdminToken ? 'admin' : 'company';
+    final payload = <String, dynamic>{
+      'booking_id': id,
+      'actor_role': actorRole,
+      'actorRole': actorRole,
+      if (safeLegId.isNotEmpty) 'leg_id': safeLegId,
+      if (safeLegId.isNotEmpty) 'legId': safeLegId,
+      if (safeLegType.isNotEmpty) 'leg_type': safeLegType,
+      if (safeLegType.isNotEmpty) 'legType': safeLegType,
+      if (scopeQuery['tenant_id'] != null) 'tenant_id': scopeQuery['tenant_id'],
+      if (scopeQuery['company_id'] != null)
+        'company_id': scopeQuery['company_id'],
+      if (scopeQuery['tenantId'] != null) 'tenantId': scopeQuery['tenantId'],
+      if (scopeQuery['companyId'] != null) 'companyId': scopeQuery['companyId'],
+    };
+    try {
+      final res = await http
+          .post(
+            uri,
+            headers: await _creditDecisionHeaders(),
+            body: jsonEncode(payload),
+          )
+          .timeout(const Duration(seconds: 15));
+      dynamic decoded;
+      try {
+        decoded = jsonDecode(utf8.decode(res.bodyBytes));
+      } catch (_) {
+        return unknown;
+      }
+      if (decoded is! Map<String, dynamic> ||
+          res.statusCode != 200 ||
+          decoded['ok'] != true) {
+        return unknown;
+      }
+      final safety = decoded['payment_safety'];
+      if (safety is! Map<String, dynamic>) return unknown;
+      final rawMode = (safety['mollie_mode'] ?? safety['mollieMode'] ?? '')
+          .toString()
+          .trim()
+          .toLowerCase();
+      final mollieMode = rawMode == 'test' || rawMode == 'live'
+          ? rawMode
+          : 'unknown';
+      final credentialSource =
+          (safety['payment_credential_source'] ??
+                  safety['paymentCredentialSource'] ??
+                  '')
+              .toString()
+              .trim();
+      final ownerMode =
+          (safety['payment_owner_mode'] ?? safety['paymentOwnerMode'] ?? '')
+              .toString()
+              .trim();
+      final demoMode =
+          safety['payment_demo_mode'] == true ||
+          safety['paymentDemoMode'] == true;
+      return (
+        mollieMode: mollieMode,
+        paymentCredentialSource: credentialSource,
+        paymentOwnerMode: ownerMode,
+        paymentDemoMode: demoMode,
+      );
+    } catch (_) {
+      return unknown;
+    }
+  }
+
+  String _mollieRefundSafetyModeTitle(String mollieMode) {
+    switch (mollieMode) {
+      case 'test':
+        return _t(
+          nl: 'Mollie-modus: TEST',
+          en: 'Mollie mode: TEST',
+          fr: 'Mode Mollie : TEST',
+          es: 'Modo Mollie: PRUEBA',
+        );
+      case 'live':
+        return _t(
+          nl: 'Mollie-modus: LIVE',
+          en: 'Mollie mode: LIVE',
+          fr: 'Mode Mollie : LIVE',
+          es: 'Modo Mollie: EN VIVO',
+        );
+      default:
+        return _t(
+          nl: 'Mollie-modus: onbekend',
+          en: 'Mollie mode: unknown',
+          fr: 'Mode Mollie : inconnu',
+          es: 'Modo Mollie: desconocido',
+        );
+    }
+  }
+
+  String _mollieRefundSafetyModeDetail(String mollieMode) {
+    switch (mollieMode) {
+      case 'test':
+        return _t(
+          nl: 'Dit is een testterugbetaling. Er wordt geen echt geld teruggestort.',
+          en: 'This is a test refund. No real money will be returned.',
+          fr: 'Ceci est un remboursement test. Aucun argent réel ne sera remboursé.',
+          es: 'Este es un reembolso de prueba. No se devolverá dinero real.',
+        );
+      case 'live':
+        return _t(
+          nl: 'Dit voert een echte terugbetaling uit naar de klant.',
+          en: 'This will execute a real refund to the customer.',
+          fr: 'Ceci exécutera un remboursement réel vers le client.',
+          es: 'Esto ejecutará un reembolso real al cliente.',
+        );
+      default:
+        return _t(
+          nl: 'De Mollie-modus kon niet worden gecontroleerd.',
+          en: 'The Mollie mode could not be verified.',
+          fr: 'Le mode Mollie n\'a pas pu être vérifié.',
+          es: 'No se pudo verificar el modo Mollie.',
+        );
+    }
+  }
+
+  Color _mollieRefundSafetyBadgeColor(
+    String mollieMode,
+    _CompanyBookingsThemeTokens tokens,
+  ) {
+    switch (mollieMode) {
+      case 'test':
+        return tokens.warningText;
+      case 'live':
+        return tokens.danger;
+      default:
+        return tokens.textSecondary;
+    }
+  }
+
   Future<void> _confirmMollieRefund(_CompanyBookingOverviewItem item) async {
     if (!_canShowMollieRefundAction(item)) return;
     final tokens = _themeTokensFor(businessThemeNotifier.value);
     final creditedAmountLabel = _mollieRefundCreditedAmountLabel(item);
+    final safety = await _fetchMollieRefundSafetyContext(item);
+    if (!mounted) return;
+    final badgeColor = _mollieRefundSafetyBadgeColor(safety.mollieMode, tokens);
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -751,14 +913,52 @@ class _CompanyBookingsOverviewPageState
           ),
           style: TextStyle(color: tokens.textPrimary),
         ),
-        content: Text(
-          _t(
-            nl: 'Dit voert een ECHTE terugbetaling uit via Mollie.\n\nBoeking: ${_shortBookingReference(item)}\n\nBedrag: $creditedAmountLabel\n\nDeze actie kan geld terugstorten naar de klant en mag alleen worden gebruikt na controle van de creditbeslissing.',
-            en: 'This will execute a REAL refund through Mollie.\n\nBooking: ${_shortBookingReference(item)}\n\nAmount: $creditedAmountLabel\n\nThis action may transfer money back to the customer and should only be used after reviewing the credit decision.',
-            fr: 'Ceci exécutera un VRAI remboursement via Mollie.\n\nRéservation : ${_shortBookingReference(item)}\n\nMontant : $creditedAmountLabel\n\nCette action peut renvoyer de l\'argent au client et ne doit être utilisée qu\'après examen de la décision de crédit.',
-            es: 'Esto ejecutará un reembolso REAL a través de Mollie.\n\nReserva: ${_shortBookingReference(item)}\n\nImporte: $creditedAmountLabel\n\nEsta acción puede devolver dinero al cliente y solo debe usarse tras revisar la decisión de crédito.',
-          ),
-          style: TextStyle(color: tokens.textSecondary, height: 1.35),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(
+                color: badgeColor.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: badgeColor.withValues(alpha: 0.45)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    _mollieRefundSafetyModeTitle(safety.mollieMode),
+                    style: TextStyle(
+                      color: badgeColor,
+                      fontWeight: FontWeight.w700,
+                      fontSize: 15,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    _mollieRefundSafetyModeDetail(safety.mollieMode),
+                    style: TextStyle(
+                      color: tokens.textSecondary,
+                      height: 1.35,
+                      fontSize: 13,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 14),
+            Text(
+              _t(
+                nl: 'Boeking: ${_shortBookingReference(item)}\n\nBedrag: $creditedAmountLabel\n\nDeze actie kan geld terugstorten naar de klant en mag alleen worden gebruikt na controle van de creditbeslissing.',
+                en: 'Booking: ${_shortBookingReference(item)}\n\nAmount: $creditedAmountLabel\n\nThis action may transfer money back to the customer and should only be used after reviewing the credit decision.',
+                fr: 'Réservation : ${_shortBookingReference(item)}\n\nMontant : $creditedAmountLabel\n\nCette action peut renvoyer de l\'argent au client et ne doit être utilisée qu\'après examen de la décision de crédit.',
+                es: 'Reserva: ${_shortBookingReference(item)}\n\nImporte: $creditedAmountLabel\n\nEsta acción puede devolver dinero al cliente y solo debe usarse tras revisar la decisión de crédito.',
+              ),
+              style: TextStyle(color: tokens.textSecondary, height: 1.35),
+            ),
+          ],
         ),
         actions: [
           TextButton(
