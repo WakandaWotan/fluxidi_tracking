@@ -262,6 +262,712 @@ async function consumeCalendarOAuthNonce(env, scope, nonce) {
   return { ok: true };
 }
 
+const MOLLIE_CONNECT_OAUTH_NONCE_TTL_SECONDS = 600;
+const MOLLIE_CONNECT_OAUTH_STATE_PURPOSE = "mollie_connect_oauth";
+const MOLLIE_CONNECT_OAUTH_SCOPES =
+  "organizations.read profiles.read payments.read payments.write refunds.read";
+
+function buildScopedMollieConnectAuthKey(scope = null) {
+  const tenantId = sanitizeTenantString(scope?.tenant_id ?? scope?.tenantId, 80);
+  const companyId = sanitizeTenantString(scope?.company_id ?? scope?.companyId, 80);
+  if (!tenantId || !companyId) return null;
+  return `tenant:${tenantId}:company:${companyId}:mollie_connect_auth:v1`;
+}
+
+function buildScopedMollieConnectNonceKey(scope = null, nonce = "") {
+  const tenantId = sanitizeTenantString(scope?.tenant_id ?? scope?.tenantId, 80);
+  const companyId = sanitizeTenantString(scope?.company_id ?? scope?.companyId, 80);
+  const nonceId = String(nonce || "").trim().replace(/[^a-zA-Z0-9_-]+/g, "");
+  if (!tenantId || !companyId || !nonceId) return null;
+  return `tenant:${tenantId}:company:${companyId}:mollie_oauth_state_nonce:${nonceId}:v1`;
+}
+
+function _mollieConnectOauthError(code) {
+  const err = new Error(String(code || "mollie_connect_oauth_error"));
+  err.code = String(code || "mollie_connect_oauth_error");
+  return err;
+}
+
+async function _importMollieConnectHmacKey(secret) {
+  const normalized = String(secret || "").trim();
+  if (!normalized) throw _mollieConnectOauthError("missing_mollie_connect_state_secret");
+  const raw = new TextEncoder().encode(normalized);
+  return crypto.subtle.importKey(
+    "raw",
+    raw,
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign", "verify"],
+  );
+}
+
+async function signMollieConnectOAuthState(payloadB64, secret) {
+  const key = await _importMollieConnectHmacKey(secret);
+  const data = new TextEncoder().encode(String(payloadB64 || ""));
+  const signature = await crypto.subtle.sign("HMAC", key, data);
+  return base64urlEncodeBytes(new Uint8Array(signature));
+}
+
+async function verifyMollieConnectOAuthState(payloadB64, sigB64, secret) {
+  const key = await _importMollieConnectHmacKey(secret);
+  const data = new TextEncoder().encode(String(payloadB64 || ""));
+  const sig = base64urlDecodeToBytes(sigB64);
+  if (!sig.length) return false;
+  return crypto.subtle.verify("HMAC", key, sig, data);
+}
+
+async function buildSignedMollieConnectOAuthState(payloadObj, secret) {
+  const payloadBase64 = jsonBase64urlEncode(payloadObj);
+  const signatureBase64 = await signMollieConnectOAuthState(payloadBase64, secret);
+  return `${payloadBase64}.${signatureBase64}`;
+}
+
+async function parseAndVerifyMollieConnectOAuthState(state, secret) {
+  const raw = String(state || "").trim();
+  if (!raw) throw _mollieConnectOauthError("missing_state");
+  const parts = raw.split(".");
+  if (parts.length !== 2 || !parts[0] || !parts[1]) {
+    throw _mollieConnectOauthError("invalid_state_format");
+  }
+  const [payloadBase64, signatureBase64] = parts;
+  const ok = await verifyMollieConnectOAuthState(payloadBase64, signatureBase64, secret);
+  if (!ok) throw _mollieConnectOauthError("invalid_state_signature");
+  const payload = jsonBase64urlDecode(payloadBase64);
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    throw _mollieConnectOauthError("invalid_state_payload");
+  }
+  return { payloadBase64, signatureBase64, payload };
+}
+
+async function _importMollieConnectEncryptionKey(env) {
+  const rawSecret = String(env?.MOLLIE_CONNECT_ENCRYPTION_KEY || "").trim();
+  if (!rawSecret) throw _mollieConnectOauthError("missing_mollie_connect_encryption_key");
+  const keyMaterial = new TextEncoder().encode(rawSecret);
+  const digest = await crypto.subtle.digest("SHA-256", keyMaterial);
+  return crypto.subtle.importKey(
+    "raw",
+    digest,
+    { name: "AES-GCM", length: 256 },
+    false,
+    ["encrypt", "decrypt"],
+  );
+}
+
+async function encryptMollieConnectTokenPayload(payload, env) {
+  const accessToken = safeStr(payload?.access_token ?? payload?.accessToken);
+  const refreshToken = safeStr(payload?.refresh_token ?? payload?.refreshToken);
+  if (!accessToken) throw _mollieConnectOauthError("missing_access_token");
+  const kid = safeStr(env?.MOLLIE_CONNECT_ENCRYPTION_KID, 32) || "v1";
+  const key = await _importMollieConnectEncryptionKey(env);
+
+  async function encryptOne(tokenValue) {
+    const token = String(tokenValue || "");
+    if (!token) return null;
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const plaintext = new TextEncoder().encode(token);
+    const encrypted = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, plaintext);
+    return {
+      alg: "AES-GCM",
+      kid,
+      iv: base64urlEncodeBytes(iv),
+      ciphertext: base64urlEncodeBytes(new Uint8Array(encrypted)),
+    };
+  }
+
+  const accessTokenEncrypted = await encryptOne(accessToken);
+  const refreshTokenEncrypted = await encryptOne(refreshToken);
+  return {
+    accessTokenEncrypted,
+    ...(refreshTokenEncrypted ? { refreshTokenEncrypted } : {}),
+  };
+}
+
+async function decryptMollieConnectTokenPayload(encryptedPayload, env) {
+  if (!encryptedPayload || typeof encryptedPayload !== "object") {
+    throw _mollieConnectOauthError("invalid_encrypted_token_payload");
+  }
+  const key = await _importMollieConnectEncryptionKey(env);
+
+  async function decryptOne(encryptedObj) {
+    if (!encryptedObj || typeof encryptedObj !== "object") return "";
+    const alg = String(encryptedObj.alg || "").trim();
+    if (alg !== "AES-GCM") throw _mollieConnectOauthError("unsupported_encrypted_token_alg");
+    const iv = base64urlDecodeToBytes(encryptedObj.iv);
+    const ciphertext = base64urlDecodeToBytes(encryptedObj.ciphertext);
+    if (!iv.length || !ciphertext.length) {
+      throw _mollieConnectOauthError("invalid_encrypted_token_blob");
+    }
+    const decrypted = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, ciphertext);
+    return new TextDecoder().decode(new Uint8Array(decrypted));
+  }
+
+  const accessToken = await decryptOne(
+    encryptedPayload.accessTokenEncrypted ?? encryptedPayload.access_token_encrypted,
+  );
+  const refreshToken = await decryptOne(
+    encryptedPayload.refreshTokenEncrypted ?? encryptedPayload.refresh_token_encrypted,
+  );
+  return {
+    access_token: safeStr(accessToken),
+    refresh_token: safeStr(refreshToken),
+  };
+}
+
+async function createMollieConnectOAuthNonce(env, scope) {
+  if (!env?.BOOKING_KV) throw _mollieConnectOauthError("missing_booking_kv");
+  const tenantId = sanitizeTenantString(scope?.tenant_id ?? scope?.tenantId, 80);
+  const companyId = sanitizeTenantString(scope?.company_id ?? scope?.companyId, 80);
+  if (!tenantId || !companyId) throw _mollieConnectOauthError("missing_tenant_scope");
+  const nonce = (crypto?.randomUUID ? crypto.randomUUID() : `${Date.now()}_${Math.random()}`)
+    .replace(/[^a-zA-Z0-9_-]+/g, "");
+  const nowMs = Date.now();
+  const expiresMs = nowMs + MOLLIE_CONNECT_OAUTH_NONCE_TTL_SECONDS * 1000;
+  const key = buildScopedMollieConnectNonceKey(
+    { tenant_id: tenantId, company_id: companyId },
+    nonce,
+  );
+  if (!key) throw _mollieConnectOauthError("invalid_oauth_nonce_key");
+  const record = {
+    purpose: MOLLIE_CONNECT_OAUTH_STATE_PURPOSE,
+    tenant_id: tenantId,
+    company_id: companyId,
+    nonce,
+    issued_at: new Date(nowMs).toISOString(),
+    expires_at: new Date(expiresMs).toISOString(),
+    consumed: false,
+  };
+  await env.BOOKING_KV.put(key, JSON.stringify(record), {
+    expirationTtl: MOLLIE_CONNECT_OAUTH_NONCE_TTL_SECONDS,
+  });
+  return {
+    nonce,
+    issuedAt: record.issued_at,
+    expiresAt: record.expires_at,
+    expiresIn: MOLLIE_CONNECT_OAUTH_NONCE_TTL_SECONDS,
+    key,
+  };
+}
+
+async function consumeMollieConnectOAuthNonce(env, scope, nonce) {
+  if (!env?.BOOKING_KV) {
+    return { ok: false, code: "missing_booking_kv" };
+  }
+  const tenantId = sanitizeTenantString(scope?.tenant_id ?? scope?.tenantId, 80);
+  const companyId = sanitizeTenantString(scope?.company_id ?? scope?.companyId, 80);
+  const key = buildScopedMollieConnectNonceKey(
+    { tenant_id: tenantId, company_id: companyId },
+    nonce,
+  );
+  if (!key || !tenantId || !companyId) {
+    return { ok: false, code: "invalid_nonce_scope" };
+  }
+  const rec = await env.BOOKING_KV.get(key, { type: "json" });
+  if (!rec || typeof rec !== "object") {
+    return { ok: false, code: "nonce_missing" };
+  }
+  if (String(rec?.purpose || "") !== MOLLIE_CONNECT_OAUTH_STATE_PURPOSE) {
+    return { ok: false, code: "nonce_purpose_mismatch" };
+  }
+  if (
+    sanitizeTenantString(rec?.tenant_id ?? rec?.tenantId, 80) !== tenantId ||
+    sanitizeTenantString(rec?.company_id ?? rec?.companyId, 80) !== companyId
+  ) {
+    return { ok: false, code: "nonce_scope_mismatch" };
+  }
+  if (String(rec?.nonce || "").trim() !== String(nonce || "").trim()) {
+    return { ok: false, code: "nonce_value_mismatch" };
+  }
+  if (rec?.consumed === true) {
+    return { ok: false, code: "nonce_consumed" };
+  }
+  const expiresAt = Date.parse(String(rec?.expires_at || ""));
+  if (!Number.isFinite(expiresAt) || Date.now() > expiresAt) {
+    return { ok: false, code: "nonce_expired" };
+  }
+  await env.BOOKING_KV.delete(key);
+  return { ok: true };
+}
+
+async function saveScopedMollieConnectAuthRecord(env, scope, nextRecord) {
+  if (!env?.BOOKING_KV) throw _mollieConnectOauthError("missing_booking_kv");
+  const scopedKey = buildScopedMollieConnectAuthKey(scope);
+  if (!scopedKey) throw _mollieConnectOauthError("missing_tenant_scope");
+  await env.BOOKING_KV.put(scopedKey, JSON.stringify(nextRecord));
+  return { scopedKey };
+}
+
+async function loadScopedMollieConnectAuthRecord(env, scope) {
+  const scopedKey = buildScopedMollieConnectAuthKey(scope);
+  if (!scopedKey || !env?.BOOKING_KV) return null;
+  try {
+    const raw = await env.BOOKING_KV.get(scopedKey, { type: "json" });
+    if (!raw || typeof raw !== "object") return null;
+    return raw.mollie_connect_auth && typeof raw.mollie_connect_auth === "object"
+      ? raw.mollie_connect_auth
+      : raw;
+  } catch (_) {
+    return null;
+  }
+}
+
+function sanitizeMollieConnectStatus(record, businessProfile) {
+  const rec = record && typeof record === "object" ? record : {};
+  const profile = businessProfile && typeof businessProfile === "object" ? businessProfile : {};
+  const statusRaw = safeStr(rec.status, 64) || "not_configured";
+  const statusLower = statusRaw.toLowerCase();
+  const hasTokenMaterial = !!(
+    (rec.accessTokenEncrypted && typeof rec.accessTokenEncrypted === "object") ||
+    (rec.refreshTokenEncrypted && typeof rec.refreshTokenEncrypted === "object")
+  );
+  const profileConnected = boolish(profile.mollie_connected ?? profile.mollieConnected);
+  const connected =
+    rec.connected === true &&
+    statusLower === "connected" &&
+    hasTokenMaterial &&
+    profileConnected;
+  const reportedStatus =
+    statusLower === "disconnected" || rec.connected === false
+      ? "disconnected"
+      : connected
+        ? "connected"
+        : statusRaw;
+  return {
+    connected,
+    status: reportedStatus,
+    mollie_organization_id:
+      safeStr(
+        rec.organizationId ??
+          rec.organization_id ??
+          profile.mollie_organization_id ??
+          profile.mollieOrganizationId,
+        80,
+      ) || null,
+    mollie_profile_id:
+      safeStr(
+        rec.profileId ??
+          rec.profile_id ??
+          profile.mollie_profile_id ??
+          profile.mollieProfileId,
+        80,
+      ) || null,
+    mollie_mode: (() => {
+      const mode = safeStr(rec.mollie_mode ?? rec.mollieMode, 16).toLowerCase();
+      return mode === "test" || mode === "live" ? mode : "unknown";
+    })(),
+    onboarding_status:
+      safeStr(rec.onboardingStatus ?? rec.onboarding_status, 64) || null,
+    last_connected_at:
+      safeStr(rec.lastConnectedAt ?? rec.last_connected_at, 64) || null,
+    updated_at: safeStr(rec.updatedAt ?? rec.updated_at, 64) || null,
+    last_error_code: safeStr(rec.lastErrorCode ?? rec.last_error_code, 120) || null,
+  };
+}
+
+function preserveServerOwnedBusinessProfilePaymentFields(existingProfile, incomingProfile) {
+  const existing =
+    existingProfile && typeof existingProfile === "object" ? existingProfile : {};
+  const incoming =
+    incomingProfile && typeof incomingProfile === "object" ? incomingProfile : {};
+  const out = { ...incoming };
+  const pickServerField = (snakeKey, camelKey, fallback) => {
+    if (Object.prototype.hasOwnProperty.call(existing, snakeKey)) {
+      return existing[snakeKey];
+    }
+    if (Object.prototype.hasOwnProperty.call(existing, camelKey)) {
+      return existing[camelKey];
+    }
+    return fallback;
+  };
+  const mollieConnected = pickServerField(
+    "mollie_connected",
+    "mollieConnected",
+    DEFAULT_BUSINESS_PROFILE.mollie_connected,
+  );
+  const mollieOrganizationId = pickServerField(
+    "mollie_organization_id",
+    "mollieOrganizationId",
+    DEFAULT_BUSINESS_PROFILE.mollie_organization_id,
+  );
+  const mollieProfileId = pickServerField(
+    "mollie_profile_id",
+    "mollieProfileId",
+    DEFAULT_BUSINESS_PROFILE.mollie_profile_id,
+  );
+  const mollieTokenRef = pickServerField(
+    "mollie_token_ref",
+    "mollieTokenRef",
+    DEFAULT_BUSINESS_PROFILE.mollie_token_ref,
+  );
+  const paymentOwnerMode = pickServerField(
+    "payment_owner_mode",
+    "paymentOwnerMode",
+    DEFAULT_BUSINESS_PROFILE.payment_owner_mode,
+  );
+  const paymentDemoMode = pickServerField(
+    "payment_demo_mode",
+    "paymentDemoMode",
+    DEFAULT_BUSINESS_PROFILE.payment_demo_mode,
+  );
+  out.mollie_connected = mollieConnected;
+  out.mollieConnected = mollieConnected;
+  out.mollie_organization_id = mollieOrganizationId;
+  out.mollieOrganizationId = mollieOrganizationId;
+  out.mollie_profile_id = mollieProfileId;
+  out.mollieProfileId = mollieProfileId;
+  out.mollie_token_ref = mollieTokenRef;
+  out.mollieTokenRef = mollieTokenRef;
+  out.payment_owner_mode = paymentOwnerMode;
+  out.paymentOwnerMode = paymentOwnerMode;
+  out.payment_demo_mode = paymentDemoMode;
+  out.paymentDemoMode = paymentDemoMode;
+  return out;
+}
+
+async function updateBusinessProfileMollieMetadata(env, scope, metadata = {}) {
+  if (!env?.BOOKING_KV) throw new Error("BOOKING_KV binding is missing");
+  const scopedKeys = buildScopedSettingsKeys(scope);
+  const targetKey = scopedKeys?.businessProfileKey;
+  if (!targetKey) throw new Error("missing_tenant_scope");
+  const existing = await loadBusinessProfile(env, scope, {
+    allowTenantLegacyFallback: false,
+  });
+  const tokenRef = buildScopedMollieConnectAuthKey(scope) || "";
+  const connected = metadata.connected === true;
+  const merged = {
+    ...existing,
+    mollie_connected: connected,
+    mollieConnected: connected,
+    mollie_organization_id: connected
+      ? sanitizeTenantString(metadata.organizationId ?? metadata.organization_id, 80)
+      : "",
+    mollieOrganizationId: connected
+      ? sanitizeTenantString(metadata.organizationId ?? metadata.organization_id, 80)
+      : "",
+    mollie_profile_id: connected
+      ? sanitizeTenantString(metadata.profileId ?? metadata.profile_id, 80)
+      : "",
+    mollieProfileId: connected
+      ? sanitizeTenantString(metadata.profileId ?? metadata.profile_id, 80)
+      : "",
+    mollie_token_ref: connected ? tokenRef : "",
+    mollieTokenRef: connected ? tokenRef : "",
+    payment_owner_mode: connected
+      ? "company_mollie"
+      : normalizePaymentOwnerMode(existing.payment_owner_mode),
+    paymentOwnerMode: connected
+      ? "company_mollie"
+      : normalizePaymentOwnerMode(existing.payment_owner_mode),
+    payment_demo_mode: connected ? false : existing.payment_demo_mode === true,
+    paymentDemoMode: connected ? false : existing.payment_demo_mode === true,
+  };
+  const normalized = normalizeBusinessProfile(merged);
+  await env.BOOKING_KV.put(targetKey, JSON.stringify({
+    version: 1,
+    updated_at: new Date().toISOString(),
+    business_profile: normalized,
+  }));
+  return normalized;
+}
+
+async function saveScopedMollieConnectAuthFailureStatus(
+  env,
+  scope,
+  { status = "failed", errorCode = "mollie_connect_callback_failed" } = {},
+) {
+  if (!env?.BOOKING_KV) return;
+  const scopedKey = buildScopedMollieConnectAuthKey(scope);
+  if (!scopedKey) return;
+  const nowIso = new Date().toISOString();
+  const existing = await loadScopedMollieConnectAuthRecord(env, scope);
+  const next = {
+    version: 1,
+    connected: false,
+    status: String(status || "failed"),
+    organizationId: safeStr(existing?.organizationId ?? existing?.organization_id, 80) || null,
+    profileId: safeStr(existing?.profileId ?? existing?.profile_id, 80) || null,
+    mollie_mode: safeStr(existing?.mollie_mode ?? existing?.mollieMode, 16) || "unknown",
+    onboardingStatus: safeStr(existing?.onboardingStatus ?? existing?.onboarding_status, 64) || null,
+    accessTokenEncrypted:
+      existing?.accessTokenEncrypted && typeof existing.accessTokenEncrypted === "object"
+        ? existing.accessTokenEncrypted
+        : null,
+    refreshTokenEncrypted:
+      existing?.refreshTokenEncrypted && typeof existing.refreshTokenEncrypted === "object"
+        ? existing.refreshTokenEncrypted
+        : null,
+    tokenRef: scopedKey,
+    lastConnectedAt: safeStr(existing?.lastConnectedAt ?? existing?.last_connected_at, 64) || null,
+    lastErrorCode: String(errorCode || "mollie_connect_callback_failed"),
+    lastErrorAt: nowIso,
+    createdAt: safeStr(existing?.createdAt ?? existing?.created_at, 64) || nowIso,
+    updatedAt: nowIso,
+  };
+  await env.BOOKING_KV.put(scopedKey, JSON.stringify(next));
+}
+
+async function exchangeMollieConnectCodeForTokens({
+  code,
+  clientId,
+  clientSecret,
+  redirectUri,
+}) {
+  const tokenUrl = "https://api.mollie.com/oauth2/tokens";
+  const credentials = `${String(clientId || "").trim()}:${String(clientSecret || "").trim()}`;
+  const basic = btoa(credentials);
+  const form = new URLSearchParams();
+  form.set("grant_type", "authorization_code");
+  form.set("code", String(code || "").trim());
+  form.set("redirect_uri", String(redirectUri || "").trim());
+  const res = await fetch(tokenUrl, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      Authorization: `Basic ${basic}`,
+    },
+    body: form.toString(),
+  });
+  const txt = await res.text();
+  let parsed = null;
+  try {
+    parsed = JSON.parse(txt);
+  } catch (_) {}
+  if (!res.ok) {
+    const errCode = safeStr(parsed?.error, 64) || "mollie_token_exchange_failed";
+    throw _mollieConnectOauthError(errCode);
+  }
+  return parsed && typeof parsed === "object" ? parsed : {};
+}
+
+async function fetchMollieConnectAccountMetadata(accessToken) {
+  const token = safeStr(accessToken);
+  if (!token) {
+    return {
+      organizationId: "",
+      profileId: "",
+      mollieMode: "unknown",
+      onboardingStatus: null,
+    };
+  }
+  const headers = {
+    Authorization: `Bearer ${token}`,
+    Accept: "application/json",
+  };
+  let organizationId = "";
+  let onboardingStatus = null;
+  try {
+    const orgRes = await fetch("https://api.mollie.com/v2/organizations/me", { headers });
+    if (orgRes.ok) {
+      const org = await orgRes.json();
+      organizationId = safeStr(org?.id, 80);
+      onboardingStatus =
+        safeStr(org?.status, 64) ||
+        safeStr(org?.onboarding?.status ?? org?.onboardingStatus, 64) ||
+        null;
+    }
+  } catch (_) {
+    // Best-effort metadata only.
+  }
+  let profileId = "";
+  let mollieMode = "unknown";
+  try {
+    const profileRes = await fetch("https://api.mollie.com/v2/profiles?limit=5", { headers });
+    if (profileRes.ok) {
+      const profilePage = await profileRes.json();
+      const profiles = profilePage?._embedded?.profiles;
+      if (Array.isArray(profiles) && profiles.length) {
+        const primary =
+          profiles.find((p) => safeStr(p?.status, 32).toLowerCase() === "verified") ||
+          profiles[0];
+        profileId = safeStr(primary?.id, 80);
+        const mode = safeStr(primary?.mode, 16).toLowerCase();
+        if (mode === "test" || mode === "live") mollieMode = mode;
+      }
+    }
+  } catch (_) {
+    // Best-effort metadata only.
+  }
+  return { organizationId, profileId, mollieMode, onboardingStatus };
+}
+
+async function mollieConnectOAuthCallback(request, env) {
+  const url = new URL(request.url);
+  const code = url.searchParams.get("code");
+  const err = url.searchParams.get("error");
+  const state = url.searchParams.get("state");
+
+  if (err) {
+    return html(
+      `<div style="font-family: ui-sans-serif, system-ui; max-width: 900px; margin: 40px auto; line-height: 1.4;">
+        <h1>⚠️ Mollie-koppeling mislukt</h1>
+        <p>De autorisatie werd geweigerd of afgebroken. Probeer opnieuw vanuit Fluxidi.</p>
+      </div>`,
+      400,
+    );
+  }
+  if (!code) {
+    return html(
+      `<div style="font-family: ui-sans-serif, system-ui; max-width: 900px; margin: 40px auto; line-height: 1.4;">
+        <h1>⚠️ Mollie-koppeling mislukt</h1>
+        <p>Geen autorisatiecode ontvangen. Start opnieuw vanuit Fluxidi.</p>
+      </div>`,
+      400,
+    );
+  }
+  if (!state) {
+    return html(
+      `<div style="font-family: ui-sans-serif, system-ui; max-width: 900px; margin: 40px auto; line-height: 1.4;">
+        <h1>⚠️ Mollie-koppeling mislukt</h1>
+        <p>OAuth state ontbreekt of is ongeldig. Start opnieuw vanuit de beveiligde admin-flow.</p>
+      </div>`,
+      400,
+    );
+  }
+
+  const base = getBaseUrl(request);
+  const redirectUri = `${base}/mollie/connect/callback`;
+  let scopedState = null;
+  let callbackErrorCode = "mollie_connect_callback_failed";
+
+  try {
+    if (!safeStr(env?.MOLLIE_CONNECT_CLIENT_ID)) {
+      throw _mollieConnectOauthError("missing_mollie_connect_client_id");
+    }
+    if (!safeStr(env?.MOLLIE_CONNECT_CLIENT_SECRET)) {
+      throw _mollieConnectOauthError("missing_mollie_connect_client_secret");
+    }
+    if (!safeStr(env?.MOLLIE_CONNECT_STATE_SECRET)) {
+      throw _mollieConnectOauthError("missing_mollie_connect_state_secret");
+    }
+    if (!safeStr(env?.MOLLIE_CONNECT_ENCRYPTION_KEY)) {
+      throw _mollieConnectOauthError("missing_mollie_connect_encryption_key");
+    }
+    if (!env?.BOOKING_KV) {
+      throw _mollieConnectOauthError("missing_booking_kv");
+    }
+
+    const parsed = await parseAndVerifyMollieConnectOAuthState(
+      state,
+      env.MOLLIE_CONNECT_STATE_SECRET,
+    );
+    const payload = parsed.payload;
+    const nowSec = Math.floor(Date.now() / 1000);
+    const purpose = safeStr(payload?.purpose, 64);
+    const tenantId = sanitizeTenantString(payload?.tenant_id ?? payload?.tenantId, 80);
+    const companyId = sanitizeTenantString(payload?.company_id ?? payload?.companyId, 80);
+    const nonce = String(payload?.nonce || "").trim().replace(/[^a-zA-Z0-9_-]+/g, "");
+    const iat = Number(payload?.iat);
+    const exp = Number(payload?.exp);
+    if (purpose !== MOLLIE_CONNECT_OAUTH_STATE_PURPOSE) {
+      throw _mollieConnectOauthError("invalid_state_purpose");
+    }
+    if (!tenantId || !companyId) {
+      throw _mollieConnectOauthError("missing_state_scope");
+    }
+    if (!nonce) {
+      throw _mollieConnectOauthError("missing_state_nonce");
+    }
+    if (!Number.isFinite(iat) || !Number.isFinite(exp) || iat <= 0 || exp <= 0 || exp <= iat) {
+      throw _mollieConnectOauthError("invalid_state_timing");
+    }
+    if (nowSec < iat - 30 || nowSec > exp) {
+      throw _mollieConnectOauthError("state_expired");
+    }
+    scopedState = { tenant_id: tenantId, company_id: companyId, nonce };
+    const nonceResult = await consumeMollieConnectOAuthNonce(env, scopedState, nonce);
+    if (!nonceResult?.ok) {
+      throw _mollieConnectOauthError(nonceResult?.code || "nonce_invalid");
+    }
+
+    const tokens = await exchangeMollieConnectCodeForTokens({
+      code,
+      clientId: env.MOLLIE_CONNECT_CLIENT_ID,
+      clientSecret: env.MOLLIE_CONNECT_CLIENT_SECRET,
+      redirectUri,
+    });
+    const accessToken = safeStr(tokens?.access_token);
+    const refreshToken = safeStr(tokens?.refresh_token);
+    if (!accessToken) {
+      callbackErrorCode = "missing_access_token";
+      await saveScopedMollieConnectAuthFailureStatus(env, scopedState, {
+        status: "auth_required",
+        errorCode: callbackErrorCode,
+      });
+      throw _mollieConnectOauthError(callbackErrorCode);
+    }
+
+    const encryptedTokens = await encryptMollieConnectTokenPayload(
+      { access_token: accessToken, refresh_token: refreshToken },
+      env,
+    );
+    const metadata = await fetchMollieConnectAccountMetadata(accessToken);
+    const nowIso = new Date().toISOString();
+    const tokenRef = buildScopedMollieConnectAuthKey(scopedState) || "";
+    const expiresInSec = Number(tokens?.expires_in);
+    const expiresAt =
+      Number.isFinite(expiresInSec) && expiresInSec > 0
+        ? new Date(Date.now() + expiresInSec * 1000).toISOString()
+        : null;
+    const existing = await loadScopedMollieConnectAuthRecord(env, scopedState);
+    const scopedRecord = {
+      version: 1,
+      connected: true,
+      status: "connected",
+      organizationId: metadata.organizationId || null,
+      profileId: metadata.profileId || null,
+      mollie_mode: metadata.mollieMode || "unknown",
+      onboardingStatus: metadata.onboardingStatus || null,
+      ...encryptedTokens,
+      tokenRef,
+      expiresAt,
+      lastConnectedAt: nowIso,
+      lastErrorCode: null,
+      lastErrorAt: null,
+      createdAt: safeStr(existing?.createdAt ?? existing?.created_at, 64) || nowIso,
+      updatedAt: nowIso,
+    };
+    await saveScopedMollieConnectAuthRecord(env, scopedState, scopedRecord);
+    await updateBusinessProfileMollieMetadata(env, scopedState, {
+      connected: true,
+      organizationId: metadata.organizationId,
+      profileId: metadata.profileId,
+    });
+    console.log(
+      `[MOLLIE_CONNECT][CALLBACK_OK] tenant=${tenantId} company=${companyId} org=${safeStr(metadata.organizationId, 80) || "-"} profile=${safeStr(metadata.profileId, 80) || "-"}`,
+    );
+    return html(`
+      <div style="font-family: ui-sans-serif, system-ui; max-width: 900px; margin: 40px auto; line-height: 1.4;">
+        <h1>✅ Mollie-account is gekoppeld.</h1>
+        <p>Je kunt dit venster sluiten en teruggaan naar Fluxidi.</p>
+      </div>
+    `);
+  } catch (callbackErr) {
+    callbackErrorCode =
+      safeStr(callbackErr?.code || callbackErr?.message, 64) || callbackErrorCode;
+    if (scopedState?.tenant_id && scopedState?.company_id) {
+      try {
+        await saveScopedMollieConnectAuthFailureStatus(env, scopedState, {
+          status: callbackErrorCode === "missing_access_token" ? "auth_required" : "failed",
+          errorCode: callbackErrorCode,
+        });
+      } catch (_) {
+        // Best-effort status write only.
+      }
+      console.log(
+        `[MOLLIE_CONNECT][CALLBACK_FAIL] tenant=${scopedState.tenant_id} company=${scopedState.company_id} code=${callbackErrorCode}`,
+      );
+    } else {
+      console.log(`[MOLLIE_CONNECT][CALLBACK_FAIL] code=${callbackErrorCode}`);
+    }
+    return html(
+      `<div style="font-family: ui-sans-serif, system-ui; max-width: 900px; margin: 40px auto; line-height: 1.4;">
+        <h1>⚠️ Mollie-koppeling mislukt</h1>
+        <p>Probeer opnieuw vanuit de beheeromgeving.</p>
+      </div>`,
+      400,
+    );
+  }
+}
+
 async function loadGoogleCalendarAuthConfig(env, scope = null) {
   const scopedKey = buildScopedGoogleCalendarAuthKey(scope);
   const baseClientId = safeStr(env?.GOOGLE_CLIENT_ID);
@@ -2637,11 +3343,23 @@ async function saveBusinessProfile(
   { allowTenantLegacyWrite = true } = {},
 ) {
   if (!env?.BOOKING_KV) throw new Error("BOOKING_KV binding is missing");
-  const normalized = normalizeBusinessProfile(profile);
   const scopedKeys = buildScopedSettingsKeys(scope);
   const targetKey = scopedKeys?.businessProfileKey ||
     (allowTenantLegacyWrite ? TENANT_BUSINESS_PROFILE_KEY : "");
   if (!targetKey) throw new Error("missing_tenant_scope");
+  let existing = null;
+  try {
+    existing = await loadBusinessProfile(env, scope, {
+      allowTenantLegacyFallback: allowTenantLegacyWrite,
+    });
+  } catch (_) {
+    existing = null;
+  }
+  const preserved = preserveServerOwnedBusinessProfilePaymentFields(
+    existing || DEFAULT_BUSINESS_PROFILE,
+    profile,
+  );
+  const normalized = normalizeBusinessProfile(preserved);
   await env.BOOKING_KV.put(targetKey, JSON.stringify({
     version: 1,
     updated_at: new Date().toISOString(),
@@ -19447,6 +20165,161 @@ export default {
         );
       }
 
+      if (url.pathname === "/admin/mollie/connect/start" && request.method === "POST") {
+        const body = await safeJson(request);
+        const authScope = await _requireAdminOrCompanySessionForExplicitScope({
+          request,
+          url,
+          env,
+          body,
+          routeLabel: "ADMIN_MOLLIE_CONNECT_START",
+        });
+        if (!authScope.ok) return authScope.response;
+        const explicitScope = authScope.explicitScope;
+        const missingEnv = [];
+        if (!safeStr(env?.MOLLIE_CONNECT_CLIENT_ID)) missingEnv.push("MOLLIE_CONNECT_CLIENT_ID");
+        if (!safeStr(env?.MOLLIE_CONNECT_CLIENT_SECRET)) missingEnv.push("MOLLIE_CONNECT_CLIENT_SECRET");
+        if (!safeStr(env?.MOLLIE_CONNECT_STATE_SECRET)) missingEnv.push("MOLLIE_CONNECT_STATE_SECRET");
+        if (!safeStr(env?.MOLLIE_CONNECT_ENCRYPTION_KEY)) missingEnv.push("MOLLIE_CONNECT_ENCRYPTION_KEY");
+        if (!env?.BOOKING_KV) missingEnv.push("BOOKING_KV");
+        if (missingEnv.length) {
+          return json(
+            {
+              ok: false,
+              error: "mollie_connect_not_configured",
+              missing: missingEnv,
+            },
+            500,
+          );
+        }
+        const nonceOut = await createMollieConnectOAuthNonce(env, explicitScope);
+        const iat = Math.floor(Date.now() / 1000);
+        const exp = iat + MOLLIE_CONNECT_OAUTH_NONCE_TTL_SECONDS;
+        const kid = safeStr(env?.MOLLIE_CONNECT_ENCRYPTION_KID, 32) || "v1";
+        const statePayload = {
+          v: 1,
+          purpose: MOLLIE_CONNECT_OAUTH_STATE_PURPOSE,
+          tenant_id: explicitScope.tenant_id,
+          company_id: explicitScope.company_id,
+          nonce: nonceOut.nonce,
+          iat,
+          exp,
+          kid,
+        };
+        const signedState = await buildSignedMollieConnectOAuthState(
+          statePayload,
+          env.MOLLIE_CONNECT_STATE_SECRET,
+        );
+        const base = getBaseUrl(request);
+        const redirectUri = `${base}/mollie/connect/callback`;
+        const authUrl = new URL("https://my.mollie.com/oauth2/authorize");
+        authUrl.searchParams.set("client_id", env.MOLLIE_CONNECT_CLIENT_ID);
+        authUrl.searchParams.set("redirect_uri", redirectUri);
+        authUrl.searchParams.set("response_type", "code");
+        authUrl.searchParams.set("scope", MOLLIE_CONNECT_OAUTH_SCOPES);
+        authUrl.searchParams.set("state", signedState);
+        authUrl.searchParams.set("approval_prompt", "auto");
+        console.log(
+          `[MOLLIE_CONNECT][START] tenant=${explicitScope.tenant_id} company=${explicitScope.company_id} nonce=${nonceOut.nonce}`,
+        );
+        return json(
+          {
+            ok: true,
+            auth_url: authUrl.toString(),
+            expires_in: MOLLIE_CONNECT_OAUTH_NONCE_TTL_SECONDS,
+          },
+          200,
+        );
+      }
+
+      if (url.pathname === "/mollie/connect/callback" && request.method === "GET") {
+        return mollieConnectOAuthCallback(request, env);
+      }
+
+      if (url.pathname === "/admin/mollie/connect/status" && request.method === "GET") {
+        const authScope = await _requireAdminOrCompanySessionForExplicitScope({
+          request,
+          url,
+          env,
+          routeLabel: "ADMIN_MOLLIE_CONNECT_STATUS",
+        });
+        if (!authScope.ok) return authScope.response;
+        const explicitScope = authScope.explicitScope;
+        const tenantId = explicitScope.tenant_id;
+        const companyId = explicitScope.company_id;
+        const businessProfile = await loadBusinessProfile(env, explicitScope, {
+          allowTenantLegacyFallback: false,
+        });
+        const scopedRecord = await loadScopedMollieConnectAuthRecord(env, explicitScope);
+        const status = sanitizeMollieConnectStatus(scopedRecord, businessProfile);
+        return json(
+          {
+            ok: true,
+            tenant_id: tenantId,
+            company_id: companyId,
+            source: scopedRecord ? "scoped" : "none",
+            ...status,
+          },
+          200,
+        );
+      }
+
+      if (url.pathname === "/admin/mollie/connect/disconnect" && request.method === "POST") {
+        const body = await safeJson(request);
+        const authScope = await _requireAdminOrCompanySessionForExplicitScope({
+          request,
+          url,
+          env,
+          body,
+          routeLabel: "ADMIN_MOLLIE_CONNECT_DISCONNECT",
+        });
+        if (!authScope.ok) return authScope.response;
+        const explicitScope = authScope.explicitScope;
+        if (!env?.BOOKING_KV) {
+          return json({ ok: false, error: "missing_booking_kv" }, 500);
+        }
+        const scopedKey = buildScopedMollieConnectAuthKey(explicitScope);
+        if (!scopedKey) {
+          return json(missingTenantScopeError(), 400);
+        }
+        const nowIso = new Date().toISOString();
+        const disconnected = {
+          version: 1,
+          connected: false,
+          status: "disconnected",
+          organizationId: null,
+          profileId: null,
+          mollie_mode: "unknown",
+          onboardingStatus: null,
+          accessTokenEncrypted: null,
+          refreshTokenEncrypted: null,
+          tokenRef: scopedKey,
+          expiresAt: null,
+          lastConnectedAt: null,
+          lastDisconnectedAt: nowIso,
+          lastErrorCode: null,
+          lastErrorAt: null,
+          createdAt: nowIso,
+          updatedAt: nowIso,
+        };
+        await env.BOOKING_KV.put(scopedKey, JSON.stringify(disconnected));
+        await updateBusinessProfileMollieMetadata(env, explicitScope, { connected: false });
+        console.log(
+          `[MOLLIE_CONNECT][DISCONNECT] tenant=${explicitScope.tenant_id} company=${explicitScope.company_id}`,
+        );
+        return json(
+          {
+            ok: true,
+            tenant_id: explicitScope.tenant_id,
+            company_id: explicitScope.company_id,
+            connected: false,
+            status: "disconnected",
+            last_disconnected_at: nowIso,
+          },
+          200,
+        );
+      }
+
       // Home
       if (url.pathname === "/" && request.method === "GET") {
         return new Response(
@@ -19472,6 +20345,12 @@ POST /invoice/pdf
 OAuth:
 GET /oauth/start
 GET /oauth/callback
+
+Mollie Connect:
+POST /admin/mollie/connect/start
+GET  /mollie/connect/callback
+GET  /admin/mollie/connect/status
+POST /admin/mollie/connect/disconnect
 `,
           { headers: { "Content-Type": "text/plain; charset=utf-8", ...corsHeaders() } }
         );

@@ -10,6 +10,13 @@ GOOGLE_CALENDAR_ID = "primary"
 FLEET_AVAILABILITY_MODE = "multi_vehicle"
 COMPLIANCE_API_URL = "https://fluxidi-compliance-api.fluxidi.workers.dev"
 
+# Mollie Connect OAuth (Phase 1) — set via Cloudflare secrets, never commit values:
+# MOLLIE_CONNECT_CLIENT_ID       — OAuth app client id (app_…)
+# MOLLIE_CONNECT_CLIENT_SECRET   — OAuth app client secret
+# MOLLIE_CONNECT_STATE_SECRET    — HMAC secret for signed OAuth state
+# MOLLIE_CONNECT_ENCRYPTION_KEY  — AES-GCM encryption key for stored tokens
+# MOLLIE_CONNECT_ENCRYPTION_KID — optional key id label (default v1)
+
 [[services]]
 binding = "COMPLIANCE_WORKER"
 service = "fluxidi-compliance-api"
