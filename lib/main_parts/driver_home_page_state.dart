@@ -13626,6 +13626,9 @@ class _DriverHomePageState extends State<DriverHomePage>
           ),
           child: SingleChildScrollView(
             scrollDirection: Axis.horizontal,
+            physics: const BouncingScrollPhysics(),
+            clipBehavior: Clip.none,
+            padding: const EdgeInsets.symmetric(horizontal: 2),
             child: Row(
               children: [
                 _ridesSegmentChip(
@@ -13694,6 +13697,7 @@ class _DriverHomePageState extends State<DriverHomePage>
                     _markBookingsUiDirty();
                   },
                 ),
+                const SizedBox(width: 4),
               ],
             ),
           ),
@@ -13843,6 +13847,9 @@ class _DriverHomePageState extends State<DriverHomePage>
         else
           Expanded(
             child: ListView.separated(
+              padding: EdgeInsets.only(
+                bottom: MediaQuery.of(context).padding.bottom + 12,
+              ),
               itemCount: visibleBookings.length,
               separatorBuilder: (_, __) => const SizedBox(height: 10),
               itemBuilder: (context, i) {
@@ -13995,7 +14002,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     );
 
     return Container(
-      padding: const EdgeInsets.fromLTRB(14, 14, 14, 12),
+      padding: const EdgeInsets.fromLTRB(14, 14, 14, 18),
       decoration: BoxDecoration(
         gradient: isMiddayGold
             ? _middayGoldSurfaceGradient()
@@ -14130,6 +14137,139 @@ class _DriverHomePageState extends State<DriverHomePage>
     );
   }
 
+  ButtonStyle _compactRideCardFilledStyle(ButtonStyle? base) {
+    final compact = FilledButton.styleFrom(
+      visualDensity: VisualDensity.compact,
+      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      minimumSize: const Size(0, 36),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+    );
+    if (base == null) {
+      return compact.copyWith(
+        backgroundColor: MaterialStateProperty.all(kFluxidiYellow),
+        foregroundColor: MaterialStateProperty.all(Colors.black),
+      );
+    }
+    return base.merge(compact);
+  }
+
+  ButtonStyle _compactRideCardOutlinedStyle(ButtonStyle? base) {
+    final compact = OutlinedButton.styleFrom(
+      visualDensity: VisualDensity.compact,
+      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      minimumSize: const Size(0, 36),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+    );
+    return base == null ? compact : base.merge(compact);
+  }
+
+  Widget _buildRideCardPrimaryActions({
+    required BookingItem b,
+    required bool actionBusy,
+    required String goToRideLabel,
+    required ButtonStyle filledStyle,
+    required ButtonStyle outlineStyle,
+    required bool stackSecondaryActions,
+  }) {
+    void setCompleted() {
+      if (b.isOperationalLeg && b.legId.trim().isNotEmpty) {
+        _setOperationalLegStatus(b, 'COMPLETED');
+      } else {
+        _setBookingStatus(b, 'COMPLETED');
+      }
+    }
+
+    void setCancelled() {
+      if (b.isOperationalLeg && b.legId.trim().isNotEmpty) {
+        _setOperationalLegStatus(b, 'CANCELLED');
+      } else {
+        _setBookingStatus(b, 'CANCELLED');
+      }
+    }
+
+    final goButton = SizedBox(
+      width: double.infinity,
+      child: FilledButton.icon(
+        style: filledStyle,
+        onPressed: actionBusy ? null : () => _goToRide(b),
+        icon: const Icon(Icons.navigation_rounded, size: 15),
+        label: Text(
+          goToRideLabel,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 12.5),
+        ),
+      ),
+    );
+    final completeButton = OutlinedButton.icon(
+      style: outlineStyle,
+      onPressed: actionBusy ? null : setCompleted,
+      icon: const Icon(Icons.check_circle_outline, size: 15),
+      label: Text(
+        kRideActionCompletedLabel,
+        overflow: TextOverflow.ellipsis,
+        style: const TextStyle(fontSize: 12.5),
+      ),
+    );
+    final cancelButton = OutlinedButton.icon(
+      style: outlineStyle,
+      onPressed: actionBusy ? null : setCancelled,
+      icon: const Icon(Icons.cancel_outlined, size: 15),
+      label: Text(
+        kRideActionCancelledLabel,
+        overflow: TextOverflow.ellipsis,
+        style: const TextStyle(fontSize: 12.5),
+      ),
+    );
+    final deleteButton = IconButton(
+      style: IconButton.styleFrom(
+        visualDensity: VisualDensity.compact,
+        minimumSize: const Size(36, 36),
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      ),
+      onPressed: actionBusy ? null : () => _confirmDelete(b),
+      icon: const Icon(Icons.delete_outline, size: 18),
+      tooltip: kRideDeleteLabel,
+    );
+
+    if (stackSecondaryActions) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          goButton,
+          const SizedBox(height: 6),
+          SizedBox(width: double.infinity, child: completeButton),
+          const SizedBox(height: 6),
+          Row(
+            children: [
+              Expanded(child: cancelButton),
+              const SizedBox(width: 6),
+              deleteButton,
+            ],
+          ),
+        ],
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        goButton,
+        const SizedBox(height: 6),
+        Row(
+          children: [
+            Expanded(child: completeButton),
+            const SizedBox(width: 6),
+            Expanded(child: cancelButton),
+            const SizedBox(width: 6),
+            deleteButton,
+          ],
+        ),
+      ],
+    );
+  }
+
   Widget _bookingCard(BookingItem b) {
     final isMidnightBlue =
         driverThemeNotifier.value == DriverThemeVariant.midnightBlue;
@@ -14182,7 +14322,10 @@ class _DriverHomePageState extends State<DriverHomePage>
             MediaQuery.of(context).orientation == Orientation.portrait;
         final narrow = c.maxWidth < 380;
         final tight = c.maxWidth < 340;
-        final actionHeight = narrow ? 40.0 : 38.0;
+        final filledStyle = _compactRideCardFilledStyle(cardActionStyle);
+        final outlineStyle = _compactRideCardOutlinedStyle(
+          cardOutlineStyle ?? _ghostButtonStyle(),
+        );
         final statusText = _rideStatusLabel(
           (_effectiveStatusFor(b) ?? 'PENDING'),
         );
@@ -14202,9 +14345,8 @@ class _DriverHomePageState extends State<DriverHomePage>
         );
 
         if (compactPortrait) {
-          final compactActionHeight = 36.0;
           return Container(
-            padding: const EdgeInsets.fromLTRB(14, 14, 14, 12),
+            padding: const EdgeInsets.fromLTRB(14, 14, 14, 18),
             decoration: BoxDecoration(
               gradient: isMiddayGold
                   ? _middayGoldSurfaceGradient()
@@ -14412,81 +14554,13 @@ class _DriverHomePageState extends State<DriverHomePage>
                   ),
                 ],
                 const SizedBox(height: 8),
-                SizedBox(
-                  width: double.infinity,
-                  height: compactActionHeight,
-                  child: FilledButton.icon(
-                    style:
-                        cardActionStyle ??
-                        FilledButton.styleFrom(
-                          backgroundColor: kFluxidiYellow,
-                          foregroundColor: Colors.black,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                        ),
-                    onPressed: actionBusy ? null : () => _goToRide(b),
-                    icon: const Icon(Icons.navigation_rounded, size: 16),
-                    label: Text(
-                      goToRideLabel,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontWeight: FontWeight.w800),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 6),
-                SizedBox(
-                  width: double.infinity,
-                  height: compactActionHeight,
-                  child: OutlinedButton.icon(
-                    style: cardOutlineStyle ?? _ghostButtonStyle(),
-                    onPressed: actionBusy
-                        ? null
-                        : () =>
-                              (b.isOperationalLeg && b.legId.trim().isNotEmpty)
-                              ? _setOperationalLegStatus(b, 'COMPLETED')
-                              : _setBookingStatus(b, 'COMPLETED'),
-                    icon: const Icon(Icons.check_circle_outline, size: 16),
-                    label: Text(
-                      kRideActionCompletedLabel,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 6),
-                Row(
-                  children: [
-                    Expanded(
-                      child: SizedBox(
-                        height: compactActionHeight,
-                        child: OutlinedButton.icon(
-                          style: cardOutlineStyle ?? _ghostButtonStyle(),
-                          onPressed: actionBusy
-                              ? null
-                              : () =>
-                                    (b.isOperationalLeg &&
-                                        b.legId.trim().isNotEmpty)
-                                    ? _setOperationalLegStatus(b, 'CANCELLED')
-                                    : _setBookingStatus(b, 'CANCELLED'),
-                          icon: const Icon(Icons.cancel_outlined, size: 16),
-                          label: Text(
-                            kRideActionCancelledLabel,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 6),
-                    SizedBox(
-                      height: compactActionHeight,
-                      width: compactActionHeight + 2,
-                      child: IconButton(
-                        onPressed: actionBusy ? null : () => _confirmDelete(b),
-                        icon: const Icon(Icons.delete_outline, size: 18),
-                        tooltip: kRideDeleteLabel,
-                      ),
-                    ),
-                  ],
+                _buildRideCardPrimaryActions(
+                  b: b,
+                  actionBusy: actionBusy,
+                  goToRideLabel: goToRideLabel,
+                  filledStyle: filledStyle,
+                  outlineStyle: outlineStyle,
+                  stackSecondaryActions: true,
                 ),
               ],
             ),
@@ -14494,7 +14568,12 @@ class _DriverHomePageState extends State<DriverHomePage>
         }
 
         return Container(
-          padding: EdgeInsets.all(tight ? 11 : 12),
+          padding: EdgeInsets.fromLTRB(
+            tight ? 11 : 12,
+            tight ? 11 : 12,
+            tight ? 11 : 12,
+            18,
+          ),
           decoration: BoxDecoration(
             gradient: isMiddayGold
                 ? _middayGoldSurfaceGradient()
@@ -14691,160 +14770,14 @@ class _DriverHomePageState extends State<DriverHomePage>
                 ),
               ],
               const SizedBox(height: 8),
-              if (narrow) ...[
-                SizedBox(
-                  width: double.infinity,
-                  height: actionHeight,
-                  child: FilledButton.icon(
-                    style:
-                        cardActionStyle ??
-                        FilledButton.styleFrom(
-                          backgroundColor: kFluxidiYellow,
-                          foregroundColor: Colors.black,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                        ),
-                    onPressed: actionBusy ? null : () => _goToRide(b),
-                    icon: const Icon(Icons.navigation_rounded, size: 16),
-                    label: Text(
-                      goToRideLabel,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontWeight: FontWeight.w800),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 6),
-                SizedBox(
-                  width: double.infinity,
-                  height: actionHeight,
-                  child: OutlinedButton.icon(
-                    style: cardOutlineStyle ?? _ghostButtonStyle(),
-                    onPressed: actionBusy
-                        ? null
-                        : () =>
-                              (b.isOperationalLeg && b.legId.trim().isNotEmpty)
-                              ? _setOperationalLegStatus(b, 'COMPLETED')
-                              : _setBookingStatus(b, 'COMPLETED'),
-                    icon: const Icon(Icons.check_circle_outline, size: 16),
-                    label: Text(
-                      kRideActionCompletedLabel,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 6),
-                Row(
-                  children: [
-                    Expanded(
-                      child: SizedBox(
-                        height: actionHeight,
-                        child: OutlinedButton.icon(
-                          style: cardOutlineStyle ?? _ghostButtonStyle(),
-                          onPressed: actionBusy
-                              ? null
-                              : () =>
-                                    (b.isOperationalLeg &&
-                                        b.legId.trim().isNotEmpty)
-                                    ? _setOperationalLegStatus(b, 'CANCELLED')
-                                    : _setBookingStatus(b, 'CANCELLED'),
-                          icon: const Icon(Icons.cancel_outlined, size: 16),
-                          label: Text(
-                            kRideActionCancelledLabel,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 6),
-                    SizedBox(
-                      height: actionHeight,
-                      width: actionHeight + 2,
-                      child: IconButton(
-                        onPressed: actionBusy ? null : () => _confirmDelete(b),
-                        icon: const Icon(Icons.delete_outline, size: 18),
-                        tooltip: kRideDeleteLabel,
-                      ),
-                    ),
-                  ],
-                ),
-              ] else ...[
-                SizedBox(
-                  width: double.infinity,
-                  height: actionHeight,
-                  child: FilledButton.icon(
-                    style:
-                        cardActionStyle ??
-                        FilledButton.styleFrom(
-                          backgroundColor: kFluxidiYellow,
-                          foregroundColor: Colors.black,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                        ),
-                    onPressed: actionBusy ? null : () => _goToRide(b),
-                    icon: const Icon(Icons.navigation_rounded, size: 16),
-                    label: Text(
-                      goToRideLabel,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontWeight: FontWeight.w800),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 6),
-                Row(
-                  children: [
-                    Expanded(
-                      child: SizedBox(
-                        height: actionHeight,
-                        child: OutlinedButton.icon(
-                          style: cardOutlineStyle ?? _ghostButtonStyle(),
-                          onPressed: actionBusy
-                              ? null
-                              : () =>
-                                    (b.isOperationalLeg &&
-                                        b.legId.trim().isNotEmpty)
-                                    ? _setOperationalLegStatus(b, 'COMPLETED')
-                                    : _setBookingStatus(b, 'COMPLETED'),
-                          icon: const Icon(
-                            Icons.check_circle_outline,
-                            size: 16,
-                          ),
-                          label: Text(kRideActionCompletedLabel),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 6),
-                    Expanded(
-                      child: SizedBox(
-                        height: actionHeight,
-                        child: OutlinedButton.icon(
-                          style: cardOutlineStyle ?? _ghostButtonStyle(),
-                          onPressed: actionBusy
-                              ? null
-                              : () =>
-                                    (b.isOperationalLeg &&
-                                        b.legId.trim().isNotEmpty)
-                                    ? _setOperationalLegStatus(b, 'CANCELLED')
-                                    : _setBookingStatus(b, 'CANCELLED'),
-                          icon: const Icon(Icons.cancel_outlined, size: 16),
-                          label: Text(kRideActionCancelledLabel),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 6),
-                    SizedBox(
-                      height: actionHeight,
-                      width: actionHeight + 2,
-                      child: IconButton(
-                        onPressed: actionBusy ? null : () => _confirmDelete(b),
-                        icon: const Icon(Icons.delete_outline, size: 18),
-                        tooltip: kRideDeleteLabel,
-                      ),
-                    ),
-                  ],
-                ),
-              ],
+              _buildRideCardPrimaryActions(
+                b: b,
+                actionBusy: actionBusy,
+                goToRideLabel: goToRideLabel,
+                filledStyle: filledStyle,
+                outlineStyle: outlineStyle,
+                stackSecondaryActions: narrow,
+              ),
             ],
           ),
         );
@@ -15712,8 +15645,8 @@ class _DriverHomePageState extends State<DriverHomePage>
               ? _midnightBlueTextMuted()
               : Colors.white.withOpacity(0.78));
     final chip = Container(
-      constraints: const BoxConstraints(minHeight: 34, minWidth: 108),
-      padding: const EdgeInsets.symmetric(horizontal: 12),
+      constraints: const BoxConstraints(minHeight: 34),
+      padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 7),
       alignment: Alignment.center,
       decoration: BoxDecoration(
         color: active ? activeFill : idleFill,
