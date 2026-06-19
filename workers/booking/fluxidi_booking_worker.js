@@ -23518,12 +23518,29 @@ GET /oauth/callback
             .replaceAll("-", "_");
           const legIdBody = safeStr(body?.leg_id ?? body?.legId, 200);
           const legTypeBody = safeStr(body?.leg_type ?? body?.legType, 24);
+          // PAY-REFRESH-C.1: accept four request body aliases for the explicit
+          // refund id (and four for the payment id). All four collapse into a
+          // single `mollie_refund_id` / `mollie_payment_id` parameter that
+          // `refreshMollieRefundStatusForBooking` validates against the
+          // booking's payment context before persisting any parent refund
+          // identity. The function still requires a stored leg-level refund
+          // id for leg-only refreshes (leg scope is intentionally unchanged).
           const refundIdBody = safeStr(
-            body?.mollie_refund_id ?? body?.mollieRefundId,
+            body?.refund_id ??
+              body?.refundId ??
+              body?.mollie_refund_id ??
+              body?.mollieRefundId,
+            120,
+          );
+          const paymentIdBody = safeStr(
+            body?.payment_id ??
+              body?.paymentId ??
+              body?.mollie_payment_id ??
+              body?.molliePaymentId,
             120,
           );
           console.log(
-            `[BOOKING][MOLLIE_REFUND_STATUS][REQ] booking=${_bookingIntentMask(bookingId)} actor_role=${actorRole} auth_mode=${safeStr(auth.auth_mode, 32) || "-"} refund_scope=${refundScopeBodyRaw || "-"} leg=${_bookingIntentMask(legIdBody) || "-"} refund_id_in_body=${refundIdBody ? "present" : "empty"}`,
+            `[BOOKING][MOLLIE_REFUND_STATUS][REQ] booking=${_bookingIntentMask(bookingId)} actor_role=${actorRole} auth_mode=${safeStr(auth.auth_mode, 32) || "-"} refund_scope=${refundScopeBodyRaw || "-"} leg=${_bookingIntentMask(legIdBody) || "-"} refund_id_in_body=${refundIdBody ? "present" : "empty"} payment_id_in_body=${paymentIdBody ? "present" : "empty"}`,
           );
           const out = await refreshMollieRefundStatusForBooking(
             bookingId,
@@ -23536,10 +23553,11 @@ GET /oauth/callback
               leg_id: legIdBody,
               leg_type: legTypeBody,
               mollie_refund_id: refundIdBody,
+              mollie_payment_id: paymentIdBody,
             },
           );
           console.log(
-            `[BOOKING][MOLLIE_REFUND_STATUS][RES] booking=${_bookingIntentMask(bookingId)} ok=${out?.ok === true} error=${safeStr(out?.error, 64) || "-"} refund_status=${safeStr(out?.refund_status ?? out?.refundStatus, 64) || "-"} mollie_refund_status=${safeStr(out?.mollie_refund_status ?? out?.mollieRefundStatus, 64) || "-"} mollie_status_raw=${safeStr(out?.mollie_status_raw ?? out?.mollieStatusRaw, 64) || "-"} lookup_source=${safeStr(out?.mollie_lookup_source ?? out?.mollieLookupSource, 32) || "-"} compliance_emit_ok=${out?.compliance_emit_ok === true || out?.complianceEmitOk === true}`,
+            `[BOOKING][MOLLIE_REFUND_STATUS][RES] booking=${_bookingIntentMask(bookingId)} ok=${out?.ok === true} error=${safeStr(out?.error, 64) || "-"} refund_status=${safeStr(out?.refund_status ?? out?.refundStatus, 64) || "-"} mollie_refund_status=${safeStr(out?.mollie_refund_status ?? out?.mollieRefundStatus, 64) || "-"} mollie_status_raw=${safeStr(out?.mollie_status_raw ?? out?.mollieStatusRaw, 64) || "-"} lookup_source=${safeStr(out?.mollie_lookup_source ?? out?.mollieLookupSource, 32) || "-"} refund_id_source=${safeStr(out?.refund_id_source ?? out?.refundIdSource, 32) || "-"} compliance_emit_ok=${out?.compliance_emit_ok === true || out?.complianceEmitOk === true}`,
           );
           const statusCode =
             out?.error === "missing_tenant_scope"
@@ -23550,7 +23568,10 @@ GET /oauth/callback
                   ? 404
                   : out?.error === "missing_mollie_refund_id" ||
                       out?.error === "missing_mollie_payment_id" ||
-                      out?.error === "mollie_config_unavailable"
+                      out?.error === "mollie_config_unavailable" ||
+                      out?.error === "invalid_mollie_refund_id" ||
+                      out?.error === "invalid_mollie_payment_id" ||
+                      out?.error === "mollie_refund_id_payment_mismatch"
                     ? 400
                     : out?.error === "mollie_refund_lookup_failed"
                       ? 502
@@ -33895,6 +33916,7 @@ async function refreshMollieRefundStatusForBooking(
     leg_type: legTypeRaw = "",
     refund_scope: refundScopeRaw = "",
     mollie_refund_id: mollieRefundIdOverrideRaw = "",
+    mollie_payment_id: molliePaymentIdOverrideRaw = "",
   } = {},
 ) {
   if (!tenantScope?.hasScope) {
@@ -33919,6 +33941,7 @@ async function refreshMollieRefundStatusForBooking(
     .toLowerCase()
     .replaceAll("-", "_");
   const mollieRefundIdOverride = safeStr(mollieRefundIdOverrideRaw, 120);
+  const molliePaymentIdOverride = safeStr(molliePaymentIdOverrideRaw, 120);
   const isLegOnlyScope = refundScopeNormalized === "leg_only" && safeLegId !== "";
 
   let legEntry = null;
@@ -33944,8 +33967,53 @@ async function refreshMollieRefundStatusForBooking(
       `[BOOKING][MOLLIE_REFUND_STATUS][LEG_TARGET] booking=${_bookingIntentMask(bookingId)} leg=${_bookingIntentMask(safeLegId)} leg_type=${safeStr(legTypeRaw, 24) || safeStr(legEntry?.leg_type ?? legEntry?.legType, 24) || "-"} refund_id_present=${!!mollieRefundId} refund_id_source=${refundIdSource}`,
     );
   } else {
-    mollieRefundId = _readMollieRefundIdFromRecord(rec);
-    refundIdSource = mollieRefundId ? "parent_record" : "none";
+    // PAY-REFRESH-C.1: parent-scope refund-id resolution.
+    //
+    // Prior behavior: read the parent's stored `mollie_refund_id` only, and
+    // return `missing_mollie_refund_id` if the record never recorded one.
+    // That blocked the runtime case where a Mollie refund exists (e.g. a
+    // partially-refunded payment) but Fluxidi never persisted the refund id
+    // — typically because the refund was issued out-of-band in the Mollie
+    // dashboard, or pre-PAY-REFRESH-B the persistence path failed.
+    //
+    // New behavior: prefer the stored parent refund id, but accept an
+    // explicit body override that looks like a Mollie refund id. The
+    // override is treated as untrusted until validated below against the
+    // booking's resolved Mollie payment context:
+    //   * the body refund id must pass `_looksLikeMollieRefundId` (format
+    //     gate, prevents accidentally writing a random string);
+    //   * if a body payment id alias is also supplied, it must exactly
+    //     match the booking's `paymentContext.mollie_payment_id`;
+    //   * `mollieResolveRefundSnapshot(paymentContext.mollie_payment_id,
+    //     overrideRefundId, ...)` must return a snapshot. Because that
+    //     helper calls `GET /v2/payments/{paymentId}/refunds/{refundId}`
+    //     scoped to the booking's payment, a refund id that belongs to a
+    //     different payment naturally returns Mollie 404, which the
+    //     existing catch surfaces as `mollie_refund_lookup_failed`;
+    //   * after fetch, the returned refund's `paymentId` is cross-checked
+    //     against `paymentContext.mollie_payment_id` and a mismatch
+    //     short-circuits to `mollie_refund_id_payment_mismatch` (defense
+    //     in depth against any future Mollie response shape change).
+    // No parent KV write occurs before all checks pass.
+    const storedRefundId = _readMollieRefundIdFromRecord(rec);
+    if (storedRefundId) {
+      mollieRefundId = storedRefundId;
+      refundIdSource = "parent_record";
+    } else if (mollieRefundIdOverride) {
+      if (!_looksLikeMollieRefundId(mollieRefundIdOverride)) {
+        console.log(
+          `[BOOKING][MOLLIE_REFUND_STATUS][C1_VALIDATE] booking=${_bookingIntentMask(bookingId)} scope=full_parent reason=invalid_mollie_refund_id`,
+        );
+        return { ok: false, error: "invalid_mollie_refund_id" };
+      }
+      mollieRefundId = mollieRefundIdOverride;
+      refundIdSource = "request";
+      console.log(
+        `[BOOKING][MOLLIE_REFUND_STATUS][C1_FALLBACK] booking=${_bookingIntentMask(bookingId)} scope=full_parent refund_id=${_bookingIntentMask(mollieRefundId)} source=request`,
+      );
+    } else {
+      refundIdSource = "none";
+    }
   }
 
   if (!mollieRefundId) {
@@ -33958,6 +34026,31 @@ async function refreshMollieRefundStatusForBooking(
   const paymentContext = await resolveMolliePaymentContextForBooking(env, bookingId, rec);
   if (!paymentContext?.ok) {
     return { ok: false, error: paymentContext?.error || "missing_mollie_payment_id" };
+  }
+
+  // PAY-REFRESH-C.1: explicit payment-id alias cross-check.
+  //
+  // Only applies to the parent-scope `request` fallback. When the caller
+  // also supplied a payment id alias (`payment_id` / `paymentId` /
+  // `mollie_payment_id` / `molliePaymentId`), it must match the booking's
+  // canonical stored Mollie payment id. This protects against a body that
+  // tries to bind an unrelated booking's refund id to this booking by
+  // accident (e.g. a copy/paste error in an admin tool). Leg-scope
+  // refreshes intentionally skip this check because their `body_override`
+  // path was unchanged by PAY-REFRESH-C.1.
+  if (!isLegOnlyScope && refundIdSource === "request" && molliePaymentIdOverride) {
+    if (!_looksLikeMolliePaymentId(molliePaymentIdOverride)) {
+      console.log(
+        `[BOOKING][MOLLIE_REFUND_STATUS][C1_VALIDATE] booking=${_bookingIntentMask(bookingId)} scope=full_parent reason=invalid_mollie_payment_id`,
+      );
+      return { ok: false, error: "invalid_mollie_payment_id" };
+    }
+    if (molliePaymentIdOverride !== paymentContext.mollie_payment_id) {
+      console.log(
+        `[BOOKING][MOLLIE_REFUND_STATUS][C1_VALIDATE] booking=${_bookingIntentMask(bookingId)} scope=full_parent reason=payment_id_mismatch override=${_bookingIntentMask(molliePaymentIdOverride)} canonical=${_bookingIntentMask(paymentContext.mollie_payment_id)}`,
+      );
+      return { ok: false, error: "mollie_refund_id_payment_mismatch" };
+    }
   }
 
   const rideCredentials = await resolveRideMollieCredentialsForPaymentContext(
@@ -33986,6 +34079,35 @@ async function refreshMollieRefundStatusForBooking(
       `[BOOKING][MOLLIE_REFUND_STATUS][LOOKUP_FAIL] booking=${_bookingIntentMask(bookingId)} refund=${_bookingIntentMask(mollieRefundId)} payment=${_bookingIntentMask(paymentContext.mollie_payment_id)} payment_context_source=${safeStr(paymentContext.source, 32) || "-"} reason=${safeErr}`,
     );
     return { ok: false, error: "mollie_refund_lookup_failed" };
+  }
+
+  // PAY-REFRESH-C.1: post-fetch ownership cross-check.
+  //
+  // `mollieResolveRefundSnapshot` fetches via
+  // `GET /v2/payments/{paymentId}/refunds/{refundId}`, so a refund id that
+  // does not belong to the booking's payment normally returns Mollie 404
+  // and short-circuits above as `mollie_refund_lookup_failed`. This
+  // additional check is defense in depth: if Mollie ever returns a
+  // snapshot whose `paymentId` differs from the booking's canonical
+  // payment id (e.g. via list-fallback or a future API shape change), we
+  // refuse to write the explicit request override onto the parent
+  // record. The check is intentionally limited to the parent-scope
+  // `request` fallback so the existing leg flow and the stored-refund-id
+  // flow keep their previous behaviour.
+  if (!isLegOnlyScope && refundIdSource === "request" && mollieRefundSnapshot) {
+    const snapshotPaymentId = safeStr(
+      mollieRefundSnapshot?.paymentId ?? mollieRefundSnapshot?.payment_id,
+      120,
+    );
+    if (snapshotPaymentId && snapshotPaymentId !== paymentContext.mollie_payment_id) {
+      console.log(
+        `[BOOKING][MOLLIE_REFUND_STATUS][C1_VALIDATE] booking=${_bookingIntentMask(bookingId)} scope=full_parent reason=snapshot_payment_id_mismatch snapshot_payment=${_bookingIntentMask(snapshotPaymentId)} canonical=${_bookingIntentMask(paymentContext.mollie_payment_id)}`,
+      );
+      return { ok: false, error: "mollie_refund_id_payment_mismatch" };
+    }
+    console.log(
+      `[BOOKING][MOLLIE_REFUND_STATUS][C1_VALIDATE] booking=${_bookingIntentMask(bookingId)} scope=full_parent reason=ok snapshot_payment_id_present=${snapshotPaymentId ? "true" : "false"}`,
+    );
   }
 
   let paymentAmountRefunded = "";
