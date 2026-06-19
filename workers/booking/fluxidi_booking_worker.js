@@ -20514,6 +20514,103 @@ export default {
         );
       }
 
+      if (url.pathname === "/admin/mollie/connect/readiness" && request.method === "GET") {
+        const authScope = await _requireAdminOrCompanySessionForExplicitScope({
+          request,
+          url,
+          env,
+          routeLabel: "ADMIN_MOLLIE_CONNECT_READINESS",
+        });
+        if (!authScope.ok) return authScope.response;
+        const explicitScope = authScope.explicitScope;
+        const tenantId = explicitScope.tenant_id;
+        const companyId = explicitScope.company_id;
+        const businessProfile = await loadBusinessProfile(env, explicitScope, {
+          allowTenantLegacyFallback: false,
+        });
+        const scopedRecord = await loadScopedMollieConnectAuthRecord(env, explicitScope);
+        const status = sanitizeMollieConnectStatus(scopedRecord, businessProfile);
+        const paymentsEnabled = mollieCompanyPaymentsEnabled(env);
+        let readiness = null;
+        try {
+          readiness = await resolveCompanyMollieConnectCredentials(
+            env,
+            explicitScope,
+            { purpose: "admin_readiness_probe" },
+          );
+        } catch (_) {
+          readiness = { ok: false, error: "company_mollie_credentials_unavailable" };
+        }
+        if (readiness?.ok === true) {
+          const mode =
+            safeStr(readiness.mollie_mode ?? readiness.mollieMode, 16) ||
+            status.mollie_mode ||
+            "unknown";
+          const organizationId =
+            safeStr(readiness.mollie_organization_id ?? readiness.mollieOrganizationId, 80) ||
+            status.mollie_organization_id ||
+            null;
+          const profileId =
+            safeStr(readiness.mollie_profile_id ?? readiness.mollieProfileId, 80) ||
+            status.mollie_profile_id ||
+            null;
+          readiness = null;
+          console.log(
+            `[MOLLIE_CONNECT][READINESS_OK] tenant=${tenantId} company=${companyId} paymentsEnabled=${paymentsEnabled ? "true" : "false"}`,
+          );
+          return json(
+            {
+              ok: true,
+              ready: true,
+              payments_enabled: paymentsEnabled,
+              connected: true,
+              status: "ready",
+              mollie_mode: mode,
+              mollie_organization_id: organizationId,
+              mollie_profile_id: profileId,
+              payment_owner_mode: "company_mollie",
+              payment_credential_source: "company_mollie",
+              token_check: "ok",
+            },
+            200,
+          );
+        }
+        const allowedReadinessErrors = new Set([
+          "company_mollie_not_connected",
+          "company_mollie_token_missing",
+          "company_mollie_token_refresh_failed",
+          "company_mollie_credentials_unavailable",
+        ]);
+        const rawCode =
+          safeStr(readiness?.error ?? readiness?.code, 80) ||
+          "company_mollie_credentials_unavailable";
+        const code = allowedReadinessErrors.has(rawCode)
+          ? rawCode
+          : "company_mollie_credentials_unavailable";
+        readiness = null;
+        console.log(
+          `[MOLLIE_CONNECT][READINESS_FAIL] tenant=${tenantId} company=${companyId} paymentsEnabled=${paymentsEnabled ? "true" : "false"} code=${code}`,
+        );
+        return json(
+          {
+            ok: true,
+            ready: false,
+            payments_enabled: paymentsEnabled,
+            connected: status.connected === true,
+            status: status.status || "not_configured",
+            token_check: "failed",
+            error: code,
+            code,
+            mollie_mode: status.mollie_mode || "unknown",
+            mollie_organization_id: status.mollie_organization_id || null,
+            mollie_profile_id: status.mollie_profile_id || null,
+            payment_owner_mode: "company_mollie",
+            payment_credential_source: "company_mollie",
+          },
+          200,
+        );
+      }
+
       if (url.pathname === "/admin/mollie/connect/disconnect" && request.method === "POST") {
         const body = await safeJson(request);
         const authScope = await _requireAdminOrCompanySessionForExplicitScope({
@@ -20600,6 +20697,7 @@ Mollie Connect:
 POST /admin/mollie/connect/start
 GET  /mollie/connect/callback
 GET  /admin/mollie/connect/status
+GET  /admin/mollie/connect/readiness
 POST /admin/mollie/connect/disconnect
 `,
           { headers: { "Content-Type": "text/plain; charset=utf-8", ...corsHeaders() } }
