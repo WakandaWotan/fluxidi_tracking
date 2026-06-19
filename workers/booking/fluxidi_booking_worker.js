@@ -831,6 +831,214 @@ async function fetchMollieConnectAccountMetadata(accessToken) {
   return { organizationId, profileId, mollieMode, onboardingStatus };
 }
 
+const MOLLIE_CONNECT_TOKEN_REFRESH_LEEWAY_MS = 60 * 1000;
+
+function mollieCompanyPaymentsEnabled(env) {
+  return String(env?.MOLLIE_COMPANY_PAYMENTS_ENABLED || "").trim() === "true";
+}
+
+function _isMollieConnectAccessTokenExpired(record, nowMs = Date.now()) {
+  if (!record || typeof record !== "object") return true;
+  const expiresAtRaw = safeStr(record.expiresAt ?? record.expires_at);
+  if (!expiresAtRaw) return false;
+  const t = Date.parse(expiresAtRaw);
+  if (!Number.isFinite(t)) return false;
+  return nowMs + MOLLIE_CONNECT_TOKEN_REFRESH_LEEWAY_MS >= t;
+}
+
+async function refreshMollieConnectTokens(env, scope, existingRecord) {
+  const tenantId = sanitizeTenantString(scope?.tenant_id ?? scope?.tenantId, 80);
+  const companyId = sanitizeTenantString(scope?.company_id ?? scope?.companyId, 80);
+  if (!tenantId || !companyId) {
+    return { ok: false, code: "missing_tenant_scope" };
+  }
+  if (!existingRecord || typeof existingRecord !== "object") {
+    return { ok: false, code: "company_mollie_token_missing" };
+  }
+  const clientId = safeStr(env?.MOLLIE_CONNECT_CLIENT_ID);
+  const clientSecret = safeStr(env?.MOLLIE_CONNECT_CLIENT_SECRET);
+  if (!clientId || !clientSecret) {
+    return { ok: false, code: "missing_mollie_connect_client_config" };
+  }
+  const encryptedRefresh =
+    existingRecord.refreshTokenEncrypted ?? existingRecord.refresh_token_encrypted;
+  if (!encryptedRefresh || typeof encryptedRefresh !== "object") {
+    return { ok: false, code: "company_mollie_token_missing" };
+  }
+  let decrypted;
+  try {
+    decrypted = await decryptMollieConnectTokenPayload(
+      { refreshTokenEncrypted: encryptedRefresh },
+      env,
+    );
+  } catch (_) {
+    return { ok: false, code: "company_mollie_token_refresh_failed" };
+  }
+  const refreshTokenPlain = safeStr(decrypted?.refresh_token);
+  if (!refreshTokenPlain) {
+    return { ok: false, code: "company_mollie_token_missing" };
+  }
+  const basic = btoa(`${clientId}:${clientSecret}`);
+  const form = new URLSearchParams();
+  form.set("grant_type", "refresh_token");
+  form.set("refresh_token", refreshTokenPlain);
+  let res;
+  try {
+    res = await fetch("https://api.mollie.com/oauth2/tokens", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        Authorization: `Basic ${basic}`,
+      },
+      body: form.toString(),
+    });
+  } catch (_) {
+    return { ok: false, code: "company_mollie_token_refresh_failed" };
+  }
+  if (!res.ok) {
+    return { ok: false, code: "company_mollie_token_refresh_failed" };
+  }
+  let tokens = null;
+  try {
+    tokens = await res.json();
+  } catch (_) {
+    return { ok: false, code: "company_mollie_token_refresh_failed" };
+  }
+  const newAccessToken = safeStr(tokens?.access_token);
+  if (!newAccessToken) {
+    return { ok: false, code: "company_mollie_token_refresh_failed" };
+  }
+  const newRefreshTokenRaw = safeStr(tokens?.refresh_token);
+  const newRefreshToken = newRefreshTokenRaw || refreshTokenPlain;
+  let encryptedTokens;
+  try {
+    encryptedTokens = await encryptMollieConnectTokenPayload(
+      { access_token: newAccessToken, refresh_token: newRefreshToken },
+      env,
+    );
+  } catch (_) {
+    return { ok: false, code: "company_mollie_token_refresh_failed" };
+  }
+  const expiresInSec = Number(tokens?.expires_in);
+  const nowMs = Date.now();
+  const expiresAt =
+    Number.isFinite(expiresInSec) && expiresInSec > 0
+      ? new Date(nowMs + expiresInSec * 1000).toISOString()
+      : null;
+  const nowIso = new Date(nowMs).toISOString();
+  const updatedRecord = {
+    ...existingRecord,
+    accessTokenEncrypted: encryptedTokens.accessTokenEncrypted,
+    ...(encryptedTokens.refreshTokenEncrypted
+      ? { refreshTokenEncrypted: encryptedTokens.refreshTokenEncrypted }
+      : {}),
+    expiresAt,
+    expires_at: expiresAt,
+    updatedAt: nowIso,
+    updated_at: nowIso,
+  };
+  try {
+    await saveScopedMollieConnectAuthRecord(
+      env,
+      { tenant_id: tenantId, company_id: companyId },
+      updatedRecord,
+    );
+  } catch (_) {
+    return { ok: false, code: "company_mollie_token_refresh_failed" };
+  }
+  return {
+    ok: true,
+    record: updatedRecord,
+    accessToken: newAccessToken,
+  };
+}
+
+async function resolveCompanyMollieConnectCredentials(env, scope, _options = {}) {
+  const tenantId = sanitizeTenantString(scope?.tenant_id ?? scope?.tenantId, 80);
+  const companyId = sanitizeTenantString(scope?.company_id ?? scope?.companyId, 80);
+  if (!tenantId || !companyId) {
+    return { ok: false, error: "company_mollie_credentials_unavailable" };
+  }
+  const scopedState = { tenant_id: tenantId, company_id: companyId };
+  let record = null;
+  try {
+    record = await loadScopedMollieConnectAuthRecord(env, scopedState);
+  } catch (_) {
+    record = null;
+  }
+  if (!record || typeof record !== "object") {
+    return { ok: false, error: "company_mollie_not_connected" };
+  }
+  const statusLower = safeStr(record.status, 32).toLowerCase();
+  if (record.connected !== true || statusLower !== "connected") {
+    return { ok: false, error: "company_mollie_not_connected" };
+  }
+  const encryptedAccess = record.accessTokenEncrypted ?? record.access_token_encrypted;
+  const encryptedRefresh = record.refreshTokenEncrypted ?? record.refresh_token_encrypted;
+  if (
+    !encryptedAccess ||
+    typeof encryptedAccess !== "object" ||
+    !encryptedRefresh ||
+    typeof encryptedRefresh !== "object"
+  ) {
+    return { ok: false, error: "company_mollie_token_missing" };
+  }
+
+  let workingRecord = record;
+  let accessTokenPlain = "";
+
+  if (_isMollieConnectAccessTokenExpired(workingRecord)) {
+    const refreshed = await refreshMollieConnectTokens(env, scopedState, workingRecord);
+    if (!refreshed?.ok) {
+      return { ok: false, error: "company_mollie_token_refresh_failed" };
+    }
+    workingRecord = refreshed.record;
+    accessTokenPlain = safeStr(refreshed.accessToken);
+  } else {
+    try {
+      const decrypted = await decryptMollieConnectTokenPayload(
+        { accessTokenEncrypted: encryptedAccess },
+        env,
+      );
+      accessTokenPlain = safeStr(decrypted?.access_token);
+    } catch (_) {
+      accessTokenPlain = "";
+    }
+    if (!accessTokenPlain) {
+      const refreshed = await refreshMollieConnectTokens(env, scopedState, workingRecord);
+      if (!refreshed?.ok) {
+        return { ok: false, error: "company_mollie_token_refresh_failed" };
+      }
+      workingRecord = refreshed.record;
+      accessTokenPlain = safeStr(refreshed.accessToken);
+    }
+  }
+
+  if (!accessTokenPlain) {
+    return { ok: false, error: "company_mollie_credentials_unavailable" };
+  }
+
+  const modeRaw = safeStr(
+    workingRecord.mollie_mode ?? workingRecord.mollieMode,
+    16,
+  ).toLowerCase();
+  const mode = modeRaw === "test" || modeRaw === "live" ? modeRaw : "unknown";
+  return {
+    ok: true,
+    apiKey: accessTokenPlain,
+    keyKind: "oauth",
+    mode,
+    payment_owner_mode: "company_mollie",
+    payment_credential_source: "company_mollie",
+    payment_company_id: companyId,
+    payment_demo_mode: false,
+    mollie_organization_id:
+      safeStr(workingRecord.organizationId ?? workingRecord.organization_id, 80) || null,
+    mollie_profile_id:
+      safeStr(workingRecord.profileId ?? workingRecord.profile_id, 80) || null,
+  };
+}
+
 async function mollieConnectOAuthCallback(request, env) {
   const url = new URL(request.url);
   const code = url.searchParams.get("code");
@@ -31826,21 +32034,46 @@ async function resolveRideMollieCredentials(env, tenantScope = {}, options = {})
   }
 
   if (paymentOwnerMode === "company_mollie") {
-    const connected = boolish(businessProfile.mollie_connected);
-    const tokenRef = safeStr(businessProfile.mollie_token_ref, 160);
-    const errorCode = connected && tokenRef
-      ? "company_mollie_credentials_unavailable"
-      : "company_mollie_not_connected";
+    if (!mollieCompanyPaymentsEnabled(env)) {
+      console.log(
+        `[MOLLIE_CREDENTIALS][BLOCK] tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} mode=${paymentOwnerMode} credentialSource=${storedCredentialSource || "company_mollie"} reason=company_mollie_payments_not_enabled`,
+      );
+      return {
+        ok: false,
+        error: "company_mollie_payments_not_enabled",
+        payment_owner_mode: paymentOwnerMode,
+        payment_credential_source: "company_mollie",
+        payment_demo_mode: false,
+        payment_company_id: companyId,
+        company_id: companyId,
+      };
+    }
+    const companyCreds = await resolveCompanyMollieConnectCredentials(
+      env,
+      { tenant_id: tenantId, company_id: companyId },
+      options,
+    );
+    if (!companyCreds?.ok) {
+      const errorCode =
+        safeStr(companyCreds?.error, 80) || "company_mollie_credentials_unavailable";
+      console.log(
+        `[MOLLIE_CREDENTIALS][BLOCK] tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} mode=${paymentOwnerMode} credentialSource=${storedCredentialSource || "company_mollie"} reason=${errorCode}`,
+      );
+      return {
+        ok: false,
+        error: errorCode,
+        payment_owner_mode: paymentOwnerMode,
+        payment_credential_source: "company_mollie",
+        payment_demo_mode: false,
+        payment_company_id: companyId,
+        company_id: companyId,
+      };
+    }
     console.log(
-      `[MOLLIE_CREDENTIALS][BLOCK] tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} mode=${paymentOwnerMode} credentialSource=${storedCredentialSource || "company_mollie"} connected=${connected} hasTokenRef=${!!tokenRef} reason=${errorCode}`,
+      `[MOLLIE_CREDENTIALS][OK] tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} mode=${paymentOwnerMode} credentialSource=company_mollie keyKind=oauth`,
     );
     return {
-      ok: false,
-      error: errorCode,
-      payment_owner_mode: paymentOwnerMode,
-      payment_credential_source: "company_mollie",
-      payment_demo_mode: paymentDemoMode,
-      payment_company_id: companyId,
+      ...companyCreds,
       company_id: companyId,
     };
   }
