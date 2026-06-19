@@ -266,6 +266,7 @@ const MOLLIE_CONNECT_OAUTH_NONCE_TTL_SECONDS = 600;
 const MOLLIE_CONNECT_OAUTH_STATE_PURPOSE = "mollie_connect_oauth";
 const MOLLIE_CONNECT_OAUTH_SCOPES =
   "organizations.read profiles.read payments.read payments.write refunds.read";
+const ADMIN_MOLLIE_CONNECT_TEST_PAYMENT_TTL_SECONDS = 60 * 60 * 24 * 30;
 
 function buildScopedMollieConnectAuthKey(scope = null) {
   const tenantId = sanitizeTenantString(scope?.tenant_id ?? scope?.tenantId, 80);
@@ -280,6 +281,33 @@ function buildScopedMollieConnectNonceKey(scope = null, nonce = "") {
   const nonceId = String(nonce || "").trim().replace(/[^a-zA-Z0-9_-]+/g, "");
   if (!tenantId || !companyId || !nonceId) return null;
   return `tenant:${tenantId}:company:${companyId}:mollie_oauth_state_nonce:${nonceId}:v1`;
+}
+
+function buildScopedMollieConnectTestPaymentKey(scope = null, paymentId = "") {
+  const tenantId = sanitizeTenantString(scope?.tenant_id ?? scope?.tenantId, 80);
+  const companyId = sanitizeTenantString(scope?.company_id ?? scope?.companyId, 80);
+  const safePaymentId = safeStr(paymentId).replace(/[^a-zA-Z0-9_-]+/g, "");
+  if (!tenantId || !companyId || !safePaymentId) return null;
+  return `tenant:${tenantId}:company:${companyId}:admin_mollie_test_payment:${safePaymentId}:v1`;
+}
+
+function _sanitizeAdminMollieConnectTestPaymentAmount(value) {
+  const raw = value === null || value === undefined || value === "" ? "1.00" : value;
+  const parsed = _parsePositivePaymentAmount(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0 || parsed > 2) return null;
+  return money2(parsed);
+}
+
+function _sanitizeAdminMollieConnectTestPaymentCurrency(value) {
+  const currency = safeStr(value || "EUR").toUpperCase();
+  return currency === "EUR" ? "EUR" : "";
+}
+
+function _sanitizeAdminMollieConnectTestPaymentDescription(value) {
+  return (
+    safeStr(value || "Fluxidi company Mollie test payment").slice(0, 120) ||
+    "Fluxidi company Mollie test payment"
+  );
 }
 
 function _mollieConnectOauthError(code) {
@@ -20616,6 +20644,316 @@ export default {
         );
       }
 
+      if (url.pathname === "/admin/mollie/connect/test-payment" && request.method === "POST") {
+        const body = await safeJson(request);
+        const authScope = await _requireAdminOrCompanySessionForExplicitScope({
+          request,
+          url,
+          env,
+          body,
+          routeLabel: "ADMIN_MOLLIE_CONNECT_TEST_PAYMENT",
+        });
+        if (!authScope.ok) return authScope.response;
+        const explicitScope = authScope.explicitScope;
+        const tenantId = explicitScope.tenant_id;
+        const companyId = explicitScope.company_id;
+        if (!env?.BOOKING_KV) {
+          return json({ ok: false, error: "missing_booking_kv" }, 500);
+        }
+        if (!mollieCompanyPaymentsEnabled(env)) {
+          console.log(
+            `[MOLLIE_CONNECT][TEST_PAYMENT_BLOCK] tenant=${tenantId} company=${companyId} reason=company_mollie_payments_not_enabled`,
+          );
+          return json(
+            {
+              ok: false,
+              error: "company_mollie_payments_not_enabled",
+              code: "company_mollie_payments_not_enabled",
+            },
+            403,
+          );
+        }
+        const amountValue = _sanitizeAdminMollieConnectTestPaymentAmount(body?.amount);
+        if (!amountValue) {
+          return json(
+            {
+              ok: false,
+              error: "invalid_test_payment_amount",
+              code: "invalid_test_payment_amount",
+              message: "Amount must be positive and no more than 2.00 EUR.",
+            },
+            400,
+          );
+        }
+        const currency = _sanitizeAdminMollieConnectTestPaymentCurrency(body?.currency);
+        if (!currency) {
+          return json(
+            {
+              ok: false,
+              error: "unsupported_test_payment_currency",
+              code: "unsupported_test_payment_currency",
+            },
+            400,
+          );
+        }
+        let credentials = null;
+        try {
+          credentials = await resolveCompanyMollieConnectCredentials(
+            env,
+            explicitScope,
+            { purpose: "admin_test_payment" },
+          );
+        } catch (_) {
+          credentials = { ok: false, error: "company_mollie_credentials_unavailable" };
+        }
+        if (!credentials?.ok) {
+          const allowedErrors = new Set([
+            "company_mollie_not_connected",
+            "company_mollie_token_missing",
+            "company_mollie_token_refresh_failed",
+            "company_mollie_credentials_unavailable",
+          ]);
+          const rawCode =
+            safeStr(credentials?.error ?? credentials?.code, 80) ||
+            "company_mollie_credentials_unavailable";
+          const code = allowedErrors.has(rawCode)
+            ? rawCode
+            : "company_mollie_credentials_unavailable";
+          credentials = null;
+          console.log(
+            `[MOLLIE_CONNECT][TEST_PAYMENT_BLOCK] tenant=${tenantId} company=${companyId} reason=${code}`,
+          );
+          return json({ ok: false, error: code, code }, 400);
+        }
+
+        const livePaymentsEnabled = mollieCompanyLivePaymentsEnabled(env);
+        const description = _sanitizeAdminMollieConnectTestPaymentDescription(body?.description);
+        const base = getBaseUrl(request);
+        const testPaymentId = crypto?.randomUUID
+          ? crypto.randomUUID()
+          : `${Date.now()}_${Math.random()}`.replace(/[^a-zA-Z0-9_-]+/g, "");
+        const redirectUrl =
+          `${base}/admin/mollie/connect/readiness?tenant_id=${encodeURIComponent(tenantId)}&company_id=${encodeURIComponent(companyId)}`;
+        const mollieCreateBody = {
+          amount: { currency, value: amountValue },
+          description,
+          redirectUrl,
+          testmode: true,
+          metadata: {
+            source: "admin_mollie_connect_test_payment",
+            testPaymentId,
+            tenantId,
+            companyId,
+          },
+        };
+        let mollieRes = null;
+        let mollie = null;
+        try {
+          mollieRes = await fetch(_mollieCreatePaymentApiUrl(), {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${credentials.apiKey}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify(mollieCreateBody),
+          });
+          const txt = await mollieRes.text();
+          try {
+            mollie = JSON.parse(txt);
+          } catch (_) {
+            mollie = {};
+          }
+        } catch (_) {
+          credentials = null;
+          return json(
+            {
+              ok: false,
+              error: "mollie_test_payment_create_failed",
+              code: "mollie_test_payment_create_failed",
+            },
+            502,
+          );
+        }
+        const paymentId = safeStr(mollie?.id, 160);
+        const checkoutUrl = safeStr(mollie?._links?.checkout?.href, 2000);
+        if (!mollieRes?.ok || !paymentId || !checkoutUrl) {
+          const code =
+            safeStr(mollie?.detail || mollie?.code || mollie?.error, 80) ||
+            "mollie_test_payment_create_failed";
+          credentials = null;
+          console.log(
+            `[MOLLIE_CONNECT][TEST_PAYMENT_FAIL] tenant=${tenantId} company=${companyId} code=${code}`,
+          );
+          return json(
+            {
+              ok: false,
+              error: "mollie_test_payment_create_failed",
+              code: "mollie_test_payment_create_failed",
+              mollie_code: code,
+            },
+            502,
+          );
+        }
+        const paymentKey = buildScopedMollieConnectTestPaymentKey(explicitScope, paymentId);
+        if (!paymentKey) {
+          credentials = null;
+          return json({ ok: false, error: "invalid_test_payment_scope" }, 400);
+        }
+        const nowIso = new Date().toISOString();
+        const ownership = {
+          payment_owner_mode: "company_mollie",
+          payment_credential_source: "company_mollie",
+          payment_company_id: companyId,
+          payment_demo_mode: false,
+          payment_test_mode: true,
+          mollie_testmode: true,
+          mollie_mode: "test",
+          mollie_organization_id:
+            safeStr(credentials.mollie_organization_id ?? credentials.mollieOrganizationId, 80) || null,
+          mollie_profile_id:
+            safeStr(credentials.mollie_profile_id ?? credentials.mollieProfileId, 80) || null,
+        };
+        const record = {
+          version: 1,
+          source: "admin_mollie_connect_test_payment",
+          test_payment_id: testPaymentId,
+          testPaymentId,
+          payment_id: paymentId,
+          paymentId,
+          checkout_url: checkoutUrl,
+          checkoutUrl,
+          amount: amountValue,
+          currency,
+          tenant_id: tenantId,
+          tenantId,
+          company_id: companyId,
+          companyId,
+          created_at: nowIso,
+          createdAt: nowIso,
+          status: safeStr(mollie?.status, 40) || "open",
+          live_payments_enabled: livePaymentsEnabled,
+          forced_testmode: true,
+          mollie: {
+            id: paymentId,
+            payment_id: paymentId,
+            status: safeStr(mollie?.status, 40) || "open",
+            testmode: true,
+          },
+        };
+        applyPaymentOwnershipFields(record, ownership);
+        await env.BOOKING_KV.put(
+          paymentKey,
+          JSON.stringify(record),
+          { expirationTtl: ADMIN_MOLLIE_CONNECT_TEST_PAYMENT_TTL_SECONDS },
+        );
+        credentials = null;
+        console.log(
+          `[MOLLIE_CONNECT][TEST_PAYMENT_OK] tenant=${tenantId} company=${companyId} payment=${_bookingIntentMask(paymentId)} amount=${amountValue} testmode=true`,
+        );
+        return json(
+          {
+            ok: true,
+            payment_id: paymentId,
+            checkout_url: checkoutUrl,
+            amount: amountValue,
+            currency,
+            ...paymentOwnershipApiFields(record),
+            mollie_mode: "test",
+            mollieMode: "test",
+            live_payments_enabled: livePaymentsEnabled,
+            forced_testmode: true,
+          },
+          200,
+        );
+      }
+
+      if (url.pathname === "/admin/mollie/connect/test-payment/status" && request.method === "GET") {
+        const authScope = await _requireAdminOrCompanySessionForExplicitScope({
+          request,
+          url,
+          env,
+          routeLabel: "ADMIN_MOLLIE_CONNECT_TEST_PAYMENT_STATUS",
+        });
+        if (!authScope.ok) return authScope.response;
+        const explicitScope = authScope.explicitScope;
+        const tenantId = explicitScope.tenant_id;
+        const companyId = explicitScope.company_id;
+        const paymentId = safeStr(url.searchParams.get("payment_id") || url.searchParams.get("paymentId"), 160);
+        if (!paymentId) {
+          return json({ ok: false, error: "missing_payment_id" }, 400);
+        }
+        const paymentKey = buildScopedMollieConnectTestPaymentKey(explicitScope, paymentId);
+        if (!paymentKey || !env?.BOOKING_KV) {
+          return json({ ok: false, error: "invalid_test_payment_scope" }, 400);
+        }
+        const record = await env.BOOKING_KV.get(paymentKey, { type: "json" });
+        if (!record || record?.source !== "admin_mollie_connect_test_payment") {
+          return json({ ok: false, error: "test_payment_not_found" }, 404);
+        }
+        let credentials = null;
+        try {
+          credentials = await resolveCompanyMollieConnectCredentials(
+            env,
+            explicitScope,
+            { purpose: "admin_test_payment_status" },
+          );
+        } catch (_) {
+          credentials = { ok: false, error: "company_mollie_credentials_unavailable" };
+        }
+        if (!credentials?.ok) {
+          const code =
+            safeStr(credentials?.error ?? credentials?.code, 80) ||
+            "company_mollie_credentials_unavailable";
+          credentials = null;
+          return json({ ok: false, error: code, code }, 400);
+        }
+        credentials.payment_test_mode = true;
+        credentials.paymentTestMode = true;
+        credentials.mollie_testmode = true;
+        credentials.mollieTestmode = true;
+        credentials.mollie_mode = "test";
+        credentials.mollieMode = "test";
+        credentials.mode = "test";
+        let paymentSnapshot = null;
+        try {
+          paymentSnapshot = await mollieFetchPaymentJson(paymentId, env, credentials, {
+            paymentRecord: record,
+          });
+        } catch (_) {
+          credentials = null;
+          return json({ ok: false, error: "mollie_test_payment_lookup_failed" }, 502);
+        }
+        credentials = null;
+        const status = safeStr(paymentSnapshot?.status, 40) || safeStr(record?.status, 40) || "unknown";
+        record.status = status;
+        record.updated_at = new Date().toISOString();
+        record.updatedAt = record.updated_at;
+        record.mollie = record.mollie && typeof record.mollie === "object" ? record.mollie : {};
+        record.mollie.status = status;
+        record.mollie.last_checked_at = record.updated_at;
+        await env.BOOKING_KV.put(
+          paymentKey,
+          JSON.stringify(record),
+          { expirationTtl: ADMIN_MOLLIE_CONNECT_TEST_PAYMENT_TTL_SECONDS },
+        );
+        return json(
+          {
+            ok: true,
+            payment_id: paymentId,
+            status,
+            amount: safeStr(paymentSnapshot?.amount?.value, 32) || record.amount || null,
+            currency: safeStr(paymentSnapshot?.amount?.currency, 8) || record.currency || "EUR",
+            checkout_url: safeStr(record.checkout_url ?? record.checkoutUrl, 2000) || null,
+            ...paymentOwnershipApiFields(record),
+            mollie_mode: "test",
+            mollieMode: "test",
+            live_payments_enabled: mollieCompanyLivePaymentsEnabled(env),
+            forced_testmode: true,
+          },
+          200,
+        );
+      }
+
       if (url.pathname === "/admin/mollie/connect/disconnect" && request.method === "POST") {
         const body = await safeJson(request);
         const authScope = await _requireAdminOrCompanySessionForExplicitScope({
@@ -20703,6 +21041,8 @@ POST /admin/mollie/connect/start
 GET  /mollie/connect/callback
 GET  /admin/mollie/connect/status
 GET  /admin/mollie/connect/readiness
+POST /admin/mollie/connect/test-payment
+GET  /admin/mollie/connect/test-payment/status
 POST /admin/mollie/connect/disconnect
 `,
           { headers: { "Content-Type": "text/plain; charset=utf-8", ...corsHeaders() } }
