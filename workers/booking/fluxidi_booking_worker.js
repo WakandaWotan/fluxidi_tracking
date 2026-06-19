@@ -22792,6 +22792,7 @@ GET /oauth/callback
       // POST /bookings/:id/credit-decision
       // POST /bookings/:id/mollie-refund
       // POST /bookings/:id/mollie-refund/status-refresh
+      // POST /bookings/:id/mollie-refund/status-snapshot (PAY-REFRESH-A, read-only)
       // POST /bookings/:id/assign (placeholder for future)
       // POST /bookings/:id/delete
       if (pathParts.length >= 2 && pathParts[0] === "bookings") {
@@ -23556,6 +23557,81 @@ GET /oauth/callback
                       : out.ok
                         ? 200
                         : 404;
+          return json(out, statusCode);
+        }
+
+        // PAY-REFRESH-A: read-only Mollie refund/payment status snapshot.
+        //
+        // Returns a side-by-side comparison of the stored Fluxidi refund
+        // fields and the live Mollie payment/refund snapshot. Never writes
+        // to BOOKING_KV. Never emits any Chiron / compliance event. The
+        // `dry_run` body field is accepted but always treated as true.
+        if (
+          pathParts.length === 4 &&
+          pathParts[2] === "mollie-refund" &&
+          pathParts[3] === "status-snapshot" &&
+          request.method === "POST"
+        ) {
+          const body = await safeJson(request);
+          const scopedRoute = requireExplicitBookingRouteScope({ request, url, body });
+          if (!scopedRoute.ok) return scopedRoute.response;
+          const tenantScope = scopedRoute.scope;
+          const auth = await _requireAdminOrCompanySessionAuth({
+            request,
+            url,
+            env,
+            tenantScope,
+          });
+          if (!auth.ok) return auth.response;
+          const actorRoleBody = _scopeText(body?.actor_role ?? body?.actorRole, 32).toLowerCase();
+          if (actorRoleBody === "customer" || actorRoleBody === "driver") {
+            return json({ ok: false, error: "forbidden" }, 403);
+          }
+          const legIdBody = safeStr(body?.leg_id ?? body?.legId, 200);
+          const legTypeBody = safeStr(body?.leg_type ?? body?.legType, 24);
+          const refundIdBody = safeStr(
+            body?.refund_id ??
+              body?.refundId ??
+              body?.mollie_refund_id ??
+              body?.mollieRefundId,
+            120,
+          );
+          console.log(
+            `[BOOKING][MOLLIE_REFUND_STATUS_SNAPSHOT][REQ] booking=${_bookingIntentMask(bookingId)} auth_mode=${safeStr(auth.auth_mode, 32) || "-"} scope=${legIdBody ? "operational_leg" : "parent"} leg=${legIdBody ? _bookingIntentMask(legIdBody) : "-"} refund_id_hint=${refundIdBody ? "present" : "empty"} dry_run=true`,
+          );
+          const out = await buildMollieRefundStatusSnapshot(
+            bookingId,
+            env,
+            tenantScope,
+            {
+              leg_id: legIdBody,
+              leg_type: legTypeBody,
+              refund_id: refundIdBody,
+            },
+          );
+          console.log(
+            `[BOOKING][MOLLIE_REFUND_STATUS_SNAPSHOT][RES] booking=${_bookingIntentMask(bookingId)} ok=${out?.ok === true} error=${safeStr(out?.error, 64) || "-"} stored_lifecycle=${safeStr(out?.classification?.stored_lifecycle, 32) || "-"} mollie_lifecycle=${safeStr(out?.classification?.mollie_lifecycle, 32) || "-"} is_stale=${out?.classification?.is_stale === true} recommended_next_action=${safeStr(out?.classification?.recommended_next_action, 32) || "-"} mollie_refund_id=${_bookingIntentMask(out?.mollie?.refund_id) || "-"} lookup_source=${safeStr(out?.mollie?.refund_lookup_source, 32) || "-"} candidate_refund_count=${Number.isFinite(Number(out?.mollie?.candidate_refund_count)) ? Math.round(Number(out.mollie.candidate_refund_count)) : "-"}`,
+          );
+          const statusCode =
+            out?.error === "missing_tenant_scope"
+              ? 400
+              : out?.error === "forbidden"
+                ? 403
+                : out?.error === "booking_not_found" ||
+                    out?.error === "operational_leg_not_found" ||
+                    out?.error === "missing_mollie_payment_id" ||
+                    out?.error === "missing_mollie_refund_id"
+                  ? 404
+                  : out?.error === "ambiguous_refund"
+                    ? 409
+                    : out?.error === "mollie_config_unavailable"
+                      ? 503
+                      : out?.error === "mollie_payment_lookup_failed" ||
+                          out?.error === "mollie_refund_lookup_failed"
+                        ? 502
+                        : out?.ok
+                          ? 200
+                          : 400;
           return json(out, statusCode);
         }
 
@@ -33302,6 +33378,510 @@ async function mollieResolveRefundSnapshot(molliePaymentId, mollieRefundId, env,
     }
     throw getErr;
   }
+}
+
+// PAY-REFRESH-A: read-only Mollie refund/payment status snapshot helpers.
+//
+// These helpers power POST /bookings/:id/mollie-refund/status-snapshot, a
+// strictly read-only diagnostic endpoint. They MUST NOT mutate the booking
+// record, MUST NOT write to BOOKING_KV, and MUST NOT emit any Chiron /
+// compliance event. They only normalize Mollie + stored fields into a side
+// by side comparison the operator can use to decide whether a follow-up
+// PAY-REFRESH-B/C patch needs to refresh the persisted refund state.
+function _mollieAmountValueToCents(value) {
+  if (value == null) return null;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return null;
+  return Math.max(0, Math.round(parsed * 100));
+}
+
+function _normalizeRefundStatusToken(value) {
+  return safeStr(value, 40)
+    .toLowerCase()
+    .replaceAll("-", "_")
+    .replace(/\s+/g, "_");
+}
+
+// Classifies a single Mollie/refund/payment status token into a lifecycle
+// bucket. Mirrors CR-1 UI semantics so the snapshot's classification can be
+// compared 1:1 with what the company bookings overview tabs would show.
+function _classifyRefundLifecycleToken(value) {
+  const token = _normalizeRefundStatusToken(value);
+  if (!token) return "unknown";
+  switch (token) {
+    case "refunded":
+    case "succeeded":
+    case "success":
+    case "completed":
+    case "paid":
+    case "paid_out":
+    case "settled":
+      return "refunded";
+    case "failed":
+    case "failure":
+    case "error":
+    case "rejected":
+    case "cancelled":
+    case "canceled":
+    case "expired":
+    case "requires_action":
+      return "failed";
+    case "queued":
+    case "pending":
+    case "processing":
+    case "in_progress":
+    case "open":
+    case "requested":
+    case "created":
+    case "in_behandeling":
+    case "mollie_refund_pending":
+      return "pending";
+    case "partially_refunded":
+    case "partial_refunded":
+    case "partly_refunded":
+    case "gedeeltelijk_teruggestort":
+      return "partially_refunded";
+    default:
+      return "unknown";
+  }
+}
+
+// Resolves the Mollie-side lifecycle. When the individual refund object
+// reports a final-success status but the parent payment has only been
+// partially refunded so far, the overall booking lifecycle is reported as
+// "partially_refunded" so the snapshot reflects what the operator sees in
+// the Mollie dashboard ("Gedeeltelijk teruggestort").
+function _classifyMollieLifecycle({
+  refundStatus,
+  paymentStatus,
+  paymentAmountCents,
+  paymentAmountRefundedCents,
+}) {
+  const refundLifecycle = _classifyRefundLifecycleToken(refundStatus);
+  const paymentLifecycle = _classifyRefundLifecycleToken(paymentStatus);
+
+  const paidCents = Number.isFinite(Number(paymentAmountCents))
+    ? Math.max(0, Math.round(Number(paymentAmountCents)))
+    : 0;
+  const refundedCents = Number.isFinite(Number(paymentAmountRefundedCents))
+    ? Math.max(0, Math.round(Number(paymentAmountRefundedCents)))
+    : 0;
+
+  if (paymentLifecycle === "partially_refunded") {
+    return "partially_refunded";
+  }
+  if (paidCents > 0 && refundedCents > 0 && refundedCents < paidCents) {
+    return "partially_refunded";
+  }
+  if (refundLifecycle === "refunded") {
+    if (paidCents > 0 && refundedCents >= paidCents) return "refunded";
+    if (paidCents > 0 && refundedCents > 0 && refundedCents < paidCents) {
+      return "partially_refunded";
+    }
+    return "refunded";
+  }
+  if (refundLifecycle === "failed") return "failed";
+  if (refundLifecycle === "pending") return "pending";
+  if (refundLifecycle === "partially_refunded") return "partially_refunded";
+  if (paidCents > 0 && refundedCents >= paidCents) return "refunded";
+  return "unknown";
+}
+
+// Resolves the stored (Fluxidi-side) lifecycle. Uses ONLY locally cached
+// booking/leg fields so the snapshot can compare what the UI would currently
+// show against what Mollie reports live.
+function _classifyStoredLifecycle({
+  refundStatus,
+  mollieRefundStatus,
+  refundedAmountCents,
+  paidAmountCents,
+}) {
+  const refundLifecycle = _classifyRefundLifecycleToken(refundStatus);
+  const mollieLifecycle = _classifyRefundLifecycleToken(mollieRefundStatus);
+  const paidCents = Number.isFinite(Number(paidAmountCents))
+    ? Math.max(0, Math.round(Number(paidAmountCents)))
+    : 0;
+  const refundedCents = Number.isFinite(Number(refundedAmountCents))
+    ? Math.max(0, Math.round(Number(refundedAmountCents)))
+    : 0;
+  if (refundLifecycle === "refunded" || mollieLifecycle === "refunded") {
+    if (paidCents > 0 && refundedCents > 0 && refundedCents < paidCents) {
+      return "partially_refunded";
+    }
+    return "refunded";
+  }
+  if (refundLifecycle === "failed" || mollieLifecycle === "failed") return "failed";
+  if (refundLifecycle === "partially_refunded" || mollieLifecycle === "partially_refunded") {
+    return "partially_refunded";
+  }
+  if (refundLifecycle === "pending" || mollieLifecycle === "pending") return "pending";
+  return "unknown";
+}
+
+// Picks the best matching refund from a Mollie refunds-list response when
+// no explicit refund id is known. Prefers an exact id match, then narrows
+// non-failed candidates by requested amount. Returns ambiguous=true only
+// when several candidates remain and none can be disambiguated; the caller
+// then reports HTTP 409 so the operator can pass `refund_id` explicitly.
+function _pickBestMollieRefundFromList(
+  refunds,
+  { hintRefundId = "", hintAmountCents = 0 } = {},
+) {
+  if (!Array.isArray(refunds) || refunds.length === 0) {
+    return { refund: null, ambiguous: false, candidateCount: 0 };
+  }
+  const safeHintId = safeStr(hintRefundId, 120);
+  if (safeHintId) {
+    const exact = refunds.find((r) => safeStr(r?.id, 120) === safeHintId);
+    if (exact) {
+      return { refund: exact, ambiguous: false, candidateCount: refunds.length };
+    }
+  }
+  const nonFailed = refunds.filter(
+    (r) => _classifyRefundLifecycleToken(r?.status) !== "failed",
+  );
+  const pool = nonFailed.length > 0 ? nonFailed : refunds;
+  if (pool.length === 1) {
+    return { refund: pool[0], ambiguous: false, candidateCount: refunds.length };
+  }
+  const safeHintAmount = Number.isFinite(Number(hintAmountCents))
+    ? Math.max(0, Math.round(Number(hintAmountCents)))
+    : 0;
+  if (safeHintAmount > 0) {
+    const amountMatches = pool.filter(
+      (r) => _mollieAmountValueToCents(r?.amount?.value) === safeHintAmount,
+    );
+    if (amountMatches.length === 1) {
+      return { refund: amountMatches[0], ambiguous: false, candidateCount: refunds.length };
+    }
+  }
+  return { refund: null, ambiguous: true, candidateCount: refunds.length };
+}
+
+// READ-ONLY orchestrator for the status-snapshot endpoint. Returns a plain
+// JSON-serialisable result. NEVER writes to BOOKING_KV. NEVER emits any
+// Chiron / compliance event. Reuses existing identifier/credential helpers
+// so there is no duplicated Mollie auth or scope-resolution code.
+async function buildMollieRefundStatusSnapshot(
+  bookingId,
+  env,
+  tenantScope = null,
+  {
+    leg_id: legIdRaw = "",
+    leg_type: legTypeRaw = "",
+    refund_id: refundIdRaw = "",
+  } = {},
+) {
+  if (!tenantScope?.hasScope) {
+    return missingTenantScopeError();
+  }
+  if (!env?.BOOKING_KV) throw new Error("BOOKING_KV binding is missing");
+
+  let rec;
+  try {
+    const loaded = await loadBookingRecord(env, bookingId);
+    rec = loaded?.rec;
+  } catch (loadErr) {
+    if (String(loadErr?.message || "") === "Booking not found") {
+      return { ok: false, error: "booking_not_found" };
+    }
+    throw loadErr;
+  }
+  if (!bookingMatchesRequiredTenantCompanyScope(rec, tenantScope)) {
+    return { ok: false, error: "forbidden" };
+  }
+
+  const safeLegId = safeStr(legIdRaw, 200);
+  const safeLegType = safeStr(legTypeRaw, 24);
+  const refundIdHint = safeStr(refundIdRaw, 120);
+  const useLegScope = safeLegId !== "";
+
+  let legEntry = null;
+  if (useLegScope) {
+    legEntry = _findOperationalLegEntryById(rec, safeLegId);
+    if (!legEntry) {
+      return { ok: false, error: "operational_leg_not_found" };
+    }
+  }
+
+  const readLegOrRecord = (legKey, snakeKey, camelKey) => {
+    if (useLegScope) {
+      return safeStr(legEntry?.[snakeKey] ?? legEntry?.[camelKey], legKey);
+    }
+    const booking = rec?.booking && typeof rec.booking === "object" ? rec.booking : {};
+    const payload = rec?.payload && typeof rec.payload === "object" ? rec.payload : {};
+    return safeStr(
+      rec?.[snakeKey] ??
+        rec?.[camelKey] ??
+        booking?.[snakeKey] ??
+        booking?.[camelKey] ??
+        payload?.[snakeKey] ??
+        payload?.[camelKey],
+      legKey,
+    );
+  };
+
+  const storedRefundStatus = readLegOrRecord(64, "refund_status", "refundStatus");
+  const storedMollieRefundStatus = readLegOrRecord(
+    64,
+    "mollie_refund_status",
+    "mollieRefundStatus",
+  );
+  const storedRefundedAt = readLegOrRecord(64, "refunded_at", "refundedAt");
+  const storedMollieRefundId = useLegScope
+    ? _readMollieRefundIdFromLeg(legEntry)
+    : _readMollieRefundIdFromRecord(rec);
+  const storedMolliePaymentId = _readMolliePaymentIdFromRecordLayers(rec);
+  const storedRefundedAmountCents = useLegScope
+    ? (() => {
+        const raw = legEntry?.refunded_amount_cents ?? legEntry?.refundedAmountCents;
+        const n = Number(raw);
+        if (!Number.isFinite(n) || n <= 0) return 0;
+        return Math.max(0, Math.round(n));
+      })()
+    : _readNumericCentsFromRecordLayers(rec, "refunded_amount_cents", "refundedAmountCents");
+  const storedCreditDecision = useLegScope
+    ? _operationalLegCreditDecisionRaw(legEntry)
+    : _bookingCreditDecisionRaw(rec);
+  const publicBookingReference = safeStr(
+    rec?.public_booking_reference ??
+      rec?.publicBookingReference ??
+      rec?.booking_reference ??
+      rec?.bookingReference ??
+      rec?.booking?.public_booking_reference ??
+      rec?.booking?.publicBookingReference ??
+      rec?.booking?.booking_reference ??
+      rec?.booking?.bookingReference,
+    120,
+  );
+
+  const paymentContext = await resolveMolliePaymentContextForBooking(env, bookingId, rec);
+  if (!paymentContext?.ok) {
+    return { ok: false, error: paymentContext?.error || "missing_mollie_payment_id" };
+  }
+
+  const rideCredentials = await resolveRideMollieCredentialsForPaymentContext(
+    env,
+    paymentContext,
+    rec,
+  );
+  if (!rideCredentials.ok) {
+    return { ok: false, error: rideCredentials.error || "mollie_config_unavailable" };
+  }
+
+  const warnings = [];
+
+  let paymentSnapshot = null;
+  try {
+    paymentSnapshot = await mollieFetchPaymentJson(
+      paymentContext.mollie_payment_id,
+      env,
+      rideCredentials,
+    );
+  } catch (_) {
+    return { ok: false, error: "mollie_payment_lookup_failed" };
+  }
+  const paymentStatus = safeStr(paymentSnapshot?.status, 32);
+  const paymentAmountCents = _mollieAmountValueToCents(paymentSnapshot?.amount?.value);
+  const paymentAmountRefundedCents = _mollieAmountValueToCents(
+    paymentSnapshot?.amountRefunded?.value ?? paymentSnapshot?.amount_refunded?.value,
+  );
+
+  const refundIdEffective = refundIdHint || storedMollieRefundId;
+
+  let mollieRefund = null;
+  let mollieLookupSource = "none";
+  let ambiguousRefund = false;
+  let candidateRefundCount = 0;
+  if (refundIdEffective) {
+    try {
+      mollieRefund = await mollieFetchRefundJson(
+        paymentContext.mollie_payment_id,
+        refundIdEffective,
+        env,
+        rideCredentials,
+      );
+      mollieLookupSource = "get";
+    } catch (_) {
+      try {
+        const listMatch = await mollieFindRefundInListJson(
+          paymentContext.mollie_payment_id,
+          refundIdEffective,
+          env,
+          rideCredentials,
+        );
+        if (listMatch) {
+          mollieRefund = listMatch;
+          mollieLookupSource = "list_fallback";
+        }
+      } catch (_) {
+        // Fall through to list+pick below.
+      }
+    }
+  }
+  if (!mollieRefund) {
+    try {
+      let nextUrl = null;
+      let guard = 0;
+      const allRefunds = [];
+      do {
+        guard += 1;
+        if (guard > 8) break;
+        const page = await mollieFetchRefundsListPageJson(
+          paymentContext.mollie_payment_id,
+          env,
+          { fromUrl: nextUrl, rideCredentials },
+        );
+        const refunds = page?._embedded?.refunds;
+        if (Array.isArray(refunds)) {
+          for (const r of refunds) allRefunds.push(r);
+        }
+        nextUrl = safeStr(page?._links?.next?.href, 512) || null;
+      } while (nextUrl);
+      if (allRefunds.length > 0) {
+        const pick = _pickBestMollieRefundFromList(allRefunds, {
+          hintRefundId: refundIdEffective,
+          hintAmountCents: storedRefundedAmountCents,
+        });
+        candidateRefundCount = pick.candidateCount;
+        if (pick.refund) {
+          mollieRefund = pick.refund;
+          mollieLookupSource = mollieLookupSource === "none" ? "list_pick" : mollieLookupSource;
+        } else if (pick.ambiguous) {
+          ambiguousRefund = true;
+        }
+      }
+    } catch (_) {
+      warnings.push("mollie_refund_list_failed");
+    }
+  }
+
+  if (ambiguousRefund) {
+    return {
+      ok: false,
+      error: "ambiguous_refund",
+      candidate_count: candidateRefundCount,
+      candidateCount: candidateRefundCount,
+      mollie_payment_id: paymentContext.mollie_payment_id,
+    };
+  }
+
+  const mollieRefundStatus = safeStr(mollieRefund?.status, 40);
+  const mollieRefundId = safeStr(mollieRefund?.id, 120);
+  const mollieRefundAmountCents = _mollieAmountValueToCents(mollieRefund?.amount?.value);
+  const mollieRefundCreatedAt = safeStr(
+    mollieRefund?.createdAt ?? mollieRefund?.created_at,
+    64,
+  );
+  const mollieRefundDescription = safeStr(mollieRefund?.description, 200);
+
+  const storedPaidAmountCentsForClassification =
+    paymentAmountCents != null && paymentAmountCents > 0
+      ? paymentAmountCents
+      : paymentContext.paid_amount_cents;
+  const storedLifecycle = _classifyStoredLifecycle({
+    refundStatus: storedRefundStatus,
+    mollieRefundStatus: storedMollieRefundStatus,
+    refundedAmountCents: storedRefundedAmountCents,
+    paidAmountCents: storedPaidAmountCentsForClassification,
+  });
+  const mollieLifecycle = _classifyMollieLifecycle({
+    refundStatus: mollieRefundStatus,
+    paymentStatus,
+    paymentAmountCents,
+    paymentAmountRefundedCents,
+  });
+
+  const isStale = storedLifecycle !== mollieLifecycle;
+  let recommendedNextAction;
+  if (!isStale) {
+    recommendedNextAction = "no_change";
+  } else if (
+    mollieLifecycle === "refunded" ||
+    mollieLifecycle === "partially_refunded" ||
+    mollieLifecycle === "failed"
+  ) {
+    recommendedNextAction = "persist_refresh";
+  } else {
+    recommendedNextAction = "manual_review";
+  }
+
+  if (refundIdHint && storedMollieRefundId && refundIdHint !== storedMollieRefundId) {
+    warnings.push("refund_id_hint_does_not_match_stored_refund_id");
+  }
+  if (mollieRefundId && storedMollieRefundId && mollieRefundId !== storedMollieRefundId) {
+    warnings.push("mollie_refund_id_differs_from_stored");
+  }
+  if (
+    mollieRefundAmountCents != null &&
+    storedRefundedAmountCents > 0 &&
+    mollieRefundAmountCents !== storedRefundedAmountCents
+  ) {
+    warnings.push("refund_amount_cents_differs_from_stored");
+  }
+  if (
+    paymentAmountRefundedCents != null &&
+    paymentAmountCents != null &&
+    paymentAmountRefundedCents > 0 &&
+    paymentAmountRefundedCents < paymentAmountCents
+  ) {
+    warnings.push("payment_partially_refunded");
+  }
+  if (!mollieRefund) {
+    warnings.push("mollie_refund_not_found");
+  }
+
+  return {
+    ok: true,
+    dry_run: true,
+    booking_id: bookingId,
+    bookingId,
+    public_booking_reference: publicBookingReference || null,
+    publicBookingReference: publicBookingReference || null,
+    tenant_id: tenantScope.tenant_id,
+    tenantId: tenantScope.tenant_id,
+    company_id: tenantScope.company_id,
+    companyId: tenantScope.company_id,
+    scope: useLegScope ? "operational_leg" : "parent",
+    leg_id: useLegScope ? safeLegId : null,
+    legId: useLegScope ? safeLegId : null,
+    leg_type: useLegScope
+      ? (safeLegType || safeStr(legEntry?.leg_type ?? legEntry?.legType, 24) || null)
+      : null,
+    legType: useLegScope
+      ? (safeLegType || safeStr(legEntry?.leg_type ?? legEntry?.legType, 24) || null)
+      : null,
+    stored: {
+      refund_status: storedRefundStatus || null,
+      mollie_refund_status: storedMollieRefundStatus || null,
+      mollie_refund_id: storedMollieRefundId || null,
+      mollie_payment_id: storedMolliePaymentId || null,
+      refunded_amount_cents: storedRefundedAmountCents,
+      refunded_at: storedRefundedAt || null,
+      credit_decision: storedCreditDecision || null,
+    },
+    mollie: {
+      payment_id: paymentContext.mollie_payment_id,
+      payment_status: paymentStatus || null,
+      payment_amount_cents: paymentAmountCents != null ? paymentAmountCents : null,
+      payment_amount_refunded_cents:
+        paymentAmountRefundedCents != null ? paymentAmountRefundedCents : null,
+      refund_id: mollieRefundId || null,
+      refund_status: mollieRefundStatus || null,
+      refund_amount_cents: mollieRefundAmountCents != null ? mollieRefundAmountCents : null,
+      refund_created_at: mollieRefundCreatedAt || null,
+      refund_description: mollieRefundDescription || null,
+      refund_lookup_source: mollieLookupSource,
+      candidate_refund_count: candidateRefundCount,
+    },
+    classification: {
+      stored_lifecycle: storedLifecycle,
+      mollie_lifecycle: mollieLifecycle,
+      is_stale: isStale,
+      recommended_next_action: recommendedNextAction,
+    },
+    warnings,
+  };
 }
 
 async function refreshMollieRefundStatusForBooking(
