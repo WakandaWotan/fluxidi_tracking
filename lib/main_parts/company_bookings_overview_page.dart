@@ -2016,15 +2016,24 @@ class _CompanyBookingsOverviewPageState
             .where((item) => item.bucket == _CompanyBookingsFilter.completed)
             .toList(growable: false);
       case _CompanyBookingsFilter.cancelled:
-        // Paid cancelled legs that still need a credit decision or refund
-        // follow-up live in **Te crediteren** only. Settled paid cancelled
-        // legs and unpaid cancelled legs surface here with a settlement chip.
         return _all
             .where(_CompanyBookingOverviewItem.isCancelledBucketVisible)
             .toList(growable: false);
       case _CompanyBookingsFilter.toCredit:
         return _all
             .where(_CompanyBookingOverviewItem.isToCreditBucketVisible)
+            .toList(growable: false);
+      case _CompanyBookingsFilter.refundPending:
+        return _all
+            .where(_CompanyBookingOverviewItem.isRefundLifecyclePending)
+            .toList(growable: false);
+      case _CompanyBookingsFilter.refunded:
+        return _all
+            .where(_CompanyBookingOverviewItem.isRefundLifecycleRefunded)
+            .toList(growable: false);
+      case _CompanyBookingsFilter.refundFailed:
+        return _all
+            .where(_CompanyBookingOverviewItem.isRefundLifecycleFailed)
             .toList(growable: false);
     }
   }
@@ -2039,6 +2048,21 @@ class _CompanyBookingsOverviewPageState
       case _CompanyBookingsFilter.toCredit:
         return _all
             .where(_CompanyBookingOverviewItem.isToCreditBucketVisible)
+            .length
+            .toString();
+      case _CompanyBookingsFilter.refundPending:
+        return _all
+            .where(_CompanyBookingOverviewItem.isRefundLifecyclePending)
+            .length
+            .toString();
+      case _CompanyBookingsFilter.refunded:
+        return _all
+            .where(_CompanyBookingOverviewItem.isRefundLifecycleRefunded)
+            .length
+            .toString();
+      case _CompanyBookingsFilter.refundFailed:
+        return _all
+            .where(_CompanyBookingOverviewItem.isRefundLifecycleFailed)
             .length
             .toString();
       default:
@@ -2273,6 +2297,12 @@ class _CompanyBookingsOverviewPageState
         return tokens.danger;
       case _CompanyBookingsFilter.toCredit:
         return tokens.warningText;
+      case _CompanyBookingsFilter.refundPending:
+        return tokens.warningText;
+      case _CompanyBookingsFilter.refunded:
+        return tokens.palette.success;
+      case _CompanyBookingsFilter.refundFailed:
+        return tokens.danger;
       case _CompanyBookingsFilter.open:
         if (item.statusText.trim().toUpperCase() == 'CONFIRMED') {
           return tokens.palette.success;
@@ -3256,6 +3286,36 @@ class _CompanyBookingsOverviewPageState
                           en: 'To credit',
                           fr: 'À créditer',
                           es: 'Por abonar',
+                        ),
+                        tokens,
+                      ),
+                      _filterChip(
+                        _CompanyBookingsFilter.refundPending,
+                        _t(
+                          nl: 'Terugbetaling bezig',
+                          en: 'Refund pending',
+                          fr: 'Remboursement en cours',
+                          es: 'Reembolso en curso',
+                        ),
+                        tokens,
+                      ),
+                      _filterChip(
+                        _CompanyBookingsFilter.refunded,
+                        _t(
+                          nl: 'Terugbetaald',
+                          en: 'Refunded',
+                          fr: 'Remboursées',
+                          es: 'Reembolsadas',
+                        ),
+                        tokens,
+                      ),
+                      _filterChip(
+                        _CompanyBookingsFilter.refundFailed,
+                        _t(
+                          nl: 'Terugbetaling mislukt',
+                          en: 'Refund failed',
+                          fr: 'Remboursement échoué',
+                          es: 'Reembolso fallido',
                         ),
                         tokens,
                       ),
