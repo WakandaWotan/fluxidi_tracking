@@ -32335,6 +32335,37 @@ function _paymentOptionsCompanyMollieUnavailableResponse() {
   };
 }
 
+const _COMPANY_MOLLIE_BLOCK_MESSAGES = {
+  company_mollie_payments_not_enabled:
+    "Company Mollie checkout is not enabled for this company yet.",
+  company_mollie_not_connected:
+    "Company Mollie account is not connected for this company.",
+  company_mollie_token_missing:
+    "Company Mollie credentials are missing or incomplete.",
+  company_mollie_token_refresh_failed:
+    "Company Mollie credentials could not be refreshed.",
+  company_mollie_credentials_unavailable:
+    "Company Mollie checkout is not available for this company.",
+};
+
+function _paymentOptionsCompanyMollieBlockResponse(errorCode) {
+  const code = safeStr(errorCode, 80) || "company_mollie_credentials_unavailable";
+  const normalized = Object.prototype.hasOwnProperty.call(
+    _COMPANY_MOLLIE_BLOCK_MESSAGES,
+    code,
+  )
+    ? code
+    : "company_mollie_credentials_unavailable";
+  return {
+    ok: false,
+    error: normalized,
+    code: normalized,
+    message: _COMPANY_MOLLIE_BLOCK_MESSAGES[normalized],
+    payment_owner_mode: "company_mollie",
+    paymentOwnerMode: "company_mollie",
+  };
+}
+
 function _paymentOptionsUnsupportedCheckoutResponse(paymentMethod) {
   const method = safeStr(paymentMethod, 80) || "unknown";
   return {
@@ -32415,15 +32446,48 @@ async function validateCompanyPaymentMethodForBooking(env, tenantScope = {}, pay
   const ownerMode = resolved.payment_owner_mode;
   if (onlineRequested && ownerMode === "company_mollie") {
     const scopeMask = _bookingIntentScopeMask(tenantScope || {});
+    if (!mollieCompanyPaymentsEnabled(env)) {
+      console.log(
+        `[PAYMENT_OWNER][COMPANY_MOLLIE_BLOCK] tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} reason=company_mollie_payments_not_enabled`,
+      );
+      return {
+        ..._paymentOptionsCompanyMollieBlockResponse("company_mollie_payments_not_enabled"),
+        payment_method: requestedMethod,
+        paymentMethod: requestedMethod,
+        status: 400,
+      };
+    }
+    let readiness = null;
+    try {
+      readiness = await resolveCompanyMollieConnectCredentials(
+        env,
+        {
+          tenant_id: safeStr(tenantScope?.tenant_id ?? tenantScope?.tenantId, 80),
+          company_id: safeStr(tenantScope?.company_id ?? tenantScope?.companyId, 80),
+        },
+        { purpose: "payment_validation" },
+      );
+    } catch (_) {
+      readiness = { ok: false, error: "company_mollie_credentials_unavailable" };
+    }
+    const readinessOk = readiness?.ok === true;
+    const readinessError =
+      safeStr(readiness?.error, 80) || "company_mollie_credentials_unavailable";
+    readiness = null;
+    if (!readinessOk) {
+      console.log(
+        `[PAYMENT_OWNER][COMPANY_MOLLIE_BLOCK] tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} reason=${readinessError}`,
+      );
+      return {
+        ..._paymentOptionsCompanyMollieBlockResponse(readinessError),
+        payment_method: requestedMethod,
+        paymentMethod: requestedMethod,
+        status: 400,
+      };
+    }
     console.log(
-      `[PAYMENT_OWNER][COMPANY_MOLLIE_UNAVAILABLE] tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"}`,
+      `[PAYMENT_OWNER][COMPANY_MOLLIE_READY] tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"}`,
     );
-    return {
-      ..._paymentOptionsCompanyMollieUnavailableResponse(),
-      payment_method: requestedMethod,
-      paymentMethod: requestedMethod,
-      status: 400,
-    };
   }
   const enabled = resolved.enabledSet;
   const checkoutSupported =
