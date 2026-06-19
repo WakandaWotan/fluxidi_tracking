@@ -669,6 +669,20 @@ async function updateBusinessProfileMollieMetadata(env, scope, metadata = {}) {
   return normalized;
 }
 
+function hasSuccessfulMollieConnectRecord(record) {
+  if (!record || typeof record !== "object") return false;
+  const status = safeStr(record.status, 64).toLowerCase();
+  if (record.connected === true || status === "connected") return true;
+  const lastConnectedAt = safeStr(record.lastConnectedAt ?? record.last_connected_at, 64);
+  const organizationId = safeStr(record.organizationId ?? record.organization_id, 80);
+  const profileId = safeStr(record.profileId ?? record.profile_id, 80);
+  const hasTokenMaterial = !!(
+    (record.accessTokenEncrypted && typeof record.accessTokenEncrypted === "object") ||
+    (record.refreshTokenEncrypted && typeof record.refreshTokenEncrypted === "object")
+  );
+  return !!lastConnectedAt && hasTokenMaterial && (!!organizationId || !!profileId);
+}
+
 async function saveScopedMollieConnectAuthFailureStatus(
   env,
   scope,
@@ -679,10 +693,35 @@ async function saveScopedMollieConnectAuthFailureStatus(
   if (!scopedKey) return;
   const nowIso = new Date().toISOString();
   const existing = await loadScopedMollieConnectAuthRecord(env, scope);
+  const safeErrorCode = String(errorCode || "mollie_connect_callback_failed");
+  const safeFailureStatus = String(status || "failed");
+  if (hasSuccessfulMollieConnectRecord(existing)) {
+    const existingStatus = safeStr(existing.status, 64).toLowerCase();
+    const next = {
+      ...existing,
+      connected: true,
+      status: existingStatus === "connected" ? safeStr(existing.status, 64) : "connected",
+      tokenRef: safeStr(existing.tokenRef ?? existing.token_ref, 512) || scopedKey,
+      lastErrorCode: safeErrorCode,
+      last_error_code: safeErrorCode,
+      lastErrorAt: nowIso,
+      last_error_at: nowIso,
+      lastFailedAt: nowIso,
+      last_failed_at: nowIso,
+      lastFailureStatus: safeFailureStatus,
+      last_failure_status: safeFailureStatus,
+      lastCallbackErrorCode: safeErrorCode,
+      last_callback_error_code: safeErrorCode,
+      updatedAt: nowIso,
+      updated_at: nowIso,
+    };
+    await env.BOOKING_KV.put(scopedKey, JSON.stringify(next));
+    return;
+  }
   const next = {
     version: 1,
     connected: false,
-    status: String(status || "failed"),
+    status: safeFailureStatus,
     organizationId: safeStr(existing?.organizationId ?? existing?.organization_id, 80) || null,
     profileId: safeStr(existing?.profileId ?? existing?.profile_id, 80) || null,
     mollie_mode: safeStr(existing?.mollie_mode ?? existing?.mollieMode, 16) || "unknown",
@@ -697,8 +736,11 @@ async function saveScopedMollieConnectAuthFailureStatus(
         : null,
     tokenRef: scopedKey,
     lastConnectedAt: safeStr(existing?.lastConnectedAt ?? existing?.last_connected_at, 64) || null,
-    lastErrorCode: String(errorCode || "mollie_connect_callback_failed"),
+    lastErrorCode: safeErrorCode,
     lastErrorAt: nowIso,
+    lastFailedAt: nowIso,
+    lastFailureStatus: safeFailureStatus,
+    lastCallbackErrorCode: safeErrorCode,
     createdAt: safeStr(existing?.createdAt ?? existing?.created_at, 64) || nowIso,
     updatedAt: nowIso,
   };
