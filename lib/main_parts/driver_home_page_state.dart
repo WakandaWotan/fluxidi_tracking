@@ -13685,16 +13685,10 @@ class _DriverHomePageState extends State<DriverHomePage>
                   ),
                   active: _ridesHubSegment == _DriverRidesHubSegment.history,
                   onTap: () {
-                    if (_ridesHubSegment == _DriverRidesHubSegment.history) {
-                      return;
-                    }
                     debugPrint(
-                      '[DRIVER_RIDES][SEGMENT] segment=${_DriverRidesHubSegment.history} source=hub_chip',
+                      '[DRIVER_RIDES][SEGMENT] segment=${_DriverRidesHubSegment.history} source=hub_chip action=open_trip_history',
                     );
-                    setState(
-                      () => _ridesHubSegment = _DriverRidesHubSegment.history,
-                    );
-                    _markBookingsUiDirty();
+                    _openTripHistoryFromDashboard();
                   },
                 ),
                 const SizedBox(width: 4),
