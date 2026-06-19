@@ -34121,10 +34121,20 @@ async function refreshMollieRefundStatusForBooking(
   const actorRole =
     safeStr(actorRoleRaw, 32).toLowerCase() === "company" ? "company" : "admin";
   let complianceEmitOk = false;
-  let complianceFinalEmitReason = isLegOnlyScope ? "leg_only_scope" : "not_terminal";
+  let complianceFinalEmitReason = "not_terminal";
+  let complianceFinalEmitScope = "none";
   const isFinalRefunded =
     mapped.refundStatus === "refunded" ||
     _mollieRefundApiStatusIsTerminalRefunded(mapped.mollieRefundStatus);
+  // PAY-REFRESH-C: treat Mollie terminal-failure statuses as audit-worthy too
+  // (failed / canceled / cancelled / expired). The Mollie refund mapper sets
+  // mapped.refundStatus to `mollie_refund_failed` for those, and
+  // _mollieRefundApiStatusIsFailed also covers the raw lowercase token from
+  // mollieRefundStatus, so this guard catches both shapes.
+  const isFinalFailed =
+    mapped.refundStatus === "mollie_refund_failed" ||
+    _mollieRefundApiStatusIsFailed(mapped.refundStatus) ||
+    _mollieRefundApiStatusIsFailed(mapped.mollieRefundStatus);
   if (isFinalRefunded && !isLegOnlyScope) {
     const finalEmitOut = await _emitMollieRefundFinalComplianceIfNeeded(env, key, rec, bookingId, {
       actorRole,
@@ -34136,12 +34146,49 @@ async function refreshMollieRefundStatusForBooking(
     });
     complianceEmitOk = finalEmitOut?.emitted === true;
     complianceFinalEmitReason = safeStr(finalEmitOut?.reason, 64) || "unknown";
-  } else if (isFinalRefunded && isLegOnlyScope) {
-    // Parent-level compliance final emit is owned by the leg-refund apply
-    // path. The status-refresh endpoint must not double-emit a parent
-    // compliance event from a leg-only refresh.
+    complianceFinalEmitScope = "parent";
+  } else if (isLegOnlyScope && (isFinalRefunded || isFinalFailed)) {
+    // PAY-REFRESH-C: leg-scoped final audit emit.
+    //
+    // Previously this branch was an explicit no-op (`reason=leg_only_scope`)
+    // because the only leg-level emit path lived in
+    // `_applyMollieRefundForOperationalLegAuthoritative`, which fires once
+    // at refund CREATION with `mollie_refund_pending`. That left
+    // Backendmeldingen showing only the original "Betalingsupdate" event for
+    // leg-scoped refunds even after Mollie reached `refunded`.
+    //
+    // The new helper emits exactly one leg-scoped final
+    // `booking_mollie_refund` event per (leg, mollie_refund_id, final_status)
+    // tuple, deduped by a separate `compliance_mollie_refund_final_*`
+    // marker on the leg entry. The leg-level initial-emit marker
+    // (`compliance_mollie_refund_emitted_at`) is left untouched so the
+    // refund-creation pending event remains visible in audit history.
+    const legFinalEmitOut = await _emitMollieRefundFinalLegComplianceIfNeeded(
+      env,
+      key,
+      rec,
+      bookingId,
+      {
+        legId: safeLegId,
+        legType: legTypeRaw,
+        mollieRefundId: mapped.mollieRefundId || mollieRefundId,
+        refundStatusFinal: mapped.refundStatus,
+        mollieRefundStatusFinal: mapped.mollieRefundStatus,
+        refundAmountCents: mapped.refundedAmountCents,
+        refundedAt: mapped.refundedAt,
+        actorRole,
+        sourceEndpoint: source_endpoint,
+        sourceOverride: "refund_status_refresh_leg",
+      },
+    );
+    complianceEmitOk = legFinalEmitOut?.emitted === true;
+    complianceFinalEmitReason = safeStr(legFinalEmitOut?.reason, 64) || "unknown";
+    complianceFinalEmitScope = "leg";
+  } else if (isLegOnlyScope) {
+    complianceFinalEmitReason = "not_terminal";
+    complianceFinalEmitScope = "leg";
     console.log(
-      `[BOOKING][MOLLIE_REFUND_FINAL_EMIT] booking=${_bookingIntentMask(bookingId)} emitted=false reason=leg_only_scope leg=${_bookingIntentMask(safeLegId)}`,
+      `[BOOKING][MOLLIE_REFUND_LEG_FINAL_EMIT] booking=${_bookingIntentMask(bookingId)} leg=${_bookingIntentMask(safeLegId)} emitted=false reason=not_terminal`,
     );
   } else {
     console.log(
@@ -34224,6 +34271,17 @@ async function refreshMollieRefundStatusForBooking(
     complianceEmitOk: complianceEmitOk,
     compliance_final_emit_reason: complianceFinalEmitReason,
     complianceFinalEmitReason: complianceFinalEmitReason,
+    // PAY-REFRESH-C: which compliance final-emit path ran for this refresh.
+    //   * "parent" — _emitMollieRefundFinalComplianceIfNeeded was invoked
+    //     (full-parent refund, terminal refunded).
+    //   * "leg"    — _emitMollieRefundFinalLegComplianceIfNeeded was invoked
+    //     (leg-only refund, terminal refunded or failed). Combined with
+    //     `compliance_final_emit_reason` this distinguishes a fresh emit
+    //     (`reason=ok`) from a deduped emit (`reason=already_emitted`) from
+    //     a non-terminal observation (`reason=not_terminal`).
+    //   * "none"   — neither path ran (non-terminal full-parent observation).
+    compliance_final_emit_scope: complianceFinalEmitScope,
+    complianceFinalEmitScope: complianceFinalEmitScope,
   };
 }
 
@@ -34721,6 +34779,103 @@ async function _persistLegMollieRefundComplianceMarker(env, key, rec, legId, mol
   }
 }
 
+// PAY-REFRESH-C: leg-level FINAL compliance emit dedupe markers.
+//
+// Distinct from the existing leg-level INITIAL emit markers
+// (`compliance_mollie_refund_emitted_at` / `compliance_mollie_refund_id`)
+// that the leg refund creation path writes when it first records
+// `mollie_refund_pending`. The final-emit markers track when a
+// status-refresh observed and emitted a leg-scoped FINAL audit event
+// (refunded / failed). Keying the marker by mollie_refund_id + final
+// status token guarantees idempotency:
+//   * Clicking status-refresh twice for the same refund produces exactly
+//     one final audit event.
+//   * A theoretical second refund attempt for the same leg with a
+//     different mollie_refund_id can still emit a fresh final event.
+//   * A theoretical pending → refunded → failed transition (very rare)
+//     would emit one event per distinct final status.
+//
+// These markers live on the operational leg entry; they never pollute
+// the parent record's compliance markers.
+function _legMollieRefundFinalComplianceAlreadyEmittedForRefundId(
+  leg,
+  mollieRefundId,
+  finalStatusToken,
+) {
+  if (!leg || typeof leg !== "object") return false;
+  const markerTs = safeStr(
+    leg.compliance_mollie_refund_final_emitted_at ??
+      leg.complianceMollieRefundFinalEmittedAt,
+    64,
+  );
+  if (!markerTs) return false;
+  const wantedRefundId = safeStr(mollieRefundId, 120);
+  const markerRefundId = safeStr(
+    leg.compliance_mollie_refund_final_id ?? leg.complianceMollieRefundFinalId,
+    120,
+  );
+  const wantedStatus = safeStr(finalStatusToken, 64).toLowerCase();
+  const markerStatus = safeStr(
+    leg.compliance_mollie_refund_final_status ??
+      leg.complianceMollieRefundFinalStatus,
+    64,
+  ).toLowerCase();
+  if (!wantedRefundId) {
+    // Caller could not supply a refund id; dedupe by status only so a bare
+    // retry still skips a duplicate emit.
+    return wantedStatus ? markerStatus === wantedStatus : true;
+  }
+  if (!markerRefundId) return false;
+  if (markerRefundId !== wantedRefundId) return false;
+  return wantedStatus ? markerStatus === wantedStatus : true;
+}
+
+async function _persistLegMollieRefundFinalComplianceMarker(
+  env,
+  key,
+  rec,
+  legId,
+  mollieRefundId,
+  finalStatusToken,
+) {
+  if (!env?.BOOKING_KV || !key || !rec) return;
+  const safeLegId = safeStr(legId, 200);
+  if (!safeLegId) return;
+  const nowIso = new Date().toISOString();
+  const safeRefundId = safeStr(mollieRefundId, 120);
+  const safeFinalStatus = safeStr(finalStatusToken, 64).toLowerCase();
+  const mutated = _mutateOperationalLegEntryInRecord(rec, safeLegId, (entry) => {
+    const next = { ...(entry && typeof entry === "object" ? entry : {}) };
+    next.compliance_mollie_refund_final_emitted_at = nowIso;
+    next.complianceMollieRefundFinalEmittedAt = nowIso;
+    if (safeRefundId) {
+      next.compliance_mollie_refund_final_id = safeRefundId;
+      next.complianceMollieRefundFinalId = safeRefundId;
+    }
+    if (safeFinalStatus) {
+      next.compliance_mollie_refund_final_status = safeFinalStatus;
+      next.complianceMollieRefundFinalStatus = safeFinalStatus;
+    }
+    return next;
+  });
+  if (!mutated) return;
+  rec.updatedAt = nowIso;
+  rec.updated_at = nowIso;
+  if (rec.booking && typeof rec.booking === "object") {
+    rec.booking.updatedAt = nowIso;
+    rec.booking.updated_at = nowIso;
+  }
+  try {
+    await env.BOOKING_KV.put(key, JSON.stringify(rec));
+  } catch (_) {
+    // Best-effort marker only. The compliance event was already emitted
+    // successfully; a marker-persist failure only risks one potential
+    // redundant emit on a future retry, which the dedupe check on the
+    // next refresh will still surface as `reason=already_emitted` once
+    // the marker eventually persists.
+  }
+}
+
 async function _emitMollieRefundComplianceFromRecordBestEffort(
   env,
   rec,
@@ -34859,6 +35014,267 @@ async function _emitMollieRefundFinalComplianceIfNeeded(
     `[BOOKING][MOLLIE_REFUND_FINAL_EMIT] booking=${_bookingIntentMask(bookingId)} emitted=false reason=${failReason}`,
   );
   return { ok: false, emitted: false, reason: failReason, error: failReason };
+}
+
+// PAY-REFRESH-C: orchestrate the leg-scoped FINAL `booking_mollie_refund`
+// compliance event emit triggered by `/bookings/:id/mollie-refund/status-refresh`
+// when the refreshed Mollie state for an operational leg reaches a terminal
+// status (refunded / failed / canceled / expired).
+//
+// Idempotency layers:
+//   1. Terminal-status gate: returns `reason=not_terminal` for any non-final
+//      Mollie status. Status-refresh that observes pending/processing never
+//      emits.
+//   2. Per-leg + refund-id + final-status marker, persisted to KV. Subsequent
+//      refresh calls for the same refund id with the same final status return
+//      `reason=already_emitted` without re-emitting.
+//   3. Marker persistence is best-effort; a single redundant emit is
+//      preferable to no emit at all if KV write fails immediately after a
+//      successful Compliance Worker accept.
+//
+// Event enrichment:
+//   * Reuses `buildBookingMollieRefundComplianceEvent(rec, bookingId, { leg })`
+//     so leg_id / leg_type / planning_reference / vehicle / driver come from
+//     the existing `_bookingComplianceAssignmentContext` helper.
+//   * Adds optional Mollie payment-level fields persisted by PAY-REFRESH-B
+//     (`mollie_payment_id`, `mollie_payment_amount_cents`,
+//     `mollie_payment_amount_refunded_cents`), `payment_method`, and a
+//     `refund_partial` boolean derived from `amountRefunded < amount`. The
+//     Compliance Worker preserves unknown keys, so Backendmeldingen can use
+//     them to render "Gedeeltelijke terugbetaling bevestigd" without
+//     re-fetching Mollie.
+//
+// This function is invoked ONLY from the write path (`refreshMollieRefundStatusForBooking`).
+// The read-only `/mollie-refund/status-snapshot` endpoint MUST NOT call it.
+async function _emitMollieRefundFinalLegComplianceIfNeeded(
+  env,
+  key,
+  rec,
+  bookingId,
+  {
+    legId = "",
+    legType = "",
+    mollieRefundId = "",
+    refundStatusFinal = "",
+    mollieRefundStatusFinal = "",
+    refundAmountCents = null,
+    refundedAt = "",
+    actorRole = "admin",
+    sourceEndpoint = "/bookings/:id/mollie-refund/status-refresh",
+    sourceOverride = "refund_status_refresh_leg",
+  } = {},
+) {
+  const safeLegId = safeStr(legId, 200);
+  if (!safeLegId) {
+    console.log(
+      `[BOOKING][MOLLIE_REFUND_LEG_FINAL_EMIT] booking=${_bookingIntentMask(bookingId)} emitted=false reason=missing_leg_id`,
+    );
+    return { ok: false, emitted: false, reason: "missing_leg_id" };
+  }
+  const refundStatusToken = safeStr(refundStatusFinal, 64)
+    .toLowerCase()
+    .replaceAll("-", "_");
+  const mollieRefundStatusToken = safeStr(mollieRefundStatusFinal, 64)
+    .toLowerCase()
+    .replaceAll("-", "_");
+  const isRefunded =
+    refundStatusToken === "refunded" ||
+    _mollieRefundApiStatusIsTerminalRefunded(refundStatusToken) ||
+    _mollieRefundApiStatusIsTerminalRefunded(mollieRefundStatusToken);
+  const isFailed =
+    refundStatusToken === "mollie_refund_failed" ||
+    _mollieRefundApiStatusIsFailed(refundStatusToken) ||
+    _mollieRefundApiStatusIsFailed(mollieRefundStatusToken);
+  if (!isRefunded && !isFailed) {
+    console.log(
+      `[BOOKING][MOLLIE_REFUND_LEG_FINAL_EMIT] booking=${_bookingIntentMask(bookingId)} leg=${_bookingIntentMask(safeLegId)} emitted=false reason=not_terminal`,
+    );
+    return { ok: false, emitted: false, reason: "not_terminal" };
+  }
+  const finalStatusToken = isRefunded ? "refunded" : "failed";
+  const persistedLeg = _findOperationalLegEntryById(rec, safeLegId) || null;
+  if (!persistedLeg) {
+    console.log(
+      `[BOOKING][MOLLIE_REFUND_LEG_FINAL_EMIT] booking=${_bookingIntentMask(bookingId)} leg=${_bookingIntentMask(safeLegId)} emitted=false reason=leg_not_found`,
+    );
+    return { ok: false, emitted: false, reason: "leg_not_found" };
+  }
+  const refundIdSafe =
+    safeStr(mollieRefundId, 120) || _readMollieRefundIdFromLeg(persistedLeg);
+  if (
+    _legMollieRefundFinalComplianceAlreadyEmittedForRefundId(
+      persistedLeg,
+      refundIdSafe,
+      finalStatusToken,
+    )
+  ) {
+    console.log(
+      `[BOOKING][MOLLIE_REFUND_LEG_FINAL_EMIT] booking=${_bookingIntentMask(bookingId)} leg=${_bookingIntentMask(safeLegId)} emitted=false reason=already_emitted final_status=${finalStatusToken}`,
+    );
+    return {
+      ok: true,
+      emitted: false,
+      skipped: "already_emitted",
+      reason: "already_emitted",
+    };
+  }
+  const resolvedRefundedAt =
+    safeStr(refundedAt, 64) ||
+    safeStr(persistedLeg?.refunded_at ?? persistedLeg?.refundedAt, 64) ||
+    new Date().toISOString();
+  const numericRefundAmountOverride = Number(refundAmountCents);
+  const legStoredAmountRaw =
+    persistedLeg?.refunded_amount_cents ?? persistedLeg?.refundedAmountCents;
+  const numericLegStoredAmount = Number(legStoredAmountRaw);
+  const resolvedRefundAmountCents = Number.isFinite(numericRefundAmountOverride)
+    ? Math.max(0, Math.round(numericRefundAmountOverride))
+    : Number.isFinite(numericLegStoredAmount)
+      ? Math.max(0, Math.round(numericLegStoredAmount))
+      : 0;
+  const legRefundStatus =
+    safeStr(refundStatusFinal, 64) ||
+    safeStr(persistedLeg?.refund_status ?? persistedLeg?.refundStatus, 64) ||
+    (isRefunded ? "refunded" : "mollie_refund_failed");
+  const legMollieRefundStatus =
+    safeStr(mollieRefundStatusFinal, 64) ||
+    safeStr(
+      persistedLeg?.mollie_refund_status ?? persistedLeg?.mollieRefundStatus,
+      64,
+    ) ||
+    legRefundStatus;
+  let complianceEvent = null;
+  try {
+    complianceEvent = buildBookingMollieRefundComplianceEvent(rec, bookingId, {
+      refundStatus: legRefundStatus,
+      mollieRefundStatus: legMollieRefundStatus,
+      refundAmountCents: resolvedRefundAmountCents,
+      creditDecision: _bookingCreditDecisionRaw(rec),
+      mollieRefundId: refundIdSafe,
+      actorRole,
+      refundedAt: resolvedRefundedAt,
+      sourceEndpoint,
+      sourceOverride: safeStr(sourceOverride, 80) || "refund_status_refresh_leg",
+      leg: persistedLeg,
+    });
+  } catch (_) {
+    console.log(
+      `[BOOKING][MOLLIE_REFUND_LEG_FINAL_EMIT] booking=${_bookingIntentMask(bookingId)} leg=${_bookingIntentMask(safeLegId)} emitted=false reason=builder_error`,
+    );
+    return { ok: false, emitted: false, reason: "builder_error" };
+  }
+  if (!complianceEvent) {
+    console.log(
+      `[BOOKING][MOLLIE_REFUND_LEG_FINAL_EMIT] booking=${_bookingIntentMask(bookingId)} leg=${_bookingIntentMask(safeLegId)} emitted=false reason=builder_null`,
+    );
+    return { ok: false, emitted: false, reason: "builder_null" };
+  }
+  const paymentAmountCents = _readNumericCentsFromRecordLayers(
+    rec,
+    "mollie_payment_amount_cents",
+    "molliePaymentAmountCents",
+  );
+  const paymentAmountRefundedCents = _readNumericCentsFromRecordLayers(
+    rec,
+    "mollie_payment_amount_refunded_cents",
+    "molliePaymentAmountRefundedCents",
+  );
+  const parentRefundedAmountCentsTotal = _readNumericCentsFromRecordLayers(
+    rec,
+    "refunded_amount_cents",
+    "refundedAmountCents",
+  );
+  const molliePaymentIdFromRec = _readMolliePaymentIdFromRecordLayers(rec);
+  if (molliePaymentIdFromRec) {
+    complianceEvent.mollie_payment_id = molliePaymentIdFromRec;
+    complianceEvent.molliePaymentId = molliePaymentIdFromRec;
+    if (complianceEvent.payment && typeof complianceEvent.payment === "object") {
+      complianceEvent.payment.mollie_payment_id = molliePaymentIdFromRec;
+      complianceEvent.payment.molliePaymentId = molliePaymentIdFromRec;
+    }
+  }
+  if (paymentAmountCents > 0) {
+    complianceEvent.mollie_payment_amount_cents = paymentAmountCents;
+    complianceEvent.molliePaymentAmountCents = paymentAmountCents;
+    if (complianceEvent.payment && typeof complianceEvent.payment === "object") {
+      complianceEvent.payment.mollie_payment_amount_cents = paymentAmountCents;
+      complianceEvent.payment.molliePaymentAmountCents = paymentAmountCents;
+    }
+  }
+  if (paymentAmountRefundedCents > 0) {
+    complianceEvent.mollie_payment_amount_refunded_cents = paymentAmountRefundedCents;
+    complianceEvent.molliePaymentAmountRefundedCents = paymentAmountRefundedCents;
+    if (complianceEvent.payment && typeof complianceEvent.payment === "object") {
+      complianceEvent.payment.mollie_payment_amount_refunded_cents = paymentAmountRefundedCents;
+      complianceEvent.payment.molliePaymentAmountRefundedCents = paymentAmountRefundedCents;
+    }
+  }
+  if (parentRefundedAmountCentsTotal > 0) {
+    complianceEvent.cumulative_refunded_amount_cents = parentRefundedAmountCentsTotal;
+    complianceEvent.cumulativeRefundedAmountCents = parentRefundedAmountCentsTotal;
+  }
+  const paymentMethod = safeStr(
+    rec?.payment_method ??
+      rec?.paymentMethod ??
+      rec?.booking?.payment_method ??
+      rec?.booking?.paymentMethod ??
+      rec?.payload?.payment_method ??
+      rec?.payload?.paymentMethod,
+    80,
+  );
+  if (paymentMethod) {
+    complianceEvent.payment_method = paymentMethod;
+    complianceEvent.paymentMethod = paymentMethod;
+    if (complianceEvent.payment && typeof complianceEvent.payment === "object") {
+      complianceEvent.payment.method = paymentMethod;
+      complianceEvent.payment.payment_method = paymentMethod;
+      complianceEvent.payment.paymentMethod = paymentMethod;
+    }
+  }
+  const safeLegType =
+    safeStr(legType, 24) ||
+    safeStr(persistedLeg?.leg_type ?? persistedLeg?.legType, 24);
+  if (safeLegType) {
+    complianceEvent.leg_type = safeLegType;
+    complianceEvent.legType = safeLegType;
+  }
+  // Partial-refund hint: amountRefunded > 0 and amountRefunded < amount.
+  // Backendmeldingen can use this to render "Gedeeltelijke terugbetaling
+  // bevestigd" vs "Volledige terugbetaling bevestigd".
+  if (paymentAmountCents > 0 && paymentAmountRefundedCents > 0) {
+    complianceEvent.refund_partial =
+      paymentAmountRefundedCents < paymentAmountCents;
+    complianceEvent.refundPartial = complianceEvent.refund_partial;
+  }
+  const emitOut = await emitComplianceEventBestEffort(env, complianceEvent, {
+    logLabel: "mollie_refund_leg_final",
+  });
+  if (emitOut?.ok === true) {
+    await _persistLegMollieRefundFinalComplianceMarker(
+      env,
+      key,
+      rec,
+      safeLegId,
+      refundIdSafe,
+      finalStatusToken,
+    );
+    console.log(
+      `[BOOKING][MOLLIE_REFUND_LEG_FINAL_EMIT] booking=${_bookingIntentMask(bookingId)} leg=${_bookingIntentMask(safeLegId)} emitted=true reason=ok final_status=${finalStatusToken}`,
+    );
+    return { ok: true, emitted: true, reason: "ok", final_status: finalStatusToken };
+  }
+  const failReason =
+    safeStr(emitOut?.skipped ?? emitOut?.error ?? emitOut?.status, 64) ||
+    "emit_failed";
+  console.log(
+    `[BOOKING][MOLLIE_REFUND_LEG_FINAL_EMIT] booking=${_bookingIntentMask(bookingId)} leg=${_bookingIntentMask(safeLegId)} emitted=false reason=${failReason}`,
+  );
+  return {
+    ok: false,
+    emitted: false,
+    reason: failReason,
+    error: failReason,
+    final_status: finalStatusToken,
+  };
 }
 
 function _applyMollieRefundFieldsToLeg(legEntry, fields) {
