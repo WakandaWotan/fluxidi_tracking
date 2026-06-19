@@ -31859,6 +31859,20 @@ function _validateMollieWebhookMetadataScope(stored, metadataTenantId, metadataC
   return { ok: false, reason: "metadata_scope_missing" };
 }
 
+function _safeMollieOwnershipMetadata(source = {}) {
+  const src = source && typeof source === "object" ? source : {};
+  const organizationId =
+    safeStr(src.mollie_organization_id ?? src.mollieOrganizationId, 80) || null;
+  const profileId =
+    safeStr(src.mollie_profile_id ?? src.mollieProfileId, 80) || null;
+  const modeRaw = safeStr(src.mollie_mode ?? src.mollieMode, 16).toLowerCase();
+  const mode =
+    modeRaw === "test" || modeRaw === "live" || modeRaw === "unknown"
+      ? modeRaw
+      : null;
+  return { organizationId, profileId, mode };
+}
+
 function readPaymentOwnershipFromRecord(rec) {
   const source = rec && typeof rec === "object" ? rec : {};
   const paymentDemoRaw = source.payment_demo_mode ?? source.paymentDemoMode;
@@ -31868,6 +31882,7 @@ function readPaymentOwnershipFromRecord(rec) {
       source.payment_owner ??
       source.paymentOwner,
   );
+  const mollieMeta = _safeMollieOwnershipMetadata(source);
   return {
     payment_owner_mode: paymentOwnerMode,
     payment_credential_source:
@@ -31880,6 +31895,11 @@ function readPaymentOwnershipFromRecord(rec) {
       ) || null,
     payment_demo_mode:
       typeof paymentDemoRaw === "boolean" ? paymentDemoRaw : null,
+    payment_company_id:
+      safeStr(source.payment_company_id ?? source.paymentCompanyId, 80) || null,
+    mollie_organization_id: mollieMeta.organizationId,
+    mollie_profile_id: mollieMeta.profileId,
+    mollie_mode: mollieMeta.mode,
   };
 }
 
@@ -31923,6 +31943,19 @@ function applyPaymentOwnershipFields(target, creds = {}) {
   target.paymentCostOwner = costOwner;
   target.payment_demo_mode = demoMode;
   target.paymentDemoMode = demoMode;
+  const mollieMeta = _safeMollieOwnershipMetadata(creds);
+  if (mollieMeta.organizationId) {
+    target.mollie_organization_id = mollieMeta.organizationId;
+    target.mollieOrganizationId = mollieMeta.organizationId;
+  }
+  if (mollieMeta.profileId) {
+    target.mollie_profile_id = mollieMeta.profileId;
+    target.mollieProfileId = mollieMeta.profileId;
+  }
+  if (mollieMeta.mode) {
+    target.mollie_mode = mollieMeta.mode;
+    target.mollieMode = mollieMeta.mode;
+  }
   return target;
 }
 
@@ -31937,6 +31970,7 @@ function paymentOwnershipApiFields(creds = {}) {
       creds.companyId,
     80,
   );
+  const mollieMeta = _safeMollieOwnershipMetadata(creds);
   return {
     payment_owner: ownerMode,
     paymentOwner: ownerMode,
@@ -31952,6 +31986,21 @@ function paymentOwnershipApiFields(creds = {}) {
     paymentCostOwner: paymentCostOwnerForCredentialSource(ownerMode, credentialSource),
     payment_demo_mode: creds.payment_demo_mode === true,
     paymentDemoMode: creds.payment_demo_mode === true,
+    ...(mollieMeta.organizationId
+      ? {
+          mollie_organization_id: mollieMeta.organizationId,
+          mollieOrganizationId: mollieMeta.organizationId,
+        }
+      : {}),
+    ...(mollieMeta.profileId
+      ? {
+          mollie_profile_id: mollieMeta.profileId,
+          mollieProfileId: mollieMeta.profileId,
+        }
+      : {}),
+    ...(mollieMeta.mode
+      ? { mollie_mode: mollieMeta.mode, mollieMode: mollieMeta.mode }
+      : {}),
   };
 }
 
@@ -31961,7 +32010,11 @@ function applyPaymentOwnershipFromPayResult(target, pay) {
     payment_owner_mode: pay.payment_owner_mode ?? pay.paymentOwnerMode,
     payment_credential_source: pay.payment_credential_source ?? pay.paymentCredentialSource,
     payment_demo_mode: pay.payment_demo_mode ?? pay.paymentDemoMode,
-    payment_company_id: pay.payment_company_id ?? pay.paymentCompanyId ?? pay.company_id ?? pay.companyId,
+    payment_company_id:
+      pay.payment_company_id ?? pay.paymentCompanyId ?? pay.company_id ?? pay.companyId,
+    mollie_organization_id: pay.mollie_organization_id ?? pay.mollieOrganizationId,
+    mollie_profile_id: pay.mollie_profile_id ?? pay.mollieProfileId,
+    mollie_mode: pay.mollie_mode ?? pay.mollieMode,
   });
 }
 
@@ -38425,24 +38478,31 @@ async function mollieCreatePayment(payload, env, request, options = {}) {
     );
     if (!mollieRes.ok || !mollie?.id || !mollie?._links?.checkout?.href) {
       // Keep booking in KV for debugging
+      const failureRecord = {
+        bookingId,
+        status: "PENDING",
+        createdAt,
+        tenant_id: paymentTenantId,
+        tenantId: paymentTenantId,
+        company_id: paymentCompanyId,
+        companyId: paymentCompanyId,
+        payload: payloadClean,
+        quote,
+        mollie_error: mollie,
+      };
+      applyPaymentOwnershipFields(failureRecord, rideCredentials);
       await env.BOOKING_KV.put(
         `booking:${bookingId}`,
-        JSON.stringify({
-          bookingId,
-          status: "PENDING",
-          createdAt,
-          tenant_id: paymentTenantId,
-          tenantId: paymentTenantId,
-          company_id: paymentCompanyId,
-          companyId: paymentCompanyId,
-          payload: payloadClean,
-          quote,
-          mollie_error: mollie
-        }),
+        JSON.stringify(failureRecord),
         { expirationTtl: 60 * 60 }
       );
 
-      return { ok: false, error: "Mollie payment failed", mollie };
+      return {
+        ok: false,
+        error: "Mollie payment failed",
+        mollie,
+        ...paymentOwnershipApiFields(rideCredentials),
+      };
     }
 
     // 5) Update KV with mollie id
