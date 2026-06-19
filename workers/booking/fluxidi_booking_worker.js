@@ -291,11 +291,25 @@ function buildScopedMollieConnectTestPaymentKey(scope = null, paymentId = "") {
   return `tenant:${tenantId}:company:${companyId}:admin_mollie_test_payment:${safePaymentId}:v1`;
 }
 
-function _sanitizeAdminMollieConnectTestPaymentAmount(value) {
-  const raw = value === null || value === undefined || value === "" ? "1.00" : value;
-  const parsed = _parsePositivePaymentAmount(raw);
-  if (!Number.isFinite(parsed) || parsed <= 0 || parsed > 2) return null;
-  return money2(parsed);
+function _normalizeAdminMollieTestAmount(value) {
+  if (value === null || value === undefined || value === "") {
+    return "1.00";
+  }
+  let num = null;
+  if (typeof value === "number") {
+    num = value;
+  } else if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return "1.00";
+    if (!/^-?[0-9]+([.,][0-9]+)?$/.test(trimmed)) return null;
+    num = Number(trimmed.replace(",", "."));
+  } else {
+    return null;
+  }
+  if (!Number.isFinite(num) || num <= 0) return null;
+  const cents = Math.round(num * 100);
+  if (!Number.isFinite(cents) || cents <= 0 || cents > 200) return null;
+  return (cents / 100).toFixed(2);
 }
 
 function _sanitizeAdminMollieConnectTestPaymentCurrency(value) {
@@ -20673,7 +20687,7 @@ export default {
             403,
           );
         }
-        const amountValue = _sanitizeAdminMollieConnectTestPaymentAmount(body?.amount);
+        const amountValue = _normalizeAdminMollieTestAmount(body?.amount);
         if (!amountValue) {
           return json(
             {
