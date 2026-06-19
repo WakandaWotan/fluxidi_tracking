@@ -20531,6 +20531,7 @@ export default {
         const scopedRecord = await loadScopedMollieConnectAuthRecord(env, explicitScope);
         const status = sanitizeMollieConnectStatus(scopedRecord, businessProfile);
         const paymentsEnabled = mollieCompanyPaymentsEnabled(env);
+        const livePaymentsEnabled = mollieCompanyLivePaymentsEnabled(env);
         let readiness = null;
         try {
           readiness = await resolveCompanyMollieConnectCredentials(
@@ -20563,6 +20564,8 @@ export default {
               ok: true,
               ready: true,
               payments_enabled: paymentsEnabled,
+              live_payments_enabled: livePaymentsEnabled,
+              forced_testmode: !livePaymentsEnabled,
               connected: true,
               status: "ready",
               mollie_mode: mode,
@@ -20596,6 +20599,8 @@ export default {
             ok: true,
             ready: false,
             payments_enabled: paymentsEnabled,
+            live_payments_enabled: livePaymentsEnabled,
+            forced_testmode: !livePaymentsEnabled,
             connected: status.connected === true,
             status: status.status || "not_configured",
             token_check: "failed",
@@ -31971,9 +31976,62 @@ function _safeMollieOwnershipMetadata(source = {}) {
   return { organizationId, profileId, mode };
 }
 
+function mollieCompanyLivePaymentsEnabled(env) {
+  return String(env?.MOLLIE_COMPANY_LIVE_PAYMENTS_ENABLED || "").trim() === "true";
+}
+
+function resolveCompanyMolliePaymentTestMode(env, rideCredentials) {
+  const ownerMode = normalizePaymentOwnerMode(
+    rideCredentials?.payment_owner_mode ?? rideCredentials?.paymentOwnerMode,
+  );
+  if (ownerMode !== "company_mollie") return false;
+  return !mollieCompanyLivePaymentsEnabled(env);
+}
+
+function _readPaymentTestModeFromRecord(source = {}) {
+  const src = source && typeof source === "object" ? source : {};
+  const explicit =
+    src.payment_test_mode ??
+    src.paymentTestMode ??
+    src.mollie_testmode ??
+    src.mollieTestmode ??
+    src.mollie?.testmode ??
+    src.mollie?.testMode;
+  if (typeof explicit === "boolean") return explicit;
+  if (explicit !== null && explicit !== undefined && safeStr(explicit)) {
+    return boolish(explicit);
+  }
+  const mode = safeStr(src.mollie_mode ?? src.mollieMode, 16).toLowerCase();
+  if (mode === "test") return true;
+  if (mode === "live") return false;
+  return null;
+}
+
+function _molliePaymentFetchTestMode(rideCredentials = null, options = {}) {
+  const fromOptions = _readPaymentTestModeFromRecord(options?.paymentRecord ?? options?.record ?? {});
+  if (typeof fromOptions === "boolean") return fromOptions;
+  const fromCreds = _readPaymentTestModeFromRecord(rideCredentials || {});
+  if (typeof fromCreds === "boolean") return fromCreds;
+  return null;
+}
+
+function _molliePaymentApiUrl(paymentId, { includeQrCode = false, testMode = null } = {}) {
+  const url = new URL(`https://api.mollie.com/v2/payments/${encodeURIComponent(paymentId)}`);
+  if (includeQrCode) url.searchParams.set("include", "details.qrCode");
+  if (typeof testMode === "boolean") url.searchParams.set("testmode", testMode ? "true" : "false");
+  return url.toString();
+}
+
+function _mollieCreatePaymentApiUrl({ includeQrCode = false } = {}) {
+  const url = new URL("https://api.mollie.com/v2/payments");
+  if (includeQrCode) url.searchParams.set("include", "details.qrCode");
+  return url.toString();
+}
+
 function readPaymentOwnershipFromRecord(rec) {
   const source = rec && typeof rec === "object" ? rec : {};
   const paymentDemoRaw = source.payment_demo_mode ?? source.paymentDemoMode;
+  const paymentTestMode = _readPaymentTestModeFromRecord(source);
   const paymentOwnerMode = normalizePaymentOwnerMode(
     source.payment_owner_mode ??
       source.paymentOwnerMode ??
@@ -31995,6 +32053,7 @@ function readPaymentOwnershipFromRecord(rec) {
       typeof paymentDemoRaw === "boolean" ? paymentDemoRaw : null,
     payment_company_id:
       safeStr(source.payment_company_id ?? source.paymentCompanyId, 80) || null,
+    payment_test_mode: typeof paymentTestMode === "boolean" ? paymentTestMode : null,
     mollie_organization_id: mollieMeta.organizationId,
     mollie_profile_id: mollieMeta.profileId,
     mollie_mode: mollieMeta.mode,
@@ -32015,6 +32074,7 @@ function applyPaymentOwnershipFields(target, creds = {}) {
   const ownerMode = normalizePaymentOwnerMode(creds.payment_owner_mode);
   const credentialSource = safeStr(creds.payment_credential_source, 40) || null;
   const demoMode = creds.payment_demo_mode === true;
+  const paymentTestMode = _readPaymentTestModeFromRecord(creds);
   const paymentCompanyId = safeStr(
     creds.payment_company_id ??
       creds.paymentCompanyId ??
@@ -32041,6 +32101,12 @@ function applyPaymentOwnershipFields(target, creds = {}) {
   target.paymentCostOwner = costOwner;
   target.payment_demo_mode = demoMode;
   target.paymentDemoMode = demoMode;
+  if (typeof paymentTestMode === "boolean") {
+    target.payment_test_mode = paymentTestMode;
+    target.paymentTestMode = paymentTestMode;
+    target.mollie_testmode = paymentTestMode;
+    target.mollieTestmode = paymentTestMode;
+  }
   const mollieMeta = _safeMollieOwnershipMetadata(creds);
   if (mollieMeta.organizationId) {
     target.mollie_organization_id = mollieMeta.organizationId;
@@ -32069,6 +32135,7 @@ function paymentOwnershipApiFields(creds = {}) {
     80,
   );
   const mollieMeta = _safeMollieOwnershipMetadata(creds);
+  const paymentTestMode = _readPaymentTestModeFromRecord(creds);
   return {
     payment_owner: ownerMode,
     paymentOwner: ownerMode,
@@ -32084,6 +32151,14 @@ function paymentOwnershipApiFields(creds = {}) {
     paymentCostOwner: paymentCostOwnerForCredentialSource(ownerMode, credentialSource),
     payment_demo_mode: creds.payment_demo_mode === true,
     paymentDemoMode: creds.payment_demo_mode === true,
+    ...(typeof paymentTestMode === "boolean"
+      ? {
+          payment_test_mode: paymentTestMode,
+          paymentTestMode: paymentTestMode,
+          mollie_testmode: paymentTestMode,
+          mollieTestmode: paymentTestMode,
+        }
+      : {}),
     ...(mollieMeta.organizationId
       ? {
           mollie_organization_id: mollieMeta.organizationId,
@@ -32110,6 +32185,8 @@ function applyPaymentOwnershipFromPayResult(target, pay) {
     payment_demo_mode: pay.payment_demo_mode ?? pay.paymentDemoMode,
     payment_company_id:
       pay.payment_company_id ?? pay.paymentCompanyId ?? pay.company_id ?? pay.companyId,
+    payment_test_mode:
+      pay.payment_test_mode ?? pay.paymentTestMode ?? pay.mollie_testmode ?? pay.mollieTestmode,
     mollie_organization_id: pay.mollie_organization_id ?? pay.mollieOrganizationId,
     mollie_profile_id: pay.mollie_profile_id ?? pay.mollieProfileId,
     mollie_mode: pay.mollie_mode ?? pay.mollieMode,
@@ -32314,7 +32391,7 @@ async function resolveRideMollieCredentials(env, tenantScope = {}, options = {})
 async function resolveRideMollieCredentialsForPaymentRecord(env, rec, options = {}) {
   const scope = normalizeFleetTenantScope(resolveBookingTenantScopeFromRecord(rec));
   const stored = readPaymentOwnershipFromRecord(rec);
-  return resolveRideMollieCredentials(
+  const resolved = await resolveRideMollieCredentials(
     env,
     {
       tenant_id: scope.tenant_id,
@@ -32328,6 +32405,18 @@ async function resolveRideMollieCredentialsForPaymentRecord(env, rec, options = 
       paymentDemoMode: stored.payment_demo_mode,
     },
   );
+  if (resolved?.ok && typeof stored.payment_test_mode === "boolean") {
+    resolved.payment_test_mode = stored.payment_test_mode;
+    resolved.paymentTestMode = stored.payment_test_mode;
+    resolved.mollie_testmode = stored.payment_test_mode;
+    resolved.mollieTestmode = stored.payment_test_mode;
+    if (stored.payment_test_mode === true) {
+      resolved.mollie_mode = "test";
+      resolved.mollieMode = "test";
+      resolved.mode = "test";
+    }
+  }
+  return resolved;
 }
 
 async function resolveRideMollieCredentialsForPaymentContext(env, paymentContext, rec, options = {}) {
@@ -32354,13 +32443,16 @@ async function resolveRideMollieCredentialsForPaymentContext(env, paymentContext
         if (typeof shadowStored.payment_demo_mode === "boolean") {
           stored.payment_demo_mode = shadowStored.payment_demo_mode;
         }
+        if (typeof shadowStored.payment_test_mode === "boolean") {
+          stored.payment_test_mode = shadowStored.payment_test_mode;
+        }
       }
     } catch (_) {
       // Best-effort only.
     }
   }
   const scope = normalizeFleetTenantScope(resolveBookingTenantScopeFromRecord(rec));
-  return resolveRideMollieCredentials(
+  const resolved = await resolveRideMollieCredentials(
     env,
     {
       tenant_id: scope.tenant_id,
@@ -32374,6 +32466,18 @@ async function resolveRideMollieCredentialsForPaymentContext(env, paymentContext
       paymentDemoMode: stored.payment_demo_mode,
     },
   );
+  if (resolved?.ok && typeof stored.payment_test_mode === "boolean") {
+    resolved.payment_test_mode = stored.payment_test_mode;
+    resolved.paymentTestMode = stored.payment_test_mode;
+    resolved.mollie_testmode = stored.payment_test_mode;
+    resolved.mollieTestmode = stored.payment_test_mode;
+    if (stored.payment_test_mode === true) {
+      resolved.mollie_mode = "test";
+      resolved.mollieMode = "test";
+      resolved.mode = "test";
+    }
+  }
+  return resolved;
 }
 
 function normalizePaymentStatus(value) {
@@ -38353,6 +38457,18 @@ async function mollieCreatePayment(payload, env, request, options = {}) {
         ...paymentOwnershipApiFields(rideCredentials),
       };
     }
+    const companyMollieCreateTestMode = resolveCompanyMolliePaymentTestMode(env, rideCredentials);
+    if (normalizePaymentOwnerMode(rideCredentials.payment_owner_mode) === "company_mollie") {
+      rideCredentials.payment_test_mode = companyMollieCreateTestMode;
+      rideCredentials.paymentTestMode = companyMollieCreateTestMode;
+      rideCredentials.mollie_testmode = companyMollieCreateTestMode;
+      rideCredentials.mollieTestmode = companyMollieCreateTestMode;
+      if (companyMollieCreateTestMode) {
+        rideCredentials.mode = "test";
+        rideCredentials.mollie_mode = "test";
+        rideCredentials.mollieMode = "test";
+      }
+    }
     payloadClean.tenant_id = paymentTenantId;
     payloadClean.tenantId = paymentTenantId;
     payloadClean.company_id = paymentCompanyId;
@@ -38506,7 +38622,7 @@ async function mollieCreatePayment(payload, env, request, options = {}) {
       company_id: paymentCompanyId,
     });
     console.log(
-      `[MOLLIE_CREATE][REQ] tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} amount=${amountValue} currency=EUR hasRedirectUrl=${!!redirectUrl} hasWebhookUrl=${!!webhookUrl} mode=${safeStr(rideCredentials?.mode, 16) || "unknown"} credentialSource=${safeStr(rideCredentials?.payment_credential_source, 40) || "-"} ownerMode=${safeStr(rideCredentials?.payment_owner_mode, 40) || "-"} demo=${rideCredentials?.payment_demo_mode === true} sourceBooking=${_bookingIntentMask(sourceBookingId)} sourceLoaded=${sourceBookingLoaded}`,
+      `[MOLLIE_CREATE][REQ] tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} amount=${amountValue} currency=EUR hasRedirectUrl=${!!redirectUrl} hasWebhookUrl=${!!webhookUrl} mode=${safeStr(rideCredentials?.mode, 16) || "unknown"} credentialSource=${safeStr(rideCredentials?.payment_credential_source, 40) || "-"} ownerMode=${safeStr(rideCredentials?.payment_owner_mode, 40) || "-"} demo=${rideCredentials?.payment_demo_mode === true} testmode=${companyMollieCreateTestMode === true} sourceBooking=${_bookingIntentMask(sourceBookingId)} sourceLoaded=${sourceBookingLoaded}`,
     );
 
     const commProfile = await resolveTenantCommunicationProfile(env, paymentTenantId, paymentCompanyId);
@@ -38537,12 +38653,13 @@ async function mollieCreatePayment(payload, env, request, options = {}) {
         ...(paymentCompanyId ? { companyId: paymentCompanyId } : {}),
       },
     };
+    if (companyMollieCreateTestMode) {
+      mollieCreateBody.testmode = true;
+    }
     if (mollieMethod) {
       mollieCreateBody.method = mollieMethod;
     }
-    const mollieApiUrl = includeQrCode
-      ? "https://api.mollie.com/v2/payments?include=details.qrCode"
-      : "https://api.mollie.com/v2/payments";
+    const mollieApiUrl = _mollieCreatePaymentApiUrl({ includeQrCode });
 
     const mollieRes = await fetch(mollieApiUrl, {
       method: "POST",
@@ -38627,6 +38744,9 @@ async function mollieCreatePayment(payload, env, request, options = {}) {
       id: mollie.id,
       payment_id: mollie.id,
       status: mollie.status || "open",
+      ...(typeof _readPaymentTestModeFromRecord(rideCredentials) === "boolean"
+        ? { testmode: _readPaymentTestModeFromRecord(rideCredentials) }
+        : {}),
       ...(mollieMethod ? { method: mollieMethod } : {}),
     };
     applyPaymentOwnershipFields(stored, rideCredentials);
@@ -38687,7 +38807,8 @@ async function mollieFetchPayment(molliePaymentId, env, rideCredentials = null, 
       return { ok: false, status: 403, data: { error: "ride_mollie_credentials_required" } };
     }
   }
-  const r = await fetch(`https://api.mollie.com/v2/payments/${encodeURIComponent(molliePaymentId)}`, {
+  const paymentFetchTestMode = _molliePaymentFetchTestMode(creds, options);
+  const r = await fetch(_molliePaymentApiUrl(molliePaymentId, { testMode: paymentFetchTestMode }), {
     method: "GET",
     headers: { "Authorization": `Bearer ${creds.apiKey}` }
   });
@@ -66816,7 +66937,8 @@ async function mollieFetchPaymentJson(paymentId, env, rideCredentials = null, op
       throw new Error("ride_mollie_credentials_required");
     }
   }
-  const url = `https://api.mollie.com/v2/payments/${encodeURIComponent(paymentId)}`;
+  const paymentFetchTestMode = _molliePaymentFetchTestMode(creds, options);
+  const url = _molliePaymentApiUrl(paymentId, { testMode: paymentFetchTestMode });
   const res = await fetch(url, {
     headers: {
       Authorization: `Bearer ${creds.apiKey}`,
