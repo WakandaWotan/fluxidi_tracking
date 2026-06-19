@@ -33990,6 +33990,12 @@ async function refreshMollieRefundStatusForBooking(
 
   let paymentAmountRefunded = "";
   let paymentStatus = "";
+  // PAY-REFRESH-B: also capture the Mollie payment-level totals in cents so
+  // we can persist them as parent aggregates below. These are distinct from
+  // per-refund `refunded_amount_cents` and are required to distinguish
+  // partially_refunded from refunded without re-fetching Mollie.
+  let paymentAmountCents = null;
+  let paymentAmountRefundedCents = null;
   try {
     const paymentSnapshot = await mollieFetchPaymentJson(
       paymentContext.mollie_payment_id,
@@ -34001,6 +34007,10 @@ async function refreshMollieRefundStatusForBooking(
       24,
     );
     paymentStatus = safeStr(paymentSnapshot?.status, 32);
+    paymentAmountCents = _mollieAmountValueToCents(paymentSnapshot?.amount?.value);
+    paymentAmountRefundedCents = _mollieAmountValueToCents(
+      paymentSnapshot?.amountRefunded?.value ?? paymentSnapshot?.amount_refunded?.value,
+    );
   } catch (_) {
     // Diagnostic-only; never used for terminal mapping.
   }
@@ -34020,6 +34030,15 @@ async function refreshMollieRefundStatusForBooking(
     paymentStatus,
     paymentContextSource: paymentContext.source,
   });
+  // Capture the parent's pre-refresh cumulative refund total so the patch
+  // report (and logs) can show the delta. Mirrors the same record-layer
+  // priority that `_readNumericCentsFromRecordLayers` uses.
+  const parentRefundedAmountCentsBefore = _readNumericCentsFromRecordLayers(
+    rec,
+    "refunded_amount_cents",
+    "refundedAmountCents",
+  );
+
   if (isLegOnlyScope) {
     // Persist refreshed Mollie refund fields **on the leg entry only**. The
     // parent record's refund identity must remain untouched because a
@@ -34047,6 +34066,42 @@ async function refreshMollieRefundStatusForBooking(
       mollieRefundError: mapped.mollieRefundError,
     });
   }
+
+  // PAY-REFRESH-B: persist parent payment-level aggregates and (for
+  // leg-only refresh) the recomputed cumulative refund total.
+  //
+  // Idempotency rules:
+  //   * `cumulative_refunded_amount_cents` is recomputed as
+  //     SUM(leg.refunded_amount_cents) AFTER the leg write above, so running
+  //     status-refresh twice for the same leg cannot inflate the parent.
+  //   * For full-parent refunds we deliberately leave the parent's
+  //     `refunded_amount_cents` to the value already written by
+  //     `_applyMollieRefundFieldsToRecord` (single-refund amount). Passing
+  //     `cumulativeRefundedAmountCents: null` to the aggregate helper
+  //     skips the field for that scope.
+  //   * `paymentAmountCents` / `paymentAmountRefundedCents` always reflect
+  //     the latest Mollie payment snapshot. When the payment fetch failed
+  //     they stay null and the helper leaves the existing values intact.
+  const cumulativeRefundedAmountCents = isLegOnlyScope
+    ? _sumLegRefundedAmountCentsFromRecord(rec)
+    : null;
+  const aggregateHasAnyField =
+    paymentAmountCents != null ||
+    paymentAmountRefundedCents != null ||
+    cumulativeRefundedAmountCents != null;
+  if (aggregateHasAnyField) {
+    _applyMollieRefundPaymentAggregatesToRecord(rec, {
+      paymentAmountCents,
+      paymentAmountRefundedCents,
+      cumulativeRefundedAmountCents,
+    });
+  }
+  const parentRefundedAmountCentsAfter = _readNumericCentsFromRecordLayers(
+    rec,
+    "refunded_amount_cents",
+    "refundedAmountCents",
+  );
+
   const nowIso = new Date().toISOString();
   rec.updatedAt = nowIso;
   rec.updated_at = nowIso;
@@ -34058,6 +34113,9 @@ async function refreshMollieRefundStatusForBooking(
   await env.BOOKING_KV.put(key, JSON.stringify(rec));
   console.log(
     `[BOOKING][MOLLIE_REFUND_STATUS][PERSIST] booking=${_bookingIntentMask(bookingId)} scope=${isLegOnlyScope ? "leg_only" : "full_parent"} leg=${isLegOnlyScope ? _bookingIntentMask(safeLegId) : "-"} refund_status=${safeStr(mapped.refundStatus, 64) || "-"} mollie_refund_status=${safeStr(mapped.mollieRefundStatus, 64) || "-"}`,
+  );
+  console.log(
+    `[BOOKING][MOLLIE_REFUND_STATUS][PARENT_AGGREGATE_PERSIST] booking=${_bookingIntentMask(bookingId)} scope=${isLegOnlyScope ? "leg_only" : "full_parent"} payment_amount_cents=${paymentAmountCents != null ? paymentAmountCents : "-"} payment_amount_refunded_cents=${paymentAmountRefundedCents != null ? paymentAmountRefundedCents : "-"} parent_refunded_amount_cents_before=${parentRefundedAmountCentsBefore} parent_refunded_amount_cents_after=${parentRefundedAmountCentsAfter} cumulative_recomputed=${cumulativeRefundedAmountCents != null} aggregates_persisted=${aggregateHasAnyField}`,
   );
 
   const actorRole =
@@ -34104,6 +34162,11 @@ async function refreshMollieRefundStatusForBooking(
     `[BOOKING][MOLLIE_REFUND_STATUS][INDEX_UPSERT] booking=${_bookingIntentMask(bookingId)} tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} ok=${indexUpserted} skipped=${indexUpsert?.skipped === true} reason=${safeStr(indexUpsert?.reason, 64) || "-"}`,
   );
 
+  const responseLegType = isLegOnlyScope
+    ? (safeStr(legTypeRaw, 24) ||
+        safeStr(legEntry?.leg_type ?? legEntry?.legType, 24) ||
+        null)
+    : null;
   return {
     ok: true,
     booking_id: bookingId,
@@ -34116,6 +34179,8 @@ async function refreshMollieRefundStatusForBooking(
     refundScope: isLegOnlyScope ? "leg_only" : "full_parent",
     leg_id: isLegOnlyScope ? safeLegId : null,
     legId: isLegOnlyScope ? safeLegId : null,
+    leg_type: responseLegType,
+    legType: responseLegType,
     refund_id_source: refundIdSource,
     refundIdSource,
     refund_status: mapped.refundStatus,
@@ -34136,6 +34201,25 @@ async function refreshMollieRefundStatusForBooking(
     refundedAmountCents: mapped.refundedAmountCents,
     refunded_at: mapped.refundedAt,
     refundedAt: mapped.refundedAt,
+    // PAY-REFRESH-B: parent payment-level aggregates + recomputed parent
+    // cumulative refund total. `aggregates_persisted` is true whenever
+    // at least one of the aggregate fields was written this refresh.
+    // `parent_cumulative_recomputed` is true only for leg-only refresh
+    // (the full-parent branch keeps the existing single-refund value).
+    mollie_payment_amount_cents: paymentAmountCents != null ? paymentAmountCents : null,
+    molliePaymentAmountCents: paymentAmountCents != null ? paymentAmountCents : null,
+    mollie_payment_amount_refunded_cents:
+      paymentAmountRefundedCents != null ? paymentAmountRefundedCents : null,
+    molliePaymentAmountRefundedCents:
+      paymentAmountRefundedCents != null ? paymentAmountRefundedCents : null,
+    parent_refunded_amount_cents: parentRefundedAmountCentsAfter,
+    parentRefundedAmountCents: parentRefundedAmountCentsAfter,
+    parent_refunded_amount_cents_before: parentRefundedAmountCentsBefore,
+    parentRefundedAmountCentsBefore: parentRefundedAmountCentsBefore,
+    parent_cumulative_recomputed: cumulativeRefundedAmountCents != null,
+    parentCumulativeRecomputed: cumulativeRefundedAmountCents != null,
+    aggregates_persisted: aggregateHasAnyField,
+    aggregatesPersisted: aggregateHasAnyField,
     compliance_emit_ok: complianceEmitOk,
     complianceEmitOk: complianceEmitOk,
     compliance_final_emit_reason: complianceFinalEmitReason,
@@ -34813,6 +34897,67 @@ function _applyMollieRefundFieldsToLeg(legEntry, fields) {
   }
   legEntry.refund_provider = "mollie";
   legEntry.refundProvider = "mollie";
+}
+
+// PAY-REFRESH-B parent aggregate helpers.
+//
+// These helpers persist Mollie payment-level aggregates and the cumulative
+// per-booking refund total onto the parent booking record so the company
+// bookings UI can reason about partially_refunded vs refunded without
+// re-fetching Mollie. They MUST stay strictly additive:
+//   * `mollie_payment_amount_cents` and `mollie_payment_amount_refunded_cents`
+//     are NEW Mollie-payment-level fields. They reflect Mollie payment
+//     truth (payment.amount, payment.amountRefunded) and are distinct from
+//     per-refund `refunded_amount_cents`.
+//   * `refunded_amount_cents` on the parent represents the cumulative sum
+//     of leg-level refunds (or the single refund amount for full-parent
+//     refunds). The leg-only refresh path uses `_sumLegRefundedAmountCentsFromRecord`
+//     to recompute this sum from scratch each time, which guarantees
+//     idempotency: running status-refresh repeatedly for the same leg
+//     cannot inflate the parent total.
+// The helper mirrors fields onto rec / rec.booking / rec.payload the same
+// way `_applyMollieRefundFieldsToRecord` does, so the company list
+// projection and any downstream readers see consistent values regardless
+// of which record layer they read from.
+function _applyMollieRefundPaymentAggregatesToRecord(rec, fields) {
+  if (!rec || typeof rec !== "object" || !fields || typeof fields !== "object") return;
+  const { paymentAmountCents, paymentAmountRefundedCents, cumulativeRefundedAmountCents } = fields;
+  const writeLayer = (target) => {
+    if (!target || typeof target !== "object") return;
+    if (paymentAmountCents != null) {
+      target.mollie_payment_amount_cents = paymentAmountCents;
+      target.molliePaymentAmountCents = paymentAmountCents;
+    }
+    if (paymentAmountRefundedCents != null) {
+      target.mollie_payment_amount_refunded_cents = paymentAmountRefundedCents;
+      target.molliePaymentAmountRefundedCents = paymentAmountRefundedCents;
+    }
+    if (cumulativeRefundedAmountCents != null) {
+      target.refunded_amount_cents = cumulativeRefundedAmountCents;
+      target.refundedAmountCents = cumulativeRefundedAmountCents;
+    }
+  };
+  writeLayer(rec);
+  writeLayer(rec.booking);
+  writeLayer(rec.payload);
+}
+
+// Idempotent sum of every operational leg's `refunded_amount_cents`. Used by
+// the leg-only refresh path to recompute the parent's cumulative refund
+// total **after** the refreshed leg has been written. Reading the final
+// state guarantees that running status-refresh twice for the same leg
+// produces the same parent total.
+function _sumLegRefundedAmountCentsFromRecord(rec) {
+  const legs = _bookingOperationalLegsFromRecord(rec);
+  let total = 0;
+  for (const leg of legs) {
+    const raw = leg?.refunded_amount_cents ?? leg?.refundedAmountCents;
+    const n = Number(raw);
+    if (Number.isFinite(n) && n > 0) {
+      total += Math.max(0, Math.round(n));
+    }
+  }
+  return total;
 }
 
 function _operationalLegHasMollieRefundEligibleCreditDecision(legEntry) {
