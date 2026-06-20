@@ -175,14 +175,24 @@ class ChironComplianceDashboardPage extends StatelessWidget {
                   fr: 'Aperçu',
                   es: 'Resumen',
                 ),
-                child: Text(
-                  _t(
-                    nl: 'Alleen-lezen compliance overzicht.',
-                    en: 'Read-only compliance overview.',
-                    fr: 'Aperçu de conformité en lecture seule.',
-                    es: 'Resumen de cumplimiento de solo lectura.',
-                  ),
-                  style: TextStyle(color: tokens.textSecondary, fontSize: 13),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      _t(
+                        nl: 'Alleen-lezen compliance overzicht.',
+                        en: 'Read-only compliance overview.',
+                        fr: 'Aperçu de conformité en lecture seule.',
+                        es: 'Resumen de cumplimiento de solo lectura.',
+                      ),
+                      style: TextStyle(
+                        color: tokens.textSecondary,
+                        fontSize: 13,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    _ChironScoreSummaryPanel(lang: _lang),
+                  ],
                 ),
               ),
               _HubActionCard(
@@ -266,6 +276,381 @@ class ChironComplianceDashboardPage extends StatelessWidget {
             ],
           ),
         );
+      },
+    );
+  }
+}
+
+class _ChironScoreSummaryPanel extends StatefulWidget {
+  const _ChironScoreSummaryPanel({required this.lang});
+
+  final AppLanguage lang;
+
+  @override
+  State<_ChironScoreSummaryPanel> createState() =>
+      _ChironScoreSummaryPanelState();
+}
+
+class _ChironScoreSummaryPanelState extends State<_ChironScoreSummaryPanel> {
+  late Future<_ChironScoreSummaryResponse> _future;
+
+  @override
+  void initState() {
+    super.initState();
+    _future = _loadScoreSummary();
+  }
+
+  String _t({
+    required String nl,
+    required String en,
+    required String fr,
+    required String es,
+  }) {
+    switch (widget.lang) {
+      case AppLanguage.nl:
+        return nl;
+      case AppLanguage.en:
+        return en;
+      case AppLanguage.fr:
+        return fr;
+      case AppLanguage.es:
+        return es;
+    }
+  }
+
+  String _text(dynamic value) => (value ?? '').toString().trim();
+
+  ({String tenantId, String companyId})? _effectiveTenantCompanyIds() {
+    final activeCompanyId =
+        companyProfileNotifier.value?.companyId.trim() ?? '';
+    if (activeCompanyId.isNotEmpty) {
+      return (tenantId: activeCompanyId, companyId: activeCompanyId);
+    }
+    final sessionCompanyId =
+        activeCompanySessionNotifier.value?.companyId.trim() ?? '';
+    if (sessionCompanyId.isNotEmpty) {
+      return (tenantId: sessionCompanyId, companyId: sessionCompanyId);
+    }
+    return null;
+  }
+
+  Future<_ChironScoreSummaryResponse> _loadScoreSummary() async {
+    final effective = _effectiveTenantCompanyIds();
+    if (effective == null) {
+      return _ChironScoreSummaryResponse.error(
+        errorMessage: _t(
+          nl: 'Chiron-status kon niet geladen worden.',
+          en: 'Chiron status could not be loaded.',
+          fr: 'Le statut Chiron n’a pas pu être chargé.',
+          es: 'No se pudo cargar el estado Chiron.',
+        ),
+      );
+    }
+
+    final token = _complianceAdminToken.trim();
+    if (token.isEmpty) {
+      return _ChironScoreSummaryResponse.error(
+        tenantId: effective.tenantId,
+        companyId: effective.companyId,
+        errorMessage: _t(
+          nl: 'Chiron-status kon niet geladen worden.',
+          en: 'Chiron status could not be loaded.',
+          fr: 'Le statut Chiron n’a pas pu être chargé.',
+          es: 'No se pudo cargar el estado Chiron.',
+        ),
+      );
+    }
+
+    final uri = Uri.parse('$_complianceApiBaseUrl/admin/chiron/score-summary')
+        .replace(
+          queryParameters: <String, String>{
+            'tenant_id': effective.tenantId,
+            'company_id': effective.companyId,
+          },
+        );
+
+    try {
+      final res = await http
+          .get(
+            uri,
+            headers: <String, String>{
+              'Authorization': 'Bearer $token',
+              'x-admin-token': token,
+            },
+          )
+          .timeout(const Duration(seconds: 10));
+      final decoded = jsonDecode(res.body);
+      final payload = decoded is Map
+          ? Map<String, dynamic>.from(decoded)
+          : const <String, dynamic>{};
+      if (res.statusCode < 200 || res.statusCode >= 300) {
+        return _ChironScoreSummaryResponse.error(
+          tenantId: _text(payload['tenant_id']).isEmpty
+              ? effective.tenantId
+              : _text(payload['tenant_id']),
+          companyId: _text(payload['company_id']).isEmpty
+              ? effective.companyId
+              : _text(payload['company_id']),
+          errorMessage: _t(
+            nl: 'Chiron-status kon niet geladen worden.',
+            en: 'Chiron status could not be loaded.',
+            fr: 'Le statut Chiron n’a pas pu être chargé.',
+            es: 'No se pudo cargar el estado Chiron.',
+          ),
+        );
+      }
+      return _ChironScoreSummaryResponse.fromJson(payload);
+    } catch (_) {
+      return _ChironScoreSummaryResponse.error(
+        tenantId: effective.tenantId,
+        companyId: effective.companyId,
+        errorMessage: _t(
+          nl: 'Chiron-status kon niet geladen worden.',
+          en: 'Chiron status could not be loaded.',
+          fr: 'Le statut Chiron n’a pas pu être chargé.',
+          es: 'No se pudo cargar el estado Chiron.',
+        ),
+      );
+    }
+  }
+
+  ({String label, Color color, IconData icon}) _status(
+    _ChironScoreSummaryCounts counts,
+  ) {
+    if (counts.blockerCount > 0) {
+      return (
+        label: _t(
+          nl: 'Aandacht nodig',
+          en: 'Needs attention',
+          fr: 'Attention requise',
+          es: 'Requiere atención',
+        ),
+        color: _chironDanger,
+        icon: Icons.error_outline,
+      );
+    }
+    if (counts.warningCount > 0) {
+      return (
+        label: _t(
+          nl: 'Waarschuwingen',
+          en: 'Warnings',
+          fr: 'Avertissements',
+          es: 'Advertencias',
+        ),
+        color: _chironWarning,
+        icon: Icons.warning_amber_outlined,
+      );
+    }
+    return (
+      label: _t(nl: 'Klaar', en: 'Ready', fr: 'Prêt', es: 'Listo'),
+      color: _chironSuccess,
+      icon: Icons.check_circle_outline,
+    );
+  }
+
+  Widget _messagePanel(String text, {Color? color}) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: _chironPanel,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: _chironBorder),
+      ),
+      child: Text(
+        text,
+        style: TextStyle(color: color ?? _chironTextMuted, fontSize: 12),
+      ),
+    );
+  }
+
+  Widget _metric(String label, String value) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: _chironCard,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: _chironBorder),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(label, style: TextStyle(color: _chironTextMuted, fontSize: 11)),
+          const SizedBox(height: 4),
+          Text(
+            value,
+            style: TextStyle(
+              color: _chironTextPrimary,
+              fontSize: 15,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _summaryPanel(_ChironScoreSummaryResponse summary) {
+    if (summary.totalEvents == 0 || summary.newestEvents.isEmpty) {
+      return _messagePanel(
+        _t(
+          nl: 'Nog geen Chiron-score beschikbaar.',
+          en: 'No Chiron score available yet.',
+          fr: 'Aucun score Chiron disponible pour le moment.',
+          es: 'Aún no hay puntuación Chiron disponible.',
+        ),
+      );
+    }
+
+    final counts = summary.counts;
+    final status = _status(counts);
+    final latestScore = summary.newestEvents.first.score;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: _chironPanel,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: _chironBorder),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 5,
+                ),
+                decoration: BoxDecoration(
+                  color: status.color.withOpacity(0.16),
+                  borderRadius: BorderRadius.circular(999),
+                  border: Border.all(color: status.color.withOpacity(0.55)),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(status.icon, size: 14, color: status.color),
+                    const SizedBox(width: 6),
+                    Text(
+                      status.label,
+                      style: TextStyle(
+                        color: status.color,
+                        fontWeight: FontWeight.w800,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Text(
+                _t(
+                  nl: 'Laatste Chiron-score',
+                  en: 'Latest Chiron score',
+                  fr: 'Dernier score Chiron',
+                  es: 'Última puntuación Chiron',
+                ),
+                style: TextStyle(color: _chironTextMuted, fontSize: 12),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              _metric(
+                _t(
+                  nl: 'Laatste score',
+                  en: 'Latest score',
+                  fr: 'Dernier score',
+                  es: 'Última puntuación',
+                ),
+                latestScore == null ? '—' : '$latestScore',
+              ),
+              _metric(
+                _t(
+                  nl: 'Chiron-ready',
+                  en: 'Chiron-ready',
+                  fr: 'Chiron-ready',
+                  es: 'Chiron-ready',
+                ),
+                '${counts.readyCount}',
+              ),
+              _metric(
+                _t(
+                  nl: 'Waarschuwingen',
+                  en: 'Warnings',
+                  fr: 'Avertissements',
+                  es: 'Advertencias',
+                ),
+                '${counts.warningCount}',
+              ),
+              _metric(
+                _t(
+                  nl: 'Aandacht vereist',
+                  en: 'Attention required',
+                  fr: 'Attention requise',
+                  es: 'Atención requerida',
+                ),
+                '${counts.blockerCount}',
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<_ChironScoreSummaryResponse>(
+      future: _future,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState != ConnectionState.done) {
+          return Row(
+            children: [
+              SizedBox(
+                width: 14,
+                height: 14,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: _chironGold,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                _t(
+                  nl: 'Chiron-status laden...',
+                  en: 'Loading Chiron status...',
+                  fr: 'Chargement du statut Chiron...',
+                  es: 'Cargando estado Chiron...',
+                ),
+                style: TextStyle(color: _chironTextSecondary, fontSize: 12),
+              ),
+            ],
+          );
+        }
+
+        final summary =
+            snapshot.data ??
+            _ChironScoreSummaryResponse.error(
+              errorMessage: _t(
+                nl: 'Chiron-status kon niet geladen worden.',
+                en: 'Chiron status could not be loaded.',
+                fr: 'Le statut Chiron n’a pas pu être chargé.',
+                es: 'No se pudo cargar el estado Chiron.',
+              ),
+            );
+        if (!summary.ok) {
+          return _messagePanel(summary.errorMessage, color: _chironWarning);
+        }
+        return _summaryPanel(summary);
       },
     );
   }
@@ -1504,6 +1889,111 @@ const String _complianceAdminToken = String.fromEnvironment(
   'ADMIN_TOKEN',
   defaultValue: '',
 );
+
+class _ChironScoreSummaryCounts {
+  const _ChironScoreSummaryCounts({
+    required this.readyCount,
+    required this.warningCount,
+    required this.blockerCount,
+  });
+
+  final int readyCount;
+  final int warningCount;
+  final int blockerCount;
+
+  factory _ChironScoreSummaryCounts.fromJson(Map<String, dynamic> json) {
+    return _ChironScoreSummaryCounts(
+      readyCount: _parseChironInt(json['ready_count']),
+      warningCount: _parseChironInt(json['warning_count']),
+      blockerCount: _parseChironInt(json['blocker_count']),
+    );
+  }
+}
+
+class _ChironNewestEventSummary {
+  const _ChironNewestEventSummary({required this.score});
+
+  final int? score;
+
+  factory _ChironNewestEventSummary.fromJson(Map<String, dynamic> json) {
+    return _ChironNewestEventSummary(
+      score: _parseNullableChironInt(json['score']),
+    );
+  }
+}
+
+class _ChironScoreSummaryResponse {
+  const _ChironScoreSummaryResponse({
+    required this.ok,
+    required this.totalEvents,
+    required this.counts,
+    required this.newestEvents,
+    required this.errorMessage,
+  });
+
+  final bool ok;
+  final int totalEvents;
+  final _ChironScoreSummaryCounts counts;
+  final List<_ChironNewestEventSummary> newestEvents;
+  final String errorMessage;
+
+  factory _ChironScoreSummaryResponse.error({
+    String tenantId = '',
+    String companyId = '',
+    required String errorMessage,
+  }) {
+    return _ChironScoreSummaryResponse(
+      ok: false,
+      totalEvents: 0,
+      counts: const _ChironScoreSummaryCounts(
+        readyCount: 0,
+        warningCount: 0,
+        blockerCount: 0,
+      ),
+      newestEvents: const <_ChironNewestEventSummary>[],
+      errorMessage: errorMessage,
+    );
+  }
+
+  factory _ChironScoreSummaryResponse.fromJson(Map<String, dynamic> json) {
+    final scoreSummaryRaw = json['score_summary'];
+    final scoreSummary = scoreSummaryRaw is Map
+        ? Map<String, dynamic>.from(scoreSummaryRaw)
+        : const <String, dynamic>{};
+    final newestEventsRaw = json['newest_events'];
+    final newestEvents = newestEventsRaw is List
+        ? newestEventsRaw
+              .whereType<Map>()
+              .map(
+                (event) => _ChironNewestEventSummary.fromJson(
+                  Map<String, dynamic>.from(event),
+                ),
+              )
+              .toList(growable: false)
+        : const <_ChironNewestEventSummary>[];
+
+    return _ChironScoreSummaryResponse(
+      ok: json['ok'] == true,
+      totalEvents: _parseChironInt(json['total_events']),
+      counts: _ChironScoreSummaryCounts.fromJson(scoreSummary),
+      newestEvents: newestEvents,
+      errorMessage: '',
+    );
+  }
+}
+
+int _parseChironInt(dynamic value) => _parseNullableChironInt(value) ?? 0;
+
+int? _parseNullableChironInt(dynamic value) {
+  if (value is int) return value;
+  if (value is num) return value.round();
+  if (value is String) {
+    final normalized = value.trim();
+    if (normalized.isEmpty) return null;
+    return int.tryParse(normalized) ?? double.tryParse(normalized)?.round();
+  }
+  return null;
+}
 
 class RemoteComplianceEvent {
   const RemoteComplianceEvent({
