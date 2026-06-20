@@ -41368,19 +41368,31 @@ async function handleBooking(payload, env, request, options = {}) {
           const checkoutUrl = readMollieCheckoutUrlFromPaymentResult(pay);
           if (pay?.ok !== true || !checkoutUrl) {
             const failIso = new Date().toISOString();
+            const checkoutFailReason =
+              safeStr(pay?.error || pay?.code || pay?.message, 80) || "payment_checkout_unavailable";
+            provisionalRecord.status = "FAILED";
+            provisionalRecord.stage = "FAILED";
+            provisionalRecord.lifecycle_status = "failed";
+            provisionalRecord.lifecycleStatus = "failed";
             provisionalRecord.payment_status = "payment_checkout_failed";
             provisionalRecord.paymentStatus = "payment_checkout_failed";
             provisionalRecord.booking_status = "payment_checkout_failed";
             provisionalRecord.bookingStatus = "payment_checkout_failed";
-            provisionalRecord.payment_error_code = safeStr(pay?.error || pay?.code, 80) || "payment_checkout_unavailable";
-            provisionalRecord.paymentErrorCode = safeStr(pay?.error || pay?.code, 80) || "payment_checkout_unavailable";
+            provisionalRecord.payment_error_code = checkoutFailReason;
+            provisionalRecord.paymentErrorCode = checkoutFailReason;
             provisionalRecord.payment_error_message =
               safeStr(pay?.message || pay?.error, 180) || "Online payment checkout could not be created";
             provisionalRecord.paymentErrorMessage =
               safeStr(pay?.message || pay?.error, 180) || "Online payment checkout could not be created";
+            provisionalRecord.failed_at = failIso;
+            provisionalRecord.failedAt = failIso;
             provisionalRecord.updatedAt = failIso;
             provisionalRecord.updated_at = failIso;
             if (provisionalRecord.booking && typeof provisionalRecord.booking === "object") {
+              provisionalRecord.booking.status = "FAILED";
+              provisionalRecord.booking.stage = "FAILED";
+              provisionalRecord.booking.lifecycle_status = "failed";
+              provisionalRecord.booking.lifecycleStatus = "failed";
               provisionalRecord.booking.payment_status = "payment_checkout_failed";
               provisionalRecord.booking.paymentStatus = "payment_checkout_failed";
               provisionalRecord.booking.booking_status = "payment_checkout_failed";
@@ -41390,33 +41402,42 @@ async function handleBooking(payload, env, request, options = {}) {
               provisionalRecord.payload.payment_status = "payment_checkout_failed";
               provisionalRecord.payload.paymentStatus = "payment_checkout_failed";
             }
+            const checkoutFailedFleetScope = normalizeFleetTenantScope(tenantContext);
             await env.BOOKING_KV.put(
               `booking:${canonicalBookingId}`,
               JSON.stringify(provisionalRecord),
+              { expirationTtl: 30 * 60 },
             );
-            await upsertBookingDemandIndexBestEffort(
+            await removeBookingDemandIndexBestEffort(
               env,
               canonicalBookingId,
-              provisionalRecord,
-              normalizeFleetTenantScope(tenantContext),
+              checkoutFailedFleetScope,
+              {
+                source: "payment_checkout_failed",
+                rec: provisionalRecord,
+              },
             );
             await upsertDriverVehicleBookingIndexesBestEffort(
               env,
               canonicalBookingId,
               provisionalRecord,
-              normalizeFleetTenantScope(tenantContext),
+              checkoutFailedFleetScope,
             );
             await upsertCompanyBookingsListIndexBestEffort(
               env,
               canonicalBookingId,
               provisionalRecord,
-              normalizeFleetTenantScope(tenantContext),
+              checkoutFailedFleetScope,
             );
             await upsertDashboardBookingsKpiProjectionBestEffort(
               env,
               canonicalBookingId,
               provisionalRecord,
-              normalizeFleetTenantScope(tenantContext),
+              checkoutFailedFleetScope,
+            );
+            const checkoutFailedScopeMask = _bookingIntentScopeMask(checkoutFailedFleetScope);
+            console.log(
+              `[BOOKING][PAYMENT_CHECKOUT_FAILED_RELEASED] tenant=${checkoutFailedScopeMask.tenant || "-"} company=${checkoutFailedScopeMask.company || "-"} booking=${_bookingIntentMask(canonicalBookingId)} reason=${checkoutFailReason}`,
             );
             console.log(
               `[BOOKING][PAYMENT_CHECKOUT_UNAVAILABLE] booking=${_bookingIntentMask(canonicalBookingId)} payOk=${pay?.ok === true} payError=${safeStr(pay?.error || pay?.message, 80) || "-"} hasCheckout=${!!checkoutUrl} businessDetected=${business_detected === true} invoiceRequested=${invoice_requested === true} branch=calendar_configured_business_unpaid persisted=true`,
