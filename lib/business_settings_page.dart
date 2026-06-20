@@ -261,8 +261,12 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
   bool _mollieConnectLoading = false;
   bool _mollieConnectStartLoading = false;
   bool _mollieConnectDisconnectLoading = false;
+  bool _mollieTerminalsLoading = false;
+  bool _mollieTerminalsSyncLoading = false;
   String? _mollieConnectStatusError;
   Map<String, dynamic>? _mollieConnectStatus;
+  String? _mollieTerminalsError;
+  Map<String, dynamic>? _mollieTerminalsSnapshot;
   bool _showAdvancedLogoPath = false;
   bool _showAdvancedPublicMediaUrls = false;
   final ImagePicker _imagePicker = ImagePicker();
@@ -487,6 +491,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     _loadBackendProfiles();
     _loadGoogleCalendarStatus();
     _loadMollieConnectStatus();
+    _loadMollieTerminalsSnapshot();
     _loadAirportFixedFareRules();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
@@ -1417,6 +1422,238 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     }
   }
 
+  String _maskedMollieId(String? raw) {
+    final text = (raw ?? '').trim();
+    if (text.length <= 10) return text;
+    final prefix = text.contains('_') ? '${text.split('_').first}_' : '';
+    final suffix = text.substring(text.length - 4);
+    return '$prefix...$suffix';
+  }
+
+  List<Map<String, dynamic>> _mollieTerminalList() {
+    final raw = _mollieTerminalsSnapshot?['terminals'];
+    if (raw is! List) return const <Map<String, dynamic>>[];
+    return raw
+        .whereType<Map>()
+        .map((entry) => Map<String, dynamic>.from(entry))
+        .toList(growable: false);
+  }
+
+  String _mollieTerminalsStatusCode() {
+    final raw = (_mollieTerminalsSnapshot?['status'] ?? '').toString().trim();
+    if (raw.isNotEmpty) return raw.toLowerCase();
+    if (_mollieTerminalsError != null) return 'fetch_failed';
+    return 'not_synced';
+  }
+
+  String _mollieTerminalStatusTitle() {
+    final status = _mollieTerminalsStatusCode();
+    final terminals = _mollieTerminalList();
+    if (status == 'terminals_scope_missing') {
+      return _t(
+        nl: 'Mollie opnieuw verbinden nodig',
+        en: 'Reconnect Mollie required',
+        fr: 'Reconnexion Mollie nécessaire',
+        es: 'Es necesario volver a conectar Mollie',
+      );
+    }
+    if (status == 'synced' && terminals.isEmpty) {
+      return _t(
+        nl: 'Geen terminals gevonden',
+        en: 'No terminals found',
+        fr: 'Aucun terminal trouvé',
+        es: 'No se encontraron terminales',
+      );
+    }
+    if (status == 'synced') {
+      return _t(
+        nl: 'Terminals gevonden',
+        en: 'Terminals found',
+        fr: 'Terminaux trouvés',
+        es: 'Terminales encontrados',
+      );
+    }
+    if (status == 'fetch_failed') {
+      return _t(
+        nl: 'Terminalstatus kon niet geladen worden',
+        en: 'Terminal status could not be loaded',
+        fr: 'Le statut des terminaux n’a pas pu être chargé',
+        es: 'No se pudo cargar el estado de los terminales',
+      );
+    }
+    return _t(
+      nl: 'Nog niet gesynchroniseerd',
+      en: 'Not synced yet',
+      fr: 'Pas encore synchronisé',
+      es: 'Aún no sincronizado',
+    );
+  }
+
+  String _mollieTerminalStatusDescription() {
+    final status = _mollieTerminalsStatusCode();
+    final terminals = _mollieTerminalList();
+    if (status == 'terminals_scope_missing') {
+      return _t(
+        nl: 'De huidige Mollie-koppeling heeft nog geen terminalrechten. Verbind Mollie opnieuw om terminals te kunnen synchroniseren.',
+        en: 'The current Mollie connection does not have terminal permissions yet. Reconnect Mollie to sync terminals.',
+        fr: 'La connexion Mollie actuelle ne dispose pas encore des droits pour les terminaux. Reconnectez Mollie pour les synchroniser.',
+        es: 'La conexión actual de Mollie aún no tiene permisos para terminales. Vuelve a conectar Mollie para poder sincronizarlos.',
+      );
+    }
+    if (status == 'synced' && terminals.isEmpty) {
+      return _t(
+        nl: 'Controleer in Mollie of Point of Sale/terminalbetalingen actief zijn voor dit profiel. In testmodus kan Mollie een testterminal beschikbaar maken wanneer Point of Sale actief is.',
+        en: 'Check in Mollie whether Point of Sale or terminal payments are active for this profile. In test mode, Mollie may provide a test terminal when Point of Sale is active.',
+        fr: 'Vérifiez dans Mollie si les paiements Point of Sale ou par terminal sont actifs pour ce profil. En mode test, Mollie peut fournir un terminal de test lorsque Point of Sale est actif.',
+        es: 'Comprueba en Mollie si los pagos Point of Sale o con terminal están activos para este perfil. En modo de prueba, Mollie puede ofrecer un terminal de prueba cuando Point of Sale está activo.',
+      );
+    }
+    if (status == 'synced') {
+      return _t(
+        nl: 'Fluxidi heeft de terminalsnapshot opgehaald voor dit Mollie-profiel.',
+        en: 'Fluxidi has fetched the terminal snapshot for this Mollie profile.',
+        fr: 'Fluxidi a récupéré l’instantané des terminaux pour ce profil Mollie.',
+        es: 'Fluxidi ha obtenido la instantánea de terminales para este perfil de Mollie.',
+      );
+    }
+    if (status == 'fetch_failed') {
+      return _t(
+        nl: 'De opgeslagen terminalsnapshot kon niet opgehaald worden. Probeer opnieuw of synchroniseer terminals later.',
+        en: 'The saved terminal snapshot could not be fetched. Try again or sync terminals later.',
+        fr: 'L’instantané enregistré des terminaux n’a pas pu être récupéré. Réessayez ou synchronisez les terminaux plus tard.',
+        es: 'No se pudo obtener la instantánea guardada de terminales. Inténtalo de nuevo o sincroniza los terminales más tarde.',
+      );
+    }
+    return _t(
+      nl: 'Er is nog geen terminalsnapshot opgeslagen. Synchroniseer terminals om te controleren of Mollie-terminals beschikbaar zijn voor dit bedrijf.',
+      en: 'No terminal snapshot has been saved yet. Sync terminals to check whether Mollie terminals are available for this company.',
+      fr: 'Aucun instantané de terminal n’a encore été enregistré. Synchronisez les terminaux pour vérifier si des terminaux Mollie sont disponibles pour cette entreprise.',
+      es: 'Aún no se ha guardado ninguna instantánea de terminales. Sincroniza los terminales para comprobar si hay terminales Mollie disponibles para esta empresa.',
+    );
+  }
+
+  _SetupStatus _mollieTerminalSetupStatus() {
+    final status = _mollieTerminalsStatusCode();
+    if (status == 'synced' && _mollieTerminalList().isNotEmpty) {
+      return _SetupStatus.complete;
+    }
+    if (status == 'terminals_scope_missing' || status == 'fetch_failed') {
+      return _SetupStatus.attention;
+    }
+    return _SetupStatus.activationPending;
+  }
+
+  Future<void> _loadMollieTerminalsSnapshot({
+    bool showErrorSnack = false,
+  }) async {
+    setState(() {
+      _mollieTerminalsLoading = true;
+      _mollieTerminalsError = null;
+    });
+    try {
+      final scope = _activeSettingsScopeStrict();
+      if (scope == null) {
+        debugPrint(
+          '[BUSINESS_SETTINGS_SCOPE][SKIP] reason=missing_strict_company_scope action=load_mollie_terminals_snapshot',
+        );
+        return;
+      }
+      final data = await fetchCompanyMollieTerminals(
+        tenantId: scope.tenantId,
+        companyId: scope.companyId,
+      );
+      if (!mounted) return;
+      setState(() {
+        _mollieTerminalsSnapshot = data;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _mollieTerminalsError = e.toString();
+      });
+      if (showErrorSnack) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              _t(
+                nl: 'Terminalstatus kon niet geladen worden.',
+                en: 'Terminal status could not be loaded.',
+                fr: 'Le statut des terminaux n’a pas pu être chargé.',
+                es: 'No se pudo cargar el estado de los terminales.',
+              ),
+            ),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _mollieTerminalsLoading = false);
+      }
+    }
+  }
+
+  Future<void> _syncMollieTerminals() async {
+    setState(() {
+      _mollieTerminalsSyncLoading = true;
+      _mollieTerminalsError = null;
+    });
+    try {
+      final scope = _strictSettingsScopeForAction(
+        action: 'sync_mollie_terminals',
+      );
+      if (scope == null) return;
+      final data = await syncCompanyMollieTerminals(
+        tenantId: scope.tenantId,
+        companyId: scope.companyId,
+      );
+      if (!mounted) return;
+      setState(() {
+        _mollieTerminalsSnapshot = data;
+      });
+      final status = (data['status'] ?? data['error'] ?? data['code'] ?? '')
+          .toString()
+          .trim()
+          .toLowerCase();
+      final message = status == 'terminals_scope_missing'
+          ? _t(
+              nl: 'Mollie moet opnieuw verbonden worden om terminalrechten toe te voegen.',
+              en: 'Mollie must be reconnected to add terminal permissions.',
+              fr: 'Mollie doit être reconnecté pour ajouter les droits de terminal.',
+              es: 'Hay que volver a conectar Mollie para añadir permisos de terminal.',
+            )
+          : _t(
+              nl: 'Mollie-terminals zijn gesynchroniseerd.',
+              en: 'Mollie terminals have been synced.',
+              fr: 'Les terminaux Mollie ont été synchronisés.',
+              es: 'Los terminales de Mollie se han sincronizado.',
+            );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(message)));
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _mollieTerminalsError = 'sync_failed';
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Mollie-terminals konden niet gesynchroniseerd worden.',
+              en: 'Mollie terminals could not be synced.',
+              fr: 'Les terminaux Mollie n’ont pas pu être synchronisés.',
+              es: 'No se pudieron sincronizar los terminales de Mollie.',
+            ),
+          ),
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _mollieTerminalsSyncLoading = false);
+      }
+    }
+  }
+
   Future<void> _loadGoogleCalendarStatus({bool showErrorSnack = false}) async {
     setState(() {
       _googleCalendarLoading = true;
@@ -2260,6 +2497,299 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
             child: Text(
               value,
               style: TextStyle(color: _textPrimary, fontSize: 13),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _mollieTerminalPaymentsCard() {
+    final statusCode = _mollieTerminalsStatusCode();
+    final terminals = _mollieTerminalList();
+    final syncedAt = (_mollieTerminalsSnapshot?['synced_at'] ?? '')
+        .toString()
+        .trim();
+    final showReconnect = statusCode == 'terminals_scope_missing';
+    return _collapsibleSettingsCard(
+      id: 'mollie_terminal_payments',
+      icon: Icons.point_of_sale_outlined,
+      title: _t(
+        nl: 'Mollie terminalbetalingen',
+        en: 'Mollie terminal payments',
+        fr: 'Paiements par terminal Mollie',
+        es: 'Pagos con terminal Mollie',
+      ),
+      subtitle: _mollieTerminalStatusTitle(),
+      status: _mollieTerminalSetupStatus(),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            _t(
+              nl: 'Laat klanten later in de wagen betalen via een Mollie-terminal. Fluxidi kan terminals synchroniseren en voorbereiden voor voertuig- of chauffeurskoppeling.',
+              en: 'Let customers pay in the vehicle later through a Mollie terminal. Fluxidi can sync terminals and prepare them for vehicle or driver linking.',
+              fr: 'Permettez plus tard aux clients de payer dans le véhicule avec un terminal Mollie. Fluxidi peut synchroniser les terminaux et les préparer pour une liaison avec un véhicule ou un chauffeur.',
+              es: 'Permite más adelante que los clientes paguen en el vehículo con un terminal Mollie. Fluxidi puede sincronizar terminales y prepararlos para vincularlos a vehículos o conductores.',
+            ),
+            style: TextStyle(color: _textSecondary, fontSize: 12, height: 1.38),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            _t(
+              nl: 'Bestellen, activeren en beschikbaarheid van terminals verlopen via het eigen Mollie-account van het bedrijf. Voorwaarden en beschikbaarheid worden door Mollie bepaald.',
+              en: 'Ordering, activation and terminal availability are handled through the company’s own Mollie account. Terms and availability are determined by Mollie.',
+              fr: 'La commande, l’activation et la disponibilité des terminaux se font via le propre compte Mollie de l’entreprise. Les conditions et la disponibilité sont déterminées par Mollie.',
+              es: 'El pedido, la activación y la disponibilidad de terminales se gestionan desde la propia cuenta Mollie de la empresa. Las condiciones y la disponibilidad las determina Mollie.',
+            ),
+            style: TextStyle(color: _textMuted, fontSize: 11.5, height: 1.35),
+          ),
+          const SizedBox(height: 12),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: _subPanelBg,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: _border.withOpacity(_isDark ? 0.48 : 0.9),
+              ),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 6,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    Text(
+                      _mollieTerminalStatusTitle(),
+                      style: TextStyle(
+                        color: _textPrimary,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    _mollieTerminalsLoading
+                        ? const SizedBox(
+                            width: 14,
+                            height: 14,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : _setupStatusChip(_mollieTerminalSetupStatus()),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  _mollieTerminalStatusDescription(),
+                  style: TextStyle(
+                    color: _textSecondary,
+                    fontSize: 11.6,
+                    height: 1.35,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 12,
+                  runSpacing: 6,
+                  children: [
+                    Text(
+                      '${_t(nl: 'Terminals', en: 'Terminals', fr: 'Terminaux', es: 'Terminales')}: ${terminals.length}',
+                      style: TextStyle(
+                        color: _textMuted,
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    if (syncedAt.isNotEmpty)
+                      Text(
+                        '${_t(nl: 'Laatste sync', en: 'Last sync', fr: 'Dernière synchro', es: 'Última sincronización')}: $syncedAt',
+                        style: TextStyle(color: _textMuted, fontSize: 11.5),
+                      ),
+                  ],
+                ),
+                if (_mollieTerminalsError != null) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    _t(
+                      nl: 'Laatste terminalcontrole gaf een fout. De bestaande instellingen blijven bruikbaar.',
+                      en: 'The latest terminal check returned an error. Existing settings remain usable.',
+                      fr: 'Le dernier contrôle des terminaux a renvoyé une erreur. Les paramètres existants restent utilisables.',
+                      es: 'La última comprobación de terminales devolvió un error. La configuración existente sigue siendo utilizable.',
+                    ),
+                    style: TextStyle(
+                      color: _danger,
+                      fontSize: 11.5,
+                      height: 1.3,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          if (terminals.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            Column(
+              children: terminals
+                  .map(_mollieTerminalListTile)
+                  .toList(growable: false),
+            ),
+          ],
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              FilledButton.icon(
+                onPressed: _mollieTerminalsSyncLoading
+                    ? null
+                    : _syncMollieTerminals,
+                icon: _mollieTerminalsSyncLoading
+                    ? const SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.sync_rounded),
+                label: Text(
+                  _t(
+                    nl: 'Terminals synchroniseren',
+                    en: 'Sync terminals',
+                    fr: 'Synchroniser les terminaux',
+                    es: 'Sincronizar terminales',
+                  ),
+                ),
+              ),
+              if (showReconnect)
+                OutlinedButton.icon(
+                  onPressed: _mollieConnectStartLoading
+                      ? null
+                      : _startMollieConnect,
+                  icon: _mollieConnectStartLoading
+                      ? const SizedBox(
+                          width: 14,
+                          height: 14,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.link_outlined),
+                  label: Text(
+                    _t(
+                      nl: 'Mollie opnieuw verbinden',
+                      en: 'Reconnect Mollie',
+                      fr: 'Reconnecter Mollie',
+                      es: 'Volver a conectar Mollie',
+                    ),
+                  ),
+                ),
+              OutlinedButton.icon(
+                onPressed: _mollieTerminalsLoading
+                    ? null
+                    : () => _loadMollieTerminalsSnapshot(showErrorSnack: true),
+                icon: _mollieTerminalsLoading
+                    ? const SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.refresh_outlined),
+                label: Text(
+                  _t(
+                    nl: 'Snapshot vernieuwen',
+                    en: 'Refresh snapshot',
+                    fr: 'Actualiser l’instantané',
+                    es: 'Actualizar instantánea',
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Text(
+            _t(
+              nl: 'Bestellen en activeren gebeurt via je eigen Mollie Dashboard.',
+              en: 'Ordering and activation happen through your own Mollie Dashboard.',
+              fr: 'La commande et l’activation se font via votre propre tableau de bord Mollie.',
+              es: 'El pedido y la activación se realizan desde tu propio panel de Mollie.',
+            ),
+            style: TextStyle(color: _textMuted, fontSize: 11.4, height: 1.3),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _mollieTerminalListTile(Map<String, dynamic> terminal) {
+    String value(String key) => (terminal[key] ?? '').toString().trim();
+    final id = _maskedMollieId(value('id'));
+    final profileId = _maskedMollieId(value('profile_id'));
+    final description = value('description');
+    final status = value('status');
+    final brand = value('brand');
+    final model = value('model');
+    final title = description.isNotEmpty
+        ? description
+        : _t(
+            nl: 'Mollie-terminal',
+            en: 'Mollie terminal',
+            fr: 'Terminal Mollie',
+            es: 'Terminal Mollie',
+          );
+    final detailParts = <String>[
+      if (id.isNotEmpty) id,
+      if (status.isNotEmpty) status,
+      if (brand.isNotEmpty || model.isNotEmpty)
+        [brand, model].where((part) => part.isNotEmpty).join(' '),
+      if (profileId.isNotEmpty)
+        '${_t(nl: 'Profiel', en: 'Profile', fr: 'Profil', es: 'Perfil')}: $profileId',
+    ];
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: _panelBg.withOpacity(_isDark ? 0.55 : 0.72),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: _border.withOpacity(_isDark ? 0.42 : 0.82)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 32,
+            height: 32,
+            decoration: BoxDecoration(
+              color: _subPanelBg,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: _border.withOpacity(0.72)),
+            ),
+            child: Icon(Icons.point_of_sale_rounded, size: 18, color: _accent),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: TextStyle(
+                    color: _textPrimary,
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                if (detailParts.isNotEmpty) ...[
+                  const SizedBox(height: 3),
+                  Text(
+                    detailParts.join(' • '),
+                    style: TextStyle(
+                      color: _textMuted,
+                      fontSize: 11.1,
+                      height: 1.28,
+                    ),
+                  ),
+                ],
+              ],
             ),
           ),
         ],
@@ -8253,6 +8783,8 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                 ),
               if (_shouldShowSection('payment_ownership'))
                 _paymentOwnershipCard(),
+              if (_shouldShowSection('payment_ownership'))
+                _mollieTerminalPaymentsCard(),
               if (_shouldShowSection('vat_settings'))
                 _collapsibleSettingsCard(
                   id: 'vat_settings',
