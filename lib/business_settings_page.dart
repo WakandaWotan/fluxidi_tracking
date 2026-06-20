@@ -1446,6 +1446,15 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     return 'not_synced';
   }
 
+  String _mollieTerminalCardSubtitle() {
+    return _t(
+      nl: 'Terminalstatus en synchronisatie',
+      en: 'Terminal status and sync',
+      fr: 'Statut et synchronisation',
+      es: 'Estado y sincronización',
+    );
+  }
+
   String _mollieTerminalStatusTitle() {
     final status = _mollieTerminalsStatusCode();
     final terminals = _mollieTerminalList();
@@ -1749,6 +1758,14 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         setState(() => _mollieConnectLoading = false);
       }
     }
+  }
+
+  Future<void> _reconnectMollieForTerminals() async {
+    await _startMollieConnect();
+    if (!mounted) return;
+    await _loadMollieConnectStatus();
+    if (!mounted) return;
+    await _loadMollieTerminalsSnapshot();
   }
 
   Future<void> _startMollieConnect() async {
@@ -2515,12 +2532,13 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
       id: 'mollie_terminal_payments',
       icon: Icons.point_of_sale_outlined,
       title: _t(
-        nl: 'Mollie terminalbetalingen',
-        en: 'Mollie terminal payments',
-        fr: 'Paiements par terminal Mollie',
-        es: 'Pagos con terminal Mollie',
+        nl: 'Mollie terminals',
+        en: 'Mollie terminals',
+        fr: 'Terminaux Mollie',
+        es: 'Terminales Mollie',
       ),
-      subtitle: _mollieTerminalStatusTitle(),
+      titleMaxLines: 2,
+      subtitle: _mollieTerminalCardSubtitle(),
       status: _mollieTerminalSetupStatus(),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -2665,7 +2683,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                 OutlinedButton.icon(
                   onPressed: _mollieConnectStartLoading
                       ? null
-                      : _startMollieConnect,
+                      : _reconnectMollieForTerminals,
                   icon: _mollieConnectStartLoading
                       ? const SizedBox(
                           width: 14,
@@ -5010,6 +5028,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     required String subtitle,
     required Widget child,
     _SetupStatus? status,
+    int? titleMaxLines,
   }) {
     final isExpanded = _expandedSections.contains(id);
     final statusResolved = status ?? _SetupStatus.comingSoon;
@@ -5067,10 +5086,15 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                     children: [
                       Text(
                         title,
+                        maxLines: titleMaxLines,
+                        overflow: titleMaxLines != null
+                            ? TextOverflow.ellipsis
+                            : null,
                         style: TextStyle(
                           color: _textPrimary,
                           fontSize: 14,
                           fontWeight: FontWeight.w800,
+                          height: 1.2,
                         ),
                       ),
                       const SizedBox(height: 2),
