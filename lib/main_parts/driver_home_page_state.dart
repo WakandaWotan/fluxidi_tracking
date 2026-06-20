@@ -3906,6 +3906,9 @@ class _DriverHomePageState extends State<DriverHomePage>
     final date = '${pickupAt.year}-${two(pickupAt.month)}-${two(pickupAt.day)}';
     final time = '${two(pickupAt.hour)}:${two(pickupAt.minute)}';
     final pickupIso = '${date}T$time:00';
+    final bookingCurrency = normalizeExplicitIsoCurrencyCode(
+      settings.defaultCurrency,
+    );
 
     final body = <String, dynamic>{
       'from': pickupText,
@@ -3927,6 +3930,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       'return_pickup_iso': '',
       'vat_rate': vatRate,
       'vat_mode': vatMode,
+      if (bookingCurrency.isNotEmpty) 'currency': bookingCurrency,
       'pricing_profile': <String, dynamic>{
         'base_fare': settings.pricingBaseFare,
         'price_per_km': settings.pricingPerKm,
@@ -3938,6 +3942,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         'fuel_surcharge': settings.pricingFuelSurcharge,
         'vat_rate': vatRate,
         'vat_mode': vatMode,
+        if (bookingCurrency.isNotEmpty) 'currency': bookingCurrency,
       },
       'surcharge_fuel': settings.pricingFuelSurcharge,
       'return_fee': 0,

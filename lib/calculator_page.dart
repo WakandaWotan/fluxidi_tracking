@@ -1061,6 +1061,9 @@ class _CalculatorPageState extends State<CalculatorPage> {
     final extrasAliases = _isPremiumTier
         ? _derivePublicExtrasAliases(extraServiceValue)
         : (drinkService: false, workTable: false, extras: const <String>[]);
+    final bookingCurrency = normalizeExplicitIsoCurrencyCode(
+      _business.defaultCurrency,
+    );
     return <String, dynamic>{
       "from": fromText,
       "to": toText,
@@ -1097,6 +1100,7 @@ class _CalculatorPageState extends State<CalculatorPage> {
       "return_pickup_iso": returnEnabled ? _isoLikeLocal(returnDt) : '',
       "vat_rate": vat.vatRate,
       "vat_mode": vat.vatMode,
+      if (bookingCurrency.isNotEmpty) "currency": bookingCurrency,
       "pricing_profile": <String, dynamic>{
         "base_fare": _business.pricingBaseFare,
         "price_per_km": _business.pricingPerKm,
@@ -1108,6 +1112,7 @@ class _CalculatorPageState extends State<CalculatorPage> {
         "fuel_surcharge": _business.pricingFuelSurcharge,
         "vat_rate": vat.vatRate,
         "vat_mode": vat.vatMode,
+        if (bookingCurrency.isNotEmpty) "currency": bookingCurrency,
       },
       "surcharge_fuel": _business.pricingFuelSurcharge,
       "return_fee": returnEnabled ? _business.pricingReturnFee : 0,

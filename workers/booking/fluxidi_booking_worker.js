@@ -13044,11 +13044,13 @@ async function _handleQuoteRequestInternal({ body, env, request, url }) {
       ? `${quoteMainFixedFareRuleId} + ${quoteReturnFixedFareRuleId}`
       : (quoteMainFixedFareRuleId || quoteReturnFixedFareRuleId || null))
     : quoteMainFixedFareRuleId;
-  return {
-    status: 200,
-    out: {
-      ok: true,
-      inputs: {
+  const bookingCurrency = resolveExplicitBookingCurrencyFromRecordOrPayload({
+    payload: body,
+    pricingProfile,
+  });
+  const quoteOut = {
+    ok: true,
+    inputs: {
         from: body.from,
         to: body.to,
         date: body.date,
@@ -13102,7 +13104,16 @@ async function _handleQuoteRequestInternal({ body, env, request, url }) {
       return: returnQuote,
       breakdown: mainPricing.breakdown,
       availability,
-    },
+    };
+  if (bookingCurrency) {
+    _stampExplicitBookingCurrencyOnQuoteOut(quoteOut, bookingCurrency, {
+      mainPricing,
+      returnPricing: returnQuote,
+    });
+  }
+  return {
+    status: 200,
+    out: quoteOut,
   };
 }
 
@@ -40770,6 +40781,11 @@ async function handleBooking(payload, env, request, options = {}) {
     const fleetScope = normalizeFleetTenantScope(tenantContext);
 
     const pricingProfile = await _loadTenantPricingProfile(env, tenantContext);
+    const bookingCurrency = resolveExplicitBookingCurrencyFromRecordOrPayload({
+      payload,
+      quote: payload?.quote,
+      pricingProfile,
+    });
     const vat_rate = clampNumber(
       pricingProfile?.vat_rate,
       clampNumber(payload?.vat_rate, 0.06, 0, 1),
@@ -42051,6 +42067,9 @@ async function handleBooking(payload, env, request, options = {}) {
             tracking_last: null,
             trip: null,
           };
+          if (bookingCurrency) {
+            _stampExplicitBookingCurrencyOnPersistedRecord(provisionalRecord, bookingCurrency);
+          }
           _applyPaymentInvoiceLifecycleToRecord(provisionalRecord, {
             paymentMode: bookingPaymentMode,
             paymentProvider: bookingPaymentProvider,
@@ -42944,6 +42963,9 @@ Retour route: ${return_from || to} → ${return_to || from}`,
         tracking_last: null,
         trip: null,
       };
+      if (bookingCurrency) {
+        _stampExplicitBookingCurrencyOnPersistedRecord(provisionalRecord, bookingCurrency);
+      }
       applyPaymentOwnershipFromPayResult(provisionalRecord, pay);
       if (provisionalRecord.booking && typeof provisionalRecord.booking === "object") {
         applyPaymentOwnershipFromPayResult(provisionalRecord.booking, pay);
@@ -43483,6 +43505,9 @@ Retour route: ${return_from || to} → ${return_to || from}`,
       tracking_last: null,
       trip: null
     };
+    if (bookingCurrency) {
+      _stampExplicitBookingCurrencyOnPersistedRecord(record, bookingCurrency);
+    }
     _applyPaymentInvoiceLifecycleToRecord(record, {
       paymentMode: bookingPaymentMode,
       paymentProvider: bookingPaymentProvider,
@@ -48071,9 +48096,114 @@ function _numOr(v, fb) {
   return Number.isFinite(n) ? n : fb;
 }
 
+function normalizeExplicitIsoCurrency(value) {
+  if (typeof value !== "string") return "";
+  const upper = value.trim().toUpperCase();
+  return /^[A-Z]{3}$/.test(upper) ? upper : "";
+}
+
+function resolveExplicitBookingCurrencyFromRecordOrPayload({
+  payload,
+  quote,
+  pricingProfile,
+  booking,
+} = {}) {
+  const payloadObj = payload && typeof payload === "object" ? payload : {};
+  const quoteObj = quote && typeof quote === "object" ? quote : {};
+  const pricingProfileObj = pricingProfile && typeof pricingProfile === "object" ? pricingProfile : {};
+  const bookingObj = booking && typeof booking === "object" ? booking : {};
+  const payloadQuote = payloadObj.quote && typeof payloadObj.quote === "object" ? payloadObj.quote : {};
+  const payloadQuotePricing = payloadQuote.pricing && typeof payloadQuote.pricing === "object"
+    ? payloadQuote.pricing
+    : {};
+  const payloadPayment = payloadObj.payment && typeof payloadObj.payment === "object" ? payloadObj.payment : {};
+  const payloadPricingProfile = payloadObj.pricing_profile && typeof payloadObj.pricing_profile === "object"
+    ? payloadObj.pricing_profile
+    : (payloadObj.pricingProfile && typeof payloadObj.pricingProfile === "object" ? payloadObj.pricingProfile : {});
+  const quotePricing = quoteObj.pricing && typeof quoteObj.pricing === "object" ? quoteObj.pricing : {};
+  const candidates = [
+    payloadObj.currency,
+    payloadObj.booking_currency,
+    payloadObj.bookingCurrency,
+    payloadPricingProfile.currency,
+    payloadQuote.currency,
+    payloadQuotePricing.currency,
+    payloadPayment.currency,
+    quoteObj.currency,
+    quotePricing.currency,
+    pricingProfileObj.currency,
+    pricingProfileObj.booking_currency,
+    pricingProfileObj.bookingCurrency,
+    bookingObj.currency,
+    bookingObj.booking_currency,
+    bookingObj.bookingCurrency,
+  ];
+  for (const candidate of candidates) {
+    const normalized = normalizeExplicitIsoCurrency(candidate);
+    if (normalized) return normalized;
+  }
+  return "";
+}
+
+function _stampExplicitBookingCurrencyOnQuoteOut(out, currency, { quoteNested, mainPricing, returnPricing } = {}) {
+  if (!currency || !out || typeof out !== "object") return;
+  out.currency = currency;
+  if (quoteNested && typeof quoteNested === "object") {
+    quoteNested.currency = currency;
+  }
+  if (!out.pricing || typeof out.pricing !== "object") {
+    out.pricing = { currency };
+  } else {
+    out.pricing.currency = currency;
+  }
+  const main = out.pricing_main && typeof out.pricing_main === "object"
+    ? out.pricing_main
+    : (mainPricing && typeof mainPricing === "object" ? mainPricing : null);
+  if (main) {
+    out.pricing_main = { ...main, currency };
+  }
+  const ret = out.pricing_return && typeof out.pricing_return === "object"
+    ? out.pricing_return
+    : (returnPricing && typeof returnPricing === "object" ? returnPricing : null);
+  if (ret) {
+    out.pricing_return = { ...ret, currency };
+  }
+}
+
+function _stampExplicitBookingCurrencyOnPersistedRecord(rec, currency) {
+  if (!currency || !rec || typeof rec !== "object") return;
+  rec.currency = currency;
+  rec.booking_currency = currency;
+  rec.bookingCurrency = currency;
+  if (rec.booking && typeof rec.booking === "object") {
+    rec.booking.currency = currency;
+    rec.booking.booking_currency = currency;
+    rec.booking.bookingCurrency = currency;
+  }
+  if (rec.payload && typeof rec.payload === "object") {
+    rec.payload.currency = currency;
+  }
+  if (!rec.quote || typeof rec.quote !== "object") {
+    rec.quote = { currency };
+  } else {
+    rec.quote.currency = currency;
+    if (!rec.quote.pricing || typeof rec.quote.pricing !== "object") {
+      rec.quote.pricing = { currency };
+    } else {
+      rec.quote.pricing.currency = currency;
+    }
+    if (rec.quote.pricing_main && typeof rec.quote.pricing_main === "object") {
+      rec.quote.pricing_main.currency = currency;
+    }
+    if (rec.quote.pricing_return && typeof rec.quote.pricing_return === "object") {
+      rec.quote.pricing_return.currency = currency;
+    }
+  }
+}
+
 function _normalizeTenantPricingProfile(raw) {
   const src = raw && typeof raw === "object" ? raw : {};
-  return {
+  const profile = {
     base_fare: Math.max(0, _numOr(src.base_fare, DEFAULT_TENANT_PRICING_PROFILE.base_fare)),
     price_per_km: Math.max(0, _numOr(src.price_per_km, DEFAULT_TENANT_PRICING_PROFILE.price_per_km)),
     price_per_minute: Math.max(0, _numOr(src.price_per_minute, DEFAULT_TENANT_PRICING_PROFILE.price_per_minute)),
@@ -48097,6 +48227,21 @@ function _normalizeTenantPricingProfile(raw) {
     return_fee: Math.max(0, _numOr(src.return_fee, DEFAULT_TENANT_PRICING_PROFILE.return_fee)),
     fuel_surcharge: Math.max(0, _numOr(src.fuel_surcharge, DEFAULT_TENANT_PRICING_PROFILE.fuel_surcharge)),
   };
+  const currencyCandidates = [
+    src.currency,
+    src.default_currency,
+    src.defaultCurrency,
+    src.booking_currency,
+    src.bookingCurrency,
+  ];
+  for (const candidate of currencyCandidates) {
+    const normalized = normalizeExplicitIsoCurrency(candidate);
+    if (normalized) {
+      profile.currency = normalized;
+      break;
+    }
+  }
+  return profile;
 }
 
 async function _loadTenantPricingProfile(
@@ -51110,11 +51255,6 @@ function _bookingChironRecordNetAmount(rec) {
 function _bookingChironRecordCurrency(rec) {
   const booking = rec?.booking && typeof rec.booking === "object" ? rec.booking : {};
   const payload = rec?.payload && typeof rec.payload === "object" ? rec.payload : {};
-  const normalizeCurrencyCandidate = (value) => {
-    if (typeof value !== "string") return "";
-    const upper = value.trim().toUpperCase();
-    return /^[A-Z]{3}$/.test(upper) ? upper : "";
-  };
   // Chiron-1B-C (additive): scan only existing booking/quote/payment
   // snapshots and accept strict ISO-4217 string tokens. No default is
   // invented, and symbols/noisy strings are rejected.
@@ -51156,7 +51296,7 @@ function _bookingChironRecordCurrency(rec) {
     _pick(rec, ["mollie", "amount", "currency"], null),
   ];
   for (const candidate of candidates) {
-    const normalized = normalizeCurrencyCandidate(candidate);
+    const normalized = normalizeExplicitIsoCurrency(candidate);
     if (normalized) return normalized;
   }
   return "";

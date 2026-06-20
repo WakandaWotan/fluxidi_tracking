@@ -3640,9 +3640,15 @@ Uri _withAdminTenantCompanyScope(
   return endpoint.replace(queryParameters: merged);
 }
 
+String normalizeExplicitIsoCurrencyCode(String raw) {
+  final upper = raw.trim().toUpperCase();
+  if (!RegExp(r'^[A-Z]{3}$').hasMatch(upper)) return '';
+  return upper;
+}
+
 Map<String, dynamic> _encodePricingProfileForBackend(BusinessSettingsState s) {
   final vat = resolveActiveVatConfig(settings: s);
-  return <String, dynamic>{
+  final profile = <String, dynamic>{
     'base_fare': s.pricingBaseFare,
     'price_per_km': s.pricingPerKm,
     'price_per_minute': s.pricingPerMinute,
@@ -3662,6 +3668,13 @@ Map<String, dynamic> _encodePricingProfileForBackend(BusinessSettingsState s) {
     'weekend_surcharge_rate': s.pricingWeekendSurchargeRate,
     'surcharge_cap_rate': s.pricingSurchargeCapRate,
   };
+  final currency = normalizeExplicitIsoCurrencyCode(s.defaultCurrency);
+  if (currency.isNotEmpty) {
+    profile['currency'] = currency;
+    profile['default_currency'] = currency;
+    profile['defaultCurrency'] = currency;
+  }
+  return profile;
 }
 
 String? _sanitizeOutboundFleetMediaRef(String raw) {
