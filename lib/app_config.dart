@@ -6925,6 +6925,70 @@ Future<Map<String, dynamic>> disconnectBackendMollieConnect({
   return _safeMollieConnectMap(decoded);
 }
 
+Future<Map<String, dynamic>> fetchCompanyMollieTerminals({
+  String? tenantId,
+  String? companyId,
+}) async {
+  final endpoint = _withAdminTenantCompanyScope(
+    Uri.parse('${appConfig.bookingBaseUrl}/admin/mollie/terminals'),
+    tenantId: tenantId,
+    companyId: companyId,
+  );
+  final auth = await resolveCompanyOwnerAuthHeaders();
+  final res = await http
+      .get(endpoint, headers: auth.headers)
+      .timeout(const Duration(seconds: 12));
+  final decoded = jsonDecode(utf8.decode(res.bodyBytes));
+  if (decoded is! Map) throw Exception('Invalid response');
+  final map = Map<String, dynamic>.from(decoded);
+  if (res.statusCode < 200 || res.statusCode >= 300) {
+    throw Exception(
+      _adminApiErrorMessageFromResponse(
+        map,
+        res.statusCode,
+        fallback: 'mollie_terminals_fetch_failed',
+      ),
+    );
+  }
+  return map;
+}
+
+Future<Map<String, dynamic>> syncCompanyMollieTerminals({
+  String? tenantId,
+  String? companyId,
+}) async {
+  final endpoint = _withAdminTenantCompanyScope(
+    Uri.parse('${appConfig.bookingBaseUrl}/admin/mollie/terminals/sync'),
+    tenantId: tenantId,
+    companyId: companyId,
+  );
+  final scope = _resolveAdminTenantCompanyScope(
+    tenantId: tenantId,
+    companyId: companyId,
+  );
+  final auth = await resolveCompanyOwnerAuthHeaders();
+  final res = await http
+      .post(
+        endpoint,
+        headers: auth.headers,
+        body: jsonEncode(<String, dynamic>{...scope}),
+      )
+      .timeout(const Duration(seconds: 20));
+  final decoded = jsonDecode(utf8.decode(res.bodyBytes));
+  if (decoded is! Map) throw Exception('Invalid response');
+  final map = Map<String, dynamic>.from(decoded);
+  if (res.statusCode < 200 || res.statusCode >= 300) {
+    throw Exception(
+      _adminApiErrorMessageFromResponse(
+        map,
+        res.statusCode,
+        fallback: 'mollie_terminals_sync_failed',
+      ),
+    );
+  }
+  return map;
+}
+
 Future<void> loadLocalTenantState() async {
   try {
     _deletedDriverIdsByScope.clear();
