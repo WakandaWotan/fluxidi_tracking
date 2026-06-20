@@ -37,6 +37,12 @@ const CHIRON_EXPORT_LIST_SCAN_CAP = 10000;
 
 const CHIRON_REGULATOR_READY_TYPES = new Set(["booking_status_update", "ride_stop"]);
 
+const CHIRON_DRIVER_VEHICLE_BLOCKER_EVENT_TYPES = new Set([
+  "ride_stop",
+  "ride_start",
+  "correction_event",
+]);
+
 const CHIRON_LOG_ONLY_TYPES = new Set([
   "payment_update",
   "booking_credit_decision",
@@ -1040,13 +1046,27 @@ function _chironComputeCompleteness(event, blueprint) {
   if (!occurredAtUtc) missing.push("occurred_at_utc");
   if (!bookingId && !tripId) missing.push("booking_id_or_trip_id");
 
+  const lowerEventType = eventType.toLowerCase();
+  const requiresDriverVehicleBlockers =
+    CHIRON_DRIVER_VEHICLE_BLOCKER_EVENT_TYPES.has(lowerEventType);
+
   const vehicle = blueprint?.vehicle || {};
-  if (!vehicle.vehicle_id && !vehicle.license_plate) {
-    missing.push("vehicle_id_or_license_plate");
+  const missingVehicleIdentity = !vehicle.vehicle_id && !vehicle.license_plate;
+  if (missingVehicleIdentity) {
+    if (requiresDriverVehicleBlockers) {
+      missing.push("vehicle_id_or_license_plate");
+    } else if (!warnings.includes("vehicle_id_or_license_plate")) {
+      warnings.push("vehicle_id_or_license_plate");
+    }
   }
   const driver = blueprint?.driver || {};
-  if (!driver.driver_id && !driver.driver_name) {
-    missing.push("driver_id_or_driver_name");
+  const missingDriverNameOrId = !driver.driver_id && !driver.driver_name;
+  if (missingDriverNameOrId) {
+    if (requiresDriverVehicleBlockers) {
+      missing.push("driver_id_or_driver_name");
+    } else if (!warnings.includes("driver_id_or_driver_name")) {
+      warnings.push("driver_id_or_driver_name");
+    }
   }
 
   const fare = blueprint?.fare || {};
@@ -1080,7 +1100,6 @@ function _chironComputeCompleteness(event, blueprint) {
     warnings.push("missing_retry_outbox_state");
   }
 
-  const lowerEventType = eventType.toLowerCase();
   if (lowerEventType === "ride_stop") {
     const locations = blueprint?.locations || {};
     if (!locations.pickup || !locations.dropoff) {
@@ -1088,9 +1107,29 @@ function _chironComputeCompleteness(event, blueprint) {
     }
   }
   if (lowerEventType === "payment_update") {
-    const provider = payment && typeof payment === "object" ? payment.provider : null;
-    if (!provider) {
-      warnings.push("missing_payment_provider_for_payment_update");
+    const paymentAmount =
+      payment && typeof payment === "object" ? payment.amount : null;
+    if (
+      (fare.total_amount === null || fare.total_amount === undefined) &&
+      (paymentAmount === null || paymentAmount === undefined)
+    ) {
+      missing.push("payment_amount_when_payment_update");
+    }
+    if (!fare.currency) {
+      missing.push("currency_when_payment_update");
+    }
+    const paymentMethod =
+      payment && typeof payment === "object" ? cleanText(payment.method, 64) : null;
+    const paymentProvider =
+      payment && typeof payment === "object" ? cleanText(payment.provider, 64) : null;
+    if (!paymentMethod && !paymentProvider) {
+      if (!warnings.includes("missing_payment_method_or_provider_for_payment_update")) {
+        warnings.push("missing_payment_method_or_provider_for_payment_update");
+      }
+    } else if (!paymentProvider) {
+      if (!warnings.includes("missing_payment_provider_for_payment_update")) {
+        warnings.push("missing_payment_provider_for_payment_update");
+      }
     }
   }
 
