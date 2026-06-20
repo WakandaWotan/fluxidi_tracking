@@ -17,6 +17,13 @@ const RECENT_PATH = "/compliance/events/recent";
 const ADMIN_RESET_PATH = "/admin/dev/reset-compliance-events";
 const ADMIN_RESET_DRY_RUN_PATH = "/admin/dev/reset-compliance-events/dry-run";
 
+// Chiron-1: backend-only dry-run blueprint preview. Lives alongside the
+// existing compliance event store but uses a distinct KV prefix so the
+// compliance_event_v1 history is never touched.
+const CHIRON_DRYRUN_SCHEMA_VERSION = "chiron_dryrun_v1";
+const CHIRON_DRYRUN_BUILD_PATH = "/admin/chiron/dryrun/build-from-event";
+const CHIRON_DRYRUN_RECENT_PATH = "/admin/chiron/dryrun/recent";
+
 function jsonResponse(payload, status = 200, origin = "*") {
   return new Response(JSON.stringify(payload), {
     status,
@@ -673,6 +680,675 @@ async function handleAdminResetComplianceEvents(request, url, env, origin, dryRu
   );
 }
 
+// === Chiron-1: dry-run blueprint builder, lookup and routes ===
+// All helpers below are additive and never mutate compliance_event_v1
+// records. They only project existing event fields into a Chiron-shaped
+// preview and, when requested, persist that preview under a dedicated
+// KV prefix.
+
+function _chironMaskScopeId(value) {
+  const text = cleanText(value, 256);
+  if (!text) return "-";
+  if (text.length <= 6) return text;
+  return `${text.slice(0, 3)}...${text.slice(-3)}`;
+}
+
+function _chironPickFirstNonEmpty(...values) {
+  for (const value of values) {
+    const text = cleanText(value, 256);
+    if (text) return text;
+  }
+  return "";
+}
+
+function _chironCloneObject(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return { ...value };
+}
+
+function _chironResolveOccurredAtUtc(event) {
+  const timestamps =
+    event?.timestamps && typeof event.timestamps === "object" && !Array.isArray(event.timestamps)
+      ? event.timestamps
+      : {};
+  return _chironPickFirstNonEmpty(
+    timestamps.event_at_utc,
+    timestamps.stopped_at_utc,
+    timestamps.started_at_utc,
+    timestamps.paid_at_utc,
+    timestamps.status_updated_at_utc,
+    timestamps.refunded_at_utc,
+    timestamps.recorded_at_utc,
+    event?.created_at_utc,
+  );
+}
+
+function _chironProjectRide(event) {
+  const ride = {
+    ride_type: cleanText(event?.ride_type, 64) || null,
+    lifecycle_status: cleanText(event?.lifecycle_status, 64) || null,
+    session_id: cleanText(event?.session_id, 128) || null,
+    leg_id: cleanText(event?.leg_id, 128) || null,
+    leg_type: cleanText(event?.leg_type, 64) || null,
+    parent_booking_id: cleanText(event?.parent_booking_id, 128) || null,
+    row_key: cleanText(event?.row_key, 196) || null,
+    public_booking_reference:
+      cleanText(
+        event?.public_booking_reference ??
+          event?.publicBookingReference ??
+          event?.booking_reference ??
+          event?.bookingReference ??
+          event?.public_reference ??
+          event?.publicReference,
+        128,
+      ) || null,
+    receipt_reference:
+      cleanText(event?.receipt_reference ?? event?.receiptReference, 128) || null,
+    booking_status: cleanText(event?.booking_status, 64) || null,
+    previous_status: cleanText(event?.previous_status, 64) || null,
+    actor_role: cleanText(event?.actor_role, 64) || null,
+  };
+  return ride;
+}
+
+function _chironProjectDriver(event) {
+  const source = _chironCloneObject(event?.driver);
+  return {
+    driver_id: cleanText(source.driver_id ?? source.driverId, 96) || null,
+    driver_name: cleanText(source.driver_name ?? source.driverName, 160) || null,
+    license_id: cleanText(source.license_id ?? source.licenseId, 96) || null,
+    badge_id: cleanText(source.badge_id ?? source.badgeId, 96) || null,
+  };
+}
+
+function _chironProjectVehicle(event) {
+  const source = _chironCloneObject(event?.vehicle);
+  return {
+    vehicle_id: cleanText(source.vehicle_id ?? source.vehicleId, 96) || null,
+    license_plate:
+      cleanText(source.license_plate ?? source.licensePlate ?? source.plate, 64) || null,
+    make: cleanText(source.make, 80) || null,
+    model: cleanText(source.model, 80) || null,
+    vehicle_class:
+      cleanText(source.vehicle_class ?? source.vehicleClass ?? source.class, 64) || null,
+  };
+}
+
+function _chironProjectLocationPoint(point) {
+  if (!point || typeof point !== "object" || Array.isArray(point)) return null;
+  const label = cleanText(point.label ?? point.address ?? point.name, 256);
+  const lat = Number(point.lat);
+  const lng = Number(point.lng ?? point.lon);
+  const projected = {
+    label: label || null,
+    lat: Number.isFinite(lat) ? lat : null,
+    lng: Number.isFinite(lng) ? lng : null,
+  };
+  if (!projected.label && projected.lat === null && projected.lng === null) {
+    return null;
+  }
+  return projected;
+}
+
+function _chironProjectLocations(event) {
+  const source = _chironCloneObject(event?.locations);
+  return {
+    pickup: _chironProjectLocationPoint(source.pickup),
+    dropoff: _chironProjectLocationPoint(source.dropoff),
+  };
+}
+
+function _chironProjectFare(event) {
+  const source = _chironCloneObject(event?.fare);
+  const currency = cleanText(source.currency, 8).toUpperCase();
+  const totalAmount = Number(source.total_amount ?? source.totalAmount);
+  const distanceKm = Number(source.distance_km ?? source.distanceKm);
+  const waitSeconds = Number(source.wait_seconds_total ?? source.waitSecondsTotal);
+  const vatRate = Number(source.vat_rate ?? source.vatRate);
+  const vatAmount = Number(source.vat_amount ?? source.vatAmount);
+  return {
+    currency: currency || null,
+    total_amount: Number.isFinite(totalAmount) ? totalAmount : null,
+    distance_km: Number.isFinite(distanceKm) ? distanceKm : null,
+    wait_seconds_total: Number.isFinite(waitSeconds) ? waitSeconds : null,
+    vat_rate: Number.isFinite(vatRate) ? vatRate : null,
+    vat_amount: Number.isFinite(vatAmount) ? vatAmount : null,
+  };
+}
+
+function _chironProjectPayment(event) {
+  const source = _chironCloneObject(event?.payment);
+  if (!event?.payment || typeof event.payment !== "object") {
+    return null;
+  }
+  const amount = Number(source.amount);
+  return {
+    status: cleanText(source.status, 64) || null,
+    method: cleanText(source.method, 64) || null,
+    source: cleanText(source.source, 64) || null,
+    provider: cleanText(source.provider, 64) || null,
+    payment_id: cleanText(source.payment_id ?? source.paymentId, 160) || null,
+    mollie_payment_id:
+      cleanText(source.mollie_payment_id ?? source.molliePaymentId, 160) || null,
+    refund_status: cleanText(source.refund_status ?? source.refundStatus, 64) || null,
+    credit_status: cleanText(source.credit_status ?? source.creditStatus, 64) || null,
+    amount: Number.isFinite(amount) ? amount : null,
+    currency: cleanText(source.currency, 8).toUpperCase() || null,
+  };
+}
+
+function _chironProjectProvenance(event) {
+  const source = _chironCloneObject(event?.provenance);
+  return {
+    producer: cleanText(source.producer, 64) || null,
+    source_endpoint: cleanText(source.source_endpoint ?? source.sourceEndpoint, 128) || null,
+    backend_confirmed: source.backend_confirmed === true,
+    validation_state:
+      cleanText(source.validation_state ?? source.validationState, 64) || null,
+  };
+}
+
+function _chironComputeCompleteness(event, blueprint) {
+  const missing = [];
+  const warnings = [];
+
+  const tenantId = cleanText(event?.tenant_id, 128);
+  const companyId = cleanText(event?.company_id, 128);
+  const eventId = cleanText(event?.event_id, 200);
+  const eventType = cleanText(event?.event_type, 64);
+  const occurredAtUtc = cleanText(blueprint?.occurred_at_utc, 64);
+  const bookingId = cleanText(event?.booking_id, 128);
+  const tripId = cleanText(event?.trip_id, 128);
+
+  if (!tenantId) missing.push("tenant_id");
+  if (!companyId) missing.push("company_id");
+  if (!eventId) missing.push("event_id");
+  if (!eventType) missing.push("event_type");
+  if (!occurredAtUtc) missing.push("occurred_at_utc");
+  if (!bookingId && !tripId) missing.push("booking_id_or_trip_id");
+
+  const vehicle = blueprint?.vehicle || {};
+  if (!vehicle.vehicle_id && !vehicle.license_plate) {
+    missing.push("vehicle_id_or_license_plate");
+  }
+  const driver = blueprint?.driver || {};
+  if (!driver.driver_id && !driver.driver_name) {
+    missing.push("driver_id_or_driver_name");
+  }
+
+  const fare = blueprint?.fare || {};
+  if (fare.total_amount !== null && fare.total_amount !== undefined && !fare.currency) {
+    missing.push("fare_currency_when_total_amount_present");
+  }
+
+  const payment = blueprint?.payment;
+  if (payment && typeof payment === "object" && !payment.status) {
+    missing.push("payment_status_when_payment_present");
+  }
+
+  if (!vehicle.license_plate) {
+    warnings.push("missing_vehicle_license_plate");
+  }
+  if (!driver.driver_id && !driver.driver_name && !driver.license_id && !driver.badge_id) {
+    warnings.push("missing_driver_identity");
+  }
+  if (fare.vat_rate === null && fare.vat_amount === null) {
+    warnings.push("missing_vat_breakdown");
+  }
+  const reportingRegion = cleanText(event?.reporting_region ?? event?.reportingRegion, 64);
+  if (!reportingRegion) {
+    warnings.push("missing_reporting_region");
+  }
+  const syncState = cleanText(event?.sync_state, 64) || SYNC_STATE;
+  if (syncState === SYNC_STATE) {
+    warnings.push("missing_retry_outbox_state");
+  }
+
+  const lowerEventType = eventType.toLowerCase();
+  if (lowerEventType === "ride_stop") {
+    const locations = blueprint?.locations || {};
+    if (!locations.pickup || !locations.dropoff) {
+      warnings.push("missing_pickup_or_dropoff_for_ride_stop");
+    }
+  }
+  if (lowerEventType === "payment_update") {
+    const provider = payment && typeof payment === "object" ? payment.provider : null;
+    if (!provider) {
+      warnings.push("missing_payment_provider_for_payment_update");
+    }
+  }
+
+  // Predictable scoring: missing required = -10, warning = -2. Clamped 0..100.
+  const requiredPenalty = missing.length * 10;
+  const warningPenalty = warnings.length * 2;
+  const score = Math.max(0, Math.min(100, 100 - requiredPenalty - warningPenalty));
+
+  return {
+    score,
+    missing,
+    warnings,
+  };
+}
+
+function buildChironDryRunBlueprint(event) {
+  const safeEvent = event && typeof event === "object" && !Array.isArray(event) ? event : {};
+  const occurredAtUtc = _chironResolveOccurredAtUtc(safeEvent);
+  const blueprint = {
+    event_type: cleanText(safeEvent.event_type, 64) || null,
+    occurred_at_utc: occurredAtUtc || null,
+    ride: _chironProjectRide(safeEvent),
+    driver: _chironProjectDriver(safeEvent),
+    vehicle: _chironProjectVehicle(safeEvent),
+    locations: _chironProjectLocations(safeEvent),
+    fare: _chironProjectFare(safeEvent),
+    payment: _chironProjectPayment(safeEvent),
+    provenance: _chironProjectProvenance(safeEvent),
+  };
+  const completeness = _chironComputeCompleteness(safeEvent, blueprint);
+  return {
+    schema_version: CHIRON_DRYRUN_SCHEMA_VERSION,
+    source_schema_version: cleanText(safeEvent.schema_version, 64) || null,
+    source_event_id: cleanText(safeEvent.event_id, 200) || null,
+    source_event_type: cleanText(safeEvent.event_type, 64) || null,
+    tenant_id: cleanText(safeEvent.tenant_id, 128) || null,
+    company_id: cleanText(safeEvent.company_id, 128) || null,
+    booking_id: cleanText(safeEvent.booking_id, 128) || null,
+    trip_id: cleanText(safeEvent.trip_id, 128) || null,
+    created_at_utc: nowIso(),
+    blueprint,
+    completeness,
+    sync: {
+      dry_run: true,
+      would_submit: false,
+      target: "chiron",
+      state: "not_submitted",
+    },
+  };
+}
+
+function buildChironDryRunStorageKey(blueprint) {
+  const createdAt = cleanText(blueprint?.created_at_utc, 64) || nowIso();
+  const parsed = Date.parse(createdAt);
+  const when = new Date(Number.isFinite(parsed) ? parsed : Date.now());
+  const year = String(when.getUTCFullYear()).padStart(4, "0");
+  const month = String(when.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(when.getUTCDate()).padStart(2, "0");
+  const ms = String(when.getTime()).padStart(13, "0");
+  return [
+    CHIRON_DRYRUN_SCHEMA_VERSION,
+    "tenant",
+    safeSegment(blueprint?.tenant_id),
+    "company",
+    safeSegment(blueprint?.company_id),
+    year,
+    month,
+    day,
+    `${ms}_${safeSegment(blueprint?.source_event_id, "evt")}`,
+  ].join("/");
+}
+
+function buildChironDryRunPrefixForScope(tenantSegment, companySegment) {
+  return [
+    CHIRON_DRYRUN_SCHEMA_VERSION,
+    "tenant",
+    tenantSegment,
+    "company",
+    companySegment,
+    "",
+  ].join("/");
+}
+
+async function _chironLookupComplianceEventById(env, tenantSegment, companySegment, eventIdRaw) {
+  if (!env?.COMPLIANCE_KV || typeof env.COMPLIANCE_KV.list !== "function") {
+    return { ok: false, reason: "kv_unavailable" };
+  }
+  const eventId = cleanText(eventIdRaw, 200);
+  if (!eventId) return { ok: false, reason: "missing_event_id" };
+  const prefix = [
+    SCHEMA_VERSION,
+    "tenant",
+    tenantSegment,
+    "company",
+    companySegment,
+    "",
+  ].join("/");
+  const suffixSafe = safeSegment(eventId, "");
+  if (!suffixSafe) return { ok: false, reason: "invalid_event_id" };
+  const suffix = `_${suffixSafe}`;
+  const pageSize = 500;
+  const maxScan = 5000;
+  let cursor = undefined;
+  let listComplete = false;
+  let scanned = 0;
+  let matchKey = null;
+  while (!listComplete && scanned < maxScan && !matchKey) {
+    let listed;
+    try {
+      listed = await env.COMPLIANCE_KV.list({
+        prefix,
+        limit: pageSize,
+        ...(cursor ? { cursor } : {}),
+      });
+    } catch (_) {
+      return { ok: false, reason: "kv_list_failed" };
+    }
+    const keys = Array.isArray(listed?.keys) ? listed.keys : [];
+    for (const entry of keys) {
+      scanned += 1;
+      const keyName = cleanText(entry?.name, 1024);
+      if (!keyName) continue;
+      if (keyName.endsWith(suffix)) {
+        matchKey = keyName;
+        break;
+      }
+      if (scanned >= maxScan) break;
+    }
+    listComplete = listed?.list_complete === true;
+    cursor = cleanText(listed?.cursor, 1024) || undefined;
+    if (!listComplete && !cursor) break;
+  }
+  if (!matchKey) {
+    return { ok: false, reason: scanned >= maxScan ? "scan_cap" : "not_found" };
+  }
+  let raw;
+  try {
+    raw = await env.COMPLIANCE_KV.get(matchKey);
+  } catch (_) {
+    return { ok: false, reason: "kv_get_failed" };
+  }
+  if (!raw) return { ok: false, reason: "not_found" };
+  try {
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return { ok: false, reason: "malformed" };
+    }
+    return { ok: true, event: parsed, key: matchKey };
+  } catch (_) {
+    return { ok: false, reason: "malformed" };
+  }
+}
+
+async function handleChironDryrunBuildFromEvent(request, env, origin) {
+  const authError = ensureAuthorized(request, env);
+  if (authError) return authError;
+
+  if (!requireJsonRequest(request)) {
+    return jsonResponse(
+      { ok: false, error: "Content-Type must be application/json" },
+      400,
+      origin,
+    );
+  }
+
+  const body = await readJsonBody(request);
+  if (body === null || typeof body !== "object" || Array.isArray(body)) {
+    return jsonResponse({ ok: false, error: "Invalid JSON body" }, 400, origin);
+  }
+
+  const tenantId = cleanText(body.tenant_id, 128);
+  const companyId = cleanText(body.company_id, 128);
+  if (!tenantId || !companyId) {
+    return jsonResponse({ ok: false, error: "missing_scope" }, 400, origin);
+  }
+  const tenantSegment = safeSegment(tenantId, "");
+  const companySegment = safeSegment(companyId, "");
+  if (!tenantSegment || !companySegment) {
+    return jsonResponse({ ok: false, error: "missing_scope" }, 400, origin);
+  }
+
+  const persist = body.persist === true;
+  let event = null;
+
+  if (body.event && typeof body.event === "object" && !Array.isArray(body.event)) {
+    event = body.event;
+    const eventTenantId = cleanText(event.tenant_id, 128);
+    const eventCompanyId = cleanText(event.company_id, 128);
+    if (
+      (eventTenantId && eventTenantId !== tenantId) ||
+      (eventCompanyId && eventCompanyId !== companyId)
+    ) {
+      return jsonResponse({ ok: false, error: "scope_mismatch" }, 400, origin);
+    }
+    if (!eventTenantId) event.tenant_id = tenantId;
+    if (!eventCompanyId) event.company_id = companyId;
+  } else if (cleanText(body.event_id, 200)) {
+    const lookup = await _chironLookupComplianceEventById(
+      env,
+      tenantSegment,
+      companySegment,
+      body.event_id,
+    );
+    if (!lookup.ok) {
+      const recoverableReasons = new Set(["not_found", "scan_cap", "malformed"]);
+      if (recoverableReasons.has(lookup.reason)) {
+        return jsonResponse(
+          {
+            ok: false,
+            error: "event_lookup_not_supported_yet",
+            reason: lookup.reason,
+          },
+          404,
+          origin,
+        );
+      }
+      return jsonResponse(
+        {
+          ok: false,
+          error: "event_lookup_not_supported_yet",
+          reason: lookup.reason,
+        },
+        400,
+        origin,
+      );
+    }
+    event = lookup.event;
+    const lookupTenantId = cleanText(event.tenant_id, 128);
+    const lookupCompanyId = cleanText(event.company_id, 128);
+    if (
+      (lookupTenantId && lookupTenantId !== tenantId) ||
+      (lookupCompanyId && lookupCompanyId !== companyId)
+    ) {
+      return jsonResponse({ ok: false, error: "scope_mismatch" }, 400, origin);
+    }
+  } else {
+    return jsonResponse({ ok: false, error: "event_required" }, 400, origin);
+  }
+
+  if (!event || typeof event !== "object" || Array.isArray(event)) {
+    return jsonResponse({ ok: false, error: "invalid_event" }, 400, origin);
+  }
+
+  const blueprint = buildChironDryRunBlueprint(event);
+  console.log(
+    `[CHIRON_DRYRUN][BUILD] tenant=${_chironMaskScopeId(tenantId)} company=${_chironMaskScopeId(companyId)} source_event_id=${_chironMaskScopeId(blueprint.source_event_id)} source_event_type=${cleanText(blueprint.source_event_type, 64) || "-"} score=${blueprint.completeness.score} missing=${blueprint.completeness.missing.length} warnings=${blueprint.completeness.warnings.length}`,
+  );
+
+  let persisted = false;
+  if (persist) {
+    if (!env?.COMPLIANCE_KV || typeof env.COMPLIANCE_KV.put !== "function") {
+      console.log(
+        `[CHIRON_DRYRUN][ERROR] reason=missing_kv tenant=${_chironMaskScopeId(tenantId)} company=${_chironMaskScopeId(companyId)}`,
+      );
+      return jsonResponse(
+        { ok: false, error: "chiron_dryrun_persist_failed", reason: "missing_kv" },
+        500,
+        origin,
+      );
+    }
+    const key = buildChironDryRunStorageKey(blueprint);
+    try {
+      await env.COMPLIANCE_KV.put(key, JSON.stringify(blueprint));
+      persisted = true;
+      console.log(
+        `[CHIRON_DRYRUN][PERSIST] tenant=${_chironMaskScopeId(tenantId)} company=${_chironMaskScopeId(companyId)} source_event_id=${_chironMaskScopeId(blueprint.source_event_id)} ok=true`,
+      );
+    } catch (_) {
+      console.log(
+        `[CHIRON_DRYRUN][ERROR] reason=persist_failed tenant=${_chironMaskScopeId(tenantId)} company=${_chironMaskScopeId(companyId)} source_event_id=${_chironMaskScopeId(blueprint.source_event_id)}`,
+      );
+      return jsonResponse(
+        { ok: false, error: "chiron_dryrun_persist_failed", reason: "kv_put_failed" },
+        500,
+        origin,
+      );
+    }
+  }
+
+  return jsonResponse(
+    {
+      ok: true,
+      dry_run: true,
+      persisted,
+      blueprint,
+    },
+    200,
+    origin,
+  );
+}
+
+async function handleChironDryrunRecent(request, url, env, origin) {
+  const authError = ensureAuthorized(request, env);
+  if (authError) return authError;
+
+  if (!env?.COMPLIANCE_KV || typeof env.COMPLIANCE_KV.list !== "function") {
+    return jsonResponse(
+      {
+        ok: false,
+        error: "Compliance storage is not configured (missing COMPLIANCE_KV binding).",
+      },
+      500,
+      origin,
+    );
+  }
+
+  const tenant = parseRequiredQuerySegment(url, "tenant_id");
+  if (tenant.error) {
+    return jsonResponse({ ok: false, error: tenant.error }, 400, origin);
+  }
+  const company = parseRequiredQuerySegment(url, "company_id");
+  if (company.error) {
+    return jsonResponse({ ok: false, error: company.error }, 400, origin);
+  }
+
+  const limitRaw = cleanText(url.searchParams.get("limit"), 16);
+  let requestedLimit = 25;
+  if (limitRaw) {
+    const parsed = Number(limitRaw);
+    if (!Number.isFinite(parsed) || !Number.isInteger(parsed)) {
+      return jsonResponse(
+        { ok: false, error: "Invalid query parameter: limit must be an integer." },
+        400,
+        origin,
+      );
+    }
+    requestedLimit = Math.min(100, Math.max(1, parsed));
+  }
+
+  const tenantSegment = tenant.value;
+  const companySegment = company.value;
+  const prefix = buildChironDryRunPrefixForScope(tenantSegment, companySegment);
+
+  const pageSize = 250;
+  const maxScanKeys = 5000;
+  const keyNames = [];
+  const seenKeys = new Set();
+  let cursor = undefined;
+  let listComplete = false;
+  let hitScanCap = false;
+
+  while (!listComplete && keyNames.length < maxScanKeys) {
+    let listed;
+    try {
+      listed = await env.COMPLIANCE_KV.list({
+        prefix,
+        limit: pageSize,
+        ...(cursor ? { cursor } : {}),
+      });
+    } catch (_) {
+      return jsonResponse(
+        { ok: false, error: "Failed to list chiron dry-run blueprints." },
+        500,
+        origin,
+      );
+    }
+    const keys = Array.isArray(listed?.keys) ? listed.keys : [];
+    for (const entry of keys) {
+      const keyName = cleanText(entry?.name, 1024);
+      if (!keyName || seenKeys.has(keyName)) continue;
+      seenKeys.add(keyName);
+      keyNames.push(keyName);
+      if (keyNames.length >= maxScanKeys) break;
+    }
+    listComplete = listed?.list_complete === true;
+    cursor = cleanText(listed?.cursor, 1024) || undefined;
+    if (!listComplete && !cursor) break;
+    if (keyNames.length >= maxScanKeys && !listComplete) {
+      hitScanCap = true;
+    }
+  }
+
+  const items = [];
+  let malformedCount = 0;
+  for (const key of keyNames) {
+    let raw;
+    try {
+      raw = await env.COMPLIANCE_KV.get(key);
+    } catch (_) {
+      malformedCount += 1;
+      continue;
+    }
+    if (!raw) {
+      malformedCount += 1;
+      continue;
+    }
+    try {
+      const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        malformedCount += 1;
+        continue;
+      }
+      items.push({ key, ...parsed });
+    } catch (_) {
+      malformedCount += 1;
+    }
+  }
+
+  const parseMaybeDate = (value) => {
+    const text = cleanText(value, 64);
+    if (!text) return null;
+    const parsed = Date.parse(text);
+    if (!Number.isFinite(parsed)) return null;
+    return parsed;
+  };
+
+  const sorted = [...items].sort((a, b) => {
+    const aTs = parseMaybeDate(a?.created_at_utc);
+    const bTs = parseMaybeDate(b?.created_at_utc);
+    if (aTs != null && bTs != null && aTs !== bTs) return bTs - aTs;
+    if (aTs != null && bTs == null) return -1;
+    if (aTs == null && bTs != null) return 1;
+    return cleanText(b?.key, 1024).localeCompare(cleanText(a?.key, 1024));
+  });
+
+  const limitedItems = sorted.slice(0, requestedLimit);
+
+  return jsonResponse(
+    {
+      ok: true,
+      tenant_id: tenantSegment,
+      company_id: companySegment,
+      limit: requestedLimit,
+      count: limitedItems.length,
+      malformed_count: malformedCount,
+      scanned_count: keyNames.length,
+      has_more_candidates: hitScanCap || sorted.length > requestedLimit,
+      items: limitedItems,
+    },
+    200,
+    origin,
+  );
+}
+
 export default {
   async fetch(request, env) {
     const origin = request.headers.get("origin") || "*";
@@ -694,7 +1370,9 @@ export default {
       url.pathname !== APPEND_PATH &&
       url.pathname !== RECENT_PATH &&
       url.pathname !== ADMIN_RESET_PATH &&
-      url.pathname !== ADMIN_RESET_DRY_RUN_PATH
+      url.pathname !== ADMIN_RESET_DRY_RUN_PATH &&
+      url.pathname !== CHIRON_DRYRUN_BUILD_PATH &&
+      url.pathname !== CHIRON_DRYRUN_RECENT_PATH
     ) {
       return jsonResponse(
         { ok: false, error: "Not Found", path: url.pathname },
@@ -727,6 +1405,18 @@ export default {
           return jsonResponse({ ok: false, error: "dev reset endpoints are disabled" }, 403, origin);
         }
         return await handleAdminResetComplianceEvents(request, url, env, origin, false);
+      }
+      if (url.pathname === CHIRON_DRYRUN_BUILD_PATH) {
+        if (request.method !== "POST") {
+          return jsonResponse({ ok: false, error: "Method Not Allowed" }, 405, origin);
+        }
+        return await handleChironDryrunBuildFromEvent(request, env, origin);
+      }
+      if (url.pathname === CHIRON_DRYRUN_RECENT_PATH) {
+        if (request.method !== "GET") {
+          return jsonResponse({ ok: false, error: "Method Not Allowed" }, 405, origin);
+        }
+        return await handleChironDryrunRecent(request, url, env, origin);
       }
       if (request.method !== "GET") {
         return jsonResponse({ ok: false, error: "Method Not Allowed" }, 405, origin);
