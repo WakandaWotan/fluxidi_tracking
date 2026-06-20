@@ -12,6 +12,7 @@ const ALLOWED_EVENT_TYPES = new Set([
 
 const SCHEMA_VERSION = "compliance_event_v1";
 const SYNC_STATE = "not_configured";
+const RETRY_OUTBOX_STATE_DIRECT = "direct_append_v1";
 const APPEND_PATH = "/compliance/events/append";
 const RECENT_PATH = "/compliance/events/recent";
 const ADMIN_RESET_PATH = "/admin/dev/reset-compliance-events";
@@ -163,6 +164,8 @@ function normalizeEventEnvelope(input) {
         ? input.provenance
         : {},
     sync_state: SYNC_STATE,
+    retry_outbox_state: RETRY_OUTBOX_STATE_DIRECT,
+    retryOutboxState: RETRY_OUTBOX_STATE_DIRECT,
     created_at_utc: recordedAtUtc,
   };
 
@@ -357,6 +360,8 @@ function projectRecentEvent(key, parsedEvent) {
     receiptReference: cleanText(event.receiptReference, 128) || null,
     trip_id: cleanText(event.trip_id, 128) || null,
     sync_state: cleanText(event.sync_state, 64) || null,
+    retry_outbox_state:
+      cleanText(event.retry_outbox_state ?? event.retryOutboxState, 64) || null,
     created_at_utc: cleanText(event.created_at_utc, 64) || null,
     timestamps:
       event.timestamps && typeof event.timestamps === "object" && !Array.isArray(event.timestamps)
@@ -936,8 +941,11 @@ function _chironComputeCompleteness(event, blueprint) {
   if (!reportingRegion) {
     warnings.push("missing_reporting_region");
   }
-  const syncState = cleanText(event?.sync_state, 64) || SYNC_STATE;
-  if (syncState === SYNC_STATE) {
+  const retryOutboxState = cleanText(
+    event?.retry_outbox_state ?? event?.retryOutboxState,
+    64,
+  );
+  if (!retryOutboxState) {
     warnings.push("missing_retry_outbox_state");
   }
 
