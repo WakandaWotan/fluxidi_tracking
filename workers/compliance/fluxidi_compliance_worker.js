@@ -26,6 +26,15 @@ const CHIRON_DRYRUN_BUILD_PATH = "/admin/chiron/dryrun/build-from-event";
 const CHIRON_DRYRUN_RECENT_PATH = "/admin/chiron/dryrun/recent";
 const CHIRON_SCORE_SUMMARY_PATH = "/admin/chiron/score-summary";
 
+// Chiron-4A: backend-only export dry-run / optional test-mode handover foundation.
+const CHIRON_EXPORT_VERSION = "chiron_export_v1";
+const CHIRON_EXPORT_SOURCE = "fluxidi_chiron";
+const CHIRON_EXPORT_DRY_RUN_PATH = "/admin/chiron/export/dry-run";
+const CHIRON_EXPORT_TEST_PATH = "/admin/chiron/export/test";
+const CHIRON_EXPORT_STATUS_SCHEMA = "chiron_export_status_v1";
+const CHIRON_EXPORT_MAX_SAMPLE_PAYLOADS = 3;
+const CHIRON_EXPORT_LIST_SCAN_CAP = 10000;
+
 const CHIRON_REGULATOR_READY_TYPES = new Set(["booking_status_update", "ride_stop"]);
 
 const CHIRON_LOG_ONLY_TYPES = new Set([
@@ -285,6 +294,43 @@ function parseChironNewestEventsLimit(url) {
     return { error: "Invalid query parameter: newest_events_limit must be an integer." };
   }
   return { value: Math.min(25, Math.max(0, parsed)) };
+}
+
+function parseChironExportLimit(raw) {
+  const text = cleanText(raw, 16);
+  if (!text) return { value: 10 };
+  const parsed = Number(text);
+  if (!Number.isFinite(parsed) || !Number.isInteger(parsed)) {
+    return { error: "Invalid limit: must be an integer." };
+  }
+  return { value: Math.min(50, Math.max(1, parsed)) };
+}
+
+function parseOptionalIsoBodyMs(body, key) {
+  const raw = cleanText(body?.[key], 64);
+  if (!raw) return { value: null, raw: null };
+  const ms = Date.parse(raw);
+  if (!Number.isFinite(ms)) {
+    return { error: `Invalid body field: ${key}` };
+  }
+  return { value: ms, raw };
+}
+
+function parseChironExportScopeFromBody(body) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return { error: "Invalid JSON body" };
+  }
+  const tenantId = cleanText(body.tenant_id, 128);
+  const companyId = cleanText(body.company_id, 128);
+  if (!tenantId || !companyId) {
+    return { error: "missing_scope" };
+  }
+  const tenantSegment = safeSegment(tenantId, "");
+  const companySegment = safeSegment(companyId, "");
+  if (!tenantSegment || !companySegment) {
+    return { error: "missing_scope" };
+  }
+  return { tenantId, companyId, tenantSegment, companySegment, body };
 }
 
 function parseOptionalIsoQueryMs(url, key) {
@@ -1759,6 +1805,581 @@ async function handleChironScoreSummary(request, url, env, origin) {
   );
 }
 
+function chironExportTestModeEnabled(env) {
+  return (
+    cleanText(env?.CHIRON_EXPORT_MODE, 32).toLowerCase() === "test" &&
+    cleanText(env?.CHIRON_EXPORT_BASE_URL, 512).length > 0 &&
+    cleanText(env?.CHIRON_EXPORT_API_TOKEN, 512).length > 0
+  );
+}
+
+function buildChironExportIdempotencyKey(tenantId, companyId, eventId, eventType, occurredAtUtc) {
+  return cleanText(
+    [tenantId, companyId, eventId, eventType, occurredAtUtc].filter(Boolean).join(":"),
+    256,
+  );
+}
+
+function buildChironExportStatusKey(tenantSegment, companySegment, eventId) {
+  return [
+    CHIRON_EXPORT_STATUS_SCHEMA,
+    "tenant",
+    tenantSegment,
+    "company",
+    companySegment,
+    "event",
+    safeSegment(eventId, "evt"),
+  ].join("/");
+}
+
+function _chironSanitizeExportError(message) {
+  return cleanText(
+    String(message ?? "")
+      .replace(/Bearer\s+\S+/gi, "[redacted]")
+      .replace(/token[=:]\s*\S+/gi, "token=[redacted]"),
+    256,
+  );
+}
+
+function _chironExtractExternalReference(data) {
+  if (!data || typeof data !== "object" || Array.isArray(data)) return null;
+  return (
+    cleanText(
+      data.external_reference ??
+        data.externalReference ??
+        data.reference ??
+        data.id ??
+        data.event_id ??
+        data.eventId,
+      200,
+    ) || null
+  );
+}
+
+function buildChironExportPayload(event, eventKey, options = {}) {
+  const safeEvent =
+    event && typeof event === "object" && !Array.isArray(event) ? event : {};
+  const built = buildChironDryRunBlueprint(safeEvent);
+  const blueprint = built?.blueprint || {};
+  const completeness = built?.completeness || { missing: [], warnings: [], score: 0 };
+  const ride = blueprint.ride || _chironProjectRide(safeEvent);
+  const driver = blueprint.driver || _chironProjectDriver(safeEvent);
+  const vehicle = blueprint.vehicle || _chironProjectVehicle(safeEvent);
+  const fare = blueprint.fare || _chironProjectFare(safeEvent);
+  const payment = blueprint.payment || _chironProjectPayment(safeEvent);
+  const refundAudit = projectRefundAuditFields(safeEvent);
+
+  const tenantId = cleanText(safeEvent.tenant_id, 128);
+  const companyId = cleanText(safeEvent.company_id, 128);
+  const eventId = cleanText(safeEvent.event_id, 200);
+  const eventType = cleanText(safeEvent.event_type, 64);
+  const createdAtUtc = cleanText(safeEvent.created_at_utc, 64);
+  const occurredAtUtc =
+    cleanText(blueprint.occurred_at_utc, 64) || _chironResolveOccurredAtUtc(safeEvent);
+
+  const payload = {
+    export_version: CHIRON_EXPORT_VERSION,
+    source: CHIRON_EXPORT_SOURCE,
+    tenant_id: tenantId || null,
+    company_id: companyId || null,
+    event_id: eventId || null,
+    event_key: cleanText(eventKey, 1024) || null,
+    event_type: eventType || null,
+    booking_id: cleanText(safeEvent.booking_id, 128) || null,
+    trip_id: cleanText(safeEvent.trip_id, 128) || null,
+    public_booking_reference: ride.public_booking_reference || null,
+    created_at_utc: createdAtUtc || null,
+    occurred_at_utc: occurredAtUtc || null,
+    driver,
+    vehicle,
+    ride_status:
+      cleanText(safeEvent.ride_status ?? safeEvent.lifecycle_status ?? ride.lifecycle_status, 64) ||
+      null,
+    lifecycle_status: ride.lifecycle_status || null,
+    booking_status: ride.booking_status || null,
+    payment_status: payment?.status || null,
+    payment_method: payment?.method || null,
+    refund_status: refundAudit.refund_status || payment?.refund_status || null,
+    credit_status: payment?.credit_status || null,
+    amount: fare.total_amount ?? payment?.amount ?? null,
+    currency: fare.currency ?? payment?.currency ?? null,
+    vat_rate: fare.vat_rate ?? null,
+    vat_amount: fare.vat_amount ?? null,
+    vat_amount_cents: fare.vat_amount_cents ?? null,
+    idempotency_key: buildChironExportIdempotencyKey(
+      tenantId,
+      companyId,
+      eventId,
+      eventType,
+      occurredAtUtc,
+    ),
+    exportable: completeness.missing.length === 0,
+    completeness_score: completeness.score,
+    missing: Array.isArray(completeness.missing) ? completeness.missing : [],
+    warnings: Array.isArray(completeness.warnings) ? completeness.warnings : [],
+  };
+
+  if (options.includeRaw === true) {
+    payload.raw_event = projectRecentEvent(cleanText(eventKey, 1024), safeEvent);
+  }
+
+  return payload;
+}
+
+async function _chironCollectScopedComplianceEventsForExport(
+  env,
+  tenantSegment,
+  companySegment,
+  options,
+) {
+  const {
+    requestedLimit,
+    sinceMs = null,
+    untilMs = null,
+    eventTypeFilterRaw = "",
+  } = options;
+
+  const prefix = buildCompliancePrefixForScope(tenantSegment, companySegment);
+  let keyNames;
+  try {
+    keyNames = await listScopedComplianceEventKeys(env, prefix);
+  } catch (_) {
+    return { error: "Failed to list compliance events." };
+  }
+
+  const hitScanCap = keyNames.length >= CHIRON_EXPORT_LIST_SCAN_CAP;
+  let malformedCount = 0;
+  const parsedEvents = [];
+
+  for (const key of keyNames) {
+    let raw;
+    try {
+      raw = await env.COMPLIANCE_KV.get(key);
+    } catch (_) {
+      malformedCount += 1;
+      continue;
+    }
+    if (!raw) {
+      malformedCount += 1;
+      continue;
+    }
+    try {
+      const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        malformedCount += 1;
+        continue;
+      }
+      parsedEvents.push({ key, event: parsed });
+    } catch (_) {
+      malformedCount += 1;
+    }
+  }
+
+  const filtered = [];
+  for (const entry of parsedEvents) {
+    const event = entry.event;
+    const eventType = cleanText(event.event_type, 64).toLowerCase();
+    if (eventTypeFilterRaw && eventType !== eventTypeFilterRaw) continue;
+
+    const eventTs = _chironEventTimestampMs(event);
+    if (sinceMs != null && (eventTs == null || eventTs < sinceMs)) continue;
+    if (untilMs != null && (eventTs == null || eventTs > untilMs)) continue;
+
+    filtered.push({ key: entry.key, event, eventTs });
+  }
+
+  const sortedFiltered = [...filtered].sort((a, b) => {
+    const aTs = a.eventTs;
+    const bTs = b.eventTs;
+    if (aTs != null && bTs != null && aTs !== bTs) return bTs - aTs;
+    if (aTs != null && bTs == null) return -1;
+    if (aTs == null && bTs != null) return 1;
+    return cleanText(b?.key, 1024).localeCompare(cleanText(a?.key, 1024));
+  });
+
+  const limitedEntries = sortedFiltered.slice(0, requestedLimit);
+  const hasMoreCandidates = hitScanCap || sortedFiltered.length > requestedLimit;
+
+  return {
+    limitedEntries,
+    malformedCount,
+    scannedCount: keyNames.length,
+    hasMoreCandidates,
+  };
+}
+
+function _chironBuildExportDryRunPayloadResponse(
+  tenantId,
+  companyId,
+  limit,
+  collectResult,
+  includeRaw,
+) {
+  const payloads = collectResult.limitedEntries.map((entry) =>
+    buildChironExportPayload(entry.event, entry.key, { includeRaw }),
+  );
+  const exportableCount = payloads.filter((payload) => payload.exportable).length;
+  const sampleCandidates = [
+    ...payloads.filter((payload) => payload.exportable),
+    ...payloads.filter((payload) => !payload.exportable),
+  ];
+  const samplePayloads = sampleCandidates.slice(0, CHIRON_EXPORT_MAX_SAMPLE_PAYLOADS);
+
+  return {
+    ok: true,
+    dry_run: true,
+    tenant_id: tenantId,
+    company_id: companyId,
+    limit,
+    scanned_count: collectResult.scannedCount,
+    processed_count: payloads.length,
+    exportable_count: exportableCount,
+    non_exportable_count: payloads.length - exportableCount,
+    malformed_count: collectResult.malformedCount,
+    has_more_candidates: collectResult.hasMoreCandidates,
+    sample_payloads: samplePayloads,
+  };
+}
+
+async function _chironReadExportStatus(env, statusKey) {
+  if (!env?.COMPLIANCE_KV || typeof env.COMPLIANCE_KV.get !== "function") return null;
+  try {
+    const raw = await env.COMPLIANCE_KV.get(statusKey);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    return parsed;
+  } catch (_) {
+    return null;
+  }
+}
+
+async function _chironWriteExportStatus(env, statusKey, statusDoc) {
+  if (!env?.COMPLIANCE_KV || typeof env.COMPLIANCE_KV.put !== "function") {
+    return { ok: false, reason: "missing_kv" };
+  }
+  try {
+    await env.COMPLIANCE_KV.put(statusKey, JSON.stringify(statusDoc));
+    return { ok: true };
+  } catch (_) {
+    return { ok: false, reason: "kv_put_failed" };
+  }
+}
+
+async function _chironPostChironExportTestPayload(env, payload) {
+  const baseUrl = cleanText(env?.CHIRON_EXPORT_BASE_URL, 512).replace(/\/+$/, "");
+  const token = cleanText(env?.CHIRON_EXPORT_API_TOKEN, 512);
+  if (!baseUrl || !token) {
+    return { ok: false, error: "chiron_export_test_mode_disabled" };
+  }
+
+  let response;
+  try {
+    response = await fetch(baseUrl, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(payload),
+    });
+  } catch (err) {
+    return {
+      ok: false,
+      external_status_code: null,
+      sanitized_error: _chironSanitizeExportError(err?.message || "network_error"),
+    };
+  }
+
+  let responseBody = null;
+  const contentType = cleanText(response.headers.get("content-type"), 128).toLowerCase();
+  if (contentType.includes("application/json")) {
+    try {
+      responseBody = await response.json();
+    } catch (_) {
+      responseBody = null;
+    }
+  }
+
+  if (!response.ok) {
+    const message =
+      (responseBody &&
+        typeof responseBody === "object" &&
+        cleanText(responseBody.error ?? responseBody.message, 256)) ||
+      `HTTP ${response.status}`;
+    return {
+      ok: false,
+      external_status_code: response.status,
+      sanitized_error: _chironSanitizeExportError(message),
+      external_reference: _chironExtractExternalReference(responseBody),
+    };
+  }
+
+  return {
+    ok: true,
+    external_status_code: response.status,
+    external_reference: _chironExtractExternalReference(responseBody),
+    sanitized_error: null,
+  };
+}
+
+async function handleChironExportDryRun(request, env, origin) {
+  const authError = ensureAuthorized(request, env);
+  if (authError) return authError;
+
+  if (!requireJsonRequest(request)) {
+    return jsonResponse(
+      { ok: false, error: "Content-Type must be application/json" },
+      400,
+      origin,
+    );
+  }
+
+  if (!env?.COMPLIANCE_KV || typeof env.COMPLIANCE_KV.list !== "function") {
+    return jsonResponse(
+      {
+        ok: false,
+        error: "Compliance storage is not configured (missing COMPLIANCE_KV binding).",
+      },
+      500,
+      origin,
+    );
+  }
+
+  const body = await readJsonBody(request);
+  const scope = parseChironExportScopeFromBody(body);
+  if (scope.error) {
+    const status = scope.error === "missing_scope" ? 400 : 400;
+    return jsonResponse({ ok: false, error: scope.error }, status, origin);
+  }
+
+  const limitParsed = parseChironExportLimit(body.limit);
+  if (limitParsed.error) {
+    return jsonResponse({ ok: false, error: limitParsed.error }, 400, origin);
+  }
+
+  const sinceParsed = parseOptionalIsoBodyMs(body, "since");
+  if (sinceParsed.error) {
+    return jsonResponse({ ok: false, error: sinceParsed.error }, 400, origin);
+  }
+  const untilParsed = parseOptionalIsoBodyMs(body, "until");
+  if (untilParsed.error) {
+    return jsonResponse({ ok: false, error: untilParsed.error }, 400, origin);
+  }
+
+  const eventTypeFilterRaw = cleanText(body.event_type, 64).toLowerCase();
+  if (eventTypeFilterRaw && !ALLOWED_EVENT_TYPES.has(eventTypeFilterRaw)) {
+    return jsonResponse({ ok: false, error: "Invalid body field: event_type" }, 400, origin);
+  }
+
+  const includeRaw = body.include_raw === true;
+  const { tenantId, companyId, tenantSegment, companySegment } = scope;
+
+  const collectResult = await _chironCollectScopedComplianceEventsForExport(
+    env,
+    tenantSegment,
+    companySegment,
+    {
+      requestedLimit: limitParsed.value,
+      sinceMs: sinceParsed.value,
+      untilMs: untilParsed.value,
+      eventTypeFilterRaw,
+    },
+  );
+  if (collectResult.error) {
+    return jsonResponse({ ok: false, error: collectResult.error }, 500, origin);
+  }
+
+  const responsePayload = _chironBuildExportDryRunPayloadResponse(
+    tenantId,
+    companyId,
+    limitParsed.value,
+    collectResult,
+    includeRaw,
+  );
+
+  console.log(
+    `[CHIRON_EXPORT][DRY_RUN] tenant=${_chironMaskScopeId(tenantId)} company=${_chironMaskScopeId(companyId)} scanned=${responsePayload.scanned_count} processed=${responsePayload.processed_count} exportable=${responsePayload.exportable_count}`,
+  );
+
+  return jsonResponse(responsePayload, 200, origin);
+}
+
+async function handleChironExportTest(request, env, origin) {
+  const authError = ensureAuthorized(request, env);
+  if (authError) return authError;
+
+  if (!chironExportTestModeEnabled(env)) {
+    return jsonResponse({ ok: false, error: "chiron_export_test_mode_disabled" }, 403, origin);
+  }
+
+  if (!requireJsonRequest(request)) {
+    return jsonResponse(
+      { ok: false, error: "Content-Type must be application/json" },
+      400,
+      origin,
+    );
+  }
+
+  if (!env?.COMPLIANCE_KV || typeof env.COMPLIANCE_KV.list !== "function") {
+    return jsonResponse(
+      {
+        ok: false,
+        error: "Compliance storage is not configured (missing COMPLIANCE_KV binding).",
+      },
+      500,
+      origin,
+    );
+  }
+
+  const body = await readJsonBody(request);
+  const scope = parseChironExportScopeFromBody(body);
+  if (scope.error) {
+    return jsonResponse({ ok: false, error: scope.error }, 400, origin);
+  }
+
+  const limitParsed = parseChironExportLimit(body.limit);
+  if (limitParsed.error) {
+    return jsonResponse({ ok: false, error: limitParsed.error }, 400, origin);
+  }
+
+  const sinceParsed = parseOptionalIsoBodyMs(body, "since");
+  if (sinceParsed.error) {
+    return jsonResponse({ ok: false, error: sinceParsed.error }, 400, origin);
+  }
+  const untilParsed = parseOptionalIsoBodyMs(body, "until");
+  if (untilParsed.error) {
+    return jsonResponse({ ok: false, error: untilParsed.error }, 400, origin);
+  }
+
+  const eventTypeFilterRaw = cleanText(body.event_type, 64).toLowerCase();
+  if (eventTypeFilterRaw && !ALLOWED_EVENT_TYPES.has(eventTypeFilterRaw)) {
+    return jsonResponse({ ok: false, error: "Invalid body field: event_type" }, 400, origin);
+  }
+
+  const includeRaw = body.include_raw === true;
+  const performLiveExport = body.dry_run === false;
+  const { tenantId, companyId, tenantSegment, companySegment } = scope;
+
+  const collectResult = await _chironCollectScopedComplianceEventsForExport(
+    env,
+    tenantSegment,
+    companySegment,
+    {
+      requestedLimit: limitParsed.value,
+      sinceMs: sinceParsed.value,
+      untilMs: untilParsed.value,
+      eventTypeFilterRaw,
+    },
+  );
+  if (collectResult.error) {
+    return jsonResponse({ ok: false, error: collectResult.error }, 500, origin);
+  }
+
+  const dryRunPayload = _chironBuildExportDryRunPayloadResponse(
+    tenantId,
+    companyId,
+    limitParsed.value,
+    collectResult,
+    includeRaw,
+  );
+
+  if (!performLiveExport) {
+    console.log(
+      `[CHIRON_EXPORT][TEST][DRY_RUN] tenant=${_chironMaskScopeId(tenantId)} company=${_chironMaskScopeId(companyId)} scanned=${dryRunPayload.scanned_count} exportable=${dryRunPayload.exportable_count}`,
+    );
+    return jsonResponse(
+      {
+        ...dryRunPayload,
+        test_mode: true,
+        live_export: false,
+      },
+      200,
+      origin,
+    );
+  }
+
+  const exportAttempts = [];
+  const nowIso = new Date().toISOString();
+  const payloads = collectResult.limitedEntries.map((entry) =>
+    buildChironExportPayload(entry.event, entry.key, { includeRaw: false }),
+  );
+
+  for (const payload of payloads) {
+    if (!payload.exportable || !payload.event_id) continue;
+
+    const statusKey = buildChironExportStatusKey(
+      tenantSegment,
+      companySegment,
+      payload.event_id,
+    );
+    const previousStatus = await _chironReadExportStatus(env, statusKey);
+    const attemptCount = Number(previousStatus?.attempt_count || 0) + 1;
+
+    const pendingDoc = {
+      schema_version: CHIRON_EXPORT_STATUS_SCHEMA,
+      tenant_id: tenantId,
+      company_id: companyId,
+      event_id: payload.event_id,
+      sync_state: "pending",
+      external_status_code: null,
+      external_reference: null,
+      last_attempt_at: nowIso,
+      attempt_count: attemptCount,
+      sanitized_error: null,
+    };
+    await _chironWriteExportStatus(env, statusKey, pendingDoc);
+
+    const postResult = await _chironPostChironExportTestPayload(env, payload);
+    const finalDoc = {
+      ...pendingDoc,
+      sync_state: postResult.ok ? "synced" : "failed",
+      external_status_code: postResult.external_status_code ?? null,
+      external_reference: postResult.external_reference ?? null,
+      sanitized_error: postResult.sanitized_error ?? null,
+      last_attempt_at: new Date().toISOString(),
+    };
+    await _chironWriteExportStatus(env, statusKey, finalDoc);
+
+    exportAttempts.push({
+      event_id: payload.event_id,
+      idempotency_key: payload.idempotency_key,
+      sync_state: finalDoc.sync_state,
+      external_status_code: finalDoc.external_status_code,
+      external_reference: finalDoc.external_reference,
+      attempt_count: finalDoc.attempt_count,
+      sanitized_error: finalDoc.sanitized_error,
+      status_key: statusKey,
+    });
+  }
+
+  console.log(
+    `[CHIRON_EXPORT][TEST][LIVE] tenant=${_chironMaskScopeId(tenantId)} company=${_chironMaskScopeId(companyId)} attempts=${exportAttempts.length} synced=${exportAttempts.filter((entry) => entry.sync_state === "synced").length}`,
+  );
+
+  return jsonResponse(
+    {
+      ok: true,
+      dry_run: false,
+      test_mode: true,
+      live_export: true,
+      tenant_id: tenantId,
+      company_id: companyId,
+      limit: limitParsed.value,
+      scanned_count: dryRunPayload.scanned_count,
+      processed_count: dryRunPayload.processed_count,
+      exportable_count: dryRunPayload.exportable_count,
+      non_exportable_count: dryRunPayload.non_exportable_count,
+      malformed_count: dryRunPayload.malformed_count,
+      has_more_candidates: dryRunPayload.has_more_candidates,
+      sample_payloads: dryRunPayload.sample_payloads,
+      export_attempts: exportAttempts,
+    },
+    200,
+    origin,
+  );
+}
+
 export default {
   async fetch(request, env) {
     const origin = request.headers.get("origin") || "*";
@@ -1783,7 +2404,9 @@ export default {
       url.pathname !== ADMIN_RESET_DRY_RUN_PATH &&
       url.pathname !== CHIRON_DRYRUN_BUILD_PATH &&
       url.pathname !== CHIRON_DRYRUN_RECENT_PATH &&
-      url.pathname !== CHIRON_SCORE_SUMMARY_PATH
+      url.pathname !== CHIRON_SCORE_SUMMARY_PATH &&
+      url.pathname !== CHIRON_EXPORT_DRY_RUN_PATH &&
+      url.pathname !== CHIRON_EXPORT_TEST_PATH
     ) {
       return jsonResponse(
         { ok: false, error: "Not Found", path: url.pathname },
@@ -1834,6 +2457,18 @@ export default {
           return jsonResponse({ ok: false, error: "Method Not Allowed" }, 405, origin);
         }
         return await handleChironScoreSummary(request, url, env, origin);
+      }
+      if (url.pathname === CHIRON_EXPORT_DRY_RUN_PATH) {
+        if (request.method !== "POST") {
+          return jsonResponse({ ok: false, error: "Method Not Allowed" }, 405, origin);
+        }
+        return await handleChironExportDryRun(request, env, origin);
+      }
+      if (url.pathname === CHIRON_EXPORT_TEST_PATH) {
+        if (request.method !== "POST") {
+          return jsonResponse({ ok: false, error: "Method Not Allowed" }, 405, origin);
+        }
+        return await handleChironExportTest(request, env, origin);
       }
       if (request.method !== "GET") {
         return jsonResponse({ ok: false, error: "Method Not Allowed" }, 405, origin);
