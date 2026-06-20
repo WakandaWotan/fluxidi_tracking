@@ -973,6 +973,85 @@ class _ChironReadinessChecklistPage extends StatelessWidget {
     );
   }
 
+  Widget _attentionActionCard({
+    required String title,
+    required String body,
+    required String actionLabel,
+    required IconData icon,
+    required Color accent,
+  }) {
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: _chironPanel,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: _chironBorder),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 32,
+            height: 32,
+            decoration: BoxDecoration(
+              color: accent.withOpacity(0.14),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: accent.withOpacity(0.35)),
+            ),
+            child: Icon(icon, color: accent, size: 18),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: TextStyle(
+                    color: _chironTextPrimary,
+                    fontWeight: FontWeight.w800,
+                    fontSize: 13,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  body,
+                  style: TextStyle(
+                    color: _chironTextSecondary,
+                    fontSize: 12,
+                    height: 1.3,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 9,
+                    vertical: 5,
+                  ),
+                  decoration: BoxDecoration(
+                    color: accent.withOpacity(0.12),
+                    borderRadius: BorderRadius.circular(999),
+                    border: Border.all(color: accent.withOpacity(0.35)),
+                  ),
+                  child: Text(
+                    actionLabel,
+                    style: TextStyle(
+                      color: accent,
+                      fontWeight: FontWeight.w700,
+                      fontSize: 11,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
@@ -1107,6 +1186,7 @@ class _ChironReadinessChecklistPage extends StatelessWidget {
           hasContactEmails,
           hasTaxProfile,
         ];
+        final companyFieldsComplete = companyChecks.every((check) => check);
         final driverChecks = <bool>[
           driverCount > 0,
           activeDriverCount > 0,
@@ -1234,6 +1314,20 @@ class _ChironReadinessChecklistPage extends StatelessWidget {
           ));
         }
 
+        final companyStatusLabel = profile == null
+            ? ''
+            : profile.isSuspended
+            ? profile.verificationBadgeLabel(_lang)
+            : profile.isVerified
+            ? profile.verificationBadgeLabel(_lang)
+            : companyFieldsComplete
+            ? _t(
+                nl: 'Compleet · verificatie openstaand',
+                en: 'Complete · verification pending',
+                fr: 'Complet · vérification en attente',
+                es: 'Completo · verificación pendiente',
+              )
+            : profile.verificationBadgeLabel(_lang);
         final allAttention = <({String text, bool critical})>[
           ...companyAttention,
           ...driverAttention,
@@ -1417,7 +1511,7 @@ class _ChironReadinessChecklistPage extends StatelessWidget {
                                 borderRadius: BorderRadius.circular(20),
                               ),
                               child: Text(
-                                profile.verificationBadgeLabel(_lang),
+                                companyStatusLabel,
                                 style: TextStyle(
                                   color: _chironTextPrimary,
                                   fontWeight: FontWeight.w700,
@@ -1495,8 +1589,8 @@ class _ChironReadinessChecklistPage extends StatelessWidget {
               ),
               _baseCard(
                 title: _t(
-                  nl: 'Chauffeur readiness',
-                  en: 'Driver readiness',
+                  nl: 'Chauffeurgegevens readiness',
+                  en: 'Driver details readiness',
                   fr: 'Préparation chauffeurs',
                   es: 'Preparación conductores',
                 ),
@@ -1765,6 +1859,68 @@ class _ChironReadinessChecklistPage extends StatelessWidget {
                     : Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
+                          if (vehiclesMissingRequired > 0)
+                            _attentionActionCard(
+                              title: _t(
+                                nl: 'Voertuiggegevens aanvullen',
+                                en: 'Complete vehicle details',
+                                fr: 'Compléter les données véhicule',
+                                es: 'Completar datos del vehículo',
+                              ),
+                              body: _t(
+                                nl: vehiclesMissingRequired == 1
+                                    ? '1 voertuig mist verplichte Chiron-velden.'
+                                    : '$vehiclesMissingRequired voertuigen missen verplichte Chiron-velden.',
+                                en: vehiclesMissingRequired == 1
+                                    ? '1 vehicle is missing required Chiron fields.'
+                                    : '$vehiclesMissingRequired vehicles are missing required Chiron fields.',
+                                fr: vehiclesMissingRequired == 1
+                                    ? '1 véhicule manque des champs Chiron obligatoires.'
+                                    : '$vehiclesMissingRequired véhicules manquent des champs Chiron obligatoires.',
+                                es: vehiclesMissingRequired == 1
+                                    ? '1 vehículo no tiene campos Chiron obligatorios.'
+                                    : '$vehiclesMissingRequired vehículos no tienen campos Chiron obligatorios.',
+                              ),
+                              actionLabel: _t(
+                                nl: 'Voertuigen controleren',
+                                en: 'Check vehicles',
+                                fr: 'Vérifier les véhicules',
+                                es: 'Revisar vehículos',
+                              ),
+                              icon: Icons.directions_car_filled_outlined,
+                              accent: _chironWarning,
+                            ),
+                          if (coreGapCount > 0)
+                            _attentionActionCard(
+                              title: _t(
+                                nl: 'Chauffeurdocumenten aanvullen',
+                                en: 'Complete driver documents',
+                                fr: 'Compléter les documents chauffeurs',
+                                es: 'Completar documentos de conductores',
+                              ),
+                              body: _t(
+                                nl: coreGapCount == 1
+                                    ? '1 chauffeur heeft een kern-documentkloof.'
+                                    : '$coreGapCount chauffeurs hebben een kern-documentkloof.',
+                                en: coreGapCount == 1
+                                    ? '1 driver has a core document gap.'
+                                    : '$coreGapCount drivers have a core document gap.',
+                                fr: coreGapCount == 1
+                                    ? '1 chauffeur a un manque de documents clés.'
+                                    : '$coreGapCount chauffeurs ont un manque de documents clés.',
+                                es: coreGapCount == 1
+                                    ? '1 conductor tiene una brecha de documentos clave.'
+                                    : '$coreGapCount conductores tienen una brecha de documentos clave.',
+                              ),
+                              actionLabel: _t(
+                                nl: 'Documenten controleren',
+                                en: 'Check documents',
+                                fr: 'Vérifier les documents',
+                                es: 'Revisar documentos',
+                              ),
+                              icon: Icons.badge_outlined,
+                              accent: _chironWarning,
+                            ),
                           _attentionGroup(
                             title: _t(
                               nl: 'Bedrijf',
