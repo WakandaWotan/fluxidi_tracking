@@ -35352,7 +35352,7 @@ function buildBookingCreditDecisionComplianceEvent(
   // parent-scope assignment block unchanged. Future leg-scoped emits
   // (Patch 3B-emit) can pass the originating operational leg here.
   const assignmentContext = _bookingComplianceAssignmentContext(rec, { leg });
-  return {
+  const complianceEvent = {
     event_type: "booking_credit_decision",
     tenant_id: tenantId,
     company_id: companyId,
@@ -35388,6 +35388,9 @@ function buildBookingCreditDecisionComplianceEvent(
     },
     ...assignmentContext,
   };
+  return _applyBookingChironEnrichmentToComplianceEvent(complianceEvent, rec, {
+    assignmentContext,
+  });
 }
 
 async function applyBookingCreditDecisionAuthoritative(
@@ -37276,7 +37279,7 @@ function buildBookingMollieRefundComplianceEvent(
   // parent-scope assignment block unchanged. Future leg-scoped emits
   // (Patch 3B-emit) can pass the originating operational leg here.
   const assignmentContext = _bookingComplianceAssignmentContext(rec, { leg });
-  return {
+  const complianceEvent = {
     event_type: "booking_mollie_refund",
     tenant_id: tenantId,
     company_id: companyId,
@@ -37332,6 +37335,9 @@ function buildBookingMollieRefundComplianceEvent(
     },
     ...assignmentContext,
   };
+  return _applyBookingChironEnrichmentToComplianceEvent(complianceEvent, rec, {
+    assignmentContext,
+  });
 }
 
 function _logMollieRefundGate(bookingId, ok, reason) {
@@ -39073,7 +39079,7 @@ function buildBookingPaymentUpdateComplianceEvent(recordOrBooking, bookingId, pa
   // add new top-level keys, never override existing required fields.
   const assignmentContext = _bookingComplianceAssignmentContext(rec);
 
-  return {
+  const complianceEvent = {
     event_type: "payment_update",
     tenant_id: tenantId,
     company_id: companyId,
@@ -39121,6 +39127,9 @@ function buildBookingPaymentUpdateComplianceEvent(recordOrBooking, bookingId, pa
     },
     ...assignmentContext,
   };
+  return _applyBookingChironEnrichmentToComplianceEvent(complianceEvent, rec, {
+    assignmentContext,
+  });
 }
 
 function buildBookingStatusUpdateComplianceEvent(
@@ -39280,7 +39289,9 @@ function buildBookingStatusUpdateComplianceEvent(
       complianceEvent.refund_required = true;
     }
   }
-  return complianceEvent;
+  return _applyBookingChironEnrichmentToComplianceEvent(complianceEvent, rec, {
+    assignmentContext,
+  });
 }
 
 async function emitComplianceEventBestEffort(env, event, options = {}) {
@@ -50899,6 +50910,422 @@ function _bookingWaitMinFromRecord(rec) {
 // data. When `options.leg` is provided, leg-scoped values win over the
 // parent's summary (mirroring the read-model leg-first override from
 // Patch 2). When no leg is provided, parent-summary values are used.
+// Chiron-1B-A: additive enrichment helper for compliance event builders.
+// Builds nested `vehicle` / `driver` blocks, reporting region/country, and
+// optional fare VAT breakdown — strictly from data already present in the
+// booking record / assignment context. Never invents values. Never
+// overrides existing event fields; only fills in keys that are absent.
+function _bookingChironRecordCountryCode(rec) {
+  const booking = rec?.booking && typeof rec.booking === "object" ? rec.booking : {};
+  const payload = rec?.payload && typeof rec.payload === "object" ? rec.payload : {};
+  const raw = safeStr(
+    booking?.country_code ??
+      booking?.countryCode ??
+      booking?.country ??
+      payload?.country_code ??
+      payload?.countryCode ??
+      payload?.country ??
+      rec?.country_code ??
+      rec?.countryCode ??
+      rec?.country,
+    8,
+  );
+  if (raw) {
+    const upper = raw.toUpperCase().replace(/[^A-Z]/g, "");
+    if (upper.length === 2) return upper;
+  }
+  // Chiron-1B-A (additive): when no explicit country field is present on
+  // the record, derive the reporting region from a VAT number already
+  // stored on the booking. EU VAT numbers are ISO 3166-1 alpha-2 prefixed
+  // (e.g. "BE0772931038") so the first two alphabetic characters are a
+  // standardised, data-derived country indicator — never a hardcoded
+  // default. We require the trailing characters to begin with a digit so
+  // a free-form string that merely starts with two letters can never be
+  // mistaken for a VAT number.
+  const vatNumberCandidates = [
+    _pick(rec, ["payload", "customer", "vat_number"], null),
+    _pick(rec, ["payload", "customer", "vatNumber"], null),
+    payload?.customer_vat_number,
+    payload?.customerVatNumber,
+    payload?.billing_vat_number,
+    payload?.billingVatNumber,
+    payload?.vat_number,
+    payload?.vatNumber,
+    _pick(rec, ["booking", "customer", "vat_number"], null),
+    _pick(rec, ["booking", "customer", "vatNumber"], null),
+    booking?.customer_vat_number,
+    booking?.customerVatNumber,
+    booking?.billing_vat_number,
+    booking?.billingVatNumber,
+    booking?.vat_number,
+    booking?.vatNumber,
+  ];
+  for (const candidate of vatNumberCandidates) {
+    const vatText = safeStr(candidate, 32).toUpperCase().replace(/\s+/g, "");
+    if (!vatText) continue;
+    const match = vatText.match(/^([A-Z]{2})(\d)/);
+    if (match && match[1]) return match[1];
+  }
+  return "";
+}
+
+function _bookingChironRecordVatRate(rec) {
+  const booking = rec?.booking && typeof rec.booking === "object" ? rec.booking : {};
+  const payload = rec?.payload && typeof rec.payload === "object" ? rec.payload : {};
+  // Chiron-1B-A (additive): walk every existing path that already stores
+  // a VAT rate alongside the rest of the pricing snapshot. We never
+  // invent or recompute a rate — every candidate must be a finite number
+  // in the 0..1 inclusive range to be accepted. Order is most-specific
+  // first so the explicit booking-level rate always wins over the
+  // quote-level breakdown / inputs / pricing_profile copies.
+  const candidates = [
+    booking?.vat_rate,
+    booking?.vatRate,
+    rec?.vat_rate,
+    rec?.vatRate,
+    payload?.vat_rate,
+    payload?.vatRate,
+    _pick(rec, ["quote", "pricing", "vat_rate"], null),
+    _pick(rec, ["quote", "vat_rate"], null),
+    _pick(rec, ["quote", "breakdown", "vat_rate"], null),
+    _pick(rec, ["quote", "inputs", "vat_rate"], null),
+    _pick(rec, ["quote", "pricing_profile", "vat_rate"], null),
+    _pick(rec, ["payload", "quote", "pricing", "vat_rate"], null),
+    _pick(rec, ["payload", "quote", "vat_rate"], null),
+    _pick(rec, ["payload", "quote", "breakdown", "vat_rate"], null),
+    _pick(rec, ["payload", "quote", "inputs", "vat_rate"], null),
+    _pick(rec, ["payload", "quote", "pricing_profile", "vat_rate"], null),
+    _pick(rec, ["booking", "quote", "breakdown", "vat_rate"], null),
+    _pick(rec, ["booking", "quote", "inputs", "vat_rate"], null),
+    _pick(rec, ["booking", "quote", "pricing_profile", "vat_rate"], null),
+  ];
+  for (const candidate of candidates) {
+    if (candidate === null || candidate === undefined || candidate === "") continue;
+    const num = Number(candidate);
+    if (Number.isFinite(num) && num >= 0 && num <= 1) return num;
+  }
+  return null;
+}
+
+function _bookingChironRecordVatAmount(rec) {
+  const booking = rec?.booking && typeof rec.booking === "object" ? rec.booking : {};
+  const payload = rec?.payload && typeof rec.payload === "object" ? rec.payload : {};
+  // Chiron-1B-A (additive): walk the existing VAT-amount paths that the
+  // pricing/quote/breakdown layers already write. Roundtrip totals
+  // (`total_price_vat`) win over single-leg breakdown values so the
+  // compliance event reflects the customer-facing total. Strings such
+  // as "22.60" are coerced via Number() exactly like the original
+  // helper. Negative or non-finite values are rejected so a malformed
+  // pricing snapshot can never produce a misleading number.
+  const candidates = [
+    booking?.vat_amount,
+    booking?.vatAmount,
+    booking?.price_vat,
+    booking?.priceVat,
+    rec?.vat_amount,
+    rec?.vatAmount,
+    rec?.price_vat,
+    rec?.priceVat,
+    payload?.vat_amount,
+    payload?.vatAmount,
+    payload?.total_price_vat,
+    payload?.totalPriceVat,
+    payload?.price_vat,
+    payload?.priceVat,
+    _pick(rec, ["quote", "pricing", "price_vat"], null),
+    _pick(rec, ["quote", "total_price_vat"], null),
+    _pick(rec, ["quote", "totalPriceVat"], null),
+    _pick(rec, ["quote", "price_vat"], null),
+    _pick(rec, ["quote", "priceVat"], null),
+    _pick(rec, ["quote", "breakdown", "vat_amount"], null),
+    _pick(rec, ["quote", "breakdown", "vatAmount"], null),
+    _pick(rec, ["payload", "quote", "pricing", "price_vat"], null),
+    _pick(rec, ["payload", "quote", "total_price_vat"], null),
+    _pick(rec, ["payload", "quote", "totalPriceVat"], null),
+    _pick(rec, ["payload", "quote", "price_vat"], null),
+    _pick(rec, ["payload", "quote", "priceVat"], null),
+    _pick(rec, ["payload", "quote", "breakdown", "vat_amount"], null),
+    _pick(rec, ["payload", "quote", "breakdown", "vatAmount"], null),
+    _pick(rec, ["booking", "quote", "total_price_vat"], null),
+    _pick(rec, ["booking", "quote", "price_vat"], null),
+    _pick(rec, ["booking", "quote", "breakdown", "vat_amount"], null),
+  ];
+  for (const candidate of candidates) {
+    if (candidate === null || candidate === undefined || candidate === "") continue;
+    const num = Number(candidate);
+    if (Number.isFinite(num) && num >= 0) return num;
+  }
+  return null;
+}
+
+function _bookingChironRecordNetAmount(rec) {
+  const booking = rec?.booking && typeof rec.booking === "object" ? rec.booking : {};
+  const payload = rec?.payload && typeof rec.payload === "object" ? rec.payload : {};
+  // Chiron-1B-A (additive): walk the existing ex-VAT/net-amount paths
+  // the pricing/quote layers already populate. Roundtrip totals
+  // (`total_price_ex_vat`, `total_ex_vat`) win over per-leg breakdown
+  // values so the compliance event reflects the customer-facing net
+  // amount. Strings are coerced via Number() exactly like the original
+  // helper. Negative or non-finite values are rejected.
+  const candidates = [
+    booking?.price_ex_vat,
+    booking?.priceExVat,
+    booking?.net_amount,
+    booking?.netAmount,
+    booking?.total_ex_vat,
+    booking?.totalExVat,
+    rec?.price_ex_vat,
+    rec?.priceExVat,
+    rec?.net_amount,
+    rec?.netAmount,
+    payload?.total_ex_vat,
+    payload?.totalExVat,
+    payload?.price_ex_vat,
+    payload?.priceExVat,
+    payload?.net_amount,
+    payload?.netAmount,
+    _pick(rec, ["quote", "pricing", "price_ex_vat"], null),
+    _pick(rec, ["quote", "total_price_ex_vat"], null),
+    _pick(rec, ["quote", "totalPriceExVat"], null),
+    _pick(rec, ["quote", "price_ex_vat"], null),
+    _pick(rec, ["quote", "priceExVat"], null),
+    _pick(rec, ["quote", "breakdown", "total_ex"], null),
+    _pick(rec, ["payload", "quote", "pricing", "price_ex_vat"], null),
+    _pick(rec, ["payload", "quote", "total_price_ex_vat"], null),
+    _pick(rec, ["payload", "quote", "totalPriceExVat"], null),
+    _pick(rec, ["payload", "quote", "price_ex_vat"], null),
+    _pick(rec, ["payload", "quote", "priceExVat"], null),
+    _pick(rec, ["payload", "quote", "breakdown", "total_ex"], null),
+    _pick(rec, ["booking", "quote", "total_price_ex_vat"], null),
+    _pick(rec, ["booking", "quote", "price_ex_vat"], null),
+  ];
+  for (const candidate of candidates) {
+    if (candidate === null || candidate === undefined || candidate === "") continue;
+    const num = Number(candidate);
+    if (Number.isFinite(num) && num >= 0) return num;
+  }
+  return null;
+}
+
+function _bookingChironRecordCurrency(rec) {
+  const booking = rec?.booking && typeof rec.booking === "object" ? rec.booking : {};
+  const payload = rec?.payload && typeof rec.payload === "object" ? rec.payload : {};
+  // Chiron-1B-A (additive): widen the currency lookup so the existing
+  // pricing/quote/payment snapshots can populate the value when no
+  // top-level currency field is set on the record. Returns "" when no
+  // candidate is present — callers (and the upstream wrapper) treat ""
+  // as "do not stamp" so existing payment_update behaviour is preserved.
+  const raw = safeStr(
+    booking?.currency ??
+      booking?.booking_currency ??
+      booking?.bookingCurrency ??
+      rec?.currency ??
+      rec?.booking_currency ??
+      rec?.bookingCurrency ??
+      payload?.currency ??
+      payload?.booking_currency ??
+      payload?.bookingCurrency ??
+      _pick(rec, ["quote", "currency"], null) ??
+      _pick(rec, ["quote", "pricing", "currency"], null) ??
+      _pick(rec, ["quote", "pricing_profile", "currency"], null) ??
+      _pick(rec, ["quote", "breakdown", "currency"], null) ??
+      _pick(rec, ["payload", "quote", "currency"], null) ??
+      _pick(rec, ["payload", "quote", "pricing", "currency"], null) ??
+      _pick(rec, ["payload", "quote", "pricing_profile", "currency"], null) ??
+      _pick(rec, ["payload", "quote", "breakdown", "currency"], null) ??
+      _pick(rec, ["payload", "payment", "currency"], null) ??
+      _pick(rec, ["mollie", "currency"], null),
+    8,
+  );
+  if (!raw) return "";
+  const upper = raw.toUpperCase().replace(/[^A-Z]/g, "");
+  // ISO-4217 codes are exactly three uppercase letters; anything else
+  // (e.g. "€", "EU", random tokens) is rejected so a noisy value can
+  // never leak into the compliance event.
+  return upper.length === 3 ? upper : "";
+}
+
+function _bookingChironRecordVehicleClass(rec) {
+  const booking = rec?.booking && typeof rec.booking === "object" ? rec.booking : {};
+  const payload = rec?.payload && typeof rec.payload === "object" ? rec.payload : {};
+  // Chiron-1B-A (additive): widen tier lookup to the existing tier_id /
+  // quote.inputs.tier aliases the airport + quote flow already stamp.
+  // The allow-list at the end still gates noisy values so only known
+  // tiers reach the compliance event.
+  const raw = safeStr(
+    booking?.tier ??
+      booking?.tier_id ??
+      booking?.tierId ??
+      rec?.tier ??
+      rec?.tier_id ??
+      rec?.tierId ??
+      payload?.tier ??
+      payload?.tier_id ??
+      payload?.tierId ??
+      _pick(rec, ["quote", "inputs", "tier"], null) ??
+      _pick(rec, ["quote", "breakdown", "tier"], null) ??
+      _pick(rec, ["payload", "quote", "inputs", "tier"], null) ??
+      _pick(rec, ["payload", "quote", "breakdown", "tier"], null),
+    40,
+  ).toLowerCase();
+  if (!raw) return "";
+  // Only forward known tiers so a noisy/free-form value cannot leak.
+  return ["comfort", "private", "premium"].includes(raw) ? raw : "";
+}
+
+function _bookingChironEnrichmentForComplianceEvent(rec, options = {}) {
+  if (!rec || typeof rec !== "object") return null;
+  const assignmentContext =
+    options?.assignmentContext && typeof options.assignmentContext === "object"
+      ? options.assignmentContext
+      : null;
+  const assignment =
+    assignmentContext?.assignment && typeof assignmentContext.assignment === "object"
+      ? assignmentContext.assignment
+      : {};
+
+  const vehicle = {};
+  const vehicleId = safeStr(assignment.vehicle_id, 128);
+  if (vehicleId) {
+    vehicle.vehicle_id = vehicleId;
+    vehicle.vehicleId = vehicleId;
+  }
+  const licensePlate = safeStr(assignment.license_plate, 64);
+  if (licensePlate) {
+    vehicle.license_plate = licensePlate;
+    vehicle.licensePlate = licensePlate;
+  }
+  const vehicleClass = _bookingChironRecordVehicleClass(rec);
+  if (vehicleClass) {
+    vehicle.vehicle_class = vehicleClass;
+    vehicle.vehicleClass = vehicleClass;
+  }
+  const vehicleBrandModel = safeStr(assignment.vehicle_brand_model, 160);
+  if (vehicleBrandModel) {
+    vehicle.brand_model = vehicleBrandModel;
+    vehicle.brandModel = vehicleBrandModel;
+    // Chiron-1B-A (additive): the Chiron dry-run blueprint reads
+    // vehicle.make and vehicle.model as separate fields. Our fleet
+    // pipeline persists them as a single combined `brand_model` string
+    // (e.g. "Tesla Model 3"); split deterministically on the first
+    // whitespace so the first token becomes the make and the remainder
+    // becomes the model. This is a pure string projection of data
+    // already on the record — never a guess and never a hardcoded list.
+    // When the combined value carries no whitespace we surface it as
+    // `model` only and leave `make` unset rather than fabricate one.
+    const firstSpace = vehicleBrandModel.indexOf(" ");
+    if (firstSpace > 0) {
+      const makeToken = vehicleBrandModel.slice(0, firstSpace).trim();
+      const modelToken = vehicleBrandModel.slice(firstSpace + 1).trim();
+      if (makeToken) vehicle.make = makeToken;
+      if (modelToken) vehicle.model = modelToken;
+    } else {
+      vehicle.model = vehicleBrandModel;
+    }
+  }
+  const vehicleName = safeStr(assignment.vehicle_name, 160);
+  if (vehicleName) {
+    vehicle.name = vehicleName;
+  }
+  const vehicleColor = safeStr(assignment.vehicle_color, 64);
+  if (vehicleColor) {
+    vehicle.color = vehicleColor;
+  }
+
+  const driver = {};
+  const driverId = safeStr(assignment.driver_id, 96);
+  if (driverId) {
+    driver.driver_id = driverId;
+    driver.driverId = driverId;
+  }
+  const driverName = safeStr(assignment.driver_name, 160);
+  if (driverName) {
+    driver.driver_name = driverName;
+    driver.driverName = driverName;
+  }
+
+  const countryCode = _bookingChironRecordCountryCode(rec);
+
+  const fareExtension = {};
+  const fareCurrency = _bookingChironRecordCurrency(rec);
+  if (fareCurrency) fareExtension.currency = fareCurrency;
+  const vatRate = _bookingChironRecordVatRate(rec);
+  if (vatRate != null) {
+    fareExtension.vat_rate = vatRate;
+    fareExtension.vatRate = vatRate;
+  }
+  const vatAmount = _bookingChironRecordVatAmount(rec);
+  if (vatAmount != null) {
+    fareExtension.vat_amount = vatAmount;
+    fareExtension.vatAmount = vatAmount;
+    fareExtension.vat_amount_cents = Math.max(0, Math.round(vatAmount * 100));
+    fareExtension.vatAmountCents = fareExtension.vat_amount_cents;
+  }
+  const netAmount = _bookingChironRecordNetAmount(rec);
+  if (netAmount != null) {
+    fareExtension.net_amount = netAmount;
+    fareExtension.netAmount = netAmount;
+    fareExtension.net_amount_cents = Math.max(0, Math.round(netAmount * 100));
+    fareExtension.netAmountCents = fareExtension.net_amount_cents;
+  }
+  const parentTotal = _bookingMainPriceInclVatFromRecord(rec);
+  if (parentTotal != null) {
+    fareExtension.total_amount_cents = Math.max(0, Math.round(parentTotal * 100));
+    fareExtension.totalAmountCents = fareExtension.total_amount_cents;
+  }
+
+  const out = {};
+  if (Object.keys(vehicle).length > 0) out.vehicle = vehicle;
+  if (Object.keys(driver).length > 0) out.driver = driver;
+  if (countryCode) {
+    out.reporting_region = countryCode;
+    out.reportingRegion = countryCode;
+    out.country = countryCode;
+    out.country_code = countryCode;
+    out.countryCode = countryCode;
+  }
+  if (Object.keys(fareExtension).length > 0) out.fareExtension = fareExtension;
+  return Object.keys(out).length > 0 ? out : null;
+}
+
+function _applyBookingChironEnrichmentToComplianceEvent(event, rec, options = {}) {
+  if (!event || typeof event !== "object") return event;
+  const enrichment = _bookingChironEnrichmentForComplianceEvent(rec, options);
+  if (!enrichment) return event;
+
+  // Only fill keys when not already present; never override existing event
+  // fields such as `vehicle`, `driver`, `country`, etc.
+  if (enrichment.vehicle && (event.vehicle === undefined || event.vehicle === null)) {
+    event.vehicle = enrichment.vehicle;
+  }
+  if (enrichment.driver && (event.driver === undefined || event.driver === null)) {
+    event.driver = enrichment.driver;
+  }
+  for (const key of [
+    "reporting_region",
+    "reportingRegion",
+    "country",
+    "country_code",
+    "countryCode",
+  ]) {
+    if (enrichment[key] && (event[key] === undefined || event[key] === null)) {
+      event[key] = enrichment[key];
+    }
+  }
+  if (enrichment.fareExtension) {
+    if (!event.fare || typeof event.fare !== "object" || Array.isArray(event.fare)) {
+      event.fare = { ...enrichment.fareExtension };
+    } else {
+      for (const [k, v] of Object.entries(enrichment.fareExtension)) {
+        if (event.fare[k] === undefined || event.fare[k] === null) {
+          event.fare[k] = v;
+        }
+      }
+    }
+  }
+  return event;
+}
+
 function _bookingComplianceAssignmentContext(rec, options = {}) {
   if (!rec || typeof rec !== "object") return {};
   const leg = options?.leg && typeof options.leg === "object" ? options.leg : null;
