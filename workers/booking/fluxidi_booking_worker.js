@@ -51549,6 +51549,48 @@ async function _enrichBookingStatusUpdateComplianceEventVehiclePlateBestEffort(
   return complianceEvent;
 }
 
+// Chiron-1D-B (additive): when a booking_status_update compliance event
+// lacks reporting_region, resolve from record-derived country or scoped
+// company business profile at emit time. In-memory only — never persists to
+// booking KV and never parses pickup address strings.
+async function _enrichBookingStatusUpdateComplianceEventReportingRegionBestEffort(
+  env,
+  rec,
+  tenantScope,
+  complianceEvent,
+) {
+  if (!complianceEvent || typeof complianceEvent !== "object" || Array.isArray(complianceEvent)) {
+    return complianceEvent;
+  }
+  if (safeStr(complianceEvent.reporting_region ?? complianceEvent.reportingRegion, 64)) {
+    return complianceEvent;
+  }
+
+  let countryCode = _bookingChironRecordCountryCode(rec);
+  if (!countryCode) {
+    try {
+      const profile = await loadBusinessProfile(env, tenantScope, {
+        allowTenantLegacyFallback: true,
+      });
+      const raw = safeStr(profile?.country, 64);
+      if (raw) {
+        const normalized = raw.toUpperCase().replace(/[^A-Z]/g, "");
+        if (normalized.length === 2) countryCode = normalized;
+      }
+    } catch (_) {
+      // Best-effort only; never block compliance emit.
+    }
+  }
+  if (!countryCode) return complianceEvent;
+
+  complianceEvent.reporting_region = countryCode;
+  complianceEvent.reportingRegion = countryCode;
+  complianceEvent.country = countryCode;
+  complianceEvent.country_code = countryCode;
+  complianceEvent.countryCode = countryCode;
+  return complianceEvent;
+}
+
 function _bookingComplianceAssignmentContext(rec, options = {}) {
   if (!rec || typeof rec !== "object") return {};
   const leg = options?.leg && typeof options.leg === "object" ? options.leg : null;
@@ -62941,6 +62983,12 @@ async function updateBookingStatusAuthoritative(
         tenantScope,
         complianceEvent,
       );
+      await _enrichBookingStatusUpdateComplianceEventReportingRegionBestEffort(
+        env,
+        rec,
+        tenantScope,
+        complianceEvent,
+      );
       emitComplianceEventBestEffort(env, complianceEvent, {
         timeoutMs: 1500,
         logLabel: "booking_status_update",
@@ -63283,6 +63331,12 @@ async function updateBookingOperationalLegStatusAuthoritative(
       });
       if (complianceEvent) {
         await _enrichBookingStatusUpdateComplianceEventVehiclePlateBestEffort(
+          env,
+          rec,
+          tenantScope,
+          complianceEvent,
+        );
+        await _enrichBookingStatusUpdateComplianceEventReportingRegionBestEffort(
           env,
           rec,
           tenantScope,
