@@ -24,6 +24,19 @@ const ADMIN_RESET_DRY_RUN_PATH = "/admin/dev/reset-compliance-events/dry-run";
 const CHIRON_DRYRUN_SCHEMA_VERSION = "chiron_dryrun_v1";
 const CHIRON_DRYRUN_BUILD_PATH = "/admin/chiron/dryrun/build-from-event";
 const CHIRON_DRYRUN_RECENT_PATH = "/admin/chiron/dryrun/recent";
+const CHIRON_SCORE_SUMMARY_PATH = "/admin/chiron/score-summary";
+
+const CHIRON_REGULATOR_READY_TYPES = new Set(["booking_status_update", "ride_stop"]);
+
+const CHIRON_LOG_ONLY_TYPES = new Set([
+  "payment_update",
+  "booking_credit_decision",
+  "booking_mollie_refund",
+  "correction_event",
+  "sync_success",
+  "sync_failed",
+  "ride_start",
+]);
 
 function jsonResponse(payload, status = 200, origin = "*") {
   return new Response(JSON.stringify(payload), {
@@ -252,6 +265,36 @@ function parseRecentLimit(url) {
     return { error: "Invalid query parameter: limit must be an integer." };
   }
   return { value: Math.min(100, Math.max(1, parsed)) };
+}
+
+function parseChironScoreSummaryLimit(url) {
+  const raw = cleanText(url.searchParams.get("limit"), 16);
+  if (!raw) return { value: 50 };
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || !Number.isInteger(parsed)) {
+    return { error: "Invalid query parameter: limit must be an integer." };
+  }
+  return { value: Math.min(100, Math.max(1, parsed)) };
+}
+
+function parseChironNewestEventsLimit(url) {
+  const raw = cleanText(url.searchParams.get("newest_events_limit"), 16);
+  if (!raw) return { value: 10 };
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || !Number.isInteger(parsed)) {
+    return { error: "Invalid query parameter: newest_events_limit must be an integer." };
+  }
+  return { value: Math.min(25, Math.max(0, parsed)) };
+}
+
+function parseOptionalIsoQueryMs(url, key) {
+  const raw = cleanText(url.searchParams.get(key), 64);
+  if (!raw) return { value: null, raw: null };
+  const ms = Date.parse(raw);
+  if (!Number.isFinite(ms)) {
+    return { error: `Invalid query parameter: ${key}` };
+  }
+  return { value: ms, raw };
 }
 
 function parseRequiredQuerySegment(url, key) {
@@ -696,6 +739,48 @@ function _chironMaskScopeId(value) {
   if (!text) return "-";
   if (text.length <= 6) return text;
   return `${text.slice(0, 3)}...${text.slice(-3)}`;
+}
+
+function _chironClassifyEventType(eventType) {
+  const normalized = cleanText(eventType, 64).toLowerCase();
+  if (CHIRON_REGULATOR_READY_TYPES.has(normalized)) return "regulator_ready";
+  if (CHIRON_LOG_ONLY_TYPES.has(normalized)) return "log_only";
+  return "unknown";
+}
+
+function _chironScoreBucket(score, missingCount) {
+  const safeScore = Number.isFinite(Number(score)) ? Number(score) : 0;
+  const missing = Number.isFinite(Number(missingCount)) ? Math.max(0, Math.trunc(missingCount)) : 0;
+  if (safeScore === 100 && missing === 0) return "ready";
+  if (safeScore >= 90 && safeScore < 100 && missing === 0) return "warning";
+  return "blocker";
+}
+
+function _chironEventTimestampMs(event) {
+  const parseMaybeDate = (value) => {
+    const text = cleanText(value, 64);
+    if (!text) return null;
+    const parsed = Date.parse(text);
+    return Number.isFinite(parsed) ? parsed : null;
+  };
+  const ts =
+    event?.timestamps && typeof event.timestamps === "object" && !Array.isArray(event.timestamps)
+      ? event.timestamps
+      : {};
+  return (
+    parseMaybeDate(event?.created_at_utc) ??
+    parseMaybeDate(ts.recorded_at_utc) ??
+    parseMaybeDate(ts.event_at_utc) ??
+    parseMaybeDate(ts.paid_at_utc) ??
+    parseMaybeDate(ts.stopped_at_utc) ??
+    parseMaybeDate(ts.started_at_utc) ??
+    null
+  );
+}
+
+function _chironPct(count, total) {
+  if (!total) return 0;
+  return Math.round((count / total) * 1000) / 10;
 }
 
 function _chironPickFirstNonEmpty(...values) {
@@ -1394,6 +1479,286 @@ async function handleChironDryrunRecent(request, url, env, origin) {
   );
 }
 
+async function handleChironScoreSummary(request, url, env, origin) {
+  const authError = ensureAuthorized(request, env);
+  if (authError) return authError;
+
+  if (!env?.COMPLIANCE_KV || typeof env.COMPLIANCE_KV.list !== "function") {
+    return jsonResponse(
+      {
+        ok: false,
+        error: "Compliance storage is not configured (missing COMPLIANCE_KV binding).",
+      },
+      500,
+      origin,
+    );
+  }
+
+  const tenant = parseRequiredQuerySegment(url, "tenant_id");
+  if (tenant.error) {
+    return jsonResponse({ ok: false, error: tenant.error }, 400, origin);
+  }
+  const company = parseRequiredQuerySegment(url, "company_id");
+  if (company.error) {
+    return jsonResponse({ ok: false, error: company.error }, 400, origin);
+  }
+
+  const sinceParsed = parseOptionalIsoQueryMs(url, "since");
+  if (sinceParsed.error) {
+    return jsonResponse({ ok: false, error: sinceParsed.error }, 400, origin);
+  }
+  const untilParsed = parseOptionalIsoQueryMs(url, "until");
+  if (untilParsed.error) {
+    return jsonResponse({ ok: false, error: untilParsed.error }, 400, origin);
+  }
+
+  const eventTypeFilterRaw = cleanText(url.searchParams.get("event_type"), 64).toLowerCase();
+  if (eventTypeFilterRaw && !ALLOWED_EVENT_TYPES.has(eventTypeFilterRaw)) {
+    return jsonResponse({ ok: false, error: "Invalid query parameter: event_type" }, 400, origin);
+  }
+
+  const limitParsed = parseChironScoreSummaryLimit(url);
+  if (limitParsed.error) {
+    return jsonResponse({ ok: false, error: limitParsed.error }, 400, origin);
+  }
+  const newestLimitParsed = parseChironNewestEventsLimit(url);
+  if (newestLimitParsed.error) {
+    return jsonResponse({ ok: false, error: newestLimitParsed.error }, 400, origin);
+  }
+
+  const tenantSegment = tenant.value;
+  const companySegment = company.value;
+  const tenantId = cleanText(url.searchParams.get("tenant_id"), 128);
+  const companyId = cleanText(url.searchParams.get("company_id"), 128);
+  const requestedLimit = limitParsed.value;
+  const newestEventsLimit = newestLimitParsed.value;
+  const sinceMs = sinceParsed.value;
+  const untilMs = untilParsed.value;
+
+  const prefix = buildCompliancePrefixForScope(tenantSegment, companySegment);
+  const listScopedMaxScanKeys = 10000;
+  let keyNames;
+  try {
+    keyNames = await listScopedComplianceEventKeys(env, prefix);
+  } catch (_) {
+    return jsonResponse({ ok: false, error: "Failed to list compliance events." }, 500, origin);
+  }
+
+  const hitScanCap = keyNames.length >= listScopedMaxScanKeys;
+  let malformedCount = 0;
+  const parsedEvents = [];
+
+  for (const key of keyNames) {
+    let raw;
+    try {
+      raw = await env.COMPLIANCE_KV.get(key);
+    } catch (_) {
+      malformedCount += 1;
+      continue;
+    }
+    if (!raw) {
+      malformedCount += 1;
+      continue;
+    }
+    try {
+      const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        malformedCount += 1;
+        continue;
+      }
+      parsedEvents.push({ key, event: parsed });
+    } catch (_) {
+      malformedCount += 1;
+    }
+  }
+
+  const filtered = [];
+  for (const entry of parsedEvents) {
+    const event = entry.event;
+    const eventType = cleanText(event.event_type, 64).toLowerCase();
+    if (eventTypeFilterRaw && eventType !== eventTypeFilterRaw) continue;
+
+    const eventTs = _chironEventTimestampMs(event);
+    if (sinceMs != null && (eventTs == null || eventTs < sinceMs)) continue;
+    if (untilMs != null && (eventTs == null || eventTs > untilMs)) continue;
+
+    filtered.push({ key: entry.key, event, eventTs });
+  }
+
+  const sortedFiltered = [...filtered].sort((a, b) => {
+    const aTs = a.eventTs;
+    const bTs = b.eventTs;
+    if (aTs != null && bTs != null && aTs !== bTs) return bTs - aTs;
+    if (aTs != null && bTs == null) return -1;
+    if (aTs == null && bTs != null) return 1;
+    return cleanText(b?.key, 1024).localeCompare(cleanText(a?.key, 1024));
+  });
+
+  const limitedEntries = sortedFiltered.slice(0, requestedLimit);
+  const hasMoreCandidates = hitScanCap || sortedFiltered.length > requestedLimit;
+
+  const scoreSummary = {
+    ready_count: 0,
+    warning_count: 0,
+    blocker_count: 0,
+    ready_pct: 0,
+    warning_pct: 0,
+    blocker_pct: 0,
+    avg_score: null,
+    min_score: null,
+    max_score: null,
+  };
+  const totalsByType = {};
+  const scoresByTypeRaw = {};
+  const classificationSummary = {
+    regulator_ready: { count: 0, ready: 0, warning: 0, blocker: 0 },
+    log_only: { count: 0, ready: 0, warning: 0, blocker: 0 },
+    unknown: { count: 0, ready: 0, warning: 0, blocker: 0 },
+  };
+  const missingTally = {};
+  const warningTally = {};
+  const newestEvents = [];
+  let scoreSum = 0;
+
+  for (const entry of limitedEntries) {
+    const parsedEvent = entry.event;
+    const blueprint = buildChironDryRunBlueprint(parsedEvent);
+    const completeness = blueprint?.completeness || {};
+    const score = Number.isFinite(Number(completeness.score)) ? Number(completeness.score) : 0;
+    const missing = Array.isArray(completeness.missing) ? completeness.missing : [];
+    const warnings = Array.isArray(completeness.warnings) ? completeness.warnings : [];
+    const eventType = cleanText(parsedEvent.event_type, 64).toLowerCase() || "unknown";
+    const classification = _chironClassifyEventType(eventType);
+    const bucket = _chironScoreBucket(score, missing.length);
+
+    scoreSum += score;
+    if (scoreSummary.min_score === null || score < scoreSummary.min_score) {
+      scoreSummary.min_score = score;
+    }
+    if (scoreSummary.max_score === null || score > scoreSummary.max_score) {
+      scoreSummary.max_score = score;
+    }
+
+    if (bucket === "ready") scoreSummary.ready_count += 1;
+    else if (bucket === "warning") scoreSummary.warning_count += 1;
+    else scoreSummary.blocker_count += 1;
+
+    totalsByType[eventType] = (totalsByType[eventType] || 0) + 1;
+
+    if (!scoresByTypeRaw[eventType]) {
+      scoresByTypeRaw[eventType] = {
+        count: 0,
+        sum: 0,
+        min: null,
+        max: null,
+        ready: 0,
+        warning: 0,
+        blocker: 0,
+      };
+    }
+    const typeStats = scoresByTypeRaw[eventType];
+    typeStats.count += 1;
+    typeStats.sum += score;
+    typeStats.min = typeStats.min === null ? score : Math.min(typeStats.min, score);
+    typeStats.max = typeStats.max === null ? score : Math.max(typeStats.max, score);
+    typeStats[bucket] += 1;
+
+    const classBucket = classificationSummary[classification];
+    if (classBucket) {
+      classBucket.count += 1;
+      classBucket[bucket] += 1;
+    }
+
+    for (const code of missing) {
+      const key = cleanText(code, 96);
+      if (!key) continue;
+      missingTally[key] = (missingTally[key] || 0) + 1;
+    }
+    for (const code of warnings) {
+      const key = cleanText(code, 96);
+      if (!key) continue;
+      warningTally[key] = (warningTally[key] || 0) + 1;
+    }
+
+    if (newestEvents.length < newestEventsLimit) {
+      newestEvents.push({
+        event_id: cleanText(parsedEvent.event_id, 200) || null,
+        event_type: eventType || null,
+        booking_id: cleanText(parsedEvent.booking_id, 128) || null,
+        trip_id: cleanText(parsedEvent.trip_id, 128) || null,
+        score,
+        missing,
+        warnings,
+        classification,
+        bucket,
+        created_at_utc: cleanText(parsedEvent.created_at_utc, 64) || null,
+      });
+    }
+  }
+
+  const totalEvents = limitedEntries.length;
+  if (totalEvents > 0) {
+    scoreSummary.avg_score = Math.round((scoreSum / totalEvents) * 10) / 10;
+  }
+  scoreSummary.ready_pct = _chironPct(scoreSummary.ready_count, totalEvents);
+  scoreSummary.warning_pct = _chironPct(scoreSummary.warning_count, totalEvents);
+  scoreSummary.blocker_pct = _chironPct(scoreSummary.blocker_count, totalEvents);
+
+  const scoresByType = {};
+  for (const [type, stats] of Object.entries(scoresByTypeRaw)) {
+    scoresByType[type] = {
+      count: stats.count,
+      avg: stats.count > 0 ? Math.round((stats.sum / stats.count) * 10) / 10 : null,
+      min: stats.min,
+      max: stats.max,
+      ready: stats.ready,
+      warning: stats.warning,
+      blocker: stats.blocker,
+    };
+  }
+
+  const topMissing = Object.entries(missingTally)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 10)
+    .map(([code, count]) => ({ code, count }));
+
+  const topWarnings = Object.entries(warningTally)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 10)
+    .map(([code, count]) => ({ code, count }));
+
+  console.log(
+    `[CHIRON_SCORE_SUMMARY] tenant=${_chironMaskScopeId(tenantId)} company=${_chironMaskScopeId(companyId)} total=${totalEvents} scanned=${keyNames.length} ready=${scoreSummary.ready_count} warning=${scoreSummary.warning_count} blocker=${scoreSummary.blocker_count}`,
+  );
+
+  return jsonResponse(
+    {
+      ok: true,
+      tenant_id: tenantId,
+      company_id: companyId,
+      scope: {
+        since: sinceParsed.raw,
+        until: untilParsed.raw,
+        event_type: eventTypeFilterRaw || null,
+      },
+      limit: requestedLimit,
+      total_events: totalEvents,
+      scanned_count: keyNames.length,
+      malformed_count: malformedCount,
+      has_more_candidates: hasMoreCandidates,
+      score_summary: scoreSummary,
+      totals_by_type: totalsByType,
+      scores_by_type: scoresByType,
+      classification_summary: classificationSummary,
+      top_missing: topMissing,
+      top_warnings: topWarnings,
+      newest_events: newestEvents,
+    },
+    200,
+    origin,
+  );
+}
+
 export default {
   async fetch(request, env) {
     const origin = request.headers.get("origin") || "*";
@@ -1417,7 +1782,8 @@ export default {
       url.pathname !== ADMIN_RESET_PATH &&
       url.pathname !== ADMIN_RESET_DRY_RUN_PATH &&
       url.pathname !== CHIRON_DRYRUN_BUILD_PATH &&
-      url.pathname !== CHIRON_DRYRUN_RECENT_PATH
+      url.pathname !== CHIRON_DRYRUN_RECENT_PATH &&
+      url.pathname !== CHIRON_SCORE_SUMMARY_PATH
     ) {
       return jsonResponse(
         { ok: false, error: "Not Found", path: url.pathname },
@@ -1462,6 +1828,12 @@ export default {
           return jsonResponse({ ok: false, error: "Method Not Allowed" }, 405, origin);
         }
         return await handleChironDryrunRecent(request, url, env, origin);
+      }
+      if (url.pathname === CHIRON_SCORE_SUMMARY_PATH) {
+        if (request.method !== "GET") {
+          return jsonResponse({ ok: false, error: "Method Not Allowed" }, 405, origin);
+        }
+        return await handleChironScoreSummary(request, url, env, origin);
       }
       if (request.method !== "GET") {
         return jsonResponse({ ok: false, error: "Method Not Allowed" }, 405, origin);
