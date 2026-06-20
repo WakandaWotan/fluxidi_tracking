@@ -6998,6 +6998,59 @@ Future<Map<String, dynamic>> syncCompanyMollieTerminals({
   return map;
 }
 
+Future<Map<String, dynamic>> startBackendMollieTerminalPayment({
+  required String tenantId,
+  required String companyId,
+  required String bookingId,
+  required String terminalId,
+  required String amountValue,
+  String currency = 'EUR',
+  String description = 'Fluxidi terminal test payment',
+  bool dryRun = true,
+  bool confirmLiveTerminalPayment = false,
+}) async {
+  final endpoint = _withAdminTenantCompanyScope(
+    Uri.parse(
+      '${appConfig.bookingBaseUrl}/admin/mollie/terminal-payment/start',
+    ),
+    tenantId: tenantId,
+    companyId: companyId,
+  );
+  final auth = await resolveCompanyOwnerAuthHeaders();
+  final res = await http
+      .post(
+        endpoint,
+        headers: auth.headers,
+        body: jsonEncode(<String, dynamic>{
+          'tenant_id': tenantId,
+          'company_id': companyId,
+          'booking_id': bookingId,
+          'terminal_id': terminalId,
+          'amount': <String, dynamic>{
+            'currency': currency,
+            'value': amountValue,
+          },
+          'description': description,
+          'dry_run': dryRun,
+          'confirm_live_terminal_payment': confirmLiveTerminalPayment,
+        }),
+      )
+      .timeout(const Duration(seconds: 20));
+  final decoded = jsonDecode(utf8.decode(res.bodyBytes));
+  if (decoded is! Map) throw Exception('Invalid response');
+  final map = Map<String, dynamic>.from(decoded);
+  if (res.statusCode < 200 || res.statusCode >= 300) {
+    throw Exception(
+      _adminApiErrorMessageFromResponse(
+        map,
+        res.statusCode,
+        fallback: 'mollie_terminal_payment_start_failed',
+      ),
+    );
+  }
+  return map;
+}
+
 Future<void> loadLocalTenantState() async {
   try {
     _deletedDriverIdsByScope.clear();

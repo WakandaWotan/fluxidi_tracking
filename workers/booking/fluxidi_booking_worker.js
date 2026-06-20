@@ -267,6 +267,7 @@ const MOLLIE_CONNECT_OAUTH_STATE_PURPOSE = "mollie_connect_oauth";
 const MOLLIE_CONNECT_OAUTH_SCOPES =
   "organizations.read profiles.read payments.read payments.write refunds.read terminals.read";
 const ADMIN_MOLLIE_CONNECT_TEST_PAYMENT_TTL_SECONDS = 60 * 60 * 24 * 30;
+const ADMIN_MOLLIE_TERMINAL_PAYMENT_INTENT_TTL_SECONDS = 60 * 60 * 2;
 
 function buildScopedMollieConnectAuthKey(scope = null) {
   const tenantId = sanitizeTenantString(scope?.tenant_id ?? scope?.tenantId, 80);
@@ -289,6 +290,15 @@ function buildScopedMollieConnectTestPaymentKey(scope = null, paymentId = "") {
   const safePaymentId = safeStr(paymentId).replace(/[^a-zA-Z0-9_-]+/g, "");
   if (!tenantId || !companyId || !safePaymentId) return null;
   return `tenant:${tenantId}:company:${companyId}:admin_mollie_test_payment:${safePaymentId}:v1`;
+}
+
+function buildScopedMollieTerminalPaymentIntentKey(scope = null, bookingId = "", terminalId = "") {
+  const tenantId = sanitizeTenantString(scope?.tenant_id ?? scope?.tenantId, 80);
+  const companyId = sanitizeTenantString(scope?.company_id ?? scope?.companyId, 80);
+  const safeBookingId = safeStr(bookingId, 160).replace(/[^a-zA-Z0-9_-]+/g, "");
+  const safeTerminalId = safeStr(terminalId, 120).replace(/[^a-zA-Z0-9_-]+/g, "");
+  if (!tenantId || !companyId || !safeBookingId || !safeTerminalId) return null;
+  return `tenant:${tenantId}:company:${companyId}:mollie_terminal_payment_intent:${safeBookingId}:${safeTerminalId}:v1`;
 }
 
 function buildScopedMollieTerminalsSnapshotKey(scope = null) {
@@ -1138,6 +1148,49 @@ function _mollieTerminalsScopeMissingFromResponse(status, payload = {}, text = "
     haystack.includes("permission") ||
     haystack.includes("not authorized")
   );
+}
+
+function _adminPosTerminalError(error, status = 400, extra = {}) {
+  const code = safeStr(error, 80) || "mollie_terminal_payment_create_failed";
+  return json({ ok: false, error: code, code, ...extra }, status);
+}
+
+function _normalizeAdminPosTerminalAmount(amount = {}) {
+  const source = amount && typeof amount === "object" ? amount : {};
+  const currency = safeStr(source.currency, 8).toUpperCase();
+  const valueRaw = source.value;
+  if (currency !== "EUR" || typeof valueRaw !== "string") return null;
+  const value = valueRaw.trim();
+  if (!/^[0-9]+(\.[0-9]{2})$/.test(value)) return null;
+  const cents = _mollieAmountValueToCents(value);
+  if (!Number.isFinite(cents) || cents <= 0) return null;
+  if (cents > 100) {
+    return { ok: false, error: "pos_terminal_amount_cap_exceeded", currency, value };
+  }
+  return { ok: true, currency, value, cents };
+}
+
+function _sanitizeAdminPosTerminalDescription(value) {
+  const text = safeStr(value, 140).trim();
+  return text || "Fluxidi terminal test payment";
+}
+
+function _adminPosTerminalIntentKeyValue({ tenantId, companyId, bookingId, terminalId } = {}) {
+  return [
+    safeStr(tenantId, 80),
+    safeStr(companyId, 80),
+    safeStr(bookingId, 160),
+    safeStr(terminalId, 120),
+  ].join(":");
+}
+
+function _adminPosTerminalResponseTerminal(terminal = {}) {
+  return {
+    id: safeStr(terminal.id, 80),
+    description: safeStr(terminal.description, 160) || null,
+    status: safeStr(terminal.status, 64) || null,
+    profile_id: safeStr(terminal.profile_id ?? terminal.profileId, 80) || null,
+  };
 }
 
 async function fetchCompanyMollieTerminals(env, scope) {
@@ -21383,6 +21436,289 @@ export default {
         return json(synced, 200);
       }
 
+      if (url.pathname === "/admin/mollie/terminal-payment/start" && request.method === "POST") {
+        const body = await safeJson(request);
+        const requestedScope = resolveAdminExplicitTenantCompanyScope({ request, url, body });
+        if (!requestedScope?.hasScope) {
+          return _adminPosTerminalError("missing_scope", 400);
+        }
+        const authScope = await _requireAdminOrCompanySessionForExplicitScope({
+          request,
+          url,
+          env,
+          body,
+          routeLabel: "ADMIN_MOLLIE_TERMINAL_PAYMENT_START",
+        });
+        if (!authScope.ok) return authScope.response;
+        const explicitScope = authScope.explicitScope;
+        const tenantId = explicitScope.tenant_id;
+        const companyId = explicitScope.company_id;
+        if (!env?.BOOKING_KV) {
+          return _adminPosTerminalError("missing_booking_kv", 500);
+        }
+
+        const bookingId = safeStr(body?.booking_id ?? body?.bookingId, 160);
+        if (!bookingId) return _adminPosTerminalError("booking_id_required", 400);
+        const terminalId = safeStr(body?.terminal_id ?? body?.terminalId, 120);
+        if (!terminalId) return _adminPosTerminalError("terminal_id_required", 400);
+        const amountNormalized = _normalizeAdminPosTerminalAmount(body?.amount);
+        if (!amountNormalized) return _adminPosTerminalError("invalid_amount", 400);
+        if (amountNormalized.ok === false) {
+          return _adminPosTerminalError(amountNormalized.error, 400, {
+            amount: { currency: amountNormalized.currency, value: amountNormalized.value },
+            max_amount: { currency: "EUR", value: "1.00" },
+          });
+        }
+        const dryRun = body?.dry_run === false || body?.dryRun === false ? false : true;
+        if (!dryRun && body?.confirm_live_terminal_payment !== true) {
+          return _adminPosTerminalError("live_terminal_payment_confirmation_required", 400);
+        }
+
+        let bookingLoaded = null;
+        try {
+          bookingLoaded = await loadBookingRecord(env, bookingId);
+        } catch (err) {
+          const missing = String(err?.message || "") === "Booking not found";
+          return _adminPosTerminalError(missing ? "booking_not_found" : "booking_lookup_failed", missing ? 404 : 500);
+        }
+        if (!bookingMatchesRequiredTenantCompanyScope(bookingLoaded?.rec, explicitScope)) {
+          return _adminPosTerminalError("forbidden", 403);
+        }
+
+        let credentials = null;
+        try {
+          credentials = await resolveCompanyMollieConnectCredentials(
+            env,
+            explicitScope,
+            { purpose: "admin_pos_terminal_payment_start" },
+          );
+        } catch (_) {
+          credentials = { ok: false, error: "company_mollie_credentials_unavailable" };
+        }
+        if (!credentials?.ok) {
+          const rawCode =
+            safeStr(credentials?.error ?? credentials?.code, 80) ||
+            "company_mollie_credentials_unavailable";
+          const code = "company_mollie_credentials_unavailable";
+          credentials = null;
+          console.log(
+            `[MOLLIE_POS][START_BLOCK] tenant=${tenantId} company=${companyId} booking=${_bookingIntentMask(bookingId)} terminal=${_bookingIntentMask(terminalId)} reason=${code} raw=${rawCode}`,
+          );
+          return _adminPosTerminalError(code, 400);
+        }
+        if (
+          !_isCompanyMollieOAuthCredentials(credentials) ||
+          safeStr(credentials.payment_owner_mode, 40) !== "company_mollie"
+        ) {
+          credentials = null;
+          return _adminPosTerminalError("company_mollie_credentials_unavailable", 400);
+        }
+        const companyMollieProfileId = _companyMollieProfileId(credentials);
+        if (!companyMollieProfileId) {
+          credentials = null;
+          return _adminPosTerminalError("company_mollie_credentials_unavailable", 400);
+        }
+
+        const snapshotKey = buildScopedMollieTerminalsSnapshotKey({
+          ...explicitScope,
+          testmode: false,
+        });
+        const snapshot = snapshotKey
+          ? await env.BOOKING_KV.get(snapshotKey, { type: "json" })
+          : null;
+        if (!snapshot || typeof snapshot !== "object") {
+          credentials = null;
+          return _adminPosTerminalError("terminal_snapshot_not_synced", 400);
+        }
+        const terminals = Array.isArray(snapshot.terminals)
+          ? snapshot.terminals
+              .map(_sanitizeMollieTerminalForSnapshot)
+              .filter((terminal) => !!terminal.id)
+          : [];
+        const terminal = terminals.find((entry) => safeStr(entry.id, 120) === terminalId);
+        if (!terminal) {
+          credentials = null;
+          return _adminPosTerminalError("terminal_not_found_for_company", 404);
+        }
+        if (safeStr(terminal.status, 64).toLowerCase() !== "active") {
+          credentials = null;
+          return _adminPosTerminalError("terminal_not_active", 400, {
+            terminal: _adminPosTerminalResponseTerminal(terminal),
+          });
+        }
+        const terminalProfileId = safeStr(terminal.profile_id ?? terminal.profileId, 80);
+        if (!terminalProfileId || terminalProfileId !== companyMollieProfileId) {
+          credentials = null;
+          return _adminPosTerminalError("terminal_profile_mismatch", 400, {
+            terminal: _adminPosTerminalResponseTerminal(terminal),
+            profile_id: companyMollieProfileId,
+          });
+        }
+
+        const amount = { currency: amountNormalized.currency, value: amountNormalized.value };
+        const terminalResponse = _adminPosTerminalResponseTerminal(terminal);
+        const posTerminalIntentKey = _adminPosTerminalIntentKeyValue({
+          tenantId,
+          companyId,
+          bookingId,
+          terminalId,
+        });
+        if (dryRun) {
+          credentials = null;
+          return json(
+            {
+              ok: true,
+              dry_run: true,
+              status: "validated",
+              tenant_id: tenantId,
+              company_id: companyId,
+              booking_id: bookingId,
+              terminal: terminalResponse,
+              amount,
+              pos_terminal_intent_key: posTerminalIntentKey,
+            },
+            200,
+          );
+        }
+
+        const intentKey = buildScopedMollieTerminalPaymentIntentKey(explicitScope, bookingId, terminalId);
+        if (!intentKey) {
+          credentials = null;
+          return _adminPosTerminalError("missing_scope", 400);
+        }
+        const existingIntent = await env.BOOKING_KV.get(intentKey, { type: "json" });
+        const existingStatus = safeStr(existingIntent?.mollie_status ?? existingIntent?.status, 40).toLowerCase();
+        if (
+          existingIntent?.payment_id &&
+          ["open", "pending", "authorized", "created"].includes(existingStatus)
+        ) {
+          credentials = null;
+          console.log(
+            `[MOLLIE_POS][START_IDEMPOTENT_HIT] tenant=${tenantId} company=${companyId} booking=${_bookingIntentMask(bookingId)} terminal=${_bookingIntentMask(terminalId)} payment=${_bookingIntentMask(existingIntent.payment_id)} status=${existingStatus || "-"}`,
+          );
+          return json(
+            {
+              ok: true,
+              dry_run: false,
+              status: "existing_open",
+              payment_id: safeStr(existingIntent.payment_id, 160),
+              mollie_status: existingStatus || null,
+              tenant_id: tenantId,
+              company_id: companyId,
+              booking_id: bookingId,
+              terminal_id: terminalId,
+              amount: existingIntent.amount && typeof existingIntent.amount === "object"
+                ? existingIntent.amount
+                : amount,
+              pos_terminal_intent_key: posTerminalIntentKey,
+            },
+            200,
+          );
+        }
+
+        const base = getBaseUrl(request);
+        const description = _sanitizeAdminPosTerminalDescription(body?.description);
+        const mollieCreateBody = {
+          amount,
+          description,
+          method: "pointofsale",
+          terminalId,
+          webhookUrl: `${base}/webhook/mollie`,
+          metadata: {
+            bookingId,
+            tenantId,
+            companyId,
+            payment_channel: "pos_terminal",
+            payment_source: "terminal",
+            terminal_id: terminalId,
+            terminal_description: terminalResponse.description,
+            fluxidi_pos_version: "POS-3A",
+            pos_terminal_intent_key: posTerminalIntentKey,
+          },
+          profileId: companyMollieProfileId,
+        };
+        const idempotencyKey = safeStr(posTerminalIntentKey, 240).replace(/[^a-zA-Z0-9_-]+/g, "_");
+        let mollieRes = null;
+        let mollie = {};
+        try {
+          mollieRes = await fetch(_mollieCreatePaymentApiUrl(), {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${credentials.apiKey}`,
+              "Content-Type": "application/json",
+              ...(idempotencyKey ? { "Idempotency-Key": idempotencyKey } : {}),
+            },
+            body: JSON.stringify(mollieCreateBody),
+          });
+          const txt = await mollieRes.text();
+          try {
+            mollie = txt ? JSON.parse(txt) : {};
+          } catch (_) {
+            mollie = {};
+          }
+        } catch (_) {
+          credentials = null;
+          return _adminPosTerminalError("mollie_terminal_payment_create_failed", 502);
+        }
+        const paymentId = safeStr(mollie?.id, 160);
+        const mollieStatus = safeStr(mollie?.status, 40) || "created";
+        if (!mollieRes?.ok || !paymentId) {
+          const mollieCode =
+            safeStr(mollie?.detail || mollie?.code || mollie?.error, 80) ||
+            "mollie_terminal_payment_create_failed";
+          credentials = null;
+          console.log(
+            `[MOLLIE_POS][START_FAIL] tenant=${tenantId} company=${companyId} booking=${_bookingIntentMask(bookingId)} terminal=${_bookingIntentMask(terminalId)} code=${mollieCode}`,
+          );
+          return _adminPosTerminalError("mollie_terminal_payment_create_failed", 502, {
+            mollie_code: mollieCode,
+          });
+        }
+        const nowIso = new Date().toISOString();
+        await env.BOOKING_KV.put(
+          intentKey,
+          JSON.stringify({
+            version: 1,
+            source: "admin_mollie_terminal_payment_start",
+            tenant_id: tenantId,
+            company_id: companyId,
+            booking_id: bookingId,
+            terminal_id: terminalId,
+            terminal: terminalResponse,
+            amount,
+            payment_id: paymentId,
+            paymentId,
+            status: mollieStatus,
+            mollie_status: mollieStatus,
+            profile_id: companyMollieProfileId,
+            pos_terminal_intent_key: posTerminalIntentKey,
+            created_at: nowIso,
+            updated_at: nowIso,
+          }),
+          { expirationTtl: ADMIN_MOLLIE_TERMINAL_PAYMENT_INTENT_TTL_SECONDS },
+        );
+        credentials = null;
+        console.log(
+          `[MOLLIE_POS][START_OK] tenant=${tenantId} company=${companyId} booking=${_bookingIntentMask(bookingId)} terminal=${_bookingIntentMask(terminalId)} payment=${_bookingIntentMask(paymentId)} amount=${amount.value}`,
+        );
+        return json(
+          {
+            ok: true,
+            dry_run: false,
+            status: "created",
+            payment_id: paymentId,
+            mollie_status: mollieStatus,
+            tenant_id: tenantId,
+            company_id: companyId,
+            booking_id: bookingId,
+            terminal_id: terminalId,
+            amount,
+            pos_terminal_intent_key: posTerminalIntentKey,
+          },
+          200,
+        );
+      }
+
       if (url.pathname === "/admin/mollie/connect/disconnect" && request.method === "POST") {
         const body = await safeJson(request);
         const authScope = await _requireAdminOrCompanySessionForExplicitScope({
@@ -21474,6 +21810,7 @@ POST /admin/mollie/connect/test-payment
 GET  /admin/mollie/connect/test-payment/status
 GET  /admin/mollie/terminals (?testmode=true for test snapshot)
 POST /admin/mollie/terminals/sync (body/query testmode=true for test sync)
+POST /admin/mollie/terminal-payment/start
 POST /admin/mollie/connect/disconnect
 `,
           { headers: { "Content-Type": "text/plain; charset=utf-8", ...corsHeaders() } }
