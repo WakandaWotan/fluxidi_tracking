@@ -13,6 +13,7 @@ import 'package:fluxidi_tracking/local_ride_assignment_cache.dart';
 import 'package:fluxidi_tracking/company_session_store.dart';
 import 'package:fluxidi_tracking/customer_bookings_store.dart';
 import 'package:fluxidi_tracking/driver_documents_store.dart';
+import 'package:fluxidi_tracking/vehicle_management_page.dart';
 import 'package:http/http.dart' as http;
 
 @immutable
@@ -979,16 +980,11 @@ class _ChironReadinessChecklistPage extends StatelessWidget {
     required String actionLabel,
     required IconData icon,
     required Color accent,
+    VoidCallback? onTap,
   }) {
-    return Container(
-      width: double.infinity,
-      margin: const EdgeInsets.only(bottom: 8),
+    const borderRadius = BorderRadius.all(Radius.circular(12));
+    final content = Padding(
       padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(
-        color: _chironPanel,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: _chironBorder),
-      ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -1049,6 +1045,27 @@ class _ChironReadinessChecklistPage extends StatelessWidget {
           ),
         ],
       ),
+    );
+
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 8),
+      decoration: BoxDecoration(
+        color: _chironPanel,
+        borderRadius: borderRadius,
+        border: Border.all(color: _chironBorder),
+      ),
+      clipBehavior: onTap != null ? Clip.antiAlias : Clip.none,
+      child: onTap == null
+          ? content
+          : Material(
+              color: Colors.transparent,
+              child: InkWell(
+                borderRadius: borderRadius,
+                onTap: onTap,
+                child: content,
+              ),
+            ),
     );
   }
 
@@ -1889,6 +1906,14 @@ class _ChironReadinessChecklistPage extends StatelessWidget {
                               ),
                               icon: Icons.directions_car_filled_outlined,
                               accent: _chironWarning,
+                              onTap: () {
+                                Navigator.of(context).push(
+                                  MaterialPageRoute<void>(
+                                    builder: (_) =>
+                                        const VehicleManagementPage(),
+                                  ),
+                                );
+                              },
                             ),
                           if (coreGapCount > 0)
                             _attentionActionCard(
