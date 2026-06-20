@@ -51483,6 +51483,72 @@ function _applyBookingChironEnrichmentToComplianceEvent(event, rec, options = {}
   return event;
 }
 
+// Chiron-1D-A (additive): when a booking_status_update compliance event
+// already carries vehicle_id but no license_plate (common when legs were
+// assigned without fleet metadata stamping), resolve the plate from scoped
+// fleet inventory at emit time. In-memory only — never persists to booking KV.
+async function _enrichBookingStatusUpdateComplianceEventVehiclePlateBestEffort(
+  env,
+  rec,
+  tenantScope,
+  complianceEvent,
+) {
+  if (!complianceEvent || typeof complianceEvent !== "object" || Array.isArray(complianceEvent)) {
+    return complianceEvent;
+  }
+  const vehicleBlock =
+    complianceEvent.vehicle && typeof complianceEvent.vehicle === "object" && !Array.isArray(complianceEvent.vehicle)
+      ? complianceEvent.vehicle
+      : null;
+  const vehicleId =
+    safeStr(
+      vehicleBlock?.vehicle_id ??
+        vehicleBlock?.vehicleId ??
+        complianceEvent.vehicle_id ??
+        complianceEvent.vehicleId ??
+        bookingAssignedVehicleId(rec),
+      128,
+    ) || "";
+  if (!vehicleId) return complianceEvent;
+
+  const existingPlate = safeStr(
+    vehicleBlock?.license_plate ?? vehicleBlock?.licensePlate ?? vehicleBlock?.plate,
+    64,
+  );
+  if (existingPlate) return complianceEvent;
+
+  let vehicleSummary = null;
+  try {
+    vehicleSummary = await _vehicleSummaryForVehicleId(env, vehicleId, tenantScope);
+  } catch (_) {
+    vehicleSummary = null;
+  }
+  if (!vehicleSummary || typeof vehicleSummary !== "object") return complianceEvent;
+
+  const fleetPlate = safeStr(
+    vehicleSummary.license_plate ?? vehicleSummary.licensePlate,
+    64,
+  );
+  if (!fleetPlate) return complianceEvent;
+
+  if (!vehicleBlock) {
+    complianceEvent.vehicle = {
+      vehicle_id: vehicleId,
+      vehicleId,
+    };
+  }
+  const vehicle = complianceEvent.vehicle;
+  if (!safeStr(vehicle?.vehicle_id ?? vehicle?.vehicleId, 128)) {
+    vehicle.vehicle_id = vehicleId;
+    vehicle.vehicleId = vehicleId;
+  }
+  if (!safeStr(vehicle?.license_plate ?? vehicle?.licensePlate, 64)) {
+    vehicle.license_plate = fleetPlate;
+    vehicle.licensePlate = fleetPlate;
+  }
+  return complianceEvent;
+}
+
 function _bookingComplianceAssignmentContext(rec, options = {}) {
   if (!rec || typeof rec !== "object") return {};
   const leg = options?.leg && typeof options.leg === "object" ? options.leg : null;
@@ -62869,6 +62935,12 @@ async function updateBookingStatusAuthoritative(
       sourceEndpoint: options?.source_endpoint || "/bookings/:id/status",
     });
     if (complianceEvent) {
+      await _enrichBookingStatusUpdateComplianceEventVehiclePlateBestEffort(
+        env,
+        rec,
+        tenantScope,
+        complianceEvent,
+      );
       emitComplianceEventBestEffort(env, complianceEvent, {
         timeoutMs: 1500,
         logLabel: "booking_status_update",
@@ -63210,6 +63282,12 @@ async function updateBookingOperationalLegStatusAuthoritative(
         leg: matchedLeg,
       });
       if (complianceEvent) {
+        await _enrichBookingStatusUpdateComplianceEventVehiclePlateBestEffort(
+          env,
+          rec,
+          tenantScope,
+          complianceEvent,
+        );
         emitComplianceEventBestEffort(env, complianceEvent, {
           timeoutMs: 1500,
           logLabel: "booking_leg_status_parent_derivation",
