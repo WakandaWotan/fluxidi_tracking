@@ -51110,39 +51110,56 @@ function _bookingChironRecordNetAmount(rec) {
 function _bookingChironRecordCurrency(rec) {
   const booking = rec?.booking && typeof rec.booking === "object" ? rec.booking : {};
   const payload = rec?.payload && typeof rec.payload === "object" ? rec.payload : {};
-  // Chiron-1B-A (additive): widen the currency lookup so the existing
-  // pricing/quote/payment snapshots can populate the value when no
-  // top-level currency field is set on the record. Returns "" when no
-  // candidate is present — callers (and the upstream wrapper) treat ""
-  // as "do not stamp" so existing payment_update behaviour is preserved.
-  const raw = safeStr(
-    booking?.currency ??
-      booking?.booking_currency ??
-      booking?.bookingCurrency ??
-      rec?.currency ??
-      rec?.booking_currency ??
-      rec?.bookingCurrency ??
-      payload?.currency ??
-      payload?.booking_currency ??
-      payload?.bookingCurrency ??
-      _pick(rec, ["quote", "currency"], null) ??
-      _pick(rec, ["quote", "pricing", "currency"], null) ??
-      _pick(rec, ["quote", "pricing_profile", "currency"], null) ??
-      _pick(rec, ["quote", "breakdown", "currency"], null) ??
-      _pick(rec, ["payload", "quote", "currency"], null) ??
-      _pick(rec, ["payload", "quote", "pricing", "currency"], null) ??
-      _pick(rec, ["payload", "quote", "pricing_profile", "currency"], null) ??
-      _pick(rec, ["payload", "quote", "breakdown", "currency"], null) ??
-      _pick(rec, ["payload", "payment", "currency"], null) ??
-      _pick(rec, ["mollie", "currency"], null),
-    8,
-  );
-  if (!raw) return "";
-  const upper = raw.toUpperCase().replace(/[^A-Z]/g, "");
-  // ISO-4217 codes are exactly three uppercase letters; anything else
-  // (e.g. "€", "EU", random tokens) is rejected so a noisy value can
-  // never leak into the compliance event.
-  return upper.length === 3 ? upper : "";
+  const normalizeCurrencyCandidate = (value) => {
+    if (typeof value !== "string") return "";
+    const upper = value.trim().toUpperCase();
+    return /^[A-Z]{3}$/.test(upper) ? upper : "";
+  };
+  // Chiron-1B-C (additive): scan only existing booking/quote/payment
+  // snapshots and accept strict ISO-4217 string tokens. No default is
+  // invented, and symbols/noisy strings are rejected.
+  const candidates = [
+    _pick(rec, ["fare", "currency"], null),
+    _pick(rec, ["quote", "currency"], null),
+    _pick(rec, ["quote", "pricing", "currency"], null),
+    _pick(rec, ["quote", "pricing_profile", "currency"], null),
+    _pick(rec, ["quote", "inputs", "currency"], null),
+    _pick(rec, ["quote", "breakdown", "currency"], null),
+    rec?.currency,
+    rec?.booking_currency,
+    rec?.bookingCurrency,
+    payload?.currency,
+    payload?.booking_currency,
+    payload?.bookingCurrency,
+    _pick(rec, ["payload", "fare", "currency"], null),
+    _pick(rec, ["payload", "quote", "currency"], null),
+    _pick(rec, ["payload", "quote", "pricing", "currency"], null),
+    _pick(rec, ["payload", "quote", "pricing_profile", "currency"], null),
+    _pick(rec, ["payload", "quote", "inputs", "currency"], null),
+    _pick(rec, ["payload", "quote", "breakdown", "currency"], null),
+    booking?.currency,
+    booking?.booking_currency,
+    booking?.bookingCurrency,
+    _pick(rec, ["booking", "fare", "currency"], null),
+    _pick(rec, ["booking", "quote", "currency"], null),
+    _pick(rec, ["booking", "quote", "pricing", "currency"], null),
+    _pick(rec, ["booking", "quote", "pricing_profile", "currency"], null),
+    _pick(rec, ["booking", "quote", "inputs", "currency"], null),
+    _pick(rec, ["booking", "quote", "breakdown", "currency"], null),
+    _pick(rec, ["payment", "currency"], null),
+    _pick(rec, ["booking", "payment", "currency"], null),
+    _pick(rec, ["payload", "payment", "currency"], null),
+    _pick(rec, ["mollie", "currency"], null),
+    _pick(rec, ["booking", "mollie", "currency"], null),
+    _pick(rec, ["payload", "mollie", "currency"], null),
+    _pick(rec, ["payment", "amount", "currency"], null),
+    _pick(rec, ["mollie", "amount", "currency"], null),
+  ];
+  for (const candidate of candidates) {
+    const normalized = normalizeCurrencyCandidate(candidate);
+    if (normalized) return normalized;
+  }
+  return "";
 }
 
 function _bookingChironRecordVehicleClass(rec) {
