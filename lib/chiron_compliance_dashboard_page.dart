@@ -3200,10 +3200,10 @@ class _RemoteComplianceEventsSectionState
     switch (raw.trim().toLowerCase()) {
       case 'not_configured':
         return _t(
-          nl: 'Chiron-koppeling niet geconfigureerd',
-          en: 'Chiron sync not configured',
-          fr: 'Liaison Chiron non configurée',
-          es: 'Sincronización Chiron no configurada',
+          nl: 'Externe Chiron-export niet ingesteld',
+          en: 'External Chiron export not configured',
+          fr: 'Export Chiron externe non configuré',
+          es: 'Exportación externa de Chiron no configurada',
         );
       case 'synced':
         return _t(
