@@ -13,6 +13,7 @@ import 'package:fluxidi_tracking/business_theme_page.dart';
 import 'package:fluxidi_tracking/business_theme_store.dart';
 import 'package:fluxidi_tracking/company_session_store.dart';
 import 'package:fluxidi_tracking/payment/payment_method_catalog.dart';
+import 'package:fluxidi_tracking/payment/payment_method_logo.dart';
 import 'package:fluxidi_tracking/payment/payment_method_resolver.dart';
 import 'package:geolocator/geolocator.dart' as geo;
 import 'package:image_picker/image_picker.dart';
@@ -2044,13 +2045,26 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
               ),
             ),
           const SizedBox(height: 12),
-          Text(
-            _mollieConnectStatusLabel(),
-            style: TextStyle(
-              color: _textPrimary,
-              fontWeight: FontWeight.w800,
-              fontSize: 13.5,
-            ),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Expanded(
+                child: Text(
+                  _mollieConnectStatusLabel(),
+                  style: TextStyle(
+                    color: _textPrimary,
+                    fontWeight: FontWeight.w800,
+                    fontSize: 13.5,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              buildMollieProviderLogo(
+                isDarkSurface: _isDark,
+                height: 14,
+                width: 52,
+              ),
+            ],
           ),
           const SizedBox(height: 6),
           Text(
@@ -3225,6 +3239,91 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
       default:
         return id.replaceAll('_', ' ');
     }
+  }
+
+  Widget _publicPaymentOptionFilterChip(String id) {
+    final selected = _publicPaymentOptionIds.contains(id);
+    return FilterChip(
+      avatar: paymentMethodLogoAssetForId(id) == null
+          ? null
+          : buildPaymentMethodLogo(
+              methodId: id,
+              plateWidth: 48,
+              plateHeight: 34,
+              imageMaxWidth: 42,
+              imageMaxHeight: 28,
+              plateBorderRadius: 6,
+              platePadding: const EdgeInsets.symmetric(
+                horizontal: 4,
+                vertical: 3,
+              ),
+              fallbackIconSize: 18,
+            ),
+      label: Text(_publicPaymentOptionLabel(id)),
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      selected: selected,
+      onSelected: (value) {
+        setState(() {
+          if (value) {
+            _publicPaymentOptionIds.add(id);
+          } else {
+            _publicPaymentOptionIds.remove(id);
+          }
+        });
+      },
+      selectedColor: _accent.withOpacity(_isDark ? 0.22 : 0.14),
+      checkmarkColor: _accent,
+      backgroundColor: _subPanelBg,
+      side: BorderSide(
+        color: selected
+            ? _accent.withOpacity(0.75)
+            : _border.withOpacity(_isDark ? 0.48 : 0.95),
+      ),
+      labelStyle: TextStyle(
+        color: selected ? (_isDark ? _textOnAccent : _accent) : _textPrimary,
+        fontWeight: FontWeight.w600,
+        fontSize: 11.6,
+      ),
+    );
+  }
+
+  Widget _publicPaymentOptionsChipSection() {
+    final paymentCatalog = _orderedPublicPaymentOptionCatalogForUi();
+    final lastMollieIdx = lastMollieCheckoutMethodIndex(paymentCatalog);
+    final leadingIds = lastMollieIdx == null
+        ? paymentCatalog
+        : paymentCatalog.sublist(0, lastMollieIdx + 1);
+    final trailingIds = lastMollieIdx == null
+        ? const <String>[]
+        : paymentCatalog.sublist(lastMollieIdx + 1);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: leadingIds
+              .map(_publicPaymentOptionFilterChip)
+              .toList(growable: false),
+        ),
+        if (lastMollieIdx != null) ...[
+          const SizedBox(height: 10),
+          buildPaymentsByMollieTrustBadge(isDarkSurface: _isDark),
+        ],
+        if (trailingIds.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: trailingIds
+                .map(_publicPaymentOptionFilterChip)
+                .toList(growable: false),
+          ),
+        ],
+      ],
+    );
   }
 
   double? _tryParsePublicLat(String value) {
@@ -8560,49 +8659,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                         ),
                       ),
                       const SizedBox(height: 8),
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: _orderedPublicPaymentOptionCatalogForUi()
-                            .map((id) {
-                              final selected = _publicPaymentOptionIds.contains(
-                                id,
-                              );
-                              return FilterChip(
-                                label: Text(_publicPaymentOptionLabel(id)),
-                                selected: selected,
-                                onSelected: (value) {
-                                  setState(() {
-                                    if (value) {
-                                      _publicPaymentOptionIds.add(id);
-                                    } else {
-                                      _publicPaymentOptionIds.remove(id);
-                                    }
-                                  });
-                                },
-                                selectedColor: _accent.withOpacity(
-                                  _isDark ? 0.22 : 0.14,
-                                ),
-                                checkmarkColor: _accent,
-                                backgroundColor: _subPanelBg,
-                                side: BorderSide(
-                                  color: selected
-                                      ? _accent.withOpacity(0.75)
-                                      : _border.withOpacity(
-                                          _isDark ? 0.48 : 0.95,
-                                        ),
-                                ),
-                                labelStyle: TextStyle(
-                                  color: selected
-                                      ? (_isDark ? _textOnAccent : _accent)
-                                      : _textPrimary,
-                                  fontWeight: FontWeight.w600,
-                                  fontSize: 11.6,
-                                ),
-                              );
-                            })
-                            .toList(growable: false),
-                      ),
+                      _publicPaymentOptionsChipSection(),
                       const SizedBox(height: 10),
                       _publicMediaPreview(),
                       const SizedBox(height: 10),

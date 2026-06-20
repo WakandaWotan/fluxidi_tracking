@@ -64,3 +64,6 @@ flutter:
     - assets/🥇 Fluxidi Neon Rush/
     - assets/events/categories/
     - assets/payment/png/
+    - assets/payment/logos/
+    - assets/payment/badges/
+    - assets/payment/providers/

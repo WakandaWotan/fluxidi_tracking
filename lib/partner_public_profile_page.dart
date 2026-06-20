@@ -14,6 +14,7 @@ import 'customer_session_store.dart';
 import 'customer_theme_palette.dart';
 import 'customer_theme_store.dart';
 import 'payment/payment_method_catalog.dart';
+import 'payment/payment_method_logo.dart';
 import 'payment/payment_method_resolver.dart';
 
 class PartnerPublicProfilePage extends StatefulWidget {
@@ -1033,40 +1034,18 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
     );
   }
 
-  String? _paymentOptionAssetPath(String id) {
-    switch (id.trim().toLowerCase()) {
-      case 'cash':
-      case 'qr_code':
-      case 'bancontact':
-      case 'payconiq_wero':
-      case 'ideal':
-      case 'cartes_bancaires':
-      case 'bizum':
-      case 'card_payment':
-      case 'apple_pay':
-      case 'google_pay':
-      case 'paypal':
-      case 'online_payment':
-      case 'bank_transfer_bacs':
-        return 'assets/payment/png/$id.png';
-      default:
-        return null;
-    }
-  }
-
   Widget _paymentOptionLogoTile({
     required String paymentId,
     required String semanticLabel,
   }) {
-    final assetPath = _paymentOptionAssetPath(paymentId);
     return Tooltip(
       message: semanticLabel,
       child: Semantics(
         label: semanticLabel,
         button: false,
         child: Container(
-          width: 56,
-          height: 56,
+          width: 72,
+          height: 64,
           decoration: BoxDecoration(
             color: _surfaceAlt,
             borderRadius: BorderRadius.circular(15),
@@ -1082,28 +1061,62 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
             ],
           ),
           alignment: Alignment.center,
-          child: assetPath == null
-              ? Icon(
-                  Icons.payments_outlined,
-                  color: _gold.withOpacity(0.95),
-                  size: 24,
-                )
-              : ClipRRect(
-                  borderRadius: BorderRadius.circular(10),
-                  child: Image.asset(
-                    assetPath,
-                    width: 40,
-                    height: 40,
-                    fit: BoxFit.contain,
-                    errorBuilder: (_, __, ___) => Icon(
-                      Icons.payments_outlined,
-                      color: _gold.withOpacity(0.95),
-                      size: 24,
-                    ),
-                  ),
-                ),
+          child: buildPaymentMethodLogo(
+            methodId: paymentId,
+            fallbackIconColor: _gold.withOpacity(0.95),
+            plateWidth: 60,
+            plateHeight: 46,
+            imageMaxWidth: 52,
+            imageMaxHeight: 38,
+            fallbackIconSize: 28,
+            plateBorderRadius: 9,
+            platePadding: const EdgeInsets.symmetric(
+              horizontal: 5,
+              vertical: 4,
+            ),
+          ),
         ),
       ),
+    );
+  }
+
+  Widget _paymentOptionLogoWrap(List<String> paymentIds) {
+    return Wrap(
+      spacing: 11,
+      runSpacing: 11,
+      children: paymentIds
+          .map(
+            (m) => _paymentOptionLogoTile(
+              paymentId: _normalizePublicPaymentMethodId(m),
+              semanticLabel: _paymentLabel(m),
+            ),
+          )
+          .toList(growable: false),
+    );
+  }
+
+  Widget _paymentOptionsWithMollieBadgeSection(List<String> paymentMethods) {
+    final lastMollieIdx = lastMollieCheckoutMethodIndex(paymentMethods);
+    final leadingIds = lastMollieIdx == null
+        ? paymentMethods
+        : paymentMethods.sublist(0, lastMollieIdx + 1);
+    final trailingIds = lastMollieIdx == null
+        ? const <String>[]
+        : paymentMethods.sublist(lastMollieIdx + 1);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _paymentOptionLogoWrap(leadingIds),
+        if (lastMollieIdx != null) ...[
+          const SizedBox(height: 10),
+          buildPaymentsByMollieTrustBadge(isDarkSurface: _isDarkTheme),
+        ],
+        if (trailingIds.isNotEmpty) ...[
+          const SizedBox(height: 11),
+          _paymentOptionLogoWrap(trailingIds),
+        ],
+      ],
     );
   }
 
@@ -2287,18 +2300,13 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
                               fr: 'Moyens de paiement',
                               es: 'Opciones de pago',
                             ),
-                            Wrap(
-                              spacing: 9,
-                              runSpacing: 9,
-                              children: paymentMethods
-                                  .map(
-                                    (m) => _paymentOptionLogoTile(
-                                      paymentId:
-                                          _normalizePublicPaymentMethodId(m),
-                                      semanticLabel: _paymentLabel(m),
-                                    ),
-                                  )
-                                  .toList(growable: false),
+                            Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                _paymentOptionsWithMollieBadgeSection(
+                                  paymentMethods,
+                                ),
+                              ],
                             ),
                           ),
                       ],

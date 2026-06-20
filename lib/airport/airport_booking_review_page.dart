@@ -13,6 +13,7 @@ import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/payment/payment_booking_selection.dart';
 import 'package:fluxidi_tracking/payment/payment_method_catalog.dart';
+import 'package:fluxidi_tracking/payment/payment_method_logo.dart';
 import 'package:fluxidi_tracking/payment/payment_method_resolver.dart';
 import 'package:fluxidi_tracking/payment/payment_qr_panel.dart';
 import 'package:http/http.dart' as http;
@@ -524,26 +525,6 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
       fr: 'Vous serez redirigé immédiatement vers le paiement sécurisé.',
       es: 'Se te redirigirá de inmediato al pago seguro.',
     );
-  }
-
-  IconData _paymentMethodIcon(String methodId) {
-    final id = normalizePaymentMethodId(methodId);
-    if (id == PaymentMethodIds.inVehicleCard) {
-      return Icons.local_taxi_rounded;
-    }
-    if (id == PaymentMethodIds.qrCode) {
-      return Icons.qr_code_2_rounded;
-    }
-    if (id == PaymentMethodIds.payconiqWero) {
-      return Icons.schedule_rounded;
-    }
-    if (id == PaymentMethodIds.bancontactQr) {
-      return Icons.qr_code_2_rounded;
-    }
-    if (id == PaymentMethodIds.kbcCbc || id == PaymentMethodIds.belfius) {
-      return Icons.account_balance_rounded;
-    }
-    return Icons.language_rounded;
   }
 
   String? _qrSrcFromBookResponse(Map<String, dynamic> body) {
@@ -1308,6 +1289,11 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
   Widget _paymentMethodChoiceOptionTile(String methodId) {
     final selected = _selectedPaymentMethodId == methodId;
     final displayOnly = _isDisplayOnlyPaymentMethod(methodId);
+    final fallbackIconColor = displayOnly
+        ? _textMuted.withOpacity(0.72)
+        : selected
+        ? _gold
+        : _textMuted;
     return InkWell(
       borderRadius: BorderRadius.circular(12),
       onTap: _isSubmitting || _isSubmitted
@@ -1348,14 +1334,11 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
         ),
         child: Row(
           children: [
-            Icon(
-              _paymentMethodIcon(methodId),
-              color: displayOnly
-                  ? _textMuted.withOpacity(0.72)
-                  : selected
-                  ? _gold
-                  : _textMuted,
-              size: 18,
+            buildPaymentMethodLogo(
+              methodId: methodId,
+              fallbackIconColor: fallbackIconColor,
+              plateWidth: 44,
+              plateHeight: 32,
             ),
             const SizedBox(width: 9),
             Expanded(
@@ -2101,6 +2084,15 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
                         _paymentMethodChoiceOptionTile(
                           _visiblePaymentMethodIds[i],
                         ),
+                        if (i ==
+                            lastMollieCheckoutMethodIndex(
+                              _visiblePaymentMethodIds,
+                            )) ...[
+                          const SizedBox(height: 10),
+                          buildPaymentsByMollieTrustBadge(
+                            isDarkSurface: _isDarkTheme,
+                          ),
+                        ],
                       ],
                     ],
                   ),
