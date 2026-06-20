@@ -38913,6 +38913,102 @@ function resolveCompliancePaymentMethodToken(recordOrBooking, payment, { provide
   return "unknown";
 }
 
+function _parseCompliancePaymentAmountValue(value) {
+  if (value == null || value === "") return null;
+  if (typeof value === "object" && !Array.isArray(value)) {
+    const nested = value.value ?? value.amount;
+    if (nested != null && nested !== "") {
+      return _parseCompliancePaymentAmountValue(nested);
+    }
+    return null;
+  }
+  const parsed = _trackingSyncParseAmountNumber(value);
+  if (!Number.isFinite(parsed) || parsed < 0) return null;
+  return parsed;
+}
+
+function _parseCompliancePaymentAmountFromCents(value) {
+  if (value == null || value === "") return null;
+  const cents = Number(value);
+  if (!Number.isFinite(cents) || cents < 0) return null;
+  return cents / 100;
+}
+
+function _firstCompliancePaymentAmount(...values) {
+  for (const value of values) {
+    if (value == null || value === "") continue;
+    const parsed = _parseCompliancePaymentAmountValue(value);
+    if (parsed != null) return parsed;
+  }
+  return null;
+}
+
+function _resolveCompliancePaymentUpdateAmount({ payment, rec, booking }) {
+  const pay = payment && typeof payment === "object" ? payment : {};
+  const record = rec && typeof rec === "object" ? rec : {};
+  const book = booking && typeof booking === "object" ? booking : {};
+
+  const scalarAmount = _firstCompliancePaymentAmount(
+    pay.amount,
+    pay.amount?.value,
+    pay.price,
+    pay.total,
+    pay.paid_amount,
+    pay.paidAmount,
+    record.payment_amount,
+    record.paymentAmount,
+    record.amount,
+    record.total,
+    record.amount?.value,
+    record.mollie?.amount?.value,
+    book.payment_amount,
+    book.paymentAmount,
+    book.total_price_incl_vat,
+    book.totalPriceInclVat,
+    book.price_incl_vat,
+    book.priceInclVat,
+  );
+  if (scalarAmount != null) return scalarAmount;
+
+  const centsValues = [
+    pay.amount_cents,
+    pay.amountCents,
+    pay.paid_amount_cents,
+    pay.paidAmountCents,
+    record.payment_amount_cents,
+    record.paymentAmountCents,
+    record.mollie_payment_amount_cents,
+  ];
+  for (const cents of centsValues) {
+    const parsed = _parseCompliancePaymentAmountFromCents(cents);
+    if (parsed != null) return parsed;
+  }
+  return null;
+}
+
+function _resolveCompliancePaymentUpdateTotal({ booking, rec, amount }) {
+  const book = booking && typeof booking === "object" ? booking : {};
+  const record = rec && typeof rec === "object" ? rec : {};
+
+  return _firstCompliancePaymentAmount(
+    book.price_incl_vat,
+    book.priceInclVat,
+    book.total_price_incl_vat,
+    book.totalPriceInclVat,
+    book.total_amount,
+    book.totalAmount,
+    book.total_incl,
+    record.price_incl_vat,
+    record.priceInclVat,
+    record.total_price_incl_vat,
+    record.totalPriceInclVat,
+    record.total_amount,
+    record.totalAmount,
+    record.total_incl,
+    amount,
+  );
+}
+
 function buildBookingPaymentUpdateComplianceEvent(recordOrBooking, bookingId, payment) {
   const rec = recordOrBooking && typeof recordOrBooking === "object" ? recordOrBooking : {};
   const booking = rec?.booking && typeof rec.booking === "object" ? rec.booking : {};
@@ -38953,30 +39049,16 @@ function buildBookingPaymentUpdateComplianceEvent(recordOrBooking, bookingId, pa
   const currency = (
     safeStr(
       payment?.currency ||
+        (payment?.amount && typeof payment.amount === "object" ? payment.amount.currency : null) ||
         rec?.currency ||
         booking?.currency ||
         booking?.booking_currency ||
+        rec?.mollie?.amount?.currency ||
         "EUR",
     ) || "EUR"
   ).toUpperCase();
-  const amountRaw =
-    payment?.amount ??
-    payment?.price ??
-    payment?.total ??
-    rec?.payment_amount ??
-    rec?.paymentAmount ??
-    booking?.payment_amount ??
-    booking?.paymentAmount;
-  const amountNum = Number(amountRaw);
-  const amount = Number.isFinite(amountNum) ? amountNum : null;
-  const totalRaw =
-    booking?.price_incl_vat ??
-    booking?.priceInclVat ??
-    rec?.price_incl_vat ??
-    rec?.priceInclVat ??
-    amountRaw;
-  const totalNum = Number(totalRaw);
-  const totalAmount = Number.isFinite(totalNum) ? totalNum : null;
+  const amount = _resolveCompliancePaymentUpdateAmount({ payment, rec, booking });
+  const totalAmount = _resolveCompliancePaymentUpdateTotal({ booking, rec, amount });
   const paymentSource = normalizeComplianceText(
     pickMeaningfulCompliancePaymentValue(
       rec?.payment_source,
@@ -68752,6 +68834,27 @@ async function payStatus(request, env, requestedScopeOverride = null) {
           data?.payload?.payment_provider,
           data?.payload?.paymentProvider,
         ) || "mollie";
+      const linkedRec =
+        linkedBooking?.rec && typeof linkedBooking.rec === "object" ? linkedBooking.rec : {};
+      const linkedNestedBooking =
+        linkedRec?.booking && typeof linkedRec.booking === "object" ? linkedRec.booking : {};
+      const compliancePaymentAmount = _firstCompliancePaymentAmount(
+        data?.amount,
+        data?.amount?.value,
+        data?.payment_amount,
+        data?.paymentAmount,
+        data?.mollie?.amount?.value,
+        linkedRec?.payment_amount,
+        linkedRec?.paymentAmount,
+        linkedRec?.total_price_incl_vat,
+        linkedRec?.totalPriceInclVat,
+        linkedRec?.price_incl_vat,
+        linkedRec?.priceInclVat,
+        linkedNestedBooking?.total_price_incl_vat,
+        linkedNestedBooking?.totalPriceInclVat,
+        linkedNestedBooking?.price_incl_vat,
+        linkedNestedBooking?.priceInclVat,
+      );
       const compliancePaymentPayload = {
         payment_status: data?.payment_status || data?.paymentStatus || "paid",
         payment_source: compliancePaymentSource,
@@ -68759,10 +68862,19 @@ async function payStatus(request, env, requestedScopeOverride = null) {
         payment_id:
           safeStr(data?.payment_id || data?.paymentId || data?.mollie?.payment_id || data?.mollie?.id) || null,
         paid_at: safeStr(data?.paid_at || data?.paidAt) || null,
-        currency: safeStr(data?.currency || data?.payload?.currency || "EUR") || "EUR",
+        currency:
+          safeStr(
+            data?.currency ||
+              data?.payload?.currency ||
+              (data?.amount && typeof data.amount === "object" ? data.amount.currency : null) ||
+              "EUR",
+          ) || "EUR",
         tenant_id: effectiveScope?.tenant_id || null,
         company_id: effectiveScope?.company_id || null,
       };
+      if (compliancePaymentAmount != null) {
+        compliancePaymentPayload.amount = compliancePaymentAmount;
+      }
       compliancePaymentPayload.payment_method = resolveCompliancePaymentMethodToken(
         data,
         compliancePaymentPayload,
