@@ -294,7 +294,9 @@ function buildScopedMollieConnectTestPaymentKey(scope = null, paymentId = "") {
 function buildScopedMollieTerminalsSnapshotKey(scope = null) {
   const tenantId = sanitizeTenantString(scope?.tenant_id ?? scope?.tenantId, 80);
   const companyId = sanitizeTenantString(scope?.company_id ?? scope?.companyId, 80);
+  const testMode = boolish(scope?.testmode ?? scope?.testMode);
   if (!tenantId || !companyId) return null;
+  if (testMode) return `tenant:${tenantId}:company:${companyId}:mollie_terminals:test:v1`;
   return `tenant:${tenantId}:company:${companyId}:mollie_terminals:v1`;
 }
 
@@ -1141,8 +1143,17 @@ function _mollieTerminalsScopeMissingFromResponse(status, payload = {}, text = "
 async function fetchCompanyMollieTerminals(env, scope) {
   const tenantId = sanitizeTenantString(scope?.tenant_id ?? scope?.tenantId, 80);
   const companyId = sanitizeTenantString(scope?.company_id ?? scope?.companyId, 80);
+  const testMode = boolish(scope?.testmode ?? scope?.testMode);
+  const mollieMode = testMode ? "test" : "live";
   if (!tenantId || !companyId) {
-    return { ok: false, status: "missing_tenant_scope", error: "missing_tenant_scope" };
+    return {
+      ok: false,
+      status: "missing_tenant_scope",
+      error: "missing_tenant_scope",
+      mollie_mode: mollieMode,
+      testmode: testMode,
+      terminals: [],
+    };
   }
   let credentials = null;
   try {
@@ -1160,7 +1171,17 @@ async function fetchCompanyMollieTerminals(env, scope) {
       safeStr(credentials?.error ?? credentials?.code, 80) ||
       "company_mollie_credentials_unavailable";
     credentials = null;
-    return { ok: false, status: code, error: code };
+    return {
+      ok: false,
+      status: code,
+      error: code,
+      tenant_id: tenantId,
+      company_id: companyId,
+      profile_id: null,
+      mollie_mode: mollieMode,
+      testmode: testMode,
+      terminals: [],
+    };
   }
   if (
     !_isCompanyMollieOAuthCredentials(credentials) ||
@@ -1171,6 +1192,12 @@ async function fetchCompanyMollieTerminals(env, scope) {
       ok: false,
       status: "company_mollie_credentials_required",
       error: "company_mollie_credentials_required",
+      tenant_id: tenantId,
+      company_id: companyId,
+      profile_id: null,
+      mollie_mode: mollieMode,
+      testmode: testMode,
+      terminals: [],
     };
   }
   const profileId = _companyMollieProfileId(credentials);
@@ -1180,14 +1207,22 @@ async function fetchCompanyMollieTerminals(env, scope) {
       ok: false,
       status: "missing_company_mollie_profile_id",
       error: "missing_company_mollie_profile_id",
+      tenant_id: tenantId,
+      company_id: companyId,
+      profile_id: null,
+      mollie_mode: mollieMode,
+      testmode: testMode,
+      terminals: [],
     };
   }
-  const mollieMode = safeStr(credentials.mollie_mode ?? credentials.mode, 16) || "unknown";
   let res = null;
   let rawText = "";
   let payload = {};
   try {
-    res = await fetch("https://api.mollie.com/v2/terminals?limit=250", {
+    const terminalsUrl = new URL("https://api.mollie.com/v2/terminals");
+    terminalsUrl.searchParams.set("limit", "250");
+    if (testMode) terminalsUrl.searchParams.set("testmode", "true");
+    res = await fetch(terminalsUrl.toString(), {
       method: "GET",
       headers: {
         Authorization: `Bearer ${credentials.apiKey}`,
@@ -1206,6 +1241,12 @@ async function fetchCompanyMollieTerminals(env, scope) {
       ok: false,
       status: "mollie_terminals_fetch_failed",
       error: "mollie_terminals_fetch_failed",
+      tenant_id: tenantId,
+      company_id: companyId,
+      profile_id: profileId,
+      mollie_mode: mollieMode,
+      testmode: testMode,
+      terminals: [],
     };
   }
   credentials = null;
@@ -1220,6 +1261,7 @@ async function fetchCompanyMollieTerminals(env, scope) {
         company_id: companyId,
         profile_id: profileId,
         mollie_mode: mollieMode,
+        testmode: testMode,
         terminals: [],
       };
     }
@@ -1235,6 +1277,7 @@ async function fetchCompanyMollieTerminals(env, scope) {
       company_id: companyId,
       profile_id: profileId,
       mollie_mode: mollieMode,
+      testmode: testMode,
       terminals: [],
     };
   }
@@ -1256,37 +1299,61 @@ async function fetchCompanyMollieTerminals(env, scope) {
     company_id: companyId,
     profile_id: profileId,
     mollie_mode: mollieMode,
+    testmode: testMode,
     terminals,
   };
 }
 
 async function syncCompanyMollieTerminalsSnapshot(env, scope) {
+  const testMode = boolish(scope?.testmode ?? scope?.testMode);
+  const mollieMode = testMode ? "test" : "live";
   if (!env?.BOOKING_KV) {
-    return { ok: false, status: "missing_booking_kv", error: "missing_booking_kv" };
+    return {
+      ok: false,
+      status: "missing_booking_kv",
+      error: "missing_booking_kv",
+      mollie_mode: mollieMode,
+      testmode: testMode,
+      terminals: [],
+    };
   }
   const tenantId = sanitizeTenantString(scope?.tenant_id ?? scope?.tenantId, 80);
   const companyId = sanitizeTenantString(scope?.company_id ?? scope?.companyId, 80);
-  const key = buildScopedMollieTerminalsSnapshotKey({ tenant_id: tenantId, company_id: companyId });
+  const key = buildScopedMollieTerminalsSnapshotKey({
+    tenant_id: tenantId,
+    company_id: companyId,
+    testmode: testMode,
+  });
   if (!key) {
-    return { ok: false, status: "missing_tenant_scope", error: "missing_tenant_scope" };
+    return {
+      ok: false,
+      status: "missing_tenant_scope",
+      error: "missing_tenant_scope",
+      mollie_mode: mollieMode,
+      testmode: testMode,
+      terminals: [],
+    };
   }
   const fetched = await fetchCompanyMollieTerminals(env, {
     tenant_id: tenantId,
     company_id: companyId,
+    testmode: testMode,
   });
   if (!fetched?.ok) return fetched;
   const snapshot = {
+    ok: true,
     version: 1,
     tenant_id: tenantId,
     company_id: companyId,
     profile_id: safeStr(fetched.profile_id, 80) || null,
-    mollie_mode: safeStr(fetched.mollie_mode, 16) || "unknown",
+    mollie_mode: mollieMode,
+    testmode: testMode,
     status: "synced",
     synced_at: new Date().toISOString(),
     terminals: Array.isArray(fetched.terminals) ? fetched.terminals : [],
   };
   await env.BOOKING_KV.put(key, JSON.stringify(snapshot));
-  return { ok: true, ...snapshot };
+  return snapshot;
 }
 
 async function mollieConnectOAuthCallback(request, env) {
@@ -21216,7 +21283,12 @@ export default {
         const explicitScope = authScope.explicitScope;
         const tenantId = explicitScope.tenant_id;
         const companyId = explicitScope.company_id;
-        const snapshotKey = buildScopedMollieTerminalsSnapshotKey(explicitScope);
+        const testMode = boolish(url.searchParams.get("testmode"));
+        const mollieMode = testMode ? "test" : "live";
+        const snapshotKey = buildScopedMollieTerminalsSnapshotKey({
+          ...explicitScope,
+          testmode: testMode,
+        });
         if (!snapshotKey || !env?.BOOKING_KV) {
           return json({ ok: false, error: "invalid_terminals_snapshot_scope" }, 400);
         }
@@ -21229,7 +21301,8 @@ export default {
               tenant_id: tenantId,
               company_id: companyId,
               profile_id: null,
-              mollie_mode: "unknown",
+              mollie_mode: mollieMode,
+              testmode: testMode,
               status: "not_synced",
               synced_at: null,
               terminals: [],
@@ -21244,10 +21317,15 @@ export default {
             tenant_id: tenantId,
             company_id: companyId,
             profile_id: safeStr(snapshot.profile_id ?? snapshot.profileId, 80) || null,
-            mollie_mode: safeStr(snapshot.mollie_mode ?? snapshot.mollieMode, 16) || "unknown",
+            mollie_mode: mollieMode,
+            testmode: boolish(snapshot.testmode ?? snapshot.testMode ?? testMode),
             status: safeStr(snapshot.status, 40) || "synced",
             synced_at: safeStr(snapshot.synced_at ?? snapshot.syncedAt, 80) || null,
-            terminals: Array.isArray(snapshot.terminals) ? snapshot.terminals : [],
+            terminals: Array.isArray(snapshot.terminals)
+              ? snapshot.terminals
+                  .map(_sanitizeMollieTerminalForSnapshot)
+                  .filter((terminal) => !!terminal.id)
+              : [],
           },
           200,
         );
@@ -21264,10 +21342,16 @@ export default {
         });
         if (!authScope.ok) return authScope.response;
         const explicitScope = authScope.explicitScope;
-        const synced = await syncCompanyMollieTerminalsSnapshot(env, explicitScope);
+        const testMode = boolish(
+          body?.testmode ?? body?.testMode ?? url.searchParams.get("testmode"),
+        );
+        const synced = await syncCompanyMollieTerminalsSnapshot(env, {
+          ...explicitScope,
+          testmode: testMode,
+        });
         if (synced?.status === "terminals_scope_missing") {
           console.log(
-            `[MOLLIE_TERMINALS][SYNC_SCOPE_MISSING] tenant=${explicitScope.tenant_id} company=${explicitScope.company_id}`,
+            `[MOLLIE_TERMINALS][SYNC_SCOPE_MISSING] tenant=${explicitScope.tenant_id} company=${explicitScope.company_id} mode=${testMode ? "test" : "live"}`,
           );
           return json(synced, 200);
         }
@@ -21276,12 +21360,25 @@ export default {
             safeStr(synced?.error ?? synced?.code ?? synced?.status, 80) ||
             "mollie_terminals_sync_failed";
           console.log(
-            `[MOLLIE_TERMINALS][SYNC_FAIL] tenant=${explicitScope.tenant_id} company=${explicitScope.company_id} code=${code}`,
+            `[MOLLIE_TERMINALS][SYNC_FAIL] tenant=${explicitScope.tenant_id} company=${explicitScope.company_id} mode=${testMode ? "test" : "live"} code=${code}`,
           );
-          return json({ ok: false, error: code, code, status: code }, 400);
+          return json(
+            {
+              ok: false,
+              error: code,
+              code,
+              status: code,
+              tenant_id: explicitScope.tenant_id,
+              company_id: explicitScope.company_id,
+              mollie_mode: testMode ? "test" : "live",
+              testmode: testMode,
+              terminals: [],
+            },
+            400,
+          );
         }
         console.log(
-          `[MOLLIE_TERMINALS][SYNC_OK] tenant=${explicitScope.tenant_id} company=${explicitScope.company_id} count=${Array.isArray(synced.terminals) ? synced.terminals.length : 0}`,
+          `[MOLLIE_TERMINALS][SYNC_OK] tenant=${explicitScope.tenant_id} company=${explicitScope.company_id} mode=${testMode ? "test" : "live"} count=${Array.isArray(synced.terminals) ? synced.terminals.length : 0}`,
         );
         return json(synced, 200);
       }
@@ -21375,8 +21472,8 @@ GET  /admin/mollie/connect/status
 GET  /admin/mollie/connect/readiness
 POST /admin/mollie/connect/test-payment
 GET  /admin/mollie/connect/test-payment/status
-GET  /admin/mollie/terminals
-POST /admin/mollie/terminals/sync
+GET  /admin/mollie/terminals (?testmode=true for test snapshot)
+POST /admin/mollie/terminals/sync (body/query testmode=true for test sync)
 POST /admin/mollie/connect/disconnect
 `,
           { headers: { "Content-Type": "text/plain; charset=utf-8", ...corsHeaders() } }

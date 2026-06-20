@@ -6928,9 +6928,14 @@ Future<Map<String, dynamic>> disconnectBackendMollieConnect({
 Future<Map<String, dynamic>> fetchCompanyMollieTerminals({
   String? tenantId,
   String? companyId,
+  bool testmode = false,
 }) async {
   final endpoint = _withAdminTenantCompanyScope(
-    Uri.parse('${appConfig.bookingBaseUrl}/admin/mollie/terminals'),
+    Uri.parse('${appConfig.bookingBaseUrl}/admin/mollie/terminals').replace(
+      queryParameters: testmode
+          ? const <String, String>{'testmode': 'true'}
+          : null,
+    ),
     tenantId: tenantId,
     companyId: companyId,
   );
@@ -6956,6 +6961,7 @@ Future<Map<String, dynamic>> fetchCompanyMollieTerminals({
 Future<Map<String, dynamic>> syncCompanyMollieTerminals({
   String? tenantId,
   String? companyId,
+  bool testmode = false,
 }) async {
   final endpoint = _withAdminTenantCompanyScope(
     Uri.parse('${appConfig.bookingBaseUrl}/admin/mollie/terminals/sync'),
@@ -6971,7 +6977,10 @@ Future<Map<String, dynamic>> syncCompanyMollieTerminals({
       .post(
         endpoint,
         headers: auth.headers,
-        body: jsonEncode(<String, dynamic>{...scope}),
+        body: jsonEncode(<String, dynamic>{
+          ...scope,
+          if (testmode) 'testmode': true,
+        }),
       )
       .timeout(const Duration(seconds: 20));
   final decoded = jsonDecode(utf8.decode(res.bodyBytes));
