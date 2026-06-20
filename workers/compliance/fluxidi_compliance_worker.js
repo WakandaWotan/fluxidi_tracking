@@ -798,21 +798,58 @@ function _chironProjectLocations(event) {
   };
 }
 
+function _chironProjectNonNegativeNumber(value) {
+  if (value === null || value === undefined || value === "") return null;
+  if (typeof value === "string" && !/^\d+(?:\.\d+)?$/.test(value.trim())) return null;
+  const num = Number(value);
+  return Number.isFinite(num) && num >= 0 ? num : null;
+}
+
+function _chironProjectNonNegativeInteger(value) {
+  const num = _chironProjectNonNegativeNumber(value);
+  return num !== null && Number.isInteger(num) ? num : null;
+}
+
+function _chironProjectCurrency(value) {
+  const currency = cleanText(value, 8).toUpperCase();
+  return /^[A-Z]{3}$/.test(currency) ? currency : null;
+}
+
 function _chironProjectFare(event) {
   const source = _chironCloneObject(event?.fare);
-  const currency = cleanText(source.currency, 8).toUpperCase();
-  const totalAmount = Number(source.total_amount ?? source.totalAmount);
-  const distanceKm = Number(source.distance_km ?? source.distanceKm);
-  const waitSeconds = Number(source.wait_seconds_total ?? source.waitSecondsTotal);
-  const vatRate = Number(source.vat_rate ?? source.vatRate);
-  const vatAmount = Number(source.vat_amount ?? source.vatAmount);
+  const currency = _chironProjectCurrency(source.currency);
+  const totalAmountCents = _chironProjectNonNegativeInteger(
+    source.total_amount_cents ?? source.totalAmountCents,
+  );
+  const vatAmountCents = _chironProjectNonNegativeInteger(
+    source.vat_amount_cents ?? source.vatAmountCents,
+  );
+  const netAmountCents = _chironProjectNonNegativeInteger(
+    source.net_amount_cents ?? source.netAmountCents,
+  );
+  const totalAmount =
+    _chironProjectNonNegativeNumber(source.total_amount ?? source.totalAmount) ??
+    (totalAmountCents !== null ? totalAmountCents / 100 : null);
+  const vatAmount =
+    _chironProjectNonNegativeNumber(source.vat_amount ?? source.vatAmount) ??
+    (vatAmountCents !== null ? vatAmountCents / 100 : null);
+  const netAmount =
+    _chironProjectNonNegativeNumber(source.net_amount ?? source.netAmount) ??
+    (netAmountCents !== null ? netAmountCents / 100 : null);
   return {
-    currency: currency || null,
-    total_amount: Number.isFinite(totalAmount) ? totalAmount : null,
-    distance_km: Number.isFinite(distanceKm) ? distanceKm : null,
-    wait_seconds_total: Number.isFinite(waitSeconds) ? waitSeconds : null,
-    vat_rate: Number.isFinite(vatRate) ? vatRate : null,
-    vat_amount: Number.isFinite(vatAmount) ? vatAmount : null,
+    currency,
+    total_amount: totalAmount,
+    total_amount_cents: totalAmountCents,
+    distance_km: _chironProjectNonNegativeNumber(source.distance_km ?? source.distanceKm),
+    wait_seconds_total: _chironProjectNonNegativeNumber(
+      source.wait_seconds_total ?? source.waitSecondsTotal,
+    ),
+    vat_rate: _chironProjectNonNegativeNumber(source.vat_rate ?? source.vatRate),
+    vat_amount: vatAmount,
+    vat_amount_cents: vatAmountCents,
+    net_amount: netAmount,
+    net_amount_cents: netAmountCents,
+    tariff_code: cleanText(source.tariff_code ?? source.tariffCode, 96) || null,
   };
 }
 
@@ -892,7 +929,7 @@ function _chironComputeCompleteness(event, blueprint) {
   if (!driver.driver_id && !driver.driver_name && !driver.license_id && !driver.badge_id) {
     warnings.push("missing_driver_identity");
   }
-  if (fare.vat_rate === null && fare.vat_amount === null) {
+  if (fare.vat_rate === null && fare.vat_amount === null && fare.vat_amount_cents === null) {
     warnings.push("missing_vat_breakdown");
   }
   const reportingRegion = cleanText(event?.reporting_region ?? event?.reportingRegion, 64);
