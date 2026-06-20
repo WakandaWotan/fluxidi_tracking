@@ -25,6 +25,8 @@ extension PaymentProviderWire on PaymentProvider {
 abstract final class PaymentMethodIds {
   static const bancontact = 'bancontact';
   static const bancontactQr = 'bancontact_qr';
+  static const kbcCbc = 'kbc_cbc';
+  static const belfius = 'belfius';
   static const ideal = 'ideal';
   static const cardPayment = 'card_payment';
   static const applePay = 'apple_pay';
@@ -43,6 +45,8 @@ abstract final class PaymentMethodIds {
   static const all = <String>[
     bancontact,
     bancontactQr,
+    kbcCbc,
+    belfius,
     ideal,
     cardPayment,
     applePay,
@@ -154,6 +158,16 @@ String normalizePaymentMethodId(String raw) {
     case 'bancontact_pay_qr':
     case 'payconiq_qr':
       return PaymentMethodIds.bancontactQr;
+    case 'kbc':
+    case 'cbc':
+    case 'kbc_cbc_payment_button':
+    case 'kbc_payment_button':
+    case 'cbc_payment_button':
+      return PaymentMethodIds.kbcCbc;
+    case 'belfius_pay':
+    case 'belfius_direct_net':
+    case 'belfius_pay_button':
+      return PaymentMethodIds.belfius;
     case 'bacs':
     case 'bank_transfer':
     case 'bankoverschrijving':
@@ -194,6 +208,16 @@ List<String> filterKnownPaymentMethodIds(Iterable<String> rawIds) {
   return out;
 }
 
+/// Public partner profile options exposed to Android admin/customer surfaces.
+///
+/// Apple Pay stays in the internal catalog for future platforms but is omitted
+/// from publishable public payment option lists on Android-first builds.
+List<String> filterPublicPartnerPaymentOptionIds(Iterable<String> rawIds) {
+  return filterKnownPaymentMethodIds(
+    rawIds,
+  ).where((id) => id != PaymentMethodIds.applePay).toList(growable: false);
+}
+
 /// Catalog of payment methods, providers, and country-default orderings.
 abstract final class PaymentMethodCatalog {
   static final Map<String, PaymentMethodDefinition> _byId =
@@ -206,6 +230,8 @@ abstract final class PaymentMethodCatalog {
   static const Set<String> knownIds = <String>{
     PaymentMethodIds.bancontact,
     PaymentMethodIds.bancontactQr,
+    PaymentMethodIds.kbcCbc,
+    PaymentMethodIds.belfius,
     PaymentMethodIds.ideal,
     PaymentMethodIds.cardPayment,
     PaymentMethodIds.applePay,
@@ -285,6 +311,16 @@ abstract final class PaymentMethodCatalog {
           capability: PaymentMethodCapability.mollieOnline,
         ),
         PaymentMethodDefinition(
+          id: PaymentMethodIds.kbcCbc,
+          provider: PaymentProvider.mollie,
+          capability: PaymentMethodCapability.mollieOnline,
+        ),
+        PaymentMethodDefinition(
+          id: PaymentMethodIds.belfius,
+          provider: PaymentProvider.mollie,
+          capability: PaymentMethodCapability.mollieOnline,
+        ),
+        PaymentMethodDefinition(
           id: PaymentMethodIds.ideal,
           provider: PaymentProvider.mollie,
           capability: PaymentMethodCapability.mollieOnline,
@@ -359,12 +395,14 @@ abstract final class PaymentMethodCatalog {
   static const Map<String, List<String>> _countryProfiles =
       <String, List<String>>{
         PaymentCountryCodes.belgium: <String>[
-          PaymentMethodIds.bancontactQr,
           PaymentMethodIds.bancontact,
+          PaymentMethodIds.kbcCbc,
+          PaymentMethodIds.belfius,
           PaymentMethodIds.cardPayment,
-          PaymentMethodIds.applePay,
-          PaymentMethodIds.googlePay,
           PaymentMethodIds.paypal,
+          PaymentMethodIds.qrCode,
+          PaymentMethodIds.payconiqWero,
+          PaymentMethodIds.googlePay,
         ],
         PaymentCountryCodes.netherlands: <String>[
           PaymentMethodIds.ideal,

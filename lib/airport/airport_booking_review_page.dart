@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:fluxidi_tracking/company_session_store.dart';
 import 'package:fluxidi_tracking/customer_bookings_store.dart';
@@ -238,11 +240,46 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
     );
   }
 
+  bool get _isApplePaymentPlatform => !kIsWeb && Platform.isIOS;
+
+  PaymentMethodClientContext get _paymentClientContext {
+    final profile = localBackendBusinessProfileNotifier.value;
+    final forcedTestMode = PaymentMethodResolver.inferMollieForcedTestMode(
+      gate: _paymentOwnershipGate,
+      livePaymentsEnabled: profile?.livePaymentsEnabled,
+      mollieForcedTestMode: profile?.mollieForcedTestMode,
+    );
+    return PaymentMethodClientContext.forPlatform(
+      isApplePlatform: _isApplePaymentPlatform,
+      supportsGooglePayCheckout: !forcedTestMode,
+    );
+  }
+
+  bool get _blocksGooglePayBookSubmit {
+    final profile = localBackendBusinessProfileNotifier.value;
+    return PaymentMethodResolver.blocksGooglePayBookSubmit(
+      gate: _paymentOwnershipGate,
+      livePaymentsEnabled: profile?.livePaymentsEnabled,
+      mollieForcedTestMode: profile?.mollieForcedTestMode,
+    );
+  }
+
+  bool _isGooglePaySubmitBlocked(String methodId) =>
+      PaymentMethodResolver.isGooglePayMethodId(methodId) &&
+      _blocksGooglePayBookSubmit;
+
+  String? _googlePayBookSubmitBlockedMessage() {
+    if (!_isGooglePaySubmitBlocked(_selectedPaymentMethodId)) return null;
+    return PaymentMethodResolver.googlePayTestModeUnavailableMessage(
+      languageCode: widget.languageCode,
+    );
+  }
+
   List<String> get _enabledCompanyPaymentOptionIds {
     final profile = localBackendBusinessProfileNotifier.value;
     return profile == null
         ? const <String>[]
-        : filterKnownPaymentMethodIds(profile.publicPaymentOptions);
+        : filterPublicPartnerPaymentOptionIds(profile.publicPaymentOptions);
   }
 
   ResolvedPaymentMethods get _resolvedPaymentMethods =>
@@ -250,6 +287,7 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
         countryCode: _paymentCountryCodeForResolver(),
         enabledPublicPaymentOptionIds: _enabledCompanyPaymentOptionIds,
         ownershipGate: _paymentOwnershipGate,
+        clientContext: _paymentClientContext,
         languageCode: widget.languageCode,
       );
 
@@ -261,10 +299,15 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
     if (def == null) return true;
     if (id == PaymentMethodIds.inVehicleCard) return false;
     if (id == PaymentMethodIds.qrCode) return !_isQrPaymentConfigured();
+    if (PaymentMethodResolver.isGooglePayMethodId(id) &&
+        _blocksGooglePayBookSubmit) {
+      return true;
+    }
     return !def.isSupportedMollieCheckout;
   }
 
   bool _isDirectCheckoutPaymentMethod(String methodId) {
+    if (_isDisplayOnlyPaymentMethod(methodId)) return false;
     return PaymentMethodCatalog.definitionFor(
           methodId,
         )?.isSupportedMollieCheckout ??
@@ -367,6 +410,11 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
     if (id == PaymentMethodIds.payconiqWero) {
       return _payconiqWeroPendingMessage();
     }
+    if (id == PaymentMethodIds.googlePay) {
+      return PaymentMethodResolver.googlePayTestModeUnavailableMessage(
+        languageCode: widget.languageCode,
+      );
+    }
     return _paymentMethodUnavailableMessage();
   }
 
@@ -381,6 +429,10 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
         );
       case PaymentMethodIds.bancontact:
         return 'Bancontact';
+      case PaymentMethodIds.kbcCbc:
+        return 'KBC/CBC Payment Button';
+      case PaymentMethodIds.belfius:
+        return 'Belfius Pay Button';
       case PaymentMethodIds.bancontactQr:
         return 'Payconiq / Bancontact Pay QR';
       case PaymentMethodIds.qrCode:
@@ -458,6 +510,14 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
         es: 'Escanea con Bancontact Pay, Payconiq by Bancontact o tu app bancaria belga.',
       );
     }
+    if (id == PaymentMethodIds.kbcCbc || id == PaymentMethodIds.belfius) {
+      return _t(
+        nl: 'Open de beveiligde betaalpagina na het bevestigen.',
+        en: 'Open the secure checkout page after confirming.',
+        fr: 'Ouvrez la page de paiement sécurisée après confirmation.',
+        es: 'Abre la página de pago segura tras confirmar.',
+      );
+    }
     return _t(
       nl: 'Je wordt direct doorgestuurd naar de veilige betaalpagina.',
       en: 'You will be redirected to secure checkout immediately.',
@@ -479,6 +539,9 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
     }
     if (id == PaymentMethodIds.bancontactQr) {
       return Icons.qr_code_2_rounded;
+    }
+    if (id == PaymentMethodIds.kbcCbc || id == PaymentMethodIds.belfius) {
+      return Icons.account_balance_rounded;
     }
     return Icons.language_rounded;
   }
@@ -925,6 +988,19 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
       });
       return;
     }
+    if (_isDisplayOnlyPaymentMethod(_selectedPaymentMethodId)) {
+      setState(() {
+        _submitError = _displayOnlyPaymentMessage(_selectedPaymentMethodId);
+      });
+      return;
+    }
+    final googlePayBlockedMessage = _googlePayBookSubmitBlockedMessage();
+    if (googlePayBlockedMessage != null) {
+      setState(() {
+        _submitError = googlePayBlockedMessage;
+      });
+      return;
+    }
     final name = _nameController.text.trim();
     final phone = _phoneController.text.trim();
     final email = _emailController.text.trim();
@@ -959,6 +1035,15 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
       _submittedMessage = null;
     });
     try {
+      final googlePayBlockedBeforePost = _googlePayBookSubmitBlockedMessage();
+      if (googlePayBlockedBeforePost != null) {
+        if (!mounted) return;
+        setState(() {
+          _isSubmitting = false;
+          _submitError = googlePayBlockedBeforePost;
+        });
+        return;
+      }
       final response = await http
           .post(
             Uri.parse('${widget.bookingBaseUrl}/book'),

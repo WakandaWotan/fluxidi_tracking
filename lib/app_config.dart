@@ -295,6 +295,8 @@ class BackendBusinessProfile {
   final String paymentOwnerMode;
   final bool paymentDemoMode;
   final bool mollieConnected;
+  final bool? livePaymentsEnabled;
+  final bool? mollieForcedTestMode;
   final String mollieOrganizationId;
   final String mollieProfileId;
   final String mollieTokenRef;
@@ -334,6 +336,8 @@ class BackendBusinessProfile {
     this.paymentOwnerMode = 'fluxidi_central_demo',
     this.paymentDemoMode = true,
     this.mollieConnected = false,
+    this.livePaymentsEnabled,
+    this.mollieForcedTestMode,
     this.mollieOrganizationId = '',
     this.mollieProfileId = '',
     this.mollieTokenRef = '',
@@ -409,6 +413,11 @@ class BackendBusinessProfile {
         if (out.isNotEmpty) return out;
       }
       return fallbackValue;
+    }
+
+    bool? boolOptional(dynamic value) {
+      if (value is bool) return value;
+      return null;
     }
 
     return BackendBusinessProfile(
@@ -519,6 +528,15 @@ class BackendBusinessProfile {
           (json['mollieConnected'] ?? json['mollie_connected']) is bool
           ? ((json['mollieConnected'] ?? json['mollie_connected']) as bool)
           : fallback.mollieConnected,
+      livePaymentsEnabled: boolOptional(
+        json['livePaymentsEnabled'] ?? json['live_payments_enabled'],
+      ),
+      mollieForcedTestMode: boolOptional(
+        json['mollieForcedTestMode'] ??
+            json['mollie_forced_testmode'] ??
+            json['forced_testmode'] ??
+            json['forcedTestmode'],
+      ),
       mollieOrganizationId: textAny(const [
         'mollieOrganizationId',
         'mollie_organization_id',
@@ -595,6 +613,16 @@ class BackendBusinessProfile {
     'payment_demo_mode': paymentDemoMode,
     'mollieConnected': mollieConnected,
     'mollie_connected': mollieConnected,
+    if (livePaymentsEnabled != null) ...<String, dynamic>{
+      'livePaymentsEnabled': livePaymentsEnabled,
+      'live_payments_enabled': livePaymentsEnabled,
+    },
+    if (mollieForcedTestMode != null) ...<String, dynamic>{
+      'mollieForcedTestMode': mollieForcedTestMode,
+      'mollie_forced_testmode': mollieForcedTestMode,
+      'forced_testmode': mollieForcedTestMode,
+      'forcedTestmode': mollieForcedTestMode,
+    },
     'mollieOrganizationId': mollieOrganizationId,
     'mollie_organization_id': mollieOrganizationId,
     'mollieProfileId': mollieProfileId,

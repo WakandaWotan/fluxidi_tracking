@@ -16,7 +16,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:flutter/foundation.dart' show ValueListenable;
+import 'package:flutter/foundation.dart' show ValueListenable, kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:fluxidi_tracking/app_config.dart';
@@ -3438,11 +3438,49 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
     );
   }
 
+  bool get _isApplePaymentPlatform => !kIsWeb && Platform.isIOS;
+
+  PaymentMethodClientContext get _paymentClientContext {
+    final profile = localBackendBusinessProfileNotifier.value;
+    final forcedTestMode = PaymentMethodResolver.inferMollieForcedTestMode(
+      gate: _paymentOwnershipGate,
+      livePaymentsEnabled: profile?.livePaymentsEnabled,
+      mollieForcedTestMode: profile?.mollieForcedTestMode,
+    );
+    return PaymentMethodClientContext.forPlatform(
+      isApplePlatform: _isApplePaymentPlatform,
+      supportsGooglePayCheckout: !forcedTestMode,
+    );
+  }
+
+  bool get _blocksGooglePayBookSubmit {
+    final profile = localBackendBusinessProfileNotifier.value;
+    return PaymentMethodResolver.blocksGooglePayBookSubmit(
+      gate: _paymentOwnershipGate,
+      livePaymentsEnabled: profile?.livePaymentsEnabled,
+      mollieForcedTestMode: profile?.mollieForcedTestMode,
+    );
+  }
+
+  bool _isGooglePaySubmitBlocked(String methodId) =>
+      PaymentMethodResolver.isGooglePayMethodId(methodId) &&
+      _blocksGooglePayBookSubmit;
+
+  bool _blockGooglePayBookSubmitWithMessage() {
+    if (!_isGooglePaySubmitBlocked(_selectedPaymentMethodId)) return false;
+    _showThemedSnackBar(
+      PaymentMethodResolver.googlePayTestModeUnavailableMessage(
+        languageCode: widget.language.name,
+      ),
+    );
+    return true;
+  }
+
   List<String> get _enabledCompanyPaymentOptionIds {
     final profile = localBackendBusinessProfileNotifier.value;
     return profile == null
         ? const <String>[]
-        : filterKnownPaymentMethodIds(profile.publicPaymentOptions);
+        : filterPublicPartnerPaymentOptionIds(profile.publicPaymentOptions);
   }
 
   String _normalizePaymentMarketCountry(String raw) {
@@ -3486,6 +3524,7 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
         countryCode: _paymentMarketCountryCode(),
         enabledPublicPaymentOptionIds: _enabledCompanyPaymentOptionIds,
         ownershipGate: _paymentOwnershipGate,
+        clientContext: _paymentClientContext,
         languageCode: widget.language.name,
       );
 
@@ -3497,10 +3536,15 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
     if (def == null) return true;
     if (id == PaymentMethodIds.inVehicleCard) return false;
     if (id == PaymentMethodIds.qrCode) return !_isQrPaymentConfigured();
+    if (PaymentMethodResolver.isGooglePayMethodId(id) &&
+        _blocksGooglePayBookSubmit) {
+      return true;
+    }
     return !def.isSupportedMollieCheckout;
   }
 
   bool _isDirectCheckoutPaymentMethod(String methodId) {
+    if (_isDisplayOnlyPaymentMethod(methodId)) return false;
     return PaymentMethodCatalog.definitionFor(
           methodId,
         )?.isSupportedMollieCheckout ??
@@ -3630,6 +3674,11 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
     if (id == PaymentMethodIds.payconiqWero) {
       return _payconiqWeroPendingMessage();
     }
+    if (id == PaymentMethodIds.googlePay) {
+      return PaymentMethodResolver.googlePayTestModeUnavailableMessage(
+        languageCode: widget.language.name,
+      );
+    }
     return _paymentMethodUnavailableMessage();
   }
 
@@ -3644,6 +3693,10 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
         );
       case PaymentMethodIds.bancontact:
         return 'Bancontact';
+      case PaymentMethodIds.kbcCbc:
+        return 'KBC/CBC Payment Button';
+      case PaymentMethodIds.belfius:
+        return 'Belfius Pay Button';
       case PaymentMethodIds.bancontactQr:
         return 'Payconiq / Bancontact Pay QR';
       case PaymentMethodIds.qrCode:
@@ -3721,6 +3774,14 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
         es: 'Escanea con Bancontact Pay, Payconiq by Bancontact o tu app bancaria belga.',
       );
     }
+    if (id == PaymentMethodIds.kbcCbc || id == PaymentMethodIds.belfius) {
+      return _localizedText(
+        nl: 'Open de beveiligde betaalpagina na het bevestigen.',
+        en: 'Open the secure checkout page after confirming.',
+        fr: 'Ouvrez la page de paiement sécurisée après confirmation.',
+        es: 'Abre la página de pago segura tras confirmar.',
+      );
+    }
     return _localizedText(
       nl: 'Open de beveiligde betaalpagina na het bevestigen.',
       en: 'Open the secure checkout page after confirming.',
@@ -3742,6 +3803,9 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
     }
     if (id == PaymentMethodIds.bancontactQr) {
       return Icons.qr_code_2_rounded;
+    }
+    if (id == PaymentMethodIds.kbcCbc || id == PaymentMethodIds.belfius) {
+      return Icons.account_balance_rounded;
     }
     return Icons.language_rounded;
   }
@@ -4723,6 +4787,13 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
       _showThemedSnackBar(_paymentMethodUnavailableMessage());
       return;
     }
+    if (_isDisplayOnlyPaymentMethod(_selectedPaymentMethodId)) {
+      _showThemedSnackBar(_displayOnlyPaymentMessage(_selectedPaymentMethodId));
+      return;
+    }
+    if (_blockGooglePayBookSubmitWithMessage()) {
+      return;
+    }
     final name = _nameCtrl.text.trim();
     final phone = _phoneCtrl.text.trim();
     final email = _emailCtrl.text.trim();
@@ -4990,6 +5061,14 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
         '[CALCULATOR][BOOK_SCOPE] tenant=${selectedScope.tenantId} company=${selectedScope.companyId}',
       );
       _logBusinessPayload(stage: 'book', payload: payload);
+      if (_blockGooglePayBookSubmitWithMessage()) {
+        if (mounted) {
+          setState(() {
+            _submitting = false;
+          });
+        }
+        return;
+      }
       final body = await _postBookAndDecode(
         payload,
         customerSessionToken: customerSessionToken,

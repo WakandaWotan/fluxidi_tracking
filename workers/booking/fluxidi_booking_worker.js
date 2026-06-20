@@ -2661,6 +2661,8 @@ const PUBLIC_PAYMENT_OPTION_IDS = new Set([
   "qr_code",
   "bancontact",
   "bancontact_qr",
+  "kbc_cbc",
+  "belfius",
   "payconiq_wero",
   "ideal",
   "cartes_bancaires",
@@ -2701,6 +2703,8 @@ const FUTURE_OR_CONDITIONAL_PUBLIC_PAYMENT_OPTION_IDS = new Set([
 const SUPPORTED_MOLLIE_CHECKOUT_PUBLIC_PAYMENT_OPTION_IDS = new Set([
   "bancontact",
   "bancontact_qr",
+  "kbc_cbc",
+  "belfius",
   "ideal",
   "cartes_bancaires",
   "card_payment",
@@ -2712,6 +2716,8 @@ const SUPPORTED_MOLLIE_CHECKOUT_PUBLIC_PAYMENT_OPTION_IDS = new Set([
 const SUPPORTED_MOLLIE_API_METHOD_IDS = new Set([
   "bancontact",
   "ideal",
+  "kbc",
+  "belfius",
   "creditcard",
   "applepay",
   "googlepay",
@@ -2740,6 +2746,13 @@ function normalizePublicPaymentOptionId(raw) {
     cartesbancaires: "cartes_bancaires",
     cartes_bancaires_cb: "cartes_bancaires",
     cb: "cartes_bancaires",
+    kbc: "kbc_cbc",
+    cbc: "kbc_cbc",
+    kbc_cbc_payment_button: "kbc_cbc",
+    kbc_payment_button: "kbc_cbc",
+    belfius_pay: "belfius",
+    belfius_direct_net: "belfius",
+    belfius_pay_button: "belfius",
     bacs: "bank_transfer_bacs",
     bank_transfer: "bank_transfer_bacs",
     bankoverschrijving: "bank_transfer_bacs",
@@ -32965,6 +32978,8 @@ function resolveMollieMethodForPublicPayment(publicMethod, mollieMethodHint = nu
       cartes_bancaires_cb: "creditcard",
       apple_pay: "applepay",
       google_pay: "googlepay",
+      kbc_cbc: "kbc",
+      belfius: "belfius",
     };
     const mappedHint = hintAliases[hinted] || hinted;
     return SUPPORTED_MOLLIE_API_METHOD_IDS.has(mappedHint) ? mappedHint : null;
@@ -32987,6 +33002,8 @@ function resolveMollieMethodForPublicPayment(publicMethod, mollieMethodHint = nu
     cartes_bancaires_cb: "creditcard",
     apple_pay: "applepay",
     google_pay: "googlepay",
+    kbc_cbc: "kbc",
+    belfius: "belfius",
     online_payment: null,
   };
   if (Object.prototype.hasOwnProperty.call(aliases, method)) {

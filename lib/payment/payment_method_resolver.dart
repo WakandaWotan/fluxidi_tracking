@@ -65,6 +65,48 @@ class PaymentOwnershipGate {
   }
 }
 
+/// Client/runtime capability hints for wallet methods in the payment picker.
+///
+/// Catalog entries stay intact; this only affects visible/selectable methods.
+class PaymentMethodClientContext {
+  const PaymentMethodClientContext({
+    this.supportsApplePay = true,
+    this.supportsGooglePayCheckout = true,
+  });
+
+  /// Apple Pay may be offered (typically iOS only).
+  final bool supportsApplePay;
+
+  /// Google Pay checkout may be selected (disabled in Mollie forced testmode).
+  final bool supportsGooglePayCheckout;
+
+  factory PaymentMethodClientContext.forPlatform({
+    required bool isApplePlatform,
+    bool supportsGooglePayCheckout = true,
+  }) {
+    return PaymentMethodClientContext(
+      supportsApplePay: isApplePlatform,
+      supportsGooglePayCheckout: supportsGooglePayCheckout,
+    );
+  }
+
+  /// Whether the method may appear in the picker at all.
+  bool allowsMethodId(String rawId) {
+    final id = normalizePaymentMethodId(rawId);
+    if (id == PaymentMethodIds.applePay && !supportsApplePay) return false;
+    return true;
+  }
+
+  /// Whether the customer may confirm checkout with this method.
+  bool isSelectableMethodId(String rawId) {
+    final id = normalizePaymentMethodId(rawId);
+    if (id == PaymentMethodIds.googlePay && !supportsGooglePayCheckout) {
+      return false;
+    }
+    return allowsMethodId(rawId);
+  }
+}
+
 /// Result of [PaymentMethodResolver.resolve].
 class ResolvedPaymentMethods {
   const ResolvedPaymentMethods({
@@ -112,13 +154,57 @@ abstract final class PaymentMethodResolver {
   ///
   /// When [ownershipGate] blocks online payments, Mollie-hosted methods are
   /// omitted while manual collection methods remain visible.
+  static bool inferMollieForcedTestMode({
+    required PaymentOwnershipGate gate,
+    bool? livePaymentsEnabled,
+    bool? mollieForcedTestMode,
+  }) {
+    if (mollieForcedTestMode == true) return true;
+    if (livePaymentsEnabled == false) return true;
+    if (gate.paymentOwnerMode.trim().toLowerCase() == 'company_mollie' &&
+        livePaymentsEnabled != true) {
+      return true;
+    }
+    return false;
+  }
+
+  static bool isGooglePayMethodId(String rawId) =>
+      normalizePaymentMethodId(rawId) == PaymentMethodIds.googlePay;
+
+  static bool blocksGooglePayBookSubmit({
+    required PaymentOwnershipGate gate,
+    bool? livePaymentsEnabled,
+    bool? mollieForcedTestMode,
+  }) => inferMollieForcedTestMode(
+    gate: gate,
+    livePaymentsEnabled: livePaymentsEnabled,
+    mollieForcedTestMode: mollieForcedTestMode,
+  );
+
+  static String googlePayTestModeUnavailableMessage({
+    String languageCode = 'nl',
+  }) {
+    switch (languageCode.toLowerCase()) {
+      case 'en':
+        return 'Google Pay is not available in test mode. Use card payment, Bancontact, or PayPal.';
+      case 'fr':
+        return 'Google Pay n’est pas disponible en mode test. Utilisez la carte, Bancontact ou PayPal.';
+      case 'es':
+        return 'Google Pay no está disponible en modo de prueba. Usa tarjeta, Bancontact o PayPal.';
+      default:
+        return 'Google Pay is niet beschikbaar in testmodus. Gebruik kaartbetaling, Bancontact of PayPal.';
+    }
+  }
+
   static ResolvedPaymentMethods resolve({
     required String countryCode,
     Iterable<String>? enabledPublicPaymentOptionIds,
     PaymentOwnershipGate? ownershipGate,
+    PaymentMethodClientContext? clientContext,
     String languageCode = 'nl',
   }) {
     final gate = ownershipGate ?? const PaymentOwnershipGate();
+    final client = clientContext ?? const PaymentMethodClientContext();
     final normalizedCountry = normalizeCountryCode(countryCode);
     final profileOrder = PaymentMethodCatalog.defaultMethodOrderForCountry(
       normalizedCountry.isEmpty
@@ -142,6 +228,7 @@ abstract final class PaymentMethodResolver {
 
     void addIfVisible(String id) {
       if (includedIds.contains(id)) return;
+      if (!client.allowsMethodId(id)) return;
       if (PaymentMethodCatalog.hiddenPickerMethodIds.contains(id)) return;
       if (enabledSet != null && !enabledSet.contains(id)) return;
       final def = PaymentMethodCatalog.definitionFor(id);
@@ -218,11 +305,13 @@ abstract final class PaymentMethodResolver {
     required String countryCode,
     Iterable<String>? enabledPublicPaymentOptionIds,
     PaymentOwnershipGate? ownershipGate,
+    PaymentMethodClientContext? clientContext,
     String languageCode = 'nl',
   }) => resolve(
     countryCode: countryCode,
     enabledPublicPaymentOptionIds: enabledPublicPaymentOptionIds,
     ownershipGate: ownershipGate,
+    clientContext: clientContext,
     languageCode: languageCode,
   ).ids;
 

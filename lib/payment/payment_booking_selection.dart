@@ -97,6 +97,10 @@ class BookingPaymentSelection {
         return ('bancontact', true);
       case PaymentMethodIds.bancontact:
         return ('bancontact', false);
+      case PaymentMethodIds.kbcCbc:
+        return ('kbc', false);
+      case PaymentMethodIds.belfius:
+        return ('belfius', false);
       case PaymentMethodIds.ideal:
         return ('ideal', false);
       case PaymentMethodIds.cardPayment:

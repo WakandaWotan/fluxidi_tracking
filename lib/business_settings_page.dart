@@ -150,12 +150,13 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     'cash',
     'qr_code',
     'bancontact',
+    'kbc_cbc',
+    'belfius',
     'payconiq_wero',
     'ideal',
     'cartes_bancaires',
     'bizum',
     'card_payment',
-    'apple_pay',
     'google_pay',
     'paypal',
     'online_payment',
@@ -3142,7 +3143,9 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
 
   Set<String> _sanitizePublicPaymentOptionIds(Iterable<String> values) {
     final allowed = _publicPaymentOptionCatalog.toSet();
-    return filterKnownPaymentMethodIds(values).where(allowed.contains).toSet();
+    return filterPublicPartnerPaymentOptionIds(
+      values,
+    ).where(allowed.contains).toSet();
   }
 
   String _companyCountryCodeForPaymentResolver() {
@@ -3180,6 +3183,10 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         return _t(nl: 'QR-code', en: 'QR code', fr: 'Code QR', es: 'Código QR');
       case 'bancontact':
         return 'Bancontact';
+      case 'kbc_cbc':
+        return 'KBC/CBC Payment Button';
+      case 'belfius':
+        return 'Belfius Pay Button';
       case 'payconiq_wero':
         return 'Payconiq / Wero';
       case 'ideal':

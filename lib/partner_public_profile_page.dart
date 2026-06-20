@@ -1025,7 +1025,7 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
     List<String> methods,
     String countryCode,
   ) {
-    final known = filterKnownPaymentMethodIds(methods);
+    final known = filterPublicPartnerPaymentOptionIds(methods);
     if (known.isEmpty) return const <String>[];
     return PaymentMethodResolver.reorderByCountryProfile(
       countryCode: countryCode,
