@@ -33,10 +33,36 @@ const CHIRON_EXPORT_DRY_RUN_PATH = "/admin/chiron/export/dry-run";
 const CHIRON_EXPORT_TEST_PATH = "/admin/chiron/export/test";
 // Chiron-6B-3D: clean app-facing readiness endpoint.
 const CHIRON_READINESS_PATH = "/admin/chiron/readiness";
-// Phase 0: read-only per-company Chiron connection status contract (no storage yet).
+// Phase 0/1: per-company Chiron connection status contract (Phase 1: KV persistence).
 const CHIRON_CONFIG_STATUS_PATH = "/admin/chiron/config/status";
 const CHIRON_CONNECTION_STATUS_SCHEMA = "chiron_connection_status_v1";
+const CHIRON_CONNECTION_KV_SUFFIX = "chiron_connection:v1";
 const CHIRON_INTERNAL_PROXY_MODE = "booking_worker_v1";
+const CHIRON_CONNECTION_ALLOWED_ENVIRONMENTS = new Set(["test", "production"]);
+const CHIRON_CONNECTION_ALLOWED_REGIONS = new Set(["flanders"]);
+const CHIRON_CONNECTION_ALLOWED_STATUSES = new Set([
+  "never_tested",
+  "test_pending",
+  "test_passed",
+  "test_failed",
+]);
+const CHIRON_CONFIG_FORBIDDEN_BODY_KEYS = new Set([
+  "token",
+  "apitoken",
+  "api_token",
+  "apikey",
+  "api_key",
+  "clientsecret",
+  "client_secret",
+  "password",
+  "bearer",
+  "credentials",
+  "secret",
+  "accesstoken",
+  "access_token",
+  "refreshtoken",
+  "refresh_token",
+]);
 const CHIRON_READINESS_DEFAULT_LIMIT = 20;
 const CHIRON_READINESS_DEFAULT_EVENT_TYPE = "ride_stop";
 const CHIRON_EXPORT_STATUS_SCHEMA = "chiron_export_status_v1";
@@ -5567,11 +5593,190 @@ function defaultChironConnectionStatusDoc(tenantId, companyId) {
   };
 }
 
-async function handleChironConfigStatus(request, url, env, origin) {
-  if (request.method !== "GET") {
-    return jsonResponse({ ok: false, error: "Method Not Allowed" }, 405, origin);
+function buildChironConnectionKvKey(tenantId, companyId) {
+  const tenant = cleanText(tenantId, 128);
+  const company = cleanText(companyId, 128);
+  if (!tenant || !company) return null;
+  return `tenant:${tenant}:company:${company}:${CHIRON_CONNECTION_KV_SUFFIX}`;
+}
+
+function _normalizeChironConfigBodyKey(value) {
+  return cleanText(value, 64).toLowerCase().replace(/[\s_-]/g, "");
+}
+
+function chironConfigBodyHasForbiddenKeys(body) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) return false;
+  for (const key of Object.keys(body)) {
+    if (CHIRON_CONFIG_FORBIDDEN_BODY_KEYS.has(_normalizeChironConfigBodyKey(key))) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function parseChironConfigStatusScope(body, url) {
+  const tenantId = cleanText(
+    body?.tenant_id ?? url?.searchParams?.get("tenant_id"),
+    128,
+  );
+  const companyId = cleanText(
+    body?.company_id ?? url?.searchParams?.get("company_id"),
+    128,
+  );
+  if (!tenantId || !companyId) {
+    return { error: "missing_scope" };
+  }
+  return { tenantId, companyId };
+}
+
+function _resolveChironConfigUpdatedBy(request) {
+  const proxyMode = cleanText(request.headers.get("x-fluxidi-internal-proxy"), 64);
+  if (proxyMode === CHIRON_INTERNAL_PROXY_MODE) return "proxy";
+  return "admin_or_company_session";
+}
+
+function buildChironConnectionStatusResponse(tenantId, companyId, stored) {
+  const defaults = defaultChironConnectionStatusDoc(tenantId, companyId);
+  if (!stored || typeof stored !== "object" || Array.isArray(stored)) {
+    return defaults;
   }
 
+  const rawStatus = cleanText(stored.last_connection_status, 64).toLowerCase();
+  const lastConnectionStatus = CHIRON_CONNECTION_ALLOWED_STATUSES.has(rawStatus)
+    ? rawStatus
+    : defaults.last_connection_status;
+
+  const environmentRaw = cleanText(stored.environment, 32).toLowerCase();
+  const environment = CHIRON_CONNECTION_ALLOWED_ENVIRONMENTS.has(environmentRaw)
+    ? environmentRaw
+    : defaults.environment;
+
+  const regionRaw = cleanText(stored.region, 32).toLowerCase();
+  const region = CHIRON_CONNECTION_ALLOWED_REGIONS.has(regionRaw)
+    ? regionRaw
+    : defaults.region;
+
+  const testMessagesSent = Number(stored.test_messages_sent_count);
+  const productionEnabled =
+    stored.production_enabled === true && lastConnectionStatus === "test_passed";
+
+  return {
+    ok: true,
+    schema_version: CHIRON_CONNECTION_STATUS_SCHEMA,
+    tenant_id: tenantId,
+    company_id: companyId,
+    enabled: stored.enabled === true,
+    environment,
+    region,
+    production_enabled: productionEnabled,
+    test_credentials_stored: false,
+    production_credentials_stored: false,
+    last_connection_status: lastConnectionStatus,
+    last_connection_test_at: cleanText(stored.last_connection_test_at, 64) || null,
+    last_connection_status_message:
+      cleanText(stored.last_connection_status_message, 256) || "",
+    official_submit_enabled: false,
+    official_submission_performed_at:
+      cleanText(stored.official_submission_performed_at, 64) || null,
+    test_messages_required: 10,
+    test_messages_sent_count:
+      Number.isFinite(testMessagesSent) && testMessagesSent >= 0
+        ? Math.floor(testMessagesSent)
+        : 0,
+    updated_at: cleanText(stored.updated_at, 64) || null,
+  };
+}
+
+async function readChironConnectionStatusRaw(env, tenantId, companyId) {
+  if (!env?.COMPLIANCE_KV || typeof env.COMPLIANCE_KV.get !== "function") {
+    return { doc: null, error: "missing_kv" };
+  }
+  const key = buildChironConnectionKvKey(tenantId, companyId);
+  if (!key) return { doc: null, error: "missing_scope" };
+  try {
+    const raw = await env.COMPLIANCE_KV.get(key);
+    if (!raw) return { doc: null, key };
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return { doc: null, key };
+    }
+    return { doc: parsed, key };
+  } catch (_) {
+    return { doc: null, key, error: "kv_read_failed" };
+  }
+}
+
+async function writeChironConnectionStatusRaw(env, tenantId, companyId, doc) {
+  if (!env?.COMPLIANCE_KV || typeof env.COMPLIANCE_KV.put !== "function") {
+    return { ok: false, error: "missing_kv" };
+  }
+  const key = buildChironConnectionKvKey(tenantId, companyId);
+  if (!key) return { ok: false, error: "missing_scope" };
+  try {
+    await env.COMPLIANCE_KV.put(key, JSON.stringify(doc));
+    return { ok: true, key };
+  } catch (_) {
+    return { ok: false, error: "kv_write_failed" };
+  }
+}
+
+function parseChironConfigStatusPostInput(body, existingStored) {
+  const existing = existingStored && typeof existingStored === "object" ? existingStored : {};
+  const existingStatusRaw = cleanText(existing.last_connection_status, 64).toLowerCase();
+  const existingStatus = CHIRON_CONNECTION_ALLOWED_STATUSES.has(existingStatusRaw)
+    ? existingStatusRaw
+    : "never_tested";
+
+  const enabled =
+    typeof body?.enabled === "boolean" ? body.enabled : existing.enabled === true;
+
+  const environmentRaw = cleanText(
+    body?.environment ?? existing.environment ?? "test",
+    32,
+  ).toLowerCase();
+  if (!CHIRON_CONNECTION_ALLOWED_ENVIRONMENTS.has(environmentRaw)) {
+    return { error: "invalid_environment" };
+  }
+
+  const regionRaw = cleanText(body?.region ?? existing.region ?? "flanders", 32).toLowerCase();
+  if (!CHIRON_CONNECTION_ALLOWED_REGIONS.has(regionRaw)) {
+    return { error: "invalid_region" };
+  }
+
+  const productionEnabledRequested =
+    typeof body?.production_enabled === "boolean"
+      ? body.production_enabled
+      : existing.production_enabled === true;
+
+  if (productionEnabledRequested && existingStatus !== "test_passed") {
+    return { error: "production_requires_test_passed" };
+  }
+
+  const testMessagesSent = Number(existing.test_messages_sent_count);
+
+  return {
+    value: {
+      schema_version: CHIRON_CONNECTION_STATUS_SCHEMA,
+      enabled,
+      environment: environmentRaw,
+      region: regionRaw,
+      production_enabled:
+        productionEnabledRequested && existingStatus === "test_passed",
+      last_connection_status: existingStatus,
+      last_connection_test_at: cleanText(existing.last_connection_test_at, 64) || null,
+      last_connection_status_message:
+        cleanText(existing.last_connection_status_message, 256) || "",
+      test_messages_sent_count:
+        Number.isFinite(testMessagesSent) && testMessagesSent >= 0
+          ? Math.floor(testMessagesSent)
+          : 0,
+      official_submission_performed_at:
+        cleanText(existing.official_submission_performed_at, 64) || null,
+    },
+  };
+}
+
+async function handleChironConfigStatusGet(request, url, env, origin) {
   const tenant = parseRequiredQuerySegment(url, "tenant_id");
   if (tenant.error) {
     return jsonResponse({ ok: false, error: tenant.error }, 400, origin);
@@ -5590,11 +5795,118 @@ async function handleChironConfigStatus(request, url, env, origin) {
   });
   if (authError) return authError;
 
-  const payload = defaultChironConnectionStatusDoc(tenantId, companyId);
+  if (!env?.COMPLIANCE_KV || typeof env.COMPLIANCE_KV.get !== "function") {
+    return jsonResponse(
+      {
+        ok: false,
+        error: "Compliance storage is not configured (missing COMPLIANCE_KV binding).",
+      },
+      500,
+      origin,
+    );
+  }
+
+  const readResult = await readChironConnectionStatusRaw(env, tenantId, companyId);
+  if (readResult.error === "missing_kv") {
+    return jsonResponse(
+      {
+        ok: false,
+        error: "Compliance storage is not configured (missing COMPLIANCE_KV binding).",
+      },
+      500,
+      origin,
+    );
+  }
+
+  const source = readResult.doc ? "kv" : "default";
+  const payload = buildChironConnectionStatusResponse(tenantId, companyId, readResult.doc);
   console.log(
-    `[CHIRON_CONFIG_STATUS] tenant=${_chironMaskScopeId(tenantId)} company=${_chironMaskScopeId(companyId)} result=ok`,
+    `[CHIRON_CONFIG_STATUS] tenant=${_chironMaskScopeId(tenantId)} company=${_chironMaskScopeId(companyId)} result=ok source=${source}`,
   );
   return jsonResponse(payload, 200, origin);
+}
+
+async function handleChironConfigStatusPost(request, url, env, origin) {
+  if (!requireJsonRequest(request)) {
+    return jsonResponse(
+      { ok: false, error: "Content-Type must be application/json" },
+      400,
+      origin,
+    );
+  }
+
+  const body = await readJsonBody(request);
+  if (body === null) {
+    return jsonResponse({ ok: false, error: "Invalid JSON body" }, 400, origin);
+  }
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return jsonResponse({ ok: false, error: "Invalid JSON body" }, 400, origin);
+  }
+
+  if (chironConfigBodyHasForbiddenKeys(body)) {
+    return jsonResponse({ ok: false, error: "forbidden_fields" }, 400, origin);
+  }
+
+  const scope = parseChironConfigStatusScope(body, url);
+  if (scope.error) {
+    return jsonResponse({ ok: false, error: scope.error }, 400, origin);
+  }
+
+  const { tenantId, companyId } = scope;
+
+  const authError = ensureAuthorizedOrInternalProxy(request, env, {
+    tenantId,
+    companyId,
+  });
+  if (authError) return authError;
+
+  if (!env?.COMPLIANCE_KV || typeof env.COMPLIANCE_KV.put !== "function") {
+    return jsonResponse(
+      {
+        ok: false,
+        error: "Compliance storage is not configured (missing COMPLIANCE_KV binding).",
+      },
+      500,
+      origin,
+    );
+  }
+
+  const readResult = await readChironConnectionStatusRaw(env, tenantId, companyId);
+  const parsed = parseChironConfigStatusPostInput(body, readResult.doc);
+  if (parsed.error) {
+    const status = parsed.error === "production_requires_test_passed" ? 400 : 400;
+    return jsonResponse({ ok: false, error: parsed.error }, status, origin);
+  }
+
+  const updatedAt = nowIso();
+  const storedDoc = {
+    ...parsed.value,
+    tenant_id: tenantId,
+    company_id: companyId,
+    updated_at: updatedAt,
+    updated_by: _resolveChironConfigUpdatedBy(request),
+  };
+
+  const writeResult = await writeChironConnectionStatusRaw(env, tenantId, companyId, storedDoc);
+  if (!writeResult.ok) {
+    return jsonResponse({ ok: false, error: writeResult.error || "kv_write_failed" }, 500, origin);
+  }
+
+  const payload = buildChironConnectionStatusResponse(tenantId, companyId, storedDoc);
+  console.log(
+    `[CHIRON_CONFIG_STATUS_WRITE] tenant=${_chironMaskScopeId(tenantId)} company=${_chironMaskScopeId(companyId)} result=ok enabled=${payload.enabled} environment=${payload.environment}`,
+  );
+  return jsonResponse(payload, 200, origin);
+}
+
+async function handleChironConfigStatus(request, url, env, origin) {
+  if (request.method === "GET") {
+    return handleChironConfigStatusGet(request, url, env, origin);
+  }
+  if (request.method === "POST") {
+    return handleChironConfigStatusPost(request, url, env, origin);
+  }
+  return jsonResponse({ ok: false, error: "Method Not Allowed" }, 405, origin);
 }
 
 export default {

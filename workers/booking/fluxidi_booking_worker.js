@@ -24275,6 +24275,35 @@ POST /admin/mollie/connect/disconnect
         return _proxyChironConfigStatusToComplianceWorker(env, authScope.explicitScope);
       }
 
+      if (url.pathname === CHIRON_CONFIG_STATUS_PATH && request.method === "POST") {
+        const body = await safeJson(request);
+        const authScope = await _requireAdminOrCompanySessionForExplicitScope({
+          request,
+          url,
+          env,
+          body,
+          routeLabel: "ADMIN_CHIRON_CONFIG_STATUS_POST",
+        });
+        if (!authScope.ok) return authScope.response;
+        const bodyScopeCheck = _validateSettingsPayloadScope(body, authScope.explicitScope);
+        if (!bodyScopeCheck.ok) return json(bodyScopeCheck, 400);
+        const proxyBody =
+          body && typeof body === "object" && !Array.isArray(body)
+            ? {
+                ...body,
+                tenant_id: authScope.explicitScope.tenant_id,
+                company_id: authScope.explicitScope.company_id,
+              }
+            : {
+                tenant_id: authScope.explicitScope.tenant_id,
+                company_id: authScope.explicitScope.company_id,
+              };
+        return _proxyChironConfigStatusToComplianceWorker(env, authScope.explicitScope, {
+          method: "POST",
+          body: proxyBody,
+        });
+      }
+
       if (url.pathname === "/admin/business/profile" && request.method === "POST") {
         const body = await safeJson(request);
         const authScope = await _requireAdminOrCompanySessionForExplicitScope({
@@ -39400,7 +39429,7 @@ function buildBookingStatusUpdateComplianceEvent(
   });
 }
 
-async function _proxyChironConfigStatusToComplianceWorker(env, explicitScope) {
+async function _proxyChironConfigStatusToComplianceWorker(env, explicitScope, options = {}) {
   const adminToken = safeStr(env?.COMPLIANCE_ADMIN_TOKEN || env?.ADMIN_TOKEN);
   if (!adminToken) {
     return json({ ok: false, error: "compliance_auth_not_configured" }, 503);
@@ -39415,25 +39444,37 @@ async function _proxyChironConfigStatusToComplianceWorker(env, explicitScope) {
     return json(missingTenantScopeError(), 400);
   }
 
+  const method = safeStr(options?.method) || "GET";
+  const body = options?.body ?? null;
+
   const proxyUrl = new URL(`https://fluxidi-compliance-api.internal${CHIRON_CONFIG_STATUS_PATH}`);
   proxyUrl.searchParams.set("tenant_id", tenantId);
   proxyUrl.searchParams.set("company_id", companyId);
 
+  const headers = {
+    accept: "application/json",
+    "x-fluxidi-internal-proxy": CHIRON_INTERNAL_PROXY_MODE,
+    "x-fluxidi-proxy-token": adminToken,
+    "x-fluxidi-proxy-tenant-id": tenantId,
+    "x-fluxidi-proxy-company-id": companyId,
+  };
+  if (method === "POST") {
+    headers["content-type"] = "application/json";
+  }
+
   const proxyReq = new Request(proxyUrl.toString(), {
-    method: "GET",
-    headers: {
-      accept: "application/json",
-      "x-fluxidi-internal-proxy": CHIRON_INTERNAL_PROXY_MODE,
-      "x-fluxidi-proxy-token": adminToken,
-      "x-fluxidi-proxy-tenant-id": tenantId,
-      "x-fluxidi-proxy-company-id": companyId,
-    },
+    method,
+    headers,
+    body:
+      method === "POST" && body && typeof body === "object" && !Array.isArray(body)
+        ? JSON.stringify(body)
+        : undefined,
   });
 
   try {
     const resp = await env.COMPLIANCE_WORKER.fetch(proxyReq);
-    const body = await resp.text();
-    return new Response(body, {
+    const responseBody = await resp.text();
+    return new Response(responseBody, {
       status: resp.status,
       headers: {
         "content-type": resp.headers.get("content-type") || "application/json; charset=utf-8",
