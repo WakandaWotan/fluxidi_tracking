@@ -35,6 +35,74 @@ const CHIRON_EXPORT_STATUS_SCHEMA = "chiron_export_status_v1";
 const CHIRON_EXPORT_MAX_SAMPLE_PAYLOADS = 3;
 const CHIRON_EXPORT_LIST_SCAN_CAP = 10000;
 
+// Chiron-6A-light: optional official ride payload draft (additive, opt-in).
+const CHIRON_OFFICIAL_DRAFT_SCHEMA_VERSION = "chiron_official_draft_v1";
+
+const CHIRON_OFFICIAL_RESERVATION_EVENT_TYPES = new Set([
+  "booking_created",
+  "booking_confirmed",
+]);
+
+const CHIRON_OFFICIAL_DEPARTURE_EVENT_TYPES = new Set([
+  "ride_start",
+  "trip_start",
+  "planned_ride_start",
+  "driver_departure",
+]);
+
+const CHIRON_OFFICIAL_ARRIVAL_EVENT_TYPES = new Set([
+  "ride_stop",
+  "trip_stop",
+  "ride_completed",
+  "planned_ride_stop",
+]);
+
+const CHIRON_OFFICIAL_RESERVATION_BOOKING_STATUSES = new Set([
+  "pending",
+  "created",
+  "confirmed",
+  "reserved",
+  "planned",
+  "booked",
+  "scheduled",
+  "accepted",
+]);
+
+const CHIRON_OFFICIAL_NON_RIDE_STATUS_EVENT_TYPES = new Set([
+  "payment_update",
+  "booking_credit_decision",
+  "booking_mollie_refund",
+  "correction_event",
+  "sync_success",
+  "sync_failed",
+]);
+
+const CHIRON_OFFICIAL_REQUIRED_RESERVATIE = [
+  "broncreatiedatum",
+  "ritnummer",
+  "registratie",
+  "naam",
+  "status",
+];
+
+const CHIRON_OFFICIAL_REQUIRED_VERTREK = [
+  ...CHIRON_OFFICIAL_REQUIRED_RESERVATIE,
+  "kentekenplaat",
+  "bestuurderspasnummer",
+  "vertrektijdstip",
+  "vertrekpunt_lengtegraad",
+  "vertrekpunt_breedtegraad",
+];
+
+const CHIRON_OFFICIAL_REQUIRED_AANKOMST = [
+  ...CHIRON_OFFICIAL_REQUIRED_VERTREK,
+  "aankomsttijdstip",
+  "aankomstpunt_lengtegraad",
+  "aankomstpunt_breedtegraad",
+  "afstand",
+  "kostprijs",
+];
+
 const CHIRON_REGULATOR_READY_TYPES = new Set(["booking_status_update", "ride_stop"]);
 
 const CHIRON_DRIVER_VEHICLE_BLOCKER_EVENT_TYPES = new Set([
@@ -320,6 +388,17 @@ function parseOptionalIsoBodyMs(body, key) {
     return { error: `Invalid body field: ${key}` };
   }
   return { value: ms, raw };
+}
+
+function parseIncludeOfficialDraftFlag(body, url) {
+  const queryRaw =
+    url?.searchParams?.get("include_official_draft") ??
+    url?.searchParams?.get("include_chiron_official_draft");
+  if (String(queryRaw ?? "").trim().toLowerCase() === "true") return true;
+  if (body?.include_official_draft === true || body?.include_chiron_official_draft === true) {
+    return true;
+  }
+  return false;
 }
 
 function parseChironExportScopeFromBody(body) {
@@ -1895,6 +1974,431 @@ function _chironExtractExternalReference(data) {
   );
 }
 
+// === Chiron-6A-light: official ride payload draft (additive, opt-in) ===
+
+function normalizeChironKboRegistration(value) {
+  const text = cleanText(value, 64);
+  if (!text) return null;
+  if (/^\d{4}\.\d{3}\.\d{3}$/.test(text)) return text;
+  const digits = text.replace(/\D/g, "");
+  if (digits.length === 10) {
+    return `${digits.slice(0, 4)}.${digits.slice(4, 7)}.${digits.slice(7)}`;
+  }
+  return null;
+}
+
+function normalizeChironMoney(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const num = Number(value);
+  if (!Number.isFinite(num) || num < 0) return null;
+  return Math.round(num * 100) / 100;
+}
+
+function normalizeChironCoordinate(value, kind) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return null;
+  if (kind === "lat" && (num < -90 || num > 90)) return null;
+  if (kind === "lng" && (num < -180 || num > 180)) return null;
+  return num;
+}
+
+function _chironOfficialNestedProfile(event) {
+  const profile =
+    event?.business_profile ??
+    event?.businessProfile ??
+    event?.company_profile ??
+    event?.companyProfile;
+  return profile && typeof profile === "object" && !Array.isArray(profile) ? profile : {};
+}
+
+function _chironOfficialPickProfileField(event, profile, ...keys) {
+  for (const key of keys) {
+    const fromEvent = cleanText(event?.[key], 256);
+    if (fromEvent) return fromEvent;
+    const fromProfile = cleanText(profile?.[key], 256);
+    if (fromProfile) return fromProfile;
+  }
+  return "";
+}
+
+function _chironResolveOfficialRitnummer(event, blueprint) {
+  const ride = blueprint?.ride || _chironProjectRide(event);
+  return (
+    cleanText(event?.booking_id, 128) ||
+    cleanText(ride?.public_booking_reference, 128) ||
+    cleanText(event?.trip_id, 128) ||
+    cleanText(
+      event?.public_booking_reference ??
+        event?.publicBookingReference ??
+        event?.booking_reference ??
+        event?.bookingReference,
+      128,
+    ) ||
+    null
+  );
+}
+
+function _chironResolveOfficialRegistratie(event) {
+  const profile = _chironOfficialNestedProfile(event);
+  const raw = _chironOfficialPickProfileField(
+    event,
+    profile,
+    "kbo_number",
+    "kboNumber",
+    "company_registration_number",
+    "companyRegistrationNumber",
+    "enterprise_number",
+    "enterpriseNumber",
+    "registratie",
+  );
+  return normalizeChironKboRegistration(raw);
+}
+
+function _chironResolveOfficialNaam(event) {
+  const profile = _chironOfficialNestedProfile(event);
+  return (
+    cleanText(
+      _chironOfficialPickProfileField(
+        event,
+        profile,
+        "legal_name",
+        "legalName",
+        "company_name",
+        "companyName",
+        "naam",
+      ),
+      256,
+    ) || null
+  );
+}
+
+function _chironResolveOfficialBestuurderspasnummer(blueprint) {
+  const driver = blueprint?.driver || {};
+  return (
+    cleanText(driver.badge_id, 96) ||
+    cleanText(driver.license_id, 96) ||
+    null
+  );
+}
+
+function _chironResolveOfficialKentekenplaat(blueprint) {
+  const vehicle = blueprint?.vehicle || {};
+  return cleanText(vehicle.license_plate, 64) || null;
+}
+
+function _chironResolveOfficialVertrekTijdstip(event, blueprint) {
+  const timestamps =
+    event?.timestamps && typeof event.timestamps === "object" && !Array.isArray(event.timestamps)
+      ? event.timestamps
+      : {};
+  return (
+    cleanText(
+      timestamps.started_at_utc ??
+        timestamps.event_at_utc ??
+        blueprint?.occurred_at_utc ??
+        event?.created_at_utc,
+      64,
+    ) || null
+  );
+}
+
+function _chironResolveOfficialAankomstTijdstip(event, blueprint) {
+  const timestamps =
+    event?.timestamps && typeof event.timestamps === "object" && !Array.isArray(event.timestamps)
+      ? event.timestamps
+      : {};
+  return (
+    cleanText(
+      timestamps.stopped_at_utc ??
+        timestamps.event_at_utc ??
+        blueprint?.occurred_at_utc ??
+        event?.created_at_utc,
+      64,
+    ) || null
+  );
+}
+
+function _chironOfficialHasDepartureStartData(event, blueprint) {
+  const vertrektijdstip = _chironResolveOfficialVertrekTijdstip(event, blueprint);
+  if (vertrektijdstip) return true;
+  const pickup = blueprint?.locations?.pickup;
+  if (!pickup) return false;
+  return (
+    normalizeChironCoordinate(pickup.lat, "lat") !== null &&
+    normalizeChironCoordinate(pickup.lng, "lng") !== null
+  );
+}
+
+function _chironOfficialDraftNotApplicableReason(eventType) {
+  const lower = cleanText(eventType, 64).toLowerCase();
+  if (
+    lower === "payment_update" ||
+    lower === "booking_credit_decision" ||
+    lower === "booking_mollie_refund"
+  ) {
+    return "Payment/refund/audit events are not official Chiron ride status messages.";
+  }
+  return "Event is not an official Chiron ride status message.";
+}
+
+function normalizeChironOfficialStatusFromEvent(event, blueprint) {
+  const safeEvent = event && typeof event === "object" && !Array.isArray(event) ? event : {};
+  const safeBlueprint =
+    blueprint && typeof blueprint === "object" && !Array.isArray(blueprint) ? blueprint : {};
+  const eventType = cleanText(safeEvent.event_type, 64).toLowerCase();
+
+  if (CHIRON_OFFICIAL_NON_RIDE_STATUS_EVENT_TYPES.has(eventType)) {
+    return {
+      category: "not_chiron_ride_status",
+      status: null,
+      mappable: false,
+      reason: _chironOfficialDraftNotApplicableReason(eventType),
+    };
+  }
+
+  if (CHIRON_OFFICIAL_RESERVATION_EVENT_TYPES.has(eventType)) {
+    return { category: "ride_payload", status: "reservatie", mappable: true, reason: null };
+  }
+
+  if (eventType === "booking_status_update") {
+    const ride = safeBlueprint.ride || _chironProjectRide(safeEvent);
+    const bookingStatus = cleanText(
+      ride.booking_status ??
+        safeEvent.booking_status ??
+        safeEvent.status ??
+        safeEvent.ride_status,
+      64,
+    ).toLowerCase();
+    if (bookingStatus && CHIRON_OFFICIAL_RESERVATION_BOOKING_STATUSES.has(bookingStatus)) {
+      return { category: "ride_payload", status: "reservatie", mappable: true, reason: null };
+    }
+    return {
+      category: "not_chiron_ride_status",
+      status: null,
+      mappable: false,
+      reason: _chironOfficialDraftNotApplicableReason(eventType),
+    };
+  }
+
+  if (CHIRON_OFFICIAL_DEPARTURE_EVENT_TYPES.has(eventType)) {
+    if (!_chironOfficialHasDepartureStartData(safeEvent, safeBlueprint)) {
+      return {
+        category: "not_chiron_ride_status",
+        status: null,
+        mappable: false,
+        reason: "Departure event lacks start timestamp or pickup coordinates.",
+      };
+    }
+    return { category: "ride_payload", status: "vertrek", mappable: true, reason: null };
+  }
+
+  if (CHIRON_OFFICIAL_ARRIVAL_EVENT_TYPES.has(eventType)) {
+    return { category: "ride_payload", status: "aankomst", mappable: true, reason: null };
+  }
+
+  return {
+    category: "not_chiron_ride_status",
+    status: null,
+    mappable: false,
+    reason: _chironOfficialDraftNotApplicableReason(eventType),
+  };
+}
+
+function buildChironOfficialPayloadDraft(event, blueprint, scope, officialStatus) {
+  const safeEvent = event && typeof event === "object" && !Array.isArray(event) ? event : {};
+  const safeBlueprint =
+    blueprint && typeof blueprint === "object" && !Array.isArray(blueprint) ? blueprint : {};
+  const fare = safeBlueprint.fare || _chironProjectFare(safeEvent);
+  const locations = safeBlueprint.locations || _chironProjectLocations(safeEvent);
+  const pickup = locations.pickup || null;
+  const dropoff = locations.dropoff || null;
+
+  const payload = {
+    broncreatiedatum: cleanText(safeEvent.created_at_utc, 64) || null,
+    ritnummer: _chironResolveOfficialRitnummer(safeEvent, safeBlueprint),
+    registratie: _chironResolveOfficialRegistratie(safeEvent),
+    naam: _chironResolveOfficialNaam(safeEvent),
+    status: officialStatus,
+  };
+
+  if (officialStatus === "vertrek" || officialStatus === "aankomst") {
+    payload.kentekenplaat = _chironResolveOfficialKentekenplaat(safeBlueprint);
+    payload.bestuurderspasnummer = _chironResolveOfficialBestuurderspasnummer(safeBlueprint);
+    payload.vertrektijdstip = _chironResolveOfficialVertrekTijdstip(safeEvent, safeBlueprint);
+    payload.vertrekpunt_lengtegraad = normalizeChironCoordinate(pickup?.lng, "lng");
+    payload.vertrekpunt_breedtegraad = normalizeChironCoordinate(pickup?.lat, "lat");
+  }
+
+  if (officialStatus === "aankomst") {
+    payload.aankomsttijdstip = _chironResolveOfficialAankomstTijdstip(safeEvent, safeBlueprint);
+    payload.aankomstpunt_lengtegraad = normalizeChironCoordinate(dropoff?.lng, "lng");
+    payload.aankomstpunt_breedtegraad = normalizeChironCoordinate(dropoff?.lat, "lat");
+    payload.afstand = normalizeChironMoney(fare.distance_km);
+    payload.kostprijs = normalizeChironMoney(fare.total_amount);
+  }
+
+  return payload;
+}
+
+function _chironOfficialPayloadFieldPresent(payload, field) {
+  if (!payload || typeof payload !== "object") return false;
+  const value = payload[field];
+  if (value === null || value === undefined) return false;
+  if (typeof value === "string" && !value.trim()) return false;
+  return true;
+}
+
+function _chironOfficialRequiredFieldsForStatus(officialStatus) {
+  if (officialStatus === "reservatie") return [...CHIRON_OFFICIAL_REQUIRED_RESERVATIE];
+  if (officialStatus === "vertrek") return [...CHIRON_OFFICIAL_REQUIRED_VERTREK];
+  if (officialStatus === "aankomst") return [...CHIRON_OFFICIAL_REQUIRED_AANKOMST];
+  return [];
+}
+
+function validateChironOfficialPayloadDraft(payload, context = {}) {
+  const officialStatus = cleanText(context.officialStatus, 32) || null;
+  const category = cleanText(context.category, 64) || "not_chiron_ride_status";
+
+  if (category !== "ride_payload" || !officialStatus) {
+    return {
+      status: "not_applicable",
+      exportable: false,
+      missing: [],
+      warnings: [],
+      errors: [],
+      required_fields: [],
+    };
+  }
+
+  const requiredFields = _chironOfficialRequiredFieldsForStatus(officialStatus);
+  const missing = [];
+  const warnings = [];
+  const errors = [];
+
+  for (const field of requiredFields) {
+    if (!_chironOfficialPayloadFieldPresent(payload, field)) {
+      missing.push(field);
+    }
+  }
+
+  if (!["reservatie", "vertrek", "aankomst"].includes(officialStatus)) {
+    errors.push("invalid_official_status");
+  }
+
+  if (officialStatus === "aankomst" && context.batchRitStatuses && context.ritnummer) {
+    const seen = context.batchRitStatuses.get(context.ritnummer);
+    if (!seen || (!seen.has("vertrek") && !seen.has("reservatie"))) {
+      warnings.push("missing_prior_vertrek_or_reservatie_in_batch");
+    }
+  }
+
+  let validationStatus = "ready";
+  if (errors.length > 0 || missing.length > 0) {
+    validationStatus = "blocker";
+  } else if (warnings.length > 0) {
+    validationStatus = "warning";
+  }
+
+  const validation = {
+    status: validationStatus,
+    exportable: validationStatus === "ready" || validationStatus === "warning",
+    missing,
+    warnings,
+    errors,
+    required_fields: requiredFields,
+  };
+  if (warnings.includes("missing_prior_vertrek_or_reservatie_in_batch")) {
+    validation.sequence_safe = false;
+  }
+  return validation;
+}
+
+function buildChironOfficialIdempotencyKey(scope, registratie, ritnummer, status) {
+  return cleanText(
+    [
+      "chiron_official_v1",
+      cleanText(scope?.tenant_id, 128),
+      cleanText(scope?.company_id, 128),
+      registratie || "-",
+      ritnummer || "-",
+      status || "-",
+    ].join(":"),
+    256,
+  );
+}
+
+function buildChironOfficialDraftEnvelope(event, blueprint, scope, context = {}) {
+  const safeEvent = event && typeof event === "object" && !Array.isArray(event) ? event : {};
+  const safeBlueprint =
+    blueprint && typeof blueprint === "object" && !Array.isArray(blueprint) ? blueprint : {};
+  const normalized = normalizeChironOfficialStatusFromEvent(safeEvent, safeBlueprint);
+
+  if (!normalized.mappable || normalized.category !== "ride_payload" || !normalized.status) {
+    return {
+      schema_version: CHIRON_OFFICIAL_DRAFT_SCHEMA_VERSION,
+      category: "not_chiron_ride_status",
+      status: null,
+      payload: null,
+      validation: validateChironOfficialPayloadDraft(null, {
+        category: normalized.category,
+        officialStatus: null,
+      }),
+      reason: normalized.reason || _chironOfficialDraftNotApplicableReason(safeEvent.event_type),
+    };
+  }
+
+  const payload = buildChironOfficialPayloadDraft(
+    safeEvent,
+    safeBlueprint,
+    scope,
+    normalized.status,
+  );
+  const validation = validateChironOfficialPayloadDraft(payload, {
+    category: normalized.category,
+    officialStatus: normalized.status,
+    ritnummer: payload.ritnummer,
+    batchRitStatuses: context.batchRitStatuses || null,
+  });
+
+  return {
+    schema_version: CHIRON_OFFICIAL_DRAFT_SCHEMA_VERSION,
+    category: "ride_payload",
+    status: normalized.status,
+    payload,
+    validation,
+    idempotency_key: buildChironOfficialIdempotencyKey(
+      scope,
+      payload.registratie,
+      payload.ritnummer,
+      normalized.status,
+    ),
+  };
+}
+
+function _chironBuildBatchRitStatusIndex(entries) {
+  const index = new Map();
+  for (const entry of entries) {
+    const event = entry?.event;
+    if (!event || typeof event !== "object") continue;
+    const built = buildChironDryRunBlueprint(event);
+    const blueprint = built?.blueprint || {};
+    const normalized = normalizeChironOfficialStatusFromEvent(event, blueprint);
+    if (!normalized.status) continue;
+    const ritnummer = _chironResolveOfficialRitnummer(event, blueprint);
+    if (!ritnummer) continue;
+    if (!index.has(ritnummer)) {
+      index.set(ritnummer, new Map());
+    }
+    const statusCounts = index.get(ritnummer);
+    statusCounts.set(normalized.status, (statusCounts.get(normalized.status) || 0) + 1);
+  }
+  const simplified = new Map();
+  for (const [ritnummer, statusCounts] of index.entries()) {
+    simplified.set(ritnummer, new Set(statusCounts.keys()));
+  }
+  return simplified;
+}
+
 function buildChironExportPayload(event, eventKey, options = {}) {
   const safeEvent =
     event && typeof event === "object" && !Array.isArray(event) ? event : {};
@@ -1960,6 +2464,19 @@ function buildChironExportPayload(event, eventKey, options = {}) {
 
   if (options.includeRaw === true) {
     payload.raw_event = projectRecentEvent(cleanText(eventKey, 1024), safeEvent);
+  }
+
+  if (options.includeOfficialDraft === true) {
+    const scope = {
+      tenant_id: tenantId,
+      company_id: companyId,
+    };
+    payload.chiron_official_draft = buildChironOfficialDraftEnvelope(
+      safeEvent,
+      blueprint,
+      scope,
+      { batchRitStatuses: options.batchRitStatuses || null },
+    );
   }
 
   return payload;
@@ -2053,9 +2570,17 @@ function _chironBuildExportDryRunPayloadResponse(
   limit,
   collectResult,
   includeRaw,
+  includeOfficialDraft = false,
 ) {
+  const batchRitStatuses = includeOfficialDraft
+    ? _chironBuildBatchRitStatusIndex(collectResult.limitedEntries)
+    : null;
   const payloads = collectResult.limitedEntries.map((entry) =>
-    buildChironExportPayload(entry.event, entry.key, { includeRaw }),
+    buildChironExportPayload(entry.event, entry.key, {
+      includeRaw,
+      includeOfficialDraft,
+      batchRitStatuses,
+    }),
   );
   const exportableCount = payloads.filter((payload) => payload.exportable).length;
   const sampleCandidates = [
@@ -2162,7 +2687,7 @@ async function _chironPostChironExportTestPayload(env, payload) {
   };
 }
 
-async function handleChironExportDryRun(request, env, origin) {
+async function handleChironExportDryRun(request, url, env, origin) {
   const authError = ensureAuthorized(request, env);
   if (authError) return authError;
 
@@ -2212,6 +2737,7 @@ async function handleChironExportDryRun(request, env, origin) {
   }
 
   const includeRaw = body.include_raw === true;
+  const includeOfficialDraft = parseIncludeOfficialDraftFlag(body, url);
   const { tenantId, companyId, tenantSegment, companySegment } = scope;
 
   const collectResult = await _chironCollectScopedComplianceEventsForExport(
@@ -2235,6 +2761,7 @@ async function handleChironExportDryRun(request, env, origin) {
     limitParsed.value,
     collectResult,
     includeRaw,
+    includeOfficialDraft,
   );
 
   console.log(
@@ -2501,7 +3028,7 @@ export default {
         if (request.method !== "POST") {
           return jsonResponse({ ok: false, error: "Method Not Allowed" }, 405, origin);
         }
-        return await handleChironExportDryRun(request, env, origin);
+        return await handleChironExportDryRun(request, url, env, origin);
       }
       if (url.pathname === CHIRON_EXPORT_TEST_PATH) {
         if (request.method !== "POST") {
