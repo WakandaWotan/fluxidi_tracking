@@ -31,6 +31,10 @@ const CHIRON_EXPORT_VERSION = "chiron_export_v1";
 const CHIRON_EXPORT_SOURCE = "fluxidi_chiron";
 const CHIRON_EXPORT_DRY_RUN_PATH = "/admin/chiron/export/dry-run";
 const CHIRON_EXPORT_TEST_PATH = "/admin/chiron/export/test";
+// Chiron-6B-3D: clean app-facing readiness endpoint.
+const CHIRON_READINESS_PATH = "/admin/chiron/readiness";
+const CHIRON_READINESS_DEFAULT_LIMIT = 20;
+const CHIRON_READINESS_DEFAULT_EVENT_TYPE = "ride_stop";
 const CHIRON_EXPORT_STATUS_SCHEMA = "chiron_export_status_v1";
 const CHIRON_EXPORT_MAX_SAMPLE_PAYLOADS = 3;
 const CHIRON_EXPORT_LIST_SCAN_CAP = 10000;
@@ -5347,6 +5351,147 @@ async function handleChironExportTest(request, env, origin) {
   );
 }
 
+// Chiron-6B-3D: clean app-facing readiness endpoint that returns only the
+// readiness report + minimal metadata. Supports GET (query params) and POST (JSON body).
+function _chironExtractReadinessRequestBody(method, parsedBody, url) {
+  if (method === "POST") {
+    if (parsedBody && typeof parsedBody === "object" && !Array.isArray(parsedBody)) {
+      return { ...parsedBody };
+    }
+    return null;
+  }
+  const params = url?.searchParams;
+  if (!params) return {};
+  const body = {};
+  const tenantId = cleanText(params.get("tenant_id"), 128);
+  const companyId = cleanText(params.get("company_id"), 128);
+  if (tenantId) body.tenant_id = tenantId;
+  if (companyId) body.company_id = companyId;
+  const limitRaw = cleanText(params.get("limit"), 16);
+  if (limitRaw) body.limit = limitRaw;
+  const eventTypeRaw = cleanText(params.get("event_type"), 64);
+  if (eventTypeRaw) body.event_type = eventTypeRaw;
+  const sinceRaw = cleanText(params.get("since"), 64);
+  if (sinceRaw) body.since = sinceRaw;
+  const untilRaw = cleanText(params.get("until"), 64);
+  if (untilRaw) body.until = untilRaw;
+  return body;
+}
+
+async function handleChironReadinessReport(request, url, env, origin) {
+  const authError = ensureAuthorized(request, env);
+  if (authError) return authError;
+
+  if (request.method !== "GET" && request.method !== "POST") {
+    return jsonResponse({ ok: false, error: "Method Not Allowed" }, 405, origin);
+  }
+
+  if (!env?.COMPLIANCE_KV || typeof env.COMPLIANCE_KV.list !== "function") {
+    return jsonResponse(
+      {
+        ok: false,
+        error: "Compliance storage is not configured (missing COMPLIANCE_KV binding).",
+      },
+      500,
+      origin,
+    );
+  }
+
+  let parsedBody = null;
+  if (request.method === "POST") {
+    if (!requireJsonRequest(request)) {
+      return jsonResponse(
+        { ok: false, error: "Content-Type must be application/json" },
+        400,
+        origin,
+      );
+    }
+    parsedBody = await readJsonBody(request);
+  }
+
+  const body = _chironExtractReadinessRequestBody(request.method, parsedBody, url);
+  if (!body) {
+    return jsonResponse({ ok: false, error: "Invalid JSON body" }, 400, origin);
+  }
+
+  const scope = parseChironExportScopeFromBody(body);
+  if (scope.error) {
+    return jsonResponse({ ok: false, error: scope.error }, 400, origin);
+  }
+
+  const limitParsed = parseChironExportLimit(body.limit);
+  if (limitParsed.error) {
+    return jsonResponse({ ok: false, error: limitParsed.error }, 400, origin);
+  }
+  // Default to 20 (vs. 10 used by export dry-run) when no explicit limit is given.
+  const effectiveLimit = cleanText(body.limit, 16) ? limitParsed.value : CHIRON_READINESS_DEFAULT_LIMIT;
+
+  const sinceParsed = parseOptionalIsoBodyMs(body, "since");
+  if (sinceParsed.error) {
+    return jsonResponse({ ok: false, error: sinceParsed.error }, 400, origin);
+  }
+  const untilParsed = parseOptionalIsoBodyMs(body, "until");
+  if (untilParsed.error) {
+    return jsonResponse({ ok: false, error: untilParsed.error }, 400, origin);
+  }
+
+  const requestedEventType = cleanText(body.event_type, 64).toLowerCase();
+  const effectiveEventType = requestedEventType || CHIRON_READINESS_DEFAULT_EVENT_TYPE;
+  if (!ALLOWED_EVENT_TYPES.has(effectiveEventType)) {
+    return jsonResponse({ ok: false, error: "Invalid body field: event_type" }, 400, origin);
+  }
+
+  const { tenantId, companyId, tenantSegment, companySegment } = scope;
+
+  const collectResult = await _chironCollectScopedComplianceEventsForExport(
+    env,
+    tenantSegment,
+    companySegment,
+    {
+      requestedLimit: effectiveLimit,
+      sinceMs: sinceParsed.value,
+      untilMs: untilParsed.value,
+      eventTypeFilterRaw: effectiveEventType,
+    },
+  );
+  if (collectResult.error) {
+    return jsonResponse({ ok: false, error: collectResult.error }, 500, origin);
+  }
+
+  // Reuse the dry-run/report path. We do NOT expose chiron_official_draft to
+  // the readiness endpoint, so includeOfficialDraft stays false; the report
+  // builder auto-enables it internally and the response strips it from samples.
+  const dryRunPayload = await _chironBuildExportDryRunPayloadResponse(
+    tenantId,
+    companyId,
+    effectiveLimit,
+    collectResult,
+    false,
+    false,
+    env,
+    { includeReadinessReport: true },
+  );
+
+  console.log(
+    `[CHIRON_READINESS] tenant=${_chironMaskScopeId(tenantId)} company=${_chironMaskScopeId(companyId)} scanned=${dryRunPayload.scanned_count} processed=${dryRunPayload.processed_count} overall=${dryRunPayload.readiness_report?.overall_status || "-"}`,
+  );
+
+  return jsonResponse(
+    {
+      ok: true,
+      tenant_id: tenantId,
+      company_id: companyId,
+      dry_run: true,
+      official_submission_performed: false,
+      scanned_count: dryRunPayload.scanned_count,
+      processed_count: dryRunPayload.processed_count,
+      readiness_report: dryRunPayload.readiness_report || null,
+    },
+    200,
+    origin,
+  );
+}
+
 export default {
   async fetch(request, env) {
     const origin = request.headers.get("origin") || "*";
@@ -5373,7 +5518,8 @@ export default {
       url.pathname !== CHIRON_DRYRUN_RECENT_PATH &&
       url.pathname !== CHIRON_SCORE_SUMMARY_PATH &&
       url.pathname !== CHIRON_EXPORT_DRY_RUN_PATH &&
-      url.pathname !== CHIRON_EXPORT_TEST_PATH
+      url.pathname !== CHIRON_EXPORT_TEST_PATH &&
+      url.pathname !== CHIRON_READINESS_PATH
     ) {
       return jsonResponse(
         { ok: false, error: "Not Found", path: url.pathname },
@@ -5436,6 +5582,9 @@ export default {
           return jsonResponse({ ok: false, error: "Method Not Allowed" }, 405, origin);
         }
         return await handleChironExportTest(request, env, origin);
+      }
+      if (url.pathname === CHIRON_READINESS_PATH) {
+        return await handleChironReadinessReport(request, url, env, origin);
       }
       if (request.method !== "GET") {
         return jsonResponse({ ok: false, error: "Method Not Allowed" }, 405, origin);
