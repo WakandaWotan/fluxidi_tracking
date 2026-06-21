@@ -24264,6 +24264,17 @@ POST /admin/mollie/connect/disconnect
         }, 200);
       }
 
+      if (url.pathname === CHIRON_CONFIG_STATUS_PATH && request.method === "GET") {
+        const authScope = await _requireAdminOrCompanySessionForExplicitScope({
+          request,
+          url,
+          env,
+          routeLabel: "ADMIN_CHIRON_CONFIG_STATUS_GET",
+        });
+        if (!authScope.ok) return authScope.response;
+        return _proxyChironConfigStatusToComplianceWorker(env, authScope.explicitScope);
+      }
+
       if (url.pathname === "/admin/business/profile" && request.method === "POST") {
         const body = await safeJson(request);
         const authScope = await _requireAdminOrCompanySessionForExplicitScope({
@@ -34388,6 +34399,8 @@ async function _maybeGenerateBusinessInvoiceForPaidBooking({
 }
 
 const COMPLIANCE_APPEND_PATH = "/compliance/events/append";
+const CHIRON_CONFIG_STATUS_PATH = "/admin/chiron/config/status";
+const CHIRON_INTERNAL_PROXY_MODE = "booking_worker_v1";
 
 function buildComplianceAppendUrl(baseUrlRaw) {
   const normalized = safeStr(baseUrlRaw);
@@ -39385,6 +39398,51 @@ function buildBookingStatusUpdateComplianceEvent(
   return _applyBookingChironEnrichmentToComplianceEvent(complianceEvent, rec, {
     assignmentContext,
   });
+}
+
+async function _proxyChironConfigStatusToComplianceWorker(env, explicitScope) {
+  const adminToken = safeStr(env?.COMPLIANCE_ADMIN_TOKEN || env?.ADMIN_TOKEN);
+  if (!adminToken) {
+    return json({ ok: false, error: "compliance_auth_not_configured" }, 503);
+  }
+  if (!env?.COMPLIANCE_WORKER || typeof env.COMPLIANCE_WORKER.fetch !== "function") {
+    return json({ ok: false, error: "compliance_worker_binding_missing" }, 500);
+  }
+
+  const tenantId = sanitizeTenantString(explicitScope?.tenant_id, 80);
+  const companyId = sanitizeTenantString(explicitScope?.company_id, 80);
+  if (!tenantId || !companyId) {
+    return json(missingTenantScopeError(), 400);
+  }
+
+  const proxyUrl = new URL(`https://fluxidi-compliance-api.internal${CHIRON_CONFIG_STATUS_PATH}`);
+  proxyUrl.searchParams.set("tenant_id", tenantId);
+  proxyUrl.searchParams.set("company_id", companyId);
+
+  const proxyReq = new Request(proxyUrl.toString(), {
+    method: "GET",
+    headers: {
+      accept: "application/json",
+      "x-fluxidi-internal-proxy": CHIRON_INTERNAL_PROXY_MODE,
+      "x-fluxidi-proxy-token": adminToken,
+      "x-fluxidi-proxy-tenant-id": tenantId,
+      "x-fluxidi-proxy-company-id": companyId,
+    },
+  });
+
+  try {
+    const resp = await env.COMPLIANCE_WORKER.fetch(proxyReq);
+    const body = await resp.text();
+    return new Response(body, {
+      status: resp.status,
+      headers: {
+        "content-type": resp.headers.get("content-type") || "application/json; charset=utf-8",
+        "cache-control": "no-store",
+      },
+    });
+  } catch (_) {
+    return json({ ok: false, error: "compliance_proxy_failed" }, 502);
+  }
 }
 
 async function emitComplianceEventBestEffort(env, event, options = {}) {

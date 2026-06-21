@@ -33,6 +33,10 @@ const CHIRON_EXPORT_DRY_RUN_PATH = "/admin/chiron/export/dry-run";
 const CHIRON_EXPORT_TEST_PATH = "/admin/chiron/export/test";
 // Chiron-6B-3D: clean app-facing readiness endpoint.
 const CHIRON_READINESS_PATH = "/admin/chiron/readiness";
+// Phase 0: read-only per-company Chiron connection status contract (no storage yet).
+const CHIRON_CONFIG_STATUS_PATH = "/admin/chiron/config/status";
+const CHIRON_CONNECTION_STATUS_SCHEMA = "chiron_connection_status_v1";
+const CHIRON_INTERNAL_PROXY_MODE = "booking_worker_v1";
 const CHIRON_READINESS_DEFAULT_LIMIT = 20;
 const CHIRON_READINESS_DEFAULT_EVENT_TYPE = "ride_stop";
 const CHIRON_EXPORT_STATUS_SCHEMA = "chiron_export_status_v1";
@@ -179,6 +183,48 @@ function ensureAuthorized(request, env) {
     return jsonResponse({ ok: false, error: "Unauthorized" }, 401);
   }
   return null;
+}
+
+function _requiredComplianceAuthToken(env) {
+  return cleanText(env?.COMPLIANCE_ADMIN_TOKEN || env?.ADMIN_TOKEN, 512);
+}
+
+function _parseInternalProxyAuth(request, env, scope) {
+  const proxyMode = cleanText(request.headers.get("x-fluxidi-internal-proxy"), 64);
+  if (proxyMode !== CHIRON_INTERNAL_PROXY_MODE) return null;
+
+  const requiredToken = _requiredComplianceAuthToken(env);
+  if (!requiredToken) {
+    return { error: "compliance_auth_not_configured", status: 503 };
+  }
+
+  const proxyToken = cleanText(request.headers.get("x-fluxidi-proxy-token"), 512);
+  if (!proxyToken || proxyToken !== requiredToken) {
+    return { error: "Unauthorized", status: 401 };
+  }
+
+  const proxyTenant = cleanText(request.headers.get("x-fluxidi-proxy-tenant-id"), 128);
+  const proxyCompany = cleanText(request.headers.get("x-fluxidi-proxy-company-id"), 128);
+  if (!proxyTenant || !proxyCompany) {
+    return { error: "missing_proxy_scope", status: 400 };
+  }
+  if (proxyTenant !== scope.tenantId || proxyCompany !== scope.companyId) {
+    return { error: "proxy_scope_mismatch", status: 403 };
+  }
+
+  return { ok: true, auth_mode: "internal_proxy" };
+}
+
+function ensureAuthorizedOrInternalProxy(request, env, scope) {
+  const adminError = ensureAuthorized(request, env);
+  if (!adminError) return null;
+
+  const proxy = _parseInternalProxyAuth(request, env, scope);
+  if (proxy?.ok) return null;
+  if (proxy?.error) {
+    return jsonResponse({ ok: false, error: proxy.error }, proxy.status);
+  }
+  return adminError;
 }
 
 function allowDevResetEndpoints(env) {
@@ -5498,6 +5544,59 @@ async function handleChironReadinessReport(request, url, env, origin) {
   );
 }
 
+function defaultChironConnectionStatusDoc(tenantId, companyId) {
+  return {
+    ok: true,
+    schema_version: CHIRON_CONNECTION_STATUS_SCHEMA,
+    tenant_id: tenantId,
+    company_id: companyId,
+    enabled: false,
+    environment: "test",
+    region: "flanders",
+    production_enabled: false,
+    test_credentials_stored: false,
+    production_credentials_stored: false,
+    last_connection_status: "never_tested",
+    last_connection_test_at: null,
+    last_connection_status_message: "",
+    official_submit_enabled: false,
+    official_submission_performed_at: null,
+    test_messages_required: 10,
+    test_messages_sent_count: 0,
+    updated_at: null,
+  };
+}
+
+async function handleChironConfigStatus(request, url, env, origin) {
+  if (request.method !== "GET") {
+    return jsonResponse({ ok: false, error: "Method Not Allowed" }, 405, origin);
+  }
+
+  const tenant = parseRequiredQuerySegment(url, "tenant_id");
+  if (tenant.error) {
+    return jsonResponse({ ok: false, error: tenant.error }, 400, origin);
+  }
+  const company = parseRequiredQuerySegment(url, "company_id");
+  if (company.error) {
+    return jsonResponse({ ok: false, error: company.error }, 400, origin);
+  }
+
+  const tenantId = cleanText(url.searchParams.get("tenant_id"), 128);
+  const companyId = cleanText(url.searchParams.get("company_id"), 128);
+
+  const authError = ensureAuthorizedOrInternalProxy(request, env, {
+    tenantId,
+    companyId,
+  });
+  if (authError) return authError;
+
+  const payload = defaultChironConnectionStatusDoc(tenantId, companyId);
+  console.log(
+    `[CHIRON_CONFIG_STATUS] tenant=${_chironMaskScopeId(tenantId)} company=${_chironMaskScopeId(companyId)} result=ok`,
+  );
+  return jsonResponse(payload, 200, origin);
+}
+
 export default {
   async fetch(request, env) {
     const origin = request.headers.get("origin") || "*";
@@ -5525,7 +5624,8 @@ export default {
       url.pathname !== CHIRON_SCORE_SUMMARY_PATH &&
       url.pathname !== CHIRON_EXPORT_DRY_RUN_PATH &&
       url.pathname !== CHIRON_EXPORT_TEST_PATH &&
-      url.pathname !== CHIRON_READINESS_PATH
+      url.pathname !== CHIRON_READINESS_PATH &&
+      url.pathname !== CHIRON_CONFIG_STATUS_PATH
     ) {
       return jsonResponse(
         { ok: false, error: "Not Found", path: url.pathname },
@@ -5591,6 +5691,9 @@ export default {
       }
       if (url.pathname === CHIRON_READINESS_PATH) {
         return await handleChironReadinessReport(request, url, env, origin);
+      }
+      if (url.pathname === CHIRON_CONFIG_STATUS_PATH) {
+        return await handleChironConfigStatus(request, url, env, origin);
       }
       if (request.method !== "GET") {
         return jsonResponse({ ok: false, error: "Method Not Allowed" }, 405, origin);
