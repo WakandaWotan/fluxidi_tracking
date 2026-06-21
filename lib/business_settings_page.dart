@@ -271,6 +271,10 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
   String _chironRegionScope = ChironCompanyConnectionDefaults.chironRegionScope;
   bool _chironProductionEnabled =
       ChironCompanyConnectionDefaults.chironProductionEnabled;
+  bool _chironConnectionLoading = false;
+  bool _chironConnectionSaving = false;
+  bool _chironBackendConfirmed = false;
+  String? _chironConnectionStatusError;
   bool _mollieConnectLoading = false;
   bool _mollieConnectStartLoading = false;
   bool _mollieConnectDisconnectLoading = false;
@@ -501,11 +505,16 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
       BackendCancellationPolicyProfile.defaults(),
     );
     _mergeLocalIntoGeneralControllersIfEligible();
+    final cachedChironStatus = backendChironConnectionStatusNotifier.value;
+    if (cachedChironStatus != null) {
+      _applyBackendChironStatus(cachedChironStatus, confirmed: true);
+    }
     _loadBackendProfiles();
     _loadGoogleCalendarStatus();
     _loadMollieConnectStatus();
     _loadMollieTerminalsSnapshot();
     _loadAirportFixedFareRules();
+    _loadChironConnectionStatus();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       _syncLocalTenantLogoFromNotifier();
@@ -626,27 +635,276 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     _chironProductionEnabled = s.chironProductionEnabled;
   }
 
-  void _onChironEnabledChanged(bool value) {
+  void _applyBackendChironStatus(
+    BackendChironConnectionStatus status, {
+    required bool confirmed,
+  }) {
+    _chironEnabled = status.enabled;
+    _chironEnvironment = status.environment;
+    _chironRegionScope = status.region == ChironRegionScope.flanders
+        ? ChironRegionScope.flanders
+        : '';
+    _chironConnectionStatus =
+        ChironCompanyConnectionDefaults.mapBackendLastConnectionStatus(
+          status.lastConnectionStatus,
+        );
+    _chironProductionEnabled = status.productionEnabled;
+    _chironBackendConfirmed = confirmed;
+    _chironConnectionStatusError = null;
+  }
+
+  void _syncLocalChironFallback(BackendChironConnectionStatus status) {
+    final current = businessSettingsNotifier.value;
+    updateBusinessSettings(
+      current.copyWith(
+        chironEnabled: status.enabled,
+        chironEnvironment: status.environment,
+        chironConnectionStatus:
+            ChironCompanyConnectionDefaults.mapBackendLastConnectionStatus(
+              status.lastConnectionStatus,
+            ),
+        chironRegionScope: status.region == ChironRegionScope.flanders
+            ? ChironRegionScope.flanders
+            : '',
+        chironLastTestedAt: status.lastConnectionTestAt ?? '',
+        chironProductionEnabled: status.productionEnabled,
+      ),
+      syncToBackend: false,
+    );
+  }
+
+  void _revertChironFromServer() {
+    final cached = backendChironConnectionStatusNotifier.value;
+    if (cached != null) {
+      _applyBackendChironStatus(cached, confirmed: _chironBackendConfirmed);
+      return;
+    }
+    _hydrateFromSettings(businessSettingsNotifier.value);
+    _chironBackendConfirmed = false;
+  }
+
+  String _chironRegionForBackend() {
+    final scope = _chironRegionScope.trim().toLowerCase();
+    if (scope == ChironRegionScope.flanders) return ChironRegionScope.flanders;
+    return ChironRegionScope.flanders;
+  }
+
+  String _normalizeChironRegionForSave(String? region) {
+    final raw = (region ?? _chironRegionForBackend()).trim().toLowerCase();
+    if (raw.isEmpty || raw != ChironRegionScope.flanders) {
+      return ChironRegionScope.flanders;
+    }
+    return ChironRegionScope.flanders;
+  }
+
+  Future<void> _loadChironConnectionStatus({
+    bool showErrorSnack = false,
+  }) async {
+    setState(() {
+      _chironConnectionLoading = true;
+      _chironConnectionStatusError = null;
+    });
+    try {
+      final scope = _activeSettingsScopeStrict();
+      if (scope == null) {
+        debugPrint(
+          '[BUSINESS_SETTINGS_SCOPE][SKIP] reason=missing_strict_company_scope action=load_chiron_connection_status',
+        );
+        return;
+      }
+      final status = await fetchBackendChironConnectionStatus(
+        tenantId: scope.tenantId,
+        companyId: scope.companyId,
+      );
+      if (!mounted) return;
+      setState(() {
+        _applyBackendChironStatus(status, confirmed: true);
+      });
+      updateBackendChironConnectionStatusCache(status);
+      _syncLocalChironFallback(status);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _chironBackendConfirmed = false;
+        _chironConnectionStatusError = e.toString();
+      });
+      debugPrint('[CHIRON_CONNECTION][LOAD] error=$e');
+      if (showErrorSnack) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              _t(
+                nl: 'Chiron-status kon niet van de server geladen worden.',
+                en: 'Chiron status could not be loaded from the server.',
+                fr: 'Le statut Chiron n’a pas pu être chargé depuis le serveur.',
+                es: 'No se pudo cargar el estado Chiron desde el servidor.',
+              ),
+            ),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _chironConnectionLoading = false);
+      }
+    }
+  }
+
+  void _showChironProductionRequiresTestPassedSnackbar() {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          _t(
+            nl: 'Productie kan pas na een geslaagde Chiron-test.',
+            en: 'Production is only available after a successful Chiron test.',
+            fr: 'La production n’est possible qu’après un test Chiron réussi.',
+            es: 'La producción solo está disponible tras una prueba Chiron exitosa.',
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _showChironSaveErrorSnackbar({String? errorCode}) {
+    if (!mounted) return;
+    final code = (errorCode ?? '').trim();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          code.isEmpty
+              ? _t(
+                  nl: 'Chiron-koppeling kon niet opgeslagen worden.',
+                  en: 'Chiron connection could not be saved.',
+                  fr: 'La connexion Chiron n’a pas pu être enregistrée.',
+                  es: 'No se pudo guardar la conexión Chiron.',
+                )
+              : _t(
+                  nl: 'Chiron-koppeling kon niet opgeslagen worden ($code).',
+                  en: 'Chiron connection could not be saved ($code).',
+                  fr: 'La connexion Chiron n’a pas pu être enregistrée ($code).',
+                  es: 'No se pudo guardar la conexión Chiron ($code).',
+                ),
+        ),
+      ),
+    );
+  }
+
+  Future<bool> _saveChironConnectionToBackend({
+    bool? enabled,
+    bool? productionEnabled,
+    String? region,
+  }) async {
+    final scope = _strictSettingsScopeForAction(
+      action: 'save_chiron_connection',
+    );
+    if (scope == null) {
+      _revertChironFromServer();
+      return false;
+    }
+    setState(() => _chironConnectionSaving = true);
+    try {
+      final saved = await saveBackendChironConnectionStatus(
+        tenantId: scope.tenantId,
+        companyId: scope.companyId,
+        enabled: enabled ?? _chironEnabled,
+        environment: _chironEnvironment,
+        region: _normalizeChironRegionForSave(region),
+        productionEnabled: productionEnabled ?? _chironProductionEnabled,
+      );
+      if (!mounted) return true;
+      setState(() {
+        _applyBackendChironStatus(saved, confirmed: true);
+      });
+      updateBackendChironConnectionStatusCache(saved);
+      _syncLocalChironFallback(saved);
+      return true;
+    } on BackendChironConnectionApiException catch (e) {
+      if (!mounted) return false;
+      setState(() {
+        _revertChironFromServer();
+      });
+      if (e.error == 'production_requires_test_passed') {
+        _showChironProductionRequiresTestPassedSnackbar();
+      } else {
+        _showChironSaveErrorSnackbar(errorCode: e.error);
+      }
+      debugPrint(
+        '[CHIRON_CONNECTION][SAVE] error=${e.error} status=${e.statusCode}',
+      );
+      return false;
+    } catch (e) {
+      if (!mounted) return false;
+      setState(() {
+        _revertChironFromServer();
+      });
+      _showChironSaveErrorSnackbar();
+      debugPrint('[CHIRON_CONNECTION][SAVE] error=$e');
+      return false;
+    } finally {
+      if (mounted) {
+        setState(() => _chironConnectionSaving = false);
+      }
+    }
+  }
+
+  Future<void> _onChironEnabledChanged(bool value) async {
+    final previousEnabled = _chironEnabled;
     setState(() {
       _chironEnabled = value;
       if (!value) {
         _chironProductionEnabled = false;
-        _chironConnectionStatus = ChironConnectionStatus.notConfigured;
-        return;
       }
-      _chironEnvironment = ChironConnectionEnvironment.test;
-      _chironProductionEnabled = false;
-      if (_chironConnectionStatus == ChironConnectionStatus.testPassed) {
-        return;
-      }
-      _chironConnectionStatus = ChironConnectionStatus.notConfigured;
     });
+    final saved = await _saveChironConnectionToBackend(enabled: value);
+    if (!saved && mounted && _chironEnabled != previousEnabled) {
+      setState(() => _chironEnabled = previousEnabled);
+    }
   }
 
-  void _onChironRegionScopeChanged(String? value) {
-    setState(() {
-      _chironRegionScope = (value ?? '').trim();
-    });
+  Future<void> _onChironRegionScopeChanged(String? value) async {
+    final previous = _chironRegionScope;
+    final next = (value ?? '').trim();
+    setState(() => _chironRegionScope = next);
+    final saved = await _saveChironConnectionToBackend(region: next);
+    if (!saved && mounted && _chironRegionScope != previous) {
+      setState(() => _chironRegionScope = previous);
+    }
+  }
+
+  Future<void> _onChironProductionEnabledChanged(bool value) async {
+    final previous = _chironProductionEnabled;
+    setState(() => _chironProductionEnabled = value);
+    final saved = await _saveChironConnectionToBackend(
+      productionEnabled: value,
+    );
+    if (!saved && mounted && _chironProductionEnabled != previous) {
+      setState(() => _chironProductionEnabled = previous);
+    }
+  }
+
+  String _chironBackendLastConnectionStatusRaw() {
+    final cached = backendChironConnectionStatusNotifier.value;
+    if (cached != null && _chironBackendConfirmed) {
+      return cached.lastConnectionStatus;
+    }
+    if (_chironConnectionStatus == ChironConnectionStatus.testPassed) {
+      return ChironConnectionStatus.testPassed;
+    }
+    if (_chironConnectionStatus == ChironConnectionStatus.testFailed) {
+      return ChironConnectionStatus.testFailed;
+    }
+    if (_chironConnectionStatus == ChironConnectionStatus.testPending) {
+      return ChironConnectionStatus.testPending;
+    }
+    return ChironBackendLastConnectionStatus.neverTested;
+  }
+
+  bool _chironProductionAllowedFromServer() {
+    return ChironCompanyConnectionDefaults.canEnableProductionFromBackend(
+      enabled: _chironEnabled,
+      lastConnectionStatus: _chironBackendLastConnectionStatusRaw(),
+    );
   }
 
   _SetupStatus _chironConnectionSetupStatus() {
@@ -674,7 +932,8 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         es: 'Desactivado',
       );
     }
-    switch (_chironConnectionStatus) {
+    final backendStatus = _chironBackendLastConnectionStatusRaw();
+    switch (backendStatus) {
       case ChironConnectionStatus.testPassed:
         return _t(
           nl: 'Test geslaagd',
@@ -696,17 +955,171 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
           fr: 'Test en attente',
           es: 'Prueba pendiente',
         );
+      case ChironBackendLastConnectionStatus.neverTested:
+        return _t(
+          nl: 'Ingeschakeld · nog niet getest',
+          en: 'Enabled · not tested yet',
+          fr: 'Activé · pas encore testé',
+          es: 'Activado · aún no probado',
+        );
       default:
         return _t(
-          nl: 'Nog niet geconfigureerd',
-          en: 'Not configured yet',
-          fr: 'Pas encore configuré',
-          es: 'Aún no configurado',
+          nl: 'Nog niet getest',
+          en: 'Not tested yet',
+          fr: 'Pas encore testé',
+          es: 'Aún no probado',
+        );
+    }
+  }
+
+  String _chironEnvironmentLabel() {
+    if (_chironEnvironment == ChironConnectionEnvironment.production) {
+      return _t(
+        nl: 'productie',
+        en: 'production',
+        fr: 'production',
+        es: 'producción',
+      );
+    }
+    return _t(nl: 'test', en: 'test', fr: 'test', es: 'prueba');
+  }
+
+  Widget _chironBackendStatusPanel() {
+    final officialSubmitEnabled =
+        backendChironConnectionStatusNotifier.value?.officialSubmitEnabled ==
+            true &&
+        _chironBackendConfirmed;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: _subPanelBg,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: _border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (!_chironBackendConfirmed) ...[
+            Text(
+              _t(
+                nl: 'Status niet bevestigd door server (lokaal voorbeeld).',
+                en: 'Status not confirmed by server (local preview).',
+                fr: 'Statut non confirmé par le serveur (aperçu local).',
+                es: 'Estado no confirmado por el servidor (vista local).',
+              ),
+              style: TextStyle(
+                color: _danger,
+                fontSize: 11.5,
+                fontWeight: FontWeight.w600,
+                height: 1.35,
+              ),
+            ),
+            const SizedBox(height: 8),
+          ],
+          Text(
+            _t(
+              nl: 'Chiron-koppeling ingeschakeld',
+              en: 'Chiron connection enabled',
+              fr: 'Connexion Chiron activée',
+              es: 'Conexión Chiron activada',
+            ),
+            style: TextStyle(
+              color: _textPrimary,
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            _t(
+              nl: 'Omgeving: ${_chironEnvironmentLabel()}',
+              en: 'Environment: ${_chironEnvironmentLabel()}',
+              fr: 'Environnement : ${_chironEnvironmentLabel()}',
+              es: 'Entorno: ${_chironEnvironmentLabel()}',
+            ),
+            style: TextStyle(color: _textSecondary, fontSize: 11.5),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            _t(
+              nl: 'Status: ${_chironDetailedStatusLabel()}',
+              en: 'Status: ${_chironDetailedStatusLabel()}',
+              fr: 'Statut : ${_chironDetailedStatusLabel()}',
+              es: 'Estado: ${_chironDetailedStatusLabel()}',
+            ),
+            style: TextStyle(color: _textSecondary, fontSize: 11.5),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            _t(
+              nl: officialSubmitEnabled
+                  ? 'Officiële doorgifte: aan'
+                  : 'Officiële doorgifte: uit',
+              en: officialSubmitEnabled
+                  ? 'Official submission: on'
+                  : 'Official submission: off',
+              fr: officialSubmitEnabled
+                  ? 'Transmission officielle : activée'
+                  : 'Transmission officielle : désactivée',
+              es: officialSubmitEnabled
+                  ? 'Envío oficial: activado'
+                  : 'Envío oficial: desactivado',
+            ),
+            style: TextStyle(color: _textSecondary, fontSize: 11.5),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            _t(
+              nl: 'Volgende stap: testgegevens toevoegen en verbinding testen.',
+              en: 'Next step: add test credentials and test the connection.',
+              fr: 'Étape suivante : ajouter les identifiants de test et tester la connexion.',
+              es: 'Siguiente paso: añadir credenciales de prueba y probar la conexión.',
+            ),
+            style: TextStyle(color: _textMuted, fontSize: 11.5, height: 1.35),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _chironDetailedStatusLabel() {
+    final backendStatus = _chironBackendLastConnectionStatusRaw();
+    switch (backendStatus) {
+      case ChironConnectionStatus.testPassed:
+        return _t(
+          nl: 'test geslaagd',
+          en: 'test passed',
+          fr: 'test réussi',
+          es: 'prueba superada',
+        );
+      case ChironConnectionStatus.testFailed:
+        return _t(
+          nl: 'test mislukt',
+          en: 'test failed',
+          fr: 'test échoué',
+          es: 'prueba fallida',
+        );
+      case ChironConnectionStatus.testPending:
+        return _t(
+          nl: 'test in afwachting',
+          en: 'test pending',
+          fr: 'test en attente',
+          es: 'prueba pendiente',
+        );
+      default:
+        return _t(
+          nl: 'nog niet getest',
+          en: 'not tested yet',
+          fr: 'pas encore testé',
+          es: 'aún no probado',
         );
     }
   }
 
   Widget _chironEnvironmentChip() {
+    final isProduction =
+        _chironEnvironment == ChironConnectionEnvironment.production;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
       decoration: BoxDecoration(
@@ -719,7 +1132,14 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         ),
       ),
       child: Text(
-        _t(nl: 'Test', en: 'Test', fr: 'Test', es: 'Prueba'),
+        isProduction
+            ? _t(
+                nl: 'Productie',
+                en: 'Production',
+                fr: 'Production',
+                es: 'Producción',
+              )
+            : _t(nl: 'Test', en: 'Test', fr: 'Test', es: 'Prueba'),
         style: TextStyle(
           color: _textPrimary,
           fontSize: 11,
@@ -785,7 +1205,9 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
           ),
         ),
       ],
-      onChanged: _onChironRegionScopeChanged,
+      onChanged: _chironConnectionSaving || _chironConnectionLoading
+          ? null
+          : _onChironRegionScopeChanged,
     );
   }
 
@@ -854,11 +1276,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
   }
 
   Widget _chironConnectionCard() {
-    final productionAllowed =
-        ChironCompanyConnectionDefaults.canEnableProduction(
-          chironEnabled: _chironEnabled,
-          connectionStatus: _chironConnectionStatus,
-        );
+    final productionAllowed = _chironProductionAllowedFromServer();
     return _collapsibleSettingsCard(
       id: 'chiron_connection',
       icon: Icons.verified_user_outlined,
@@ -908,6 +1326,15 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
             style: TextStyle(color: _textMuted, fontSize: 11.5, height: 1.35),
           ),
           const SizedBox(height: 12),
+          if (_chironConnectionLoading)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: LinearProgressIndicator(
+                minHeight: 2,
+                color: _accent,
+                backgroundColor: _border.withOpacity(0.35),
+              ),
+            ),
           SwitchListTile(
             contentPadding: EdgeInsets.zero,
             title: Text(
@@ -928,9 +1355,13 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
               style: TextStyle(color: _textSecondary, fontSize: 11.5),
             ),
             value: _chironEnabled,
-            onChanged: _onChironEnabledChanged,
+            onChanged: _chironConnectionSaving || _chironConnectionLoading
+                ? null
+                : _onChironEnabledChanged,
           ),
           if (_chironEnabled) ...[
+            const SizedBox(height: 8),
+            _chironBackendStatusPanel(),
             const SizedBox(height: 8),
             ListTile(
               contentPadding: EdgeInsets.zero,
@@ -982,10 +1413,8 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                   style: TextStyle(color: _textSecondary, fontSize: 11.5),
                 ),
                 value: _chironProductionEnabled && productionAllowed,
-                onChanged: productionAllowed
-                    ? (value) {
-                        setState(() => _chironProductionEnabled = value);
-                      }
+                onChanged: productionAllowed && !_chironConnectionSaving
+                    ? _onChironProductionEnabledChanged
                     : null,
               ),
               const SizedBox(height: 8),
@@ -5218,22 +5647,40 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
             _surchargeCapCtrl.text,
             current.pricingSurchargeCapRate,
           ),
-          chironEnabled: _chironEnabled,
-          chironEnvironment: _chironEnabled
-              ? ChironConnectionEnvironment.test
-              : current.chironEnvironment,
-          chironConnectionStatus: _chironEnabled
-              ? _chironConnectionStatus
-              : ChironConnectionStatus.notConfigured,
-          chironRegionScope: _chironRegionScope,
-          chironLastTestedAt: current.chironLastTestedAt,
+          chironEnabled:
+              backendChironConnectionStatusNotifier.value?.enabled ??
+              _chironEnabled,
+          chironEnvironment:
+              backendChironConnectionStatusNotifier.value?.environment ??
+              (_chironEnabled
+                  ? ChironConnectionEnvironment.test
+                  : current.chironEnvironment),
+          chironConnectionStatus:
+              backendChironConnectionStatusNotifier.value != null &&
+                  _chironBackendConfirmed
+              ? ChironCompanyConnectionDefaults.mapBackendLastConnectionStatus(
+                  backendChironConnectionStatusNotifier
+                      .value!
+                      .lastConnectionStatus,
+                )
+              : (_chironEnabled
+                    ? _chironConnectionStatus
+                    : ChironConnectionStatus.notConfigured),
+          chironRegionScope:
+              backendChironConnectionStatusNotifier.value?.region ==
+                  ChironRegionScope.flanders
+              ? ChironRegionScope.flanders
+              : _chironRegionScope,
+          chironLastTestedAt:
+              backendChironConnectionStatusNotifier
+                  .value
+                  ?.lastConnectionTestAt ??
+              current.chironLastTestedAt,
           chironProductionEnabled:
-              ChironCompanyConnectionDefaults.canEnableProduction(
-                chironEnabled: _chironEnabled,
-                connectionStatus: _chironConnectionStatus,
-              )
-              ? _chironProductionEnabled
-              : false,
+              backendChironConnectionStatusNotifier.value?.productionEnabled ??
+              (_chironProductionAllowedFromServer()
+                  ? _chironProductionEnabled
+                  : false),
         ),
         tenantId: scope.tenantId,
         companyId: scope.companyId,

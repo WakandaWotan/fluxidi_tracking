@@ -16,6 +16,13 @@ class ChironConnectionStatus {
   static const String testFailed = 'test_failed';
 }
 
+/// Server-side `last_connection_status` values (Phase 1 config status API).
+class ChironBackendLastConnectionStatus {
+  ChironBackendLastConnectionStatus._();
+
+  static const String neverTested = 'never_tested';
+}
+
 class ChironRegionScope {
   ChironRegionScope._();
 
@@ -39,5 +46,29 @@ class ChironCompanyConnectionDefaults {
   }) {
     return chironEnabled &&
         connectionStatus == ChironConnectionStatus.testPassed;
+  }
+
+  /// Maps server `last_connection_status` to local [ChironConnectionStatus].
+  static String mapBackendLastConnectionStatus(String raw) {
+    final token = raw.trim().toLowerCase();
+    switch (token) {
+      case ChironConnectionStatus.testPassed:
+      case ChironConnectionStatus.testFailed:
+      case ChironConnectionStatus.testPending:
+        return token;
+      case ChironBackendLastConnectionStatus.neverTested:
+        return ChironConnectionStatus.notConfigured;
+      default:
+        return ChironConnectionStatus.notConfigured;
+    }
+  }
+
+  static bool canEnableProductionFromBackend({
+    required bool enabled,
+    required String lastConnectionStatus,
+  }) {
+    return enabled &&
+        lastConnectionStatus.trim().toLowerCase() ==
+            ChironConnectionStatus.testPassed;
   }
 }

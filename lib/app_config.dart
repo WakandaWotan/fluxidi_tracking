@@ -728,6 +728,170 @@ class BackendTaxProfile {
   };
 }
 
+/// Server-backed Chiron connection status (non-secret metadata only).
+class BackendChironConnectionStatus {
+  final bool ok;
+  final String schemaVersion;
+  final String tenantId;
+  final String companyId;
+  final bool enabled;
+  final String environment;
+  final String region;
+  final bool productionEnabled;
+  final bool testCredentialsStored;
+  final bool productionCredentialsStored;
+  final String lastConnectionStatus;
+  final String? lastConnectionTestAt;
+  final String lastConnectionStatusMessage;
+  final bool officialSubmitEnabled;
+  final String? officialSubmissionPerformedAt;
+  final int testMessagesRequired;
+  final int testMessagesSentCount;
+  final String? updatedAt;
+
+  const BackendChironConnectionStatus({
+    this.ok = false,
+    this.schemaVersion = '',
+    this.tenantId = '',
+    this.companyId = '',
+    this.enabled = false,
+    this.environment = ChironConnectionEnvironment.test,
+    this.region = ChironRegionScope.flanders,
+    this.productionEnabled = false,
+    this.testCredentialsStored = false,
+    this.productionCredentialsStored = false,
+    this.lastConnectionStatus = ChironBackendLastConnectionStatus.neverTested,
+    this.lastConnectionTestAt,
+    this.lastConnectionStatusMessage = '',
+    this.officialSubmitEnabled = false,
+    this.officialSubmissionPerformedAt,
+    this.testMessagesRequired = 10,
+    this.testMessagesSentCount = 0,
+    this.updatedAt,
+  });
+
+  factory BackendChironConnectionStatus.fromJson(Map<String, dynamic> json) {
+    bool boolAny(List<String> keys, bool fallback) {
+      for (final key in keys) {
+        final value = json[key];
+        if (value is bool) return value;
+        if (value is String) {
+          final token = value.trim().toLowerCase();
+          if (token == 'true') return true;
+          if (token == 'false') return false;
+        }
+      }
+      return fallback;
+    }
+
+    String textAny(List<String> keys, String fallback) {
+      for (final key in keys) {
+        final value = json[key];
+        if (value == null) continue;
+        final text = value.toString().trim();
+        if (text.isNotEmpty) return text;
+      }
+      return fallback;
+    }
+
+    int intAny(List<String> keys, int fallback) {
+      for (final key in keys) {
+        final value = json[key];
+        if (value is int) return value;
+        if (value is num) return value.toInt();
+        final parsed = int.tryParse((value ?? '').toString().trim());
+        if (parsed != null) return parsed;
+      }
+      return fallback;
+    }
+
+    String? nullableTextAny(List<String> keys) {
+      for (final key in keys) {
+        final value = json[key];
+        if (value == null) continue;
+        final text = value.toString().trim();
+        if (text.isNotEmpty) return text;
+      }
+      return null;
+    }
+
+    final environment = textAny(const [
+      'environment',
+    ], ChironConnectionEnvironment.test).toLowerCase();
+    final region = textAny(const [
+      'region',
+    ], ChironRegionScope.flanders).toLowerCase();
+    final lastConnectionStatus = textAny(const [
+      'last_connection_status',
+      'lastConnectionStatus',
+    ], ChironBackendLastConnectionStatus.neverTested).toLowerCase();
+
+    return BackendChironConnectionStatus(
+      ok: boolAny(const ['ok'], false),
+      schemaVersion: textAny(const ['schema_version', 'schemaVersion'], ''),
+      tenantId: textAny(const ['tenant_id', 'tenantId'], ''),
+      companyId: textAny(const ['company_id', 'companyId'], ''),
+      enabled: boolAny(const ['enabled'], false),
+      environment: environment == ChironConnectionEnvironment.production
+          ? ChironConnectionEnvironment.production
+          : ChironConnectionEnvironment.test,
+      region: region.isEmpty ? ChironRegionScope.flanders : region,
+      productionEnabled: boolAny(const [
+        'production_enabled',
+        'productionEnabled',
+      ], false),
+      testCredentialsStored: boolAny(const [
+        'test_credentials_stored',
+        'testCredentialsStored',
+      ], false),
+      productionCredentialsStored: boolAny(const [
+        'production_credentials_stored',
+        'productionCredentialsStored',
+      ], false),
+      lastConnectionStatus: lastConnectionStatus,
+      lastConnectionTestAt: nullableTextAny(const [
+        'last_connection_test_at',
+        'lastConnectionTestAt',
+      ]),
+      lastConnectionStatusMessage: textAny(const [
+        'last_connection_status_message',
+        'lastConnectionStatusMessage',
+      ], ''),
+      officialSubmitEnabled: boolAny(const [
+        'official_submit_enabled',
+        'officialSubmitEnabled',
+      ], false),
+      officialSubmissionPerformedAt: nullableTextAny(const [
+        'official_submission_performed_at',
+        'officialSubmissionPerformedAt',
+      ]),
+      testMessagesRequired: intAny(const [
+        'test_messages_required',
+        'testMessagesRequired',
+      ], 10),
+      testMessagesSentCount: intAny(const [
+        'test_messages_sent_count',
+        'testMessagesSentCount',
+      ], 0),
+      updatedAt: nullableTextAny(const ['updated_at', 'updatedAt']),
+    );
+  }
+}
+
+class BackendChironConnectionApiException implements Exception {
+  final String error;
+  final int? statusCode;
+
+  const BackendChironConnectionApiException({
+    required this.error,
+    this.statusCode,
+  });
+
+  @override
+  String toString() =>
+      'BackendChironConnectionApiException(error: $error, statusCode: $statusCode)';
+}
+
 class BackendCancellationPolicyProfile {
   final int version;
   final bool allowCustomerOnlineCancellation;
@@ -3063,6 +3227,17 @@ Future<void> updateLocalBackendTaxProfileCache(
 ) async {
   localBackendTaxProfileNotifier.value = profile;
   await _persistLocalTenantState();
+}
+
+/// Server-backed Chiron connection status for the active company.
+final ValueNotifier<BackendChironConnectionStatus?>
+backendChironConnectionStatusNotifier =
+    ValueNotifier<BackendChironConnectionStatus?>(null);
+
+void updateBackendChironConnectionStatusCache(
+  BackendChironConnectionStatus? status,
+) {
+  backendChironConnectionStatusNotifier.value = status;
 }
 
 Future<void> _persistLocalTenantState() async {
@@ -6929,6 +7104,92 @@ Future<Map<String, dynamic>> fetchBackendMollieConnectStatus({
   final decoded = jsonDecode(res.body);
   if (decoded is! Map) throw Exception('Invalid response');
   return _safeMollieConnectMap(decoded);
+}
+
+String _parseBackendChironConnectionError(Map<String, dynamic> decoded) {
+  final error = decoded['error'];
+  if (error == null) return 'unknown_error';
+  final text = error.toString().trim();
+  return text.isEmpty ? 'unknown_error' : text;
+}
+
+Future<BackendChironConnectionStatus> fetchBackendChironConnectionStatus({
+  required String tenantId,
+  required String companyId,
+}) async {
+  final endpoint = _withAdminTenantCompanyScope(
+    Uri.parse('${appConfig.bookingBaseUrl}/admin/chiron/config/status'),
+    tenantId: tenantId,
+    companyId: companyId,
+  );
+  final auth = await resolveCompanyOwnerAuthHeaders();
+  final res = await http
+      .get(endpoint, headers: auth.headers)
+      .timeout(const Duration(seconds: 12));
+  final decoded = jsonDecode(res.body);
+  if (decoded is! Map) {
+    throw Exception('Invalid Chiron connection status response');
+  }
+  final map = Map<String, dynamic>.from(decoded);
+  if (res.statusCode < 200 || res.statusCode >= 300 || map['ok'] == false) {
+    throw BackendChironConnectionApiException(
+      error: _parseBackendChironConnectionError(map),
+      statusCode: res.statusCode,
+    );
+  }
+  return BackendChironConnectionStatus.fromJson(map);
+}
+
+Future<BackendChironConnectionStatus> saveBackendChironConnectionStatus({
+  required String tenantId,
+  required String companyId,
+  required bool enabled,
+  required String environment,
+  required String region,
+  required bool productionEnabled,
+}) async {
+  final endpoint = _withAdminTenantCompanyScope(
+    Uri.parse('${appConfig.bookingBaseUrl}/admin/chiron/config/status'),
+    tenantId: tenantId,
+    companyId: companyId,
+  );
+  final scope = _resolveAdminTenantCompanyScope(
+    tenantId: tenantId,
+    companyId: companyId,
+  );
+  final auth = await resolveCompanyOwnerAuthHeaders();
+  final normalizedEnvironment =
+      environment.trim().toLowerCase() == ChironConnectionEnvironment.production
+      ? ChironConnectionEnvironment.production
+      : ChironConnectionEnvironment.test;
+  final normalizedRegion = region.trim().toLowerCase().isEmpty
+      ? ChironRegionScope.flanders
+      : region.trim().toLowerCase();
+  final res = await http
+      .post(
+        endpoint,
+        headers: auth.headers,
+        body: jsonEncode(<String, dynamic>{
+          ...scope,
+          'enabled': enabled,
+          'environment': normalizedEnvironment,
+          'region': normalizedRegion,
+          'production_enabled': productionEnabled,
+        }),
+      )
+      .timeout(const Duration(seconds: 12));
+  final decoded = jsonDecode(res.body);
+  if (decoded is! Map) {
+    throw Exception('Invalid Chiron connection status response');
+  }
+  final map = Map<String, dynamic>.from(decoded);
+  if (res.statusCode < 200 || res.statusCode >= 300 || map['ok'] == false) {
+    throw BackendChironConnectionApiException(
+      error: _parseBackendChironConnectionError(map),
+      statusCode: res.statusCode,
+    );
+  }
+  return BackendChironConnectionStatus.fromJson(map);
 }
 
 Future<Map<String, dynamic>> startBackendMollieConnect({
