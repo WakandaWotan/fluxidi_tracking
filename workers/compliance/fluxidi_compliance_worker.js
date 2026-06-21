@@ -2286,6 +2286,18 @@ function _chironResolveVehiclePlateFromFleet(vehicleId, fleetVehicles) {
   return { plate: null, lookup: "miss" };
 }
 
+// Chiron-6B-3B: return the matched fleet vehicle record (singleton match only).
+function _chironLookupFleetVehicleById(vehicleId, fleetVehicles) {
+  if (!vehicleId || !Array.isArray(fleetVehicles) || !fleetVehicles.length) return null;
+  const matches = fleetVehicles.filter((vehicle) => {
+    const id = cleanText(vehicle?.vehicle_id ?? vehicle?.vehicleId ?? vehicle?.id, 96);
+    return id && id === vehicleId;
+  });
+  if (matches.length !== 1) return null;
+  const v = matches[0];
+  return v && typeof v === "object" && !Array.isArray(v) ? v : null;
+}
+
 function _chironResolveDriverPassFromIndex(driverId, driverIndex) {
   if (!driverId || !driverIndex || typeof driverIndex !== "object") {
     return { pass: null, lookup: "miss" };
@@ -2484,6 +2496,7 @@ function verifyChironOfficialRegistration(value, context = {}) {
     checks: [],
     warnings: [],
     errors: [],
+    document: _chironDefaultDocSummary("business"),
   };
   const raw = cleanText(value, 64);
   if (!raw) return out;
@@ -2500,24 +2513,29 @@ function verifyChironOfficialRegistration(value, context = {}) {
     ) {
       out.status = "placeholder";
       out.errors.push("placeholder_registration");
+      _chironApplyBusinessDocumentMarkers(out, context);
       return out;
     }
     if (!isLikelyValidBelgianEnterpriseNumberFormat(digits)) {
       out.status = "format_invalid";
       out.errors.push("invalid_registration_format");
+      _chironApplyBusinessDocumentMarkers(out, context);
       return out;
     }
     out.status = "format_valid";
+    _chironApplyBusinessDocumentMarkers(out, context);
     return out;
   }
 
   if (isChironPlaceholderValue(raw, "registration")) {
     out.status = "placeholder";
     out.errors.push("placeholder_registration");
+    _chironApplyBusinessDocumentMarkers(out, context);
     return out;
   }
   out.status = "format_invalid";
   out.errors.push("invalid_registration_format");
+  _chironApplyBusinessDocumentMarkers(out, context);
   return out;
 }
 
@@ -2528,6 +2546,7 @@ function verifyChironOfficialBusinessName(value, context = {}) {
     checks: [],
     warnings: [],
     errors: [],
+    document: _chironDefaultDocSummary("business"),
   };
   const raw = cleanText(value, 256);
   if (!raw) return out;
@@ -2536,15 +2555,18 @@ function verifyChironOfficialBusinessName(value, context = {}) {
   if (isChironPlaceholderValue(raw, "business_name")) {
     out.status = "placeholder";
     out.errors.push("placeholder_business_name");
+    _chironApplyBusinessDocumentMarkers(out, context);
     return out;
   }
   const compact = _chironCompactText(raw);
   if (compact.length < 2 || !/[a-z]/i.test(raw)) {
     out.status = "format_invalid";
     out.errors.push("invalid_business_name");
+    _chironApplyBusinessDocumentMarkers(out, context);
     return out;
   }
   out.status = "format_valid";
+  _chironApplyBusinessDocumentMarkers(out, context);
   return out;
 }
 
@@ -2555,35 +2577,52 @@ function verifyChironOfficialLicensePlate(value, context = {}) {
     checks: [],
     warnings: [],
     errors: [],
+    document: _chironDefaultDocSummary("vehicle"),
   };
   const raw = cleanText(value, 64);
-  if (!raw) return out;
+  if (!raw) {
+    _chironApplyVehicleDocumentMarkers(out, raw, context);
+    return out;
+  }
   out.checks.push("present");
 
   if (isChironPlaceholderValue(raw, "license_plate")) {
     out.status = "placeholder";
     out.errors.push("placeholder_license_plate");
+    _chironApplyVehicleDocumentMarkers(out, raw, context);
     return out;
   }
 
   if (!_chironLooksLikeAnyPlateFormat(raw)) {
     out.status = "format_invalid";
     out.errors.push("invalid_license_plate_format");
+    _chironApplyVehicleDocumentMarkers(out, raw, context);
     return out;
   }
 
   const flemishContext = _chironContextLooksFlemishTaxi(context);
   const looksTaxi = _chironLooksLikeFlemishTaxiPlate(raw);
   const looksBeStandard = _chironLooksLikeBelgianStandardPlate(raw);
+  const exception = _chironInspectVehicleTaxiPlateException(context.record || null);
 
   if (flemishContext && !looksTaxi) {
-    if (looksBeStandard) {
+    if (exception.exception) {
+      if (exception.verified) {
+        out.checks.push("taxi_plate_exception_verified");
+      } else {
+        out.warnings.push("taxi_plate_exception_requires_review");
+      }
+      out.status = "format_valid";
+    } else if (looksBeStandard) {
       out.status = "format_invalid";
       out.errors.push("invalid_flemish_taxi_plate");
+      _chironApplyVehicleDocumentMarkers(out, raw, context);
       return out;
+    } else {
+      out.warnings.push("taxi_plate_pattern_not_confirmed");
+      out.status = "format_valid";
     }
-    out.warnings.push("taxi_plate_pattern_not_confirmed");
-    out.status = "format_valid";
+    _chironApplyVehicleDocumentMarkers(out, raw, context);
     return out;
   }
 
@@ -2593,6 +2632,7 @@ function verifyChironOfficialLicensePlate(value, context = {}) {
     out.checks.push("flemish_taxi_plate_pattern");
   }
   out.status = "format_valid";
+  _chironApplyVehicleDocumentMarkers(out, raw, context);
   return out;
 }
 
@@ -2603,23 +2643,30 @@ function verifyChironOfficialDriverPass(value, context = {}) {
     checks: [],
     warnings: [],
     errors: [],
+    document: _chironDefaultDocSummary("driver_pass"),
   };
   const raw = cleanText(value, 96);
-  if (!raw) return out;
+  if (!raw) {
+    _chironApplyDriverDocumentMarkers(out, raw, context);
+    return out;
+  }
   out.checks.push("present");
 
   if (isChironPlaceholderValue(raw, "driver_pass")) {
     out.status = "placeholder";
     out.errors.push("placeholder_driver_pass");
+    _chironApplyDriverDocumentMarkers(out, raw, context);
     return out;
   }
 
   if (raw.length < 3) {
     out.status = "format_invalid";
     out.errors.push("invalid_driver_pass_format");
+    _chironApplyDriverDocumentMarkers(out, raw, context);
     return out;
   }
 
+  // Legacy explicit override (6B-3A) — keep as direct trust hint.
   const explicitDoc = context.documentVerification || null;
   if (explicitDoc && typeof explicitDoc === "object") {
     const docStatus = cleanText(explicitDoc.status, 32).toLowerCase();
@@ -2633,15 +2680,634 @@ function verifyChironOfficialDriverPass(value, context = {}) {
     ) {
       out.status = "document_verified";
       out.checks.push("scoped_document_verified");
+      out.document = {
+        status: "verified",
+        source: "scoped_driver",
+        matched: !!docNumber,
+        expires_at: cleanText(explicitDoc.expires_at, 64) || null,
+        checked_at: cleanText(explicitDoc.verified_at ?? explicitDoc.checked_at, 64) || null,
+        document_type: _chironDocLabelForKind("driver_pass"),
+      };
       return out;
     }
   }
 
-  out.warnings.push("driver_pass_document_review_required");
-  out.status = out.source === "event" || out.source === "blueprint"
-    ? "self_declared"
-    : "format_valid";
+  out.status =
+    out.source === "event" || out.source === "blueprint" ? "self_declared" : "format_valid";
+  _chironApplyDriverDocumentMarkers(out, raw, context);
   return out;
+}
+
+// === Chiron-6B-3B: document/trust-marker inspection helpers ===
+
+const CHIRON_DOC_STATUS_VERIFIED = new Set([
+  "verified",
+  "approved",
+  "active",
+  "accepted",
+  "valid",
+  "complete",
+  "completed",
+]);
+const CHIRON_DOC_STATUS_REVIEW = new Set([
+  "pending",
+  "uploaded",
+  "needs_review",
+  "review_required",
+  "in_review",
+  "submitted",
+  "under_review",
+  "awaiting_review",
+]);
+const CHIRON_DOC_STATUS_REJECTED = new Set([
+  "rejected",
+  "declined",
+  "invalid",
+  "denied",
+  "revoked",
+]);
+
+const CHIRON_DOC_BUSINESS_NESTED_KEYS = [
+  "registration_document",
+  "registrationDocument",
+  "kbo_document",
+  "kboDocument",
+  "company_document",
+  "companyDocument",
+  "business_document",
+  "businessDocument",
+];
+const CHIRON_DOC_BUSINESS_LIST_KEYS = ["documents", "business_documents", "businessDocuments"];
+const CHIRON_DOC_BUSINESS_STATUS_KEYS = [
+  "status",
+  "verification_status",
+  "verificationStatus",
+  "document_status",
+  "documentStatus",
+  "review_status",
+  "reviewStatus",
+  "kbo_status",
+  "kboStatus",
+];
+const CHIRON_DOC_BUSINESS_BOOL_VERIFIED_KEYS = ["verified", "is_verified", "approved"];
+
+const CHIRON_DOC_VEHICLE_NESTED_KEYS = [
+  "license_plate_document",
+  "licensePlateDocument",
+  "taxi_permit_document",
+  "taxiPermitDocument",
+  "vehicle_document",
+  "vehicleDocument",
+  "inspection_document",
+  "inspectionDocument",
+  "insurance_document",
+  "insuranceDocument",
+];
+const CHIRON_DOC_VEHICLE_LIST_KEYS = ["documents", "vehicle_documents", "vehicleDocuments"];
+const CHIRON_DOC_VEHICLE_STATUS_KEYS = [
+  "status",
+  "document_status",
+  "documentStatus",
+  "verification_status",
+  "verificationStatus",
+  "taxi_license_status",
+  "taxiLicenseStatus",
+  "vehicle_license_status",
+  "vehicleLicenseStatus",
+  "inspection_status",
+  "inspectionStatus",
+  "insurance_status",
+  "insuranceStatus",
+];
+const CHIRON_DOC_VEHICLE_BOOL_VERIFIED_KEYS = ["verified", "is_verified", "approved"];
+
+const CHIRON_DOC_DRIVER_NESTED_KEYS = [
+  "driver_pass_document",
+  "driverPassDocument",
+  "taxi_driver_card_document",
+  "taxiDriverCardDocument",
+  "driver_card_document",
+  "driverCardDocument",
+  "driver_document",
+  "driverDocument",
+];
+const CHIRON_DOC_DRIVER_LIST_KEYS = ["documents", "driver_documents", "driverDocuments"];
+const CHIRON_DOC_DRIVER_STATUS_KEYS = [
+  "status",
+  "document_status",
+  "documentStatus",
+  "verification_status",
+  "verificationStatus",
+  "driver_pass_status",
+  "driverPassStatus",
+  "taxi_driver_card_status",
+  "taxiDriverCardStatus",
+];
+const CHIRON_DOC_DRIVER_BOOL_VERIFIED_KEYS = ["verified", "is_verified", "approved"];
+
+const CHIRON_DOC_NUMBER_KEYS = [
+  "document_number",
+  "documentNumber",
+  "number",
+  "registration_number",
+  "registrationNumber",
+  "license_plate",
+  "licensePlate",
+  "plate",
+  "license_id",
+  "licenseId",
+  "kbo_number",
+  "kboNumber",
+];
+
+const CHIRON_DOC_EXPIRY_KEYS = [
+  "expires_at",
+  "expiresAt",
+  "expiration_at",
+  "expirationAt",
+  "expiry_at",
+  "expiryAt",
+  "expire_at",
+  "valid_until",
+  "validUntil",
+  "valid_through",
+  "expires_on",
+];
+
+const CHIRON_DOC_VERIFIED_AT_KEYS = [
+  "verified_at",
+  "verifiedAt",
+  "approved_at",
+  "approvedAt",
+  "checked_at",
+  "checkedAt",
+  "issued_at",
+  "issuedAt",
+];
+
+const CHIRON_VEHICLE_EXCEPTION_BOOL_KEYS = [
+  "taxi_plate_exception",
+  "taxiPlateException",
+  "replacement_vehicle",
+  "replacementVehicle",
+  "temporary_replacement",
+  "temporaryReplacement",
+  "regional_exception_approved",
+  "regionalExceptionApproved",
+];
+
+const CHIRON_VEHICLE_EXCEPTION_STATUS_KEYS = [
+  "exception_document_status",
+  "exceptionDocumentStatus",
+  "plate_exception_status",
+  "plateExceptionStatus",
+];
+
+function _chironNormalizeDocStatusString(value) {
+  return cleanText(value, 32).toLowerCase().replace(/[\s-]/g, "_");
+}
+
+function _chironClassifyDocStatusString(value) {
+  const norm = _chironNormalizeDocStatusString(value);
+  if (!norm) return null;
+  if (CHIRON_DOC_STATUS_VERIFIED.has(norm)) return "verified";
+  if (CHIRON_DOC_STATUS_REVIEW.has(norm)) return "review_required";
+  if (CHIRON_DOC_STATUS_REJECTED.has(norm)) return "rejected";
+  return null;
+}
+
+function _chironPickFirstString(record, keys) {
+  if (!record || typeof record !== "object" || Array.isArray(record)) return null;
+  for (const key of keys) {
+    const value = cleanText(record?.[key], 256);
+    if (value) return value;
+  }
+  return null;
+}
+
+function _chironPickFirstBoolean(record, keys) {
+  if (!record || typeof record !== "object" || Array.isArray(record)) return null;
+  for (const key of keys) {
+    const value = record?.[key];
+    if (value === true) return true;
+    if (value === false) return false;
+  }
+  return null;
+}
+
+function _chironPickFirstObject(record, keys) {
+  if (!record || typeof record !== "object" || Array.isArray(record)) return null;
+  for (const key of keys) {
+    const value = record?.[key];
+    if (value && typeof value === "object" && !Array.isArray(value)) return value;
+  }
+  return null;
+}
+
+function _chironCollectDocCandidatesFromLists(record, listKeys) {
+  if (!record || typeof record !== "object" || Array.isArray(record)) return [];
+  const out = [];
+  for (const key of listKeys) {
+    const value = record?.[key];
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        if (item && typeof item === "object" && !Array.isArray(item)) out.push(item);
+      }
+    }
+  }
+  return out;
+}
+
+function _chironDocExpiryStatus(doc) {
+  const raw = _chironPickFirstString(doc, CHIRON_DOC_EXPIRY_KEYS);
+  if (!raw) return { expired: false, expires_at: null };
+  const parsed = Date.parse(raw);
+  if (!Number.isFinite(parsed)) return { expired: false, expires_at: null };
+  const expired = parsed < Date.now();
+  return { expired, expires_at: new Date(parsed).toISOString() };
+}
+
+function _chironDocNumberMatchesPayload(doc, payloadValue, normalizer) {
+  const docNumber = _chironPickFirstString(doc, CHIRON_DOC_NUMBER_KEYS);
+  // No payload value means the caller doesn't want a number-match check
+  // (e.g. business_name vs registration document_number). Treat as N/A,
+  // not as a mismatch.
+  if (!payloadValue) return { hasNumber: false, matched: true };
+  if (!docNumber) return { hasNumber: false, matched: true };
+  const norm = typeof normalizer === "function" ? normalizer : (v) => cleanText(v, 96).toLowerCase();
+  const a = norm(docNumber);
+  const b = norm(payloadValue);
+  if (!a || !b) return { hasNumber: true, matched: false };
+  return { hasNumber: true, matched: a === b };
+}
+
+function _chironDocLabelForKind(kind) {
+  if (kind === "business") return "business_registration";
+  if (kind === "vehicle") return "vehicle_taxi_permit";
+  if (kind === "driver_pass") return "driver_pass";
+  return null;
+}
+
+function _chironInspectDocumentMarker(record, kind, payloadValue, normalizer) {
+  const empty = {
+    status: "not_available",
+    source: "none",
+    matched: false,
+    expires_at: null,
+    checked_at: null,
+    document_type: _chironDocLabelForKind(kind),
+  };
+  if (!record || typeof record !== "object" || Array.isArray(record)) return empty;
+
+  const nestedKeys =
+    kind === "business"
+      ? CHIRON_DOC_BUSINESS_NESTED_KEYS
+      : kind === "vehicle"
+      ? CHIRON_DOC_VEHICLE_NESTED_KEYS
+      : CHIRON_DOC_DRIVER_NESTED_KEYS;
+  const listKeys =
+    kind === "business"
+      ? CHIRON_DOC_BUSINESS_LIST_KEYS
+      : kind === "vehicle"
+      ? CHIRON_DOC_VEHICLE_LIST_KEYS
+      : CHIRON_DOC_DRIVER_LIST_KEYS;
+  const statusKeys =
+    kind === "business"
+      ? CHIRON_DOC_BUSINESS_STATUS_KEYS
+      : kind === "vehicle"
+      ? CHIRON_DOC_VEHICLE_STATUS_KEYS
+      : CHIRON_DOC_DRIVER_STATUS_KEYS;
+  const boolKeys =
+    kind === "business"
+      ? CHIRON_DOC_BUSINESS_BOOL_VERIFIED_KEYS
+      : kind === "vehicle"
+      ? CHIRON_DOC_VEHICLE_BOOL_VERIFIED_KEYS
+      : CHIRON_DOC_DRIVER_BOOL_VERIFIED_KEYS;
+
+  const sourceLabel =
+    kind === "business"
+      ? "scoped_business_profile"
+      : kind === "vehicle"
+      ? "scoped_vehicle"
+      : "scoped_driver";
+
+  // Collect candidate doc objects: nested doc fields + list entries.
+  const candidates = [];
+  const nestedDoc = _chironPickFirstObject(record, nestedKeys);
+  if (nestedDoc) candidates.push(nestedDoc);
+  for (const c of _chironCollectDocCandidatesFromLists(record, listKeys)) candidates.push(c);
+
+  // Evaluate record-level status as a fallback when no nested doc.
+  const recordLevelStatusRaw = _chironPickFirstString(record, statusKeys);
+  const recordLevelStatus = _chironClassifyDocStatusString(recordLevelStatusRaw);
+  const recordLevelBool = _chironPickFirstBoolean(record, boolKeys);
+  const recordLevelExpiry = _chironDocExpiryStatus(record);
+  const recordLevelVerifiedAt = _chironPickFirstString(record, CHIRON_DOC_VERIFIED_AT_KEYS);
+  const recordLevelNumberMatch = _chironDocNumberMatchesPayload(record, payloadValue, normalizer);
+
+  let best = null; // higher severity wins: rejected > expired > mismatch > review_required > verified > not_available
+
+  const severity = (status) => {
+    if (status === "rejected") return 5;
+    if (status === "expired") return 4;
+    if (status === "mismatch") return 3;
+    if (status === "review_required") return 2;
+    if (status === "verified") return 1;
+    return 0;
+  };
+
+  const consider = (candidateSummary) => {
+    if (!candidateSummary) return;
+    if (!best) {
+      best = candidateSummary;
+      return;
+    }
+    if (severity(candidateSummary.status) > severity(best.status)) best = candidateSummary;
+  };
+
+  for (const doc of candidates) {
+    const classified = _chironClassifyDocStatusString(_chironPickFirstString(doc, statusKeys));
+    const boolHint = _chironPickFirstBoolean(doc, boolKeys);
+    const expiry = _chironDocExpiryStatus(doc);
+    const verifiedAt = _chironPickFirstString(doc, CHIRON_DOC_VERIFIED_AT_KEYS);
+    const numberCheck = _chironDocNumberMatchesPayload(doc, payloadValue, normalizer);
+
+    if (classified === "rejected") {
+      consider({
+        status: "rejected",
+        source: sourceLabel,
+        matched: numberCheck.matched,
+        expires_at: expiry.expires_at,
+        checked_at: verifiedAt || null,
+        document_type: _chironDocLabelForKind(kind),
+      });
+      continue;
+    }
+    if (numberCheck.hasNumber && !numberCheck.matched) {
+      consider({
+        status: "mismatch",
+        source: sourceLabel,
+        matched: false,
+        expires_at: expiry.expires_at,
+        checked_at: verifiedAt || null,
+        document_type: _chironDocLabelForKind(kind),
+      });
+      continue;
+    }
+    if (expiry.expired) {
+      consider({
+        status: "expired",
+        source: sourceLabel,
+        matched: numberCheck.matched,
+        expires_at: expiry.expires_at,
+        checked_at: verifiedAt || null,
+        document_type: _chironDocLabelForKind(kind),
+      });
+      continue;
+    }
+    if (classified === "verified" || boolHint === true) {
+      consider({
+        status: "verified",
+        source: sourceLabel,
+        matched: numberCheck.matched,
+        expires_at: expiry.expires_at,
+        checked_at: verifiedAt || null,
+        document_type: _chironDocLabelForKind(kind),
+      });
+      continue;
+    }
+    if (classified === "review_required" || boolHint === false) {
+      consider({
+        status: "review_required",
+        source: sourceLabel,
+        matched: numberCheck.matched,
+        expires_at: expiry.expires_at,
+        checked_at: verifiedAt || null,
+        document_type: _chironDocLabelForKind(kind),
+      });
+      continue;
+    }
+  }
+
+  // If no nested/list doc told us anything, fall back to record-level signals.
+  if (!best && recordLevelStatus) {
+    if (recordLevelStatus === "rejected") {
+      consider({
+        status: "rejected",
+        source: sourceLabel,
+        matched: recordLevelNumberMatch.matched,
+        expires_at: recordLevelExpiry.expires_at,
+        checked_at: recordLevelVerifiedAt || null,
+        document_type: _chironDocLabelForKind(kind),
+      });
+    } else if (recordLevelExpiry.expired) {
+      consider({
+        status: "expired",
+        source: sourceLabel,
+        matched: recordLevelNumberMatch.matched,
+        expires_at: recordLevelExpiry.expires_at,
+        checked_at: recordLevelVerifiedAt || null,
+        document_type: _chironDocLabelForKind(kind),
+      });
+    } else if (recordLevelNumberMatch.hasNumber && !recordLevelNumberMatch.matched) {
+      consider({
+        status: "mismatch",
+        source: sourceLabel,
+        matched: false,
+        expires_at: recordLevelExpiry.expires_at,
+        checked_at: recordLevelVerifiedAt || null,
+        document_type: _chironDocLabelForKind(kind),
+      });
+    } else if (recordLevelStatus === "verified") {
+      consider({
+        status: "verified",
+        source: sourceLabel,
+        matched: recordLevelNumberMatch.matched,
+        expires_at: recordLevelExpiry.expires_at,
+        checked_at: recordLevelVerifiedAt || null,
+        document_type: _chironDocLabelForKind(kind),
+      });
+    } else if (recordLevelStatus === "review_required") {
+      consider({
+        status: "review_required",
+        source: sourceLabel,
+        matched: recordLevelNumberMatch.matched,
+        expires_at: recordLevelExpiry.expires_at,
+        checked_at: recordLevelVerifiedAt || null,
+        document_type: _chironDocLabelForKind(kind),
+      });
+    }
+  }
+
+  if (!best && recordLevelBool === true) {
+    consider({
+      status: "verified",
+      source: sourceLabel,
+      matched: recordLevelNumberMatch.matched,
+      expires_at: recordLevelExpiry.expires_at,
+      checked_at: recordLevelVerifiedAt || null,
+      document_type: _chironDocLabelForKind(kind),
+    });
+  } else if (!best && recordLevelBool === false) {
+    consider({
+      status: "review_required",
+      source: sourceLabel,
+      matched: recordLevelNumberMatch.matched,
+      expires_at: recordLevelExpiry.expires_at,
+      checked_at: recordLevelVerifiedAt || null,
+      document_type: _chironDocLabelForKind(kind),
+    });
+  }
+
+  return best || empty;
+}
+
+function _chironInspectVehicleTaxiPlateException(vehicleRecord) {
+  if (!vehicleRecord || typeof vehicleRecord !== "object" || Array.isArray(vehicleRecord)) {
+    return { exception: false, verified: false };
+  }
+  const boolHit = CHIRON_VEHICLE_EXCEPTION_BOOL_KEYS.some((k) => vehicleRecord?.[k] === true);
+  const statusRaw = _chironPickFirstString(vehicleRecord, CHIRON_VEHICLE_EXCEPTION_STATUS_KEYS);
+  const statusClass = _chironClassifyDocStatusString(statusRaw);
+  if (!boolHit && !statusClass) return { exception: false, verified: false };
+  return { exception: true, verified: statusClass === "verified" };
+}
+
+function _chironDefaultDocSummary(kind) {
+  return {
+    status: "not_available",
+    source: "none",
+    matched: false,
+    expires_at: null,
+    checked_at: null,
+    document_type: _chironDocLabelForKind(kind),
+  };
+}
+
+function _chironNormalizeLicensePlateForDocMatch(value) {
+  return cleanText(value, 64).toUpperCase().replace(/[\s.\-]/g, "");
+}
+
+function _chironNormalizeRegistrationForDocMatch(value) {
+  return cleanText(value, 64).toUpperCase().replace(/[^0-9A-Z]/g, "");
+}
+
+function _chironNormalizeDriverPassForDocMatch(value) {
+  return cleanText(value, 96).toUpperCase().replace(/[\s.\-_]/g, "");
+}
+
+function _chironMergeWarnings(out, codes) {
+  for (const code of codes) {
+    if (code && !out.warnings.includes(code)) out.warnings.push(code);
+  }
+}
+
+function _chironMergeErrors(out, codes) {
+  for (const code of codes) {
+    if (code && !out.errors.includes(code)) out.errors.push(code);
+  }
+}
+
+function _chironApplyBusinessDocumentMarkers(out, context = {}) {
+  const record = context.record || null;
+  if (!record) return;
+  const docSummary = _chironInspectDocumentMarker(
+    record,
+    "business",
+    context.payloadValue || null,
+    _chironNormalizeRegistrationForDocMatch,
+  );
+  out.document = docSummary;
+  if (docSummary.status === "verified" && out.status === "format_valid") {
+    out.status = "document_verified";
+    if (!out.checks.includes("scoped_document_verified")) out.checks.push("scoped_document_verified");
+  }
+  if (docSummary.status === "review_required") {
+    _chironMergeWarnings(out, ["business_document_review_required"]);
+  }
+  if (docSummary.status === "expired") {
+    _chironMergeErrors(out, ["business_document_expired"]);
+  }
+  if (docSummary.status === "mismatch") {
+    _chironMergeErrors(out, ["business_document_mismatch"]);
+  }
+  if (docSummary.status === "rejected") {
+    _chironMergeErrors(out, ["business_document_rejected"]);
+  }
+}
+
+function _chironApplyVehicleDocumentMarkers(out, payloadValue, context = {}) {
+  const record = context.record || null;
+  if (!record) return;
+  const docSummary = _chironInspectDocumentMarker(
+    record,
+    "vehicle",
+    payloadValue || null,
+    _chironNormalizeLicensePlateForDocMatch,
+  );
+  out.document = docSummary;
+  if (docSummary.status === "verified" && (out.status === "format_valid" || out.status === "missing")) {
+    if (out.status === "format_valid") {
+      out.status = "document_verified";
+      if (!out.checks.includes("scoped_document_verified")) out.checks.push("scoped_document_verified");
+    }
+  }
+  if (docSummary.status === "review_required") {
+    _chironMergeWarnings(out, ["vehicle_document_review_required"]);
+  }
+  if (docSummary.status === "expired") {
+    _chironMergeErrors(out, ["vehicle_document_expired"]);
+  }
+  if (docSummary.status === "mismatch") {
+    _chironMergeErrors(out, ["vehicle_document_mismatch"]);
+  }
+  if (docSummary.status === "rejected") {
+    _chironMergeErrors(out, ["vehicle_document_rejected"]);
+  }
+  // If no document marker AND we already have a format-valid plate, hint at review.
+  if (docSummary.status === "not_available" && out.status === "format_valid") {
+    _chironMergeWarnings(out, ["vehicle_document_review_required"]);
+  }
+}
+
+function _chironApplyDriverDocumentMarkers(out, payloadValue, context = {}) {
+  const record = context.record || null;
+  if (!record) {
+    // Without a record we still hint at review for non-blocker driver pass states.
+    if (out.status === "self_declared" || out.status === "format_valid") {
+      _chironMergeWarnings(out, ["driver_pass_document_review_required"]);
+    }
+    return;
+  }
+  const docSummary = _chironInspectDocumentMarker(
+    record,
+    "driver_pass",
+    payloadValue || null,
+    _chironNormalizeDriverPassForDocMatch,
+  );
+  out.document = docSummary;
+  if (docSummary.status === "verified" && (out.status === "format_valid" || out.status === "self_declared")) {
+    out.status = "document_verified";
+    if (!out.checks.includes("scoped_document_verified")) out.checks.push("scoped_document_verified");
+  }
+  if (docSummary.status === "review_required") {
+    _chironMergeWarnings(out, ["driver_pass_document_review_required"]);
+  }
+  if (docSummary.status === "expired") {
+    _chironMergeErrors(out, ["driver_pass_document_expired"]);
+  }
+  if (docSummary.status === "mismatch") {
+    _chironMergeErrors(out, ["driver_pass_document_mismatch"]);
+  }
+  if (docSummary.status === "rejected") {
+    _chironMergeErrors(out, ["driver_pass_document_rejected"]);
+  }
+  if (
+    docSummary.status === "not_available" &&
+    (out.status === "self_declared" || out.status === "format_valid")
+  ) {
+    _chironMergeWarnings(out, ["driver_pass_document_review_required"]);
+  }
 }
 
 function _chironVerificationLookupStatusMap(hydrated) {
@@ -2676,43 +3342,92 @@ function _chironVerificationOverallStatus(perField) {
   );
   if (allVerified) return "verified";
   const anyFormatValid = values.some(
-    (v) => v.status === "format_valid" || v.status === "self_declared",
+    (v) =>
+      v.status === "format_valid" ||
+      v.status === "self_declared" ||
+      v.status === "document_verified",
   );
-  if (anyFormatValid) return "required_review";
-  return "format_valid";
+  // If any field requires document review or has only format-valid proof, prefer
+  // "required_review" over the looser "format_valid" overall label.
+  const reviewSignals = values.some(
+    (v) =>
+      v.status === "self_declared" ||
+      (Array.isArray(v.warnings) && v.warnings.some((w) => /review_required$/.test(w))) ||
+      (v.document && v.document.status === "review_required"),
+  );
+  if (reviewSignals) return "required_review";
+  if (anyFormatValid) return "format_valid";
+  return "required_review";
+}
+
+function _chironExtractFlemishContextFromRecord(record) {
+  if (!record || typeof record !== "object" || Array.isArray(record)) return {};
+  const country = cleanText(
+    record.country ?? record.country_code ?? record.countryCode,
+    16,
+  ).toUpperCase();
+  const region = cleanText(record.region ?? record.reporting_region ?? record.reportingRegion, 32);
+  const service = cleanText(record.service ?? record.service_type ?? record.serviceType, 32);
+  return {
+    country: country || null,
+    region: region || null,
+    service: service || null,
+  };
 }
 
 function buildChironOfficialVerification(payload, hydrated, context = {}) {
   const safePayload = payload && typeof payload === "object" ? payload : {};
   const safeHydrated = hydrated && typeof hydrated === "object" ? hydrated : {};
+
+  // Derive Flemish context across all available record sources (defensive merge).
+  const businessCtx = _chironExtractFlemishContextFromRecord(safeHydrated.business?.record);
+  const vehicleCtx = _chironExtractFlemishContextFromRecord(safeHydrated.vehicle?.record);
   const plateContext = {
-    country: context.country || safePayload.country || null,
-    region: context.region || null,
+    country:
+      context.country ||
+      safePayload.country ||
+      vehicleCtx.country ||
+      businessCtx.country ||
+      null,
+    region:
+      context.region || vehicleCtx.region || businessCtx.region || null,
     reporting_region: context.reporting_region || null,
-    service: context.service || null,
+    service: context.service || vehicleCtx.service || businessCtx.service || null,
   };
 
   const perField = {
     registration: verifyChironOfficialRegistration(safePayload.registratie, {
       source: safeHydrated.business?.source || "missing",
+      record: safeHydrated.business?.record || null,
+      payloadValue: safePayload.registratie || null,
     }),
     business_name: verifyChironOfficialBusinessName(safePayload.naam, {
       source: safeHydrated.business?.source || "missing",
+      record: safeHydrated.business?.record || null,
     }),
     license_plate: verifyChironOfficialLicensePlate(safePayload.kentekenplaat, {
       ...plateContext,
       source: safeHydrated.vehicle?.source || "missing",
+      record: safeHydrated.vehicle?.record || null,
     }),
     driver_pass: verifyChironOfficialDriverPass(safePayload.bestuurderspasnummer, {
       source: safeHydrated.driver?.source || "missing",
+      record: safeHydrated.driver?.record || null,
       documentVerification: context.driverDocumentVerification || null,
     }),
+  };
+
+  const documentChecks = {
+    business: perField.registration.document?.status || perField.business_name.document?.status || "not_available",
+    vehicle: perField.license_plate.document?.status || "not_available",
+    driver_pass: perField.driver_pass.document?.status || "not_available",
   };
 
   return {
     ...perField,
     overall_status: _chironVerificationOverallStatus(perField),
     registry_checks: _chironVerificationLookupStatusMap(safeHydrated),
+    document_checks: documentChecks,
   };
 }
 
@@ -2955,53 +3670,77 @@ function hydrateChironOfficialBusinessIdentity(event, blueprint, scope, context 
     blueprint && typeof blueprint === "object" && !Array.isArray(blueprint) ? blueprint : {};
   const cache = context.scopedHydrationCache || {};
 
+  const eventProfile = _chironOfficialNestedProfile(safeEvent);
+  const bpProfile = _chironOfficialBlueprintProfile(safeBlueprint);
+  const scopedProfile =
+    cache.businessProfile && typeof cache.businessProfile === "object" && !Array.isArray(cache.businessProfile)
+      ? cache.businessProfile
+      : null;
+
   let registratie = _chironResolveOfficialRegistratie(safeEvent);
   let naam = _chironResolveOfficialNaam(safeEvent);
   let source = registratie || naam ? "event" : "missing";
+  let record = registratie || naam ? eventProfile && Object.keys(eventProfile).length ? eventProfile : null : null;
   let businessProfileLookup = cache.businessProfileLookup || "not_attempted";
 
   if (!registratie || !naam) {
-    const bpProfile = _chironOfficialBlueprintProfile(safeBlueprint);
     if (bpProfile) {
       if (!registratie) {
         const candidate = _chironResolveOfficialRegistratie({}, bpProfile);
         if (candidate) {
           registratie = candidate;
-          if (source === "missing") source = "blueprint";
+          if (source === "missing") {
+            source = "blueprint";
+            record = bpProfile;
+          }
         }
       }
       if (!naam) {
         const candidate = _chironResolveOfficialNaam({}, bpProfile);
         if (candidate) {
           naam = candidate;
-          if (source === "missing") source = "blueprint";
+          if (source === "missing") {
+            source = "blueprint";
+            record = bpProfile;
+          }
         }
       }
     }
   }
 
-  if ((!registratie || !naam) && cache.businessProfile) {
+  if ((!registratie || !naam) && scopedProfile) {
     if (!registratie) {
-      const candidate = _chironNormalizeRegistratieFromProfile(cache.businessProfile);
+      const candidate = _chironNormalizeRegistratieFromProfile(scopedProfile);
       if (candidate) {
         registratie = candidate;
-        if (source === "missing") source = "scoped_business_profile";
+        if (source === "missing") {
+          source = "scoped_business_profile";
+          record = scopedProfile;
+        }
       }
     }
     if (!naam) {
-      const candidate = _chironNormalizeNaamFromProfile(cache.businessProfile);
+      const candidate = _chironNormalizeNaamFromProfile(scopedProfile);
       if (candidate) {
         naam = candidate;
-        if (source === "missing") source = "scoped_business_profile";
+        if (source === "missing") {
+          source = "scoped_business_profile";
+          record = scopedProfile;
+        }
       }
     }
   }
+
+  // Even when identity came from event, scoped business profile may carry
+  // trust/document markers we want to expose later.
+  if (!record && scopedProfile) record = scopedProfile;
 
   return {
     registratie: registratie || null,
     naam: naam || null,
     source,
     business_profile_lookup: businessProfileLookup,
+    record,
   };
 }
 
@@ -3032,26 +3771,38 @@ function hydrateChironOfficialVehicleIdentity(event, blueprint, context = {}) {
     ) ||
     cleanText(assignment.license_plate ?? assignment.licensePlate, 64);
   let source = plate ? "event" : "missing";
+  let record = plate && Object.keys(eventVehicle).length ? eventVehicle : null;
   let vehicleProfileLookup = cache.fleetLookup || "not_attempted";
 
+  const bpVehicle =
+    safeBlueprint.vehicle &&
+    typeof safeBlueprint.vehicle === "object" &&
+    !Array.isArray(safeBlueprint.vehicle)
+      ? safeBlueprint.vehicle
+      : {};
+
   if (!plate) {
-    const bpVehicle =
-      safeBlueprint.vehicle &&
-      typeof safeBlueprint.vehicle === "object" &&
-      !Array.isArray(safeBlueprint.vehicle)
-        ? safeBlueprint.vehicle
-        : {};
     plate = cleanText(bpVehicle.license_plate, 64);
-    if (plate) source = "blueprint";
+    if (plate) {
+      source = "blueprint";
+      record = bpVehicle;
+    }
   }
 
-  if (!plate && Array.isArray(cache.fleetVehicles) && cache.fleetVehicles.length) {
+  let fleetRecord = null;
+  if (Array.isArray(cache.fleetVehicles) && cache.fleetVehicles.length) {
     const vehicleId = _chironResolveAssignedVehicleId(safeEvent, safeBlueprint);
     const fleetMatch = _chironResolveVehiclePlateFromFleet(vehicleId, cache.fleetVehicles);
     if (fleetMatch.plate) {
-      plate = fleetMatch.plate;
-      source = "scoped_vehicle";
-      vehicleProfileLookup = "hit";
+      fleetRecord = _chironLookupFleetVehicleById(vehicleId, cache.fleetVehicles);
+      if (!plate) {
+        plate = fleetMatch.plate;
+        source = "scoped_vehicle";
+        record = fleetRecord;
+        vehicleProfileLookup = "hit";
+      } else {
+        vehicleProfileLookup = "hit";
+      }
     } else if (fleetMatch.lookup === "ambiguous") {
       vehicleProfileLookup = "ambiguous";
     } else if (cache.fleetLookup === "hit") {
@@ -3059,10 +3810,14 @@ function hydrateChironOfficialVehicleIdentity(event, blueprint, context = {}) {
     }
   }
 
+  // Even if plate came from event, expose scoped fleet record for trust markers.
+  if (!record && fleetRecord) record = fleetRecord;
+
   return {
     kentekenplaat: plate || null,
     source,
     vehicle_profile_lookup: vehicleProfileLookup,
+    record,
   };
 }
 
@@ -3090,40 +3845,61 @@ function hydrateChironOfficialDriverIdentity(event, blueprint, context = {}) {
     96,
   );
   let source = pass ? "event" : "missing";
+  let record = pass && Object.keys(eventDriver).length ? eventDriver : null;
   let driverProfileLookup = cache.driverIndexLookup || "not_attempted";
 
+  const bpDriver =
+    safeBlueprint.driver &&
+    typeof safeBlueprint.driver === "object" &&
+    !Array.isArray(safeBlueprint.driver)
+      ? safeBlueprint.driver
+      : {};
+
   if (!pass) {
-    const bpDriver =
-      safeBlueprint.driver &&
-      typeof safeBlueprint.driver === "object" &&
-      !Array.isArray(safeBlueprint.driver)
-        ? safeBlueprint.driver
-        : {};
     pass =
       cleanText(bpDriver.badge_id, 96) ||
       cleanText(bpDriver.license_id, 96) ||
       cleanText(bpDriver.driver_pass_number, 96) ||
       cleanText(bpDriver.permit_number, 96) ||
       cleanText(bpDriver.chiron_driver_pass, 96);
-    if (pass) source = "blueprint";
+    if (pass) {
+      source = "blueprint";
+      record = bpDriver;
+    }
   }
 
-  if (!pass && cache.driverIndex && typeof cache.driverIndex === "object") {
+  let driverIndexEntry = null;
+  if (cache.driverIndex && typeof cache.driverIndex === "object") {
     const driverId = _chironResolveAssignedDriverId(safeEvent, safeBlueprint);
+    if (driverId) {
+      const entry = cache.driverIndex[driverId];
+      if (entry && typeof entry === "object" && !Array.isArray(entry)) {
+        driverIndexEntry = entry;
+      }
+    }
     const indexMatch = _chironResolveDriverPassFromIndex(driverId, cache.driverIndex);
     if (indexMatch.pass) {
-      pass = indexMatch.pass;
-      source = "scoped_driver";
-      driverProfileLookup = "hit";
+      if (!pass) {
+        pass = indexMatch.pass;
+        source = "scoped_driver";
+        record = driverIndexEntry || record;
+        driverProfileLookup = "hit";
+      } else {
+        driverProfileLookup = "hit";
+      }
     } else if (cache.driverIndexLookup === "hit") {
       driverProfileLookup = driverId ? "miss" : cache.driverIndexLookup;
     }
   }
 
+  // Even if pass came from event, expose scoped driver record for trust markers.
+  if (!record && driverIndexEntry) record = driverIndexEntry;
+
   return {
     bestuurderspasnummer: pass || null,
     source,
     driver_profile_lookup: driverProfileLookup,
+    record,
   };
 }
 
