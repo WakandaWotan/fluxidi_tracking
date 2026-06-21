@@ -401,6 +401,22 @@ function parseIncludeOfficialDraftFlag(body, url) {
   return false;
 }
 
+// Chiron-6B-3C: optional readiness-report flag. Accepts body or query string,
+// short and long aliases.
+function parseIncludeReadinessReportFlag(body, url) {
+  const queryRaw =
+    url?.searchParams?.get("include_readiness_report") ??
+    url?.searchParams?.get("include_chiron_readiness_report");
+  if (String(queryRaw ?? "").trim().toLowerCase() === "true") return true;
+  if (
+    body?.include_readiness_report === true ||
+    body?.include_chiron_readiness_report === true
+  ) {
+    return true;
+  }
+  return false;
+}
+
 function parseChironExportScopeFromBody(body) {
   if (!body || typeof body !== "object" || Array.isArray(body)) {
     return { error: "Invalid JSON body" };
@@ -4358,6 +4374,553 @@ async function _chironCollectScopedComplianceEventsForExport(
   };
 }
 
+// === Chiron-6B-3C: backend readiness-report builder ===
+
+const CHIRON_READINESS_REPORT_SCHEMA_VERSION = "chiron_readiness_report_v1";
+const CHIRON_READINESS_TOP_N = 10;
+const CHIRON_READINESS_SAMPLE_ISSUE_CAP = 5;
+
+const CHIRON_READINESS_FIELD_GROUPS = [
+  {
+    group: "business_identity",
+    fields: ["registratie", "naam"],
+    verificationKeys: ["registration", "business_name"],
+    documentKey: "business",
+    blockerCodes: [
+      "placeholder_registration",
+      "placeholder_business_name",
+      "invalid_registration_format",
+      "invalid_business_name",
+      "business_document_expired",
+      "business_document_mismatch",
+      "business_document_rejected",
+    ],
+    warningCodes: ["business_document_review_required"],
+  },
+  {
+    group: "vehicle_identity",
+    fields: ["kentekenplaat"],
+    verificationKeys: ["license_plate"],
+    documentKey: "vehicle",
+    blockerCodes: [
+      "placeholder_license_plate",
+      "invalid_license_plate_format",
+      "invalid_flemish_taxi_plate",
+      "vehicle_document_expired",
+      "vehicle_document_mismatch",
+      "vehicle_document_rejected",
+    ],
+    warningCodes: [
+      "vehicle_document_review_required",
+      "taxi_plate_pattern_not_confirmed",
+      "taxi_plate_exception_requires_review",
+    ],
+  },
+  {
+    group: "driver_identity",
+    fields: ["bestuurderspasnummer"],
+    verificationKeys: ["driver_pass"],
+    documentKey: "driver_pass",
+    blockerCodes: [
+      "placeholder_driver_pass",
+      "invalid_driver_pass_format",
+      "driver_pass_document_expired",
+      "driver_pass_document_mismatch",
+      "driver_pass_document_rejected",
+    ],
+    warningCodes: ["driver_pass_document_review_required"],
+  },
+  {
+    group: "ride_geometry",
+    fields: [
+      "vertrekpunt_lengtegraad",
+      "vertrekpunt_breedtegraad",
+      "aankomstpunt_lengtegraad",
+      "aankomstpunt_breedtegraad",
+      "afstand",
+    ],
+    verificationKeys: [],
+    documentKey: null,
+    blockerCodes: ["invalid_zero_coordinate_pair"],
+    warningCodes: [],
+  },
+  {
+    group: "sequence",
+    fields: ["status"],
+    verificationKeys: [],
+    documentKey: null,
+    blockerCodes: [],
+    warningCodes: ["missing_prior_vertrek_or_reservatie_in_batch"],
+  },
+  {
+    group: "registry",
+    fields: [],
+    verificationKeys: [],
+    documentKey: null,
+    blockerCodes: [],
+    warningCodes: [],
+  },
+  {
+    group: "documents",
+    fields: [],
+    verificationKeys: [],
+    documentKey: null,
+    blockerCodes: [],
+    warningCodes: [],
+  },
+];
+
+const CHIRON_READINESS_NEXT_ACTIONS = {
+  placeholder_registration:
+    "Vervang het test-/demo-ondernemingsnummer door het officiële KBO-nummer van de exploitant.",
+  invalid_registration_format:
+    "Corrigeer het ondernemingsnummer: het moet een geldig Belgisch KBO-nummer zijn (10 cijfers, beginnend met 0 of 1).",
+  placeholder_business_name:
+    "Vervang de test-/demo-bedrijfsnaam door de officiële bedrijfsnaam.",
+  invalid_business_name:
+    "Vul een geldige officiële bedrijfsnaam in.",
+  placeholder_license_plate:
+    "Vervang het demo-kenteken door het echte nummerplaat van het voertuig.",
+  invalid_license_plate_format:
+    "Corrigeer het kenteken: gebruik het officiële plaatformaat.",
+  invalid_flemish_taxi_plate:
+    "Controleer of dit voertuig een geldig Vlaams taxi/T-X kenteken of een goedgekeurde uitzondering heeft.",
+  taxi_plate_pattern_not_confirmed:
+    "Bevestig of dit voertuig in dit regime een T-X taxi-kenteken hoort te hebben of leg de uitzondering vast.",
+  taxi_plate_exception_requires_review:
+    "Laat het uitzonderingsdocument voor dit kenteken nakijken en goedkeuren.",
+  placeholder_driver_pass:
+    "Vul het officiële bestuurderspasnummer in en laat het document controleren.",
+  invalid_driver_pass_format:
+    "Corrigeer het bestuurderspasnummer: gebruik het officiële formaat.",
+  invalid_zero_coordinate_pair:
+    "Controleer de GPS/ritregistratie: vertrek- of aankomstcoördinaten zijn 0/0.",
+  vertrekpunt_lengtegraad:
+    "Controleer de GPS-registratie: vertrekpunt-lengtegraad ontbreekt of is ongeldig.",
+  vertrekpunt_breedtegraad:
+    "Controleer de GPS-registratie: vertrekpunt-breedtegraad ontbreekt of is ongeldig.",
+  aankomstpunt_lengtegraad:
+    "Controleer de GPS-registratie: aankomstpunt-lengtegraad ontbreekt of is ongeldig.",
+  aankomstpunt_breedtegraad:
+    "Controleer de GPS-registratie: aankomstpunt-breedtegraad ontbreekt of is ongeldig.",
+  afstand:
+    "Controleer de ritafstand: aankomstritten moeten een afstand groter dan 0 hebben.",
+  kostprijs:
+    "Controleer de ritprijs: de officiële Chiron-prijs ontbreekt.",
+  vertrektijdstip:
+    "Controleer de vertrek-tijdstempel van de rit.",
+  aankomsttijdstip:
+    "Controleer de aankomst-tijdstempel van de rit.",
+  ritnummer:
+    "Controleer of de rit een unieke ritreferentie heeft.",
+  broncreatiedatum:
+    "Controleer de aanmaakdatum van het bronregistratie-event.",
+  driver_pass_document_review_required:
+    "Upload of controleer het bestuurderspasdocument.",
+  driver_pass_document_expired:
+    "Het bestuurderspasdocument is verlopen — vernieuw het document.",
+  driver_pass_document_mismatch:
+    "Het pasnummer in het bestuurdersdocument komt niet overeen met de geregistreerde rit.",
+  driver_pass_document_rejected:
+    "Het bestuurderspasdocument is afgewezen — verifieer en upload een geldig document.",
+  vehicle_document_review_required:
+    "Upload of controleer voertuig-/taxivergunningsdocumenten.",
+  vehicle_document_expired:
+    "Het voertuig-/taxivergunningsdocument is verlopen — vernieuw het document.",
+  vehicle_document_mismatch:
+    "Het kenteken op het voertuigdocument komt niet overeen met de geregistreerde rit.",
+  vehicle_document_rejected:
+    "Het voertuig-/taxivergunningsdocument is afgewezen — verifieer en upload een geldig document.",
+  business_document_review_required:
+    "Controleer ondernemingsdocumenten of KBO-bewijs.",
+  business_document_expired:
+    "Het ondernemingsdocument is verlopen — vernieuw het document.",
+  business_document_mismatch:
+    "Het nummer op het ondernemingsdocument komt niet overeen met de geregistreerde rit.",
+  business_document_rejected:
+    "Het ondernemingsdocument is afgewezen — verifieer en upload een geldig document.",
+  missing_prior_vertrek_or_reservatie_in_batch:
+    "Controleer de volgorde: reservatie en vertrek moeten vóór aankomst beschikbaar zijn.",
+};
+
+function _chironReadinessNextActionForIssue(code) {
+  if (!code) return null;
+  if (CHIRON_READINESS_NEXT_ACTIONS[code]) return CHIRON_READINESS_NEXT_ACTIONS[code];
+  if (/^placeholder_/.test(code)) {
+    return "Vervang test-/demo-data door echte officiële waarde.";
+  }
+  if (/_document_review_required$/.test(code)) {
+    return "Upload of controleer het ondersteunende document.";
+  }
+  if (/_document_expired$/.test(code)) {
+    return "Het document is verlopen — vernieuw het document.";
+  }
+  if (/_document_mismatch$/.test(code)) {
+    return "Document-nummer komt niet overeen met de registratie — verifieer.";
+  }
+  if (/_document_rejected$/.test(code)) {
+    return "Document is afgewezen — verifieer en upload een geldig document.";
+  }
+  return "Controleer dit veld voor officiële Chiron-rapportering.";
+}
+
+function _chironReadinessIsRideGeometryFieldCode(code) {
+  return [
+    "vertrekpunt_lengtegraad",
+    "vertrekpunt_breedtegraad",
+    "aankomstpunt_lengtegraad",
+    "aankomstpunt_breedtegraad",
+    "afstand",
+    "kostprijs",
+    "vertrektijdstip",
+    "aankomsttijdstip",
+    "ritnummer",
+    "broncreatiedatum",
+  ].includes(code);
+}
+
+function _chironReadinessGroupForIssue(code) {
+  if (!code) return null;
+  for (const grp of CHIRON_READINESS_FIELD_GROUPS) {
+    if (grp.blockerCodes.includes(code) || grp.warningCodes.includes(code)) return grp.group;
+  }
+  if (_chironReadinessIsRideGeometryFieldCode(code)) return "ride_geometry";
+  return null;
+}
+
+function _chironClassifyReadinessBucket(draft) {
+  if (!draft || typeof draft !== "object") return "not_applicable";
+  if (draft.category === "not_chiron_ride_status") return "not_applicable";
+  const validation = draft.validation || {};
+  const verification = draft.verification || {};
+  if (validation.status === "blocker") return "blocked";
+  const warnings = Array.isArray(validation.warnings) ? validation.warnings : [];
+  const sequenceUnsafe = validation.sequence_safe === false;
+  const overall = cleanText(verification.overall_status, 32);
+  if (
+    warnings.length > 0 ||
+    sequenceUnsafe ||
+    overall === "required_review" ||
+    overall === "missing" ||
+    overall === "blocked"
+  ) {
+    return "required_review";
+  }
+  if (overall === "verified" && validation.status === "ready") {
+    return "ready_for_chiron_test";
+  }
+  return "format_valid";
+}
+
+function _chironReadinessOverallStatus(summary) {
+  if (!summary) return "not_applicable";
+  if (summary.blocked_count > 0) return "blocked";
+  if (summary.review_required_count > 0) return "required_review";
+  if (summary.format_valid_count > 0 && summary.official_ready_count === 0) return "format_valid";
+  if (summary.official_ready_count > 0 && summary.blocked_count === 0) return "ready_for_chiron_test";
+  return "not_applicable";
+}
+
+function _chironReadinessEmptyAccumulator() {
+  const acc = {
+    bucketCounts: {
+      blocked: 0,
+      required_review: 0,
+      format_valid: 0,
+      ready_for_chiron_test: 0,
+      not_applicable: 0,
+    },
+    officialRideCount: 0,
+    sequenceUnsafeCount: 0,
+    blockerCounts: new Map(),
+    warningCounts: new Map(),
+    sourceCounts: {},
+    verificationStatusCounts: {},
+    documentStatusCounts: {},
+    sampleIssues: [],
+    seenSampleCodes: new Set(),
+  };
+  for (const grp of CHIRON_READINESS_FIELD_GROUPS) {
+    acc.sourceCounts[grp.group] = {};
+    acc.verificationStatusCounts[grp.group] = {};
+    if (grp.documentKey) {
+      acc.documentStatusCounts[grp.group] = {};
+    }
+  }
+  return acc;
+}
+
+function _chironReadinessIncCount(map, key) {
+  if (!key) return;
+  map.set(key, (map.get(key) || 0) + 1);
+}
+
+function _chironReadinessIncObj(obj, scope, key) {
+  if (!scope || !key) return;
+  if (!obj[scope]) obj[scope] = {};
+  obj[scope][key] = (obj[scope][key] || 0) + 1;
+}
+
+function _chironReadinessAccumulateDraft(acc, payload) {
+  const draft = payload?.chiron_official_draft;
+  if (!draft) return;
+  const bucket = _chironClassifyReadinessBucket(draft);
+  acc.bucketCounts[bucket] = (acc.bucketCounts[bucket] || 0) + 1;
+
+  if (bucket === "not_applicable") return;
+  acc.officialRideCount += 1;
+
+  const validation = draft.validation || {};
+  const verification = draft.verification || {};
+  const documentChecks = verification.document_checks || {};
+
+  // Per-group: source, verification status, document status.
+  for (const grp of CHIRON_READINESS_FIELD_GROUPS) {
+    for (const vkey of grp.verificationKeys) {
+      const field = verification?.[vkey];
+      if (field && typeof field === "object") {
+        _chironReadinessIncObj(
+          acc.sourceCounts,
+          grp.group,
+          cleanText(field.source, 64) || "unknown",
+        );
+        _chironReadinessIncObj(
+          acc.verificationStatusCounts,
+          grp.group,
+          cleanText(field.status, 64) || "unknown",
+        );
+      }
+    }
+    if (grp.documentKey) {
+      const docStatus = cleanText(documentChecks?.[grp.documentKey], 64) || "not_available";
+      _chironReadinessIncObj(acc.documentStatusCounts, grp.group, docStatus);
+    }
+  }
+
+  // Sequence-safe accounting.
+  if (validation.sequence_safe === false) acc.sequenceUnsafeCount += 1;
+
+  // Blocker and missing codes contribute to blockerCounts.
+  const errors = Array.isArray(validation.errors) ? validation.errors : [];
+  for (const code of errors) {
+    _chironReadinessIncCount(acc.blockerCounts, code);
+    _chironMaybeAddSampleIssue(acc, payload, draft, code);
+  }
+  const missing = Array.isArray(validation.missing) ? validation.missing : [];
+  for (const code of missing) {
+    _chironReadinessIncCount(acc.blockerCounts, code);
+    _chironMaybeAddSampleIssue(acc, payload, draft, code);
+  }
+  const warnings = Array.isArray(validation.warnings) ? validation.warnings : [];
+  for (const code of warnings) {
+    _chironReadinessIncCount(acc.warningCounts, code);
+  }
+}
+
+function _chironMaybeAddSampleIssue(acc, payload, draft, code) {
+  if (!code || acc.sampleIssues.length >= CHIRON_READINESS_SAMPLE_ISSUE_CAP) return;
+  if (acc.seenSampleCodes.has(code)) return;
+  acc.sampleIssues.push({
+    issue: code,
+    booking_id: cleanText(payload?.booking_id, 128) || null,
+    event_type: cleanText(payload?.event_type, 64) || null,
+    official_status: cleanText(draft?.status, 32) || null,
+  });
+  acc.seenSampleCodes.add(code);
+}
+
+function _chironReadinessGroupSnapshot(acc, grp) {
+  const blockers = [];
+  const warnings = [];
+  const seenBlockers = new Set();
+  const seenWarnings = new Set();
+  for (const code of grp.blockerCodes) {
+    const count = acc.blockerCounts.get(code);
+    if (count && !seenBlockers.has(code)) {
+      blockers.push({
+        code,
+        count,
+        next_action: _chironReadinessNextActionForIssue(code),
+      });
+      seenBlockers.add(code);
+    }
+  }
+  if (grp.group === "ride_geometry") {
+    for (const fieldCode of grp.fields) {
+      const count = acc.blockerCounts.get(fieldCode);
+      if (count && !seenBlockers.has(fieldCode)) {
+        blockers.push({
+          code: fieldCode,
+          count,
+          next_action: _chironReadinessNextActionForIssue(fieldCode),
+        });
+        seenBlockers.add(fieldCode);
+      }
+    }
+  }
+  for (const code of grp.warningCodes) {
+    const count = acc.warningCounts.get(code);
+    if (count && !seenWarnings.has(code)) {
+      warnings.push({
+        code,
+        count,
+        next_action: _chironReadinessNextActionForIssue(code),
+      });
+      seenWarnings.add(code);
+    }
+  }
+
+  let status = "format_valid";
+  if (grp.group === "registry") {
+    status = "missing";
+  } else if (blockers.length > 0) {
+    status = "blocked";
+  } else if (warnings.length > 0) {
+    status = "required_review";
+  } else if (grp.group === "documents") {
+    const docCounts = acc.documentStatusCounts || {};
+    const allDocStatuses = new Set();
+    for (const groupKey of Object.keys(docCounts)) {
+      for (const docStatus of Object.keys(docCounts[groupKey] || {})) {
+        allDocStatuses.add(docStatus);
+      }
+    }
+    if (
+      allDocStatuses.has("rejected") ||
+      allDocStatuses.has("expired") ||
+      allDocStatuses.has("mismatch")
+    ) {
+      status = "blocked";
+    } else if (allDocStatuses.has("review_required")) {
+      status = "required_review";
+    } else if (allDocStatuses.size === 0 || (allDocStatuses.size === 1 && allDocStatuses.has("not_available"))) {
+      status = "missing";
+    } else if (allDocStatuses.has("not_available")) {
+      // mix of verified + not_available
+      status = "required_review";
+    } else if (allDocStatuses.has("verified") && allDocStatuses.size === 1) {
+      status = "verified";
+    } else {
+      status = "required_review";
+    }
+  } else if (grp.group === "sequence") {
+    status = acc.sequenceUnsafeCount > 0 ? "required_review" : "format_valid";
+  } else if (grp.verificationKeys.length > 0) {
+    // For business/vehicle/driver identity groups: upgrade to "verified" only when
+    // every observed verification status is one of the trusted verified labels.
+    const statusBag = acc.verificationStatusCounts[grp.group] || {};
+    const keys = Object.keys(statusBag);
+    const trusted = new Set([
+      "document_verified",
+      "registry_verified",
+      "chiron_test_verified",
+    ]);
+    if (keys.length > 0 && keys.every((k) => trusted.has(k))) {
+      status = "verified";
+    }
+  }
+
+  const nextActions = [];
+  for (const b of blockers) if (b.next_action && !nextActions.includes(b.next_action)) nextActions.push(b.next_action);
+  for (const w of warnings) if (w.next_action && !nextActions.includes(w.next_action)) nextActions.push(w.next_action);
+
+  return {
+    group: grp.group,
+    status,
+    fields: [...grp.fields],
+    source_counts: acc.sourceCounts[grp.group] || {},
+    verification_status_counts: acc.verificationStatusCounts[grp.group] || {},
+    document_status_counts: grp.documentKey ? acc.documentStatusCounts[grp.group] || {} : {},
+    blockers,
+    warnings,
+    next_actions: nextActions,
+  };
+}
+
+function _chironReadinessTopIssues(map, severity, limit) {
+  const entries = [];
+  for (const [code, count] of map.entries()) {
+    entries.push({
+      code,
+      count,
+      severity,
+      field_group: _chironReadinessGroupForIssue(code),
+      next_action: _chironReadinessNextActionForIssue(code),
+    });
+  }
+  entries.sort((a, b) => b.count - a.count || a.code.localeCompare(b.code));
+  return entries.slice(0, limit);
+}
+
+function buildChironReadinessReport(
+  tenantId,
+  companyId,
+  payloads,
+  scannedCount,
+  processedCount,
+) {
+  const acc = _chironReadinessEmptyAccumulator();
+  for (const payload of payloads) {
+    _chironReadinessAccumulateDraft(acc, payload);
+  }
+
+  const summary = {
+    official_ready_count: acc.bucketCounts.ready_for_chiron_test,
+    blocked_count: acc.bucketCounts.blocked,
+    review_required_count: acc.bucketCounts.required_review,
+    format_valid_count: acc.bucketCounts.format_valid,
+    not_applicable_count: acc.bucketCounts.not_applicable,
+    sequence_unsafe_count: acc.sequenceUnsafeCount,
+  };
+
+  const fieldGroups = CHIRON_READINESS_FIELD_GROUPS.map((grp) =>
+    _chironReadinessGroupSnapshot(acc, grp),
+  );
+
+  const topBlockers = _chironReadinessTopIssues(acc.blockerCounts, "blocker", CHIRON_READINESS_TOP_N);
+  const topWarnings = _chironReadinessTopIssues(acc.warningCounts, "warning", CHIRON_READINESS_TOP_N);
+
+  // Aggregate next-actions in priority order (blocker first).
+  const nextActions = [];
+  for (const issue of topBlockers) {
+    if (issue.next_action && !nextActions.includes(issue.next_action)) {
+      nextActions.push(issue.next_action);
+    }
+  }
+  for (const issue of topWarnings) {
+    if (issue.next_action && !nextActions.includes(issue.next_action)) {
+      nextActions.push(issue.next_action);
+    }
+  }
+
+  const overallStatus = _chironReadinessOverallStatus(summary);
+
+  return {
+    schema_version: CHIRON_READINESS_REPORT_SCHEMA_VERSION,
+    generated_at_utc: new Date().toISOString(),
+    tenant_id: tenantId || null,
+    company_id: companyId || null,
+    dry_run: true,
+    official_submission_performed: false,
+    registry_checks_performed: false,
+    document_registry_checks_performed: false,
+    overall_status: overallStatus,
+    processed_count: processedCount,
+    scanned_count: scannedCount,
+    summary,
+    field_groups: fieldGroups,
+    top_blockers: topBlockers,
+    top_warnings: topWarnings,
+    next_actions: nextActions,
+    sample_issues: acc.sampleIssues,
+    policy_notes: [
+      "Geen officiële Chiron-submit uitgevoerd.",
+      "KBO/VIES/registry checks niet uitgevoerd.",
+      "Velden met document_verified zijn alleen gebaseerd op expliciete interne trust-markers.",
+    ],
+  };
+}
+
 async function _chironBuildExportDryRunPayloadResponse(
   tenantId,
   companyId,
@@ -4366,32 +4929,61 @@ async function _chironBuildExportDryRunPayloadResponse(
   includeRaw,
   includeOfficialDraft = false,
   env = null,
+  options = {},
 ) {
+  const includeReadinessReport = options?.includeReadinessReport === true;
+  // Internally enable official-draft generation when readiness report is requested,
+  // so we can classify every payload without expanding the visible response shape.
+  const effectiveIncludeOfficialDraft = includeOfficialDraft || includeReadinessReport;
+
   const scope = { tenant_id: tenantId, company_id: companyId };
   const scopedHydrationCache = await _chironLoadScopedHydrationCache(
     env,
     scope,
-    includeOfficialDraft,
+    effectiveIncludeOfficialDraft,
   );
-  const batchRitStatuses = includeOfficialDraft
+  const batchRitStatuses = effectiveIncludeOfficialDraft
     ? _chironBuildBatchRitStatusIndex(collectResult.limitedEntries)
     : null;
   const payloads = collectResult.limitedEntries.map((entry) =>
     buildChironExportPayload(entry.event, entry.key, {
       includeRaw,
-      includeOfficialDraft,
+      includeOfficialDraft: effectiveIncludeOfficialDraft,
       batchRitStatuses,
       scopedHydrationCache,
     }),
   );
   const exportableCount = payloads.filter((payload) => payload.exportable).length;
+
+  // Build readiness report from the full payload set BEFORE stripping any drafts.
+  const readinessReport = includeReadinessReport
+    ? buildChironReadinessReport(
+        tenantId,
+        companyId,
+        payloads,
+        collectResult.scannedCount,
+        payloads.length,
+      )
+    : null;
+
+  // If the official draft was only enabled internally for the report, strip it from
+  // the visible payloads so existing dry-run clients see no shape change.
+  const visiblePayloads =
+    effectiveIncludeOfficialDraft && !includeOfficialDraft
+      ? payloads.map((p) => {
+          const { chiron_official_draft, ...rest } = p;
+          void chiron_official_draft;
+          return rest;
+        })
+      : payloads;
+
   const sampleCandidates = [
-    ...payloads.filter((payload) => payload.exportable),
-    ...payloads.filter((payload) => !payload.exportable),
+    ...visiblePayloads.filter((payload) => payload.exportable),
+    ...visiblePayloads.filter((payload) => !payload.exportable),
   ];
   const samplePayloads = sampleCandidates.slice(0, CHIRON_EXPORT_MAX_SAMPLE_PAYLOADS);
 
-  return {
+  const response = {
     ok: true,
     dry_run: true,
     tenant_id: tenantId,
@@ -4405,6 +4997,8 @@ async function _chironBuildExportDryRunPayloadResponse(
     has_more_candidates: collectResult.hasMoreCandidates,
     sample_payloads: samplePayloads,
   };
+  if (readinessReport) response.readiness_report = readinessReport;
+  return response;
 }
 
 async function _chironReadExportStatus(env, statusKey) {
@@ -4540,6 +5134,7 @@ async function handleChironExportDryRun(request, url, env, origin) {
 
   const includeRaw = body.include_raw === true;
   const includeOfficialDraft = parseIncludeOfficialDraftFlag(body, url);
+  const includeReadinessReport = parseIncludeReadinessReportFlag(body, url);
   const { tenantId, companyId, tenantSegment, companySegment } = scope;
 
   const collectResult = await _chironCollectScopedComplianceEventsForExport(
@@ -4565,6 +5160,7 @@ async function handleChironExportDryRun(request, url, env, origin) {
     includeRaw,
     includeOfficialDraft,
     env,
+    { includeReadinessReport },
   );
 
   console.log(
