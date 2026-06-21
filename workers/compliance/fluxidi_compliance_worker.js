@@ -2002,6 +2002,30 @@ function normalizeChironCoordinate(value, kind) {
   return num;
 }
 
+// Chiron-6B-1: stricter readiness validation for official ride payloads.
+function isValidChironCoordinate(value, kind) {
+  if (value === null || value === undefined || value === "") return false;
+  const num = Number(value);
+  if (!Number.isFinite(num)) return false;
+  if (kind === "lat" && (num < -90 || num > 90)) return false;
+  if (kind === "lng" && (num < -180 || num > 180)) return false;
+  return true;
+}
+
+function isInvalidZeroCoordinatePair(lng, lat) {
+  const lngNum = Number(lng);
+  const latNum = Number(lat);
+  if (!Number.isFinite(lngNum) || !Number.isFinite(latNum)) return false;
+  return Math.abs(lngNum) < 1e-9 && Math.abs(latNum) < 1e-9;
+}
+
+function isValidChironDistance(value) {
+  if (value === null || value === undefined || value === "") return false;
+  const num = Number(value);
+  if (!Number.isFinite(num)) return false;
+  return num > 0;
+}
+
 function _chironOfficialNestedProfile(event) {
   const profile =
     event?.business_profile ??
@@ -2070,20 +2094,6 @@ function _chironResolveOfficialNaam(event) {
       256,
     ) || null
   );
-}
-
-function _chironResolveOfficialBestuurderspasnummer(blueprint) {
-  const driver = blueprint?.driver || {};
-  return (
-    cleanText(driver.badge_id, 96) ||
-    cleanText(driver.license_id, 96) ||
-    null
-  );
-}
-
-function _chironResolveOfficialKentekenplaat(blueprint) {
-  const vehicle = blueprint?.vehicle || {};
-  return cleanText(vehicle.license_plate, 64) || null;
 }
 
 function _chironResolveOfficialVertrekTijdstip(event, blueprint) {
@@ -2204,7 +2214,178 @@ function normalizeChironOfficialStatusFromEvent(event, blueprint) {
   };
 }
 
-function buildChironOfficialPayloadDraft(event, blueprint, scope, officialStatus) {
+// === Chiron-6B-1: additive identity hydration from event/blueprint ===
+
+function _chironOfficialBlueprintProfile(blueprint) {
+  const candidates = [
+    blueprint?.business,
+    blueprint?.company,
+    blueprint?.tenant_profile,
+    blueprint?.tenantProfile,
+    blueprint?.company_profile,
+    blueprint?.companyProfile,
+    blueprint?.business_profile,
+    blueprint?.businessProfile,
+  ];
+  for (const candidate of candidates) {
+    if (candidate && typeof candidate === "object" && !Array.isArray(candidate)) {
+      return candidate;
+    }
+  }
+  return null;
+}
+
+function hydrateChironOfficialBusinessIdentity(event, blueprint, scope, context = {}) {
+  const safeEvent = event && typeof event === "object" && !Array.isArray(event) ? event : {};
+  const safeBlueprint =
+    blueprint && typeof blueprint === "object" && !Array.isArray(blueprint) ? blueprint : {};
+
+  // 1. Event-level (includes nested business/company profile on the event).
+  let registratie = _chironResolveOfficialRegistratie(safeEvent);
+  let naam = _chironResolveOfficialNaam(safeEvent);
+  let source = registratie || naam ? "event" : "missing";
+
+  // 2. Blueprint-level profile fallback, only if present in already-projected data.
+  if (!registratie || !naam) {
+    const bpProfile = _chironOfficialBlueprintProfile(safeBlueprint);
+    if (bpProfile) {
+      if (!registratie) {
+        const candidate = normalizeChironKboRegistration(
+          _chironOfficialPickProfileField(
+            {},
+            bpProfile,
+            "kbo_number",
+            "kboNumber",
+            "company_registration_number",
+            "companyRegistrationNumber",
+            "enterprise_number",
+            "enterpriseNumber",
+            "registratie",
+          ),
+        );
+        if (candidate) {
+          registratie = candidate;
+          if (source === "missing") source = "blueprint";
+        }
+      }
+      if (!naam) {
+        const candidate =
+          cleanText(
+            _chironOfficialPickProfileField(
+              {},
+              bpProfile,
+              "legal_name",
+              "legalName",
+              "company_name",
+              "companyName",
+              "naam",
+            ),
+            256,
+          ) || null;
+        if (candidate) {
+          naam = candidate;
+          if (source === "missing") source = "blueprint";
+        }
+      }
+    }
+  }
+
+  return {
+    registratie: registratie || null,
+    naam: naam || null,
+    source,
+  };
+}
+
+function hydrateChironOfficialVehicleIdentity(event, blueprint, context = {}) {
+  const safeEvent = event && typeof event === "object" && !Array.isArray(event) ? event : {};
+  const safeBlueprint =
+    blueprint && typeof blueprint === "object" && !Array.isArray(blueprint) ? blueprint : {};
+  const eventVehicle =
+    safeEvent.vehicle && typeof safeEvent.vehicle === "object" && !Array.isArray(safeEvent.vehicle)
+      ? safeEvent.vehicle
+      : {};
+  const assignment =
+    safeEvent.assignment &&
+    typeof safeEvent.assignment === "object" &&
+    !Array.isArray(safeEvent.assignment)
+      ? safeEvent.assignment
+      : {};
+
+  let plate =
+    cleanText(eventVehicle.license_plate ?? eventVehicle.licensePlate ?? eventVehicle.plate, 64) ||
+    cleanText(
+      safeEvent.vehicle_license_plate ??
+        safeEvent.vehicleLicensePlate ??
+        safeEvent.license_plate ??
+        safeEvent.licensePlate,
+      64,
+    ) ||
+    cleanText(assignment.license_plate ?? assignment.licensePlate, 64);
+  let source = plate ? "event" : "missing";
+
+  if (!plate) {
+    const bpVehicle =
+      safeBlueprint.vehicle &&
+      typeof safeBlueprint.vehicle === "object" &&
+      !Array.isArray(safeBlueprint.vehicle)
+        ? safeBlueprint.vehicle
+        : {};
+    plate = cleanText(bpVehicle.license_plate, 64);
+    if (plate) source = "blueprint";
+  }
+
+  return {
+    kentekenplaat: plate || null,
+    source,
+  };
+}
+
+function hydrateChironOfficialDriverIdentity(event, blueprint, context = {}) {
+  const safeEvent = event && typeof event === "object" && !Array.isArray(event) ? event : {};
+  const safeBlueprint =
+    blueprint && typeof blueprint === "object" && !Array.isArray(blueprint) ? blueprint : {};
+  const eventDriver =
+    safeEvent.driver && typeof safeEvent.driver === "object" && !Array.isArray(safeEvent.driver)
+      ? safeEvent.driver
+      : {};
+
+  // Official driver permit/pass only — never driver name or generic driver id.
+  let pass = cleanText(
+    eventDriver.badge_id ??
+      eventDriver.badgeId ??
+      eventDriver.driver_pass_number ??
+      eventDriver.driverPassNumber ??
+      eventDriver.permit_number ??
+      eventDriver.permitNumber ??
+      eventDriver.license_id ??
+      eventDriver.licenseId,
+    96,
+  );
+  let source = pass ? "event" : "missing";
+
+  if (!pass) {
+    const bpDriver =
+      safeBlueprint.driver &&
+      typeof safeBlueprint.driver === "object" &&
+      !Array.isArray(safeBlueprint.driver)
+        ? safeBlueprint.driver
+        : {};
+    pass =
+      cleanText(bpDriver.badge_id, 96) ||
+      cleanText(bpDriver.license_id, 96) ||
+      cleanText(bpDriver.driver_pass_number, 96) ||
+      cleanText(bpDriver.permit_number, 96);
+    if (pass) source = "blueprint";
+  }
+
+  return {
+    bestuurderspasnummer: pass || null,
+    source,
+  };
+}
+
+function buildChironOfficialPayloadDraft(event, blueprint, scope, officialStatus, hydrated = null) {
   const safeEvent = event && typeof event === "object" && !Array.isArray(event) ? event : {};
   const safeBlueprint =
     blueprint && typeof blueprint === "object" && !Array.isArray(blueprint) ? blueprint : {};
@@ -2213,17 +2394,24 @@ function buildChironOfficialPayloadDraft(event, blueprint, scope, officialStatus
   const pickup = locations.pickup || null;
   const dropoff = locations.dropoff || null;
 
+  const business =
+    hydrated?.business || hydrateChironOfficialBusinessIdentity(safeEvent, safeBlueprint, scope);
+  const vehicle =
+    hydrated?.vehicle || hydrateChironOfficialVehicleIdentity(safeEvent, safeBlueprint);
+  const driver =
+    hydrated?.driver || hydrateChironOfficialDriverIdentity(safeEvent, safeBlueprint);
+
   const payload = {
     broncreatiedatum: cleanText(safeEvent.created_at_utc, 64) || null,
     ritnummer: _chironResolveOfficialRitnummer(safeEvent, safeBlueprint),
-    registratie: _chironResolveOfficialRegistratie(safeEvent),
-    naam: _chironResolveOfficialNaam(safeEvent),
+    registratie: business.registratie || null,
+    naam: business.naam || null,
     status: officialStatus,
   };
 
   if (officialStatus === "vertrek" || officialStatus === "aankomst") {
-    payload.kentekenplaat = _chironResolveOfficialKentekenplaat(safeBlueprint);
-    payload.bestuurderspasnummer = _chironResolveOfficialBestuurderspasnummer(safeBlueprint);
+    payload.kentekenplaat = vehicle.kentekenplaat || null;
+    payload.bestuurderspasnummer = driver.bestuurderspasnummer || null;
     payload.vertrektijdstip = _chironResolveOfficialVertrekTijdstip(safeEvent, safeBlueprint);
     payload.vertrekpunt_lengtegraad = normalizeChironCoordinate(pickup?.lng, "lng");
     payload.vertrekpunt_breedtegraad = normalizeChironCoordinate(pickup?.lat, "lat");
@@ -2275,6 +2463,13 @@ function validateChironOfficialPayloadDraft(payload, context = {}) {
   const warnings = [];
   const errors = [];
 
+  const ensureMissing = (field) => {
+    if (!missing.includes(field)) missing.push(field);
+  };
+  const ensureError = (code) => {
+    if (!errors.includes(code)) errors.push(code);
+  };
+
   for (const field of requiredFields) {
     if (!_chironOfficialPayloadFieldPresent(payload, field)) {
       missing.push(field);
@@ -2283,6 +2478,33 @@ function validateChironOfficialPayloadDraft(payload, context = {}) {
 
   if (!["reservatie", "vertrek", "aankomst"].includes(officialStatus)) {
     errors.push("invalid_official_status");
+  }
+
+  // Chiron-6B-1: 0/0 and out-of-range coordinates are not Chiron-ready.
+  if (officialStatus === "vertrek" || officialStatus === "aankomst") {
+    const vLng = payload?.vertrekpunt_lengtegraad;
+    const vLat = payload?.vertrekpunt_breedtegraad;
+    if (!isValidChironCoordinate(vLng, "lng")) ensureMissing("vertrekpunt_lengtegraad");
+    if (!isValidChironCoordinate(vLat, "lat")) ensureMissing("vertrekpunt_breedtegraad");
+    if (isInvalidZeroCoordinatePair(vLng, vLat)) {
+      ensureMissing("vertrekpunt_lengtegraad");
+      ensureMissing("vertrekpunt_breedtegraad");
+      ensureError("invalid_zero_coordinate_pair");
+    }
+  }
+
+  if (officialStatus === "aankomst") {
+    const aLng = payload?.aankomstpunt_lengtegraad;
+    const aLat = payload?.aankomstpunt_breedtegraad;
+    if (!isValidChironCoordinate(aLng, "lng")) ensureMissing("aankomstpunt_lengtegraad");
+    if (!isValidChironCoordinate(aLat, "lat")) ensureMissing("aankomstpunt_breedtegraad");
+    if (isInvalidZeroCoordinatePair(aLng, aLat)) {
+      ensureMissing("aankomstpunt_lengtegraad");
+      ensureMissing("aankomstpunt_breedtegraad");
+      ensureError("invalid_zero_coordinate_pair");
+    }
+    // Distance must be strictly positive for an arrival payload.
+    if (!isValidChironDistance(payload?.afstand)) ensureMissing("afstand");
   }
 
   if (officialStatus === "aankomst" && context.batchRitStatuses && context.ritnummer) {
@@ -2347,11 +2569,18 @@ function buildChironOfficialDraftEnvelope(event, blueprint, scope, context = {})
     };
   }
 
+  const hydrated = {
+    business: hydrateChironOfficialBusinessIdentity(safeEvent, safeBlueprint, scope, context),
+    vehicle: hydrateChironOfficialVehicleIdentity(safeEvent, safeBlueprint, context),
+    driver: hydrateChironOfficialDriverIdentity(safeEvent, safeBlueprint, context),
+  };
+
   const payload = buildChironOfficialPayloadDraft(
     safeEvent,
     safeBlueprint,
     scope,
     normalized.status,
+    hydrated,
   );
   const validation = validateChironOfficialPayloadDraft(payload, {
     category: normalized.category,
@@ -2366,6 +2595,11 @@ function buildChironOfficialDraftEnvelope(event, blueprint, scope, context = {})
     status: normalized.status,
     payload,
     validation,
+    hydration: {
+      business_identity_source: hydrated.business.source,
+      vehicle_identity_source: hydrated.vehicle.source,
+      driver_identity_source: hydrated.driver.source,
+    },
     idempotency_key: buildChironOfficialIdempotencyKey(
       scope,
       payload.registratie,
