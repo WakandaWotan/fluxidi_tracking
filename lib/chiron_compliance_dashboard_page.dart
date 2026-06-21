@@ -196,6 +196,8 @@ class ChironComplianceDashboardPage extends StatelessWidget {
                     const SizedBox(height: 12),
                     _ChironScoreSummaryPanel(lang: _lang),
                     const SizedBox(height: 12),
+                    _ChironReadinessPanel(lang: _lang),
+                    const SizedBox(height: 12),
                     _ChironConnectionLinkCard(lang: _lang),
                   ],
                 ),
@@ -858,6 +860,708 @@ class _ChironScoreSummaryPanelState extends State<_ChironScoreSummaryPanel> {
           return _messagePanel(summary.errorMessage, color: _chironWarning);
         }
         return _summaryPanel(summary);
+      },
+    );
+  }
+}
+
+class _ChironReadinessPanel extends StatefulWidget {
+  const _ChironReadinessPanel({required this.lang});
+
+  final AppLanguage lang;
+
+  @override
+  State<_ChironReadinessPanel> createState() => _ChironReadinessPanelState();
+}
+
+class _ChironReadinessPanelState extends State<_ChironReadinessPanel> {
+  late Future<_ChironReadinessResponse> _future;
+
+  @override
+  void initState() {
+    super.initState();
+    _future = _loadReadiness();
+  }
+
+  void _refresh() {
+    setState(() {
+      _future = _loadReadiness();
+    });
+  }
+
+  String _t({
+    required String nl,
+    required String en,
+    required String fr,
+    required String es,
+  }) {
+    switch (widget.lang) {
+      case AppLanguage.nl:
+        return nl;
+      case AppLanguage.en:
+        return en;
+      case AppLanguage.fr:
+        return fr;
+      case AppLanguage.es:
+        return es;
+    }
+  }
+
+  String _text(dynamic value) => (value ?? '').toString().trim();
+
+  ({String tenantId, String companyId})? _effectiveTenantCompanyIds() {
+    final activeCompanyId =
+        companyProfileNotifier.value?.companyId.trim() ?? '';
+    if (activeCompanyId.isNotEmpty) {
+      return (tenantId: activeCompanyId, companyId: activeCompanyId);
+    }
+    final sessionCompanyId =
+        activeCompanySessionNotifier.value?.companyId.trim() ?? '';
+    if (sessionCompanyId.isNotEmpty) {
+      return (tenantId: sessionCompanyId, companyId: sessionCompanyId);
+    }
+    return null;
+  }
+
+  Future<_ChironReadinessResponse> _loadReadiness() async {
+    final effective = _effectiveTenantCompanyIds();
+    if (effective == null) {
+      return _ChironReadinessResponse.missingScope(
+        errorMessage: _t(
+          nl: 'Geen bedrijfscontext beschikbaar.',
+          en: 'No company context available.',
+          fr: 'Aucun contexte entreprise disponible.',
+          es: 'No hay contexto de empresa disponible.',
+        ),
+      );
+    }
+
+    final token = _complianceAdminToken.trim();
+    if (token.isEmpty) {
+      return _ChironReadinessResponse.error(
+        errorMessage: _t(
+          nl: 'Niet gemachtigd om Chiron-readiness te laden.',
+          en: 'Not authorized to load Chiron readiness.',
+          fr: 'Non autorisé à charger la préparation Chiron.',
+          es: 'No autorizado para cargar la preparación Chiron.',
+        ),
+        unauthorized: true,
+      );
+    }
+
+    final uri = Uri.parse('$_complianceApiBaseUrl/admin/chiron/readiness');
+    try {
+      final res = await http
+          .post(
+            uri,
+            headers: <String, String>{
+              'Authorization': 'Bearer $token',
+              'x-admin-token': token,
+              'Content-Type': 'application/json',
+            },
+            body: jsonEncode(<String, dynamic>{
+              'tenant_id': effective.tenantId,
+              'company_id': effective.companyId,
+              'limit': 20,
+              'event_type': 'ride_stop',
+            }),
+          )
+          .timeout(const Duration(seconds: 15));
+      final decoded = jsonDecode(res.body);
+      final payload = decoded is Map
+          ? Map<String, dynamic>.from(decoded)
+          : const <String, dynamic>{};
+      if (res.statusCode == 401 || res.statusCode == 403) {
+        return _ChironReadinessResponse.error(
+          errorMessage: _t(
+            nl: 'Niet gemachtigd om Chiron-readiness te laden.',
+            en: 'Not authorized to load Chiron readiness.',
+            fr: 'Non autorisé à charger la préparation Chiron.',
+            es: 'No autorizado para cargar la preparación Chiron.',
+          ),
+          unauthorized: true,
+        );
+      }
+      if (res.statusCode < 200 || res.statusCode >= 300) {
+        return _ChironReadinessResponse.error(
+          errorMessage: _t(
+            nl: 'Chiron-readiness kon niet geladen worden.',
+            en: 'Chiron readiness could not be loaded.',
+            fr: 'La préparation Chiron n’a pas pu être chargée.',
+            es: 'No se pudo cargar la preparación Chiron.',
+          ),
+        );
+      }
+      return _ChironReadinessResponse.fromJson(payload);
+    } catch (_) {
+      return _ChironReadinessResponse.error(
+        errorMessage: _t(
+          nl: 'Chiron-readiness kon niet geladen worden.',
+          en: 'Chiron readiness could not be loaded.',
+          fr: 'La préparation Chiron n’a pas pu être chargée.',
+          es: 'No se pudo cargar la preparación Chiron.',
+        ),
+      );
+    }
+  }
+
+  ({String label, Color color, IconData icon}) _overallStatusVisual(
+    String overallStatus,
+  ) {
+    switch (overallStatus) {
+      case 'blocked':
+        return (
+          label: _t(
+            nl: 'Geblokkeerd',
+            en: 'Blocked',
+            fr: 'Bloqué',
+            es: 'Bloqueado',
+          ),
+          color: _chironDanger,
+          icon: Icons.block,
+        );
+      case 'required_review':
+        return (
+          label: _t(
+            nl: 'Review nodig',
+            en: 'Review needed',
+            fr: 'Revue requise',
+            es: 'Revisión necesaria',
+          ),
+          color: _chironWarning,
+          icon: Icons.rate_review_outlined,
+        );
+      case 'format_valid':
+        return (
+          label: _t(
+            nl: 'Formaat geldig',
+            en: 'Format valid',
+            fr: 'Format valide',
+            es: 'Formato válido',
+          ),
+          color: _chironGold,
+          icon: Icons.fact_check_outlined,
+        );
+      case 'ready_for_chiron_test':
+        return (
+          label: _t(
+            nl: 'Klaar voor Chiron-test',
+            en: 'Ready for Chiron test',
+            fr: 'Prêt pour le test Chiron',
+            es: 'Listo para prueba Chiron',
+          ),
+          color: _chironSuccess,
+          icon: Icons.verified_outlined,
+        );
+      case 'not_applicable':
+        return (
+          label: _t(
+            nl: 'Niet van toepassing',
+            en: 'Not applicable',
+            fr: 'Non applicable',
+            es: 'No aplicable',
+          ),
+          color: _chironTextMuted,
+          icon: Icons.remove_circle_outline,
+        );
+      default:
+        return (
+          label: _t(
+            nl: 'Onbekend',
+            en: 'Unknown',
+            fr: 'Inconnu',
+            es: 'Desconocido',
+          ),
+          color: _chironTextMuted,
+          icon: Icons.help_outline,
+        );
+    }
+  }
+
+  String _issueGroupLabel(String fieldGroup) {
+    switch (fieldGroup) {
+      case 'business_identity':
+        return _t(
+          nl: 'Bedrijfsgegevens',
+          en: 'Business data',
+          fr: 'Données entreprise',
+          es: 'Datos empresa',
+        );
+      case 'vehicle_identity':
+        return _t(
+          nl: 'Voertuig',
+          en: 'Vehicle',
+          fr: 'Véhicule',
+          es: 'Vehículo',
+        );
+      case 'driver_identity':
+        return _t(
+          nl: 'Chauffeur',
+          en: 'Driver',
+          fr: 'Chauffeur',
+          es: 'Conductor',
+        );
+      case 'ride_geometry':
+        return _t(
+          nl: 'GPS/afstand',
+          en: 'GPS/distance',
+          fr: 'GPS/distance',
+          es: 'GPS/distancia',
+        );
+      case 'sequence':
+        return _t(
+          nl: 'Volgorde',
+          en: 'Sequence',
+          fr: 'Séquence',
+          es: 'Secuencia',
+        );
+      case 'documents':
+        return _t(
+          nl: 'Documenten',
+          en: 'Documents',
+          fr: 'Documents',
+          es: 'Documentos',
+        );
+      case 'registry':
+        return _t(
+          nl: 'Register',
+          en: 'Registry',
+          fr: 'Registre',
+          es: 'Registro',
+        );
+      default:
+        return fieldGroup.isEmpty ? '—' : fieldGroup;
+    }
+  }
+
+  Widget _messagePanel(String text, {Color? color}) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: _chironPanel,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: _chironBorder),
+      ),
+      child: Text(
+        text,
+        style: TextStyle(color: color ?? _chironTextMuted, fontSize: 12),
+      ),
+    );
+  }
+
+  Widget _readinessMetricTile({
+    required String label,
+    required String value,
+    Color? valueColor,
+  }) {
+    // Mirrors _ChironScoreSummaryPanelState._metric styling for visual parity.
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: _chironCard,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: _chironBorder),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            label,
+            style: TextStyle(color: _chironTextMuted, fontSize: 11),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+          const SizedBox(height: 4),
+          Text(
+            value,
+            style: TextStyle(
+              color: valueColor ?? _chironTextPrimary,
+              fontSize: 15,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _readinessKpiRow(_ChironReadinessSummary summary) {
+    final tiles = <Widget>[
+      _readinessMetricTile(
+        label: _t(
+          nl: 'geblokkeerd',
+          en: 'blocked',
+          fr: 'bloqué',
+          es: 'bloqueado',
+        ),
+        value: '${summary.blockedCount}',
+        valueColor: summary.blockedCount > 0 ? _chironDanger : null,
+      ),
+      _readinessMetricTile(
+        label: _t(nl: 'review', en: 'review', fr: 'revue', es: 'revisión'),
+        value: '${summary.reviewRequiredCount}',
+        valueColor: summary.reviewRequiredCount > 0 ? _chironWarning : null,
+      ),
+      _readinessMetricTile(
+        label: _t(nl: 'klaar', en: 'ready', fr: 'prêt', es: 'listo'),
+        value: '${summary.officialReadyCount}',
+        valueColor: summary.officialReadyCount > 0 ? _chironSuccess : null,
+      ),
+      if (summary.sequenceUnsafeCount > 0)
+        _readinessMetricTile(
+          label: _t(
+            nl: 'volgorde',
+            en: 'sequence',
+            fr: 'séquence',
+            es: 'secuencia',
+          ),
+          value: '${summary.sequenceUnsafeCount}',
+          valueColor: _chironWarning,
+        ),
+    ];
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final maxWidth = constraints.maxWidth;
+        const gap = 8.0;
+        final tileCount = tiles.length;
+        final columns = maxWidth >= 520
+            ? tileCount
+            : maxWidth >= 260
+            ? 2
+            : 1;
+        final tileWidth = columns == 1
+            ? maxWidth
+            : (maxWidth - gap * (columns - 1)) / columns;
+
+        return Wrap(
+          spacing: gap,
+          runSpacing: gap,
+          children: [
+            for (final tile in tiles) SizedBox(width: tileWidth, child: tile),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _issueChip(_ChironReadinessIssue issue) {
+    final label = issue.fieldGroup.isNotEmpty
+        ? _issueGroupLabel(issue.fieldGroup)
+        : issue.code;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: _chironCard,
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: _chironBorder),
+      ),
+      child: Text(
+        '$label · ${issue.count}',
+        style: TextStyle(
+          color: _chironTextSecondary,
+          fontSize: 11,
+          fontWeight: FontWeight.w600,
+        ),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      ),
+    );
+  }
+
+  Widget _readinessPanel(_ChironReadinessResponse response) {
+    if (response.processedCount == 0) {
+      return _messagePanel(
+        _t(
+          nl: 'Nog geen Chiron-ritdata gevonden.',
+          en: 'No Chiron ride data found yet.',
+          fr: 'Aucune donnée de course Chiron trouvée.',
+          es: 'Aún no se encontraron datos de viaje Chiron.',
+        ),
+      );
+    }
+
+    final report = response.report;
+    final summary = report.summary;
+    final statusVisual = _overallStatusVisual(report.overallStatus);
+    final topAction = report.topBlockers.isNotEmpty
+        ? report.topBlockers.first.nextAction
+        : (report.topWarnings.isNotEmpty
+              ? report.topWarnings.first.nextAction
+              : '');
+    final issueChips = <_ChironReadinessIssue>[];
+    final seenGroups = <String>{};
+    for (final issue in [...report.topBlockers, ...report.topWarnings]) {
+      final key = issue.fieldGroup.isNotEmpty ? issue.fieldGroup : issue.code;
+      if (seenGroups.contains(key)) continue;
+      seenGroups.add(key);
+      issueChips.add(issue);
+      if (issueChips.length >= 3) break;
+    }
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: _chironPanel,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: _chironBorder),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  _t(
+                    nl: 'Chiron readiness',
+                    en: 'Chiron readiness',
+                    fr: 'Préparation Chiron',
+                    es: 'Preparación Chiron',
+                  ),
+                  style: TextStyle(
+                    color: _chironTextPrimary,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 5,
+                ),
+                decoration: BoxDecoration(
+                  color: statusVisual.color.withOpacity(0.16),
+                  borderRadius: BorderRadius.circular(999),
+                  border: Border.all(
+                    color: statusVisual.color.withOpacity(0.55),
+                  ),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      statusVisual.icon,
+                      size: 14,
+                      color: statusVisual.color,
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      statusVisual.label,
+                      style: TextStyle(
+                        color: statusVisual.color,
+                        fontWeight: FontWeight.w800,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          _readinessKpiRow(summary),
+          if (topAction.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            Text(
+              _t(
+                nl: 'Topactie',
+                en: 'Top action',
+                fr: 'Action principale',
+                es: 'Acción principal',
+              ),
+              style: TextStyle(
+                color: _chironTextMuted,
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              topAction,
+              style: TextStyle(color: _chironTextSecondary, fontSize: 12),
+              maxLines: 3,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ],
+          if (issueChips.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              children: issueChips.map(_issueChip).toList(),
+            ),
+          ],
+          const SizedBox(height: 10),
+          Text(
+            _t(
+              nl: 'Preflightcontrole — geen officiële Chiron-submit uitgevoerd.',
+              en: 'Preflight check — no official Chiron submission performed.',
+              fr: 'Contrôle préalable — aucun envoi officiel Chiron effectué.',
+              es: 'Comprobación previa — no se ha realizado ningún envío oficial a Chiron.',
+            ),
+            style: TextStyle(color: _chironTextFaint, fontSize: 10),
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+          ),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              OutlinedButton.icon(
+                onPressed: _refresh,
+                icon: Icon(Icons.refresh, size: 16, color: _chironGold),
+                label: Text(
+                  _t(
+                    nl: 'Controle opnieuw',
+                    en: 'Refresh',
+                    fr: 'Actualiser',
+                    es: 'Actualizar',
+                  ),
+                  style: TextStyle(color: _chironGold, fontSize: 12),
+                ),
+                style: OutlinedButton.styleFrom(
+                  side: BorderSide(color: _chironBorder),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 6,
+                  ),
+                  visualDensity: VisualDensity.compact,
+                ),
+              ),
+              OutlinedButton.icon(
+                onPressed: () {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text(
+                        _t(
+                          nl: 'Volledig rapport volgt.',
+                          en: 'Full report coming soon.',
+                          fr: 'Rapport complet à venir.',
+                          es: 'Informe completo próximamente.',
+                        ),
+                      ),
+                      behavior: SnackBarBehavior.floating,
+                    ),
+                  );
+                },
+                icon: Icon(
+                  Icons.article_outlined,
+                  size: 16,
+                  color: _chironTextMuted,
+                ),
+                label: Text(
+                  _t(
+                    nl: 'Bekijk rapport',
+                    en: 'View report',
+                    fr: 'Voir le rapport',
+                    es: 'Ver informe',
+                  ),
+                  style: TextStyle(color: _chironTextMuted, fontSize: 12),
+                ),
+                style: OutlinedButton.styleFrom(
+                  side: BorderSide(color: _chironBorder.withOpacity(0.7)),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 6,
+                  ),
+                  visualDensity: VisualDensity.compact,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<_ChironReadinessResponse>(
+      future: _future,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState != ConnectionState.done) {
+          return Row(
+            children: [
+              SizedBox(
+                width: 14,
+                height: 14,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: _chironGold,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                _t(
+                  nl: 'Chiron-readiness laden...',
+                  en: 'Loading Chiron readiness...',
+                  fr: 'Chargement de la préparation Chiron...',
+                  es: 'Cargando preparación Chiron...',
+                ),
+                style: TextStyle(color: _chironTextSecondary, fontSize: 12),
+              ),
+            ],
+          );
+        }
+
+        final response =
+            snapshot.data ??
+            _ChironReadinessResponse.error(
+              errorMessage: _t(
+                nl: 'Chiron-readiness kon niet geladen worden.',
+                en: 'Chiron readiness could not be loaded.',
+                fr: 'La préparation Chiron n’a pas pu être chargée.',
+                es: 'No se pudo cargar la preparación Chiron.',
+              ),
+            );
+
+        if (response.missingScope) {
+          return _messagePanel(response.errorMessage, color: _chironWarning);
+        }
+        if (!response.ok) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _messagePanel(
+                response.errorMessage,
+                color: response.unauthorized ? _chironDanger : _chironWarning,
+              ),
+              const SizedBox(height: 8),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: OutlinedButton.icon(
+                  onPressed: _refresh,
+                  icon: Icon(Icons.refresh, size: 16, color: _chironGold),
+                  label: Text(
+                    _t(
+                      nl: 'Controle opnieuw',
+                      en: 'Refresh',
+                      fr: 'Actualiser',
+                      es: 'Actualizar',
+                    ),
+                    style: TextStyle(color: _chironGold, fontSize: 12),
+                  ),
+                  style: OutlinedButton.styleFrom(
+                    side: BorderSide(color: _chironBorder),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 6,
+                    ),
+                    visualDensity: VisualDensity.compact,
+                  ),
+                ),
+              ),
+            ],
+          );
+        }
+        return _readinessPanel(response);
       },
     );
   }
@@ -2365,6 +3069,193 @@ class _ChironScoreSummaryResponse {
       counts: _ChironScoreSummaryCounts.fromJson(scoreSummary),
       newestEvents: newestEvents,
       errorMessage: '',
+    );
+  }
+}
+
+class _ChironReadinessSummary {
+  const _ChironReadinessSummary({
+    required this.officialReadyCount,
+    required this.blockedCount,
+    required this.reviewRequiredCount,
+    required this.formatValidCount,
+    required this.notApplicableCount,
+    required this.sequenceUnsafeCount,
+  });
+
+  final int officialReadyCount;
+  final int blockedCount;
+  final int reviewRequiredCount;
+  final int formatValidCount;
+  final int notApplicableCount;
+  final int sequenceUnsafeCount;
+
+  factory _ChironReadinessSummary.fromJson(Map<String, dynamic> json) {
+    return _ChironReadinessSummary(
+      officialReadyCount: _parseChironInt(json['official_ready_count']),
+      blockedCount: _parseChironInt(json['blocked_count']),
+      reviewRequiredCount: _parseChironInt(json['review_required_count']),
+      formatValidCount: _parseChironInt(json['format_valid_count']),
+      notApplicableCount: _parseChironInt(json['not_applicable_count']),
+      sequenceUnsafeCount: _parseChironInt(json['sequence_unsafe_count']),
+    );
+  }
+
+  static const empty = _ChironReadinessSummary(
+    officialReadyCount: 0,
+    blockedCount: 0,
+    reviewRequiredCount: 0,
+    formatValidCount: 0,
+    notApplicableCount: 0,
+    sequenceUnsafeCount: 0,
+  );
+}
+
+class _ChironReadinessIssue {
+  const _ChironReadinessIssue({
+    required this.code,
+    required this.count,
+    required this.fieldGroup,
+    required this.nextAction,
+  });
+
+  final String code;
+  final int count;
+  final String fieldGroup;
+  final String nextAction;
+
+  factory _ChironReadinessIssue.fromJson(Map<String, dynamic> json) {
+    return _ChironReadinessIssue(
+      code: (json['code'] ?? '').toString().trim(),
+      count: _parseChironInt(json['count']),
+      fieldGroup: (json['field_group'] ?? '').toString().trim(),
+      nextAction: (json['next_action'] ?? '').toString().trim(),
+    );
+  }
+}
+
+class _ChironReadinessReport {
+  const _ChironReadinessReport({
+    required this.overallStatus,
+    required this.summary,
+    required this.topBlockers,
+    required this.topWarnings,
+    required this.policyNotes,
+  });
+
+  final String overallStatus;
+  final _ChironReadinessSummary summary;
+  final List<_ChironReadinessIssue> topBlockers;
+  final List<_ChironReadinessIssue> topWarnings;
+  final List<String> policyNotes;
+
+  factory _ChironReadinessReport.fromJson(Map<String, dynamic> json) {
+    final summaryRaw = json['summary'];
+    final summary = summaryRaw is Map
+        ? _ChironReadinessSummary.fromJson(
+            Map<String, dynamic>.from(summaryRaw),
+          )
+        : _ChironReadinessSummary.empty;
+
+    List<_ChironReadinessIssue> parseIssues(dynamic raw) {
+      if (raw is! List) return const <_ChironReadinessIssue>[];
+      return raw
+          .whereType<Map>()
+          .map(
+            (item) =>
+                _ChironReadinessIssue.fromJson(Map<String, dynamic>.from(item)),
+          )
+          .toList(growable: false);
+    }
+
+    final policyNotesRaw = json['policy_notes'];
+    final policyNotes = policyNotesRaw is List
+        ? policyNotesRaw
+              .map((note) => (note ?? '').toString().trim())
+              .where((note) => note.isNotEmpty)
+              .toList(growable: false)
+        : const <String>[];
+
+    return _ChironReadinessReport(
+      overallStatus: (json['overall_status'] ?? '').toString().trim(),
+      summary: summary,
+      topBlockers: parseIssues(json['top_blockers']),
+      topWarnings: parseIssues(json['top_warnings']),
+      policyNotes: policyNotes,
+    );
+  }
+
+  static const empty = _ChironReadinessReport(
+    overallStatus: '',
+    summary: _ChironReadinessSummary.empty,
+    topBlockers: <_ChironReadinessIssue>[],
+    topWarnings: <_ChironReadinessIssue>[],
+    policyNotes: <String>[],
+  );
+}
+
+class _ChironReadinessResponse {
+  const _ChironReadinessResponse({
+    required this.ok,
+    required this.processedCount,
+    required this.scannedCount,
+    required this.report,
+    required this.errorMessage,
+    required this.missingScope,
+    required this.unauthorized,
+  });
+
+  final bool ok;
+  final int processedCount;
+  final int scannedCount;
+  final _ChironReadinessReport report;
+  final String errorMessage;
+  final bool missingScope;
+  final bool unauthorized;
+
+  factory _ChironReadinessResponse.error({
+    required String errorMessage,
+    bool unauthorized = false,
+  }) {
+    return _ChironReadinessResponse(
+      ok: false,
+      processedCount: 0,
+      scannedCount: 0,
+      report: _ChironReadinessReport.empty,
+      errorMessage: errorMessage,
+      missingScope: false,
+      unauthorized: unauthorized,
+    );
+  }
+
+  factory _ChironReadinessResponse.missingScope({
+    required String errorMessage,
+  }) {
+    return _ChironReadinessResponse(
+      ok: false,
+      processedCount: 0,
+      scannedCount: 0,
+      report: _ChironReadinessReport.empty,
+      errorMessage: errorMessage,
+      missingScope: true,
+      unauthorized: false,
+    );
+  }
+
+  factory _ChironReadinessResponse.fromJson(Map<String, dynamic> json) {
+    final reportRaw = json['readiness_report'];
+    final report = reportRaw is Map
+        ? _ChironReadinessReport.fromJson(Map<String, dynamic>.from(reportRaw))
+        : _ChironReadinessReport.empty;
+
+    return _ChironReadinessResponse(
+      ok: json['ok'] == true,
+      processedCount: _parseChironInt(json['processed_count']),
+      scannedCount: _parseChironInt(json['scanned_count']),
+      report: report,
+      errorMessage: '',
+      missingScope: false,
+      unauthorized: false,
     );
   }
 }
