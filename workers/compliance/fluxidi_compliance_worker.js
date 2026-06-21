@@ -2002,11 +2002,307 @@ function normalizeChironCoordinate(value, kind) {
   return num;
 }
 
+function _chironOfficialRegistratieFieldKeys() {
+  return [
+    "kbo_number",
+    "kboNumber",
+    "kbo",
+    "enterprise_number",
+    "enterpriseNumber",
+    "company_registration_number",
+    "companyRegistrationNumber",
+    "business_identifier",
+    "businessIdentifier",
+    "tax_or_registration_id",
+    "taxOrRegistrationId",
+    "registration",
+    "registration_number",
+    "registrationNumber",
+    "registratie",
+  ];
+}
+
+function _chironOfficialNaamFieldKeys() {
+  return [
+    "legal_name",
+    "legalName",
+    "company_name",
+    "companyName",
+    "business_name",
+    "businessName",
+    "name",
+    "naam",
+  ];
+}
+
+function _chironNormalizeRegistratieFromProfile(profile) {
+  if (!profile || typeof profile !== "object" || Array.isArray(profile)) return null;
+  const raw = _chironOfficialPickProfileField({}, profile, ..._chironOfficialRegistratieFieldKeys());
+  const kbo = normalizeChironKboRegistration(raw);
+  if (kbo) return kbo;
+  const vatRaw = cleanText(profile.vat_number ?? profile.vatNumber, 64);
+  if (!vatRaw) return null;
+  const digits = vatRaw.replace(/^BE/i, "").replace(/\D/g, "");
+  if (digits.length === 10) return normalizeChironKboRegistration(digits);
+  return null;
+}
+
+function _chironNormalizeNaamFromProfile(profile) {
+  if (!profile || typeof profile !== "object" || Array.isArray(profile)) return null;
+  return (
+    cleanText(_chironOfficialPickProfileField({}, profile, ..._chironOfficialNaamFieldKeys()), 256) ||
+    null
+  );
+}
+
+function _chironScopedProfileKv(env) {
+  if (env?.BOOKING_KV && typeof env.BOOKING_KV.get === "function") return env.BOOKING_KV;
+  return null;
+}
+
+function _chironBuildScopedBusinessProfileKey(scope) {
+  const tenantId = cleanText(scope?.tenant_id, 128);
+  const companyId = cleanText(scope?.company_id, 128);
+  if (!tenantId || !companyId) return null;
+  return `tenant:${tenantId}:company:${companyId}:business_profile:v1`;
+}
+
+function _chironBuildScopedFleetVehiclesKey(scope) {
+  const tenantId = cleanText(scope?.tenant_id, 128);
+  const companyId = cleanText(scope?.company_id, 128);
+  if (!tenantId || !companyId) return null;
+  return `tenant:${tenantId}:company:${companyId}:fleet:vehicles:v1`;
+}
+
+function _chironBuildScopedDriverIndexKey(scope) {
+  const tenantId = cleanText(scope?.tenant_id, 128);
+  const companyId = cleanText(scope?.company_id, 128);
+  if (!tenantId || !companyId) return null;
+  return `tenant:${tenantId}:company:${companyId}:drivers:index:v1`;
+}
+
+function _chironParseScopedBusinessProfileRaw(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const nested = raw.business_profile ?? raw.businessProfile;
+  if (nested && typeof nested === "object" && !Array.isArray(nested)) return nested;
+  if (raw.companyName || raw.company_name || raw.legalName || raw.legal_name || raw.kbo_number) {
+    return raw;
+  }
+  return null;
+}
+
+function _chironFleetVehiclesFromKvRaw(raw) {
+  if (Array.isArray(raw)) return raw;
+  if (raw && typeof raw === "object" && Array.isArray(raw.vehicles)) return raw.vehicles;
+  return [];
+}
+
+function _chironDriverIndexFromKvRaw(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  const drivers = raw.drivers;
+  if (drivers && typeof drivers === "object" && !Array.isArray(drivers)) return drivers;
+  return {};
+}
+
+async function readScopedBusinessProfileForChiron(env, scope) {
+  const kv = _chironScopedProfileKv(env);
+  const key = _chironBuildScopedBusinessProfileKey(scope);
+  if (!kv || !key) return { profile: null, lookup: "not_attempted" };
+  try {
+    const raw = await kv.get(key);
+    if (!raw) return { profile: null, lookup: "miss" };
+    const parsed = JSON.parse(raw);
+    const profile = _chironParseScopedBusinessProfileRaw(parsed);
+    if (!profile) return { profile: null, lookup: "miss" };
+    return { profile, lookup: "hit" };
+  } catch (_) {
+    return { profile: null, lookup: "error" };
+  }
+}
+
+async function readScopedFleetVehiclesForChiron(env, scope) {
+  const kv = _chironScopedProfileKv(env);
+  const key = _chironBuildScopedFleetVehiclesKey(scope);
+  if (!kv || !key) return { vehicles: [], lookup: "not_attempted" };
+  try {
+    const raw = await kv.get(key);
+    if (!raw) return { vehicles: [], lookup: "miss" };
+    const parsed = JSON.parse(raw);
+    const vehicles = _chironFleetVehiclesFromKvRaw(parsed);
+    if (!vehicles.length) return { vehicles: [], lookup: "miss" };
+    return { vehicles, lookup: "hit" };
+  } catch (_) {
+    return { vehicles: [], lookup: "error" };
+  }
+}
+
+async function readScopedDriverIndexForChiron(env, scope) {
+  const kv = _chironScopedProfileKv(env);
+  const key = _chironBuildScopedDriverIndexKey(scope);
+  if (!kv || !key) return { drivers: {}, lookup: "not_attempted" };
+  try {
+    const raw = await kv.get(key);
+    if (!raw) return { drivers: {}, lookup: "miss" };
+    const parsed = JSON.parse(raw);
+    const drivers = _chironDriverIndexFromKvRaw(parsed);
+    if (!Object.keys(drivers).length) return { drivers: {}, lookup: "miss" };
+    return { drivers, lookup: "hit" };
+  } catch (_) {
+    return { drivers: {}, lookup: "error" };
+  }
+}
+
+async function _chironLoadScopedHydrationCache(env, scope, includeOfficialDraft = false) {
+  const empty = {
+    businessProfile: null,
+    businessProfileLookup: "not_attempted",
+    fleetVehicles: [],
+    fleetLookup: "not_attempted",
+    driverIndex: {},
+    driverIndexLookup: "not_attempted",
+  };
+  if (!includeOfficialDraft) return empty;
+  if (!_chironScopedProfileKv(env)) return empty;
+
+  const [business, fleet, drivers] = await Promise.all([
+    readScopedBusinessProfileForChiron(env, scope),
+    readScopedFleetVehiclesForChiron(env, scope),
+    readScopedDriverIndexForChiron(env, scope),
+  ]);
+
+  return {
+    businessProfile: business.profile,
+    businessProfileLookup: business.lookup,
+    fleetVehicles: fleet.vehicles,
+    fleetLookup: fleet.lookup,
+    driverIndex: drivers.drivers,
+    driverIndexLookup: drivers.lookup,
+  };
+}
+
+function _chironResolveAssignedVehicleId(event, blueprint) {
+  const safeEvent = event && typeof event === "object" && !Array.isArray(event) ? event : {};
+  const eventVehicle =
+    safeEvent.vehicle && typeof safeEvent.vehicle === "object" && !Array.isArray(safeEvent.vehicle)
+      ? safeEvent.vehicle
+      : {};
+  const assignment =
+    safeEvent.assignment &&
+    typeof safeEvent.assignment === "object" &&
+    !Array.isArray(safeEvent.assignment)
+      ? safeEvent.assignment
+      : {};
+  const bpVehicle =
+    blueprint?.vehicle && typeof blueprint.vehicle === "object" && !Array.isArray(blueprint.vehicle)
+      ? blueprint.vehicle
+      : {};
+  return (
+    cleanText(
+      eventVehicle.vehicle_id ??
+        eventVehicle.vehicleId ??
+        assignment.vehicle_id ??
+        assignment.vehicleId ??
+        safeEvent.vehicle_id ??
+        safeEvent.vehicleId ??
+        bpVehicle.vehicle_id,
+      96,
+    ) || null
+  );
+}
+
+function _chironResolveAssignedDriverId(event, blueprint) {
+  const safeEvent = event && typeof event === "object" && !Array.isArray(event) ? event : {};
+  const eventDriver =
+    safeEvent.driver && typeof safeEvent.driver === "object" && !Array.isArray(safeEvent.driver)
+      ? safeEvent.driver
+      : {};
+  const assignment =
+    safeEvent.assignment &&
+    typeof safeEvent.assignment === "object" &&
+    !Array.isArray(safeEvent.assignment)
+      ? safeEvent.assignment
+      : {};
+  const bpDriver =
+    blueprint?.driver && typeof blueprint.driver === "object" && !Array.isArray(blueprint.driver)
+      ? blueprint.driver
+      : {};
+  return (
+    cleanText(
+      eventDriver.driver_id ??
+        eventDriver.driverId ??
+        assignment.driver_id ??
+        assignment.driverId ??
+        safeEvent.driver_id ??
+        safeEvent.driverId ??
+        bpDriver.driver_id,
+      96,
+    ) || null
+  );
+}
+
+function _chironPlateFromVehicleRecord(vehicle) {
+  if (!vehicle || typeof vehicle !== "object" || Array.isArray(vehicle)) return null;
+  return (
+    cleanText(
+      vehicle.license_plate ?? vehicle.licensePlate ?? vehicle.plate,
+      64,
+    ) || null
+  );
+}
+
+function _chironPassFromDriverIndexEntry(entry) {
+  if (!entry || typeof entry !== "object" || Array.isArray(entry)) return null;
+  return (
+    cleanText(
+      entry.taxi_driver_card_number ??
+        entry.taxiDriverCardNumber ??
+        entry.badge_id ??
+        entry.badgeId ??
+        entry.permit_number ??
+        entry.permitNumber ??
+        entry.driver_pass_number ??
+        entry.driverPassNumber ??
+        entry.chiron_driver_pass ??
+        entry.chironDriverPass ??
+        entry.license_id ??
+        entry.licenseId,
+      96,
+    ) || null
+  );
+}
+
+function _chironResolveVehiclePlateFromFleet(vehicleId, fleetVehicles) {
+  if (!vehicleId || !Array.isArray(fleetVehicles) || !fleetVehicles.length) {
+    return { plate: null, lookup: "miss" };
+  }
+  const matches = fleetVehicles.filter((vehicle) => {
+    const id = cleanText(vehicle?.vehicle_id ?? vehicle?.vehicleId ?? vehicle?.id, 96);
+    return id && id === vehicleId;
+  });
+  if (matches.length === 1) {
+    return { plate: _chironPlateFromVehicleRecord(matches[0]), lookup: "hit" };
+  }
+  if (matches.length > 1) return { plate: null, lookup: "ambiguous" };
+  return { plate: null, lookup: "miss" };
+}
+
+function _chironResolveDriverPassFromIndex(driverId, driverIndex) {
+  if (!driverId || !driverIndex || typeof driverIndex !== "object") {
+    return { pass: null, lookup: "miss" };
+  }
+  const entry = driverIndex[driverId];
+  if (!entry) return { pass: null, lookup: "miss" };
+  const pass = _chironPassFromDriverIndexEntry(entry);
+  if (pass) return { pass, lookup: "hit" };
+  return { pass: null, lookup: "miss" };
+}
+
 // Chiron-6B-1: stricter readiness validation for official ride payloads.
 function isValidChironCoordinate(value, kind) {
   if (value === null || value === undefined || value === "") return false;
   const num = Number(value);
   if (!Number.isFinite(num)) return false;
+  if (Math.abs(num) < 1e-9) return false;
   if (kind === "lat" && (num < -90 || num > 90)) return false;
   if (kind === "lng" && (num < -180 || num > 180)) return false;
   return true;
@@ -2062,38 +2358,36 @@ function _chironResolveOfficialRitnummer(event, blueprint) {
   );
 }
 
-function _chironResolveOfficialRegistratie(event) {
-  const profile = _chironOfficialNestedProfile(event);
+function _chironResolveOfficialRegistratie(event, profile = null) {
+  const eventProfile = _chironOfficialNestedProfile(event);
   const raw = _chironOfficialPickProfileField(
     event,
-    profile,
-    "kbo_number",
-    "kboNumber",
-    "company_registration_number",
-    "companyRegistrationNumber",
-    "enterprise_number",
-    "enterpriseNumber",
-    "registratie",
+    profile || eventProfile,
+    ..._chironOfficialRegistratieFieldKeys(),
   );
-  return normalizeChironKboRegistration(raw);
+  const kbo = normalizeChironKboRegistration(raw);
+  if (kbo) return kbo;
+  if (!profile && eventProfile && Object.keys(eventProfile).length) {
+    return _chironNormalizeRegistratieFromProfile(eventProfile);
+  }
+  return profile ? _chironNormalizeRegistratieFromProfile(profile) : null;
 }
 
-function _chironResolveOfficialNaam(event) {
-  const profile = _chironOfficialNestedProfile(event);
-  return (
-    cleanText(
-      _chironOfficialPickProfileField(
-        event,
-        profile,
-        "legal_name",
-        "legalName",
-        "company_name",
-        "companyName",
-        "naam",
-      ),
-      256,
-    ) || null
+function _chironResolveOfficialNaam(event, profile = null) {
+  const eventProfile = _chironOfficialNestedProfile(event);
+  const fromFields = cleanText(
+    _chironOfficialPickProfileField(
+      event,
+      profile || eventProfile,
+      ..._chironOfficialNaamFieldKeys(),
+    ),
+    256,
   );
+  if (fromFields) return fromFields;
+  if (!profile && eventProfile && Object.keys(eventProfile).length) {
+    return _chironNormalizeNaamFromProfile(eventProfile);
+  }
+  return profile ? _chironNormalizeNaamFromProfile(profile) : null;
 }
 
 function _chironResolveOfficialVertrekTijdstip(event, blueprint) {
@@ -2239,49 +2533,25 @@ function hydrateChironOfficialBusinessIdentity(event, blueprint, scope, context 
   const safeEvent = event && typeof event === "object" && !Array.isArray(event) ? event : {};
   const safeBlueprint =
     blueprint && typeof blueprint === "object" && !Array.isArray(blueprint) ? blueprint : {};
+  const cache = context.scopedHydrationCache || {};
 
-  // 1. Event-level (includes nested business/company profile on the event).
   let registratie = _chironResolveOfficialRegistratie(safeEvent);
   let naam = _chironResolveOfficialNaam(safeEvent);
   let source = registratie || naam ? "event" : "missing";
+  let businessProfileLookup = cache.businessProfileLookup || "not_attempted";
 
-  // 2. Blueprint-level profile fallback, only if present in already-projected data.
   if (!registratie || !naam) {
     const bpProfile = _chironOfficialBlueprintProfile(safeBlueprint);
     if (bpProfile) {
       if (!registratie) {
-        const candidate = normalizeChironKboRegistration(
-          _chironOfficialPickProfileField(
-            {},
-            bpProfile,
-            "kbo_number",
-            "kboNumber",
-            "company_registration_number",
-            "companyRegistrationNumber",
-            "enterprise_number",
-            "enterpriseNumber",
-            "registratie",
-          ),
-        );
+        const candidate = _chironResolveOfficialRegistratie({}, bpProfile);
         if (candidate) {
           registratie = candidate;
           if (source === "missing") source = "blueprint";
         }
       }
       if (!naam) {
-        const candidate =
-          cleanText(
-            _chironOfficialPickProfileField(
-              {},
-              bpProfile,
-              "legal_name",
-              "legalName",
-              "company_name",
-              "companyName",
-              "naam",
-            ),
-            256,
-          ) || null;
+        const candidate = _chironResolveOfficialNaam({}, bpProfile);
         if (candidate) {
           naam = candidate;
           if (source === "missing") source = "blueprint";
@@ -2290,10 +2560,28 @@ function hydrateChironOfficialBusinessIdentity(event, blueprint, scope, context 
     }
   }
 
+  if ((!registratie || !naam) && cache.businessProfile) {
+    if (!registratie) {
+      const candidate = _chironNormalizeRegistratieFromProfile(cache.businessProfile);
+      if (candidate) {
+        registratie = candidate;
+        if (source === "missing") source = "scoped_business_profile";
+      }
+    }
+    if (!naam) {
+      const candidate = _chironNormalizeNaamFromProfile(cache.businessProfile);
+      if (candidate) {
+        naam = candidate;
+        if (source === "missing") source = "scoped_business_profile";
+      }
+    }
+  }
+
   return {
     registratie: registratie || null,
     naam: naam || null,
     source,
+    business_profile_lookup: businessProfileLookup,
   };
 }
 
@@ -2301,6 +2589,7 @@ function hydrateChironOfficialVehicleIdentity(event, blueprint, context = {}) {
   const safeEvent = event && typeof event === "object" && !Array.isArray(event) ? event : {};
   const safeBlueprint =
     blueprint && typeof blueprint === "object" && !Array.isArray(blueprint) ? blueprint : {};
+  const cache = context.scopedHydrationCache || {};
   const eventVehicle =
     safeEvent.vehicle && typeof safeEvent.vehicle === "object" && !Array.isArray(safeEvent.vehicle)
       ? safeEvent.vehicle
@@ -2323,6 +2612,7 @@ function hydrateChironOfficialVehicleIdentity(event, blueprint, context = {}) {
     ) ||
     cleanText(assignment.license_plate ?? assignment.licensePlate, 64);
   let source = plate ? "event" : "missing";
+  let vehicleProfileLookup = cache.fleetLookup || "not_attempted";
 
   if (!plate) {
     const bpVehicle =
@@ -2335,9 +2625,24 @@ function hydrateChironOfficialVehicleIdentity(event, blueprint, context = {}) {
     if (plate) source = "blueprint";
   }
 
+  if (!plate && Array.isArray(cache.fleetVehicles) && cache.fleetVehicles.length) {
+    const vehicleId = _chironResolveAssignedVehicleId(safeEvent, safeBlueprint);
+    const fleetMatch = _chironResolveVehiclePlateFromFleet(vehicleId, cache.fleetVehicles);
+    if (fleetMatch.plate) {
+      plate = fleetMatch.plate;
+      source = "scoped_vehicle";
+      vehicleProfileLookup = "hit";
+    } else if (fleetMatch.lookup === "ambiguous") {
+      vehicleProfileLookup = "ambiguous";
+    } else if (cache.fleetLookup === "hit") {
+      vehicleProfileLookup = "miss";
+    }
+  }
+
   return {
     kentekenplaat: plate || null,
     source,
+    vehicle_profile_lookup: vehicleProfileLookup,
   };
 }
 
@@ -2345,12 +2650,12 @@ function hydrateChironOfficialDriverIdentity(event, blueprint, context = {}) {
   const safeEvent = event && typeof event === "object" && !Array.isArray(event) ? event : {};
   const safeBlueprint =
     blueprint && typeof blueprint === "object" && !Array.isArray(blueprint) ? blueprint : {};
+  const cache = context.scopedHydrationCache || {};
   const eventDriver =
     safeEvent.driver && typeof safeEvent.driver === "object" && !Array.isArray(safeEvent.driver)
       ? safeEvent.driver
       : {};
 
-  // Official driver permit/pass only — never driver name or generic driver id.
   let pass = cleanText(
     eventDriver.badge_id ??
       eventDriver.badgeId ??
@@ -2359,10 +2664,13 @@ function hydrateChironOfficialDriverIdentity(event, blueprint, context = {}) {
       eventDriver.permit_number ??
       eventDriver.permitNumber ??
       eventDriver.license_id ??
-      eventDriver.licenseId,
+      eventDriver.licenseId ??
+      eventDriver.chiron_driver_pass ??
+      eventDriver.chironDriverPass,
     96,
   );
   let source = pass ? "event" : "missing";
+  let driverProfileLookup = cache.driverIndexLookup || "not_attempted";
 
   if (!pass) {
     const bpDriver =
@@ -2375,13 +2683,27 @@ function hydrateChironOfficialDriverIdentity(event, blueprint, context = {}) {
       cleanText(bpDriver.badge_id, 96) ||
       cleanText(bpDriver.license_id, 96) ||
       cleanText(bpDriver.driver_pass_number, 96) ||
-      cleanText(bpDriver.permit_number, 96);
+      cleanText(bpDriver.permit_number, 96) ||
+      cleanText(bpDriver.chiron_driver_pass, 96);
     if (pass) source = "blueprint";
+  }
+
+  if (!pass && cache.driverIndex && typeof cache.driverIndex === "object") {
+    const driverId = _chironResolveAssignedDriverId(safeEvent, safeBlueprint);
+    const indexMatch = _chironResolveDriverPassFromIndex(driverId, cache.driverIndex);
+    if (indexMatch.pass) {
+      pass = indexMatch.pass;
+      source = "scoped_driver";
+      driverProfileLookup = "hit";
+    } else if (cache.driverIndexLookup === "hit") {
+      driverProfileLookup = driverId ? "miss" : cache.driverIndexLookup;
+    }
   }
 
   return {
     bestuurderspasnummer: pass || null,
     source,
+    driver_profile_lookup: driverProfileLookup,
   };
 }
 
@@ -2599,6 +2921,9 @@ function buildChironOfficialDraftEnvelope(event, blueprint, scope, context = {})
       business_identity_source: hydrated.business.source,
       vehicle_identity_source: hydrated.vehicle.source,
       driver_identity_source: hydrated.driver.source,
+      business_profile_lookup: hydrated.business.business_profile_lookup || "not_attempted",
+      vehicle_profile_lookup: hydrated.vehicle.vehicle_profile_lookup || "not_attempted",
+      driver_profile_lookup: hydrated.driver.driver_profile_lookup || "not_attempted",
     },
     idempotency_key: buildChironOfficialIdempotencyKey(
       scope,
@@ -2709,7 +3034,10 @@ function buildChironExportPayload(event, eventKey, options = {}) {
       safeEvent,
       blueprint,
       scope,
-      { batchRitStatuses: options.batchRitStatuses || null },
+      {
+        batchRitStatuses: options.batchRitStatuses || null,
+        scopedHydrationCache: options.scopedHydrationCache || null,
+      },
     );
   }
 
@@ -2798,14 +3126,21 @@ async function _chironCollectScopedComplianceEventsForExport(
   };
 }
 
-function _chironBuildExportDryRunPayloadResponse(
+async function _chironBuildExportDryRunPayloadResponse(
   tenantId,
   companyId,
   limit,
   collectResult,
   includeRaw,
   includeOfficialDraft = false,
+  env = null,
 ) {
+  const scope = { tenant_id: tenantId, company_id: companyId };
+  const scopedHydrationCache = await _chironLoadScopedHydrationCache(
+    env,
+    scope,
+    includeOfficialDraft,
+  );
   const batchRitStatuses = includeOfficialDraft
     ? _chironBuildBatchRitStatusIndex(collectResult.limitedEntries)
     : null;
@@ -2814,6 +3149,7 @@ function _chironBuildExportDryRunPayloadResponse(
       includeRaw,
       includeOfficialDraft,
       batchRitStatuses,
+      scopedHydrationCache,
     }),
   );
   const exportableCount = payloads.filter((payload) => payload.exportable).length;
@@ -2989,13 +3325,14 @@ async function handleChironExportDryRun(request, url, env, origin) {
     return jsonResponse({ ok: false, error: collectResult.error }, 500, origin);
   }
 
-  const responsePayload = _chironBuildExportDryRunPayloadResponse(
+  const responsePayload = await _chironBuildExportDryRunPayloadResponse(
     tenantId,
     companyId,
     limitParsed.value,
     collectResult,
     includeRaw,
     includeOfficialDraft,
+    env,
   );
 
   console.log(
@@ -3076,12 +3413,14 @@ async function handleChironExportTest(request, env, origin) {
     return jsonResponse({ ok: false, error: collectResult.error }, 500, origin);
   }
 
-  const dryRunPayload = _chironBuildExportDryRunPayloadResponse(
+  const dryRunPayload = await _chironBuildExportDryRunPayloadResponse(
     tenantId,
     companyId,
     limitParsed.value,
     collectResult,
     includeRaw,
+    false,
+    env,
   );
 
   if (!performLiveExport) {

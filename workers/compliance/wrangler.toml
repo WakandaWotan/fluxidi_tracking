@@ -12,6 +12,11 @@ enabled = true
 binding = "COMPLIANCE_KV"
 id = "04313c4521454b909293208d738471a1"
 
+# Chiron-6B-2: read-only scoped business/fleet/driver profile hydration (same namespace as booking worker).
+[[kv_namespaces]]
+binding = "BOOKING_KV"
+id = "6805da1ffefe4a3982b4c419250c59b1"
+
 # Optional auth token (set as a secret in non-dev environments):
 #   wrangler secret put COMPLIANCE_ADMIN_TOKEN
 # or:
