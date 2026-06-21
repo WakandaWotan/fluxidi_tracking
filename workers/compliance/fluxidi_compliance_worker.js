@@ -2322,6 +2322,426 @@ function isValidChironDistance(value) {
   return num > 0;
 }
 
+// === Chiron-6B-3A: anti-placeholder + format readiness helpers ===
+
+const CHIRON_PLACEHOLDER_KEYWORDS = [
+  "demo",
+  "test",
+  "fake",
+  "voorbeeld",
+  "placeholder",
+  "dummy",
+  "sample",
+  "example",
+  "lorem",
+  "n/a",
+  "tbd",
+  "todo",
+];
+
+const CHIRON_PLACEHOLDER_REGISTRATIONS = new Set([
+  "0123456789",
+  "0000000000",
+  "1111111111",
+  "1234567890",
+  "9999999999",
+]);
+
+const CHIRON_PLACEHOLDER_BUSINESS_NAMES = new Set([
+  "fluxidi taxi",
+  "fluxidi",
+  "taxi demo",
+  "demo taxi",
+  "test taxi",
+  "taxi test",
+]);
+
+const CHIRON_PLACEHOLDER_LICENSE_PLATES = new Set([
+  "aaa000",
+  "aaa-000",
+  "1-aaa-000",
+  "0-aaa-000",
+  "1aaa000",
+  "0000aaa",
+]);
+
+const CHIRON_PLACEHOLDER_DRIVER_PASSES = new Set([
+  "0000",
+  "00000000",
+  "bp-99999",
+  "bp99999",
+  "bp-00000",
+  "bp00000",
+]);
+
+function _chironCompactText(value) {
+  return cleanText(value, 256).toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+function _chironPlaceholderKeywordHit(value) {
+  const compact = _chironCompactText(value);
+  if (!compact) return false;
+  return CHIRON_PLACEHOLDER_KEYWORDS.some((kw) => compact.includes(kw));
+}
+
+function isChironPlaceholderValue(value, kind) {
+  const text = cleanText(value, 256);
+  if (!text) return false;
+  const compact = _chironCompactText(text);
+  if (!compact) return false;
+  if (_chironPlaceholderKeywordHit(compact)) return true;
+  if (kind === "registration") {
+    const digits = text.replace(/\D/g, "");
+    if (digits.length === 10 && CHIRON_PLACEHOLDER_REGISTRATIONS.has(digits)) return true;
+    if (digits.length === 10 && /^(\d)\1{9}$/.test(digits)) return true;
+    if (digits.length === 10 && digits === "0123456789") return true;
+  }
+  if (kind === "business_name") {
+    if (CHIRON_PLACEHOLDER_BUSINESS_NAMES.has(compact)) return true;
+  }
+  if (kind === "license_plate") {
+    const normalized = compact.replace(/[\s.]/g, "");
+    if (CHIRON_PLACEHOLDER_LICENSE_PLATES.has(normalized)) return true;
+    if (/^(.)\1{2,}$/.test(normalized.replace(/-/g, ""))) return true;
+  }
+  if (kind === "driver_pass") {
+    const normalized = compact.replace(/[\s.]/g, "");
+    if (CHIRON_PLACEHOLDER_DRIVER_PASSES.has(normalized)) return true;
+    if (/^0+$/.test(normalized)) return true;
+  }
+  return false;
+}
+
+function normalizeBelgianEnterpriseNumber(value) {
+  const text = cleanText(value, 64);
+  if (!text) return null;
+  const upper = text.toUpperCase();
+  const stripped = upper.startsWith("BE") ? upper.slice(2) : upper;
+  const digits = stripped.replace(/\D/g, "");
+  if (digits.length !== 10) return null;
+  return digits;
+}
+
+function isLikelyValidBelgianEnterpriseNumberFormat(value) {
+  const digits = normalizeBelgianEnterpriseNumber(value);
+  if (!digits) return false;
+  if (digits[0] !== "0" && digits[0] !== "1") return false;
+  return true;
+}
+
+function _chironFormatBelgianEnterpriseDotted(digits) {
+  if (!digits || digits.length !== 10) return null;
+  return `${digits.slice(0, 4)}.${digits.slice(4, 7)}.${digits.slice(7)}`;
+}
+
+function _chironNormalizeLicensePlateForCheck(value) {
+  return cleanText(value, 64).toUpperCase().replace(/[\s.]/g, "");
+}
+
+function _chironLooksLikeFlemishTaxiPlate(value) {
+  const normalized = _chironNormalizeLicensePlateForCheck(value);
+  if (!normalized) return false;
+  // Belgian taxi plates carry a TX prefix (e.g. TXABC123 / TX-ABC-123).
+  return /^TX-?[A-Z0-9-]+$/i.test(normalized);
+}
+
+function _chironLooksLikeBelgianStandardPlate(value) {
+  const normalized = _chironNormalizeLicensePlateForCheck(value);
+  if (!normalized) return false;
+  return /^[0-9][-]?[A-Z]{3}[-]?[0-9]{3}$/.test(normalized);
+}
+
+function _chironLooksLikeAnyPlateFormat(value) {
+  const normalized = _chironNormalizeLicensePlateForCheck(value);
+  if (!normalized) return false;
+  if (normalized.length < 4 || normalized.length > 16) return false;
+  if (!/[A-Z0-9]/.test(normalized)) return false;
+  return /^[A-Z0-9-]+$/.test(normalized);
+}
+
+function _chironContextLooksFlemishTaxi(context = {}) {
+  const country = cleanText(
+    context?.country ??
+      context?.reporting_region ??
+      context?.reportingRegion,
+    16,
+  ).toUpperCase();
+  if (country && country !== "BE") return false;
+  const region = cleanText(context?.region ?? context?.reporting_region, 32).toLowerCase();
+  if (region === "vl" || region === "flanders" || region === "vlaanderen") return true;
+  // Even without explicit Flemish marker, BE + taxi service indicates Flemish Chiron flow.
+  const service = cleanText(context?.service ?? context?.service_type, 32).toLowerCase();
+  if (country === "BE" && (service === "taxi" || service === "" || service === "ride")) {
+    return true;
+  }
+  return false;
+}
+
+function verifyChironOfficialRegistration(value, context = {}) {
+  const out = {
+    status: "missing",
+    source: cleanText(context.source, 64) || "missing",
+    checks: [],
+    warnings: [],
+    errors: [],
+  };
+  const raw = cleanText(value, 64);
+  if (!raw) return out;
+  out.checks.push("present");
+
+  const digits = normalizeBelgianEnterpriseNumber(raw);
+  if (digits) {
+    out.checks.push("be_enterprise_format");
+    const dotted = _chironFormatBelgianEnterpriseDotted(digits);
+    if (
+      isChironPlaceholderValue(raw, "registration") ||
+      isChironPlaceholderValue(digits, "registration") ||
+      (dotted && isChironPlaceholderValue(dotted, "registration"))
+    ) {
+      out.status = "placeholder";
+      out.errors.push("placeholder_registration");
+      return out;
+    }
+    if (!isLikelyValidBelgianEnterpriseNumberFormat(digits)) {
+      out.status = "format_invalid";
+      out.errors.push("invalid_registration_format");
+      return out;
+    }
+    out.status = "format_valid";
+    return out;
+  }
+
+  if (isChironPlaceholderValue(raw, "registration")) {
+    out.status = "placeholder";
+    out.errors.push("placeholder_registration");
+    return out;
+  }
+  out.status = "format_invalid";
+  out.errors.push("invalid_registration_format");
+  return out;
+}
+
+function verifyChironOfficialBusinessName(value, context = {}) {
+  const out = {
+    status: "missing",
+    source: cleanText(context.source, 64) || "missing",
+    checks: [],
+    warnings: [],
+    errors: [],
+  };
+  const raw = cleanText(value, 256);
+  if (!raw) return out;
+  out.checks.push("present");
+
+  if (isChironPlaceholderValue(raw, "business_name")) {
+    out.status = "placeholder";
+    out.errors.push("placeholder_business_name");
+    return out;
+  }
+  const compact = _chironCompactText(raw);
+  if (compact.length < 2 || !/[a-z]/i.test(raw)) {
+    out.status = "format_invalid";
+    out.errors.push("invalid_business_name");
+    return out;
+  }
+  out.status = "format_valid";
+  return out;
+}
+
+function verifyChironOfficialLicensePlate(value, context = {}) {
+  const out = {
+    status: "missing",
+    source: cleanText(context.source, 64) || "missing",
+    checks: [],
+    warnings: [],
+    errors: [],
+  };
+  const raw = cleanText(value, 64);
+  if (!raw) return out;
+  out.checks.push("present");
+
+  if (isChironPlaceholderValue(raw, "license_plate")) {
+    out.status = "placeholder";
+    out.errors.push("placeholder_license_plate");
+    return out;
+  }
+
+  if (!_chironLooksLikeAnyPlateFormat(raw)) {
+    out.status = "format_invalid";
+    out.errors.push("invalid_license_plate_format");
+    return out;
+  }
+
+  const flemishContext = _chironContextLooksFlemishTaxi(context);
+  const looksTaxi = _chironLooksLikeFlemishTaxiPlate(raw);
+  const looksBeStandard = _chironLooksLikeBelgianStandardPlate(raw);
+
+  if (flemishContext && !looksTaxi) {
+    if (looksBeStandard) {
+      out.status = "format_invalid";
+      out.errors.push("invalid_flemish_taxi_plate");
+      return out;
+    }
+    out.warnings.push("taxi_plate_pattern_not_confirmed");
+    out.status = "format_valid";
+    return out;
+  }
+
+  if (!flemishContext && !looksTaxi) {
+    out.warnings.push("taxi_plate_pattern_not_confirmed");
+  } else {
+    out.checks.push("flemish_taxi_plate_pattern");
+  }
+  out.status = "format_valid";
+  return out;
+}
+
+function verifyChironOfficialDriverPass(value, context = {}) {
+  const out = {
+    status: "missing",
+    source: cleanText(context.source, 64) || "missing",
+    checks: [],
+    warnings: [],
+    errors: [],
+  };
+  const raw = cleanText(value, 96);
+  if (!raw) return out;
+  out.checks.push("present");
+
+  if (isChironPlaceholderValue(raw, "driver_pass")) {
+    out.status = "placeholder";
+    out.errors.push("placeholder_driver_pass");
+    return out;
+  }
+
+  if (raw.length < 3) {
+    out.status = "format_invalid";
+    out.errors.push("invalid_driver_pass_format");
+    return out;
+  }
+
+  const explicitDoc = context.documentVerification || null;
+  if (explicitDoc && typeof explicitDoc === "object") {
+    const docStatus = cleanText(explicitDoc.status, 32).toLowerCase();
+    const docNumber = cleanText(explicitDoc.document_number ?? explicitDoc.documentNumber, 96);
+    const docExpired = explicitDoc.expired === true;
+    const matches = !docNumber || docNumber === raw;
+    if (
+      matches &&
+      !docExpired &&
+      (docStatus === "verified" || docStatus === "approved" || docStatus === "active")
+    ) {
+      out.status = "document_verified";
+      out.checks.push("scoped_document_verified");
+      return out;
+    }
+  }
+
+  out.warnings.push("driver_pass_document_review_required");
+  out.status = out.source === "event" || out.source === "blueprint"
+    ? "self_declared"
+    : "format_valid";
+  return out;
+}
+
+function _chironVerificationLookupStatusMap(hydrated) {
+  return {
+    kbo: "not_attempted",
+    vat: "not_attempted",
+    vehicle:
+      hydrated?.vehicle?.vehicle_profile_lookup === "ambiguous"
+        ? "ambiguous"
+        : "not_attempted",
+    driver_pass: "not_attempted",
+  };
+}
+
+function _chironVerificationOverallStatus(perField) {
+  const values = Object.values(perField || {});
+  if (!values.length) return "missing";
+  const hasBlocker = values.some(
+    (v) =>
+      v.status === "format_invalid" ||
+      v.status === "placeholder" ||
+      (Array.isArray(v.errors) && v.errors.length > 0),
+  );
+  if (hasBlocker) return "blocked";
+  const hasMissing = values.some((v) => v.status === "missing");
+  if (hasMissing) return "missing";
+  const allVerified = values.every(
+    (v) =>
+      v.status === "registry_verified" ||
+      v.status === "document_verified" ||
+      v.status === "chiron_test_verified",
+  );
+  if (allVerified) return "verified";
+  const anyFormatValid = values.some(
+    (v) => v.status === "format_valid" || v.status === "self_declared",
+  );
+  if (anyFormatValid) return "required_review";
+  return "format_valid";
+}
+
+function buildChironOfficialVerification(payload, hydrated, context = {}) {
+  const safePayload = payload && typeof payload === "object" ? payload : {};
+  const safeHydrated = hydrated && typeof hydrated === "object" ? hydrated : {};
+  const plateContext = {
+    country: context.country || safePayload.country || null,
+    region: context.region || null,
+    reporting_region: context.reporting_region || null,
+    service: context.service || null,
+  };
+
+  const perField = {
+    registration: verifyChironOfficialRegistration(safePayload.registratie, {
+      source: safeHydrated.business?.source || "missing",
+    }),
+    business_name: verifyChironOfficialBusinessName(safePayload.naam, {
+      source: safeHydrated.business?.source || "missing",
+    }),
+    license_plate: verifyChironOfficialLicensePlate(safePayload.kentekenplaat, {
+      ...plateContext,
+      source: safeHydrated.vehicle?.source || "missing",
+    }),
+    driver_pass: verifyChironOfficialDriverPass(safePayload.bestuurderspasnummer, {
+      source: safeHydrated.driver?.source || "missing",
+      documentVerification: context.driverDocumentVerification || null,
+    }),
+  };
+
+  return {
+    ...perField,
+    overall_status: _chironVerificationOverallStatus(perField),
+    registry_checks: _chironVerificationLookupStatusMap(safeHydrated),
+  };
+}
+
+function _chironCollectVerificationBlockingErrors(verification) {
+  if (!verification || typeof verification !== "object") return [];
+  const codes = [];
+  for (const key of ["registration", "business_name", "license_plate", "driver_pass"]) {
+    const field = verification[key];
+    if (!field || !Array.isArray(field.errors)) continue;
+    for (const code of field.errors) {
+      if (code && !codes.includes(code)) codes.push(code);
+    }
+  }
+  return codes;
+}
+
+function _chironCollectVerificationWarnings(verification) {
+  if (!verification || typeof verification !== "object") return [];
+  const codes = [];
+  for (const key of ["registration", "business_name", "license_plate", "driver_pass"]) {
+    const field = verification[key];
+    if (!field || !Array.isArray(field.warnings)) continue;
+    for (const code of field.warnings) {
+      if (code && !codes.includes(code)) codes.push(code);
+    }
+  }
+  return codes;
+}
+
 function _chironOfficialNestedProfile(event) {
   const profile =
     event?.business_profile ??
@@ -2836,6 +3256,22 @@ function validateChironOfficialPayloadDraft(payload, context = {}) {
     }
   }
 
+  // Chiron-6B-3A: surface placeholder/invalid identity errors and pattern warnings.
+  const verificationErrors = Array.isArray(context.verificationErrors)
+    ? context.verificationErrors
+    : [];
+  for (const code of verificationErrors) {
+    if (!code) continue;
+    ensureError(code);
+  }
+  const verificationWarnings = Array.isArray(context.verificationWarnings)
+    ? context.verificationWarnings
+    : [];
+  for (const code of verificationWarnings) {
+    if (!code || warnings.includes(code)) continue;
+    warnings.push(code);
+  }
+
   let validationStatus = "ready";
   if (errors.length > 0 || missing.length > 0) {
     validationStatus = "blocker";
@@ -2904,11 +3340,30 @@ function buildChironOfficialDraftEnvelope(event, blueprint, scope, context = {})
     normalized.status,
     hydrated,
   );
+
+  const reportingCountry = cleanText(
+    safeEvent?.country ??
+      safeEvent?.country_code ??
+      safeEvent?.countryCode ??
+      safeEvent?.reporting_region ??
+      safeEvent?.reportingRegion,
+    16,
+  );
+  const verification = buildChironOfficialVerification(payload, hydrated, {
+    country: reportingCountry || null,
+    reporting_region: cleanText(safeEvent?.reporting_region ?? safeEvent?.reportingRegion, 32) || null,
+    service: cleanText(safeEvent?.service ?? safeEvent?.service_type, 32) || null,
+  });
+  const verificationErrors = _chironCollectVerificationBlockingErrors(verification);
+  const verificationWarnings = _chironCollectVerificationWarnings(verification);
+
   const validation = validateChironOfficialPayloadDraft(payload, {
     category: normalized.category,
     officialStatus: normalized.status,
     ritnummer: payload.ritnummer,
     batchRitStatuses: context.batchRitStatuses || null,
+    verificationErrors,
+    verificationWarnings,
   });
 
   return {
@@ -2925,6 +3380,7 @@ function buildChironOfficialDraftEnvelope(event, blueprint, scope, context = {})
       vehicle_profile_lookup: hydrated.vehicle.vehicle_profile_lookup || "not_attempted",
       driver_profile_lookup: hydrated.driver.driver_profile_lookup || "not_attempted",
     },
+    verification,
     idempotency_key: buildChironOfficialIdempotencyKey(
       scope,
       payload.registratie,
