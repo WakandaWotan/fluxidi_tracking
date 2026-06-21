@@ -2601,6 +2601,16 @@ class _ChironReadinessReportPage extends StatelessWidget {
   }
 
   String _sampleScopeNote() {
+    final processed = response.processedCount;
+    final matching = response.matchingEventCount;
+    if (matching != null) {
+      return _t(
+        nl: 'Aantallen gelden voor de $processed geanalyseerde aankomst-events binnen $matching beschikbare aankomst-events, niet voor alle ritten.',
+        en: 'Counts apply to the $processed analyzed arrival events within $matching available arrival events, not to all rides.',
+        fr: 'Les chiffres s\'appliquent aux $processed événements d\'arrivée analysés sur $matching disponibles, pas à toutes les courses.',
+        es: 'Los recuentos se aplican a los $processed eventos de llegada analizados de $matching disponibles, no a todos los viajes.',
+      );
+    }
     return _t(
       nl: 'Aantallen gelden voor de huidige steekproef van aankomst-events, niet voor alle ritten.',
       en: 'Counts apply to the current sample of arrival events, not to all rides.',
@@ -2611,6 +2621,15 @@ class _ChironReadinessReportPage extends StatelessWidget {
 
   String _analyzedSampleLine() {
     final n = response.processedCount;
+    final matching = response.matchingEventCount;
+    if (matching != null && matching > 0) {
+      return _t(
+        nl: 'Geanalyseerd: laatste $n van $matching aankomst-events',
+        en: 'Analyzed: latest $n of $matching arrival events',
+        fr: 'Analysé : les $n derniers événements d\'arrivée sur $matching',
+        es: 'Analizado: últimos $n de $matching eventos de llegada',
+      );
+    }
     return _t(
       nl: 'Geanalyseerd: laatste $n aankomst-events',
       en: 'Analyzed: latest $n arrival events',
@@ -2662,6 +2681,32 @@ class _ChironReadinessReportPage extends StatelessWidget {
       en: 'No arrival events analyzed yet.',
       fr: 'Aucun événement d\'arrivée analysé pour l\'instant.',
       es: 'Aún no se han analizado eventos de llegada.',
+    );
+  }
+
+  String _noArrivalEventsFoundLine() {
+    return _t(
+      nl: 'Nog geen aankomst-events gevonden.',
+      en: 'No arrival events found yet.',
+      fr: 'Aucun événement d\'arrivée trouvé pour l\'instant.',
+      es: 'Aún no se han encontrado eventos de llegada.',
+    );
+  }
+
+  String _zeroProcessedArrivalLine() {
+    final matching = response.matchingEventCount;
+    if (matching != null && matching == 0) {
+      return _noArrivalEventsFoundLine();
+    }
+    return _noArrivalEventsLine();
+  }
+
+  String _moreCandidatesLine() {
+    return _t(
+      nl: 'Meer aankomst-events beschikbaar dan in deze steekproef.',
+      en: 'More arrival events are available than included in this sample.',
+      fr: 'D\'autres événements d\'arrivée sont disponibles au-delà de cet échantillon.',
+      es: 'Hay más eventos de llegada disponibles fuera de esta muestra.',
     );
   }
 
@@ -2815,7 +2860,7 @@ class _ChironReadinessReportPage extends StatelessWidget {
     if (processed > 0) {
       buffer.writeln(_analyzedSampleLine());
     } else {
-      buffer.writeln(_noArrivalEventsLine());
+      buffer.writeln(_zeroProcessedArrivalLine());
     }
     buffer.writeln(
       _t(
@@ -2825,6 +2870,9 @@ class _ChironReadinessReportPage extends StatelessWidget {
         es: 'Eventos de cumplimiento almacenados: ${response.scannedCount}, todos los tipos incluidos',
       ),
     );
+    if (response.hasMoreCandidates) {
+      buffer.writeln(_moreCandidatesLine());
+    }
     if (processed > 0) {
       buffer.writeln(
         _t(
@@ -3085,6 +3133,18 @@ class _ChironReadinessReportPage extends StatelessWidget {
                             fontSize: 12,
                           ),
                         ),
+                        if (response.hasMoreCandidates) ...[
+                          const SizedBox(height: 4),
+                          Text(
+                            _moreCandidatesLine(),
+                            style: TextStyle(
+                              color: _chironTextSecondary,
+                              fontSize: 12,
+                            ),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ],
                         const SizedBox(height: 6),
                         Text(
                           _sampleBasedCheckNote(),
@@ -3097,7 +3157,7 @@ class _ChironReadinessReportPage extends StatelessWidget {
                         ),
                       ] else ...[
                         Text(
-                          _noArrivalEventsLine(),
+                          _zeroProcessedArrivalLine(),
                           style: TextStyle(
                             color: _chironTextSecondary,
                             fontSize: 12,
@@ -5251,6 +5311,10 @@ class _ChironReadinessResponse {
     required this.errorMessage,
     required this.missingScope,
     required this.unauthorized,
+    this.limit,
+    this.eventType,
+    this.matchingEventCount,
+    this.hasMoreCandidates = false,
   });
 
   final bool ok;
@@ -5260,6 +5324,10 @@ class _ChironReadinessResponse {
   final String errorMessage;
   final bool missingScope;
   final bool unauthorized;
+  final int? limit;
+  final String? eventType;
+  final int? matchingEventCount;
+  final bool hasMoreCandidates;
 
   factory _ChironReadinessResponse.error({
     required String errorMessage,
@@ -5295,6 +5363,7 @@ class _ChironReadinessResponse {
     final report = reportRaw is Map
         ? _ChironReadinessReport.fromJson(Map<String, dynamic>.from(reportRaw))
         : _ChironReadinessReport.empty;
+    final eventTypeRaw = (json['event_type'] ?? '').toString().trim();
 
     return _ChironReadinessResponse(
       ok: json['ok'] == true,
@@ -5304,6 +5373,10 @@ class _ChironReadinessResponse {
       errorMessage: '',
       missingScope: false,
       unauthorized: false,
+      limit: _parseNullableChironInt(json['limit']),
+      eventType: eventTypeRaw.isEmpty ? null : eventTypeRaw,
+      matchingEventCount: _parseNullableChironInt(json['matching_event_count']),
+      hasMoreCandidates: json['has_more_candidates'] == true,
     );
   }
 }
