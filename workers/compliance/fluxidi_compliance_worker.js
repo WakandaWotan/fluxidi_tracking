@@ -4367,13 +4367,15 @@ async function _chironCollectScopedComplianceEventsForExport(
     return cleanText(b?.key, 1024).localeCompare(cleanText(a?.key, 1024));
   });
 
+  const matchingEventCount = sortedFiltered.length;
   const limitedEntries = sortedFiltered.slice(0, requestedLimit);
-  const hasMoreCandidates = hitScanCap || sortedFiltered.length > requestedLimit;
+  const hasMoreCandidates = hitScanCap || matchingEventCount > requestedLimit;
 
   return {
     limitedEntries,
     malformedCount,
     scannedCount: keyNames.length,
+    matchingEventCount,
     hasMoreCandidates,
   };
 }
@@ -5473,7 +5475,7 @@ async function handleChironReadinessReport(request, url, env, origin) {
   );
 
   console.log(
-    `[CHIRON_READINESS] tenant=${_chironMaskScopeId(tenantId)} company=${_chironMaskScopeId(companyId)} scanned=${dryRunPayload.scanned_count} processed=${dryRunPayload.processed_count} overall=${dryRunPayload.readiness_report?.overall_status || "-"}`,
+    `[CHIRON_READINESS] tenant=${_chironMaskScopeId(tenantId)} company=${_chironMaskScopeId(companyId)} scanned=${dryRunPayload.scanned_count} matching=${collectResult.matchingEventCount} processed=${dryRunPayload.processed_count} has_more=${collectResult.hasMoreCandidates} overall=${dryRunPayload.readiness_report?.overall_status || "-"}`,
   );
 
   return jsonResponse(
@@ -5483,8 +5485,12 @@ async function handleChironReadinessReport(request, url, env, origin) {
       company_id: companyId,
       dry_run: true,
       official_submission_performed: false,
+      limit: effectiveLimit,
+      event_type: effectiveEventType,
       scanned_count: dryRunPayload.scanned_count,
+      matching_event_count: collectResult.matchingEventCount,
       processed_count: dryRunPayload.processed_count,
+      has_more_candidates: collectResult.hasMoreCandidates,
       readiness_report: dryRunPayload.readiness_report || null,
     },
     200,
