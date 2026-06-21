@@ -11,6 +11,7 @@ import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/business_theme_palette.dart';
 import 'package:fluxidi_tracking/business_theme_page.dart';
 import 'package:fluxidi_tracking/business_theme_store.dart';
+import 'package:fluxidi_tracking/chiron_company_connection_config.dart';
 import 'package:fluxidi_tracking/company_session_store.dart';
 import 'package:fluxidi_tracking/payment/payment_method_catalog.dart';
 import 'package:fluxidi_tracking/payment/payment_method_logo.dart';
@@ -27,6 +28,7 @@ enum _SetupStatus {
   complete,
   attention,
   incomplete,
+  optional,
   activationPending,
   comingSoon,
 }
@@ -258,6 +260,13 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
   bool _blockWhenDriverEnRoute = false;
   String? _googleCalendarStatusError;
   Map<String, dynamic>? _googleCalendarStatus;
+  bool _chironEnabled = ChironCompanyConnectionDefaults.chironEnabled;
+  String _chironEnvironment = ChironCompanyConnectionDefaults.chironEnvironment;
+  String _chironConnectionStatus =
+      ChironCompanyConnectionDefaults.chironConnectionStatus;
+  String _chironRegionScope = ChironCompanyConnectionDefaults.chironRegionScope;
+  bool _chironProductionEnabled =
+      ChironCompanyConnectionDefaults.chironProductionEnabled;
   bool _mollieConnectLoading = false;
   bool _mollieConnectStartLoading = false;
   bool _mollieConnectDisconnectLoading = false;
@@ -606,6 +615,357 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     _serviceIds = Set<String>.from(s.enabledServiceIds);
     _tierIds = Set<String>.from(s.enabledTierIds);
     _extraIds = Set<String>.from(s.enabledExtraOptionIds);
+    _chironEnabled = s.chironEnabled;
+    _chironEnvironment = s.chironEnvironment;
+    _chironConnectionStatus = s.chironConnectionStatus;
+    _chironRegionScope = s.chironRegionScope;
+    _chironProductionEnabled = s.chironProductionEnabled;
+  }
+
+  void _onChironEnabledChanged(bool value) {
+    setState(() {
+      _chironEnabled = value;
+      if (!value) {
+        _chironProductionEnabled = false;
+        _chironConnectionStatus = ChironConnectionStatus.notConfigured;
+        return;
+      }
+      _chironEnvironment = ChironConnectionEnvironment.test;
+      _chironProductionEnabled = false;
+      if (_chironConnectionStatus == ChironConnectionStatus.testPassed) {
+        return;
+      }
+      _chironConnectionStatus = ChironConnectionStatus.notConfigured;
+    });
+  }
+
+  void _onChironRegionScopeChanged(String? value) {
+    setState(() {
+      _chironRegionScope = (value ?? '').trim();
+    });
+  }
+
+  _SetupStatus _chironConnectionSetupStatus() {
+    if (!_chironEnabled) {
+      return _SetupStatus.optional;
+    }
+    switch (_chironConnectionStatus) {
+      case ChironConnectionStatus.testPassed:
+        return _SetupStatus.complete;
+      case ChironConnectionStatus.testFailed:
+        return _SetupStatus.attention;
+      case ChironConnectionStatus.testPending:
+        return _SetupStatus.activationPending;
+      default:
+        return _SetupStatus.attention;
+    }
+  }
+
+  String _chironConnectionStatusLabel() {
+    if (!_chironEnabled) {
+      return _t(
+        nl: 'Uitgeschakeld',
+        en: 'Disabled',
+        fr: 'Désactivé',
+        es: 'Desactivado',
+      );
+    }
+    switch (_chironConnectionStatus) {
+      case ChironConnectionStatus.testPassed:
+        return _t(
+          nl: 'Test geslaagd',
+          en: 'Test passed',
+          fr: 'Test réussi',
+          es: 'Prueba superada',
+        );
+      case ChironConnectionStatus.testFailed:
+        return _t(
+          nl: 'Test mislukt',
+          en: 'Test failed',
+          fr: 'Test échoué',
+          es: 'Prueba fallida',
+        );
+      case ChironConnectionStatus.testPending:
+        return _t(
+          nl: 'Test in afwachting',
+          en: 'Test pending',
+          fr: 'Test en attente',
+          es: 'Prueba pendiente',
+        );
+      default:
+        return _t(
+          nl: 'Nog niet geconfigureerd',
+          en: 'Not configured yet',
+          fr: 'Pas encore configuré',
+          es: 'Aún no configurado',
+        );
+    }
+  }
+
+  Widget _chironEnvironmentChip() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      decoration: BoxDecoration(
+        color: _isDark ? _accent.withOpacity(0.14) : _subPanelBg,
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(
+          color: _isDark
+              ? _accent.withOpacity(0.45)
+              : _border.withOpacity(0.95),
+        ),
+      ),
+      child: Text(
+        _t(nl: 'Test', en: 'Test', fr: 'Test', es: 'Prueba'),
+        style: TextStyle(
+          color: _textPrimary,
+          fontSize: 11,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+    );
+  }
+
+  Widget _chironRegionScopeDropdown() {
+    return DropdownButtonFormField<String>(
+      value: _chironRegionScope.isEmpty ? '' : _chironRegionScope,
+      isExpanded: true,
+      style: TextStyle(color: _textPrimary, fontSize: 13),
+      iconEnabledColor: _textSecondary,
+      dropdownColor: _isDark ? _subPanelBg : _inputFill,
+      decoration: InputDecoration(
+        labelText: _t(
+          nl: 'Regio-scope (optioneel)',
+          en: 'Region scope (optional)',
+          fr: 'Portée régionale (optionnel)',
+          es: 'Ámbito regional (opcional)',
+        ),
+        labelStyle: TextStyle(color: _textSecondary),
+        floatingLabelBehavior: FloatingLabelBehavior.always,
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 14,
+          vertical: 16,
+        ),
+        filled: true,
+        fillColor: _inputFill,
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(10),
+          borderSide: BorderSide(color: _inputBorderColor),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(10),
+          borderSide: BorderSide(color: _inputBorderColor),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(10),
+          borderSide: BorderSide(color: _inputFocusColor, width: 1.2),
+        ),
+      ),
+      items: [
+        DropdownMenuItem(
+          value: '',
+          child: Text(
+            _t(
+              nl: 'Niet van toepassing',
+              en: 'Not applicable',
+              fr: 'Non applicable',
+              es: 'No aplicable',
+            ),
+            style: TextStyle(color: _textPrimary),
+          ),
+        ),
+        DropdownMenuItem(
+          value: ChironRegionScope.flanders,
+          child: Text(
+            _t(nl: 'Vlaanderen', en: 'Flanders', fr: 'Flandre', es: 'Flandes'),
+            style: TextStyle(color: _textPrimary),
+          ),
+        ),
+      ],
+      onChanged: _onChironRegionScopeChanged,
+    );
+  }
+
+  Widget _chironConnectionCard() {
+    final productionAllowed =
+        ChironCompanyConnectionDefaults.canEnableProduction(
+          chironEnabled: _chironEnabled,
+          connectionStatus: _chironConnectionStatus,
+        );
+    return _collapsibleSettingsCard(
+      id: 'chiron_connection',
+      icon: Icons.verified_user_outlined,
+      title: _t(
+        nl: 'Chiron-koppeling',
+        en: 'Chiron connection',
+        fr: 'Connexion Chiron',
+        es: 'Conexión Chiron',
+      ),
+      subtitle: _t(
+        nl: 'Optionele koppeling voor Vlaamse Chiron-plichtige exploitanten',
+        en: 'Optional connection for Flemish Chiron-regulated operators',
+        fr: 'Connexion optionnelle pour les exploitants Chiron en Flandre',
+        es: 'Conexión opcional para operadores Chiron en Flandes',
+      ),
+      status: _chironConnectionSetupStatus(),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            _t(
+              nl: 'Koppel de Chiron-toegang van je bedrijf aan Fluxidi. Test de verbinding eerst veilig in de Chiron-testomgeving voordat je overschakelt naar productie.',
+              en: 'Connect your company’s Chiron access to Fluxidi. Test the connection safely in the Chiron test environment before switching to production.',
+              fr: 'Connectez l’accès Chiron de votre entreprise à Fluxidi. Testez d’abord la connexion dans l’environnement de test Chiron avant de passer en production.',
+              es: 'Conecta el acceso Chiron de tu empresa con Fluxidi. Prueba primero la conexión en el entorno de pruebas de Chiron antes de pasar a producción.',
+            ),
+            style: TextStyle(color: _textSecondary, fontSize: 12, height: 1.35),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            _t(
+              nl: 'Niet elk bedrijf heeft Chiron nodig. Fluxidi activeert deze koppeling alleen wanneer jouw regio en vergunning dit vereisen.',
+              en: 'Not every company needs Chiron. Fluxidi only enables this connection when your region and licence require it.',
+              fr: 'Toutes les entreprises n’ont pas besoin de Chiron. Fluxidi n’active cette connexion que si votre région et votre autorisation l’exigent.',
+              es: 'No todas las empresas necesitan Chiron. Fluxidi solo activa esta conexión cuando tu región y licencia lo requieren.',
+            ),
+            style: TextStyle(color: _textMuted, fontSize: 11.5, height: 1.35),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            _t(
+              nl: 'Chiron is bedoeld voor Vlaamse taxi-, VVB- en IBP-exploitanten met een Chiron-meldingsplicht. Wallonië, Brussel en buitenland vallen doorgaans buiten deze koppeling.',
+              en: 'Chiron is intended for Flemish taxi, VVB and IBP operators with a Chiron reporting obligation. Wallonia, Brussels and abroad are usually outside this connection.',
+              fr: 'Chiron est destiné aux exploitants taxi, VVB et IBP flamands soumis à déclaration Chiron. La Wallonie, Bruxelles et l’étranger sont en général hors scope.',
+              es: 'Chiron está pensado para operadores de taxi, VVB e IBP flamencos con obligación de notificación Chiron. Valonia, Bruselas y el extranjero suelen quedar fuera.',
+            ),
+            style: TextStyle(color: _textMuted, fontSize: 11.5, height: 1.35),
+          ),
+          const SizedBox(height: 12),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            title: Text(
+              _t(
+                nl: 'Chiron-koppeling inschakelen',
+                en: 'Enable Chiron connection',
+                fr: 'Activer la connexion Chiron',
+                es: 'Activar conexión Chiron',
+              ),
+              style: TextStyle(
+                color: _textPrimary,
+                fontWeight: FontWeight.w700,
+                fontSize: 13,
+              ),
+            ),
+            subtitle: Text(
+              _chironConnectionStatusLabel(),
+              style: TextStyle(color: _textSecondary, fontSize: 11.5),
+            ),
+            value: _chironEnabled,
+            onChanged: _onChironEnabledChanged,
+          ),
+          if (_chironEnabled) ...[
+            const SizedBox(height: 8),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              title: Text(
+                _t(
+                  nl: 'Omgeving',
+                  en: 'Environment',
+                  fr: 'Environnement',
+                  es: 'Entorno',
+                ),
+                style: TextStyle(color: _textPrimary, fontSize: 13),
+              ),
+              subtitle: Text(
+                _t(
+                  nl: 'Testomgeving (standaard)',
+                  en: 'Test environment (default)',
+                  fr: 'Environnement de test (par défaut)',
+                  es: 'Entorno de pruebas (predeterminado)',
+                ),
+                style: TextStyle(color: _textSecondary, fontSize: 11.5),
+              ),
+              trailing: _chironEnvironmentChip(),
+            ),
+            _chironRegionScopeDropdown(),
+            const SizedBox(height: 10),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: Text(
+                _t(
+                  nl: 'Productie',
+                  en: 'Production',
+                  fr: 'Production',
+                  es: 'Producción',
+                ),
+                style: TextStyle(
+                  color: productionAllowed ? _textPrimary : _textMuted,
+                  fontWeight: FontWeight.w700,
+                  fontSize: 13,
+                ),
+              ),
+              subtitle: Text(
+                productionAllowed
+                    ? _t(
+                        nl: 'Alleen na geslaagde test',
+                        en: 'Only after a successful test',
+                        fr: 'Uniquement après un test réussi',
+                        es: 'Solo tras una prueba exitosa',
+                      )
+                    : _t(
+                        nl: 'Later beschikbaar na geslaagde testverbinding',
+                        en: 'Available later after a successful test connection',
+                        fr: 'Disponible plus tard après un test réussi',
+                        es: 'Disponible más tarde tras una prueba exitosa',
+                      ),
+                style: TextStyle(color: _textSecondary, fontSize: 11.5),
+              ),
+              value: _chironProductionEnabled && productionAllowed,
+              onChanged: productionAllowed
+                  ? (value) {
+                      setState(() => _chironProductionEnabled = value);
+                    }
+                  : null,
+            ),
+            const SizedBox(height: 8),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: _subPanelBg,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: _border),
+              ),
+              child: Text(
+                _t(
+                  nl: 'Chiron-toegangsgegevens worden later veilig via de backend opgeslagen.',
+                  en: 'Chiron access credentials will be stored securely via the backend later.',
+                  fr: 'Les identifiants Chiron seront stockés de manière sécurisée via le backend ultérieurement.',
+                  es: 'Las credenciales de acceso Chiron se almacenarán de forma segura en el backend más adelante.',
+                ),
+                style: TextStyle(
+                  color: _textMuted,
+                  fontSize: 11.5,
+                  height: 1.35,
+                ),
+              ),
+            ),
+            const SizedBox(height: 10),
+            OutlinedButton.icon(
+              onPressed: null,
+              icon: const Icon(Icons.link_outlined),
+              label: Text(
+                _t(
+                  nl: 'Test verbinding (binnenkort)',
+                  en: 'Test connection (coming soon)',
+                  fr: 'Tester la connexion (bientôt)',
+                  es: 'Probar conexión (próximamente)',
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
   }
 
   void _hydrateBackendBusinessProfile(BackendBusinessProfile p) {
@@ -4521,6 +4881,22 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
             _surchargeCapCtrl.text,
             current.pricingSurchargeCapRate,
           ),
+          chironEnabled: _chironEnabled,
+          chironEnvironment: _chironEnabled
+              ? ChironConnectionEnvironment.test
+              : current.chironEnvironment,
+          chironConnectionStatus: _chironEnabled
+              ? _chironConnectionStatus
+              : ChironConnectionStatus.notConfigured,
+          chironRegionScope: _chironRegionScope,
+          chironLastTestedAt: current.chironLastTestedAt,
+          chironProductionEnabled:
+              ChironCompanyConnectionDefaults.canEnableProduction(
+                chironEnabled: _chironEnabled,
+                connectionStatus: _chironConnectionStatus,
+              )
+              ? _chironProductionEnabled
+              : false,
         ),
         tenantId: scope.tenantId,
         companyId: scope.companyId,
@@ -7214,6 +7590,13 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
           fr: 'Incomplet',
           es: 'Incompleto',
         );
+      case _SetupStatus.optional:
+        return _t(
+          nl: 'Optioneel',
+          en: 'Optional',
+          fr: 'Optionnel',
+          es: 'Opcional',
+        );
       case _SetupStatus.activationPending:
         return _t(
           nl: 'Activering volgt',
@@ -7239,6 +7622,8 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         return const Color(0xFFE5B641);
       case _SetupStatus.incomplete:
         return const Color(0xFFF87171);
+      case _SetupStatus.optional:
+        return _isDark ? const Color(0xFF94A3B8) : const Color(0xFF64748B);
       case _SetupStatus.activationPending:
         return const Color(0xFFE5B641);
       case _SetupStatus.comingSoon:
@@ -7414,6 +7799,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         );
       case _SetupStatus.attention:
       case _SetupStatus.incomplete:
+      case _SetupStatus.optional:
       case _SetupStatus.activationPending:
       case _SetupStatus.comingSoon:
         return _t(
@@ -8588,6 +8974,8 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                   },
                 ),
               if (_shouldShowSection('google_calendar')) _googleCalendarCard(),
+              if (_shouldShowSection('chiron_connection'))
+                _chironConnectionCard(),
               if (_shouldShowSection('official_company_details'))
                 _collapsibleSettingsCard(
                   id: 'official_company_details',

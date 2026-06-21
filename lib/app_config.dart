@@ -5,6 +5,7 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
+import 'package:fluxidi_tracking/chiron_company_connection_config.dart';
 import 'package:fluxidi_tracking/company_session_store.dart';
 import 'package:fluxidi_tracking/driver_session_store.dart';
 import 'package:http/http.dart' as http;
@@ -140,6 +141,12 @@ class BusinessSettingsState {
   final double pricingNightSurchargeRate;
   final double pricingWeekendSurchargeRate;
   final double pricingSurchargeCapRate;
+  final bool chironEnabled;
+  final String chironEnvironment;
+  final String chironConnectionStatus;
+  final String chironRegionScope;
+  final String chironLastTestedAt;
+  final bool chironProductionEnabled;
 
   const BusinessSettingsState({
     required this.companyName,
@@ -176,6 +183,15 @@ class BusinessSettingsState {
     required this.pricingNightSurchargeRate,
     required this.pricingWeekendSurchargeRate,
     required this.pricingSurchargeCapRate,
+    this.chironEnabled = ChironCompanyConnectionDefaults.chironEnabled,
+    this.chironEnvironment = ChironCompanyConnectionDefaults.chironEnvironment,
+    this.chironConnectionStatus =
+        ChironCompanyConnectionDefaults.chironConnectionStatus,
+    this.chironRegionScope = ChironCompanyConnectionDefaults.chironRegionScope,
+    this.chironLastTestedAt =
+        ChironCompanyConnectionDefaults.chironLastTestedAt,
+    this.chironProductionEnabled =
+        ChironCompanyConnectionDefaults.chironProductionEnabled,
   });
 
   BusinessSettingsState copyWith({
@@ -213,6 +229,12 @@ class BusinessSettingsState {
     double? pricingNightSurchargeRate,
     double? pricingWeekendSurchargeRate,
     double? pricingSurchargeCapRate,
+    bool? chironEnabled,
+    String? chironEnvironment,
+    String? chironConnectionStatus,
+    String? chironRegionScope,
+    String? chironLastTestedAt,
+    bool? chironProductionEnabled,
   }) {
     return BusinessSettingsState(
       companyName: companyName ?? this.companyName,
@@ -256,6 +278,14 @@ class BusinessSettingsState {
           pricingWeekendSurchargeRate ?? this.pricingWeekendSurchargeRate,
       pricingSurchargeCapRate:
           pricingSurchargeCapRate ?? this.pricingSurchargeCapRate,
+      chironEnabled: chironEnabled ?? this.chironEnabled,
+      chironEnvironment: chironEnvironment ?? this.chironEnvironment,
+      chironConnectionStatus:
+          chironConnectionStatus ?? this.chironConnectionStatus,
+      chironRegionScope: chironRegionScope ?? this.chironRegionScope,
+      chironLastTestedAt: chironLastTestedAt ?? this.chironLastTestedAt,
+      chironProductionEnabled:
+          chironProductionEnabled ?? this.chironProductionEnabled,
     );
   }
 }
@@ -2601,6 +2631,12 @@ Map<String, dynamic> _encodeBusinessSettings(BusinessSettingsState s) {
     'pricingNightSurchargeRate': s.pricingNightSurchargeRate,
     'pricingWeekendSurchargeRate': s.pricingWeekendSurchargeRate,
     'pricingSurchargeCapRate': s.pricingSurchargeCapRate,
+    'chironEnabled': s.chironEnabled,
+    'chironEnvironment': s.chironEnvironment,
+    'chironConnectionStatus': s.chironConnectionStatus,
+    'chironRegionScope': s.chironRegionScope,
+    'chironLastTestedAt': s.chironLastTestedAt,
+    'chironProductionEnabled': s.chironProductionEnabled,
   };
 }
 
@@ -2710,6 +2746,21 @@ BusinessSettingsState _decodeBusinessSettings(
       m['pricingSurchargeCapRate'],
       fallback.pricingSurchargeCapRate,
     ),
+    chironEnabled: (m['chironEnabled'] is bool)
+        ? m['chironEnabled'] as bool
+        : fallback.chironEnabled,
+    chironEnvironment: (m['chironEnvironment'] ?? fallback.chironEnvironment)
+        .toString(),
+    chironConnectionStatus:
+        (m['chironConnectionStatus'] ?? fallback.chironConnectionStatus)
+            .toString(),
+    chironRegionScope: (m['chironRegionScope'] ?? fallback.chironRegionScope)
+        .toString(),
+    chironLastTestedAt: (m['chironLastTestedAt'] ?? fallback.chironLastTestedAt)
+        .toString(),
+    chironProductionEnabled: (m['chironProductionEnabled'] is bool)
+        ? m['chironProductionEnabled'] as bool
+        : fallback.chironProductionEnabled,
   );
 }
 
