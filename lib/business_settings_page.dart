@@ -123,20 +123,24 @@ class BusinessSettingsPage extends StatefulWidget {
 
 /// Section ids that may be rendered in isolation via
 /// [BusinessSettingsPage.initialFocus] when [BusinessSettingsPage.stepMode]
-/// is true. Includes the 5 required first-run settings sections plus the
-/// optional integrations (Google Calendar, Airport fixed fares — both
-/// skippable, both reuse their existing settings cards, neither blocks
-/// reaching BusinessHomePage). Other settings sections (payment
-/// ownership, cancellation policy, public partner profile, local company)
-/// remain reachable only via the full settings page.
+/// is true. Includes the first-run wizard steps (company, VAT, services,
+/// pricing, payments, branding, booking link) plus optional integrations
+/// (Mollie terminals, Google Calendar, Airport fixed fares, Chiron
+/// connection — all skippable, all reuse existing settings cards, none
+/// blocks reaching BusinessHomePage). Other settings sections (cancellation
+/// policy, public partner profile, local company) remain reachable only
+/// via the full settings page.
 const Set<String> _kStepFocusableSectionIds = <String>{
   'official_company_details',
   'vat_settings',
   'service_setup',
   'pricing_engine',
+  'payment_ownership',
+  'mollie_terminal_payments',
   'branding_support',
   'google_calendar',
   'airport_fixed_fares',
+  'chiron_connection',
   'public_booking_link',
 };
 
@@ -785,6 +789,70 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     );
   }
 
+  bool get _isChironOnboardingStep =>
+      _isActiveStepMode && widget.initialFocus == 'chiron_connection';
+
+  Widget _chironOnboardingNotes() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: _subPanelBg,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: _border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            _t(
+              nl: 'Chiron is alleen nodig voor bedrijven met een Vlaamse Chiron-meldplicht. Geen Chiron-plicht? Laat deze koppeling uitgeschakeld en ga verder.',
+              en: 'Chiron is only needed for companies that are required to report through Chiron in Flanders. Not required to use Chiron? Leave this connection disabled and continue.',
+              fr: 'Chiron est uniquement nécessaire pour les entreprises soumises à l’obligation de déclaration Chiron en Flandre. Pas d’obligation Chiron ? Laissez cette connexion désactivée et continuez.',
+              es: 'Chiron solo es necesario para empresas obligadas a informar mediante Chiron en Flandes. ¿No estás obligado a usar Chiron? Deja esta conexión desactivada y continúa.',
+            ),
+            style: TextStyle(
+              color: _textSecondary,
+              fontSize: 11.5,
+              height: 1.35,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            _t(
+              nl: 'De Chiron-toegang hoort bij het bedrijf. Fluxidi gebruikt geen centraal Chiron-account voor klanten.',
+              en: 'Chiron access belongs to the company. Fluxidi does not use one central Chiron account for customers.',
+              fr: 'L’accès Chiron appartient à l’entreprise. Fluxidi n’utilise pas de compte Chiron central pour ses clients.',
+              es: 'El acceso Chiron pertenece a la empresa. Fluxidi no utiliza una cuenta Chiron central para los clientes.',
+            ),
+            style: TextStyle(color: _textMuted, fontSize: 11.5, height: 1.35),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _chironManagementInfoNote() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: _subPanelBg,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: _border),
+      ),
+      child: Text(
+        _t(
+          nl: 'Beheer de Chiron-koppeling met de officiële toegang van dit bedrijf.',
+          en: 'Manage the Chiron connection using this company’s official Chiron access.',
+          fr: 'Gérez la connexion Chiron avec l’accès Chiron officiel de cette entreprise.',
+          es: 'Gestiona la conexión Chiron con el acceso Chiron oficial de esta empresa.',
+        ),
+        style: TextStyle(color: _textMuted, fontSize: 11.5, height: 1.35),
+      ),
+    );
+  }
+
   Widget _chironConnectionCard() {
     final productionAllowed =
         ChironCompanyConnectionDefaults.canEnableProduction(
@@ -887,81 +955,46 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
               trailing: _chironEnvironmentChip(),
             ),
             _chironRegionScopeDropdown(),
-            const SizedBox(height: 10),
-            SwitchListTile(
-              contentPadding: EdgeInsets.zero,
-              title: Text(
-                _t(
-                  nl: 'Productie',
-                  en: 'Production',
-                  fr: 'Production',
-                  es: 'Producción',
+            if (!_isChironOnboardingStep) ...[
+              const SizedBox(height: 10),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: Text(
+                  _t(
+                    nl: 'Productie',
+                    en: 'Production',
+                    fr: 'Production',
+                    es: 'Producción',
+                  ),
+                  style: TextStyle(
+                    color: productionAllowed ? _textPrimary : _textMuted,
+                    fontWeight: FontWeight.w700,
+                    fontSize: 13,
+                  ),
                 ),
-                style: TextStyle(
-                  color: productionAllowed ? _textPrimary : _textMuted,
-                  fontWeight: FontWeight.w700,
-                  fontSize: 13,
+                subtitle: Text(
+                  _t(
+                    nl: 'Alleen na geslaagde test',
+                    en: 'Only after a successful test',
+                    fr: 'Uniquement après un test réussi',
+                    es: 'Solo tras una prueba exitosa',
+                  ),
+                  style: TextStyle(color: _textSecondary, fontSize: 11.5),
                 ),
+                value: _chironProductionEnabled && productionAllowed,
+                onChanged: productionAllowed
+                    ? (value) {
+                        setState(() => _chironProductionEnabled = value);
+                      }
+                    : null,
               ),
-              subtitle: Text(
-                productionAllowed
-                    ? _t(
-                        nl: 'Alleen na geslaagde test',
-                        en: 'Only after a successful test',
-                        fr: 'Uniquement après un test réussi',
-                        es: 'Solo tras una prueba exitosa',
-                      )
-                    : _t(
-                        nl: 'Later beschikbaar na geslaagde testverbinding',
-                        en: 'Available later after a successful test connection',
-                        fr: 'Disponible plus tard après un test réussi',
-                        es: 'Disponible más tarde tras una prueba exitosa',
-                      ),
-                style: TextStyle(color: _textSecondary, fontSize: 11.5),
-              ),
-              value: _chironProductionEnabled && productionAllowed,
-              onChanged: productionAllowed
-                  ? (value) {
-                      setState(() => _chironProductionEnabled = value);
-                    }
-                  : null,
-            ),
-            const SizedBox(height: 8),
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(
-                color: _subPanelBg,
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: _border),
-              ),
-              child: Text(
-                _t(
-                  nl: 'Chiron-toegangsgegevens worden later veilig via de backend opgeslagen.',
-                  en: 'Chiron access credentials will be stored securely via the backend later.',
-                  fr: 'Les identifiants Chiron seront stockés de manière sécurisée via le backend ultérieurement.',
-                  es: 'Las credenciales de acceso Chiron se almacenarán de forma segura en el backend más adelante.',
-                ),
-                style: TextStyle(
-                  color: _textMuted,
-                  fontSize: 11.5,
-                  height: 1.35,
-                ),
-              ),
-            ),
-            const SizedBox(height: 10),
-            OutlinedButton.icon(
-              onPressed: null,
-              icon: const Icon(Icons.link_outlined),
-              label: Text(
-                _t(
-                  nl: 'Test verbinding (binnenkort)',
-                  en: 'Test connection (coming soon)',
-                  fr: 'Tester la connexion (bientôt)',
-                  es: 'Probar conexión (próximamente)',
-                ),
-              ),
-            ),
+              const SizedBox(height: 8),
+              _chironManagementInfoNote(),
+            ],
+          ],
+          if (_isChironOnboardingStep) ...[
+            const SizedBox(height: 12),
+            _chironOnboardingNotes(),
           ],
         ],
       ),
@@ -1758,10 +1791,10 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
       );
     }
     return _t(
-      nl: 'Je kunt je Mollie-account alvast koppelen. Online betalingen via je eigen Mollie-account worden in een volgende stap geactiveerd.',
-      en: 'You can connect your Mollie account now. Online payments through your own Mollie account will be activated in a next step.',
-      fr: 'Vous pouvez deja connecter votre compte Mollie. Les paiements en ligne via votre propre compte Mollie seront actives dans une prochaine etape.',
-      es: 'Ya puedes conectar tu cuenta de Mollie. Los pagos online a traves de tu propia cuenta Mollie se activaran en un siguiente paso.',
+      nl: 'Koppel het eigen Mollie-account van dit bedrijf om online betaalmethodes zoals Bancontact, iDEAL, kaartbetalingen, Apple Pay, Google Pay en PayPal te activeren.',
+      en: 'Connect this company’s own Mollie account to activate online payment methods such as Bancontact, iDEAL, card payments, Apple Pay, Google Pay and PayPal.',
+      fr: 'Connectez le compte Mollie propre à cette entreprise pour activer les moyens de paiement en ligne comme Bancontact, iDEAL, les paiements par carte, Apple Pay, Google Pay et PayPal.',
+      es: 'Conecta la cuenta Mollie propia de esta empresa para activar métodos de pago en línea como Bancontact, iDEAL, pagos con tarjeta, Apple Pay, Google Pay y PayPal.',
     );
   }
 
@@ -2610,6 +2643,172 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     }
   }
 
+  Widget _onlinePaymentsSetupHelpCard() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: _subPanelBg,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: _accent.withOpacity(_isDark ? 0.28 : 0.18)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            _t(
+              nl: 'Zo stel je online betalingen in',
+              en: 'How to set up online payments',
+              fr: 'Comment configurer les paiements en ligne',
+              es: 'Cómo configurar pagos en línea',
+            ),
+            style: TextStyle(
+              color: _textPrimary,
+              fontSize: 13,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            _t(
+              nl:
+                  '1. Maak of open je eigen Mollie-account.\n'
+                  '2. Vul je bedrijfsgegevens en bankrekening aan in Mollie.\n'
+                  '3. Activeer de betaalmethodes die je klanten wilt aanbieden.\n'
+                  '4. Koppel daarna je Mollie-account aan Fluxidi.\n'
+                  '5. Keer terug naar Fluxidi en vernieuw de betaalstatus.',
+              en:
+                  '1. Create or open your own Mollie account.\n'
+                  '2. Complete your business details and bank account in Mollie.\n'
+                  '3. Activate the payment methods you want to offer customers.\n'
+                  '4. Then connect your Mollie account to Fluxidi.\n'
+                  '5. Return to Fluxidi and refresh the payment status.',
+              fr:
+                  '1. Créez ou ouvrez votre propre compte Mollie.\n'
+                  '2. Complétez vos données d’entreprise et votre compte bancaire dans Mollie.\n'
+                  '3. Activez les moyens de paiement que vous souhaitez proposer aux clients.\n'
+                  '4. Connectez ensuite votre compte Mollie à Fluxidi.\n'
+                  '5. Revenez dans Fluxidi et actualisez le statut des paiements.',
+              es:
+                  '1. Crea o abre tu propia cuenta Mollie.\n'
+                  '2. Completa los datos de empresa y la cuenta bancaria en Mollie.\n'
+                  '3. Activa los métodos de pago que quieres ofrecer a tus clientes.\n'
+                  '4. Después conecta tu cuenta Mollie con Fluxidi.\n'
+                  '5. Vuelve a Fluxidi y actualiza el estado de pagos.',
+            ),
+            style: TextStyle(color: _textSecondary, fontSize: 12, height: 1.45),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            _t(
+              nl: 'De betaalmethodes worden beheerd in het Mollie Dashboard. Fluxidi toont alleen betaalopties die door Fluxidi ondersteund worden én voor dit bedrijf beschikbaar of geactiveerd zijn.',
+              en: 'Payment methods are managed in the Mollie Dashboard. Fluxidi only shows payment options that are supported by Fluxidi and available or activated for this company.',
+              fr: 'Les moyens de paiement sont gérés dans le tableau de bord Mollie. Fluxidi affiche uniquement les options de paiement prises en charge par Fluxidi et disponibles ou activées pour cette entreprise.',
+              es: 'Los métodos de pago se gestionan en el panel de Mollie. Fluxidi solo muestra las opciones de pago compatibles con Fluxidi y disponibles o activadas para esta empresa.',
+            ),
+            style: TextStyle(color: _textMuted, fontSize: 11.5, height: 1.35),
+          ),
+          const SizedBox(height: 10),
+          Text(
+            _t(
+              nl: 'Betaalopties in Fluxidi',
+              en: 'Payment options in Fluxidi',
+              fr: 'Options de paiement dans Fluxidi',
+              es: 'Opciones de pago en Fluxidi',
+            ),
+            style: TextStyle(
+              color: _textPrimary,
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: [
+              for (final label in [
+                _t(
+                  nl: 'Bancontact',
+                  en: 'Bancontact',
+                  fr: 'Bancontact',
+                  es: 'Bancontact',
+                ),
+                _t(nl: 'iDEAL', en: 'iDEAL', fr: 'iDEAL', es: 'iDEAL'),
+                _t(
+                  nl: 'Kaartbetalingen',
+                  en: 'Card payments',
+                  fr: 'Paiements par carte',
+                  es: 'Pagos con tarjeta',
+                ),
+                _t(
+                  nl: 'Apple Pay',
+                  en: 'Apple Pay',
+                  fr: 'Apple Pay',
+                  es: 'Apple Pay',
+                ),
+                _t(
+                  nl: 'Google Pay',
+                  en: 'Google Pay',
+                  fr: 'Google Pay',
+                  es: 'Google Pay',
+                ),
+                _t(nl: 'PayPal', en: 'PayPal', fr: 'PayPal', es: 'PayPal'),
+                _t(nl: 'KBC/CBC', en: 'KBC/CBC', fr: 'KBC/CBC', es: 'KBC/CBC'),
+                _t(nl: 'Belfius', en: 'Belfius', fr: 'Belfius', es: 'Belfius'),
+              ])
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 4,
+                  ),
+                  decoration: BoxDecoration(
+                    color: _isDark ? _accent.withOpacity(0.12) : _inputFill,
+                    borderRadius: BorderRadius.circular(999),
+                    border: Border.all(
+                      color: _border.withOpacity(_isDark ? 0.5 : 0.85),
+                    ),
+                  ),
+                  child: Text(
+                    label,
+                    style: TextStyle(
+                      color: _textSecondary,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            _t(
+              nl: 'Fluxidi ondersteunt online betalingen via je eigen Mollie-account, zoals Bancontact, iDEAL, kaartbetalingen, Apple Pay, Google Pay, PayPal, KBC/CBC en Belfius. Daarnaast kun je betalingen opvolgen via betalen in de wagen, Mollie terminals, QR/EPC-bankoverschrijving, gewone bankoverschrijving en handmatige opvolging.',
+              en: 'Fluxidi supports online payments through your own Mollie account, such as Bancontact, iDEAL, card payments, Apple Pay, Google Pay, PayPal, KBC/CBC and Belfius. You can also track payments through pay in the vehicle, Mollie terminals, QR/EPC bank transfer, regular bank transfer and manual follow-up.',
+              fr: 'Fluxidi prend en charge les paiements en ligne via votre propre compte Mollie, comme Bancontact, iDEAL, les paiements par carte, Apple Pay, Google Pay, PayPal, KBC/CBC et Belfius. Vous pouvez aussi suivre les paiements via le paiement dans le véhicule, les terminaux Mollie, le virement QR/EPC, le virement bancaire classique et le suivi manuel.',
+              es: 'Fluxidi admite pagos en línea mediante tu propia cuenta Mollie, como Bancontact, iDEAL, pagos con tarjeta, Apple Pay, Google Pay, PayPal, KBC/CBC y Belfius. También puedes hacer seguimiento de pagos mediante pago en el vehículo, terminales Mollie, transferencia bancaria QR/EPC, transferencia bancaria normal y seguimiento manual.',
+            ),
+            style: TextStyle(
+              color: _textSecondary,
+              fontSize: 11.5,
+              height: 1.35,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            _t(
+              nl: 'De exacte beschikbaarheid hangt af van je land, je Mollie-account, bedrijfsverificatie en de betaalmethodes die voor dit bedrijf geactiveerd zijn.',
+              en: 'Exact availability depends on your country, Mollie account, business verification and the payment methods activated for this company.',
+              fr: 'La disponibilité exacte dépend de votre pays, de votre compte Mollie, de la vérification de l’entreprise et des moyens de paiement activés pour cette entreprise.',
+              es: 'La disponibilidad exacta depende de tu país, tu cuenta Mollie, la verificación de empresa y los métodos de pago activados para esta empresa.',
+            ),
+            style: TextStyle(color: _textMuted, fontSize: 11.5, height: 1.35),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _paymentOwnershipCard() {
     final demoActive = _paymentOwnerMode == 'fluxidi_central_demo';
     final mollieConnected = _mollieConnectConnected;
@@ -2642,10 +2841,10 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
           if (demoActive)
             Text(
               _t(
-                nl: 'Fluxidi demo-betaalaccount actief. Dit is alleen bedoeld voor interne tests en demo’s. Voor productie moet dit bedrijf later een eigen Mollie-account koppelen.',
-                en: 'Fluxidi demo payment account is active. This is only for internal tests and demos. For production, this company must later connect its own Mollie account.',
-                fr: 'Le compte de paiement demo Fluxidi est actif. Il est reserve aux tests internes et aux demos. En production, cette entreprise devra connecter son propre compte Mollie.',
-                es: 'La cuenta de pago demo de Fluxidi esta activa. Solo es para pruebas internas y demos. En produccion, esta empresa debera conectar su propia cuenta Mollie.',
+                nl: 'Demo-betaalmodus actief. Voor productie koppel je het eigen Mollie-account van dit bedrijf, zodat betalingen rechtstreeks onder de juiste bedrijfsaccount verlopen.',
+                en: 'Demo payment mode is active. For production, connect this company’s own Mollie account so payments are processed under the correct business account.',
+                fr: 'Le mode de paiement démo est actif. Pour la production, connectez le compte Mollie propre à cette entreprise afin que les paiements soient traités sous le bon compte professionnel.',
+                es: 'El modo de pago de demostración está activo. Para producción, conecta la cuenta Mollie propia de esta empresa para que los pagos se procesen bajo la cuenta empresarial correcta.',
               ),
               style: TextStyle(color: _textSecondary, height: 1.45),
             ),
@@ -2658,6 +2857,8 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                 child: CircularProgressIndicator(strokeWidth: 2),
               ),
             ),
+          const SizedBox(height: 12),
+          _onlinePaymentsSetupHelpCard(),
           const SizedBox(height: 12),
           Row(
             crossAxisAlignment: CrossAxisAlignment.center,
@@ -2881,6 +3082,140 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     );
   }
 
+  Widget _mollieTerminalSetupHelpCard() {
+    const assetPath = 'assets/fluxidi/payments/mollie_terminal_setup.png';
+    final isTabletLayout = MediaQuery.sizeOf(context).shortestSide >= 600;
+
+    Widget stepsContent() {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            _t(
+              nl: 'Zo koppel je Mollie terminals',
+              en: 'How to connect Mollie terminals',
+              fr: 'Comment connecter les terminaux Mollie',
+              es: 'Cómo conectar terminales Mollie',
+            ),
+            style: TextStyle(
+              color: _textPrimary,
+              fontSize: 13,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            _t(
+              nl:
+                  '1. Open je eigen Mollie Dashboard.\n'
+                  '2. Ga naar In-person betalingen.\n'
+                  '3. Kies een terminaloptie: koop een terminal, activeer de Tap app of gebruik Tap to Pay.\n'
+                  '4. Installeer of activeer de Mollie-app op je toestel.\n'
+                  '5. Verbind het toestel met het juiste Mollie-profiel.\n'
+                  '6. Keer terug naar Fluxidi en klik op Terminals synchroniseren.',
+              en:
+                  '1. Open your own Mollie Dashboard.\n'
+                  '2. Go to In-person payments.\n'
+                  '3. Choose a terminal option: buy a terminal, activate the Tap app or use Tap to Pay.\n'
+                  '4. Install or activate the Mollie app on your device.\n'
+                  '5. Connect the device to the correct Mollie profile.\n'
+                  '6. Return to Fluxidi and tap Synchronize terminals.',
+              fr:
+                  '1. Ouvrez votre propre tableau de bord Mollie.\n'
+                  '2. Allez dans Paiements en personne.\n'
+                  '3. Choisissez une option : acheter un terminal, activer l’application Tap ou utiliser Tap to Pay.\n'
+                  '4. Installez ou activez l’application Mollie sur votre appareil.\n'
+                  '5. Connectez l’appareil au bon profil Mollie.\n'
+                  '6. Revenez dans Fluxidi et appuyez sur Synchroniser les terminaux.',
+              es:
+                  '1. Abre tu propio panel de Mollie.\n'
+                  '2. Ve a Pagos presenciales.\n'
+                  '3. Elige una opción: comprar un terminal, activar la app Tap o usar Tap to Pay.\n'
+                  '4. Instala o activa la app de Mollie en tu dispositivo.\n'
+                  '5. Conecta el dispositivo al perfil de Mollie correcto.\n'
+                  '6. Vuelve a Fluxidi y pulsa Sincronizar terminales.',
+            ),
+            style: TextStyle(color: _textSecondary, fontSize: 12, height: 1.45),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            _t(
+              nl: 'Fluxidi bewaart geen Mollie-wachtwoord. Het bedrijf beheert terminals en activatie via het eigen Mollie-account.',
+              en: 'Fluxidi does not store your Mollie password. The company manages terminal activation through its own Mollie account.',
+              fr: 'Fluxidi ne stocke pas votre mot de passe Mollie. L’entreprise gère l’activation des terminaux via son propre compte Mollie.',
+              es: 'Fluxidi no guarda tu contraseña de Mollie. La empresa gestiona la activación de terminales desde su propia cuenta de Mollie.',
+            ),
+            style: TextStyle(color: _textMuted, fontSize: 11.5, height: 1.35),
+          ),
+          const SizedBox(height: 10),
+          Text(
+            _t(
+              nl: 'Ondersteunde betaalkaarten en wallets',
+              en: 'Supported payment cards and wallets',
+              fr: 'Cartes et wallets pris en charge',
+              es: 'Tarjetas y wallets compatibles',
+            ),
+            style: TextStyle(
+              color: _textPrimary,
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            _t(
+              nl: 'Klanten kunnen in de wagen betalen met ondersteunde betaalkaarten en wallets, zoals Visa, Mastercard/Maestro, Visa Electron, V Pay, Apple Pay, Google Pay en Samsung Pay. Afhankelijk van het Mollie-account, het land, het terminaltype en de geactiveerde betaalmethodes kunnen ook kaarten zoals American Express, JCB, UnionPay, Discover en Diners Club beschikbaar zijn.',
+              en: 'Customers can pay in the vehicle with supported payment cards and wallets, such as Visa, Mastercard/Maestro, Visa Electron, V Pay, Apple Pay, Google Pay and Samsung Pay. Depending on the Mollie account, country, terminal type and activated payment methods, cards such as American Express, JCB, UnionPay, Discover and Diners Club may also be available.',
+              fr: 'Les clients peuvent payer dans le véhicule avec les cartes et wallets pris en charge, comme Visa, Mastercard/Maestro, Visa Electron, V Pay, Apple Pay, Google Pay et Samsung Pay. Selon le compte Mollie, le pays, le type de terminal et les moyens de paiement activés, des cartes comme American Express, JCB, UnionPay, Discover et Diners Club peuvent également être disponibles.',
+              es: 'Los clientes pueden pagar en el vehículo con tarjetas y wallets compatibles, como Visa, Mastercard/Maestro, Visa Electron, V Pay, Apple Pay, Google Pay y Samsung Pay. Según la cuenta Mollie, el país, el tipo de terminal y los métodos de pago activados, también pueden estar disponibles tarjetas como American Express, JCB, UnionPay, Discover y Diners Club.',
+            ),
+            style: TextStyle(color: _textMuted, fontSize: 11.5, height: 1.35),
+          ),
+        ],
+      );
+    }
+
+    Widget illustration() {
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(10),
+        child: Image.asset(
+          assetPath,
+          fit: BoxFit.cover,
+          width: isTabletLayout ? 148 : double.infinity,
+          height: isTabletLayout ? 112 : 120,
+          errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+        ),
+      );
+    }
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: _subPanelBg,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: _accent.withOpacity(_isDark ? 0.28 : 0.18)),
+      ),
+      child: isTabletLayout
+          ? Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                illustration(),
+                const SizedBox(width: 12),
+                Expanded(child: stepsContent()),
+              ],
+            )
+          : Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                illustration(),
+                const SizedBox(height: 10),
+                stepsContent(),
+              ],
+            ),
+    );
+  }
+
   Widget _mollieTerminalPaymentsCard() {
     final statusCode = _mollieTerminalsStatusCode();
     final terminals = _mollieTerminalList();
@@ -2905,23 +3240,25 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         children: [
           Text(
             _t(
-              nl: 'Laat klanten later in de wagen betalen via een Mollie-terminal. Fluxidi kan terminals synchroniseren en voorbereiden voor voertuig- of chauffeurskoppeling.',
-              en: 'Let customers pay in the vehicle later through a Mollie terminal. Fluxidi can sync terminals and prepare them for vehicle or driver linking.',
-              fr: 'Permettez plus tard aux clients de payer dans le véhicule avec un terminal Mollie. Fluxidi peut synchroniser les terminaux et les préparer pour une liaison avec un véhicule ou un chauffeur.',
-              es: 'Permite más adelante que los clientes paguen en el vehículo con un terminal Mollie. Fluxidi puede sincronizar terminales y prepararlos para vincularlos a vehículos o conductores.',
+              nl: 'Laat klanten in de wagen betalen via gekoppelde Mollie-terminals. Fluxidi kan terminalstatussen synchroniseren en betalingen beter koppelen aan ritten, voertuigen en chauffeurs.',
+              en: 'Let customers pay in the vehicle using connected Mollie terminals. Fluxidi can synchronize terminal statuses and link payments more clearly to rides, vehicles and drivers.',
+              fr: 'Permettez aux clients de payer dans le véhicule avec des terminaux Mollie connectés. Fluxidi peut synchroniser l’état des terminaux et mieux relier les paiements aux trajets, véhicules et chauffeurs.',
+              es: 'Permite que los clientes paguen en el vehículo con terminales Mollie conectados. Fluxidi puede sincronizar el estado de los terminales y vincular mejor los pagos con viajes, vehículos y conductores.',
             ),
             style: TextStyle(color: _textSecondary, fontSize: 12, height: 1.38),
           ),
           const SizedBox(height: 8),
           Text(
             _t(
-              nl: 'Bestellen, activeren en beschikbaarheid van terminals verlopen via het eigen Mollie-account van het bedrijf. Voorwaarden en beschikbaarheid worden door Mollie bepaald.',
-              en: 'Ordering, activation and terminal availability are handled through the company’s own Mollie account. Terms and availability are determined by Mollie.',
-              fr: 'La commande, l’activation et la disponibilité des terminaux se font via le propre compte Mollie de l’entreprise. Les conditions et la disponibilité sont déterminées par Mollie.',
-              es: 'El pedido, la activación y la disponibilidad de terminales se gestionan desde la propia cuenta Mollie de la empresa. Las condiciones y la disponibilidad las determina Mollie.',
+              nl: 'Bestellen en activeren gebeurt via het eigen Mollie-dashboard van het bedrijf. Fluxidi gebruikt daarna de gekoppelde terminalinformatie voor opvolging en rapportage.',
+              en: 'Ordering and activation are handled through the company’s own Mollie dashboard. Fluxidi then uses the connected terminal information for follow-up and reporting.',
+              fr: 'La commande et l’activation se font via le tableau de bord Mollie propre à l’entreprise. Fluxidi utilise ensuite les informations des terminaux connectés pour le suivi et les rapports.',
+              es: 'La compra y activación se gestionan desde el panel Mollie propio de la empresa. Fluxidi utiliza después la información de los terminales conectados para seguimiento e informes.',
             ),
             style: TextStyle(color: _textMuted, fontSize: 11.5, height: 1.35),
           ),
+          const SizedBox(height: 12),
+          _mollieTerminalSetupHelpCard(),
           const SizedBox(height: 12),
           Container(
             width: double.infinity,
@@ -9195,7 +9532,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                 ),
               if (_shouldShowSection('payment_ownership'))
                 _paymentOwnershipCard(),
-              if (_shouldShowSection('payment_ownership'))
+              if (_shouldShowSection('mollie_terminal_payments'))
                 _mollieTerminalPaymentsCard(),
               if (_shouldShowSection('vat_settings'))
                 _collapsibleSettingsCard(

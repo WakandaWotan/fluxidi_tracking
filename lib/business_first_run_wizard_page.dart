@@ -277,22 +277,24 @@ class _BusinessFirstRunWizardPageState
   ///   2. vat_settings
   ///   3. service_setup
   ///   4. pricing_engine
-  ///   5. branding_support
-  ///   6. google_calendar        ← optional, skippable, OAuth-driven
-  ///   7. airport_fixed_fares    ← optional, skippable, airport-only
-  ///   8. public_booking_link    ← final summary step
+  ///   5. payment_ownership
+  ///   6. mollie_terminal_payments ← optional, skippable
+  ///   7. branding_support
+  ///   8. google_calendar          ← optional, skippable, OAuth-driven
+  ///   9. airport_fixed_fares      ← optional, skippable, airport-only
+  ///  10. chiron_connection        ← optional, skippable, Flanders-only
+  ///  11. public_booking_link      ← final summary step
   ///
   /// The `optional` flag is metadata used for log clarity. The top-right
   /// AppBar action skips ONE step on every step (required or optional)
   /// so users cannot accidentally abandon the whole wizard by tapping a
   /// per-step skip label. Whole-wizard exit lives behind a separate
   /// overflow menu ("Finish setup later") wired via `onExitWizard`.
-  /// Optional integration steps (Google Calendar, Airport fixed fares)
-  /// never block the operator from reaching BusinessHomePage and never
-  /// add new backend calls — they render the existing
-  /// `_googleCalendarCard()` / `_airportFixedFareCard()` from
-  /// BusinessSettingsPage so OAuth, rules, and save logic stay in one
-  /// place.
+  /// Optional integration steps (Mollie terminals, Google Calendar,
+  /// Airport fixed fares, Chiron connection) never block the operator
+  /// from reaching BusinessHomePage and never add new backend calls —
+  /// they render the existing settings cards from BusinessSettingsPage so
+  /// OAuth, rules, and save logic stay in one place.
   static const List<_BusinessFirstRunStep> _steps = <_BusinessFirstRunStep>[
     _BusinessFirstRunStep(
       sectionId: 'official_company_details',
@@ -355,6 +357,37 @@ class _BusinessFirstRunWizardPageState
       ),
     ),
     _BusinessFirstRunStep(
+      sectionId: 'payment_ownership',
+      title: _Tr(
+        nl: 'Betalingen ontvangen',
+        en: 'Receive payments',
+        fr: 'Recevoir les paiements',
+        es: 'Recibir pagos',
+      ),
+      subtitle: _Tr(
+        nl: 'Kies hoe klanten kunnen betalen: online via je eigen Mollie-account, in de wagen, via QR/bankoverschrijving of handmatig.',
+        en: 'Choose how customers can pay: online via your own Mollie account, in the vehicle, via QR/bank transfer or manually.',
+        fr: 'Choisissez comment les clients peuvent payer : en ligne via votre propre compte Mollie, dans le véhicule, par QR/virement bancaire ou manuellement.',
+        es: 'Elige cómo pueden pagar los clientes: en línea con tu cuenta Mollie, en el vehículo, por QR/transferencia o manualmente.',
+      ),
+    ),
+    _BusinessFirstRunStep(
+      sectionId: 'mollie_terminal_payments',
+      optional: true,
+      title: _Tr(
+        nl: 'Mollie terminals',
+        en: 'Mollie terminals',
+        fr: 'Terminaux Mollie',
+        es: 'Terminales Mollie',
+      ),
+      subtitle: _Tr(
+        nl: 'Optioneel. Je kunt deze stap overslaan en later verder instellen.',
+        en: 'Optional. You can skip this step and continue setup later.',
+        fr: 'Optionnel. Vous pouvez ignorer cette étape et la configurer plus tard.',
+        es: 'Opcional. Puedes omitir este paso y continuar la configuración más tarde.',
+      ),
+    ),
+    _BusinessFirstRunStep(
       sectionId: 'branding_support',
       title: _Tr(
         nl: 'Branding & support',
@@ -402,6 +435,22 @@ class _BusinessFirstRunWizardPageState
       ),
     ),
     _BusinessFirstRunStep(
+      sectionId: 'chiron_connection',
+      optional: true,
+      title: _Tr(
+        nl: 'Chiron-koppeling Vlaanderen',
+        en: 'Chiron connection for Flanders',
+        fr: 'Connexion Chiron pour la Flandre',
+        es: 'Conexión Chiron para Flandes',
+      ),
+      subtitle: _Tr(
+        nl: 'Alleen relevant voor Vlaamse Chiron-plichtige taxi-, VVB- en IBP-exploitanten. Niet actief in Vlaanderen of geen Chiron-plicht? Dan kun je deze stap overslaan.',
+        en: 'Only relevant for Flemish taxi, VVB and IBP operators required to use Chiron. Not active in Flanders or not required to use Chiron? You can skip this step.',
+        fr: 'Concerne uniquement les exploitants flamands de taxi, VVB et IBP soumis à Chiron. Pas actif en Flandre ou pas soumis à Chiron ? Vous pouvez passer cette étape.',
+        es: 'Solo relevante para operadores flamencos de taxi, VVB e IBP obligados a usar Chiron. ¿No operas en Flandes o no estás obligado a usar Chiron? Puedes omitir este paso.',
+      ),
+    ),
+    _BusinessFirstRunStep(
       sectionId: 'public_booking_link',
       title: _Tr(
         nl: 'Boekingslink',
@@ -430,7 +479,7 @@ class _BusinessFirstRunWizardPageState
   void _logCurrentStep() {
     final step = _steps[_index];
     // 1-based index for human-friendly logs that match the AppBar strip
-    // ("Stap 1 van 8") so QA can correlate with the on-screen progress.
+    // ("Stap 1 van 11") so QA can correlate with the on-screen progress.
     debugPrint(
       '[FIRST_RUN_WIZARD][STEP] index=${_index + 1}/${_steps.length} '
       'section=${step.sectionId}'
