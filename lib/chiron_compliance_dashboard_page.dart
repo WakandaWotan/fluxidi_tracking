@@ -5,7 +5,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
+import 'package:fluxidi_tracking/business_settings_page.dart';
 import 'package:fluxidi_tracking/business_theme_palette.dart';
+import 'package:fluxidi_tracking/chiron_company_connection_config.dart';
 import 'package:fluxidi_tracking/business_theme_store.dart';
 import 'package:fluxidi_tracking/compliance_ledger_reader.dart';
 import 'package:fluxidi_tracking/compliance_register_receipt_bridge.dart';
@@ -193,6 +195,8 @@ class ChironComplianceDashboardPage extends StatelessWidget {
                     ),
                     const SizedBox(height: 12),
                     _ChironScoreSummaryPanel(lang: _lang),
+                    const SizedBox(height: 12),
+                    _ChironConnectionLinkCard(lang: _lang),
                   ],
                 ),
               ),
@@ -273,6 +277,208 @@ class ChironComplianceDashboardPage extends StatelessWidget {
                     ),
                   );
                 },
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _ChironConnectionLinkCard extends StatelessWidget {
+  const _ChironConnectionLinkCard({required this.lang});
+
+  final AppLanguage lang;
+
+  String _t({
+    required String nl,
+    required String en,
+    required String fr,
+    required String es,
+  }) {
+    switch (lang) {
+      case AppLanguage.nl:
+        return nl;
+      case AppLanguage.en:
+        return en;
+      case AppLanguage.fr:
+        return fr;
+      case AppLanguage.es:
+        return es;
+    }
+  }
+
+  ({String label, Color color, Color background, Color border}) _badgeFor(
+    BusinessSettingsState settings,
+  ) {
+    if (!settings.chironEnabled) {
+      return (
+        label: _t(
+          nl: 'Optioneel',
+          en: 'Optional',
+          fr: 'Optionnel',
+          es: 'Opcional',
+        ),
+        color: _chironTextSecondary,
+        background: _chironPanel,
+        border: _chironBorder,
+      );
+    }
+    if (settings.chironProductionEnabled) {
+      return (
+        label: _t(
+          nl: 'Productie actief',
+          en: 'Production active',
+          fr: 'Production active',
+          es: 'Producción activa',
+        ),
+        color: _chironSuccess,
+        background: _chironSuccess.withOpacity(0.16),
+        border: _chironSuccess.withOpacity(0.55),
+      );
+    }
+    if (settings.chironConnectionStatus == ChironConnectionStatus.testPassed) {
+      return (
+        label: _t(
+          nl: 'Test geslaagd',
+          en: 'Test passed',
+          fr: 'Test réussi',
+          es: 'Prueba superada',
+        ),
+        color: _chironSuccess,
+        background: _chironSuccess.withOpacity(0.16),
+        border: _chironSuccess.withOpacity(0.55),
+      );
+    }
+    return (
+      label: _t(
+        nl: 'Aandacht nodig',
+        en: 'Needs attention',
+        fr: 'Attention requise',
+        es: 'Requiere atención',
+      ),
+      color: _chironWarning,
+      background: _chironWarningSoft,
+      border: _chironWarning.withOpacity(0.55),
+    );
+  }
+
+  void _openBusinessSettings(BuildContext context) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(builder: (_) => const BusinessSettingsPage()),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<BusinessSettingsState>(
+      valueListenable: businessSettingsNotifier,
+      builder: (context, settings, _) {
+        final badge = _badgeFor(settings);
+        return Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(
+            color: _chironPanel,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: _chironBorder),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  Text(
+                    _t(
+                      nl: 'Chiron-koppeling',
+                      en: 'Chiron connection',
+                      fr: 'Connexion Chiron',
+                      es: 'Conexión Chiron',
+                    ),
+                    style: TextStyle(
+                      color: _chironGold,
+                      fontWeight: FontWeight.w800,
+                      fontSize: 14,
+                    ),
+                  ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 5,
+                    ),
+                    decoration: BoxDecoration(
+                      color: badge.background,
+                      borderRadius: BorderRadius.circular(999),
+                      border: Border.all(color: badge.border),
+                    ),
+                    child: Text(
+                      badge.label,
+                      style: TextStyle(
+                        color: badge.color,
+                        fontWeight: FontWeight.w800,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Text(
+                _t(
+                  nl: 'Koppel de Chiron-toegang van je bedrijf aan Fluxidi. Test eerst veilig in de Chiron-testomgeving voordat je overschakelt naar productie.',
+                  en: 'Connect your company’s Chiron access to Fluxidi. Test safely in the Chiron test environment before switching to production.',
+                  fr: 'Connectez l’accès Chiron de votre entreprise à Fluxidi. Testez d’abord la connexion dans l’environnement de test Chiron avant de passer en production.',
+                  es: 'Conecta el acceso Chiron de tu empresa con Fluxidi. Prueba primero en el entorno de pruebas de Chiron antes de pasar a producción.',
+                ),
+                style: TextStyle(
+                  color: _chironTextSecondary,
+                  fontSize: 12,
+                  height: 1.35,
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                _t(
+                  nl: 'Alleen relevant voor Vlaamse Chiron-plichtige taxi-, VVB- en IBP-exploitanten.',
+                  en: 'Only relevant for Flemish taxi, VVB and IBP operators that are required to use Chiron.',
+                  fr: 'Uniquement pertinent pour les exploitants flamands de taxi, VVB et IBP soumis à Chiron.',
+                  es: 'Solo relevante para operadores flamencos de taxi, VVB e IBP obligados a usar Chiron.',
+                ),
+                style: TextStyle(
+                  color: _chironTextMuted,
+                  fontSize: 11,
+                  height: 1.35,
+                ),
+              ),
+              const SizedBox(height: 10),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: TextButton(
+                  onPressed: () => _openBusinessSettings(context),
+                  style: TextButton.styleFrom(
+                    foregroundColor: _chironGold,
+                    padding: EdgeInsets.zero,
+                    minimumSize: Size.zero,
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    visualDensity: VisualDensity.compact,
+                  ),
+                  child: Text(
+                    _t(
+                      nl: 'Koppeling instellen',
+                      en: 'Configure connection',
+                      fr: 'Configurer la connexion',
+                      es: 'Configurar conexión',
+                    ),
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w800,
+                      fontSize: 13,
+                    ),
+                  ),
+                ),
               ),
             ],
           ),
