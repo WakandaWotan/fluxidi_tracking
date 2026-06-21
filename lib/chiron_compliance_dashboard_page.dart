@@ -1272,6 +1272,34 @@ class _ChironReadinessPanelState extends State<_ChironReadinessPanel> {
     );
   }
 
+  void _openReportPage(
+    BuildContext context,
+    _ChironReadinessResponse response,
+  ) {
+    if (!response.ok || response.report.overallStatus.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Rapport nog niet geladen.',
+              en: 'Report not loaded yet.',
+              fr: 'Rapport pas encore chargé.',
+              es: 'Informe aún no cargado.',
+            ),
+          ),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) =>
+            _ChironReadinessReportPage(lang: widget.lang, response: response),
+      ),
+    );
+  }
+
   Widget _readinessPanel(_ChironReadinessResponse response) {
     if (response.processedCount == 0) {
       return _messagePanel(
@@ -1436,21 +1464,7 @@ class _ChironReadinessPanelState extends State<_ChironReadinessPanel> {
                 ),
               ),
               OutlinedButton.icon(
-                onPressed: () {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text(
-                        _t(
-                          nl: 'Volledig rapport volgt.',
-                          en: 'Full report coming soon.',
-                          fr: 'Rapport complet à venir.',
-                          es: 'Informe completo próximamente.',
-                        ),
-                      ),
-                      behavior: SnackBarBehavior.floating,
-                    ),
-                  );
-                },
+                onPressed: () => _openReportPage(context, response),
                 icon: Icon(
                   Icons.article_outlined,
                   size: 16,
@@ -1562,6 +1576,1194 @@ class _ChironReadinessPanelState extends State<_ChironReadinessPanel> {
           );
         }
         return _readinessPanel(response);
+      },
+    );
+  }
+}
+
+class _ChironReadinessReportPage extends StatelessWidget {
+  const _ChironReadinessReportPage({
+    required this.lang,
+    required this.response,
+  });
+
+  final AppLanguage lang;
+  final _ChironReadinessResponse response;
+
+  String _t({
+    required String nl,
+    required String en,
+    required String fr,
+    required String es,
+  }) {
+    switch (lang) {
+      case AppLanguage.nl:
+        return nl;
+      case AppLanguage.en:
+        return en;
+      case AppLanguage.fr:
+        return fr;
+      case AppLanguage.es:
+        return es;
+    }
+  }
+
+  String _groupLabel(String fieldGroup) {
+    switch (fieldGroup) {
+      case 'business_identity':
+        return _t(
+          nl: 'Bedrijfsgegevens',
+          en: 'Business data',
+          fr: 'Données entreprise',
+          es: 'Datos empresa',
+        );
+      case 'vehicle_identity':
+        return _t(
+          nl: 'Voertuig',
+          en: 'Vehicle',
+          fr: 'Véhicule',
+          es: 'Vehículo',
+        );
+      case 'driver_identity':
+        return _t(
+          nl: 'Chauffeur',
+          en: 'Driver',
+          fr: 'Chauffeur',
+          es: 'Conductor',
+        );
+      case 'ride_geometry':
+        return _t(
+          nl: 'GPS/afstand',
+          en: 'GPS/distance',
+          fr: 'GPS/distance',
+          es: 'GPS/distancia',
+        );
+      case 'sequence':
+        return _t(
+          nl: 'Volgorde',
+          en: 'Sequence',
+          fr: 'Séquence',
+          es: 'Secuencia',
+        );
+      case 'registry':
+        return _t(
+          nl: 'Officiële controles',
+          en: 'Official checks',
+          fr: 'Contrôles officiels',
+          es: 'Controles oficiales',
+        );
+      case 'documents':
+        return _t(
+          nl: 'Documenten',
+          en: 'Documents',
+          fr: 'Documents',
+          es: 'Documentos',
+        );
+      default:
+        if (fieldGroup.isEmpty) {
+          return _t(nl: 'Overig', en: 'Other', fr: 'Autre', es: 'Otro');
+        }
+        return fieldGroup;
+    }
+  }
+
+  String _issueLabel(String code) {
+    if (code.isEmpty) return code;
+    switch (code) {
+      case 'invalid_zero_coordinate_pair':
+        return _t(
+          nl: 'GPS-coördinaten zijn 0/0',
+          en: 'GPS coordinates are 0/0',
+          fr: 'Coordonnées GPS à 0/0',
+          es: 'Coordenadas GPS en 0/0',
+        );
+      case 'placeholder_registration':
+        return _t(
+          nl: 'Demo-KBO gedetecteerd',
+          en: 'Demo company number detected',
+          fr: 'Numéro d\'entreprise démo détecté',
+          es: 'Número de empresa demo detectado',
+        );
+      case 'placeholder_business_name':
+        return _t(
+          nl: 'Demo-bedrijfsnaam gedetecteerd',
+          en: 'Demo business name detected',
+          fr: 'Nom d\'entreprise démo détecté',
+          es: 'Nombre de empresa demo detectado',
+        );
+      case 'placeholder_driver_pass':
+        return _t(
+          nl: 'Demo-bestuurderspas gedetecteerd',
+          en: 'Demo driver pass detected',
+          fr: 'Carte chauffeur démo détectée',
+          es: 'Carnet de conductor demo detectado',
+        );
+      case 'placeholder_license_plate':
+        return _t(
+          nl: 'Demo-kenteken gedetecteerd',
+          en: 'Demo license plate detected',
+          fr: 'Plaque démo détectée',
+          es: 'Matrícula demo detectada',
+        );
+      case 'invalid_flemish_taxi_plate':
+        return _t(
+          nl: 'Ongeldig Vlaams taxi-kenteken',
+          en: 'Invalid Flemish taxi plate',
+          fr: 'Plaque taxi flamande invalide',
+          es: 'Matrícula taxi flamenca no válida',
+        );
+      case 'aankomstpunt_breedtegraad':
+        return _t(
+          nl: 'Aankomst GPS-breedtegraad ontbreekt',
+          en: 'Arrival GPS latitude missing',
+          fr: 'Latitude GPS d\'arrivée manquante',
+          es: 'Latitud GPS de llegada faltante',
+        );
+      case 'aankomstpunt_lengtegraad':
+        return _t(
+          nl: 'Aankomst GPS-lengtegraad ontbreekt',
+          en: 'Arrival GPS longitude missing',
+          fr: 'Longitude GPS d\'arrivée manquante',
+          es: 'Longitud GPS de llegada faltante',
+        );
+      case 'vertrekpunt_breedtegraad':
+        return _t(
+          nl: 'Vertrek GPS-breedtegraad ontbreekt',
+          en: 'Departure GPS latitude missing',
+          fr: 'Latitude GPS de départ manquante',
+          es: 'Latitud GPS de salida faltante',
+        );
+      case 'vertrekpunt_lengtegraad':
+        return _t(
+          nl: 'Vertrek GPS-lengtegraad ontbreekt',
+          en: 'Departure GPS longitude missing',
+          fr: 'Longitude GPS de départ manquante',
+          es: 'Longitud GPS de salida faltante',
+        );
+      case 'afstand':
+        return _t(
+          nl: 'Ritafstand ontbreekt of is 0',
+          en: 'Trip distance missing or zero',
+          fr: 'Distance de course manquante ou nulle',
+          es: 'Distancia del viaje faltante o cero',
+        );
+      case 'missing_prior_vertrek_or_reservatie_in_batch':
+        return _t(
+          nl: 'Ritvolgorde niet volledig',
+          en: 'Ride sequence incomplete',
+          fr: 'Ordre des courses incomplet',
+          es: 'Secuencia de viajes incompleta',
+        );
+      case 'taxi_plate_pattern_not_confirmed':
+        return _t(
+          nl: 'Taxi-kenteken niet bevestigd',
+          en: 'Taxi plate not confirmed',
+          fr: 'Plaque taxi non confirmée',
+          es: 'Matrícula taxi no confirmada',
+        );
+      case 'vehicle_document_review_required':
+        return _t(
+          nl: 'Voertuigdocument controleren',
+          en: 'Review vehicle document',
+          fr: 'Contrôler le document véhicule',
+          es: 'Revisar documento del vehículo',
+        );
+      case 'invalid_registration_format':
+        return _t(
+          nl: 'Ongeldig KBO-nummer',
+          en: 'Invalid company number format',
+          fr: 'Numéro d\'entreprise invalide',
+          es: 'Formato de número de empresa no válido',
+        );
+      case 'invalid_business_name':
+        return _t(
+          nl: 'Ongeldige bedrijfsnaam',
+          en: 'Invalid business name',
+          fr: 'Nom d\'entreprise invalide',
+          es: 'Nombre de empresa no válido',
+        );
+      case 'invalid_license_plate_format':
+        return _t(
+          nl: 'Ongeldig kentekenformaat',
+          en: 'Invalid license plate format',
+          fr: 'Format de plaque invalide',
+          es: 'Formato de matrícula no válido',
+        );
+      case 'taxi_plate_exception_requires_review':
+        return _t(
+          nl: 'Kentekenuitzondering controleren',
+          en: 'License plate exception needs review',
+          fr: 'Exception de plaque à contrôler',
+          es: 'Excepción de matrícula requiere revisión',
+        );
+      case 'invalid_driver_pass_format':
+        return _t(
+          nl: 'Ongeldig bestuurderspasnummer',
+          en: 'Invalid driver pass number',
+          fr: 'Numéro de carte chauffeur invalide',
+          es: 'Número de carnet de conductor no válido',
+        );
+      case 'kostprijs':
+        return _t(
+          nl: 'Ritprijs ontbreekt',
+          en: 'Trip price missing',
+          fr: 'Prix de course manquant',
+          es: 'Precio del viaje faltante',
+        );
+      case 'vertrektijdstip':
+        return _t(
+          nl: 'Vertrektijdstip ontbreekt',
+          en: 'Departure timestamp missing',
+          fr: 'Heure de départ manquante',
+          es: 'Hora de salida faltante',
+        );
+      case 'aankomsttijdstip':
+        return _t(
+          nl: 'Aankomsttijdstip ontbreekt',
+          en: 'Arrival timestamp missing',
+          fr: 'Heure d\'arrivée manquante',
+          es: 'Hora de llegada faltante',
+        );
+      case 'ritnummer':
+        return _t(
+          nl: 'Ritreferentie ontbreekt',
+          en: 'Trip reference missing',
+          fr: 'Référence de course manquante',
+          es: 'Referencia del viaje faltante',
+        );
+      case 'broncreatiedatum':
+        return _t(
+          nl: 'Aanmaakdatum bronregistratie ontbreekt',
+          en: 'Source record creation date missing',
+          fr: 'Date de création source manquante',
+          es: 'Fecha de creación del registro fuente faltante',
+        );
+      case 'driver_pass_document_review_required':
+        return _t(
+          nl: 'Bestuurderspasdocument controleren',
+          en: 'Review driver pass document',
+          fr: 'Contrôler le document carte chauffeur',
+          es: 'Revisar carnet de conductor',
+        );
+      case 'driver_pass_document_expired':
+        return _t(
+          nl: 'Bestuurderspasdocument verlopen',
+          en: 'Driver pass document expired',
+          fr: 'Document carte chauffeur expiré',
+          es: 'Carnet de conductor caducado',
+        );
+      case 'driver_pass_document_mismatch':
+        return _t(
+          nl: 'Bestuurderspas komt niet overeen',
+          en: 'Driver pass document mismatch',
+          fr: 'Carte chauffeur non concordante',
+          es: 'Carnet de conductor no coincide',
+        );
+      case 'driver_pass_document_rejected':
+        return _t(
+          nl: 'Bestuurderspasdocument afgewezen',
+          en: 'Driver pass document rejected',
+          fr: 'Document carte chauffeur rejeté',
+          es: 'Carnet de conductor rechazado',
+        );
+      case 'vehicle_document_expired':
+        return _t(
+          nl: 'Voertuigdocument verlopen',
+          en: 'Vehicle document expired',
+          fr: 'Document véhicule expiré',
+          es: 'Documento del vehículo caducado',
+        );
+      case 'vehicle_document_mismatch':
+        return _t(
+          nl: 'Voertuigdocument komt niet overeen',
+          en: 'Vehicle document mismatch',
+          fr: 'Document véhicule non concordant',
+          es: 'Documento del vehículo no coincide',
+        );
+      case 'vehicle_document_rejected':
+        return _t(
+          nl: 'Voertuigdocument afgewezen',
+          en: 'Vehicle document rejected',
+          fr: 'Document véhicule rejeté',
+          es: 'Documento del vehículo rechazado',
+        );
+      case 'business_document_review_required':
+        return _t(
+          nl: 'Ondernemingsdocument controleren',
+          en: 'Review business document',
+          fr: 'Contrôler le document entreprise',
+          es: 'Revisar documento de empresa',
+        );
+      case 'business_document_expired':
+        return _t(
+          nl: 'Ondernemingsdocument verlopen',
+          en: 'Business document expired',
+          fr: 'Document entreprise expiré',
+          es: 'Documento de empresa caducado',
+        );
+      case 'business_document_mismatch':
+        return _t(
+          nl: 'Ondernemingsdocument komt niet overeen',
+          en: 'Business document mismatch',
+          fr: 'Document entreprise non concordant',
+          es: 'Documento de empresa no coincide',
+        );
+      case 'business_document_rejected':
+        return _t(
+          nl: 'Ondernemingsdocument afgewezen',
+          en: 'Business document rejected',
+          fr: 'Document entreprise rejeté',
+          es: 'Documento de empresa rechazado',
+        );
+      default:
+        return code.replaceAll('_', ' ');
+    }
+  }
+
+  String _fieldLabel(String field) {
+    if (field.isEmpty) return field;
+    switch (field) {
+      case 'registratie':
+        return _t(
+          nl: 'KBO / ondernemingsnummer',
+          en: 'Company number (KBO)',
+          fr: 'Numéro d\'entreprise (BCE)',
+          es: 'Número de empresa (KBO)',
+        );
+      case 'naam':
+        return _t(
+          nl: 'Bedrijfsnaam',
+          en: 'Business name',
+          fr: 'Nom d\'entreprise',
+          es: 'Nombre de empresa',
+        );
+      case 'kentekenplaat':
+        return _t(
+          nl: 'Nummerplaat',
+          en: 'License plate',
+          fr: 'Plaque d\'immatriculation',
+          es: 'Matrícula',
+        );
+      case 'bestuurderspasnummer':
+        return _t(
+          nl: 'Bestuurderspas',
+          en: 'Driver pass',
+          fr: 'Carte chauffeur',
+          es: 'Carnet de conductor',
+        );
+      case 'vertrekpunt_lengtegraad':
+        return _t(
+          nl: 'Vertrek GPS-lengtegraad',
+          en: 'Departure GPS longitude',
+          fr: 'Longitude GPS départ',
+          es: 'Longitud GPS salida',
+        );
+      case 'vertrekpunt_breedtegraad':
+        return _t(
+          nl: 'Vertrek GPS-breedtegraad',
+          en: 'Departure GPS latitude',
+          fr: 'Latitude GPS départ',
+          es: 'Latitud GPS salida',
+        );
+      case 'aankomstpunt_lengtegraad':
+        return _t(
+          nl: 'Aankomst GPS-lengtegraad',
+          en: 'Arrival GPS longitude',
+          fr: 'Longitude GPS arrivée',
+          es: 'Longitud GPS llegada',
+        );
+      case 'aankomstpunt_breedtegraad':
+        return _t(
+          nl: 'Aankomst GPS-breedtegraad',
+          en: 'Arrival GPS latitude',
+          fr: 'Latitude GPS arrivée',
+          es: 'Latitud GPS llegada',
+        );
+      case 'afstand':
+        return _t(
+          nl: 'Ritafstand',
+          en: 'Trip distance',
+          fr: 'Distance de course',
+          es: 'Distancia del viaje',
+        );
+      case 'status':
+        return _t(nl: 'Status', en: 'Status', fr: 'Statut', es: 'Estado');
+      case 'kostprijs':
+        return _t(
+          nl: 'Ritprijs',
+          en: 'Trip price',
+          fr: 'Prix de course',
+          es: 'Precio del viaje',
+        );
+      case 'vertrektijdstip':
+        return _t(
+          nl: 'Vertrektijdstip',
+          en: 'Departure time',
+          fr: 'Heure de départ',
+          es: 'Hora de salida',
+        );
+      case 'aankomsttijdstip':
+        return _t(
+          nl: 'Aankomsttijdstip',
+          en: 'Arrival time',
+          fr: 'Heure d\'arrivée',
+          es: 'Hora de llegada',
+        );
+      case 'ritnummer':
+        return _t(
+          nl: 'Ritreferentie',
+          en: 'Trip reference',
+          fr: 'Référence de course',
+          es: 'Referencia del viaje',
+        );
+      case 'broncreatiedatum':
+        return _t(
+          nl: 'Aanmaakdatum',
+          en: 'Creation date',
+          fr: 'Date de création',
+          es: 'Fecha de creación',
+        );
+      default:
+        return field.replaceAll('_', ' ');
+    }
+  }
+
+  ({String label, Color color, IconData icon}) _statusVisual(String status) {
+    switch (status) {
+      case 'blocked':
+        return (
+          label: _t(
+            nl: 'Geblokkeerd',
+            en: 'Blocked',
+            fr: 'Bloqué',
+            es: 'Bloqueado',
+          ),
+          color: _chironDanger,
+          icon: Icons.block,
+        );
+      case 'required_review':
+        return (
+          label: _t(
+            nl: 'Review nodig',
+            en: 'Review needed',
+            fr: 'Revue requise',
+            es: 'Revisión necesaria',
+          ),
+          color: _chironWarning,
+          icon: Icons.rate_review_outlined,
+        );
+      case 'format_valid':
+        return (
+          label: _t(
+            nl: 'Formaat geldig',
+            en: 'Format valid',
+            fr: 'Format valide',
+            es: 'Formato válido',
+          ),
+          color: _chironGold,
+          icon: Icons.fact_check_outlined,
+        );
+      case 'ready_for_chiron_test':
+        return (
+          label: _t(
+            nl: 'Klaar voor Chiron-test',
+            en: 'Ready for Chiron test',
+            fr: 'Prêt pour le test Chiron',
+            es: 'Listo para prueba Chiron',
+          ),
+          color: _chironSuccess,
+          icon: Icons.verified_outlined,
+        );
+      case 'verified':
+        return (
+          label: _t(
+            nl: 'Geverifieerd',
+            en: 'Verified',
+            fr: 'Vérifié',
+            es: 'Verificado',
+          ),
+          color: _chironSuccess,
+          icon: Icons.verified_outlined,
+        );
+      case 'missing':
+        return (
+          label: _t(
+            nl: 'Ontbreekt',
+            en: 'Missing',
+            fr: 'Manquant',
+            es: 'Faltante',
+          ),
+          color: _chironTextMuted,
+          icon: Icons.help_outline,
+        );
+      case 'not_applicable':
+        return (
+          label: _t(
+            nl: 'Niet van toepassing',
+            en: 'Not applicable',
+            fr: 'Non applicable',
+            es: 'No aplicable',
+          ),
+          color: _chironTextMuted,
+          icon: Icons.remove_circle_outline,
+        );
+      default:
+        return (
+          label: _t(
+            nl: 'Onbekend',
+            en: 'Unknown',
+            fr: 'Inconnu',
+            es: 'Desconocido',
+          ),
+          color: _chironTextMuted,
+          icon: Icons.help_outline,
+        );
+    }
+  }
+
+  Widget _statusChip(String status) {
+    final visual = _statusVisual(status);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      decoration: BoxDecoration(
+        color: visual.color.withOpacity(0.16),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: visual.color.withOpacity(0.55)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(visual.icon, size: 14, color: visual.color),
+          const SizedBox(width: 6),
+          Text(
+            visual.label,
+            style: TextStyle(
+              color: visual.color,
+              fontWeight: FontWeight.w800,
+              fontSize: 12,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _metricTile({
+    required String label,
+    required String value,
+    Color? valueColor,
+  }) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: _chironCard,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: _chironBorder),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            label,
+            style: TextStyle(color: _chironTextMuted, fontSize: 11),
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+          ),
+          const SizedBox(height: 4),
+          Text(
+            value,
+            style: TextStyle(
+              color: valueColor ?? _chironTextPrimary,
+              fontSize: 15,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _metricGrid(List<Widget> tiles) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final maxWidth = constraints.maxWidth;
+        const gap = 8.0;
+        final tileCount = tiles.length;
+        final columns = maxWidth >= 520
+            ? (tileCount >= 4 ? 3 : tileCount)
+            : maxWidth >= 260
+            ? 2
+            : 1;
+        final tileWidth = columns == 1
+            ? maxWidth
+            : (maxWidth - gap * (columns - 1)) / columns;
+        return Wrap(
+          spacing: gap,
+          runSpacing: gap,
+          children: [
+            for (final tile in tiles) SizedBox(width: tileWidth, child: tile),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _panelBox({required Widget child}) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: _chironPanel,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: _chironBorder),
+      ),
+      child: child,
+    );
+  }
+
+  Widget _issueCard(_ChironReadinessIssue issue) {
+    final technicalCode = issue.code;
+    final title = technicalCode.isNotEmpty
+        ? _issueLabel(technicalCode)
+        : _groupLabel(issue.fieldGroup);
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: _chironCard,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: _chironBorder),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Text(
+                  title,
+                  style: TextStyle(
+                    color: _chironTextPrimary,
+                    fontWeight: FontWeight.w800,
+                    fontSize: 13,
+                  ),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              Text(
+                '${issue.count}',
+                style: TextStyle(
+                  color: _chironGold,
+                  fontWeight: FontWeight.w800,
+                  fontSize: 14,
+                ),
+              ),
+            ],
+          ),
+          if (technicalCode.isNotEmpty) ...[
+            const SizedBox(height: 4),
+            Text(
+              technicalCode,
+              style: TextStyle(color: _chironTextFaint, fontSize: 11),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ],
+          if (issue.nextAction.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            Text(
+              issue.nextAction,
+              style: TextStyle(color: _chironTextSecondary, fontSize: 12),
+              maxLines: 3,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _fieldGroupCard(_ChironReadinessFieldGroup group) {
+    final firstBlocker = group.blockers.isNotEmpty
+        ? group.blockers.first
+        : null;
+    final firstWarning = group.warnings.isNotEmpty
+        ? group.warnings.first
+        : null;
+    final firstAction = group.nextActions.isNotEmpty
+        ? group.nextActions.first
+        : (firstBlocker?.nextAction ?? firstWarning?.nextAction ?? '');
+
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: _chironCard,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: _chironBorder),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  _groupLabel(group.group),
+                  style: TextStyle(
+                    color: _chironTextPrimary,
+                    fontWeight: FontWeight.w800,
+                    fontSize: 13,
+                  ),
+                ),
+              ),
+              _statusChip(group.status),
+            ],
+          ),
+          if (group.fields.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              children: group.fields
+                  .map(
+                    (field) => Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: _chironPanel,
+                        borderRadius: BorderRadius.circular(999),
+                        border: Border.all(color: _chironBorder),
+                      ),
+                      child: Text(
+                        _fieldLabel(field),
+                        style: TextStyle(
+                          color: _chironTextSecondary,
+                          fontSize: 10,
+                        ),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  )
+                  .toList(growable: false),
+            ),
+          ],
+          if (firstAction.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text(
+              _t(
+                nl: 'Volgende actie',
+                en: 'Next action',
+                fr: 'Action suivante',
+                es: 'Siguiente acción',
+              ),
+              style: TextStyle(
+                color: _chironTextMuted,
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              firstAction,
+              style: TextStyle(color: _chironTextSecondary, fontSize: 12),
+              maxLines: 3,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _emptySection(String text) {
+    return _panelBox(
+      child: Text(
+        text,
+        style: TextStyle(color: _chironTextMuted, fontSize: 12),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final report = response.report;
+    final summary = report.summary;
+
+    return ValueListenableBuilder<BusinessThemeVariant>(
+      valueListenable: businessThemeNotifier,
+      builder: (context, _, __) {
+        return Scaffold(
+          backgroundColor: _chironBg,
+          appBar: AppBar(
+            backgroundColor: _chironBg,
+            foregroundColor: _chironTextPrimary,
+            title: Text(
+              _t(
+                nl: 'Chiron readinessrapport',
+                en: 'Chiron readiness report',
+                fr: 'Rapport de préparation Chiron',
+                es: 'Informe de preparación Chiron',
+              ),
+            ),
+          ),
+          body: ListView(
+            padding: const EdgeInsets.all(14),
+            children: [
+              _baseCard(
+                title: _t(
+                  nl: 'Status',
+                  en: 'Status',
+                  fr: 'Statut',
+                  es: 'Estado',
+                ),
+                child: _panelBox(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              _t(
+                                nl: 'Status',
+                                en: 'Status',
+                                fr: 'Statut',
+                                es: 'Estado',
+                              ),
+                              style: TextStyle(
+                                color: _chironTextMuted,
+                                fontSize: 12,
+                              ),
+                            ),
+                          ),
+                          _statusChip(report.overallStatus),
+                        ],
+                      ),
+                      const SizedBox(height: 10),
+                      Text(
+                        _t(
+                          nl: 'Verwerkt ${response.processedCount} van ${response.scannedCount} events',
+                          en: 'Processed ${response.processedCount} of ${response.scannedCount} events',
+                          fr: '${response.processedCount} événements traités sur ${response.scannedCount}',
+                          es: '${response.processedCount} eventos procesados de ${response.scannedCount}',
+                        ),
+                        style: TextStyle(
+                          color: _chironTextSecondary,
+                          fontSize: 12,
+                        ),
+                      ),
+                      if (report.generatedAtUtc.isNotEmpty) ...[
+                        const SizedBox(height: 4),
+                        Text(
+                          report.generatedAtUtc,
+                          style: TextStyle(
+                            color: _chironTextFaint,
+                            fontSize: 11,
+                          ),
+                        ),
+                      ],
+                      const SizedBox(height: 10),
+                      Text(
+                        _t(
+                          nl: 'Preflightcontrole — geen officiële Chiron-submit uitgevoerd.',
+                          en: 'Preflight check — no official Chiron submission performed.',
+                          fr: 'Contrôle préalable — aucun envoi officiel Chiron effectué.',
+                          es: 'Comprobación previa — no se ha realizado ningún envío oficial a Chiron.',
+                        ),
+                        style: TextStyle(color: _chironTextFaint, fontSize: 11),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              _baseCard(
+                title: _t(
+                  nl: 'Samenvatting',
+                  en: 'Summary',
+                  fr: 'Résumé',
+                  es: 'Resumen',
+                ),
+                subtitle: _t(
+                  nl: 'Tellingen',
+                  en: 'Counts',
+                  fr: 'Comptages',
+                  es: 'Recuentos',
+                ),
+                child: _metricGrid([
+                  _metricTile(
+                    label: _t(
+                      nl: 'Geblokkeerd',
+                      en: 'Blocked',
+                      fr: 'Bloqué',
+                      es: 'Bloqueado',
+                    ),
+                    value: '${summary.blockedCount}',
+                    valueColor: summary.blockedCount > 0 ? _chironDanger : null,
+                  ),
+                  _metricTile(
+                    label: _t(
+                      nl: 'Review nodig',
+                      en: 'Review needed',
+                      fr: 'Revue requise',
+                      es: 'Revisión necesaria',
+                    ),
+                    value: '${summary.reviewRequiredCount}',
+                    valueColor: summary.reviewRequiredCount > 0
+                        ? _chironWarning
+                        : null,
+                  ),
+                  _metricTile(
+                    label: _t(
+                      nl: 'Klaar',
+                      en: 'Ready',
+                      fr: 'Prêt',
+                      es: 'Listo',
+                    ),
+                    value: '${summary.officialReadyCount}',
+                    valueColor: summary.officialReadyCount > 0
+                        ? _chironSuccess
+                        : null,
+                  ),
+                  _metricTile(
+                    label: _t(
+                      nl: 'Formaat geldig',
+                      en: 'Format valid',
+                      fr: 'Format valide',
+                      es: 'Formato válido',
+                    ),
+                    value: '${summary.formatValidCount}',
+                  ),
+                  _metricTile(
+                    label: _t(
+                      nl: 'Niet van toepassing',
+                      en: 'Not applicable',
+                      fr: 'Non applicable',
+                      es: 'No aplicable',
+                    ),
+                    value: '${summary.notApplicableCount}',
+                  ),
+                  _metricTile(
+                    label: _t(
+                      nl: 'Volgorde',
+                      en: 'Sequence',
+                      fr: 'Séquence',
+                      es: 'Secuencia',
+                    ),
+                    value: '${summary.sequenceUnsafeCount}',
+                    valueColor: summary.sequenceUnsafeCount > 0
+                        ? _chironWarning
+                        : null,
+                  ),
+                ]),
+              ),
+              _baseCard(
+                title: _t(
+                  nl: 'Belangrijkste blockers',
+                  en: 'Top blockers',
+                  fr: 'Principaux blocages',
+                  es: 'Principales bloqueos',
+                ),
+                child: report.topBlockers.isEmpty
+                    ? _emptySection(
+                        _t(
+                          nl: 'Geen blockers gevonden.',
+                          en: 'No blockers found.',
+                          fr: 'Aucun blocage trouvé.',
+                          es: 'No se encontraron bloqueos.',
+                        ),
+                      )
+                    : Column(
+                        children: report.topBlockers
+                            .take(10)
+                            .map(_issueCard)
+                            .toList(growable: false),
+                      ),
+              ),
+              _baseCard(
+                title: _t(
+                  nl: 'Waarschuwingen',
+                  en: 'Warnings',
+                  fr: 'Avertissements',
+                  es: 'Advertencias',
+                ),
+                child: report.topWarnings.isEmpty
+                    ? _emptySection(
+                        _t(
+                          nl: 'Geen waarschuwingen gevonden.',
+                          en: 'No warnings found.',
+                          fr: 'Aucun avertissement trouvé.',
+                          es: 'No se encontraron advertencias.',
+                        ),
+                      )
+                    : Column(
+                        children: report.topWarnings
+                            .take(10)
+                            .map(_issueCard)
+                            .toList(growable: false),
+                      ),
+              ),
+              _baseCard(
+                title: _t(
+                  nl: 'Controle per onderdeel',
+                  en: 'Checks by area',
+                  fr: 'Contrôle par composant',
+                  es: 'Control por componente',
+                ),
+                child: report.fieldGroups.isEmpty
+                    ? _emptySection(
+                        _t(
+                          nl: 'Geen onderdelen beschikbaar.',
+                          en: 'No sections available.',
+                          fr: 'Aucune section disponible.',
+                          es: 'No hay secciones disponibles.',
+                        ),
+                      )
+                    : Column(
+                        children: report.fieldGroups
+                            .map(_fieldGroupCard)
+                            .toList(growable: false),
+                      ),
+              ),
+              _baseCard(
+                title: _t(
+                  nl: 'Beleidsnotities',
+                  en: 'Policy notes',
+                  fr: 'Notes de politique',
+                  es: 'Notas de política',
+                ),
+                child: report.policyNotes.isEmpty
+                    ? _emptySection(
+                        _t(
+                          nl: 'Geen officiële Chiron-submit uitgevoerd.',
+                          en: 'No official Chiron submission performed.',
+                          fr: 'Aucun envoi officiel Chiron effectué.',
+                          es: 'No se ha realizado ningún envío oficial a Chiron.',
+                        ),
+                      )
+                    : Column(
+                        children: report.policyNotes
+                            .map(
+                              (note) => Padding(
+                                padding: const EdgeInsets.only(bottom: 8),
+                                child: Row(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Icon(
+                                      Icons.info_outline,
+                                      size: 14,
+                                      color: _chironTextMuted,
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Expanded(
+                                      child: Text(
+                                        note,
+                                        style: TextStyle(
+                                          color: _chironTextSecondary,
+                                          fontSize: 12,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            )
+                            .toList(growable: false),
+                      ),
+              ),
+              if (report.sampleIssues.isNotEmpty)
+                _baseCard(
+                  title: _t(
+                    nl: 'Technische voorbeelden',
+                    en: 'Technical examples',
+                    fr: 'Exemples techniques',
+                    es: 'Ejemplos técnicos',
+                  ),
+                  child: Column(
+                    children: report.sampleIssues
+                        .take(5)
+                        .map(
+                          (sample) => Container(
+                            width: double.infinity,
+                            margin: const EdgeInsets.only(bottom: 8),
+                            padding: const EdgeInsets.all(10),
+                            decoration: BoxDecoration(
+                              color: _chironCard,
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(color: _chironBorder),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  _issueLabel(sample.issue),
+                                  style: TextStyle(
+                                    color: _chironTextPrimary,
+                                    fontWeight: FontWeight.w700,
+                                    fontSize: 12,
+                                  ),
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                                if (sample.issue.isNotEmpty) ...[
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    sample.issue,
+                                    style: TextStyle(
+                                      color: _chironTextFaint,
+                                      fontSize: 10,
+                                    ),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ],
+                                if (sample.bookingId.isNotEmpty) ...[
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    sample.bookingId,
+                                    style: TextStyle(
+                                      color: _chironTextSecondary,
+                                      fontSize: 11,
+                                    ),
+                                  ),
+                                ],
+                                if (sample.eventType.isNotEmpty ||
+                                    sample.officialStatus.isNotEmpty) ...[
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    [
+                                      if (sample.eventType.isNotEmpty)
+                                        sample.eventType,
+                                      if (sample.officialStatus.isNotEmpty)
+                                        sample.officialStatus,
+                                    ].join(' · '),
+                                    style: TextStyle(
+                                      color: _chironTextFaint,
+                                      fontSize: 10,
+                                    ),
+                                  ),
+                                ],
+                              ],
+                            ),
+                          ),
+                        )
+                        .toList(growable: false),
+                  ),
+                ),
+            ],
+          ),
+        );
       },
     );
   }
@@ -3126,7 +4328,7 @@ class _ChironReadinessIssue {
 
   factory _ChironReadinessIssue.fromJson(Map<String, dynamic> json) {
     return _ChironReadinessIssue(
-      code: (json['code'] ?? '').toString().trim(),
+      code: (json['code'] ?? json['issue'] ?? '').toString().trim(),
       count: _parseChironInt(json['count']),
       fieldGroup: (json['field_group'] ?? '').toString().trim(),
       nextAction: (json['next_action'] ?? '').toString().trim(),
@@ -3134,19 +4336,106 @@ class _ChironReadinessIssue {
   }
 }
 
+class _ChironReadinessFieldGroup {
+  const _ChironReadinessFieldGroup({
+    required this.group,
+    required this.status,
+    required this.fields,
+    required this.blockers,
+    required this.warnings,
+    required this.nextActions,
+  });
+
+  final String group;
+  final String status;
+  final List<String> fields;
+  final List<_ChironReadinessIssue> blockers;
+  final List<_ChironReadinessIssue> warnings;
+  final List<String> nextActions;
+
+  factory _ChironReadinessFieldGroup.fromJson(Map<String, dynamic> json) {
+    List<_ChironReadinessIssue> parseIssues(dynamic raw) {
+      if (raw is! List) return const <_ChironReadinessIssue>[];
+      return raw
+          .whereType<Map>()
+          .map(
+            (item) =>
+                _ChironReadinessIssue.fromJson(Map<String, dynamic>.from(item)),
+          )
+          .toList(growable: false);
+    }
+
+    final fieldsRaw = json['fields'];
+    final fields = fieldsRaw is List
+        ? fieldsRaw
+              .map((f) => (f ?? '').toString().trim())
+              .where((f) => f.isNotEmpty)
+              .toList(growable: false)
+        : const <String>[];
+
+    final nextActionsRaw = json['next_actions'];
+    final nextActions = nextActionsRaw is List
+        ? nextActionsRaw
+              .map((a) => (a ?? '').toString().trim())
+              .where((a) => a.isNotEmpty)
+              .toList(growable: false)
+        : const <String>[];
+
+    return _ChironReadinessFieldGroup(
+      group: (json['group'] ?? '').toString().trim(),
+      status: (json['status'] ?? '').toString().trim(),
+      fields: fields,
+      blockers: parseIssues(json['blockers']),
+      warnings: parseIssues(json['warnings']),
+      nextActions: nextActions,
+    );
+  }
+}
+
+class _ChironReadinessSampleIssue {
+  const _ChironReadinessSampleIssue({
+    required this.issue,
+    required this.bookingId,
+    required this.eventType,
+    required this.officialStatus,
+  });
+
+  final String issue;
+  final String bookingId;
+  final String eventType;
+  final String officialStatus;
+
+  factory _ChironReadinessSampleIssue.fromJson(Map<String, dynamic> json) {
+    return _ChironReadinessSampleIssue(
+      issue: (json['issue'] ?? json['code'] ?? '').toString().trim(),
+      bookingId: (json['booking_id'] ?? '').toString().trim(),
+      eventType: (json['event_type'] ?? '').toString().trim(),
+      officialStatus: (json['official_status'] ?? '').toString().trim(),
+    );
+  }
+}
+
 class _ChironReadinessReport {
   const _ChironReadinessReport({
     required this.overallStatus,
+    required this.generatedAtUtc,
     required this.summary,
     required this.topBlockers,
     required this.topWarnings,
+    required this.nextActions,
+    required this.fieldGroups,
+    required this.sampleIssues,
     required this.policyNotes,
   });
 
   final String overallStatus;
+  final String generatedAtUtc;
   final _ChironReadinessSummary summary;
   final List<_ChironReadinessIssue> topBlockers;
   final List<_ChironReadinessIssue> topWarnings;
+  final List<String> nextActions;
+  final List<_ChironReadinessFieldGroup> fieldGroups;
+  final List<_ChironReadinessSampleIssue> sampleIssues;
   final List<String> policyNotes;
 
   factory _ChironReadinessReport.fromJson(Map<String, dynamic> json) {
@@ -3176,20 +4465,60 @@ class _ChironReadinessReport {
               .toList(growable: false)
         : const <String>[];
 
+    final nextActionsRaw = json['next_actions'];
+    final nextActions = nextActionsRaw is List
+        ? nextActionsRaw
+              .map((a) => (a ?? '').toString().trim())
+              .where((a) => a.isNotEmpty)
+              .toList(growable: false)
+        : const <String>[];
+
+    final fieldGroupsRaw = json['field_groups'];
+    final fieldGroups = fieldGroupsRaw is List
+        ? fieldGroupsRaw
+              .whereType<Map>()
+              .map(
+                (g) => _ChironReadinessFieldGroup.fromJson(
+                  Map<String, dynamic>.from(g),
+                ),
+              )
+              .toList(growable: false)
+        : const <_ChironReadinessFieldGroup>[];
+
+    final sampleIssuesRaw = json['sample_issues'];
+    final sampleIssues = sampleIssuesRaw is List
+        ? sampleIssuesRaw
+              .whereType<Map>()
+              .map(
+                (s) => _ChironReadinessSampleIssue.fromJson(
+                  Map<String, dynamic>.from(s),
+                ),
+              )
+              .toList(growable: false)
+        : const <_ChironReadinessSampleIssue>[];
+
     return _ChironReadinessReport(
       overallStatus: (json['overall_status'] ?? '').toString().trim(),
+      generatedAtUtc: (json['generated_at_utc'] ?? '').toString().trim(),
       summary: summary,
       topBlockers: parseIssues(json['top_blockers']),
       topWarnings: parseIssues(json['top_warnings']),
+      nextActions: nextActions,
+      fieldGroups: fieldGroups,
+      sampleIssues: sampleIssues,
       policyNotes: policyNotes,
     );
   }
 
   static const empty = _ChironReadinessReport(
     overallStatus: '',
+    generatedAtUtc: '',
     summary: _ChironReadinessSummary.empty,
     topBlockers: <_ChironReadinessIssue>[],
     topWarnings: <_ChironReadinessIssue>[],
+    nextActions: <String>[],
+    fieldGroups: <_ChironReadinessFieldGroup>[],
+    sampleIssues: <_ChironReadinessSampleIssue>[],
     policyNotes: <String>[],
   );
 }
