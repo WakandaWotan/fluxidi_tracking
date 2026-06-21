@@ -17,6 +17,7 @@ import 'package:fluxidi_tracking/customer_bookings_store.dart';
 import 'package:fluxidi_tracking/driver_documents_store.dart';
 import 'package:fluxidi_tracking/vehicle_management_page.dart';
 import 'package:http/http.dart' as http;
+import 'package:share_plus/share_plus.dart';
 
 @immutable
 class _ChironThemeTokens {
@@ -2148,6 +2149,123 @@ class _ChironReadinessReportPage extends StatelessWidget {
     );
   }
 
+  // Chiron-6B-3H.1: softer, lifecycle-aware badges for "Controle per onderdeel".
+  ({String label, Color color, IconData icon}) _fieldGroupStatusVisual(
+    String groupKey,
+    String status,
+  ) {
+    switch (status) {
+      case 'blocked':
+        if (groupKey == 'ride_geometry' || groupKey == 'sequence') {
+          return (
+            label: _t(
+              nl: 'Aandacht in steekproef',
+              en: 'Needs attention in sample',
+              fr: 'Attention dans l\'échantillon',
+              es: 'Atención en la muestra',
+            ),
+            color: _chironWarning,
+            icon: Icons.warning_amber_outlined,
+          );
+        }
+        return (
+          label: _t(
+            nl: 'Aandacht nodig',
+            en: 'Needs attention',
+            fr: 'Attention requise',
+            es: 'Requiere atención',
+          ),
+          color: _chironWarning,
+          icon: Icons.warning_amber_outlined,
+        );
+      case 'required_review':
+        return (
+          label: _t(
+            nl: 'Review nodig',
+            en: 'Review needed',
+            fr: 'Revue requise',
+            es: 'Revisión necesaria',
+          ),
+          color: _chironWarning,
+          icon: Icons.rate_review_outlined,
+        );
+      case 'missing':
+        if (groupKey == 'registry') {
+          return (
+            label: _t(
+              nl: 'Niet uitgevoerd',
+              en: 'Not performed',
+              fr: 'Non exécuté',
+              es: 'No ejecutado',
+            ),
+            color: _chironTextMuted,
+            icon: Icons.info_outline,
+          );
+        }
+        if (groupKey == 'documents') {
+          return (
+            label: _t(
+              nl: 'Nog te controleren',
+              en: 'To review',
+              fr: 'À contrôler',
+              es: 'Por revisar',
+            ),
+            color: _chironTextMuted,
+            icon: Icons.fact_check_outlined,
+          );
+        }
+        return _statusVisual(status);
+      default:
+        return _statusVisual(status);
+    }
+  }
+
+  Widget _fieldGroupStatusChip(_ChironReadinessFieldGroup group) {
+    final visual = _fieldGroupStatusVisual(group.group, group.status);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+      decoration: BoxDecoration(
+        color: visual.color.withOpacity(0.16),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: visual.color.withOpacity(0.55)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(visual.icon, size: 14, color: visual.color),
+          const SizedBox(width: 4),
+          Flexible(
+            child: Text(
+              visual.label,
+              style: TextStyle(
+                color: visual.color,
+                fontWeight: FontWeight.w800,
+                fontSize: 11,
+              ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _fieldGroupRideGeometryNote() {
+    return _t(
+      nl: 'Deze controle geldt voor geanalyseerde aankomst-events na START en STOP.',
+      en: 'This check applies to analyzed arrival events after START and STOP.',
+      fr: 'Ce contrôle s\'applique aux événements d\'arrivée analysés après START et STOP.',
+      es: 'Este control se aplica a eventos de llegada analizados después de START y STOP.',
+    );
+  }
+
+  bool _isSetupFieldGroup(String groupKey) {
+    return groupKey == 'business_identity' ||
+        groupKey == 'vehicle_identity' ||
+        groupKey == 'driver_identity';
+  }
+
   Widget _metricTile({
     required String label,
     required String value,
@@ -2228,6 +2346,11 @@ class _ChironReadinessReportPage extends StatelessWidget {
     final title = technicalCode.isNotEmpty
         ? _issueLabel(technicalCode)
         : _groupLabel(issue.fieldGroup);
+    final lifecycleNote = _isRideGeometryIssue(technicalCode)
+        ? _gpsLifecycleNote()
+        : _isPlaceholderIssue(technicalCode)
+        ? _placeholderLifecycleNote()
+        : '';
     return Container(
       width: double.infinity,
       margin: const EdgeInsets.only(bottom: 8),
@@ -2256,7 +2379,7 @@ class _ChironReadinessReportPage extends StatelessWidget {
                 ),
               ),
               Text(
-                '${issue.count}',
+                _sampleFractionLabel(issue.count),
                 style: TextStyle(
                   color: _chironGold,
                   fontWeight: FontWeight.w800,
@@ -2279,6 +2402,15 @@ class _ChironReadinessReportPage extends StatelessWidget {
             Text(
               issue.nextAction,
               style: TextStyle(color: _chironTextSecondary, fontSize: 12),
+              maxLines: 3,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ],
+          if (lifecycleNote.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            Text(
+              lifecycleNote,
+              style: TextStyle(color: _chironTextMuted, fontSize: 11),
               maxLines: 3,
               overflow: TextOverflow.ellipsis,
             ),
@@ -2321,9 +2453,12 @@ class _ChironReadinessReportPage extends StatelessWidget {
                     fontWeight: FontWeight.w800,
                     fontSize: 13,
                   ),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
                 ),
               ),
-              _statusChip(group.status),
+              const SizedBox(width: 8),
+              Flexible(child: _fieldGroupStatusChip(group)),
             ],
           ),
           if (group.fields.isNotEmpty) ...[
@@ -2380,6 +2515,30 @@ class _ChironReadinessReportPage extends StatelessWidget {
               overflow: TextOverflow.ellipsis,
             ),
           ],
+          if (group.group == 'ride_geometry' &&
+              response.processedCount > 0 &&
+              (group.status == 'blocked' ||
+                  group.blockers.isNotEmpty ||
+                  group.warnings.isNotEmpty)) ...[
+            const SizedBox(height: 6),
+            Text(
+              _fieldGroupRideGeometryNote(),
+              style: TextStyle(color: _chironTextMuted, fontSize: 11),
+              maxLines: 3,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ],
+          if (_isSetupFieldGroup(group.group) &&
+              group.status == 'blocked' &&
+              group.blockers.any((b) => _isPlaceholderIssue(b.code))) ...[
+            const SizedBox(height: 6),
+            Text(
+              _placeholderLifecycleNote(),
+              style: TextStyle(color: _chironTextMuted, fontSize: 11),
+              maxLines: 3,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ],
         ],
       ),
     );
@@ -2392,6 +2551,454 @@ class _ChironReadinessReportPage extends StatelessWidget {
         style: TextStyle(color: _chironTextMuted, fontSize: 12),
       ),
     );
+  }
+
+  // Chiron-6B-3H: lifecycle / sample-aware helpers. The readiness endpoint
+  // analyses at most 20 ride_stop/aankomst events. Counts are sample-scoped
+  // and must never be presented as tenant-wide totals.
+
+  bool _isRideGeometryIssue(String code) {
+    if (code.isEmpty) return false;
+    switch (code) {
+      case 'invalid_zero_coordinate_pair':
+      case 'aankomstpunt_breedtegraad':
+      case 'aankomstpunt_lengtegraad':
+      case 'vertrekpunt_breedtegraad':
+      case 'vertrekpunt_lengtegraad':
+      case 'afstand':
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  bool _isPlaceholderIssue(String code) {
+    return code.isNotEmpty && code.startsWith('placeholder_');
+  }
+
+  String _sampleFractionLabel(int count) {
+    final processed = response.processedCount;
+    if (processed <= 0) return '$count';
+    return '$count/$processed';
+  }
+
+  String _gpsLifecycleNote() {
+    return _t(
+      nl: 'Deze controle geldt alleen voor geanalyseerde aankomst-events na START en STOP.',
+      en: 'This check applies only to analyzed arrival events after START and STOP.',
+      fr: 'Ce contrôle s\'applique uniquement aux événements d\'arrivée analysés après START et STOP.',
+      es: 'Este control solo se aplica a eventos de llegada analizados después de START y STOP.',
+    );
+  }
+
+  String _placeholderLifecycleNote() {
+    return _t(
+      nl: 'Deze melding kan herhaald worden per geanalyseerd rit-event zolang het profiel testgegevens bevat.',
+      en: 'This message can repeat per analyzed ride event while the profile contains test data.',
+      fr: 'Ce message peut se répéter par événement de course analysé tant que le profil contient des données de test.',
+      es: 'Este mensaje puede repetirse por evento de viaje analizado mientras el perfil contenga datos de prueba.',
+    );
+  }
+
+  String _sampleScopeNote() {
+    return _t(
+      nl: 'Aantallen gelden voor de huidige steekproef van aankomst-events, niet voor alle ritten.',
+      en: 'Counts apply to the current sample of arrival events, not to all rides.',
+      fr: 'Les chiffres s\'appliquent à l\'échantillon actuel d\'événements d\'arrivée, pas à toutes les courses.',
+      es: 'Los recuentos se aplican a la muestra actual de eventos de llegada, no a todos los viajes.',
+    );
+  }
+
+  String _analyzedSampleLine() {
+    final n = response.processedCount;
+    return _t(
+      nl: 'Geanalyseerd: laatste $n aankomst-events',
+      en: 'Analyzed: latest $n arrival events',
+      fr: 'Analysé : les $n derniers événements d\'arrivée',
+      es: 'Analizado: últimos $n eventos de llegada',
+    );
+  }
+
+  String _storageLine() {
+    final n = response.scannedCount;
+    return _t(
+      nl: 'Opslag: $n compliance-events totaal, alle types inbegrepen',
+      en: 'Storage: $n compliance events total, all types included',
+      fr: 'Stockage : $n événements de conformité au total, tous types inclus',
+      es: 'Almacenamiento: $n eventos de cumplimiento en total, todos los tipos incluidos',
+    );
+  }
+
+  String _sampleBasedCheckNote() {
+    return _t(
+      nl: 'Ritregistratiecontrole op basis van een beperkte steekproef.',
+      en: 'Ride registration check based on a limited sample.',
+      fr: 'Contrôle d\'enregistrement de course basé sur un échantillon limité.',
+      es: 'Control de registro de viaje basado en una muestra limitada.',
+    );
+  }
+
+  String _notTestedYetTitle() {
+    return _t(
+      nl: 'Ritregistratie nog niet getest',
+      en: 'Ride registration not tested yet',
+      fr: 'Enregistrement de course pas encore testé',
+      es: 'Registro de viaje aún no probado',
+    );
+  }
+
+  String _notTestedYetBody() {
+    return _t(
+      nl: 'GPS, afstand en tijdlijn kunnen pas worden gecontroleerd na een echte rit met START en STOP.',
+      en: 'GPS, distance, and timeline can only be checked after a real ride with START and STOP.',
+      fr: 'Le GPS, la distance et la chronologie ne peuvent être contrôlés qu\'après une vraie course avec START et STOP.',
+      es: 'GPS, distancia y cronología solo se pueden comprobar después de un viaje real con START y STOP.',
+    );
+  }
+
+  String _noArrivalEventsLine() {
+    return _t(
+      nl: 'Nog geen aankomst-events geanalyseerd.',
+      en: 'No arrival events analyzed yet.',
+      fr: 'Aucun événement d\'arrivée analysé pour l\'instant.',
+      es: 'Aún no se han analizado eventos de llegada.',
+    );
+  }
+
+  String _firstTestRideHintLine() {
+    return _t(
+      nl: 'Ritregistratie is nog niet getest. Voer een eerste echte testrit uit met START en STOP.',
+      en: 'Ride registration has not been tested yet. Perform a first real test ride with START and STOP.',
+      fr: 'L\'enregistrement de course n\'a pas encore été testé. Effectuez une première course test réelle avec START et STOP.',
+      es: 'El registro del viaje aún no se ha probado. Realice un primer viaje real de prueba con START y STOP.',
+    );
+  }
+
+  ({String label, Color color, IconData icon}) _lifecycleStatusVisual() {
+    final processed = response.processedCount;
+    if (processed <= 0) {
+      return (
+        label: _t(
+          nl: 'Nog niet getest',
+          en: 'Not tested yet',
+          fr: 'Pas encore testé',
+          es: 'Aún no probado',
+        ),
+        color: _chironTextMuted,
+        icon: Icons.hourglass_empty,
+      );
+    }
+    final summary = response.report.summary;
+    if (summary.officialReadyCount == processed && summary.blockedCount == 0) {
+      return (
+        label: _t(
+          nl: 'Steekproef klaar',
+          en: 'Sample ready',
+          fr: 'Échantillon prêt',
+          es: 'Muestra lista',
+        ),
+        color: _chironSuccess,
+        icon: Icons.verified_outlined,
+      );
+    }
+    return (
+      label: _t(
+        nl: 'Aandacht nodig in steekproef',
+        en: 'Needs attention in sample',
+        fr: 'Attention requise dans l\'échantillon',
+        es: 'Requiere atención en la muestra',
+      ),
+      color: _chironWarning,
+      icon: Icons.warning_amber_outlined,
+    );
+  }
+
+  Widget _lifecycleStatusChip() {
+    final visual = _lifecycleStatusVisual();
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      decoration: BoxDecoration(
+        color: visual.color.withOpacity(0.16),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: visual.color.withOpacity(0.55)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(visual.icon, size: 14, color: visual.color),
+          const SizedBox(width: 6),
+          Flexible(
+            child: Text(
+              visual.label,
+              style: TextStyle(
+                color: visual.color,
+                fontWeight: FontWeight.w800,
+                fontSize: 12,
+              ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _rideRegistrationNotTestedPanel() {
+    return _panelBox(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                Icons.directions_car_outlined,
+                size: 16,
+                color: _chironTextMuted,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  _notTestedYetTitle(),
+                  style: TextStyle(
+                    color: _chironTextPrimary,
+                    fontWeight: FontWeight.w800,
+                    fontSize: 13,
+                  ),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            _notTestedYetBody(),
+            style: TextStyle(color: _chironTextSecondary, fontSize: 12),
+            maxLines: 4,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _issueShareTitle(_ChironReadinessIssue issue) {
+    final label = issue.code.isNotEmpty
+        ? _issueLabel(issue.code)
+        : _groupLabel(issue.fieldGroup);
+    if (issue.code.isNotEmpty) {
+      return '$label (${issue.code})';
+    }
+    return label;
+  }
+
+  String _buildShareText() {
+    final report = response.report;
+    final summary = report.summary;
+    final processed = response.processedCount;
+    final buffer = StringBuffer();
+
+    buffer.writeln(
+      _t(
+        nl: 'Chiron readinessrapport',
+        en: 'Chiron readiness report',
+        fr: 'Rapport de préparation Chiron',
+        es: 'Informe de preparación Chiron',
+      ),
+    );
+    buffer.writeln();
+    buffer.writeln(
+      '${_t(nl: 'Status', en: 'Status', fr: 'Statut', es: 'Estado')}: '
+      '${_lifecycleStatusVisual().label}',
+    );
+    if (processed > 0) {
+      buffer.writeln(_analyzedSampleLine());
+    } else {
+      buffer.writeln(_noArrivalEventsLine());
+    }
+    buffer.writeln(
+      _t(
+        nl: 'Compliance-events in opslag: ${response.scannedCount}, alle types inbegrepen',
+        en: 'Stored compliance events: ${response.scannedCount}, all types included',
+        fr: 'Événements de conformité stockés : ${response.scannedCount}, tous types inclus',
+        es: 'Eventos de cumplimiento almacenados: ${response.scannedCount}, todos los tipos incluidos',
+      ),
+    );
+    if (processed > 0) {
+      buffer.writeln(
+        _t(
+          nl: 'Aantallen gelden voor deze steekproef, niet voor alle ritten.',
+          en: 'Counts apply to this sample, not to all rides.',
+          fr: 'Les chiffres s\'appliquent à cet échantillon, pas à toutes les courses.',
+          es: 'Los recuentos se aplican a esta muestra, no a todos los viajes.',
+        ),
+      );
+    }
+    buffer.writeln(
+      _t(
+        nl: 'Ritregistratie is pas volledig controleerbaar na een echte rit met START en STOP.',
+        en: 'Ride registration can only be fully checked after a real ride with START and STOP.',
+        fr: 'L\'enregistrement de course ne peut être entièrement contrôlé qu\'après une vraie course avec START et STOP.',
+        es: 'El registro del viaje solo se puede comprobar por completo tras un viaje real con START y STOP.',
+      ),
+    );
+
+    buffer.writeln();
+    buffer.writeln(
+      _t(
+        nl: 'Tellingen binnen deze steekproef:',
+        en: 'Counts within this sample:',
+        fr: 'Comptages dans cet échantillon :',
+        es: 'Recuentos dentro de esta muestra:',
+      ),
+    );
+    String fracOrDash(int v) => processed > 0 ? _sampleFractionLabel(v) : '—';
+    buffer.writeln(
+      '${_t(nl: 'Geblokkeerd', en: 'Blocked', fr: 'Bloqué', es: 'Bloqueado')}: '
+      '${fracOrDash(summary.blockedCount)}',
+    );
+    buffer.writeln(
+      '${_t(nl: 'Review nodig', en: 'Review needed', fr: 'Revue requise', es: 'Revisión necesaria')}: '
+      '${fracOrDash(summary.reviewRequiredCount)}',
+    );
+    buffer.writeln(
+      '${_t(nl: 'Klaar voor Chiron-test', en: 'Ready for Chiron test', fr: 'Prêt pour le test Chiron', es: 'Listo para prueba Chiron')}: '
+      '${fracOrDash(summary.officialReadyCount)}',
+    );
+    buffer.writeln(
+      '${_t(nl: 'Volgordecontrole', en: 'Sequence check', fr: 'Contrôle de séquence', es: 'Control de secuencia')}: '
+      '${fracOrDash(summary.sequenceUnsafeCount)}',
+    );
+
+    if (report.topBlockers.isNotEmpty) {
+      buffer.writeln();
+      buffer.writeln(
+        _t(
+          nl: 'Belangrijkste blockers (in steekproef):',
+          en: 'Top blockers (in sample):',
+          fr: 'Principaux blocages (dans l\'échantillon) :',
+          es: 'Principales bloqueos (en la muestra):',
+        ),
+      );
+      var index = 1;
+      for (final issue in report.topBlockers.take(10)) {
+        buffer.writeln(
+          '${index++}. ${_issueShareTitle(issue)} — ${_sampleFractionLabel(issue.count)}',
+        );
+        if (issue.nextAction.isNotEmpty) {
+          buffer.writeln(
+            '   ${_t(nl: 'Actie', en: 'Action', fr: 'Action', es: 'Acción')}: '
+            '${issue.nextAction}',
+          );
+        }
+      }
+    }
+
+    if (report.topWarnings.isNotEmpty) {
+      buffer.writeln();
+      buffer.writeln(
+        _t(
+          nl: 'Waarschuwingen (in steekproef):',
+          en: 'Warnings (in sample):',
+          fr: 'Avertissements (dans l\'échantillon) :',
+          es: 'Advertencias (en la muestra):',
+        ),
+      );
+      var index = 1;
+      for (final issue in report.topWarnings.take(10)) {
+        buffer.writeln(
+          '${index++}. ${_issueShareTitle(issue)} — ${_sampleFractionLabel(issue.count)}',
+        );
+        if (issue.nextAction.isNotEmpty) {
+          buffer.writeln(
+            '   ${_t(nl: 'Actie', en: 'Action', fr: 'Action', es: 'Acción')}: '
+            '${issue.nextAction}',
+          );
+        }
+      }
+    }
+
+    if (report.policyNotes.isNotEmpty) {
+      buffer.writeln();
+      buffer.writeln(
+        _t(
+          nl: 'Beleidsnotities:',
+          en: 'Policy notes:',
+          fr: 'Notes de politique :',
+          es: 'Notas de política:',
+        ),
+      );
+      for (final note in report.policyNotes) {
+        buffer.writeln('- $note');
+      }
+    }
+
+    return buffer.toString().trimRight();
+  }
+
+  Future<void> _shareReport(BuildContext context) async {
+    if (!response.ok) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Rapport niet beschikbaar.',
+              en: 'Report not available.',
+              fr: 'Rapport non disponible.',
+              es: 'Informe no disponible.',
+            ),
+          ),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
+
+    final text = _buildShareText();
+    if (text.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Rapport niet beschikbaar.',
+              en: 'Report not available.',
+              fr: 'Rapport non disponible.',
+              es: 'Informe no disponible.',
+            ),
+          ),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
+
+    final subject = _t(
+      nl: 'Chiron readinessrapport',
+      en: 'Chiron readiness report',
+      fr: 'Rapport de préparation Chiron',
+      es: 'Informe de preparación Chiron',
+    );
+
+    try {
+      await Share.share(text, subject: subject);
+    } catch (_) {
+      await Clipboard.setData(ClipboardData(text: text));
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Rapport gekopieerd.',
+              en: 'Report copied.',
+              fr: 'Rapport copié.',
+              es: 'Informe copiado.',
+            ),
+          ),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
   }
 
   @override
@@ -2415,6 +3022,18 @@ class _ChironReadinessReportPage extends StatelessWidget {
                 es: 'Informe de preparación Chiron',
               ),
             ),
+            actions: [
+              IconButton(
+                onPressed: () => _shareReport(context),
+                tooltip: _t(
+                  nl: 'Delen',
+                  en: 'Share',
+                  fr: 'Partager',
+                  es: 'Compartir',
+                ),
+                icon: Icon(Icons.share_outlined, color: _chironGold),
+              ),
+            ],
           ),
           body: ListView(
             padding: const EdgeInsets.all(14),
@@ -2446,22 +3065,65 @@ class _ChironReadinessReportPage extends StatelessWidget {
                               ),
                             ),
                           ),
-                          _statusChip(report.overallStatus),
+                          _lifecycleStatusChip(),
                         ],
                       ),
                       const SizedBox(height: 10),
-                      Text(
-                        _t(
-                          nl: 'Verwerkt ${response.processedCount} van ${response.scannedCount} events',
-                          en: 'Processed ${response.processedCount} of ${response.scannedCount} events',
-                          fr: '${response.processedCount} événements traités sur ${response.scannedCount}',
-                          es: '${response.processedCount} eventos procesados de ${response.scannedCount}',
+                      if (response.processedCount > 0) ...[
+                        Text(
+                          _analyzedSampleLine(),
+                          style: TextStyle(
+                            color: _chironTextSecondary,
+                            fontSize: 12,
+                          ),
                         ),
-                        style: TextStyle(
-                          color: _chironTextSecondary,
-                          fontSize: 12,
+                        const SizedBox(height: 4),
+                        Text(
+                          _storageLine(),
+                          style: TextStyle(
+                            color: _chironTextSecondary,
+                            fontSize: 12,
+                          ),
                         ),
-                      ),
+                        const SizedBox(height: 6),
+                        Text(
+                          _sampleBasedCheckNote(),
+                          style: TextStyle(
+                            color: _chironTextMuted,
+                            fontSize: 11,
+                          ),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ] else ...[
+                        Text(
+                          _noArrivalEventsLine(),
+                          style: TextStyle(
+                            color: _chironTextSecondary,
+                            fontSize: 12,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          _firstTestRideHintLine(),
+                          style: TextStyle(
+                            color: _chironTextSecondary,
+                            fontSize: 12,
+                          ),
+                          maxLines: 4,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          _storageLine(),
+                          style: TextStyle(
+                            color: _chironTextMuted,
+                            fontSize: 11,
+                          ),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
                       if (report.generatedAtUtc.isNotEmpty) ...[
                         const SizedBox(height: 4),
                         Text(
@@ -2488,6 +3150,16 @@ class _ChironReadinessReportPage extends StatelessWidget {
                   ),
                 ),
               ),
+              if (response.processedCount == 0)
+                _baseCard(
+                  title: _t(
+                    nl: 'Ritregistratie',
+                    en: 'Ride registration',
+                    fr: 'Enregistrement de course',
+                    es: 'Registro de viaje',
+                  ),
+                  child: _rideRegistrationNotTestedPanel(),
+                ),
               _baseCard(
                 title: _t(
                   nl: 'Samenvatting',
@@ -2496,77 +3168,110 @@ class _ChironReadinessReportPage extends StatelessWidget {
                   es: 'Resumen',
                 ),
                 subtitle: _t(
-                  nl: 'Tellingen',
-                  en: 'Counts',
-                  fr: 'Comptages',
-                  es: 'Recuentos',
+                  nl: 'Tellingen binnen deze steekproef',
+                  en: 'Counts within this sample',
+                  fr: 'Comptages dans cet échantillon',
+                  es: 'Recuentos dentro de esta muestra',
                 ),
-                child: _metricGrid([
-                  _metricTile(
-                    label: _t(
-                      nl: 'Geblokkeerd',
-                      en: 'Blocked',
-                      fr: 'Bloqué',
-                      es: 'Bloqueado',
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _metricGrid([
+                      _metricTile(
+                        label: _t(
+                          nl: 'Geblokkeerd',
+                          en: 'Blocked',
+                          fr: 'Bloqué',
+                          es: 'Bloqueado',
+                        ),
+                        value: response.processedCount > 0
+                            ? _sampleFractionLabel(summary.blockedCount)
+                            : '—',
+                        valueColor: summary.blockedCount > 0
+                            ? _chironDanger
+                            : null,
+                      ),
+                      _metricTile(
+                        label: _t(
+                          nl: 'Review nodig',
+                          en: 'Review needed',
+                          fr: 'Revue requise',
+                          es: 'Revisión necesaria',
+                        ),
+                        value: response.processedCount > 0
+                            ? _sampleFractionLabel(summary.reviewRequiredCount)
+                            : '—',
+                        valueColor: summary.reviewRequiredCount > 0
+                            ? _chironWarning
+                            : null,
+                      ),
+                      _metricTile(
+                        label: _t(
+                          nl: 'Klaar',
+                          en: 'Ready',
+                          fr: 'Prêt',
+                          es: 'Listo',
+                        ),
+                        value: response.processedCount > 0
+                            ? _sampleFractionLabel(summary.officialReadyCount)
+                            : '—',
+                        valueColor: summary.officialReadyCount > 0
+                            ? _chironSuccess
+                            : null,
+                      ),
+                      _metricTile(
+                        label: _t(
+                          nl: 'Formaat geldig',
+                          en: 'Format valid',
+                          fr: 'Format valide',
+                          es: 'Formato válido',
+                        ),
+                        value: response.processedCount > 0
+                            ? _sampleFractionLabel(summary.formatValidCount)
+                            : '—',
+                      ),
+                      _metricTile(
+                        label: _t(
+                          nl: 'Niet van toepassing',
+                          en: 'Not applicable',
+                          fr: 'Non applicable',
+                          es: 'No aplicable',
+                        ),
+                        value: response.processedCount > 0
+                            ? _sampleFractionLabel(summary.notApplicableCount)
+                            : '—',
+                      ),
+                      _metricTile(
+                        label: _t(
+                          nl: 'Volgorde',
+                          en: 'Sequence',
+                          fr: 'Séquence',
+                          es: 'Secuencia',
+                        ),
+                        value: response.processedCount > 0
+                            ? _sampleFractionLabel(summary.sequenceUnsafeCount)
+                            : '—',
+                        valueColor: summary.sequenceUnsafeCount > 0
+                            ? _chironWarning
+                            : null,
+                      ),
+                    ]),
+                    const SizedBox(height: 10),
+                    Text(
+                      response.processedCount > 0
+                          ? _sampleScopeNote()
+                          : _t(
+                              nl: 'Nog niet getest. Aantallen verschijnen na een eerste echte rit met START en STOP.',
+                              en: 'Not tested yet. Counts appear after a first real ride with START and STOP.',
+                              fr: 'Pas encore testé. Les chiffres apparaissent après une première course réelle avec START et STOP.',
+                              es: 'Aún no probado. Los recuentos aparecen tras un primer viaje real con START y STOP.',
+                            ),
+                      style: TextStyle(color: _chironTextMuted, fontSize: 11),
+                      maxLines: 3,
+                      overflow: TextOverflow.ellipsis,
                     ),
-                    value: '${summary.blockedCount}',
-                    valueColor: summary.blockedCount > 0 ? _chironDanger : null,
-                  ),
-                  _metricTile(
-                    label: _t(
-                      nl: 'Review nodig',
-                      en: 'Review needed',
-                      fr: 'Revue requise',
-                      es: 'Revisión necesaria',
-                    ),
-                    value: '${summary.reviewRequiredCount}',
-                    valueColor: summary.reviewRequiredCount > 0
-                        ? _chironWarning
-                        : null,
-                  ),
-                  _metricTile(
-                    label: _t(
-                      nl: 'Klaar',
-                      en: 'Ready',
-                      fr: 'Prêt',
-                      es: 'Listo',
-                    ),
-                    value: '${summary.officialReadyCount}',
-                    valueColor: summary.officialReadyCount > 0
-                        ? _chironSuccess
-                        : null,
-                  ),
-                  _metricTile(
-                    label: _t(
-                      nl: 'Formaat geldig',
-                      en: 'Format valid',
-                      fr: 'Format valide',
-                      es: 'Formato válido',
-                    ),
-                    value: '${summary.formatValidCount}',
-                  ),
-                  _metricTile(
-                    label: _t(
-                      nl: 'Niet van toepassing',
-                      en: 'Not applicable',
-                      fr: 'Non applicable',
-                      es: 'No aplicable',
-                    ),
-                    value: '${summary.notApplicableCount}',
-                  ),
-                  _metricTile(
-                    label: _t(
-                      nl: 'Volgorde',
-                      en: 'Sequence',
-                      fr: 'Séquence',
-                      es: 'Secuencia',
-                    ),
-                    value: '${summary.sequenceUnsafeCount}',
-                    valueColor: summary.sequenceUnsafeCount > 0
-                        ? _chironWarning
-                        : null,
-                  ),
-                ]),
+                  ],
+                ),
               ),
               _baseCard(
                 title: _t(
@@ -2577,12 +3282,19 @@ class _ChironReadinessReportPage extends StatelessWidget {
                 ),
                 child: report.topBlockers.isEmpty
                     ? _emptySection(
-                        _t(
-                          nl: 'Geen blockers gevonden.',
-                          en: 'No blockers found.',
-                          fr: 'Aucun blocage trouvé.',
-                          es: 'No se encontraron bloqueos.',
-                        ),
+                        response.processedCount == 0
+                            ? _t(
+                                nl: 'Nog niet getest. Voer een echte rit met START en STOP uit voordat ritregistratie kan worden gecontroleerd.',
+                                en: 'Not tested yet. Run a real ride with START and STOP before ride registration can be checked.',
+                                fr: 'Pas encore testé. Effectuez une vraie course avec START et STOP avant de pouvoir contrôler l\'enregistrement de course.',
+                                es: 'Aún no probado. Realice un viaje real con START y STOP antes de comprobar el registro del viaje.',
+                              )
+                            : _t(
+                                nl: 'Geen blockers gevonden in deze steekproef.',
+                                en: 'No blockers found in this sample.',
+                                fr: 'Aucun blocage trouvé dans cet échantillon.',
+                                es: 'No se encontraron bloqueos en esta muestra.',
+                              ),
                       )
                     : Column(
                         children: report.topBlockers
@@ -2600,12 +3312,19 @@ class _ChironReadinessReportPage extends StatelessWidget {
                 ),
                 child: report.topWarnings.isEmpty
                     ? _emptySection(
-                        _t(
-                          nl: 'Geen waarschuwingen gevonden.',
-                          en: 'No warnings found.',
-                          fr: 'Aucun avertissement trouvé.',
-                          es: 'No se encontraron advertencias.',
-                        ),
+                        response.processedCount == 0
+                            ? _t(
+                                nl: 'Nog niet getest. Waarschuwingen zijn pas zichtbaar na geanalyseerde aankomst-events.',
+                                en: 'Not tested yet. Warnings appear after analyzed arrival events.',
+                                fr: 'Pas encore testé. Les avertissements apparaissent après des événements d\'arrivée analysés.',
+                                es: 'Aún no probado. Las advertencias aparecen tras eventos de llegada analizados.',
+                              )
+                            : _t(
+                                nl: 'Geen waarschuwingen gevonden in deze steekproef.',
+                                en: 'No warnings found in this sample.',
+                                fr: 'Aucun avertissement trouvé dans cet échantillon.',
+                                es: 'No se encontraron advertencias en esta muestra.',
+                              ),
                       )
                     : Column(
                         children: report.topWarnings
