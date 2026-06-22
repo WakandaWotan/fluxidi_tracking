@@ -2283,6 +2283,8 @@ class _DriverHomePageState extends State<DriverHomePage>
         // Optional context (helps debugging / future UI)
         'pickup': (b.from ?? '').toString(),
         'dropoff': (b.to ?? '').toString(),
+        'origin': _currentOriginPayload(_lastPos),
+        'client_started_at': DateTime.now().toUtc().toIso8601String(),
         ..._driverMutationActorFields(
           actorDriverId: actorDriverId,
           actorVehicleId: actorVehicleId,

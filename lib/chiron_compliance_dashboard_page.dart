@@ -8723,6 +8723,27 @@ class _RemoteComplianceEventsSectionState
           fr: 'Course terminée',
           es: 'Viaje finalizado',
         );
+      case 'ride_start':
+        return _t(
+          nl: 'Rit gestart',
+          en: 'Ride started',
+          fr: 'Course démarrée',
+          es: 'Viaje iniciado',
+        );
+      case 'booking_created':
+        return _t(
+          nl: 'Boeking aangemaakt',
+          en: 'Booking created',
+          fr: 'Réservation créée',
+          es: 'Reserva creada',
+        );
+      case 'booking_confirmed':
+        return _t(
+          nl: 'Boeking bevestigd',
+          en: 'Booking confirmed',
+          fr: 'Réservation confirmée',
+          es: 'Reserva confirmada',
+        );
       case 'unknown':
         return _localizedUnknown();
       default:

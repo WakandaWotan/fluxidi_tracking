@@ -39370,6 +39370,259 @@ function buildBookingPaymentUpdateComplianceEvent(recordOrBooking, bookingId, pa
   });
 }
 
+function _bookingComplianceCoordinateNumber(...values) {
+  for (const value of values) {
+    const num = Number(value);
+    if (Number.isFinite(num)) return num;
+  }
+  return null;
+}
+
+function _bookingComplianceLocationsFromRecord(rec) {
+  const booking = rec?.booking && typeof rec.booking === "object" ? rec.booking : {};
+  const pickupLabel = safeStr(rec?.from ?? booking?.from ?? rec?.pickup ?? booking?.pickup, 256);
+  const dropoffLabel = safeStr(rec?.to ?? booking?.to ?? rec?.dropoff ?? booking?.dropoff, 256);
+  const pickupLat = _bookingComplianceCoordinateNumber(
+    rec?.pickup_lat,
+    rec?.pickupLat,
+    rec?.from_lat,
+    rec?.fromLat,
+    booking?.pickup_lat,
+    booking?.pickupLat,
+    booking?.from_lat,
+    booking?.fromLat,
+  );
+  const pickupLng = _bookingComplianceCoordinateNumber(
+    rec?.pickup_lon,
+    rec?.pickupLon,
+    rec?.pickup_lng,
+    rec?.pickupLng,
+    rec?.from_lon,
+    rec?.fromLon,
+    rec?.from_lng,
+    rec?.fromLng,
+    booking?.pickup_lon,
+    booking?.pickupLon,
+    booking?.pickup_lng,
+    booking?.pickupLng,
+    booking?.from_lon,
+    booking?.fromLon,
+    booking?.from_lng,
+    booking?.fromLng,
+  );
+  const dropoffLat = _bookingComplianceCoordinateNumber(
+    rec?.dropoff_lat,
+    rec?.dropoffLat,
+    rec?.to_lat,
+    rec?.toLat,
+    booking?.dropoff_lat,
+    booking?.dropoffLat,
+    booking?.to_lat,
+    booking?.toLat,
+  );
+  const dropoffLng = _bookingComplianceCoordinateNumber(
+    rec?.dropoff_lon,
+    rec?.dropoffLon,
+    rec?.dropoff_lng,
+    rec?.dropoffLng,
+    rec?.to_lon,
+    rec?.toLon,
+    rec?.to_lng,
+    rec?.toLng,
+    booking?.dropoff_lon,
+    booking?.dropoffLon,
+    booking?.dropoff_lng,
+    booking?.dropoffLng,
+    booking?.to_lon,
+    booking?.toLon,
+    booking?.to_lng,
+    booking?.toLng,
+  );
+  const pickup =
+    pickupLabel || pickupLat !== null || pickupLng !== null
+      ? {
+          label: pickupLabel || null,
+          lat: pickupLat,
+          lng: pickupLng,
+        }
+      : null;
+  const dropoff =
+    dropoffLabel || dropoffLat !== null || dropoffLng !== null
+      ? {
+          label: dropoffLabel || null,
+          lat: dropoffLat,
+          lng: dropoffLng,
+        }
+      : null;
+  if (!pickup && !dropoff) return null;
+  return { pickup, dropoff };
+}
+
+function buildBookingReservationComplianceEvent(
+  recordOrBooking,
+  bookingId,
+  {
+    kind = "created",
+    sourceEndpoint = "/book",
+  } = {},
+) {
+  const rec = recordOrBooking && typeof recordOrBooking === "object" ? recordOrBooking : {};
+  const booking = rec?.booking && typeof rec.booking === "object" ? rec.booking : {};
+  const tenantId = safeStr(
+    rec?.tenant_id ?? rec?.tenantId ?? booking?.tenant_id ?? booking?.tenantId,
+  );
+  const companyId = safeStr(
+    rec?.company_id ?? rec?.companyId ?? booking?.company_id ?? booking?.companyId,
+  );
+  if (!tenantId || !companyId) {
+    console.log(
+      `[COMPLIANCE][SKIP_SCOPE] source=booking_${kind} reason=missing_tenant_company_scope`,
+    );
+    return null;
+  }
+
+  const isConfirmed = kind === "confirmed";
+  const eventType = isConfirmed ? "booking_confirmed" : "booking_created";
+  const bookingStatus = isConfirmed ? "confirmed" : "pending";
+  const lifecycleStatus = isConfirmed ? "confirmed" : "pending";
+  const eventAt =
+    safeStr(
+      isConfirmed
+        ? rec?.confirmed_at ??
+            rec?.confirmedAt ??
+            rec?.updatedAt ??
+            rec?.updated_at ??
+            booking?.confirmed_at ??
+            booking?.confirmedAt
+        : rec?.createdAt ??
+            rec?.created_at ??
+            booking?.createdAt ??
+            booking?.created_at,
+      64,
+    ) || new Date().toISOString();
+  const publicBookingReference = safeStr(
+    rec?.public_booking_reference ??
+      rec?.publicBookingReference ??
+      rec?.booking_reference ??
+      rec?.bookingReference ??
+      rec?.public_reference ??
+      rec?.publicReference ??
+      booking?.public_booking_reference ??
+      booking?.publicBookingReference ??
+      booking?.booking_reference ??
+      booking?.bookingReference ??
+      booking?.public_reference ??
+      booking?.publicReference,
+    120,
+  );
+  const paymentStatus = normalizeCompliancePaymentStatus(
+    rec?.payment_status ??
+      rec?.paymentStatus ??
+      booking?.payment_status ??
+      booking?.paymentStatus,
+  );
+  const assignmentContext = _bookingComplianceAssignmentContext(rec);
+  const locations = _bookingComplianceLocationsFromRecord(rec);
+  const complianceEvent = {
+    event_type: eventType,
+    tenant_id: tenantId,
+    company_id: companyId,
+    booking_id: safeStr(bookingId) || undefined,
+    public_booking_reference: publicBookingReference || undefined,
+    publicBookingReference: publicBookingReference || undefined,
+    booking_reference: publicBookingReference || undefined,
+    bookingReference: publicBookingReference || undefined,
+    public_reference: publicBookingReference || undefined,
+    publicReference: publicBookingReference || undefined,
+    ride_type: "planned",
+    lifecycle_status: lifecycleStatus,
+    status: lifecycleStatus,
+    booking_status: bookingStatus,
+    ride_status: bookingStatus,
+    source: eventType,
+    sync_state: "not_configured",
+    timestamps: {
+      event_at_utc: eventAt,
+      ...(isConfirmed
+        ? { confirmed_at_utc: eventAt }
+        : { created_at_utc: eventAt }),
+    },
+    payment: {
+      status: paymentStatus,
+      method: normalizeComplianceText(
+        resolveCompliancePaymentMethodToken(rec, null, {
+          provider:
+            rec?.payment_provider ??
+            rec?.paymentProvider ??
+            booking?.payment_provider ??
+            booking?.paymentProvider,
+          source:
+            rec?.payment_source ??
+            rec?.paymentSource ??
+            booking?.payment_source ??
+            booking?.paymentSource,
+        }),
+      ),
+      source: normalizeComplianceText(
+        rec?.payment_source ?? rec?.paymentSource ?? booking?.payment_source ?? booking?.paymentSource,
+      ),
+      provider: normalizeComplianceText(
+        rec?.payment_provider ??
+          rec?.paymentProvider ??
+          booking?.payment_provider ??
+          booking?.paymentProvider,
+      ),
+      payment_id:
+        safeStr(rec?.payment_id ?? rec?.paymentId ?? booking?.payment_id ?? booking?.paymentId) ||
+        undefined,
+    },
+    provenance: {
+      producer: "booking_worker",
+      source_endpoint: safeStr(sourceEndpoint, 64) || "/book",
+      backend_confirmed: true,
+      validation_state: isConfirmed ? "booking_confirmed" : "booking_created",
+    },
+    ...(locations ? { locations } : {}),
+    ...assignmentContext,
+    parent_status: bookingStatus,
+    parentStatus: bookingStatus,
+  };
+  return _applyBookingChironEnrichmentToComplianceEvent(complianceEvent, rec, {
+    assignmentContext,
+  });
+}
+
+async function _emitBookingReservationComplianceEventBestEffort(
+  env,
+  rec,
+  bookingId,
+  options = {},
+) {
+  const kind = options?.kind === "confirmed" ? "confirmed" : "created";
+  const complianceEvent = buildBookingReservationComplianceEvent(rec, bookingId, options);
+  if (!complianceEvent) return;
+  const tenantScope = normalizeFleetTenantScope({
+    tenant_id: complianceEvent.tenant_id,
+    company_id: complianceEvent.company_id,
+  });
+  await _enrichBookingStatusUpdateComplianceEventVehiclePlateBestEffort(
+    env,
+    rec,
+    tenantScope,
+    complianceEvent,
+  );
+  await _enrichBookingStatusUpdateComplianceEventReportingRegionBestEffort(
+    env,
+    rec,
+    tenantScope,
+    complianceEvent,
+  );
+  emitComplianceEventBestEffort(env, complianceEvent, {
+    timeoutMs: 1500,
+    logLabel: kind === "confirmed" ? "booking_confirmed" : "booking_created",
+  }).catch(() => {});
+}
+
 function buildBookingStatusUpdateComplianceEvent(
   recordOrBooking,
   bookingId,
@@ -42385,6 +42638,12 @@ async function handleBooking(payload, env, request, options = {}) {
             JSON.stringify(provisionalRecord),
           );
           bookingPersisted = true;
+          _emitBookingReservationComplianceEventBestEffort(
+            env,
+            provisionalRecord,
+            canonicalBookingId,
+            { kind: "created", sourceEndpoint: "/book" },
+          ).catch(() => {});
           await upsertBookingDemandIndexBestEffort(
             env,
             canonicalBookingId,
@@ -43288,6 +43547,12 @@ Retour route: ${return_from || to} → ${return_to || from}`,
         JSON.stringify(provisionalRecord),
       );
       bookingPersisted = true;
+      _emitBookingReservationComplianceEventBestEffort(
+        env,
+        provisionalRecord,
+        canonicalBookingId,
+        { kind: "created", sourceEndpoint: "/book" },
+      ).catch(() => {});
       await upsertBookingDemandIndexBestEffort(
         env,
         canonicalBookingId,
@@ -43822,6 +44087,10 @@ Retour route: ${return_from || to} → ${return_to || from}`,
     try {
       await env.BOOKING_KV.put(`booking:${booking.bookingId}`, JSON.stringify(record));
       bookingPersisted = true;
+      _emitBookingReservationComplianceEventBestEffort(env, record, booking.bookingId, {
+        kind: "confirmed",
+        sourceEndpoint: "/book",
+      }).catch(() => {});
       await upsertBookingDemandIndexBestEffort(
         env,
         booking.bookingId,

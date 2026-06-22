@@ -3,6 +3,8 @@ const ALLOWED_EVENT_TYPES = new Set([
   "ride_stop",
   "payment_update",
   "booking_status_update",
+  "booking_created",
+  "booking_confirmed",
   "booking_credit_decision",
   "booking_mollie_refund",
   "correction_event",
@@ -206,7 +208,6 @@ const CHIRON_LOG_ONLY_TYPES = new Set([
   "correction_event",
   "sync_success",
   "sync_failed",
-  "ride_start",
 ]);
 
 function jsonResponse(payload, status = 200, origin = "*") {

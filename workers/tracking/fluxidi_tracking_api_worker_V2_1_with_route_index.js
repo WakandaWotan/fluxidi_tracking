@@ -1307,6 +1307,155 @@ function buildComplianceAppendUrl(baseUrlRaw) {
   }
 }
 
+function _complianceLocationFromPoint(point) {
+  if (!point || typeof point !== "object" || Array.isArray(point)) return null;
+  const label = safeStr(point.label ?? point.address ?? point.text, 256) ?? null;
+  const lat = Number.isFinite(Number(point.lat)) ? Number(point.lat) : null;
+  const lng = Number.isFinite(Number(point.lon ?? point.lng)) ? Number(point.lon ?? point.lng) : null;
+  if (!label && lat === null && lng === null) return null;
+  return { label, lat, lng };
+}
+
+function buildDirectTripStartComplianceEvent(trip, startedAt, canonicalScope = null) {
+  const normalizedScope = normalizeTenantCompanyScope(canonicalScope);
+  if (canonicalScope && (!normalizedScope?.tenant_id || !normalizedScope?.company_id)) {
+    return null;
+  }
+  const tenantId =
+    normalizedScope?.tenant_id ??
+    safeStr(trip?.tenant_id ?? trip?.tenantId ?? trip?.company_id ?? trip?.companyId, 96);
+  const companyId =
+    normalizedScope?.company_id ?? safeStr(trip?.company_id ?? trip?.companyId, 96);
+  if (!tenantId || !companyId) {
+    console.log("[COMPLIANCE][SKIP_SCOPE] source=tracking reason=missing_tenant_company_scope");
+    return null;
+  }
+
+  const pickup = _complianceLocationFromPoint(trip?.origin);
+  const dropoff = _complianceLocationFromPoint(trip?.destination);
+  const eventAt = safeStr(startedAt, 64) ?? safeStr(trip?.started_at ?? trip?.startedAt, 64) ?? nowIso();
+
+  return {
+    event_type: "ride_start",
+    tenant_id: tenantId,
+    company_id: companyId,
+    trip_id: safeStr(trip?.trip_id ?? trip?.tripId, 128) ?? undefined,
+    session_id: safeStr(trip?.session_id ?? trip?.sessionId, 128) ?? undefined,
+    receipt_reference: safeStr(trip?.receipt_reference ?? trip?.receiptReference, 128) ?? undefined,
+    ride_type: "direct",
+    lifecycle_status: "started",
+    timestamps: {
+      event_at_utc: eventAt,
+      started_at_utc: eventAt,
+    },
+    driver: {
+      driver_id: safeStr(trip?.driver_id ?? trip?.driverId, 96) ?? null,
+    },
+    vehicle: {
+      vehicle_id: safeStr(trip?.vehicle_id ?? trip?.vehicleId, 96) ?? null,
+      license_plate: safeStr(trip?.license_plate ?? trip?.licensePlate, 64) ?? undefined,
+    },
+    locations: {
+      pickup,
+      dropoff,
+    },
+    provenance: {
+      producer: "tracking_worker",
+      source_endpoint: "/trip/start-direct",
+      backend_confirmed: true,
+      validation_state: "exportable",
+    },
+  };
+}
+
+function buildPlannedSessionStartComplianceEvent(session, body, startedAt, canonicalScope = null) {
+  const normalizedScope = normalizeTenantCompanyScope(canonicalScope);
+  if (canonicalScope && (!normalizedScope?.tenant_id || !normalizedScope?.company_id)) {
+    return null;
+  }
+  const tenantId =
+    normalizedScope?.tenant_id ??
+    safeStr(
+      session?.tenant_id ??
+        session?.tenantId ??
+        session?.owner_tenant_id ??
+        body?.tenant_id ??
+        body?.tenantId,
+      96,
+    );
+  const companyId =
+    normalizedScope?.company_id ??
+    safeStr(
+      session?.company_id ??
+        session?.companyId ??
+        session?.owner_company_id ??
+        body?.company_id ??
+        body?.companyId,
+      96,
+    );
+  if (!tenantId || !companyId) {
+    console.log("[COMPLIANCE][SKIP_SCOPE] source=tracking reason=missing_tenant_company_scope");
+    return null;
+  }
+
+  const originPoint =
+    _complianceLocationFromPoint(body?.origin) ??
+    _complianceLocationFromPoint(session?.origin) ??
+    (safeStr(session?.pickup ?? body?.pickup, 256)
+      ? { label: safeStr(session?.pickup ?? body?.pickup, 256), lat: null, lng: null }
+      : null);
+  const dropoffLabel = safeStr(session?.dropoff ?? body?.dropoff, 256);
+  const dropoff = dropoffLabel ? { label: dropoffLabel, lat: null, lng: null } : null;
+  const eventAt =
+    safeStr(startedAt, 64) ??
+    safeStr(session?.started_at ?? session?.startedAt ?? session?.created_at, 64) ??
+    nowIso();
+
+  return {
+    event_type: "ride_start",
+    tenant_id: tenantId,
+    company_id: companyId,
+    booking_id: safeStr(session?.booking_id ?? session?.bookingId ?? body?.booking_id, 128) ?? undefined,
+    session_id: safeStr(session?.session_id ?? session?.sessionId, 128) ?? undefined,
+    ride_type: "planned",
+    lifecycle_status: "started",
+    timestamps: {
+      event_at_utc: eventAt,
+      started_at_utc: eventAt,
+    },
+    driver: {
+      driver_id: safeStr(
+        session?.driver_id ??
+          session?.driverId ??
+          session?.owner_driver_id ??
+          body?.driver_id ??
+          body?.driverId,
+        96,
+      ) ?? null,
+    },
+    vehicle: {
+      vehicle_id: safeStr(
+        session?.vehicle_id ??
+          session?.vehicleId ??
+          session?.owner_vehicle_id ??
+          body?.vehicle_id ??
+          body?.vehicleId,
+        96,
+      ) ?? null,
+    },
+    locations: {
+      pickup: originPoint,
+      dropoff,
+    },
+    provenance: {
+      producer: "tracking_worker",
+      source_endpoint: "/track/session/start",
+      backend_confirmed: true,
+      validation_state: "exportable",
+    },
+  };
+}
+
 function buildDirectTripStopComplianceEvent(trip, stopPayload, stoppedAt, totals, canonicalScope = null) {
   const normalizedScope = normalizeTenantCompanyScope(canonicalScope);
   if (canonicalScope && (!normalizedScope?.tenant_id || !normalizedScope?.company_id)) {
@@ -4128,6 +4277,14 @@ async function handleStartDirectTrip(req, url, env, origin) {
   await prependIndex(env.FLUXIDI_TRACKING, scopedTripsIndexKey(scope), trip_id, 500);
   await prependIndex(env.FLUXIDI_TRACKING, scopedTripsDriverIndexKey(scope, driver_id), trip_id, 200);
 
+  const startComplianceEvent = buildDirectTripStartComplianceEvent(trip, startedAt, scope);
+  if (startComplianceEvent) {
+    await emitComplianceEventBestEffort(env, startComplianceEvent, {
+      timeoutMs: 1500,
+      logLabel: "ride_start_direct",
+    });
+  }
+
   return withCors(
     json(
       {
@@ -4898,6 +5055,8 @@ async function handleStart(req, url, env, origin) {
 
   const pickup = safeStr(body["pickup"], 200) ?? null;
   const dropoff = safeStr(body["dropoff"], 200) ?? null;
+  const originData = normalizeDestination(body["origin"]);
+  const startedAt = safeStr(body["client_started_at"], 64) ?? nowIso();
   const tenant_id = scope.tenant_id;
   const company_id = scope.company_id;
   const owner_driver_id = safeStr(body["driver_id"], 96) ?? actor.actor_driver_id ?? null;
@@ -5072,8 +5231,10 @@ async function handleStart(req, url, env, origin) {
     booking_id,
     pickup,
     dropoff,
+    ...(originData ? { origin: originData } : {}),
     status: "active",
     created_at: nowIso(),
+    started_at: startedAt,
     last_ping_at: null,
     points: [],
     public_token,
@@ -5132,6 +5293,14 @@ async function handleStart(req, url, env, origin) {
   const idx = (await kvGetJson(env.FLUXIDI_TRACKING, scopedBookingIndexKey(scope))) ?? [];
   const next = [booking_id, ...idx.filter((x) => x !== booking_id)].slice(0, 200);
   await kvPutJson(env.FLUXIDI_TRACKING, scopedBookingIndexKey(scope), next, TTL_INDEX);
+
+  const startComplianceEvent = buildPlannedSessionStartComplianceEvent(session, body, startedAt, scope);
+  if (startComplianceEvent) {
+    await emitComplianceEventBestEffort(env, startComplianceEvent, {
+      timeoutMs: 1500,
+      logLabel: "ride_start_planned",
+    });
+  }
 
   return withCors(
     json({ ok: true, session_id: sessionId, booking_id, created_at: session.created_at, public_token }, { status: 200 }),
