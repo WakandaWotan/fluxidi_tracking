@@ -802,6 +802,159 @@ Future<_ChironMockConnectionTestResult> _runChironMockConnectionTestViaBooking({
   return _ChironMockConnectionTestResult.fromJson(map);
 }
 
+class _ChironPersistedInternalTestStatus {
+  const _ChironPersistedInternalTestStatus({
+    this.status = '',
+    this.passed = false,
+    this.lastAt,
+    this.environment,
+    this.mockOnly = false,
+    this.externalCallPerformed = false,
+    this.credentialDecryptOk = false,
+    this.credentialPayloadValid = false,
+    this.maskedIdentifier = '',
+    this.fingerprintShort = '',
+  });
+
+  final String status;
+  final bool passed;
+  final String? lastAt;
+  final String? environment;
+  final bool mockOnly;
+  final bool externalCallPerformed;
+  final bool credentialDecryptOk;
+  final bool credentialPayloadValid;
+  final String maskedIdentifier;
+  final String fingerprintShort;
+
+  bool get isPassed {
+    final normalizedStatus = status.trim().toLowerCase();
+    if (normalizedStatus == 'passed') return true;
+    return passed;
+  }
+
+  factory _ChironPersistedInternalTestStatus.fromJson(
+    Map<String, dynamic> json,
+  ) {
+    bool boolField(List<String> keys, {bool fallback = false}) {
+      for (final key in keys) {
+        final value = json[key];
+        if (value is bool) return value;
+        if (value is String) {
+          final token = value.trim().toLowerCase();
+          if (token == 'true') return true;
+          if (token == 'false') return false;
+        }
+      }
+      return fallback;
+    }
+
+    String textField(List<String> keys, {String fallback = ''}) {
+      for (final key in keys) {
+        final value = json[key];
+        if (value == null) continue;
+        final text = value.toString().trim();
+        if (text.isNotEmpty) return text;
+      }
+      return fallback;
+    }
+
+    String? nullableTextField(List<String> keys) {
+      final text = textField(keys);
+      return text.isEmpty ? null : text;
+    }
+
+    return _ChironPersistedInternalTestStatus(
+      status: textField(const ['internal_test_status', 'internalTestStatus']),
+      passed: boolField(const ['internal_test_passed', 'internalTestPassed']),
+      lastAt: nullableTextField(const [
+        'last_internal_test_at',
+        'lastInternalTestAt',
+      ]),
+      environment: nullableTextField(const [
+        'last_internal_test_environment',
+        'lastInternalTestEnvironment',
+      ]),
+      mockOnly: boolField(const [
+        'last_internal_test_mock_only',
+        'lastInternalTestMockOnly',
+      ]),
+      externalCallPerformed: boolField(const [
+        'last_internal_test_external_call_performed',
+        'lastInternalTestExternalCallPerformed',
+      ]),
+      credentialDecryptOk: boolField(const [
+        'last_internal_test_credential_decrypt_ok',
+        'lastInternalTestCredentialDecryptOk',
+      ]),
+      credentialPayloadValid: boolField(const [
+        'last_internal_test_credential_payload_valid',
+        'lastInternalTestCredentialPayloadValid',
+      ]),
+      maskedIdentifier: textField(const [
+        'last_internal_test_masked_identifier',
+        'lastInternalTestMaskedIdentifier',
+      ]),
+      fingerprintShort: textField(const [
+        'last_internal_test_fingerprint_short',
+        'lastInternalTestFingerprintShort',
+      ]),
+    );
+  }
+}
+
+Future<
+  ({
+    BackendChironConnectionStatus status,
+    _ChironPersistedInternalTestStatus internalTest,
+  })
+>
+_fetchChironTestAccessBackendStatus({
+  required String tenantId,
+  required String companyId,
+}) async {
+  final endpoint = _chironBookingScopedEndpoint(
+    '/admin/chiron/config/status',
+    tenantId: tenantId,
+    companyId: companyId,
+  );
+  final auth = await resolveCompanyOwnerAuthHeaders();
+  final res = await http
+      .get(endpoint, headers: auth.headers)
+      .timeout(const Duration(seconds: 12));
+  final decoded = jsonDecode(res.body);
+  if (decoded is! Map) {
+    throw BackendChironConnectionApiException(
+      error: 'invalid_response',
+      statusCode: res.statusCode,
+    );
+  }
+  final map = Map<String, dynamic>.from(decoded);
+  if (res.statusCode < 200 || res.statusCode >= 300 || map['ok'] == false) {
+    throw BackendChironConnectionApiException(
+      error: _chironSafeApiErrorCode(map),
+      statusCode: res.statusCode,
+    );
+  }
+  return (
+    status: BackendChironConnectionStatus.fromJson(map),
+    internalTest: _ChironPersistedInternalTestStatus.fromJson(map),
+  );
+}
+
+String? _formatChironInternalTestTimestamp(String? iso) {
+  if (iso == null || iso.trim().isEmpty) return null;
+  final parsed = DateTime.tryParse(iso.trim());
+  if (parsed == null) return null;
+  final local = parsed.toLocal();
+  final day = local.day.toString().padLeft(2, '0');
+  final month = local.month.toString().padLeft(2, '0');
+  final year = local.year.toString();
+  final hour = local.hour.toString().padLeft(2, '0');
+  final minute = local.minute.toString().padLeft(2, '0');
+  return '$day-$month-$year $hour:$minute';
+}
+
 class _ChironTestAccessCard extends StatefulWidget {
   const _ChironTestAccessCard({required this.lang});
 
@@ -819,6 +972,7 @@ class _ChironTestAccessCardState extends State<_ChironTestAccessCard> {
   String? _actionError;
   String _maskedIdentifier = '';
   _ChironMockConnectionTestResult? _lastMockTest;
+  _ChironPersistedInternalTestStatus? _persistedInternalTest;
 
   @override
   void initState() {
@@ -941,11 +1095,18 @@ class _ChironTestAccessCardState extends State<_ChironTestAccessCard> {
       _actionError = null;
     });
     try {
-      final status = await fetchBackendChironConnectionStatus(
+      final fetched = await _fetchChironTestAccessBackendStatus(
         tenantId: scope.tenantId,
         companyId: scope.companyId,
       );
-      updateBackendChironConnectionStatusCache(status);
+      updateBackendChironConnectionStatusCache(fetched.status);
+      if (!mounted) return;
+      setState(() {
+        _persistedInternalTest = fetched.internalTest;
+        if (fetched.internalTest.maskedIdentifier.isNotEmpty) {
+          _maskedIdentifier = fetched.internalTest.maskedIdentifier;
+        }
+      });
     } catch (_) {
       if (!mounted) return;
       setState(() {
@@ -1036,6 +1197,8 @@ class _ChironTestAccessCardState extends State<_ChironTestAccessCard> {
           _maskedIdentifier = result.maskedIdentifier;
         }
       });
+      await _refreshStatus();
+      if (!mounted) return;
       _showSnack(
         _t(
           nl: 'Interne test geslaagd.',
@@ -1114,12 +1277,24 @@ class _ChironTestAccessCardState extends State<_ChironTestAccessCard> {
         final productionEnabled = backendStatus?.productionEnabled ?? false;
         final officialSubmitEnabled =
             backendStatus?.officialSubmitEnabled ?? false;
-        final mockTestPassed =
+        final persistedInternalPassed =
+            _persistedInternalTest?.isPassed ?? false;
+        final sessionMockPassed =
             _lastMockTest?.credentialDecryptOk == true &&
             _lastMockTest?.credentialPayloadValid == true;
+        final mockTestPassed = persistedInternalPassed || sessionMockPassed;
         final lastConnectionStatus =
             backendStatus?.lastConnectionStatus ??
             ChironBackendLastConnectionStatus.neverTested;
+        final officialChironNotRunYet =
+            lastConnectionStatus ==
+            ChironBackendLastConnectionStatus.neverTested;
+        final displayMaskedIdentifier = _maskedIdentifier.isNotEmpty
+            ? _maskedIdentifier
+            : (_persistedInternalTest?.maskedIdentifier ?? '');
+        final lastInternalCheckLabel = _formatChironInternalTestTimestamp(
+          _persistedInternalTest?.lastAt,
+        );
 
         return Container(
           width: double.infinity,
@@ -1182,27 +1357,25 @@ class _ChironTestAccessCardState extends State<_ChironTestAccessCard> {
                     ),
                     active: mockTestPassed,
                   ),
-                  _statusChip(
-                    label: _t(
-                      nl: mockTestPassed
-                          ? 'Officiële Chiron-test nog niet uitgevoerd'
-                          : 'Nog niet getest',
-                      en: mockTestPassed
-                          ? 'Official Chiron test not run yet'
-                          : 'Not tested yet',
-                      fr: mockTestPassed
-                          ? 'Test Chiron officiel pas encore effectué'
-                          : 'Pas encore testé',
-                      es: mockTestPassed
-                          ? 'Prueba oficial Chiron aún no realizada'
-                          : 'Aún no probado',
+                  if (!mockTestPassed || officialChironNotRunYet)
+                    _statusChip(
+                      label: _t(
+                        nl: mockTestPassed
+                            ? 'Officiële Chiron-test nog niet uitgevoerd'
+                            : 'Nog niet getest',
+                        en: mockTestPassed
+                            ? 'Official Chiron test not run yet'
+                            : 'Not tested yet',
+                        fr: mockTestPassed
+                            ? 'Test Chiron officiel pas encore effectué'
+                            : 'Pas encore testé',
+                        es: mockTestPassed
+                            ? 'Prueba oficial Chiron aún no realizada'
+                            : 'Aún no probado',
+                      ),
+                      active: officialChironNotRunYet,
+                      activeColor: _chironWarning,
                     ),
-                    active: mockTestPassed
-                        ? true
-                        : lastConnectionStatus ==
-                              ChironBackendLastConnectionStatus.neverTested,
-                    activeColor: _chironWarning,
-                  ),
                   _statusChip(
                     label: _t(
                       nl: 'Productie niet actief',
@@ -1236,26 +1409,47 @@ class _ChironTestAccessCardState extends State<_ChironTestAccessCard> {
                   ),
                 ),
               ],
-              if (_maskedIdentifier.isNotEmpty) ...[
+              if (displayMaskedIdentifier.isNotEmpty) ...[
                 const SizedBox(height: 10),
                 Text(
                   _t(
-                    nl: 'Opgeslagen token: $_maskedIdentifier',
-                    en: 'Stored token: $_maskedIdentifier',
-                    fr: 'Jeton enregistré : $_maskedIdentifier',
-                    es: 'Token guardado: $_maskedIdentifier',
+                    nl: 'Opgeslagen token: $displayMaskedIdentifier',
+                    en: 'Stored token: $displayMaskedIdentifier',
+                    fr: 'Jeton enregistré : $displayMaskedIdentifier',
+                    es: 'Token guardado: $displayMaskedIdentifier',
                   ),
                   style: TextStyle(color: _chironTextMuted, fontSize: 11),
                 ),
               ],
-              if (_lastMockTest != null && _lastMockTest!.ok) ...[
+              if (mockTestPassed) ...[
+                if (persistedInternalPassed &&
+                    lastInternalCheckLabel != null) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    _t(
+                      nl: 'Laatste interne controle: $lastInternalCheckLabel',
+                      en: 'Last internal check: $lastInternalCheckLabel',
+                      fr: 'Dernier contrôle interne : $lastInternalCheckLabel',
+                      es: 'Último control interno: $lastInternalCheckLabel',
+                    ),
+                    style: TextStyle(color: _chironTextMuted, fontSize: 11),
+                  ),
+                ],
                 const SizedBox(height: 8),
                 Text(
                   _t(
-                    nl: 'Interne controle geslaagd · Geen externe Chiron-call uitgevoerd',
-                    en: 'Internal check passed · No external Chiron call performed',
-                    fr: 'Contrôle interne réussi · Aucun appel Chiron externe effectué',
-                    es: 'Control interno superado · No se realizó ninguna llamada externa a Chiron',
+                    nl: persistedInternalPassed
+                        ? 'Fluxidi kan de testgegevens veilig openen. Er is nog geen officiële Chiron-verbinding uitgevoerd.'
+                        : 'Interne controle geslaagd · Geen externe Chiron-call uitgevoerd',
+                    en: persistedInternalPassed
+                        ? 'Fluxidi can securely open the test credentials. No official Chiron connection has been performed yet.'
+                        : 'Internal check passed · No external Chiron call performed',
+                    fr: persistedInternalPassed
+                        ? 'Fluxidi peut ouvrir les identifiants de test en toute sécurité. Aucune connexion Chiron officielle n’a encore été effectuée.'
+                        : 'Contrôle interne réussi · Aucun appel Chiron externe effectué',
+                    es: persistedInternalPassed
+                        ? 'Fluxidi puede abrir las credenciales de prueba de forma segura. Todavía no se ha realizado ninguna conexión oficial con Chiron.'
+                        : 'Control interno superado · No se realizó ninguna llamada externa a Chiron',
                   ),
                   style: TextStyle(color: _chironTextFaint, fontSize: 10),
                 ),
