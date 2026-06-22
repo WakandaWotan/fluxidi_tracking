@@ -564,10 +564,10 @@ class _ChironComplianceOverviewState extends State<_ChironComplianceOverview> {
         children: [
           Text(
             _t(
-              nl: 'Alleen-lezen compliance overzicht.',
-              en: 'Read-only compliance overview.',
-              fr: 'Aperçu de conformité en lecture seule.',
-              es: 'Resumen de cumplimiento de solo lectura.',
+              nl: 'Stel uw Chiron-koppeling in en test de verbinding.',
+              en: 'Set up your Chiron connection and test it.',
+              fr: 'Configurez votre connexion Chiron et testez-la.',
+              es: 'Configure su conexión Chiron y pruébela.',
             ),
             style: TextStyle(color: _chironTextSecondary, fontSize: 13),
           ),
@@ -582,7 +582,11 @@ class _ChironComplianceOverviewState extends State<_ChironComplianceOverview> {
               );
             },
             onTestConnection: _scrollToTestAccess,
-            onViewTechnicalReport: () =>
+          ),
+          const SizedBox(height: 12),
+          _ChironHubAdvancedDiagnosticsSection(
+            lang: widget.lang,
+            onOpenReport: () =>
                 _openChironTechnicalReport(context, widget.lang),
           ),
           const SizedBox(height: 12),
@@ -601,13 +605,11 @@ class _ChironHubStatusCard extends StatefulWidget {
     required this.lang,
     required this.onConfigureConnection,
     required this.onTestConnection,
-    required this.onViewTechnicalReport,
   });
 
   final AppLanguage lang;
   final VoidCallback onConfigureConnection;
   final VoidCallback onTestConnection;
-  final VoidCallback onViewTechnicalReport;
 
   @override
   State<_ChironHubStatusCard> createState() => _ChironHubStatusCardState();
@@ -839,28 +841,14 @@ class _ChironHubStatusCardState extends State<_ChironHubStatusCard> {
                       const SizedBox(height: 8),
                       Text(
                         _t(
-                          nl: 'Fluxidi bewaart uw Chiron-toegang veilig en stuurt ritdata door zodra de koppeling actief is.',
-                          en: 'Fluxidi stores your Chiron access securely and forwards ride data once the connection is active.',
-                          fr: 'Fluxidi conserve votre accès Chiron en toute sécurité et transmet les données de course dès que la connexion est active.',
-                          es: 'Fluxidi guarda su acceso Chiron de forma segura y reenvía los datos de viaje cuando la conexión está activa.',
+                          nl: 'Vul de Chiron-toegang in die u via de officiële Chiron-omgeving ontvangt. Fluxidi gebruikt deze om ritdata door te sturen.',
+                          en: 'Enter the Chiron access you received through the official Chiron environment. Fluxidi uses it to forward ride data.',
+                          fr: 'Saisissez l’accès Chiron reçu via l’environnement officiel Chiron. Fluxidi l’utilise pour transmettre les données de course.',
+                          es: 'Introduzca el acceso Chiron recibido a través del entorno oficial de Chiron. Fluxidi lo usa para reenviar los datos de viaje.',
                         ),
                         style: TextStyle(
                           color: _chironTextSecondary,
                           fontSize: 12,
-                          height: 1.35,
-                        ),
-                      ),
-                      const SizedBox(height: 6),
-                      Text(
-                        _t(
-                          nl: 'Deze pagina toont Fluxidi-technische controles. Officiële Chiron-toegang en goedkeuring verlopen buiten Fluxidi. Fluxidi zorgt ervoor dat de ritdata van uw bedrijf correct worden doorgezonden.',
-                          en: 'This page shows Fluxidi technical checks. Official Chiron access and approval happen outside Fluxidi. Fluxidi ensures your company ride data is sent correctly.',
-                          fr: 'Cette page affiche les contrôles techniques Fluxidi. L’accès et l’approbation Chiron officiels se font en dehors de Fluxidi. Fluxidi veille à ce que les données de course de votre entreprise soient transmises correctement.',
-                          es: 'Esta página muestra comprobaciones técnicas de Fluxidi. El acceso y la aprobación oficial de Chiron ocurren fuera de Fluxidi. Fluxidi se encarga de que los datos de viaje de su empresa se envíen correctamente.',
-                        ),
-                        style: TextStyle(
-                          color: _chironTextMuted,
-                          fontSize: 11,
                           height: 1.35,
                         ),
                       ),
@@ -917,32 +905,6 @@ class _ChironHubStatusCardState extends State<_ChironHubStatusCard> {
                               ),
                             ),
                           ),
-                          OutlinedButton(
-                            onPressed: widget.onViewTechnicalReport,
-                            style: OutlinedButton.styleFrom(
-                              foregroundColor: _chironTextMuted,
-                              side: BorderSide(
-                                color: _chironBorder.withOpacity(0.7),
-                              ),
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 10,
-                                vertical: 6,
-                              ),
-                              visualDensity: VisualDensity.compact,
-                            ),
-                            child: Text(
-                              _t(
-                                nl: 'Bekijk technisch rapport',
-                                en: 'View technical report',
-                                fr: 'Voir le rapport technique',
-                                es: 'Ver informe técnico',
-                              ),
-                              style: const TextStyle(
-                                fontWeight: FontWeight.w800,
-                                fontSize: 12,
-                              ),
-                            ),
-                          ),
                         ],
                       ),
                     ],
@@ -953,6 +915,155 @@ class _ChironHubStatusCardState extends State<_ChironHubStatusCard> {
           },
         );
       },
+    );
+  }
+}
+
+class _ChironHubAdvancedDiagnosticsSection extends StatefulWidget {
+  const _ChironHubAdvancedDiagnosticsSection({
+    required this.lang,
+    required this.onOpenReport,
+  });
+
+  final AppLanguage lang;
+  final VoidCallback onOpenReport;
+
+  @override
+  State<_ChironHubAdvancedDiagnosticsSection> createState() =>
+      _ChironHubAdvancedDiagnosticsSectionState();
+}
+
+class _ChironHubAdvancedDiagnosticsSectionState
+    extends State<_ChironHubAdvancedDiagnosticsSection> {
+  bool _expanded = false;
+
+  String _t({
+    required String nl,
+    required String en,
+    required String fr,
+    required String es,
+  }) {
+    switch (widget.lang) {
+      case AppLanguage.nl:
+        return nl;
+      case AppLanguage.en:
+        return en;
+      case AppLanguage.fr:
+        return fr;
+      case AppLanguage.es:
+        return es;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: _chironPanel,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: _chironBorder),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          InkWell(
+            onTap: () => setState(() => _expanded = !_expanded),
+            borderRadius: BorderRadius.circular(8),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 2),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          _t(
+                            nl: 'Probleemoplossing',
+                            en: 'Troubleshooting',
+                            fr: 'Dépannage',
+                            es: 'Solución de problemas',
+                          ),
+                          style: TextStyle(
+                            color: _chironTextPrimary,
+                            fontWeight: FontWeight.w800,
+                            fontSize: 13,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          _t(
+                            nl: 'Open dit alleen wanneer support of Fluxidi vraagt om technische ritdata te controleren.',
+                            en: 'Open this only when support or Fluxidi asks you to check technical ride data.',
+                            fr: 'Ouvrez ceci uniquement lorsque le support ou Fluxidi demande de contrôler les données techniques de course.',
+                            es: 'Abra esto solo cuando soporte o Fluxidi pida comprobar los datos técnicos de viaje.',
+                          ),
+                          style: TextStyle(
+                            color: _chironTextMuted,
+                            fontSize: 11,
+                            height: 1.35,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Icon(
+                    _expanded ? Icons.expand_less : Icons.expand_more,
+                    color: _chironTextMuted,
+                    size: 20,
+                  ),
+                ],
+              ),
+            ),
+          ),
+          if (_expanded) ...[
+            const SizedBox(height: 10),
+            Text(
+              _t(
+                nl: 'Geavanceerde diagnose toont Fluxidi-technische controles op ritdata. Officiële Chiron-toegang en goedkeuring verlopen buiten Fluxidi.',
+                en: 'Advanced diagnostics shows Fluxidi technical checks on ride data. Official Chiron access and approval happen outside Fluxidi.',
+                fr: 'Le diagnostic avancé affiche les contrôles techniques Fluxidi sur les données de course. L’accès et l’approbation Chiron officiels se font en dehors de Fluxidi.',
+                es: 'El diagnóstico avanzado muestra comprobaciones técnicas de Fluxidi sobre datos de viaje. El acceso y la aprobación oficial de Chiron ocurren fuera de Fluxidi.',
+              ),
+              style: TextStyle(
+                color: _chironTextMuted,
+                fontSize: 11,
+                height: 1.35,
+              ),
+            ),
+            const SizedBox(height: 10),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton(
+                onPressed: widget.onOpenReport,
+                style: TextButton.styleFrom(
+                  foregroundColor: _chironTextSecondary,
+                  padding: EdgeInsets.zero,
+                  minimumSize: Size.zero,
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  visualDensity: VisualDensity.compact,
+                ),
+                child: Text(
+                  _t(
+                    nl: 'Geavanceerde diagnose',
+                    en: 'Advanced diagnostics',
+                    fr: 'Diagnostic avancé',
+                    es: 'Diagnóstico avanzado',
+                  ),
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w800,
+                    fontSize: 13,
+                    decoration: TextDecoration.underline,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
     );
   }
 }
@@ -1806,8 +1917,6 @@ class _ChironTestAccessCardState extends State<_ChironTestAccessCard> {
         final testCredentialsStored =
             backendStatus?.testCredentialsStored ?? false;
         final productionEnabled = backendStatus?.productionEnabled ?? false;
-        final officialSubmitEnabled =
-            backendStatus?.officialSubmitEnabled ?? false;
         final persistedInternalPassed =
             testCredentialsStored &&
             (_persistedInternalTest?.isPassed ?? false);
@@ -1816,12 +1925,6 @@ class _ChironTestAccessCardState extends State<_ChironTestAccessCard> {
             _lastMockTest?.credentialDecryptOk == true &&
             _lastMockTest?.credentialPayloadValid == true;
         final mockTestPassed = persistedInternalPassed || sessionMockPassed;
-        final lastConnectionStatus =
-            backendStatus?.lastConnectionStatus ??
-            ChironBackendLastConnectionStatus.neverTested;
-        final officialChironNotRunYet =
-            lastConnectionStatus ==
-            ChironBackendLastConnectionStatus.neverTested;
         final displayMaskedIdentifier = testCredentialsStored
             ? (_maskedIdentifier.isNotEmpty
                   ? _maskedIdentifier
@@ -1844,10 +1947,10 @@ class _ChironTestAccessCardState extends State<_ChironTestAccessCard> {
             children: [
               Text(
                 _t(
-                  nl: 'Chiron testtoegang',
-                  en: 'Chiron test access',
-                  fr: 'Accès de test Chiron',
-                  es: 'Acceso de prueba Chiron',
+                  nl: 'Chiron-toegang',
+                  en: 'Chiron access',
+                  fr: 'Accès Chiron',
+                  es: 'Acceso Chiron',
                 ),
                 style: TextStyle(
                   color: _chironGold,
@@ -1858,10 +1961,10 @@ class _ChironTestAccessCardState extends State<_ChironTestAccessCard> {
               const SizedBox(height: 6),
               Text(
                 _t(
-                  nl: 'Sla testgegevens veilig op en controleer intern of Fluxidi ze kan openen. Dit voert nog geen officiële Chiron-koppeling uit.',
-                  en: 'Store test credentials securely and run an internal check. This does not perform an official Chiron connection yet.',
-                  fr: 'Enregistrez les identifiants de test en toute sécurité et effectuez un contrôle interne. Cela n’établit pas encore de connexion Chiron officielle.',
-                  es: 'Guarda credenciales de prueba de forma segura y ejecuta una verificación interna. Esto todavía no realiza una conexión oficial con Chiron.',
+                  nl: 'Voer het API-token in dat u via de officiële Chiron-omgeving ontvangt. Sla het op en test de verbinding.',
+                  en: 'Enter the API token you received through the official Chiron environment. Save it and test the connection.',
+                  fr: 'Saisissez le jeton API reçu via l’environnement officiel Chiron. Enregistrez-le et testez la connexion.',
+                  es: 'Introduzca el token API recibido a través del entorno oficial de Chiron. Guárdelo y pruebe la conexión.',
                 ),
                 style: TextStyle(
                   color: _chironTextSecondary,
@@ -1894,45 +1997,16 @@ class _ChironTestAccessCardState extends State<_ChironTestAccessCard> {
                       ),
                       active: true,
                     ),
-                  if (!mockTestPassed || officialChironNotRunYet)
+                  if (productionEnabled)
                     _statusChip(
                       label: _t(
-                        nl: mockTestPassed
-                            ? 'Officiële Chiron-test nog niet uitgevoerd'
-                            : 'Nog niet getest',
-                        en: mockTestPassed
-                            ? 'Official Chiron test not run yet'
-                            : 'Not tested yet',
-                        fr: mockTestPassed
-                            ? 'Test Chiron officiel pas encore effectué'
-                            : 'Pas encore testé',
-                        es: mockTestPassed
-                            ? 'Prueba oficial Chiron aún no realizada'
-                            : 'Aún no probado',
+                        nl: 'Productie actief',
+                        en: 'Production active',
+                        fr: 'Production active',
+                        es: 'Producción activa',
                       ),
-                      active: officialChironNotRunYet,
-                      activeColor: _chironWarning,
+                      active: true,
                     ),
-                  _statusChip(
-                    label: _t(
-                      nl: 'Productie niet actief',
-                      en: 'Production not active',
-                      fr: 'Production inactive',
-                      es: 'Producción inactiva',
-                    ),
-                    active: !productionEnabled,
-                    activeColor: _chironTextSecondary,
-                  ),
-                  _statusChip(
-                    label: _t(
-                      nl: 'Officiële verzending niet actief',
-                      en: 'Official submit not active',
-                      fr: 'Envoi officiel inactif',
-                      es: 'Envío oficial inactivo',
-                    ),
-                    active: !officialSubmitEnabled,
-                    activeColor: _chironTextSecondary,
-                  ),
                 ],
               ),
               if (_loadingStatus) ...[
@@ -1973,24 +2047,6 @@ class _ChironTestAccessCardState extends State<_ChironTestAccessCard> {
                     style: TextStyle(color: _chironTextMuted, fontSize: 11),
                   ),
                 ],
-                const SizedBox(height: 8),
-                Text(
-                  _t(
-                    nl: persistedInternalPassed
-                        ? 'Fluxidi kan de testgegevens veilig openen. Er is nog geen officiële Chiron-verbinding uitgevoerd.'
-                        : 'Interne controle geslaagd · Geen externe Chiron-call uitgevoerd',
-                    en: persistedInternalPassed
-                        ? 'Fluxidi can securely open the test credentials. No official Chiron connection has been performed yet.'
-                        : 'Internal check passed · No external Chiron call performed',
-                    fr: persistedInternalPassed
-                        ? 'Fluxidi peut ouvrir les identifiants de test en toute sécurité. Aucune connexion Chiron officielle n’a encore été effectuée.'
-                        : 'Contrôle interne réussi · Aucun appel Chiron externe effectué',
-                    es: persistedInternalPassed
-                        ? 'Fluxidi puede abrir las credenciales de prueba de forma segura. Todavía no se ha realizado ninguna conexión oficial con Chiron.'
-                        : 'Control interno superado · No se realizó ninguna llamada externa a Chiron',
-                  ),
-                  style: TextStyle(color: _chironTextFaint, fontSize: 10),
-                ),
               ],
               if (testCredentialsStored) ...[
                 const SizedBox(height: 10),
@@ -2036,10 +2092,10 @@ class _ChironTestAccessCardState extends State<_ChironTestAccessCard> {
                 decoration: InputDecoration(
                   isDense: true,
                   labelText: _t(
-                    nl: 'Chiron test API-token',
-                    en: 'Chiron test API token',
-                    fr: 'Jeton API de test Chiron',
-                    es: 'Token API de prueba Chiron',
+                    nl: 'Chiron API-token',
+                    en: 'Chiron API token',
+                    fr: 'Jeton API Chiron',
+                    es: 'Token API Chiron',
                   ),
                   labelStyle: TextStyle(color: _chironTextMuted, fontSize: 12),
                   enabledBorder: OutlineInputBorder(
