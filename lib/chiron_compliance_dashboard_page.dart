@@ -334,6 +334,7 @@ class _ChironConnectionLinkCardState extends State<_ChironConnectionLinkCard> {
     required bool officialSubmitEnabled,
     required bool productionEnabled,
     required bool backendConfirmed,
+    required bool internalTestPassed,
   }) {
     if (!enabled) {
       return (
@@ -401,6 +402,20 @@ class _ChironConnectionLinkCardState extends State<_ChironConnectionLinkCard> {
         border: _chironWarning.withOpacity(0.55),
       );
     }
+    if (internalTestPassed &&
+        status == ChironBackendLastConnectionStatus.neverTested) {
+      return (
+        label: _t(
+          nl: 'Interne test geslaagd · officieel nog niet uitgevoerd',
+          en: 'Internal test passed · official test not run yet',
+          fr: 'Test interne réussi · test officiel pas encore effectué',
+          es: 'Prueba interna superada · prueba oficial aún no realizada',
+        ),
+        color: _chironSuccess,
+        background: _chironSuccess.withOpacity(0.16),
+        border: _chironSuccess.withOpacity(0.55),
+      );
+    }
     if (status == ChironBackendLastConnectionStatus.neverTested) {
       return (
         label: _t(
@@ -451,11 +466,14 @@ class _ChironConnectionLinkCardState extends State<_ChironConnectionLinkCard> {
     final scope = _effectiveTenantCompanyIds();
     if (scope == null) return;
     try {
-      final status = await fetchBackendChironConnectionStatus(
+      final fetched = await _fetchChironTestAccessBackendStatus(
         tenantId: scope.tenantId,
         companyId: scope.companyId,
       );
-      updateBackendChironConnectionStatusCache(status);
+      _publishChironDashboardStatusFetch(
+        status: fetched.status,
+        internalTest: fetched.internalTest,
+      );
     } catch (e) {
       debugPrint('[CHIRON_CONNECTION][DASHBOARD_LOAD] error=$e');
     }
@@ -466,141 +484,162 @@ class _ChironConnectionLinkCardState extends State<_ChironConnectionLinkCard> {
     return ValueListenableBuilder<BackendChironConnectionStatus?>(
       valueListenable: backendChironConnectionStatusNotifier,
       builder: (context, backendStatus, _) {
-        return ValueListenableBuilder<BusinessSettingsState>(
-          valueListenable: businessSettingsNotifier,
-          builder: (context, settings, __) {
-            final enabled = backendStatus?.enabled ?? settings.chironEnabled;
-            final lastConnectionStatus =
-                backendStatus?.lastConnectionStatus ??
-                (settings.chironConnectionStatus ==
-                        ChironConnectionStatus.testPassed
-                    ? ChironConnectionStatus.testPassed
-                    : settings.chironConnectionStatus ==
-                          ChironConnectionStatus.testFailed
-                    ? ChironConnectionStatus.testFailed
-                    : settings.chironConnectionStatus ==
-                          ChironConnectionStatus.testPending
-                    ? ChironConnectionStatus.testPending
-                    : ChironBackendLastConnectionStatus.neverTested);
-            final officialSubmitEnabled =
-                backendStatus?.officialSubmitEnabled ?? false;
-            final productionEnabled =
-                backendStatus?.productionEnabled ??
-                settings.chironProductionEnabled;
-            final backendConfirmed = backendStatus != null;
-            final badge = _badgeFor(
-              enabled: enabled,
-              lastConnectionStatus: lastConnectionStatus,
-              officialSubmitEnabled: officialSubmitEnabled,
-              productionEnabled: productionEnabled,
-              backendConfirmed: backendConfirmed,
-            );
-            return Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(
-                color: _chironPanel,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: _chironBorder),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    crossAxisAlignment: WrapCrossAlignment.center,
+        return ValueListenableBuilder<_ChironPersistedInternalTestStatus?>(
+          valueListenable: _chironPersistedInternalTestNotifier,
+          builder: (context, persistedInternalTest, __) {
+            return ValueListenableBuilder<BusinessSettingsState>(
+              valueListenable: businessSettingsNotifier,
+              builder: (context, settings, ___) {
+                final enabled =
+                    backendStatus?.enabled ?? settings.chironEnabled;
+                final lastConnectionStatus =
+                    backendStatus?.lastConnectionStatus ??
+                    (settings.chironConnectionStatus ==
+                            ChironConnectionStatus.testPassed
+                        ? ChironConnectionStatus.testPassed
+                        : settings.chironConnectionStatus ==
+                              ChironConnectionStatus.testFailed
+                        ? ChironConnectionStatus.testFailed
+                        : settings.chironConnectionStatus ==
+                              ChironConnectionStatus.testPending
+                        ? ChironConnectionStatus.testPending
+                        : ChironBackendLastConnectionStatus.neverTested);
+                final officialSubmitEnabled =
+                    backendStatus?.officialSubmitEnabled ?? false;
+                final productionEnabled =
+                    backendStatus?.productionEnabled ??
+                    settings.chironProductionEnabled;
+                final backendConfirmed = backendStatus != null;
+                final internalTestPassed =
+                    persistedInternalTest?.isPassed ?? false;
+                final internalPassedOfficialPending =
+                    internalTestPassed &&
+                    lastConnectionStatus ==
+                        ChironBackendLastConnectionStatus.neverTested;
+                final badge = _badgeFor(
+                  enabled: enabled,
+                  lastConnectionStatus: lastConnectionStatus,
+                  officialSubmitEnabled: officialSubmitEnabled,
+                  productionEnabled: productionEnabled,
+                  backendConfirmed: backendConfirmed,
+                  internalTestPassed: internalTestPassed,
+                );
+                return Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: _chironPanel,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: _chironBorder),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        children: [
+                          Text(
+                            _t(
+                              nl: 'Chiron-koppeling',
+                              en: 'Chiron connection',
+                              fr: 'Connexion Chiron',
+                              es: 'Conexión Chiron',
+                            ),
+                            style: TextStyle(
+                              color: _chironGold,
+                              fontWeight: FontWeight.w800,
+                              fontSize: 14,
+                            ),
+                          ),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 5,
+                            ),
+                            decoration: BoxDecoration(
+                              color: badge.background,
+                              borderRadius: BorderRadius.circular(999),
+                              border: Border.all(color: badge.border),
+                            ),
+                            child: Text(
+                              badge.label,
+                              style: TextStyle(
+                                color: badge.color,
+                                fontWeight: FontWeight.w800,
+                                fontSize: 12,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
                       Text(
                         _t(
-                          nl: 'Chiron-koppeling',
-                          en: 'Chiron connection',
-                          fr: 'Connexion Chiron',
-                          es: 'Conexión Chiron',
+                          nl: internalPassedOfficialPending
+                              ? 'Fluxidi heeft de interne testgegevens veilig gecontroleerd. De officiële Chiron-test is nog niet uitgevoerd.'
+                              : 'Koppel de Chiron-toegang van je bedrijf aan Fluxidi. Test eerst veilig in de Chiron-testomgeving voordat je overschakelt naar productie.',
+                          en: internalPassedOfficialPending
+                              ? 'Fluxidi has securely checked the internal test credentials. The official Chiron test has not been performed yet.'
+                              : 'Connect your company’s Chiron access to Fluxidi. Test safely in the Chiron test environment before switching to production.',
+                          fr: internalPassedOfficialPending
+                              ? 'Fluxidi a vérifié en toute sécurité les identifiants de test internes. Le test Chiron officiel n’a pas encore été effectué.'
+                              : 'Connectez l’accès Chiron de votre entreprise à Fluxidi. Testez d’abord la connexion dans l’environnement de test Chiron avant de passer en production.',
+                          es: internalPassedOfficialPending
+                              ? 'Fluxidi ha comprobado de forma segura las credenciales de prueba internas. La prueba oficial de Chiron aún no se ha realizado.'
+                              : 'Conecta el acceso Chiron de tu empresa con Fluxidi. Prueba primero en el entorno de pruebas de Chiron antes de pasar a producción.',
                         ),
                         style: TextStyle(
-                          color: _chironGold,
-                          fontWeight: FontWeight.w800,
-                          fontSize: 14,
+                          color: _chironTextSecondary,
+                          fontSize: 12,
+                          height: 1.35,
                         ),
                       ),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 10,
-                          vertical: 5,
+                      const SizedBox(height: 6),
+                      Text(
+                        _t(
+                          nl: 'Alleen relevant voor Vlaamse Chiron-plichtige taxi-, VVB- en IBP-exploitanten.',
+                          en: 'Only relevant for Flemish taxi, VVB and IBP operators that are required to use Chiron.',
+                          fr: 'Uniquement pertinent pour les exploitants flamands de taxi, VVB et IBP soumis à Chiron.',
+                          es: 'Solo relevante para operadores flamencos de taxi, VVB e IBP obligados a usar Chiron.',
                         ),
-                        decoration: BoxDecoration(
-                          color: badge.background,
-                          borderRadius: BorderRadius.circular(999),
-                          border: Border.all(color: badge.border),
+                        style: TextStyle(
+                          color: _chironTextMuted,
+                          fontSize: 11,
+                          height: 1.35,
                         ),
-                        child: Text(
-                          badge.label,
-                          style: TextStyle(
-                            color: badge.color,
-                            fontWeight: FontWeight.w800,
-                            fontSize: 12,
+                      ),
+                      const SizedBox(height: 10),
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: TextButton(
+                          onPressed: () => _openBusinessSettings(context),
+                          style: TextButton.styleFrom(
+                            foregroundColor: _chironGold,
+                            padding: EdgeInsets.zero,
+                            minimumSize: Size.zero,
+                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                            visualDensity: VisualDensity.compact,
+                          ),
+                          child: Text(
+                            _t(
+                              nl: 'Koppeling instellen',
+                              en: 'Configure connection',
+                              fr: 'Configurer la connexion',
+                              es: 'Configurar conexión',
+                            ),
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w800,
+                              fontSize: 13,
+                            ),
                           ),
                         ),
                       ),
                     ],
                   ),
-                  const SizedBox(height: 8),
-                  Text(
-                    _t(
-                      nl: 'Koppel de Chiron-toegang van je bedrijf aan Fluxidi. Test eerst veilig in de Chiron-testomgeving voordat je overschakelt naar productie.',
-                      en: 'Connect your company’s Chiron access to Fluxidi. Test safely in the Chiron test environment before switching to production.',
-                      fr: 'Connectez l’accès Chiron de votre entreprise à Fluxidi. Testez d’abord la connexion dans l’environnement de test Chiron avant de passer en production.',
-                      es: 'Conecta el acceso Chiron de tu empresa con Fluxidi. Prueba primero en el entorno de pruebas de Chiron antes de pasar a producción.',
-                    ),
-                    style: TextStyle(
-                      color: _chironTextSecondary,
-                      fontSize: 12,
-                      height: 1.35,
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    _t(
-                      nl: 'Alleen relevant voor Vlaamse Chiron-plichtige taxi-, VVB- en IBP-exploitanten.',
-                      en: 'Only relevant for Flemish taxi, VVB and IBP operators that are required to use Chiron.',
-                      fr: 'Uniquement pertinent pour les exploitants flamands de taxi, VVB et IBP soumis à Chiron.',
-                      es: 'Solo relevante para operadores flamencos de taxi, VVB e IBP obligados a usar Chiron.',
-                    ),
-                    style: TextStyle(
-                      color: _chironTextMuted,
-                      fontSize: 11,
-                      height: 1.35,
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: TextButton(
-                      onPressed: () => _openBusinessSettings(context),
-                      style: TextButton.styleFrom(
-                        foregroundColor: _chironGold,
-                        padding: EdgeInsets.zero,
-                        minimumSize: Size.zero,
-                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                        visualDensity: VisualDensity.compact,
-                      ),
-                      child: Text(
-                        _t(
-                          nl: 'Koppeling instellen',
-                          en: 'Configure connection',
-                          fr: 'Configurer la connexion',
-                          es: 'Configurar conexión',
-                        ),
-                        style: const TextStyle(
-                          fontWeight: FontWeight.w800,
-                          fontSize: 13,
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
+                );
+              },
             );
           },
         );
@@ -903,6 +942,18 @@ class _ChironPersistedInternalTestStatus {
   }
 }
 
+final ValueNotifier<_ChironPersistedInternalTestStatus?>
+_chironPersistedInternalTestNotifier =
+    ValueNotifier<_ChironPersistedInternalTestStatus?>(null);
+
+void _publishChironDashboardStatusFetch({
+  required BackendChironConnectionStatus status,
+  required _ChironPersistedInternalTestStatus internalTest,
+}) {
+  updateBackendChironConnectionStatusCache(status);
+  _chironPersistedInternalTestNotifier.value = internalTest;
+}
+
 Future<
   ({
     BackendChironConnectionStatus status,
@@ -1099,7 +1150,10 @@ class _ChironTestAccessCardState extends State<_ChironTestAccessCard> {
         tenantId: scope.tenantId,
         companyId: scope.companyId,
       );
-      updateBackendChironConnectionStatusCache(fetched.status);
+      _publishChironDashboardStatusFetch(
+        status: fetched.status,
+        internalTest: fetched.internalTest,
+      );
       if (!mounted) return;
       setState(() {
         _persistedInternalTest = fetched.internalTest;
