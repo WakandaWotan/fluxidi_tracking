@@ -21,3 +21,8 @@ id = "6805da1ffefe4a3982b4c419250c59b1"
 #   wrangler secret put COMPLIANCE_ADMIN_TOKEN
 # or:
 #   wrangler secret put ADMIN_TOKEN
+
+# Chiron credentials (Phase 2) — set via Cloudflare secrets, never commit values:
+# CHIRON_CREDENTIALS_ENCRYPTION_KEY    — AES-GCM encryption key for stored Chiron credentials
+# CHIRON_CREDENTIALS_ENCRYPTION_KID    — optional key id label (default v1)
+# CHIRON_PRODUCTION_SUBMIT_ENABLED     — explicit gate for production credential/submit paths

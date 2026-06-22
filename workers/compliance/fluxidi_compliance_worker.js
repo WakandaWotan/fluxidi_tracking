@@ -63,6 +63,10 @@ const CHIRON_CONFIG_FORBIDDEN_BODY_KEYS = new Set([
   "refreshtoken",
   "refresh_token",
 ]);
+// Phase 2A: Chiron credentials encryption/storage foundation (helpers only; no routes).
+const CHIRON_CREDENTIALS_SCHEMA_VERSION = "chiron_credentials_v1";
+const CHIRON_CREDENTIALS_ALLOWED_AUTH_SCHEMES = new Set(["api_token"]);
+const CHIRON_CREDENTIALS_ENCRYPTION_KEY_MIN_LENGTH = 32;
 const CHIRON_READINESS_DEFAULT_LIMIT = 20;
 const CHIRON_READINESS_DEFAULT_EVENT_TYPE = "ride_stop";
 const CHIRON_EXPORT_STATUS_SCHEMA = "chiron_export_status_v1";
@@ -5568,6 +5572,126 @@ async function handleChironReadinessReport(request, url, env, origin) {
     200,
     origin,
   );
+}
+
+// === Phase 2A: Chiron credentials encryption/storage foundation (helpers only; no routes) ===
+
+function _chironBase64urlEncodeBytes(bytes) {
+  const arr = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes || []);
+  let binary = "";
+  const chunkSize = 0x2000;
+  for (let i = 0; i < arr.length; i += chunkSize) {
+    const end = Math.min(i + chunkSize, arr.length);
+    let chunk = "";
+    for (let j = i; j < end; j++) chunk += String.fromCharCode(arr[j]);
+    binary += chunk;
+  }
+  return btoa(binary)
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/g, "");
+}
+
+function _chironBase64urlDecodeToBytes(str) {
+  const raw = String(str || "").trim();
+  if (!raw) return new Uint8Array();
+  const normalized = raw
+    .replace(/-/g, "+")
+    .replace(/_/g, "/")
+    .padEnd(Math.ceil(raw.length / 4) * 4, "=");
+  const bin = atob(normalized);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+function buildChironCredentialsKvKey(tenantId, companyId, environment) {
+  const tenant = cleanText(tenantId, 128);
+  const company = cleanText(companyId, 128);
+  const envToken = cleanText(environment, 32).toLowerCase();
+  if (!tenant || !company) return null;
+  if (!CHIRON_CONNECTION_ALLOWED_ENVIRONMENTS.has(envToken)) return null;
+  return `tenant:${tenant}:company:${company}:chiron_credentials:${envToken}:v1`;
+}
+
+function validateChironCredentialsAuthScheme(scheme) {
+  const normalized = cleanText(scheme, 64).toLowerCase();
+  if (!normalized || !CHIRON_CREDENTIALS_ALLOWED_AUTH_SCHEMES.has(normalized)) {
+    return "unsupported_auth_scheme";
+  }
+  return null;
+}
+
+async function _importChironCredentialsEncryptionKey(env) {
+  const rawSecret = String(env?.CHIRON_CREDENTIALS_ENCRYPTION_KEY || "").trim();
+  if (!rawSecret) throw new Error("missing_chiron_credentials_encryption_key");
+  if (rawSecret.length < CHIRON_CREDENTIALS_ENCRYPTION_KEY_MIN_LENGTH) {
+    throw new Error("chiron_credentials_encryption_key_too_short");
+  }
+  const keyMaterial = new TextEncoder().encode(rawSecret);
+  const digest = await crypto.subtle.digest("SHA-256", keyMaterial);
+  return crypto.subtle.importKey(
+    "raw",
+    digest,
+    { name: "AES-GCM", length: 256 },
+    false,
+    ["encrypt", "decrypt"],
+  );
+}
+
+async function encryptChironCredentialBlob(plainTextString, env) {
+  const plaintext = String(plainTextString ?? "");
+  if (!plaintext) throw new Error("missing_credential_plaintext");
+  const kid = cleanText(env?.CHIRON_CREDENTIALS_ENCRYPTION_KID, 32) || "v1";
+  const key = await _importChironCredentialsEncryptionKey(env);
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const encoded = new TextEncoder().encode(plaintext);
+  const encrypted = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, encoded);
+  return {
+    alg: "AES-GCM",
+    kid,
+    iv: _chironBase64urlEncodeBytes(iv),
+    ciphertext: _chironBase64urlEncodeBytes(new Uint8Array(encrypted)),
+  };
+}
+
+async function decryptChironCredentialBlob(blobObj, env) {
+  if (!blobObj || typeof blobObj !== "object" || Array.isArray(blobObj)) {
+    throw new Error("invalid_chiron_credential_blob");
+  }
+  const alg = String(blobObj.alg || "").trim();
+  if (alg !== "AES-GCM") throw new Error("unsupported_chiron_credential_blob_alg");
+  const kid = cleanText(blobObj.kid, 32);
+  if (!kid) throw new Error("invalid_chiron_credential_blob_kid");
+  const iv = _chironBase64urlDecodeToBytes(blobObj.iv);
+  const ciphertext = _chironBase64urlDecodeToBytes(blobObj.ciphertext);
+  if (!iv.length || !ciphertext.length) {
+    throw new Error("invalid_chiron_credential_blob_payload");
+  }
+  const key = await _importChironCredentialsEncryptionKey(env);
+  const decrypted = await crypto.subtle.decrypt(
+    { name: "AES-GCM", iv },
+    key,
+    ciphertext,
+  );
+  return new TextDecoder().decode(new Uint8Array(decrypted));
+}
+
+async function chironCredentialFingerprintShort(plainTextString) {
+  const plaintext = String(plainTextString ?? "");
+  if (!plaintext) return "";
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(plaintext));
+  const hex = Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+  return hex.slice(0, 16);
+}
+
+function chironMaskTrailingIdentifier(value) {
+  const text = cleanText(value, 512);
+  if (!text) return "";
+  if (text.length <= 4) return "*".repeat(text.length);
+  return `${"*".repeat(4)}${text.slice(-4)}`;
 }
 
 function defaultChironConnectionStatusDoc(tenantId, companyId) {

@@ -5,6 +5,14 @@ class ChironConnectionEnvironment {
 
   static const String test = 'test';
   static const String production = 'production';
+
+  static const Set<String> all = {test, production};
+}
+
+class ChironCredentialAuthScheme {
+  ChironCredentialAuthScheme._();
+
+  static const String authSchemeApiToken = 'api_token';
 }
 
 class ChironConnectionStatus {
