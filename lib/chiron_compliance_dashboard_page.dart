@@ -1035,28 +1035,46 @@ class _ChironHubAdvancedDiagnosticsSectionState
               ),
             ),
             const SizedBox(height: 10),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: TextButton(
-                onPressed: widget.onOpenReport,
-                style: TextButton.styleFrom(
-                  foregroundColor: _chironTextSecondary,
-                  padding: EdgeInsets.zero,
-                  minimumSize: Size.zero,
-                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  visualDensity: VisualDensity.compact,
-                ),
-                child: Text(
-                  _t(
-                    nl: 'Geavanceerde diagnose',
-                    en: 'Advanced diagnostics',
-                    fr: 'Diagnostic avancé',
-                    es: 'Diagnóstico avanzado',
+            Material(
+              color: _chironCard,
+              borderRadius: BorderRadius.circular(10),
+              clipBehavior: Clip.antiAlias,
+              child: InkWell(
+                onTap: widget.onOpenReport,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 12,
                   ),
-                  style: const TextStyle(
-                    fontWeight: FontWeight.w800,
-                    fontSize: 13,
-                    decoration: TextDecoration.underline,
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.manage_search_outlined,
+                        color: _chironGold,
+                        size: 20,
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          _t(
+                            nl: 'Geavanceerde diagnose openen',
+                            en: 'Open advanced diagnostics',
+                            fr: 'Ouvrir le diagnostic avancé',
+                            es: 'Abrir diagnóstico avanzado',
+                          ),
+                          style: TextStyle(
+                            color: _chironTextPrimary,
+                            fontWeight: FontWeight.w800,
+                            fontSize: 13,
+                          ),
+                        ),
+                      ),
+                      Icon(
+                        Icons.chevron_right,
+                        color: _chironTextMuted,
+                        size: 20,
+                      ),
+                    ],
                   ),
                 ),
               ),
@@ -3337,13 +3355,26 @@ String _chironTechnicalReadinessScopeNote(AppLanguage lang) {
 String _companyChecklistScopeNote(AppLanguage lang) {
   switch (lang) {
     case AppLanguage.en:
-      return 'Fluxidi checks whether your company profile, drivers and vehicles are sufficiently complete for day-to-day use. Documents remain optional and help with follow-up, reviews and expiry dates.';
+      return 'This score covers company profile, drivers and vehicles only. Optional documents are tracked separately below and do not block operational readiness.';
     case AppLanguage.fr:
-      return 'Fluxidi vérifie si votre profil entreprise, vos chauffeurs et vos véhicules sont suffisamment renseignés pour un usage quotidien. Les documents restent facultatifs et aident au suivi, aux contrôles et aux dates d\'expiration.';
+      return 'Ce score couvre uniquement le profil entreprise, les chauffeurs et les véhicules. Les documents facultatifs sont suivis séparément ci-dessous et ne bloquent pas la préparation opérationnelle.';
     case AppLanguage.es:
-      return 'Fluxidi comprueba si su perfil de empresa, conductores y vehículos están suficientemente completos para el uso diario. Los documentos siguen siendo opcionales y ayudan con el seguimiento, las revisiones y las fechas de vencimiento.';
+      return 'Esta puntuación cubre solo perfil de empresa, conductores y vehículos. Los documentos opcionales se siguen por separado abajo y no bloquean la preparación operativa.';
     case AppLanguage.nl:
-      return 'Fluxidi controleert of je bedrijfsprofiel, chauffeurs en voertuigen voldoende zijn ingevuld voor dagelijks gebruik. Documenten blijven optioneel en helpen bij opvolging, controle en vervaldatums.';
+      return 'Deze score geldt alleen voor bedrijfsprofiel, chauffeurs en voertuigen. Optionele documenten staan apart hieronder en blokkeren de operationele gereedheid niet.';
+  }
+}
+
+String _companyChecklistOptionalDocumentsNote(AppLanguage lang) {
+  switch (lang) {
+    case AppLanguage.en:
+      return 'Documents are optional and useful for follow-up, expiry tracking and controls. They do not block daily operational readiness.';
+    case AppLanguage.fr:
+      return 'Les documents sont facultatifs et utiles pour le suivi, le contrôle des échéances et les contrôles. Ils ne bloquent pas la préparation opérationnelle quotidienne.';
+    case AppLanguage.es:
+      return 'Los documentos son opcionales y útiles para el seguimiento, el control de vencimientos y las revisiones. No bloquean la preparación operativa diaria.';
+    case AppLanguage.nl:
+      return 'Documenten zijn optioneel en nuttig voor opvolging, vervaldatums en controles. Ze blokkeren de operationele gereedheid voor dagelijks gebruik niet.';
   }
 }
 
@@ -6542,10 +6573,18 @@ class _ChironReadinessChecklistPage extends StatelessWidget {
         if (coreGapCount > 0) {
           docAttention.add((
             text: _t(
-              nl: '$coreGapCount chauffeur(s) hebben een kern-documentkloof.',
-              en: '$coreGapCount driver(s) have a core document gap.',
-              fr: '$coreGapCount chauffeur(s) ont un manque de documents clés.',
-              es: '$coreGapCount conductor(es) tienen faltantes de documentos clave.',
+              nl: coreGapCount == 1
+                  ? '1 chauffeur heeft nog geen belangrijke documenten geüpload.'
+                  : '$coreGapCount chauffeurs hebben nog geen belangrijke documenten geüpload.',
+              en: coreGapCount == 1
+                  ? '1 driver has not uploaded key documents yet.'
+                  : '$coreGapCount drivers have not uploaded key documents yet.',
+              fr: coreGapCount == 1
+                  ? '1 chauffeur n’a pas encore téléversé de documents importants.'
+                  : '$coreGapCount chauffeurs n’ont pas encore téléversé de documents importants.',
+              es: coreGapCount == 1
+                  ? '1 conductor aún no ha cargado documentos importantes.'
+                  : '$coreGapCount conductores aún no han cargado documentos importantes.',
             ),
             critical: false,
           ));
@@ -6590,12 +6629,16 @@ class _ChironReadinessChecklistPage extends StatelessWidget {
           attentionCount: technicalAttention.length,
         );
         final optionalDocumentNote = _t(
-          nl: 'Optioneel — blokkeert de operationele gereedheid niet.',
-          en: 'Optional — does not block operational readiness.',
-          fr: 'Facultatif — ne bloque pas la préparation opérationnelle.',
-          es: 'Opcional — no bloquea la preparación operativa.',
+          nl: 'Optioneel — telt niet mee voor operationele gereedheid.',
+          en: 'Optional — not included in operational readiness.',
+          fr: 'Facultatif — non inclus dans la préparation opérationnelle.',
+          es: 'Opcional — no cuenta para la preparación operativa.',
         );
         final checklistScopeNote = _companyChecklistScopeNote(_lang);
+        final optionalDocumentsHelperNote =
+            _companyChecklistOptionalDocumentsNote(_lang);
+        final showOperationalCompleteDocsPending =
+            technicalScore >= 100 && docScore < 100;
 
         return Scaffold(
           backgroundColor: _chironBg,
@@ -6631,16 +6674,35 @@ class _ChironReadinessChecklistPage extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Expanded(
-                          child: Text(
-                            _t(
-                              nl: 'Operationele gereedheid',
-                              en: 'Operational readiness',
-                              fr: 'Préparation opérationnelle',
-                              es: 'Preparación operativa',
-                            ),
-                            style: TextStyle(color: _chironTextSecondary),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                _t(
+                                  nl: 'Score operationele gegevens',
+                                  en: 'Operational data score',
+                                  fr: 'Score des données opérationnelles',
+                                  es: 'Puntuación de datos operativos',
+                                ),
+                                style: TextStyle(color: _chironTextSecondary),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                _t(
+                                  nl: 'Bedrijf, chauffeurs en voertuigen — exclusief documenten',
+                                  en: 'Company, drivers and vehicles — excluding documents',
+                                  fr: 'Entreprise, chauffeurs et véhicules — hors documents',
+                                  es: 'Empresa, conductores y vehículos — sin documentos',
+                                ),
+                                style: TextStyle(
+                                  color: _chironTextMuted,
+                                  fontSize: 10,
+                                ),
+                              ),
+                            ],
                           ),
                         ),
                         Text(
@@ -6719,6 +6781,33 @@ class _ChironReadinessChecklistPage extends StatelessWidget {
                       checklistScopeNote,
                       style: TextStyle(color: _chironTextMuted, fontSize: 11),
                     ),
+                    if (showOperationalCompleteDocsPending) ...[
+                      const SizedBox(height: 8),
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: _chironTextMuted.withOpacity(0.08),
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(
+                            color: _chironBorder.withOpacity(0.85),
+                          ),
+                        ),
+                        child: Text(
+                          _t(
+                            nl: 'Operationele gegevens zijn compleet ($technicalScore%). Optionele documenten: $docScore% — telt niet mee voor deze score.',
+                            en: 'Operational data is complete ($technicalScore%). Optional documents: $docScore% — not included in this score.',
+                            fr: 'Les données opérationnelles sont complètes ($technicalScore%). Documents facultatifs : $docScore% — non inclus dans ce score.',
+                            es: 'Los datos operativos están completos ($technicalScore%). Documentos opcionales: $docScore% — no cuenta para esta puntuación.',
+                          ),
+                          style: TextStyle(
+                            color: _chironTextSecondary,
+                            fontSize: 11,
+                            height: 1.35,
+                          ),
+                        ),
+                      ),
+                    ],
                     const SizedBox(height: 10),
                     _metric(
                       label: _t(
@@ -6854,7 +6943,22 @@ class _ChironReadinessChecklistPage extends StatelessWidget {
                   es: 'Preparación conductores',
                 ),
                 child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    Text(
+                      _t(
+                        nl: 'Dit controleert ingevulde chauffeursgegevens (kaartnummer, vervaldatum). Geüploade documentbestanden staan apart in de optionele documentenmap.',
+                        en: 'This checks completed driver profile fields (card number, expiry). Uploaded document files are tracked separately in the optional document folder.',
+                        fr: 'Ceci contrôle les données chauffeur renseignées (numéro de carte, expiration). Les fichiers de documents téléversés sont suivis séparément dans le dossier documentaire facultatif.',
+                        es: 'Esto comprueba los datos de conductor completados (número de tarjeta, vencimiento). Los archivos de documentos cargados se siguen por separado en la carpeta documental opcional.',
+                      ),
+                      style: TextStyle(
+                        color: _chironTextMuted,
+                        fontSize: 11,
+                        height: 1.35,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
                     _metric(
                       label: _t(
                         nl: 'Totaal chauffeurs',
@@ -7005,183 +7109,233 @@ class _ChironReadinessChecklistPage extends StatelessWidget {
                   ],
                 ),
               ),
-              _baseCard(
-                title: _t(
-                  nl: 'Optioneel documentenbeheer',
-                  en: 'Optional document management',
-                  fr: 'Gestion documentaire facultative',
-                  es: 'Gestión documental opcional',
+              Container(
+                margin: const EdgeInsets.only(bottom: 10),
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: _chironPanel.withOpacity(0.55),
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: _chironBorder.withOpacity(0.9)),
                 ),
-                subtitle: optionalDocumentNote,
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Row(
                       children: [
-                        Expanded(
-                          child: Text(
-                            _t(
-                              nl: 'Documentenmap',
-                              en: 'Document folder',
-                              fr: 'Dossier documents',
-                              es: 'Carpeta de documentos',
-                            ),
-                            style: TextStyle(color: _chironTextSecondary),
-                          ),
+                        Icon(
+                          Icons.folder_open_outlined,
+                          size: 16,
+                          color: _chironTextMuted,
                         ),
+                        const SizedBox(width: 6),
                         Text(
-                          '$docScore%',
+                          _t(
+                            nl: 'Optioneel — apart van operationele gegevens',
+                            en: 'Optional — separate from operational data',
+                            fr: 'Facultatif — séparé des données opérationnelles',
+                            es: 'Opcional — separado de los datos operativos',
+                          ),
                           style: TextStyle(
-                            color: _chironTextPrimary,
-                            fontWeight: FontWeight.w800,
-                            fontSize: 16,
+                            color: _chironTextMuted,
+                            fontWeight: FontWeight.w700,
+                            fontSize: 11,
                           ),
                         ),
                       ],
                     ),
-                    const SizedBox(height: 8),
-                    LinearProgressIndicator(
-                      value: docScore / 100,
-                      minHeight: 6,
-                      backgroundColor: _chironProgressTrack,
-                      valueColor: AlwaysStoppedAnimation<Color>(
-                        docScore >= 80 ? _chironSuccess : _chironTextMuted,
-                      ),
-                    ),
                     const SizedBox(height: 10),
-                    _metric(
-                      label: _t(
-                        nl: 'Totaal documenten',
-                        en: 'Total documents',
-                        fr: 'Total documents',
-                        es: 'Total documentos',
+                    _baseCard(
+                      title: _t(
+                        nl: 'Optioneel documentenbeheer',
+                        en: 'Optional document management',
+                        fr: 'Gestion documentaire facultative',
+                        es: 'Gestión documental opcional',
                       ),
-                      value: totalDocs.toString(),
-                      ready: totalDocs > 0,
-                    ),
-                    _metric(
-                      label: _t(
-                        nl: 'Goedgekeurd',
-                        en: 'Approved',
-                        fr: 'Approuvés',
-                        es: 'Aprobados',
-                      ),
-                      value: approvedDocs.toString(),
-                      ready: approvedDocs == totalDocs && totalDocs > 0,
-                    ),
-                    _metric(
-                      label: _t(
-                        nl: 'In behandeling',
-                        en: 'Pending',
-                        fr: 'En cours',
-                        es: 'Pendientes',
-                      ),
-                      value: pendingDocs.toString(),
-                      ready: pendingDocs == 0,
-                    ),
-                    _metric(
-                      label: _t(
-                        nl: 'Afgewezen',
-                        en: 'Rejected',
-                        fr: 'Rejetés',
-                        es: 'Rechazados',
-                      ),
-                      value: rejectedDocs.toString(),
-                      ready: rejectedDocs == 0,
-                    ),
-                    _metric(
-                      label: _t(
-                        nl: 'Verlopen',
-                        en: 'Expired',
-                        fr: 'Expirés',
-                        es: 'Caducados',
-                      ),
-                      value: expiredDocs.toString(),
-                      ready: expiredDocs == 0,
-                    ),
-                    _metric(
-                      label: _t(
-                        nl: 'Verlopen binnen 30 dagen',
-                        en: 'Expiring within 30 days',
-                        fr: 'Expire sous 30 jours',
-                        es: 'Caducan en 30 días',
-                      ),
-                      value: expiringSoon.toString(),
-                      ready: expiringSoon == 0,
-                    ),
-                    _metric(
-                      label: _t(
-                        nl: 'Kern-documentkloof (chauffeurs)',
-                        en: 'Core document gap (drivers)',
-                        fr: 'Manque de documents clés',
-                        es: 'Brecha de documentos clave',
-                      ),
-                      value: coreGapCount.toString(),
-                      ready: coreGapCount == 0,
-                    ),
-                    if (totalDocs == 0)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 8),
-                        child: _emptyState(
-                          _t(
-                            nl: 'Nog geen documenten gevonden. Beheer documenten via Chauffeurs beheren.',
-                            en: 'No documents found yet. Manage documents in Manage drivers.',
-                            fr: 'Aucun document trouvé. Gérez les documents dans Gérer les chauffeurs.',
-                            es: 'No se encontraron documentos. Gestiona documentos en Gestionar conductores.',
+                      subtitle: optionalDocumentNote,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            optionalDocumentsHelperNote,
+                            style: TextStyle(
+                              color: _chironTextMuted,
+                              fontSize: 11,
+                              height: 1.35,
+                            ),
                           ),
-                        ),
-                      ),
-                    if (coreGapCount > 0 || docAttention.isNotEmpty) ...[
-                      const SizedBox(height: 10),
-                      if (coreGapCount > 0)
-                        _attentionActionCard(
-                          title: _t(
-                            nl: 'Chauffeurdocumenten aanvullen',
-                            en: 'Complete driver documents',
-                            fr: 'Compléter les documents chauffeurs',
-                            es: 'Completar documentos de conductores',
-                          ),
-                          body: _t(
-                            nl: coreGapCount == 1
-                                ? '1 chauffeur heeft een kern-documentkloof. Dit is optioneel en helpt bij opvolging.'
-                                : '$coreGapCount chauffeurs hebben een kern-documentkloof. Dit is optioneel en helpt bij opvolging.',
-                            en: coreGapCount == 1
-                                ? '1 driver has a core document gap. This is optional and helps with follow-up.'
-                                : '$coreGapCount drivers have a core document gap. This is optional and helps with follow-up.',
-                            fr: coreGapCount == 1
-                                ? '1 chauffeur a un manque de documents clés. Facultatif et utile pour le suivi.'
-                                : '$coreGapCount chauffeurs ont un manque de documents clés. Facultatif et utile pour le suivi.',
-                            es: coreGapCount == 1
-                                ? '1 conductor tiene una brecha de documentos clave. Opcional y útil para el seguimiento.'
-                                : '$coreGapCount conductores tienen una brecha de documentos clave. Opcional y útil para el seguimiento.',
-                          ),
-                          actionLabel: _t(
-                            nl: 'Open chauffeurs',
-                            en: 'Open drivers',
-                            fr: 'Ouvrir chauffeurs',
-                            es: 'Abrir conductores',
-                          ),
-                          icon: Icons.badge_outlined,
-                          accent: _chironTextMuted,
-                          onTap: () {
-                            Navigator.of(context).push(
-                              MaterialPageRoute<void>(
-                                builder: (_) => companyDriverManagementPage(),
+                          const SizedBox(height: 10),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  _t(
+                                    nl: 'Volledigheid documentenmap',
+                                    en: 'Document folder completeness',
+                                    fr: 'Complétude du dossier documents',
+                                    es: 'Completitud de la carpeta de documentos',
+                                  ),
+                                  style: TextStyle(color: _chironTextSecondary),
+                                ),
                               ),
-                            );
-                          },
-                        ),
-                      if (docAttention.isNotEmpty)
-                        _attentionGroup(
-                          title: _t(
-                            nl: 'Documentenmap',
-                            en: 'Document folder',
-                            fr: 'Dossier documents',
-                            es: 'Carpeta de documentos',
+                              Text(
+                                '$docScore%',
+                                style: TextStyle(
+                                  color: _chironTextPrimary,
+                                  fontWeight: FontWeight.w800,
+                                  fontSize: 16,
+                                ),
+                              ),
+                            ],
                           ),
-                          items: docAttention,
-                        ),
-                    ],
+                          const SizedBox(height: 8),
+                          LinearProgressIndicator(
+                            value: docScore / 100,
+                            minHeight: 6,
+                            backgroundColor: _chironProgressTrack,
+                            valueColor: AlwaysStoppedAnimation<Color>(
+                              docScore >= 80
+                                  ? _chironSuccess
+                                  : _chironTextMuted,
+                            ),
+                          ),
+                          const SizedBox(height: 10),
+                          _metric(
+                            label: _t(
+                              nl: 'Totaal geüploade documenten',
+                              en: 'Total uploaded documents',
+                              fr: 'Total documents téléversés',
+                              es: 'Total documentos cargados',
+                            ),
+                            value: totalDocs.toString(),
+                            ready: totalDocs > 0,
+                          ),
+                          _metric(
+                            label: _t(
+                              nl: 'Goedgekeurd',
+                              en: 'Approved',
+                              fr: 'Approuvés',
+                              es: 'Aprobados',
+                            ),
+                            value: approvedDocs.toString(),
+                            ready: approvedDocs == totalDocs && totalDocs > 0,
+                          ),
+                          _metric(
+                            label: _t(
+                              nl: 'In behandeling',
+                              en: 'Pending',
+                              fr: 'En cours',
+                              es: 'Pendientes',
+                            ),
+                            value: pendingDocs.toString(),
+                            ready: pendingDocs == 0,
+                          ),
+                          _metric(
+                            label: _t(
+                              nl: 'Afgewezen',
+                              en: 'Rejected',
+                              fr: 'Rejetés',
+                              es: 'Rechazados',
+                            ),
+                            value: rejectedDocs.toString(),
+                            ready: rejectedDocs == 0,
+                          ),
+                          _metric(
+                            label: _t(
+                              nl: 'Verlopen',
+                              en: 'Expired',
+                              fr: 'Expirés',
+                              es: 'Caducados',
+                            ),
+                            value: expiredDocs.toString(),
+                            ready: expiredDocs == 0,
+                          ),
+                          _metric(
+                            label: _t(
+                              nl: 'Verlopen binnen 30 dagen',
+                              en: 'Expiring within 30 days',
+                              fr: 'Expire sous 30 jours',
+                              es: 'Caducan en 30 días',
+                            ),
+                            value: expiringSoon.toString(),
+                            ready: expiringSoon == 0,
+                          ),
+                          _metric(
+                            label: _t(
+                              nl: 'Chauffeurs zonder belangrijke uploads',
+                              en: 'Drivers missing key uploads',
+                              fr: 'Chauffeurs sans téléversements importants',
+                              es: 'Conductores sin cargas importantes',
+                            ),
+                            value: coreGapCount.toString(),
+                            ready: coreGapCount == 0,
+                          ),
+                          if (totalDocs == 0)
+                            Padding(
+                              padding: const EdgeInsets.only(top: 8),
+                              child: _emptyState(
+                                _t(
+                                  nl: 'Nog geen documenten gevonden. Beheer documenten via Chauffeurs beheren.',
+                                  en: 'No documents found yet. Manage documents in Manage drivers.',
+                                  fr: 'Aucun document trouvé. Gérez les documents dans Gérer les chauffeurs.',
+                                  es: 'No se encontraron documentos. Gestiona documentos en Gestionar conductores.',
+                                ),
+                              ),
+                            ),
+                          if (coreGapCount > 0 || docAttention.isNotEmpty) ...[
+                            const SizedBox(height: 10),
+                            if (coreGapCount > 0)
+                              _attentionActionCard(
+                                title: _t(
+                                  nl: 'Chauffeurdocumenten aanvullen',
+                                  en: 'Complete driver documents',
+                                  fr: 'Compléter les documents chauffeurs',
+                                  es: 'Completar documentos de conductores',
+                                ),
+                                body: _t(
+                                  nl: coreGapCount == 1
+                                      ? '1 chauffeur heeft nog geen belangrijke documenten geüpload. Dit is optioneel en helpt bij opvolging.'
+                                      : '$coreGapCount chauffeurs hebben nog geen belangrijke documenten geüpload. Dit is optioneel en helpt bij opvolging.',
+                                  en: coreGapCount == 1
+                                      ? '1 driver has not uploaded key documents yet. This is optional and helps with follow-up.'
+                                      : '$coreGapCount drivers have not uploaded key documents yet. This is optional and helps with follow-up.',
+                                  fr: coreGapCount == 1
+                                      ? '1 chauffeur n’a pas encore téléversé de documents importants. Facultatif et utile pour le suivi.'
+                                      : '$coreGapCount chauffeurs n’ont pas encore téléversé de documents importants. Facultatif et utile pour le suivi.',
+                                  es: coreGapCount == 1
+                                      ? '1 conductor aún no ha cargado documentos importantes. Opcional y útil para el seguimiento.'
+                                      : '$coreGapCount conductores aún no han cargado documentos importantes. Opcional y útil para el seguimiento.',
+                                ),
+                                actionLabel: _t(
+                                  nl: 'Open chauffeurs',
+                                  en: 'Open drivers',
+                                  fr: 'Ouvrir chauffeurs',
+                                  es: 'Abrir conductores',
+                                ),
+                                icon: Icons.badge_outlined,
+                                accent: _chironTextMuted,
+                                onTap: () {
+                                  Navigator.of(context).push(
+                                    MaterialPageRoute<void>(
+                                      builder: (_) =>
+                                          companyDriverManagementPage(),
+                                    ),
+                                  );
+                                },
+                              ),
+                            if (docAttention.isNotEmpty)
+                              _attentionGroup(
+                                title: _t(
+                                  nl: 'Documentenmap',
+                                  en: 'Document folder',
+                                  fr: 'Dossier documents',
+                                  es: 'Carpeta de documentos',
+                                ),
+                                items: docAttention,
+                              ),
+                          ],
+                        ],
+                      ),
+                    ),
                   ],
                 ),
               ),
