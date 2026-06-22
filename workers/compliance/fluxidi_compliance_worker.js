@@ -35,6 +35,7 @@ const CHIRON_EXPORT_TEST_PATH = "/admin/chiron/export/test";
 const CHIRON_READINESS_PATH = "/admin/chiron/readiness";
 // Phase 0/1: per-company Chiron connection status contract (Phase 1: KV persistence).
 const CHIRON_CONFIG_STATUS_PATH = "/admin/chiron/config/status";
+const CHIRON_CONFIG_TEST_CREDENTIALS_PATH = "/admin/chiron/config/test-credentials";
 const CHIRON_CONNECTION_STATUS_SCHEMA = "chiron_connection_status_v1";
 const CHIRON_CONNECTION_KV_SUFFIX = "chiron_connection:v1";
 const CHIRON_INTERNAL_PROXY_MODE = "booking_worker_v1";
@@ -65,8 +66,32 @@ const CHIRON_CONFIG_FORBIDDEN_BODY_KEYS = new Set([
 ]);
 // Phase 2A: Chiron credentials encryption/storage foundation (helpers only; no routes).
 const CHIRON_CREDENTIALS_SCHEMA_VERSION = "chiron_credentials_v1";
+const CHIRON_CREDENTIALS_PAYLOAD_SCHEMA_VERSION = "chiron_credentials_payload_v1";
 const CHIRON_CREDENTIALS_ALLOWED_AUTH_SCHEMES = new Set(["api_token"]);
 const CHIRON_CREDENTIALS_ENCRYPTION_KEY_MIN_LENGTH = 32;
+const CHIRON_TEST_CREDENTIALS_ALLOWED_TOP_LEVEL_KEYS = new Set([
+  "tenant_id",
+  "company_id",
+  "auth_scheme",
+  "credential_fields",
+]);
+const CHIRON_TEST_CREDENTIALS_FORBIDDEN_TOP_LEVEL_KEYS = new Set([
+  "environment",
+  "production",
+  "productionenabled",
+  "production_enabled",
+  "officialsubmitenabled",
+  "official_submit_enabled",
+  "officialsubmissionperformedat",
+  "official_submission_performed_at",
+  "token",
+  "apikey",
+  "api_key",
+  "secret",
+  "password",
+  "clientsecret",
+  "client_secret",
+]);
 const CHIRON_READINESS_DEFAULT_LIMIT = 20;
 const CHIRON_READINESS_DEFAULT_EVENT_TYPE = "ride_stop";
 const CHIRON_EXPORT_STATUS_SCHEMA = "chiron_export_status_v1";
@@ -5694,6 +5719,144 @@ function chironMaskTrailingIdentifier(value) {
   return `${"*".repeat(4)}${text.slice(-4)}`;
 }
 
+function _normalizeChironTestCredentialsBodyKey(value) {
+  return cleanText(value, 64).toLowerCase().replace(/[\s_-]/g, "");
+}
+
+function parseChironTestCredentialsPostInput(body) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return { error: "invalid_body" };
+  }
+
+  for (const key of Object.keys(body)) {
+    const normalized = _normalizeChironTestCredentialsBodyKey(key);
+    if (CHIRON_TEST_CREDENTIALS_FORBIDDEN_TOP_LEVEL_KEYS.has(normalized)) {
+      return { error: "forbidden_fields" };
+    }
+    if (!CHIRON_TEST_CREDENTIALS_ALLOWED_TOP_LEVEL_KEYS.has(key)) {
+      return { error: "forbidden_fields" };
+    }
+  }
+
+  const tenantId = cleanText(body.tenant_id, 128);
+  const companyId = cleanText(body.company_id, 128);
+  if (!tenantId || !companyId) {
+    return { error: "missing_scope" };
+  }
+
+  const authScheme = cleanText(body.auth_scheme, 64).toLowerCase();
+  const schemeError = validateChironCredentialsAuthScheme(authScheme);
+  if (schemeError) {
+    return { error: schemeError };
+  }
+
+  const credentialFields = body.credential_fields;
+  if (
+    !credentialFields ||
+    typeof credentialFields !== "object" ||
+    Array.isArray(credentialFields)
+  ) {
+    return { error: "invalid_credential_fields" };
+  }
+
+  if (authScheme === "api_token") {
+    const fieldKeys = Object.keys(credentialFields);
+    if (fieldKeys.length !== 1 || fieldKeys[0] !== "api_token") {
+      return { error: "invalid_credential_fields" };
+    }
+    const rawApiToken = credentialFields.api_token;
+    if (typeof rawApiToken !== "string") {
+      return { error: "invalid_api_token" };
+    }
+    const apiToken = rawApiToken.trim();
+    if (!apiToken) {
+      return { error: "missing_api_token" };
+    }
+    return { tenantId, companyId, authScheme, apiToken };
+  }
+
+  return { error: "unsupported_auth_scheme" };
+}
+
+async function readChironCredentialsRaw(env, tenantId, companyId, environment) {
+  if (!env?.COMPLIANCE_KV || typeof env.COMPLIANCE_KV.get !== "function") {
+    return { doc: null, error: "missing_kv" };
+  }
+  const key = buildChironCredentialsKvKey(tenantId, companyId, environment);
+  if (!key) return { doc: null, error: "missing_scope" };
+  try {
+    const raw = await env.COMPLIANCE_KV.get(key);
+    if (!raw) return { doc: null, key };
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return { doc: null, key };
+    }
+    return { doc: parsed, key };
+  } catch (_) {
+    return { doc: null, key, error: "kv_read_failed" };
+  }
+}
+
+async function writeChironCredentialsRaw(env, key, doc) {
+  if (!env?.COMPLIANCE_KV || typeof env.COMPLIANCE_KV.put !== "function") {
+    return { ok: false, error: "missing_kv" };
+  }
+  if (!key) return { ok: false, error: "missing_scope" };
+  try {
+    await env.COMPLIANCE_KV.put(key, JSON.stringify(doc));
+    return { ok: true, key };
+  } catch (_) {
+    return { ok: false, error: "kv_write_failed" };
+  }
+}
+
+function buildChironTestCredentialsStatusDoc(
+  existingStored,
+  tenantId,
+  companyId,
+  updatedAt,
+  updatedBy,
+) {
+  const existing = existingStored && typeof existingStored === "object" ? existingStored : {};
+
+  const environmentRaw = cleanText(existing.environment, 32).toLowerCase();
+  const environment = CHIRON_CONNECTION_ALLOWED_ENVIRONMENTS.has(environmentRaw)
+    ? environmentRaw
+    : "test";
+
+  const regionRaw = cleanText(existing.region, 32).toLowerCase();
+  const region = CHIRON_CONNECTION_ALLOWED_REGIONS.has(regionRaw)
+    ? regionRaw
+    : "flanders";
+
+  const testMessagesRequired = Number(existing.test_messages_required);
+  const productionCredentialsStored = existing.production_credentials_stored === true;
+
+  return {
+    schema_version: CHIRON_CONNECTION_STATUS_SCHEMA,
+    tenant_id: tenantId,
+    company_id: companyId,
+    enabled: existing.enabled === true,
+    environment,
+    region,
+    production_enabled: false,
+    test_credentials_stored: true,
+    production_credentials_stored: productionCredentialsStored,
+    last_connection_status: "never_tested",
+    last_connection_test_at: null,
+    last_connection_status_message: null,
+    official_submission_performed_at:
+      cleanText(existing.official_submission_performed_at, 64) || null,
+    test_messages_required:
+      Number.isFinite(testMessagesRequired) && testMessagesRequired >= 0
+        ? Math.floor(testMessagesRequired)
+        : 10,
+    test_messages_sent_count: 0,
+    updated_at: updatedAt,
+    updated_by: updatedBy,
+  };
+}
+
 function defaultChironConnectionStatusDoc(tenantId, companyId) {
   return {
     ok: true,
@@ -6033,6 +6196,142 @@ async function handleChironConfigStatus(request, url, env, origin) {
   return jsonResponse({ ok: false, error: "Method Not Allowed" }, 405, origin);
 }
 
+async function handleChironConfigTestCredentialsPost(request, url, env, origin) {
+  if (!requireJsonRequest(request)) {
+    return jsonResponse(
+      { ok: false, error: "Content-Type must be application/json" },
+      400,
+      origin,
+    );
+  }
+
+  const body = await readJsonBody(request);
+  if (body === null) {
+    return jsonResponse({ ok: false, error: "Invalid JSON body" }, 400, origin);
+  }
+
+  const parsed = parseChironTestCredentialsPostInput(body);
+  if (parsed.error) {
+    return jsonResponse({ ok: false, error: parsed.error }, 400, origin);
+  }
+
+  const { tenantId, companyId, authScheme, apiToken } = parsed;
+
+  const authError = ensureAuthorizedOrInternalProxy(request, env, {
+    tenantId,
+    companyId,
+  });
+  if (authError) return authError;
+
+  if (!env?.COMPLIANCE_KV || typeof env.COMPLIANCE_KV.put !== "function") {
+    return jsonResponse({ ok: false, error: "missing_kv" }, 500, origin);
+  }
+
+  const plaintextEnvelope = JSON.stringify({
+    schema_version: CHIRON_CREDENTIALS_PAYLOAD_SCHEMA_VERSION,
+    auth_scheme: authScheme,
+    api_token: apiToken,
+  });
+
+  let credentialPayloadEncrypted;
+  let credentialFingerprintShort;
+  let maskedIdentifier;
+  try {
+    credentialPayloadEncrypted = await encryptChironCredentialBlob(plaintextEnvelope, env);
+    credentialFingerprintShort = await chironCredentialFingerprintShort(apiToken);
+    maskedIdentifier = chironMaskTrailingIdentifier(apiToken);
+  } catch (_) {
+    return jsonResponse({ ok: false, error: "credential_encrypt_failed" }, 500, origin);
+  }
+
+  const credentialsKey = buildChironCredentialsKvKey(tenantId, companyId, "test");
+  if (!credentialsKey) {
+    return jsonResponse({ ok: false, error: "missing_scope" }, 400, origin);
+  }
+
+  const existingCredentials = await readChironCredentialsRaw(
+    env,
+    tenantId,
+    companyId,
+    "test",
+  );
+  const updatedAt = nowIso();
+  const hadExisting =
+    existingCredentials.doc &&
+    typeof existingCredentials.doc === "object" &&
+    !Array.isArray(existingCredentials.doc);
+  const preservedCreatedAt = hadExisting
+    ? cleanText(existingCredentials.doc.created_at, 64)
+    : "";
+
+  const credentialsDoc = {
+    schema_version: CHIRON_CREDENTIALS_SCHEMA_VERSION,
+    tenant_id: tenantId,
+    company_id: companyId,
+    environment: "test",
+    auth_scheme: authScheme,
+    credential_payload_encrypted: credentialPayloadEncrypted,
+    credential_fingerprint_short: credentialFingerprintShort,
+    masked_identifier: maskedIdentifier,
+    created_at: preservedCreatedAt || updatedAt,
+    updated_at: updatedAt,
+    rotated_at: hadExisting ? updatedAt : null,
+  };
+
+  const credentialsWrite = await writeChironCredentialsRaw(
+    env,
+    credentialsKey,
+    credentialsDoc,
+  );
+  if (!credentialsWrite.ok) {
+    return jsonResponse(
+      { ok: false, error: credentialsWrite.error || "kv_write_failed" },
+      500,
+      origin,
+    );
+  }
+
+  const statusRead = await readChironConnectionStatusRaw(env, tenantId, companyId);
+  const statusDoc = buildChironTestCredentialsStatusDoc(
+    statusRead.doc,
+    tenantId,
+    companyId,
+    updatedAt,
+    _resolveChironConfigUpdatedBy(request),
+  );
+
+  const statusWrite = await writeChironConnectionStatusRaw(
+    env,
+    tenantId,
+    companyId,
+    statusDoc,
+  );
+  if (!statusWrite.ok) {
+    return jsonResponse(
+      { ok: false, error: statusWrite.error || "kv_write_failed" },
+      500,
+      origin,
+    );
+  }
+
+  return jsonResponse(
+    {
+      ok: true,
+      schema_version: CHIRON_CREDENTIALS_SCHEMA_VERSION,
+      tenant_id: tenantId,
+      company_id: companyId,
+      environment: "test",
+      auth_scheme: authScheme,
+      test_credentials_stored: true,
+      credential_fingerprint_short: credentialFingerprintShort,
+      masked_identifier: maskedIdentifier,
+      updated_at: updatedAt,
+    },
+    200,
+    origin,
+  );
+}
+
 export default {
   async fetch(request, env) {
     const origin = request.headers.get("origin") || "*";
@@ -6061,7 +6360,8 @@ export default {
       url.pathname !== CHIRON_EXPORT_DRY_RUN_PATH &&
       url.pathname !== CHIRON_EXPORT_TEST_PATH &&
       url.pathname !== CHIRON_READINESS_PATH &&
-      url.pathname !== CHIRON_CONFIG_STATUS_PATH
+      url.pathname !== CHIRON_CONFIG_STATUS_PATH &&
+      url.pathname !== CHIRON_CONFIG_TEST_CREDENTIALS_PATH
     ) {
       return jsonResponse(
         { ok: false, error: "Not Found", path: url.pathname },
@@ -6130,6 +6430,12 @@ export default {
       }
       if (url.pathname === CHIRON_CONFIG_STATUS_PATH) {
         return await handleChironConfigStatus(request, url, env, origin);
+      }
+      if (url.pathname === CHIRON_CONFIG_TEST_CREDENTIALS_PATH) {
+        if (request.method !== "POST") {
+          return jsonResponse({ ok: false, error: "Method Not Allowed" }, 405, origin);
+        }
+        return await handleChironConfigTestCredentialsPost(request, url, env, origin);
       }
       if (request.method !== "GET") {
         return jsonResponse({ ok: false, error: "Method Not Allowed" }, 405, origin);
