@@ -200,6 +200,8 @@ class ChironComplianceDashboardPage extends StatelessWidget {
                     _ChironReadinessPanel(lang: _lang),
                     const SizedBox(height: 12),
                     _ChironConnectionLinkCard(lang: _lang),
+                    const SizedBox(height: 12),
+                    _ChironTestAccessCard(lang: _lang),
                   ],
                 ),
               ),
@@ -601,6 +603,762 @@ class _ChironConnectionLinkCardState extends State<_ChironConnectionLinkCard> {
               ),
             );
           },
+        );
+      },
+    );
+  }
+}
+
+Uri _chironBookingScopedEndpoint(
+  String path, {
+  required String tenantId,
+  required String companyId,
+}) {
+  return Uri.parse('${appConfig.bookingBaseUrl}$path').replace(
+    queryParameters: <String, String>{
+      'tenant_id': tenantId,
+      'company_id': companyId,
+      'tenantId': tenantId,
+      'companyId': companyId,
+    },
+  );
+}
+
+String _chironSafeApiErrorCode(Map<String, dynamic> decoded) {
+  final error = decoded['error'];
+  if (error == null) return 'unknown_error';
+  final text = error.toString().trim();
+  return text.isEmpty ? 'unknown_error' : text;
+}
+
+Future<String> _saveChironTestCredentialsViaBooking({
+  required String tenantId,
+  required String companyId,
+  required String apiToken,
+}) async {
+  final endpoint = _chironBookingScopedEndpoint(
+    '/admin/chiron/config/test-credentials',
+    tenantId: tenantId,
+    companyId: companyId,
+  );
+  final auth = await resolveCompanyOwnerAuthHeaders();
+  final res = await http
+      .post(
+        endpoint,
+        headers: auth.headers,
+        body: jsonEncode(<String, dynamic>{
+          'tenant_id': tenantId,
+          'company_id': companyId,
+          'auth_scheme': ChironCredentialAuthScheme.authSchemeApiToken,
+          'credential_fields': <String, dynamic>{'api_token': apiToken},
+        }),
+      )
+      .timeout(const Duration(seconds: 12));
+  final decoded = jsonDecode(res.body);
+  if (decoded is! Map) {
+    throw BackendChironConnectionApiException(
+      error: 'invalid_response',
+      statusCode: res.statusCode,
+    );
+  }
+  final map = Map<String, dynamic>.from(decoded);
+  if (res.statusCode < 200 || res.statusCode >= 300 || map['ok'] == false) {
+    throw BackendChironConnectionApiException(
+      error: _chironSafeApiErrorCode(map),
+      statusCode: res.statusCode,
+    );
+  }
+  final masked = map['masked_identifier'] ?? map['maskedIdentifier'];
+  return masked == null ? '' : masked.toString().trim();
+}
+
+class _ChironMockConnectionTestResult {
+  const _ChironMockConnectionTestResult({
+    required this.ok,
+    this.mockOnly = false,
+    this.externalCallPerformed = false,
+    this.credentialDecryptOk = false,
+    this.credentialPayloadValid = false,
+    this.maskedIdentifier = '',
+    this.lastConnectionStatus = '',
+    this.productionEnabled = false,
+    this.officialSubmitEnabled = false,
+    this.updatedAt,
+    this.errorCode,
+  });
+
+  final bool ok;
+  final bool mockOnly;
+  final bool externalCallPerformed;
+  final bool credentialDecryptOk;
+  final bool credentialPayloadValid;
+  final String maskedIdentifier;
+  final String lastConnectionStatus;
+  final bool productionEnabled;
+  final bool officialSubmitEnabled;
+  final String? updatedAt;
+  final String? errorCode;
+
+  factory _ChironMockConnectionTestResult.fromJson(Map<String, dynamic> json) {
+    bool boolField(List<String> keys, {bool fallback = false}) {
+      for (final key in keys) {
+        final value = json[key];
+        if (value is bool) return value;
+        if (value is String) {
+          final token = value.trim().toLowerCase();
+          if (token == 'true') return true;
+          if (token == 'false') return false;
+        }
+      }
+      return fallback;
+    }
+
+    String textField(List<String> keys, {String fallback = ''}) {
+      for (final key in keys) {
+        final value = json[key];
+        if (value == null) continue;
+        final text = value.toString().trim();
+        if (text.isNotEmpty) return text;
+      }
+      return fallback;
+    }
+
+    return _ChironMockConnectionTestResult(
+      ok: boolField(const ['ok'], fallback: false),
+      mockOnly: boolField(const ['mock_only', 'mockOnly']),
+      externalCallPerformed: boolField(const [
+        'external_call_performed',
+        'externalCallPerformed',
+      ]),
+      credentialDecryptOk: boolField(const [
+        'credential_decrypt_ok',
+        'credentialDecryptOk',
+      ]),
+      credentialPayloadValid: boolField(const [
+        'credential_payload_valid',
+        'credentialPayloadValid',
+      ]),
+      maskedIdentifier: textField(const [
+        'masked_identifier',
+        'maskedIdentifier',
+      ]),
+      lastConnectionStatus: textField(const [
+        'last_connection_status',
+        'lastConnectionStatus',
+      ]),
+      productionEnabled: boolField(const [
+        'production_enabled',
+        'productionEnabled',
+      ]),
+      officialSubmitEnabled: boolField(const [
+        'official_submit_enabled',
+        'officialSubmitEnabled',
+      ]),
+      updatedAt: textField(const ['updated_at', 'updatedAt']).isEmpty
+          ? null
+          : textField(const ['updated_at', 'updatedAt']),
+      errorCode: textField(const ['error']).isEmpty
+          ? null
+          : textField(const ['error']),
+    );
+  }
+}
+
+Future<_ChironMockConnectionTestResult> _runChironMockConnectionTestViaBooking({
+  required String tenantId,
+  required String companyId,
+}) async {
+  final endpoint = _chironBookingScopedEndpoint(
+    '/admin/chiron/connection/test',
+    tenantId: tenantId,
+    companyId: companyId,
+  );
+  final auth = await resolveCompanyOwnerAuthHeaders();
+  final res = await http
+      .post(
+        endpoint,
+        headers: auth.headers,
+        body: jsonEncode(<String, dynamic>{
+          'tenant_id': tenantId,
+          'company_id': companyId,
+          'environment': ChironConnectionEnvironment.test,
+        }),
+      )
+      .timeout(const Duration(seconds: 12));
+  final decoded = jsonDecode(res.body);
+  if (decoded is! Map) {
+    return const _ChironMockConnectionTestResult(
+      ok: false,
+      errorCode: 'invalid_response',
+    );
+  }
+  final map = Map<String, dynamic>.from(decoded);
+  if (res.statusCode < 200 || res.statusCode >= 300 || map['ok'] == false) {
+    return _ChironMockConnectionTestResult(
+      ok: false,
+      errorCode: _chironSafeApiErrorCode(map),
+    );
+  }
+  return _ChironMockConnectionTestResult.fromJson(map);
+}
+
+class _ChironTestAccessCard extends StatefulWidget {
+  const _ChironTestAccessCard({required this.lang});
+
+  final AppLanguage lang;
+
+  @override
+  State<_ChironTestAccessCard> createState() => _ChironTestAccessCardState();
+}
+
+class _ChironTestAccessCardState extends State<_ChironTestAccessCard> {
+  final TextEditingController _apiTokenController = TextEditingController();
+  bool _loadingStatus = false;
+  bool _saving = false;
+  bool _testing = false;
+  String? _actionError;
+  String _maskedIdentifier = '';
+  _ChironMockConnectionTestResult? _lastMockTest;
+
+  @override
+  void initState() {
+    super.initState();
+    _apiTokenController.addListener(_onApiTokenChanged);
+    unawaited(_refreshStatus());
+  }
+
+  void _onApiTokenChanged() {
+    if (mounted) setState(() {});
+  }
+
+  @override
+  void dispose() {
+    _apiTokenController.removeListener(_onApiTokenChanged);
+    _apiTokenController.dispose();
+    super.dispose();
+  }
+
+  AppLanguage get lang => widget.lang;
+
+  String _t({
+    required String nl,
+    required String en,
+    required String fr,
+    required String es,
+  }) {
+    switch (lang) {
+      case AppLanguage.nl:
+        return nl;
+      case AppLanguage.en:
+        return en;
+      case AppLanguage.fr:
+        return fr;
+      case AppLanguage.es:
+        return es;
+    }
+  }
+
+  ({String tenantId, String companyId})? _effectiveTenantCompanyIds() {
+    final activeCompanyId =
+        companyProfileNotifier.value?.companyId.trim() ?? '';
+    if (activeCompanyId.isNotEmpty) {
+      return (tenantId: activeCompanyId, companyId: activeCompanyId);
+    }
+    final sessionCompanyId =
+        activeCompanySessionNotifier.value?.companyId.trim() ?? '';
+    if (sessionCompanyId.isNotEmpty) {
+      return (tenantId: sessionCompanyId, companyId: sessionCompanyId);
+    }
+    return null;
+  }
+
+  String _localizedApiError(String? code) {
+    switch ((code ?? '').trim().toLowerCase()) {
+      case 'missing_scope':
+        return _t(
+          nl: 'Bedrijfsscope ontbreekt.',
+          en: 'Company scope is missing.',
+          fr: 'Le périmètre entreprise est manquant.',
+          es: 'Falta el ámbito de empresa.',
+        );
+      case 'missing_test_credentials':
+        return _t(
+          nl: 'Sla eerst testgegevens op.',
+          en: 'Save test credentials first.',
+          fr: 'Enregistrez d’abord les identifiants de test.',
+          es: 'Guarda primero las credenciales de prueba.',
+        );
+      case 'production_connection_test_not_supported':
+        return _t(
+          nl: 'Productietest wordt nog niet ondersteund.',
+          en: 'Production connection test is not supported yet.',
+          fr: 'Le test de connexion en production n’est pas encore pris en charge.',
+          es: 'La prueba de conexión de producción aún no está disponible.',
+        );
+      case 'forbidden_fields':
+        return _t(
+          nl: 'Ongeldige velden in het verzoek.',
+          en: 'Invalid fields in the request.',
+          fr: 'Champs non valides dans la requête.',
+          es: 'Campos no válidos en la solicitud.',
+        );
+      case 'credential_encrypt_failed':
+      case 'credential_decrypt_failed':
+      case 'invalid_credential_payload':
+      case 'invalid_api_token':
+      case 'missing_api_token':
+        return _t(
+          nl: 'Testgegevens konden niet veilig verwerkt worden.',
+          en: 'Test credentials could not be processed securely.',
+          fr: 'Les identifiants de test n’ont pas pu être traités en toute sécurité.',
+          es: 'No se pudieron procesar las credenciales de prueba de forma segura.',
+        );
+      default:
+        return _t(
+          nl: 'Actie mislukt. Probeer opnieuw.',
+          en: 'Action failed. Please try again.',
+          fr: 'Action échouée. Veuillez réessayer.',
+          es: 'La acción falló. Inténtalo de nuevo.',
+        );
+    }
+  }
+
+  void _showSnack(String message, {bool isError = false}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: isError ? _chironDanger : null,
+      ),
+    );
+  }
+
+  Future<void> _refreshStatus() async {
+    final scope = _effectiveTenantCompanyIds();
+    if (scope == null) return;
+    setState(() {
+      _loadingStatus = true;
+      _actionError = null;
+    });
+    try {
+      final status = await fetchBackendChironConnectionStatus(
+        tenantId: scope.tenantId,
+        companyId: scope.companyId,
+      );
+      updateBackendChironConnectionStatusCache(status);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _actionError = _t(
+          nl: 'Status kon niet geladen worden.',
+          en: 'Status could not be loaded.',
+          fr: 'Le statut n’a pas pu être chargé.',
+          es: 'No se pudo cargar el estado.',
+        );
+      });
+    } finally {
+      if (mounted) {
+        setState(() => _loadingStatus = false);
+      }
+    }
+  }
+
+  Future<void> _saveTestCredentials() async {
+    final scope = _effectiveTenantCompanyIds();
+    if (scope == null) return;
+    final apiToken = _apiTokenController.text.trim();
+    if (apiToken.isEmpty) return;
+
+    setState(() {
+      _saving = true;
+      _actionError = null;
+    });
+    try {
+      final maskedIdentifier = await _saveChironTestCredentialsViaBooking(
+        tenantId: scope.tenantId,
+        companyId: scope.companyId,
+        apiToken: apiToken,
+      );
+      _apiTokenController.clear();
+      if (maskedIdentifier.isNotEmpty) {
+        _maskedIdentifier = maskedIdentifier;
+      }
+      await _refreshStatus();
+      if (!mounted) return;
+      _showSnack(
+        _t(
+          nl: 'Testgegevens opgeslagen.',
+          en: 'Test credentials saved.',
+          fr: 'Identifiants de test enregistrés.',
+          es: 'Credenciales de prueba guardadas.',
+        ),
+      );
+    } on BackendChironConnectionApiException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _actionError = _localizedApiError(e.error);
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _actionError = _localizedApiError('network_error');
+      });
+    } finally {
+      if (mounted) {
+        setState(() => _saving = false);
+      }
+    }
+  }
+
+  Future<void> _testConnection() async {
+    final scope = _effectiveTenantCompanyIds();
+    if (scope == null) return;
+
+    setState(() {
+      _testing = true;
+      _actionError = null;
+    });
+    try {
+      final result = await _runChironMockConnectionTestViaBooking(
+        tenantId: scope.tenantId,
+        companyId: scope.companyId,
+      );
+      if (!mounted) return;
+      if (!result.ok) {
+        setState(() {
+          _actionError = _localizedApiError(result.errorCode);
+        });
+        return;
+      }
+      setState(() {
+        _lastMockTest = result;
+        if (result.maskedIdentifier.isNotEmpty) {
+          _maskedIdentifier = result.maskedIdentifier;
+        }
+      });
+      _showSnack(
+        _t(
+          nl: 'Interne test geslaagd.',
+          en: 'Internal test passed.',
+          fr: 'Test interne réussi.',
+          es: 'Prueba interna superada.',
+        ),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _actionError = _localizedApiError('network_error');
+      });
+    } finally {
+      if (mounted) {
+        setState(() => _testing = false);
+      }
+    }
+  }
+
+  Widget _statusChip({
+    required String label,
+    required bool active,
+    Color? activeColor,
+  }) {
+    final color = active ? (activeColor ?? _chironSuccess) : _chironTextMuted;
+    final background = active ? color.withOpacity(0.16) : _chironPanel;
+    final border = active ? color.withOpacity(0.55) : _chironBorder;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      decoration: BoxDecoration(
+        color: background,
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: border),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          color: color,
+          fontWeight: FontWeight.w700,
+          fontSize: 11,
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scope = _effectiveTenantCompanyIds();
+    if (scope == null) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(10),
+        decoration: BoxDecoration(
+          color: _chironPanel,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: _chironBorder),
+        ),
+        child: Text(
+          _t(
+            nl: 'Selecteer eerst een bedrijf om Chiron-testtoegang te beheren.',
+            en: 'Select a company first to manage Chiron test access.',
+            fr: 'Sélectionnez d’abord une entreprise pour gérer l’accès de test Chiron.',
+            es: 'Selecciona primero una empresa para gestionar el acceso de prueba Chiron.',
+          ),
+          style: TextStyle(color: _chironTextMuted, fontSize: 12),
+        ),
+      );
+    }
+
+    return ValueListenableBuilder<BackendChironConnectionStatus?>(
+      valueListenable: backendChironConnectionStatusNotifier,
+      builder: (context, backendStatus, _) {
+        final testCredentialsStored =
+            backendStatus?.testCredentialsStored ?? false;
+        final productionEnabled = backendStatus?.productionEnabled ?? false;
+        final officialSubmitEnabled =
+            backendStatus?.officialSubmitEnabled ?? false;
+        final mockTestPassed =
+            _lastMockTest?.credentialDecryptOk == true &&
+            _lastMockTest?.credentialPayloadValid == true;
+        final lastConnectionStatus =
+            backendStatus?.lastConnectionStatus ??
+            ChironBackendLastConnectionStatus.neverTested;
+
+        return Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(
+            color: _chironPanel,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: _chironBorder),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                _t(
+                  nl: 'Chiron testtoegang',
+                  en: 'Chiron test access',
+                  fr: 'Accès de test Chiron',
+                  es: 'Acceso de prueba Chiron',
+                ),
+                style: TextStyle(
+                  color: _chironGold,
+                  fontWeight: FontWeight.w800,
+                  fontSize: 14,
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                _t(
+                  nl: 'Sla testgegevens veilig op en controleer intern of Fluxidi ze kan openen. Dit voert nog geen officiële Chiron-koppeling uit.',
+                  en: 'Store test credentials securely and run an internal check. This does not perform an official Chiron connection yet.',
+                  fr: 'Enregistrez les identifiants de test en toute sécurité et effectuez un contrôle interne. Cela n’établit pas encore de connexion Chiron officielle.',
+                  es: 'Guarda credenciales de prueba de forma segura y ejecuta una verificación interna. Esto todavía no realiza una conexión oficial con Chiron.',
+                ),
+                style: TextStyle(
+                  color: _chironTextSecondary,
+                  fontSize: 12,
+                  height: 1.35,
+                ),
+              ),
+              const SizedBox(height: 10),
+              Wrap(
+                spacing: 6,
+                runSpacing: 6,
+                children: [
+                  _statusChip(
+                    label: _t(
+                      nl: 'Testgegevens opgeslagen',
+                      en: 'Test credentials stored',
+                      fr: 'Identifiants de test enregistrés',
+                      es: 'Credenciales de prueba guardadas',
+                    ),
+                    active: testCredentialsStored,
+                  ),
+                  _statusChip(
+                    label: _t(
+                      nl: 'Interne test geslaagd',
+                      en: 'Internal test passed',
+                      fr: 'Test interne réussi',
+                      es: 'Prueba interna superada',
+                    ),
+                    active: mockTestPassed,
+                  ),
+                  _statusChip(
+                    label: _t(
+                      nl: mockTestPassed
+                          ? 'Officiële Chiron-test nog niet uitgevoerd'
+                          : 'Nog niet getest',
+                      en: mockTestPassed
+                          ? 'Official Chiron test not run yet'
+                          : 'Not tested yet',
+                      fr: mockTestPassed
+                          ? 'Test Chiron officiel pas encore effectué'
+                          : 'Pas encore testé',
+                      es: mockTestPassed
+                          ? 'Prueba oficial Chiron aún no realizada'
+                          : 'Aún no probado',
+                    ),
+                    active: mockTestPassed
+                        ? true
+                        : lastConnectionStatus ==
+                              ChironBackendLastConnectionStatus.neverTested,
+                    activeColor: _chironWarning,
+                  ),
+                  _statusChip(
+                    label: _t(
+                      nl: 'Productie niet actief',
+                      en: 'Production not active',
+                      fr: 'Production inactive',
+                      es: 'Producción inactiva',
+                    ),
+                    active: !productionEnabled,
+                    activeColor: _chironTextSecondary,
+                  ),
+                  _statusChip(
+                    label: _t(
+                      nl: 'Officiële verzending niet actief',
+                      en: 'Official submit not active',
+                      fr: 'Envoi officiel inactif',
+                      es: 'Envío oficial inactivo',
+                    ),
+                    active: !officialSubmitEnabled,
+                    activeColor: _chironTextSecondary,
+                  ),
+                ],
+              ),
+              if (_loadingStatus) ...[
+                const SizedBox(height: 10),
+                SizedBox(
+                  height: 18,
+                  width: 18,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: _chironGold,
+                  ),
+                ),
+              ],
+              if (_maskedIdentifier.isNotEmpty) ...[
+                const SizedBox(height: 10),
+                Text(
+                  _t(
+                    nl: 'Opgeslagen token: $_maskedIdentifier',
+                    en: 'Stored token: $_maskedIdentifier',
+                    fr: 'Jeton enregistré : $_maskedIdentifier',
+                    es: 'Token guardado: $_maskedIdentifier',
+                  ),
+                  style: TextStyle(color: _chironTextMuted, fontSize: 11),
+                ),
+              ],
+              if (_lastMockTest != null && _lastMockTest!.ok) ...[
+                const SizedBox(height: 8),
+                Text(
+                  _t(
+                    nl: 'Interne controle geslaagd · Geen externe Chiron-call uitgevoerd',
+                    en: 'Internal check passed · No external Chiron call performed',
+                    fr: 'Contrôle interne réussi · Aucun appel Chiron externe effectué',
+                    es: 'Control interno superado · No se realizó ninguna llamada externa a Chiron',
+                  ),
+                  style: TextStyle(color: _chironTextFaint, fontSize: 10),
+                ),
+              ],
+              if (_actionError != null) ...[
+                const SizedBox(height: 10),
+                Text(
+                  _actionError!,
+                  style: TextStyle(color: _chironDanger, fontSize: 12),
+                ),
+              ],
+              const SizedBox(height: 10),
+              TextField(
+                controller: _apiTokenController,
+                obscureText: true,
+                enableSuggestions: false,
+                autocorrect: false,
+                decoration: InputDecoration(
+                  isDense: true,
+                  labelText: _t(
+                    nl: 'Chiron test API-token',
+                    en: 'Chiron test API token',
+                    fr: 'Jeton API de test Chiron',
+                    es: 'Token API de prueba Chiron',
+                  ),
+                  labelStyle: TextStyle(color: _chironTextMuted, fontSize: 12),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(10),
+                    borderSide: BorderSide(color: _chironBorder),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(10),
+                    borderSide: BorderSide(color: _chironGold),
+                  ),
+                ),
+                style: TextStyle(color: _chironTextPrimary, fontSize: 13),
+              ),
+              const SizedBox(height: 10),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  OutlinedButton(
+                    onPressed:
+                        _saving || _apiTokenController.text.trim().isEmpty
+                        ? null
+                        : _saveTestCredentials,
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: _chironGold,
+                      side: BorderSide(color: _chironBorder),
+                      visualDensity: VisualDensity.compact,
+                    ),
+                    child: _saving
+                        ? SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: _chironGold,
+                            ),
+                          )
+                        : Text(
+                            _t(
+                              nl: 'Testgegevens opslaan',
+                              en: 'Save test credentials',
+                              fr: 'Enregistrer les identifiants de test',
+                              es: 'Guardar credenciales de prueba',
+                            ),
+                            style: const TextStyle(fontSize: 12),
+                          ),
+                  ),
+                  OutlinedButton(
+                    onPressed: _testing || !testCredentialsStored
+                        ? null
+                        : _testConnection,
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: _chironGold,
+                      side: BorderSide(color: _chironBorder),
+                      visualDensity: VisualDensity.compact,
+                    ),
+                    child: _testing
+                        ? SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: _chironGold,
+                            ),
+                          )
+                        : Text(
+                            _t(
+                              nl: 'Test verbinding',
+                              en: 'Test connection',
+                              fr: 'Tester la connexion',
+                              es: 'Probar conexión',
+                            ),
+                            style: const TextStyle(fontSize: 12),
+                          ),
+                  ),
+                ],
+              ),
+            ],
+          ),
         );
       },
     );
