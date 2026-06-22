@@ -711,6 +711,42 @@ Future<String> _saveChironTestCredentialsViaBooking({
   return masked == null ? '' : masked.toString().trim();
 }
 
+Future<void> _clearChironTestCredentialsViaBooking({
+  required String tenantId,
+  required String companyId,
+}) async {
+  final endpoint = _chironBookingScopedEndpoint(
+    '/admin/chiron/config/test-credentials/clear',
+    tenantId: tenantId,
+    companyId: companyId,
+  );
+  final auth = await resolveCompanyOwnerAuthHeaders();
+  final res = await http
+      .post(
+        endpoint,
+        headers: auth.headers,
+        body: jsonEncode(<String, dynamic>{
+          'tenant_id': tenantId,
+          'company_id': companyId,
+        }),
+      )
+      .timeout(const Duration(seconds: 12));
+  final decoded = jsonDecode(res.body);
+  if (decoded is! Map) {
+    throw BackendChironConnectionApiException(
+      error: 'invalid_response',
+      statusCode: res.statusCode,
+    );
+  }
+  final map = Map<String, dynamic>.from(decoded);
+  if (res.statusCode < 200 || res.statusCode >= 300 || map['ok'] == false) {
+    throw BackendChironConnectionApiException(
+      error: _chironSafeApiErrorCode(map),
+      statusCode: res.statusCode,
+    );
+  }
+}
+
 class _ChironMockConnectionTestResult {
   const _ChironMockConnectionTestResult({
     required this.ok,
@@ -1020,6 +1056,7 @@ class _ChironTestAccessCardState extends State<_ChironTestAccessCard> {
   bool _loadingStatus = false;
   bool _saving = false;
   bool _testing = false;
+  bool _clearingTestCredentials = false;
   String? _actionError;
   String _maskedIdentifier = '';
   _ChironMockConnectionTestResult? _lastMockTest;
@@ -1157,8 +1194,13 @@ class _ChironTestAccessCardState extends State<_ChironTestAccessCard> {
       if (!mounted) return;
       setState(() {
         _persistedInternalTest = fetched.internalTest;
-        if (fetched.internalTest.maskedIdentifier.isNotEmpty) {
-          _maskedIdentifier = fetched.internalTest.maskedIdentifier;
+        if (fetched.status.testCredentialsStored) {
+          if (fetched.internalTest.maskedIdentifier.isNotEmpty) {
+            _maskedIdentifier = fetched.internalTest.maskedIdentifier;
+          }
+        } else {
+          _maskedIdentifier = '';
+          _lastMockTest = null;
         }
       });
     } catch (_) {
@@ -1269,6 +1311,129 @@ class _ChironTestAccessCardState extends State<_ChironTestAccessCard> {
     } finally {
       if (mounted) {
         setState(() => _testing = false);
+      }
+    }
+  }
+
+  Future<bool> _confirmClearTestCredentials() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) {
+        return AlertDialog(
+          backgroundColor: _chironPanel,
+          title: Text(
+            _t(
+              nl: 'Testgegevens verwijderen?',
+              en: 'Remove test credentials?',
+              fr: 'Supprimer les identifiants de test ?',
+              es: '¿Eliminar credenciales de prueba?',
+            ),
+            style: TextStyle(color: _chironTextPrimary),
+          ),
+          content: Text(
+            _t(
+              nl: 'De opgeslagen Chiron testgegevens worden veilig verwijderd. De interne teststatus wordt ook gewist. Officiële Chiron-instellingen en productie blijven onaangeraakt.',
+              en: 'The saved Chiron test credentials will be securely removed. The internal test status will also be cleared. Official Chiron settings and production remain unchanged.',
+              fr: 'Les identifiants de test Chiron enregistrés seront supprimés en toute sécurité. Le statut de test interne sera également effacé. Les paramètres Chiron officiels et la production restent inchangés.',
+              es: 'Las credenciales de prueba de Chiron guardadas se eliminarán de forma segura. El estado de prueba interno también se borrará. La configuración oficial de Chiron y la producción no se modifican.',
+            ),
+            style: TextStyle(color: _chironTextSecondary, height: 1.35),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              style: TextButton.styleFrom(
+                foregroundColor: _chironTextSecondary,
+              ),
+              child: Text(
+                _t(
+                  nl: 'Annuleren',
+                  en: 'Cancel',
+                  fr: 'Annuler',
+                  es: 'Cancelar',
+                ),
+              ),
+            ),
+            OutlinedButton(
+              onPressed: () => Navigator.of(ctx).pop(true),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: _chironDanger,
+                side: BorderSide(color: _chironDanger.withOpacity(0.55)),
+              ),
+              child: Text(
+                _t(
+                  nl: 'Verwijderen',
+                  en: 'Remove',
+                  fr: 'Supprimer',
+                  es: 'Eliminar',
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+    return confirmed == true;
+  }
+
+  Future<void> _clearTestCredentials() async {
+    final scope = _effectiveTenantCompanyIds();
+    if (scope == null) return;
+
+    final confirmed = await _confirmClearTestCredentials();
+    if (!confirmed || !mounted) return;
+
+    setState(() {
+      _clearingTestCredentials = true;
+      _actionError = null;
+    });
+    try {
+      await _clearChironTestCredentialsViaBooking(
+        tenantId: scope.tenantId,
+        companyId: scope.companyId,
+      );
+      _apiTokenController.clear();
+      if (!mounted) return;
+      setState(() {
+        _maskedIdentifier = '';
+        _lastMockTest = null;
+        _persistedInternalTest = null;
+      });
+      await _refreshStatus();
+      if (!mounted) return;
+      _showSnack(
+        _t(
+          nl: 'Chiron testgegevens verwijderd.',
+          en: 'Chiron test credentials removed.',
+          fr: 'Identifiants de test Chiron supprimés.',
+          es: 'Credenciales de prueba de Chiron eliminadas.',
+        ),
+      );
+    } on BackendChironConnectionApiException catch (_) {
+      if (!mounted) return;
+      _showSnack(
+        _t(
+          nl: 'Testgegevens verwijderen is niet gelukt.',
+          en: 'Could not remove test credentials.',
+          fr: 'Impossible de supprimer les identifiants de test.',
+          es: 'No se pudieron eliminar las credenciales de prueba.',
+        ),
+        isError: true,
+      );
+    } catch (_) {
+      if (!mounted) return;
+      _showSnack(
+        _t(
+          nl: 'Testgegevens verwijderen is niet gelukt.',
+          en: 'Could not remove test credentials.',
+          fr: 'Impossible de supprimer les identifiants de test.',
+          es: 'No se pudieron eliminar las credenciales de prueba.',
+        ),
+        isError: true,
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _clearingTestCredentials = false);
       }
     }
   }
@@ -1508,6 +1673,42 @@ class _ChironTestAccessCardState extends State<_ChironTestAccessCard> {
                   style: TextStyle(color: _chironTextFaint, fontSize: 10),
                 ),
               ],
+              if (testCredentialsStored) ...[
+                const SizedBox(height: 10),
+                OutlinedButton.icon(
+                  onPressed: _saving || _testing || _clearingTestCredentials
+                      ? null
+                      : _clearTestCredentials,
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: _chironDanger,
+                    side: BorderSide(color: _chironDanger.withOpacity(0.55)),
+                    visualDensity: VisualDensity.compact,
+                  ),
+                  icon: _clearingTestCredentials
+                      ? SizedBox(
+                          width: 14,
+                          height: 14,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: _chironDanger,
+                          ),
+                        )
+                      : Icon(
+                          Icons.delete_outline,
+                          size: 16,
+                          color: _chironDanger,
+                        ),
+                  label: Text(
+                    _t(
+                      nl: 'Testgegevens verwijderen',
+                      en: 'Remove test credentials',
+                      fr: 'Supprimer les identifiants de test',
+                      es: 'Eliminar credenciales de prueba',
+                    ),
+                    style: const TextStyle(fontSize: 12),
+                  ),
+                ),
+              ],
               if (_actionError != null) ...[
                 const SizedBox(height: 10),
                 Text(
@@ -1548,7 +1749,10 @@ class _ChironTestAccessCardState extends State<_ChironTestAccessCard> {
                 children: [
                   OutlinedButton(
                     onPressed:
-                        _saving || _apiTokenController.text.trim().isEmpty
+                        _saving ||
+                            _testing ||
+                            _clearingTestCredentials ||
+                            _apiTokenController.text.trim().isEmpty
                         ? null
                         : _saveTestCredentials,
                     style: OutlinedButton.styleFrom(
@@ -1576,7 +1780,10 @@ class _ChironTestAccessCardState extends State<_ChironTestAccessCard> {
                           ),
                   ),
                   OutlinedButton(
-                    onPressed: _testing || !testCredentialsStored
+                    onPressed:
+                        _testing ||
+                            _clearingTestCredentials ||
+                            !testCredentialsStored
                         ? null
                         : _testConnection,
                     style: OutlinedButton.styleFrom(
