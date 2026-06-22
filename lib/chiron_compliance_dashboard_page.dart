@@ -243,39 +243,7 @@ class ChironComplianceDashboardPage extends StatelessWidget {
           body: ListView(
             padding: const EdgeInsets.all(14),
             children: [
-              _baseCard(
-                title: _t(
-                  nl: 'Overzicht',
-                  en: 'Overview',
-                  fr: 'Aperçu',
-                  es: 'Resumen',
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      _t(
-                        nl: 'Alleen-lezen compliance overzicht.',
-                        en: 'Read-only compliance overview.',
-                        fr: 'Aperçu de conformité en lecture seule.',
-                        es: 'Resumen de cumplimiento de solo lectura.',
-                      ),
-                      style: TextStyle(
-                        color: tokens.textSecondary,
-                        fontSize: 13,
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    _ChironScoreSummaryPanel(lang: _lang),
-                    const SizedBox(height: 12),
-                    _ChironReadinessPanel(lang: _lang),
-                    const SizedBox(height: 12),
-                    _ChironConnectionLinkCard(lang: _lang),
-                    const SizedBox(height: 12),
-                    _ChironTestAccessCard(lang: _lang),
-                  ],
-                ),
-              ),
+              _ChironComplianceOverview(lang: _lang),
               _HubActionCard(
                 title: _t(
                   nl: 'Checklist & voorbereiding',
@@ -362,26 +330,23 @@ class ChironComplianceDashboardPage extends StatelessWidget {
   }
 }
 
-class _ChironConnectionLinkCard extends StatefulWidget {
-  const _ChironConnectionLinkCard({required this.lang});
-
-  final AppLanguage lang;
-
-  @override
-  State<_ChironConnectionLinkCard> createState() =>
-      _ChironConnectionLinkCardState();
+({String tenantId, String companyId})? _chironScopedCompanyIds() {
+  final activeCompanyId = companyProfileNotifier.value?.companyId.trim() ?? '';
+  if (activeCompanyId.isNotEmpty) {
+    return (tenantId: activeCompanyId, companyId: activeCompanyId);
+  }
+  final sessionCompanyId =
+      activeCompanySessionNotifier.value?.companyId.trim() ?? '';
+  if (sessionCompanyId.isNotEmpty) {
+    return (tenantId: sessionCompanyId, companyId: sessionCompanyId);
+  }
+  return null;
 }
 
-class _ChironConnectionLinkCardState extends State<_ChironConnectionLinkCard> {
-  @override
-  void initState() {
-    super.initState();
-    unawaited(_refreshBackendChironStatus());
-  }
-
-  AppLanguage get lang => widget.lang;
-
-  String _t({
+Future<_ChironReadinessResponse> _fetchChironReadinessResponse(
+  AppLanguage lang,
+) async {
+  String tr({
     required String nl,
     required String en,
     required String fr,
@@ -399,142 +364,282 @@ class _ChironConnectionLinkCardState extends State<_ChironConnectionLinkCard> {
     }
   }
 
-  ({String label, Color color, Color background, Color border}) _badgeFor({
-    required bool enabled,
-    required String lastConnectionStatus,
-    required bool officialSubmitEnabled,
-    required bool productionEnabled,
-    required bool backendConfirmed,
-    required bool internalTestPassed,
-  }) {
-    if (!enabled) {
-      return (
-        label: _t(
-          nl: 'Niet gekoppeld',
-          en: 'Not connected',
-          fr: 'Non connecté',
-          es: 'No conectado',
-        ),
-        color: _chironTextSecondary,
-        background: _chironPanel,
-        border: _chironBorder,
-      );
-    }
-    if (officialSubmitEnabled && backendConfirmed) {
-      return (
-        label: _t(
-          nl: 'Productie actief',
-          en: 'Production active',
-          fr: 'Production active',
-          es: 'Producción activa',
-        ),
-        color: _chironSuccess,
-        background: _chironSuccess.withOpacity(0.16),
-        border: _chironSuccess.withOpacity(0.55),
-      );
-    }
-    if (productionEnabled && backendConfirmed) {
-      return (
-        label: _t(
-          nl: 'Productie actief',
-          en: 'Production active',
-          fr: 'Production active',
-          es: 'Producción activa',
-        ),
-        color: _chironSuccess,
-        background: _chironSuccess.withOpacity(0.16),
-        border: _chironSuccess.withOpacity(0.55),
-      );
-    }
-    final status = lastConnectionStatus.trim().toLowerCase();
-    if (status == ChironConnectionStatus.testPassed) {
-      return (
-        label: _t(
-          nl: 'Test geslaagd',
-          en: 'Test passed',
-          fr: 'Test réussi',
-          es: 'Prueba superada',
-        ),
-        color: _chironSuccess,
-        background: _chironSuccess.withOpacity(0.16),
-        border: _chironSuccess.withOpacity(0.55),
-      );
-    }
-    if (status == ChironConnectionStatus.testFailed) {
-      return (
-        label: _t(
-          nl: 'Test mislukt',
-          en: 'Test failed',
-          fr: 'Test échoué',
-          es: 'Prueba fallida',
-        ),
-        color: _chironWarning,
-        background: _chironWarningSoft,
-        border: _chironWarning.withOpacity(0.55),
-      );
-    }
-    if (internalTestPassed &&
-        status == ChironBackendLastConnectionStatus.neverTested) {
-      return (
-        label: _t(
-          nl: 'Interne test geslaagd · officieel nog niet uitgevoerd',
-          en: 'Internal test passed · official test not run yet',
-          fr: 'Test interne réussi · test officiel pas encore effectué',
-          es: 'Prueba interna superada · prueba oficial aún no realizada',
-        ),
-        color: _chironSuccess,
-        background: _chironSuccess.withOpacity(0.16),
-        border: _chironSuccess.withOpacity(0.55),
-      );
-    }
-    if (status == ChironBackendLastConnectionStatus.neverTested) {
-      return (
-        label: _t(
-          nl: 'Ingeschakeld · nog niet getest',
-          en: 'Enabled · not tested yet',
-          fr: 'Activé · pas encore testé',
-          es: 'Activado · aún no probado',
-        ),
-        color: _chironWarning,
-        background: _chironWarningSoft,
-        border: _chironWarning.withOpacity(0.55),
-      );
-    }
-    return (
-      label: _t(
-        nl: 'Aandacht nodig',
-        en: 'Needs attention',
-        fr: 'Attention requise',
-        es: 'Requiere atención',
+  final effective = _chironScopedCompanyIds();
+  if (effective == null) {
+    return _ChironReadinessResponse.missingScope(
+      errorMessage: tr(
+        nl: 'Geen bedrijfscontext beschikbaar.',
+        en: 'No company context available.',
+        fr: 'Aucun contexte entreprise disponible.',
+        es: 'No hay contexto de empresa disponible.',
       ),
-      color: _chironWarning,
-      background: _chironWarningSoft,
-      border: _chironWarning.withOpacity(0.55),
     );
   }
 
-  void _openBusinessSettings(BuildContext context) {
-    Navigator.of(context).push(
-      MaterialPageRoute<void>(builder: (_) => const BusinessSettingsPage()),
+  final token = _complianceAdminToken.trim();
+  if (token.isEmpty) {
+    return _ChironReadinessResponse.error(
+      errorMessage: tr(
+        nl: 'Niet gemachtigd om het technisch rapport te laden.',
+        en: 'Not authorized to load the technical report.',
+        fr: 'Non autorisé à charger le rapport technique.',
+        es: 'No autorizado para cargar el informe técnico.',
+      ),
+      unauthorized: true,
     );
   }
 
-  ({String tenantId, String companyId})? _effectiveTenantCompanyIds() {
-    final activeCompanyId =
-        companyProfileNotifier.value?.companyId.trim() ?? '';
-    if (activeCompanyId.isNotEmpty) {
-      return (tenantId: activeCompanyId, companyId: activeCompanyId);
+  final uri = Uri.parse('$_complianceApiBaseUrl/admin/chiron/readiness');
+  try {
+    final res = await http
+        .post(
+          uri,
+          headers: <String, String>{
+            'Authorization': 'Bearer $token',
+            'x-admin-token': token,
+            'Content-Type': 'application/json',
+          },
+          body: jsonEncode(<String, dynamic>{
+            'tenant_id': effective.tenantId,
+            'company_id': effective.companyId,
+            'limit': 20,
+            'event_type': 'ride_stop',
+          }),
+        )
+        .timeout(const Duration(seconds: 15));
+    final decoded = jsonDecode(res.body);
+    final payload = decoded is Map
+        ? Map<String, dynamic>.from(decoded)
+        : const <String, dynamic>{};
+    if (res.statusCode == 401 || res.statusCode == 403) {
+      return _ChironReadinessResponse.error(
+        errorMessage: tr(
+          nl: 'Niet gemachtigd om het technisch rapport te laden.',
+          en: 'Not authorized to load the technical report.',
+          fr: 'Non autorisé à charger le rapport technique.',
+          es: 'No autorizado para cargar el informe técnico.',
+        ),
+        unauthorized: true,
+      );
     }
-    final sessionCompanyId =
-        activeCompanySessionNotifier.value?.companyId.trim() ?? '';
-    if (sessionCompanyId.isNotEmpty) {
-      return (tenantId: sessionCompanyId, companyId: sessionCompanyId);
+    if (res.statusCode < 200 || res.statusCode >= 300) {
+      return _ChironReadinessResponse.error(
+        errorMessage: tr(
+          nl: 'Technisch rapport kon niet geladen worden.',
+          en: 'Technical report could not be loaded.',
+          fr: 'Le rapport technique n’a pas pu être chargé.',
+          es: 'No se pudo cargar el informe técnico.',
+        ),
+      );
     }
-    return null;
+    return _ChironReadinessResponse.fromJson(payload);
+  } catch (_) {
+    return _ChironReadinessResponse.error(
+      errorMessage: tr(
+        nl: 'Technisch rapport kon niet geladen worden.',
+        en: 'Technical report could not be loaded.',
+        fr: 'Le rapport technique n’a pas pu être chargé.',
+        es: 'No se pudo cargar el informe técnico.',
+      ),
+    );
+  }
+}
+
+Future<void> _openChironTechnicalReport(
+  BuildContext context,
+  AppLanguage lang,
+) async {
+  String tr({
+    required String nl,
+    required String en,
+    required String fr,
+    required String es,
+  }) {
+    switch (lang) {
+      case AppLanguage.nl:
+        return nl;
+      case AppLanguage.en:
+        return en;
+      case AppLanguage.fr:
+        return fr;
+      case AppLanguage.es:
+        return es;
+    }
+  }
+
+  showDialog<void>(
+    context: context,
+    barrierDismissible: false,
+    builder: (_) =>
+        Center(child: CircularProgressIndicator(color: _chironGold)),
+  );
+
+  final response = await _fetchChironReadinessResponse(lang);
+  if (!context.mounted) return;
+  Navigator.of(context).pop();
+
+  if (response.missingScope || !response.ok) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(response.errorMessage),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+    return;
+  }
+
+  if (response.processedCount == 0) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          tr(
+            nl: 'Nog geen ritdata gevonden voor een technische controle.',
+            en: 'No ride data found yet for a technical check.',
+            fr: 'Aucune donnée de course trouvée pour un contrôle technique.',
+            es: 'Aún no hay datos de viaje para una comprobación técnica.',
+          ),
+        ),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+    return;
+  }
+
+  Navigator.of(context).push(
+    MaterialPageRoute<void>(
+      builder: (_) =>
+          _ChironReadinessReportPage(lang: lang, response: response),
+    ),
+  );
+}
+
+class _ChironComplianceOverview extends StatefulWidget {
+  const _ChironComplianceOverview({required this.lang});
+
+  final AppLanguage lang;
+
+  @override
+  State<_ChironComplianceOverview> createState() =>
+      _ChironComplianceOverviewState();
+}
+
+class _ChironComplianceOverviewState extends State<_ChironComplianceOverview> {
+  final GlobalKey _testAccessSectionKey = GlobalKey();
+
+  String _t({
+    required String nl,
+    required String en,
+    required String fr,
+    required String es,
+  }) {
+    switch (widget.lang) {
+      case AppLanguage.nl:
+        return nl;
+      case AppLanguage.en:
+        return en;
+      case AppLanguage.fr:
+        return fr;
+      case AppLanguage.es:
+        return es;
+    }
+  }
+
+  void _scrollToTestAccess() {
+    final target = _testAccessSectionKey.currentContext;
+    if (target == null) return;
+    Scrollable.ensureVisible(
+      target,
+      duration: const Duration(milliseconds: 350),
+      curve: Curves.easeInOut,
+      alignment: 0.05,
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return _baseCard(
+      title: _t(nl: 'Overzicht', en: 'Overview', fr: 'Aperçu', es: 'Resumen'),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            _t(
+              nl: 'Alleen-lezen compliance overzicht.',
+              en: 'Read-only compliance overview.',
+              fr: 'Aperçu de conformité en lecture seule.',
+              es: 'Resumen de cumplimiento de solo lectura.',
+            ),
+            style: TextStyle(color: _chironTextSecondary, fontSize: 13),
+          ),
+          const SizedBox(height: 12),
+          _ChironHubStatusCard(
+            lang: widget.lang,
+            onConfigureConnection: () {
+              Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => const BusinessSettingsPage(),
+                ),
+              );
+            },
+            onTestConnection: _scrollToTestAccess,
+            onViewTechnicalReport: () =>
+                _openChironTechnicalReport(context, widget.lang),
+          ),
+          const SizedBox(height: 12),
+          KeyedSubtree(
+            key: _testAccessSectionKey,
+            child: _ChironTestAccessCard(lang: widget.lang),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ChironHubStatusCard extends StatefulWidget {
+  const _ChironHubStatusCard({
+    required this.lang,
+    required this.onConfigureConnection,
+    required this.onTestConnection,
+    required this.onViewTechnicalReport,
+  });
+
+  final AppLanguage lang;
+  final VoidCallback onConfigureConnection;
+  final VoidCallback onTestConnection;
+  final VoidCallback onViewTechnicalReport;
+
+  @override
+  State<_ChironHubStatusCard> createState() => _ChironHubStatusCardState();
+}
+
+class _ChironHubStatusCardState extends State<_ChironHubStatusCard> {
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_refreshBackendChironStatus());
+  }
+
+  String _t({
+    required String nl,
+    required String en,
+    required String fr,
+    required String es,
+  }) {
+    switch (widget.lang) {
+      case AppLanguage.nl:
+        return nl;
+      case AppLanguage.en:
+        return en;
+      case AppLanguage.fr:
+        return fr;
+      case AppLanguage.es:
+        return es;
+    }
   }
 
   Future<void> _refreshBackendChironStatus() async {
-    final scope = _effectiveTenantCompanyIds();
+    final scope = _chironScopedCompanyIds();
     if (scope == null) return;
     try {
       final fetched = await _fetchChironTestAccessBackendStatus(
@@ -550,6 +655,94 @@ class _ChironConnectionLinkCardState extends State<_ChironConnectionLinkCard> {
     }
   }
 
+  ({String label, Color color, Color background, Color border})
+  _hubStatusVisual({
+    required bool enabled,
+    required bool testCredentialsStored,
+    required bool internalTestPassed,
+    required String lastConnectionStatus,
+    required bool productionEnabled,
+    required bool backendConfirmed,
+  }) {
+    final status = lastConnectionStatus.trim().toLowerCase();
+    if (productionEnabled && backendConfirmed) {
+      return (
+        label: _t(
+          nl: 'Productie actief',
+          en: 'Production active',
+          fr: 'Production active',
+          es: 'Producción activa',
+        ),
+        color: _chironSuccess,
+        background: _chironSuccess.withOpacity(0.16),
+        border: _chironSuccess.withOpacity(0.55),
+      );
+    }
+    if (status == ChironConnectionStatus.testFailed) {
+      return (
+        label: _t(
+          nl: 'Actie nodig',
+          en: 'Action needed',
+          fr: 'Action requise',
+          es: 'Acción necesaria',
+        ),
+        color: _chironWarning,
+        background: _chironWarningSoft,
+        border: _chironWarning.withOpacity(0.55),
+      );
+    }
+    if (internalTestPassed) {
+      return (
+        label: _t(
+          nl: 'Interne test geslaagd',
+          en: 'Internal test passed',
+          fr: 'Test interne réussi',
+          es: 'Prueba interna superada',
+        ),
+        color: _chironSuccess,
+        background: _chironSuccess.withOpacity(0.16),
+        border: _chironSuccess.withOpacity(0.55),
+      );
+    }
+    if (testCredentialsStored) {
+      return (
+        label: _t(
+          nl: 'Testgegevens opgeslagen',
+          en: 'Test credentials stored',
+          fr: 'Identifiants de test enregistrés',
+          es: 'Credenciales de prueba guardadas',
+        ),
+        color: _chironGold,
+        background: _chironGold.withOpacity(0.12),
+        border: _chironGold.withOpacity(0.45),
+      );
+    }
+    if (!enabled) {
+      return (
+        label: _t(
+          nl: 'Niet ingesteld',
+          en: 'Not configured',
+          fr: 'Non configuré',
+          es: 'No configurado',
+        ),
+        color: _chironTextSecondary,
+        background: _chironPanel,
+        border: _chironBorder,
+      );
+    }
+    return (
+      label: _t(
+        nl: 'Actie nodig',
+        en: 'Action needed',
+        fr: 'Action requise',
+        es: 'Acción necesaria',
+      ),
+      color: _chironWarning,
+      background: _chironWarningSoft,
+      border: _chironWarning.withOpacity(0.55),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return ValueListenableBuilder<BackendChironConnectionStatus?>(
@@ -563,6 +756,12 @@ class _ChironConnectionLinkCardState extends State<_ChironConnectionLinkCard> {
               builder: (context, settings, ___) {
                 final enabled =
                     backendStatus?.enabled ?? settings.chironEnabled;
+                final testCredentialsStored =
+                    backendStatus?.testCredentialsStored ?? false;
+                final productionEnabled =
+                    backendStatus?.productionEnabled ??
+                    settings.chironProductionEnabled;
+                final backendConfirmed = backendStatus != null;
                 final lastConnectionStatus =
                     backendStatus?.lastConnectionStatus ??
                     (settings.chironConnectionStatus ==
@@ -575,26 +774,18 @@ class _ChironConnectionLinkCardState extends State<_ChironConnectionLinkCard> {
                               ChironConnectionStatus.testPending
                         ? ChironConnectionStatus.testPending
                         : ChironBackendLastConnectionStatus.neverTested);
-                final officialSubmitEnabled =
-                    backendStatus?.officialSubmitEnabled ?? false;
-                final productionEnabled =
-                    backendStatus?.productionEnabled ??
-                    settings.chironProductionEnabled;
-                final backendConfirmed = backendStatus != null;
                 final internalTestPassed =
-                    persistedInternalTest?.isPassed ?? false;
-                final internalPassedOfficialPending =
-                    internalTestPassed &&
-                    lastConnectionStatus ==
-                        ChironBackendLastConnectionStatus.neverTested;
-                final badge = _badgeFor(
+                    testCredentialsStored &&
+                    (persistedInternalTest?.isPassed ?? false);
+                final statusVisual = _hubStatusVisual(
                   enabled: enabled,
+                  testCredentialsStored: testCredentialsStored,
+                  internalTestPassed: internalTestPassed,
                   lastConnectionStatus: lastConnectionStatus,
-                  officialSubmitEnabled: officialSubmitEnabled,
                   productionEnabled: productionEnabled,
                   backendConfirmed: backendConfirmed,
-                  internalTestPassed: internalTestPassed,
                 );
+
                 return Container(
                   width: double.infinity,
                   padding: const EdgeInsets.all(10),
@@ -630,14 +821,14 @@ class _ChironConnectionLinkCardState extends State<_ChironConnectionLinkCard> {
                               vertical: 5,
                             ),
                             decoration: BoxDecoration(
-                              color: badge.background,
+                              color: statusVisual.background,
                               borderRadius: BorderRadius.circular(999),
-                              border: Border.all(color: badge.border),
+                              border: Border.all(color: statusVisual.border),
                             ),
                             child: Text(
-                              badge.label,
+                              statusVisual.label,
                               style: TextStyle(
-                                color: badge.color,
+                                color: statusVisual.color,
                                 fontWeight: FontWeight.w800,
                                 fontSize: 12,
                               ),
@@ -648,18 +839,10 @@ class _ChironConnectionLinkCardState extends State<_ChironConnectionLinkCard> {
                       const SizedBox(height: 8),
                       Text(
                         _t(
-                          nl: internalPassedOfficialPending
-                              ? 'Fluxidi heeft de interne testgegevens veilig gecontroleerd. De officiële Chiron-test is nog niet uitgevoerd.'
-                              : 'Koppel de Chiron-toegang van je bedrijf aan Fluxidi. Test eerst veilig in de Chiron-testomgeving voordat je overschakelt naar productie.',
-                          en: internalPassedOfficialPending
-                              ? 'Fluxidi has securely checked the internal test credentials. The official Chiron test has not been performed yet.'
-                              : 'Connect your company’s Chiron access to Fluxidi. Test safely in the Chiron test environment before switching to production.',
-                          fr: internalPassedOfficialPending
-                              ? 'Fluxidi a vérifié en toute sécurité les identifiants de test internes. Le test Chiron officiel n’a pas encore été effectué.'
-                              : 'Connectez l’accès Chiron de votre entreprise à Fluxidi. Testez d’abord la connexion dans l’environnement de test Chiron avant de passer en production.',
-                          es: internalPassedOfficialPending
-                              ? 'Fluxidi ha comprobado de forma segura las credenciales de prueba internas. La prueba oficial de Chiron aún no se ha realizado.'
-                              : 'Conecta el acceso Chiron de tu empresa con Fluxidi. Prueba primero en el entorno de pruebas de Chiron antes de pasar a producción.',
+                          nl: 'Fluxidi bewaart uw Chiron-toegang veilig en stuurt ritdata door zodra de koppeling actief is.',
+                          en: 'Fluxidi stores your Chiron access securely and forwards ride data once the connection is active.',
+                          fr: 'Fluxidi conserve votre accès Chiron en toute sécurité et transmet les données de course dès que la connexion est active.',
+                          es: 'Fluxidi guarda su acceso Chiron de forma segura y reenvía los datos de viaje cuando la conexión está activa.',
                         ),
                         style: TextStyle(
                           color: _chironTextSecondary,
@@ -670,10 +853,10 @@ class _ChironConnectionLinkCardState extends State<_ChironConnectionLinkCard> {
                       const SizedBox(height: 6),
                       Text(
                         _t(
-                          nl: 'Alleen relevant voor Vlaamse Chiron-plichtige taxi-, VVB- en IBP-exploitanten.',
-                          en: 'Only relevant for Flemish taxi, VVB and IBP operators that are required to use Chiron.',
-                          fr: 'Uniquement pertinent pour les exploitants flamands de taxi, VVB et IBP soumis à Chiron.',
-                          es: 'Solo relevante para operadores flamencos de taxi, VVB e IBP obligados a usar Chiron.',
+                          nl: 'Deze pagina toont Fluxidi-technische controles. Officiële Chiron-toegang en goedkeuring verlopen buiten Fluxidi. Fluxidi zorgt ervoor dat de ritdata van uw bedrijf correct worden doorgezonden.',
+                          en: 'This page shows Fluxidi technical checks. Official Chiron access and approval happen outside Fluxidi. Fluxidi ensures your company ride data is sent correctly.',
+                          fr: 'Cette page affiche les contrôles techniques Fluxidi. L’accès et l’approbation Chiron officiels se font en dehors de Fluxidi. Fluxidi veille à ce que les données de course de votre entreprise soient transmises correctement.',
+                          es: 'Esta página muestra comprobaciones técnicas de Fluxidi. El acceso y la aprobación oficial de Chiron ocurren fuera de Fluxidi. Fluxidi se encarga de que los datos de viaje de su empresa se envíen correctamente.',
                         ),
                         style: TextStyle(
                           color: _chironTextMuted,
@@ -682,30 +865,85 @@ class _ChironConnectionLinkCardState extends State<_ChironConnectionLinkCard> {
                         ),
                       ),
                       const SizedBox(height: 10),
-                      Align(
-                        alignment: Alignment.centerLeft,
-                        child: TextButton(
-                          onPressed: () => _openBusinessSettings(context),
-                          style: TextButton.styleFrom(
-                            foregroundColor: _chironGold,
-                            padding: EdgeInsets.zero,
-                            minimumSize: Size.zero,
-                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                            visualDensity: VisualDensity.compact,
-                          ),
-                          child: Text(
-                            _t(
-                              nl: 'Koppeling instellen',
-                              en: 'Configure connection',
-                              fr: 'Configurer la connexion',
-                              es: 'Configurar conexión',
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          OutlinedButton(
+                            onPressed: widget.onConfigureConnection,
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: _chironGold,
+                              side: BorderSide(color: _chironBorder),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 10,
+                                vertical: 6,
+                              ),
+                              visualDensity: VisualDensity.compact,
                             ),
-                            style: const TextStyle(
-                              fontWeight: FontWeight.w800,
-                              fontSize: 13,
+                            child: Text(
+                              _t(
+                                nl: 'Koppeling instellen',
+                                en: 'Configure connection',
+                                fr: 'Configurer la connexion',
+                                es: 'Configurar conexión',
+                              ),
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w800,
+                                fontSize: 12,
+                              ),
                             ),
                           ),
-                        ),
+                          OutlinedButton(
+                            onPressed: widget.onTestConnection,
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: _chironGold,
+                              side: BorderSide(color: _chironBorder),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 10,
+                                vertical: 6,
+                              ),
+                              visualDensity: VisualDensity.compact,
+                            ),
+                            child: Text(
+                              _t(
+                                nl: 'Test verbinding',
+                                en: 'Test connection',
+                                fr: 'Tester la connexion',
+                                es: 'Probar conexión',
+                              ),
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w800,
+                                fontSize: 12,
+                              ),
+                            ),
+                          ),
+                          OutlinedButton(
+                            onPressed: widget.onViewTechnicalReport,
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: _chironTextMuted,
+                              side: BorderSide(
+                                color: _chironBorder.withOpacity(0.7),
+                              ),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 10,
+                                vertical: 6,
+                              ),
+                              visualDensity: VisualDensity.compact,
+                            ),
+                            child: Text(
+                              _t(
+                                nl: 'Bekijk technisch rapport',
+                                en: 'View technical report',
+                                fr: 'Voir le rapport technique',
+                                es: 'Ver informe técnico',
+                              ),
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w800,
+                                fontSize: 12,
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                     ],
                   ),
