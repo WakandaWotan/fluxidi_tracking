@@ -284,10 +284,10 @@ class ChironComplianceDashboardPage extends StatelessWidget {
                   es: 'Checklist y preparación',
                 ),
                 subtitle: _t(
-                  nl: 'Technische Chiron-readiness voor bedrijf, chauffeurs en voertuigen.',
-                  en: 'Technical Chiron readiness for company, drivers and vehicles.',
-                  fr: 'Préparation technique Chiron pour entreprise, chauffeurs et véhicules.',
-                  es: 'Preparación técnica Chiron para empresa, conductores y vehículos.',
+                  nl: 'Controleer bedrijfsprofiel, chauffeurs en voertuigen voor dagelijks gebruik.',
+                  en: 'Check company profile, drivers and vehicles for day-to-day use.',
+                  fr: 'Vérifiez le profil entreprise, les chauffeurs et les véhicules pour un usage quotidien.',
+                  es: 'Revisa perfil de empresa, conductores y vehículos para el uso diario.',
                 ),
                 trailingIcon: Icons.fact_check_outlined,
                 onTap: () {
@@ -3037,6 +3037,19 @@ String _chironTechnicalReadinessScopeNote(AppLanguage lang) {
       return 'Fluxidi comprueba la conexión técnica con Chiron y los datos de viaje. Los permisos legales y el acceso oficial a Chiron siguen siendo responsabilidad del operador.';
     case AppLanguage.nl:
       return 'Fluxidi controleert de technische Chiron-koppeling en ritdata. Wettelijke vergunningen en officiële Chiron-toegang blijven de verantwoordelijkheid van de uitbater.';
+  }
+}
+
+String _companyChecklistScopeNote(AppLanguage lang) {
+  switch (lang) {
+    case AppLanguage.en:
+      return 'Fluxidi checks whether your company profile, drivers and vehicles are sufficiently complete for day-to-day use. Documents remain optional and help with follow-up, reviews and expiry dates.';
+    case AppLanguage.fr:
+      return 'Fluxidi vérifie si votre profil entreprise, vos chauffeurs et vos véhicules sont suffisamment renseignés pour un usage quotidien. Les documents restent facultatifs et aident au suivi, aux contrôles et aux dates d\'expiration.';
+    case AppLanguage.es:
+      return 'Fluxidi comprueba si su perfil de empresa, conductores y vehículos están suficientemente completos para el uso diario. Los documentos siguen siendo opcionales y ayudan con el seguimiento, las revisiones y las fechas de vencimiento.';
+    case AppLanguage.nl:
+      return 'Fluxidi controleert of je bedrijfsprofiel, chauffeurs en voertuigen voldoende zijn ingevuld voor dagelijks gebruik. Documenten blijven optioneel en helpen bij opvolging, controle en vervaldatums.';
   }
 }
 
@@ -6224,10 +6237,10 @@ class _ChironReadinessChecklistPage extends StatelessWidget {
         if (vehiclesMissingRequired > 0) {
           vehicleAttention.add((
             text: _t(
-              nl: '$vehiclesMissingRequired voertuig(en) missen verplichte Chiron-velden.',
-              en: '$vehiclesMissingRequired vehicle(s) missing required Chiron fields.',
-              fr: '$vehiclesMissingRequired véhicule(s) sans champs Chiron requis.',
-              es: '$vehiclesMissingRequired vehículo(s) sin campos Chiron requeridos.',
+              nl: '$vehiclesMissingRequired voertuig(en) missen verplichte velden.',
+              en: '$vehiclesMissingRequired vehicle(s) missing required fields.',
+              fr: '$vehiclesMissingRequired véhicule(s) sans champs obligatoires.',
+              es: '$vehiclesMissingRequired vehículo(s) sin campos obligatorios.',
             ),
             critical: false,
           ));
@@ -6283,12 +6296,12 @@ class _ChironReadinessChecklistPage extends StatelessWidget {
           attentionCount: technicalAttention.length,
         );
         final optionalDocumentNote = _t(
-          nl: 'Optioneel — blokkeert de technische Chiron-koppeling niet.',
-          en: 'Optional — does not block the technical Chiron connection.',
-          fr: 'Facultatif — ne bloque pas la connexion technique Chiron.',
-          es: 'Opcional — no bloquea la conexión técnica con Chiron.',
+          nl: 'Optioneel — blokkeert de operationele gereedheid niet.',
+          en: 'Optional — does not block operational readiness.',
+          fr: 'Facultatif — ne bloque pas la préparation opérationnelle.',
+          es: 'Opcional — no bloquea la preparación operativa.',
         );
-        final technicalScopeNote = _chironTechnicalReadinessScopeNote(_lang);
+        final checklistScopeNote = _companyChecklistScopeNote(_lang);
 
         return Scaffold(
           backgroundColor: _chironBg,
@@ -6297,10 +6310,10 @@ class _ChironReadinessChecklistPage extends StatelessWidget {
             foregroundColor: _chironTextPrimary,
             title: Text(
               _t(
-                nl: 'Checklist & readiness',
-                en: 'Checklist & readiness',
-                fr: 'Checklist et préparation',
-                es: 'Checklist y preparación',
+                nl: 'Bedrijfschecklist',
+                en: 'Company checklist',
+                fr: 'Checklist entreprise',
+                es: 'Checklist de empresa',
               ),
             ),
           ),
@@ -6328,10 +6341,10 @@ class _ChironReadinessChecklistPage extends StatelessWidget {
                         Expanded(
                           child: Text(
                             _t(
-                              nl: 'Technische Chiron-readiness',
-                              en: 'Technical Chiron readiness',
-                              fr: 'Préparation technique Chiron',
-                              es: 'Preparación técnica Chiron',
+                              nl: 'Operationele gereedheid',
+                              en: 'Operational readiness',
+                              fr: 'Préparation opérationnelle',
+                              es: 'Preparación operativa',
                             ),
                             style: TextStyle(color: _chironTextSecondary),
                           ),
@@ -6409,16 +6422,16 @@ class _ChironReadinessChecklistPage extends StatelessWidget {
                     ),
                     const SizedBox(height: 10),
                     Text(
-                      technicalScopeNote,
+                      checklistScopeNote,
                       style: TextStyle(color: _chironTextMuted, fontSize: 11),
                     ),
                     const SizedBox(height: 10),
                     _metric(
                       label: _t(
-                        nl: 'Technische aandachtspunten',
-                        en: 'Technical attention items',
-                        fr: 'Points d attention technique',
-                        es: 'Puntos técnicos de atención',
+                        nl: 'Aandachtspunten',
+                        en: 'Attention items',
+                        fr: 'Points d attention',
+                        es: 'Puntos de atención',
                       ),
                       value: technicalAttention.length.toString(),
                       ready: technicalAttention.isEmpty,
@@ -6836,17 +6849,17 @@ class _ChironReadinessChecklistPage extends StatelessWidget {
                           ),
                           body: _t(
                             nl: coreGapCount == 1
-                                ? '1 chauffeur heeft een kern-documentkloof. Dit is optioneel voor Chiron.'
-                                : '$coreGapCount chauffeurs hebben een kern-documentkloof. Dit is optioneel voor Chiron.',
+                                ? '1 chauffeur heeft een kern-documentkloof. Dit is optioneel en helpt bij opvolging.'
+                                : '$coreGapCount chauffeurs hebben een kern-documentkloof. Dit is optioneel en helpt bij opvolging.',
                             en: coreGapCount == 1
-                                ? '1 driver has a core document gap. This is optional for Chiron.'
-                                : '$coreGapCount drivers have a core document gap. This is optional for Chiron.',
+                                ? '1 driver has a core document gap. This is optional and helps with follow-up.'
+                                : '$coreGapCount drivers have a core document gap. This is optional and helps with follow-up.',
                             fr: coreGapCount == 1
-                                ? '1 chauffeur a un manque de documents clés. Facultatif pour Chiron.'
-                                : '$coreGapCount chauffeurs ont un manque de documents clés. Facultatif pour Chiron.',
+                                ? '1 chauffeur a un manque de documents clés. Facultatif et utile pour le suivi.'
+                                : '$coreGapCount chauffeurs ont un manque de documents clés. Facultatif et utile pour le suivi.',
                             es: coreGapCount == 1
-                                ? '1 conductor tiene una brecha de documentos clave. Opcional para Chiron.'
-                                : '$coreGapCount conductores tienen una brecha de documentos clave. Opcional para Chiron.',
+                                ? '1 conductor tiene una brecha de documentos clave. Opcional y útil para el seguimiento.'
+                                : '$coreGapCount conductores tienen una brecha de documentos clave. Opcional y útil para el seguimiento.',
                           ),
                           actionLabel: _t(
                             nl: 'Open chauffeurs',
@@ -6880,18 +6893,18 @@ class _ChironReadinessChecklistPage extends StatelessWidget {
               ),
               _baseCard(
                 title: _t(
-                  nl: 'Technische aandacht nodig',
-                  en: 'Technical attention needed',
-                  fr: 'Attention technique requise',
-                  es: 'Atención técnica requerida',
+                  nl: 'Aandacht nodig',
+                  en: 'Attention needed',
+                  fr: 'Attention requise',
+                  es: 'Atención requerida',
                 ),
                 child: technicalAttention.isEmpty
                     ? _emptyState(
                         _t(
-                          nl: 'Geen technische aandachtspunten gevonden.',
-                          en: 'No technical attention items found.',
-                          fr: 'Aucun point d attention technique.',
-                          es: 'No se encontraron puntos técnicos de atención.',
+                          nl: 'Geen aandachtspunten gevonden.',
+                          en: 'No attention items found.',
+                          fr: 'Aucun point d attention.',
+                          es: 'No se encontraron puntos de atención.',
                         ),
                       )
                     : Column(
@@ -6907,17 +6920,17 @@ class _ChironReadinessChecklistPage extends StatelessWidget {
                               ),
                               body: _t(
                                 nl: vehiclesMissingRequired == 1
-                                    ? '1 voertuig mist verplichte Chiron-velden.'
-                                    : '$vehiclesMissingRequired voertuigen missen verplichte Chiron-velden.',
+                                    ? '1 voertuig mist verplichte velden.'
+                                    : '$vehiclesMissingRequired voertuigen missen verplichte velden.',
                                 en: vehiclesMissingRequired == 1
-                                    ? '1 vehicle is missing required Chiron fields.'
-                                    : '$vehiclesMissingRequired vehicles are missing required Chiron fields.',
+                                    ? '1 vehicle is missing required fields.'
+                                    : '$vehiclesMissingRequired vehicles are missing required fields.',
                                 fr: vehiclesMissingRequired == 1
-                                    ? '1 véhicule manque des champs Chiron obligatoires.'
-                                    : '$vehiclesMissingRequired véhicules manquent des champs Chiron obligatoires.',
+                                    ? '1 véhicule manque des champs obligatoires.'
+                                    : '$vehiclesMissingRequired véhicules manquent des champs obligatoires.',
                                 es: vehiclesMissingRequired == 1
-                                    ? '1 vehículo no tiene campos Chiron obligatorios.'
-                                    : '$vehiclesMissingRequired vehículos no tienen campos Chiron obligatorios.',
+                                    ? '1 vehículo no tiene campos obligatorios.'
+                                    : '$vehiclesMissingRequired vehículos no tienen campos obligatorios.',
                               ),
                               actionLabel: _t(
                                 nl: 'Voertuigen controleren',
