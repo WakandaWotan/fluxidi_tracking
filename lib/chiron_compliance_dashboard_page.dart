@@ -665,10 +665,10 @@ class _ChironScoreSummaryPanelState extends State<_ChironScoreSummaryPanel> {
     if (effective == null) {
       return _ChironScoreSummaryResponse.error(
         errorMessage: _t(
-          nl: 'Chiron-status kon niet geladen worden.',
-          en: 'Chiron status could not be loaded.',
-          fr: 'Le statut Chiron n’a pas pu être chargé.',
-          es: 'No se pudo cargar el estado Chiron.',
+          nl: 'Chiron score-overzicht kon niet geladen worden.',
+          en: 'Chiron score overview could not be loaded.',
+          fr: 'L’aperçu du score Chiron n’a pas pu être chargé.',
+          es: 'No se pudo cargar el resumen de puntuación de Chiron.',
         ),
       );
     }
@@ -679,10 +679,10 @@ class _ChironScoreSummaryPanelState extends State<_ChironScoreSummaryPanel> {
         tenantId: effective.tenantId,
         companyId: effective.companyId,
         errorMessage: _t(
-          nl: 'Chiron-status kon niet geladen worden.',
-          en: 'Chiron status could not be loaded.',
-          fr: 'Le statut Chiron n’a pas pu être chargé.',
-          es: 'No se pudo cargar el estado Chiron.',
+          nl: 'Chiron score-overzicht kon niet geladen worden.',
+          en: 'Chiron score overview could not be loaded.',
+          fr: 'L’aperçu du score Chiron n’a pas pu être chargé.',
+          es: 'No se pudo cargar el resumen de puntuación de Chiron.',
         ),
       );
     }
@@ -718,10 +718,10 @@ class _ChironScoreSummaryPanelState extends State<_ChironScoreSummaryPanel> {
               ? effective.companyId
               : _text(payload['company_id']),
           errorMessage: _t(
-            nl: 'Chiron-status kon niet geladen worden.',
-            en: 'Chiron status could not be loaded.',
-            fr: 'Le statut Chiron n’a pas pu être chargé.',
-            es: 'No se pudo cargar el estado Chiron.',
+            nl: 'Chiron score-overzicht kon niet geladen worden.',
+            en: 'Chiron score overview could not be loaded.',
+            fr: 'L’aperçu du score Chiron n’a pas pu être chargé.',
+            es: 'No se pudo cargar el resumen de puntuación de Chiron.',
           ),
         );
       }
@@ -731,10 +731,10 @@ class _ChironScoreSummaryPanelState extends State<_ChironScoreSummaryPanel> {
         tenantId: effective.tenantId,
         companyId: effective.companyId,
         errorMessage: _t(
-          nl: 'Chiron-status kon niet geladen worden.',
-          en: 'Chiron status could not be loaded.',
-          fr: 'Le statut Chiron n’a pas pu être chargé.',
-          es: 'No se pudo cargar el estado Chiron.',
+          nl: 'Chiron score-overzicht kon niet geladen worden.',
+          en: 'Chiron score overview could not be loaded.',
+          fr: 'L’aperçu du score Chiron n’a pas pu être chargé.',
+          es: 'No se pudo cargar el resumen de puntuación de Chiron.',
         ),
       );
     }
@@ -967,10 +967,10 @@ class _ChironScoreSummaryPanelState extends State<_ChironScoreSummaryPanel> {
             snapshot.data ??
             _ChironScoreSummaryResponse.error(
               errorMessage: _t(
-                nl: 'Chiron-status kon niet geladen worden.',
-                en: 'Chiron status could not be loaded.',
-                fr: 'Le statut Chiron n’a pas pu être chargé.',
-                es: 'No se pudo cargar el estado Chiron.',
+                nl: 'Chiron score-overzicht kon niet geladen worden.',
+                en: 'Chiron score overview could not be loaded.',
+                fr: 'L’aperçu du score Chiron n’a pas pu être chargé.',
+                es: 'No se pudo cargar el resumen de puntuación de Chiron.',
               ),
             );
         if (!summary.ok) {
