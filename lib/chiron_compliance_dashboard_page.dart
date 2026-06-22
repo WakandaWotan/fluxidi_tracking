@@ -7978,6 +7978,20 @@ class RemoteComplianceEvent {
     required this.creditStatus,
     required this.creditedAmountCents,
     required this.creditedAt,
+    required this.legId,
+    required this.legType,
+    required this.parentBookingId,
+    required this.parentStatus,
+    required this.legStatus,
+    required this.legPriceInclVat,
+    required this.parentPriceInclVat,
+    required this.waitMin,
+    required this.distanceKm,
+    required this.startedAtUtc,
+    required this.stoppedAtUtc,
+    required this.roundtripDispatchMode,
+    required this.parentAssignmentMode,
+    required this.assignment,
   });
 
   final String key;
@@ -8011,6 +8025,27 @@ class RemoteComplianceEvent {
   final String creditStatus;
   final int? creditedAmountCents;
   final String creditedAt;
+  // Roundtrip operational-leg metadata: when the persisted event carries
+  // leg_id / leg_type / parent_status the dashboard surfaces ritdeel chips
+  // and refuses to promote the parent dossier to "afgerond" until the parent
+  // booking_status_update itself flips to COMPLETED.
+  final String legId;
+  final String legType;
+  final String parentBookingId;
+  final String parentStatus;
+  final String legStatus;
+  final double? legPriceInclVat;
+  final double? parentPriceInclVat;
+  final double? waitMin;
+  final double? distanceKm;
+  final String startedAtUtc;
+  final String stoppedAtUtc;
+  final String roundtripDispatchMode;
+  final String parentAssignmentMode;
+  final Map<String, dynamic> assignment;
+
+  bool get hasLegMetadata =>
+      legId.isNotEmpty || legType.isNotEmpty || parentStatus.isNotEmpty;
 
   factory RemoteComplianceEvent.fromJson(Map<String, dynamic> json) {
     Map<String, dynamic> asMap(Object? value) {
@@ -8146,6 +8181,83 @@ class RemoteComplianceEvent {
               ? firstText(const <String>['credited_at_utc'], source: timestamps)
               : firstText(const <String>['event_at_utc'], source: timestamps));
 
+    // Roundtrip operational-leg projection: read leg metadata that the
+    // compliance worker now surfaces at the top level of recent-events. Older
+    // events that pre-date the [COMPLIANCE_EVENT][LEG_METADATA] projection
+    // still parse cleanly with empty strings, so the dashboard continues to
+    // render exactly as before for one-way bookings.
+    String legText(List<String> keys) => firstText(keys);
+    double? legNumber(List<String> keys, {Map<String, dynamic>? source}) {
+      final root = source ?? json;
+      for (final key in keys) {
+        final value = root[key];
+        if (value is num && value.isFinite) return value.toDouble();
+        if (value is String) {
+          final parsed = double.tryParse(value.trim().replaceAll(',', '.'));
+          if (parsed != null && parsed.isFinite) return parsed;
+        }
+      }
+      return null;
+    }
+
+    final legIdResolved = legText(const <String>['leg_id', 'legId']);
+    final legTypeResolved = legText(const <String>[
+      'leg_type',
+      'legType',
+    ]).toLowerCase();
+    final parentBookingIdResolved = legText(const <String>[
+      'parent_booking_id',
+      'parentBookingId',
+    ]);
+    final parentStatusResolved = legText(const <String>[
+      'parent_status',
+      'parentStatus',
+    ]).toLowerCase();
+    final legStatusResolved = legText(const <String>[
+      'leg_status',
+      'legStatus',
+    ]).toLowerCase();
+    final legPriceInclVatResolved = legNumber(const <String>[
+      'leg_price_incl_vat',
+      'legPriceInclVat',
+    ]);
+    final parentPriceInclVatResolved = legNumber(const <String>[
+      'parent_price_incl_vat',
+      'parentPriceInclVat',
+    ]);
+    final waitMinResolved =
+        legNumber(const <String>['wait_min', 'waitMin']) ??
+        legNumber(const <String>['wait_min', 'waitMin'], source: payment);
+    final distanceKmResolved =
+        legNumber(const <String>['distance_km', 'distanceKm']) ??
+        legNumber(const <String>[
+          'distance_km',
+          'distanceKm',
+        ], source: asMap(json['fare']));
+    final startedAtUtcResolved =
+        legText(const <String>['started_at_utc', 'startedAtUtc']).isNotEmpty
+        ? legText(const <String>['started_at_utc', 'startedAtUtc'])
+        : firstText(const <String>[
+            'started_at_utc',
+            'startedAtUtc',
+          ], source: timestamps);
+    final stoppedAtUtcResolved =
+        legText(const <String>['stopped_at_utc', 'stoppedAtUtc']).isNotEmpty
+        ? legText(const <String>['stopped_at_utc', 'stoppedAtUtc'])
+        : firstText(const <String>[
+            'stopped_at_utc',
+            'stoppedAtUtc',
+          ], source: timestamps);
+    final assignmentResolved = asMap(json['assignment']);
+    if (legIdResolved.isNotEmpty ||
+        legTypeResolved.isNotEmpty ||
+        parentStatusResolved.isNotEmpty) {
+      // ignore: avoid_print
+      debugPrint(
+        '[BACKEND_EVENTS][LEG_STATUS_SOURCE] event_type=${text('event_type')} booking=${text('booking_id')} leg_id=${legIdResolved.isEmpty ? "-" : legIdResolved} leg_type=${legTypeResolved.isEmpty ? "-" : legTypeResolved} leg_status=${legStatusResolved.isEmpty ? "-" : legStatusResolved} parent_status=${parentStatusResolved.isEmpty ? "-" : parentStatusResolved} parent_booking=${parentBookingIdResolved.isEmpty ? "-" : parentBookingIdResolved}',
+      );
+    }
+
     return RemoteComplianceEvent(
       key: text('key'),
       eventId: text('event_id'),
@@ -8208,6 +8320,26 @@ class RemoteComplianceEvent {
       creditStatus: creditStatus,
       creditedAmountCents: creditedAmountCents,
       creditedAt: creditedAt,
+      legId: legIdResolved,
+      legType: legTypeResolved,
+      parentBookingId: parentBookingIdResolved,
+      parentStatus: parentStatusResolved,
+      legStatus: legStatusResolved,
+      legPriceInclVat: legPriceInclVatResolved,
+      parentPriceInclVat: parentPriceInclVatResolved,
+      waitMin: waitMinResolved,
+      distanceKm: distanceKmResolved,
+      startedAtUtc: startedAtUtcResolved,
+      stoppedAtUtc: stoppedAtUtcResolved,
+      roundtripDispatchMode: legText(const <String>[
+        'roundtrip_dispatch_mode',
+        'roundtripDispatchMode',
+      ]).toLowerCase(),
+      parentAssignmentMode: legText(const <String>[
+        'parent_assignment_mode',
+        'parentAssignmentMode',
+      ]).toLowerCase(),
+      assignment: assignmentResolved,
     );
   }
 }
@@ -8748,6 +8880,33 @@ class _RemoteComplianceEventsSectionState
         return _localizedUnknown();
       default:
         return raw.trim().isEmpty ? '—' : _localizedUnknown();
+    }
+  }
+
+  // Compact booking reference for diagnostic logs. Keeps the prefix that
+  // matters operationally (the public reference / date segment) without
+  // dumping a full UUID into the log line. Falls back to a literal dash so
+  // the log column never collapses on empty inputs.
+  String _chironLogBookingRef(String raw) {
+    final trimmed = raw.trim();
+    if (trimmed.isEmpty) return '-';
+    if (trimmed.length <= 18) return trimmed;
+    return '${trimmed.substring(0, 8)}…${trimmed.substring(trimmed.length - 6)}';
+  }
+
+  // Roundtrip operational-leg labels: shared by audit row title and audit
+  // chips so the dashboard renders one canonical "Heenrit / Terugrit" token
+  // per leg event. Returns empty string when the event is not leg-scoped so
+  // single-leg bookings keep their existing labels unchanged.
+  String _localizedRoundtripLegLabel(String rawLegType) {
+    final token = rawLegType.trim().toLowerCase();
+    switch (token) {
+      case 'outbound':
+        return _t(nl: 'Heenrit', en: 'Outbound', fr: 'Aller', es: 'Ida');
+      case 'return':
+        return _t(nl: 'Terugrit', en: 'Return', fr: 'Retour', es: 'Regreso');
+      default:
+        return '';
     }
   }
 
@@ -9878,41 +10037,144 @@ class _RemoteComplianceEventsSectionState
   }
 
   String _localizedRideStatus(List<RemoteComplianceEvent> events) {
-    for (final event in [...events]..sort(_compareRemoteEventsNewestFirst)) {
+    // Roundtrip operational-leg dossier status: the previous logic walked the
+    // newest booking_status_update and, failing that, returned "afgerond" on
+    // the presence of any ride_stop. For split_no_wait airport roundtrips
+    // the outbound's leg-scoped ride_stop would prematurely promote the
+    // parent dossier to "afgerond" even though the parent booking is still
+    // PENDING and the return leg has not yet been driven. The dashboard MUST
+    // mirror the backend operational-leg scope: only mark the parent as
+    // completed when the parent booking_status_update itself flipped to
+    // COMPLETED. If the parent is still PENDING but a leg ride_stop exists,
+    // render "gedeeltelijk afgerond" so the operator can see the partial
+    // progress without misreading it as a full completion.
+    final sorted = [...events]..sort(_compareRemoteEventsNewestFirst);
+
+    bool isLegScopedEvent(RemoteComplianceEvent event) {
+      if (event.legType.trim().isNotEmpty) return true;
+      if (event.legId.trim().isNotEmpty) return true;
+      return false;
+    }
+
+    // 1. Cancellation always wins.
+    for (final event in sorted) {
       final eventType = _normalizeToken(event.eventType);
-      if (eventType == 'booking_status_update') {
-        final statusTokens = <String>[
-          _normalizeToken(event.lifecycleStatus),
-          _normalizeToken(event.status),
-          _normalizeToken(event.bookingStatus),
-          _normalizeToken(event.rideStatus),
-        ];
-        if (statusTokens.contains('cancelled') ||
-            statusTokens.contains('canceled')) {
-          return _t(
-            nl: 'geannuleerd',
-            en: 'cancelled',
-            fr: 'annulée',
-            es: 'cancelado',
-          );
-        }
-        if (statusTokens.contains('completed')) {
-          return _t(
-            nl: 'afgerond',
-            en: 'completed',
-            fr: 'terminée',
-            es: 'finalizado',
-          );
-        }
-        if (statusTokens.contains('pending')) {
-          return _localizedUnknown();
-        }
+      if (eventType != 'booking_status_update') continue;
+      final statusTokens = <String>[
+        _normalizeToken(event.lifecycleStatus),
+        _normalizeToken(event.status),
+        _normalizeToken(event.bookingStatus),
+        _normalizeToken(event.rideStatus),
+      ];
+      if (statusTokens.contains('cancelled') ||
+          statusTokens.contains('canceled')) {
+        debugPrint(
+          '[CHIRON_UI][ROUNDTRIP_STATUS_SOURCE] decision=cancelled source=booking_status_update booking=${_chironLogBookingRef(event.bookingId)} parent_status=${event.parentStatus.isEmpty ? "-" : event.parentStatus}',
+        );
+        return _t(
+          nl: 'geannuleerd',
+          en: 'cancelled',
+          fr: 'annulée',
+          es: 'cancelado',
+        );
       }
     }
-    final hasRideStop = events.any(
+
+    // 2. Parent-scope booking_status_update is the source of truth for
+    //    completion. Leg-scoped updates can mention COMPLETED as a transition
+    //    side effect, but only the parent's lifecycle flips the dossier.
+    RemoteComplianceEvent? latestParentStatusUpdate;
+    for (final event in sorted) {
+      final eventType = _normalizeToken(event.eventType);
+      if (eventType != 'booking_status_update') continue;
+      if (isLegScopedEvent(event)) continue;
+      latestParentStatusUpdate = event;
+      break;
+    }
+    if (latestParentStatusUpdate != null) {
+      final tokens = <String>[
+        _normalizeToken(latestParentStatusUpdate.lifecycleStatus),
+        _normalizeToken(latestParentStatusUpdate.status),
+        _normalizeToken(latestParentStatusUpdate.bookingStatus),
+        _normalizeToken(latestParentStatusUpdate.rideStatus),
+      ];
+      if (tokens.contains('completed')) {
+        debugPrint(
+          '[CHIRON_UI][ROUNDTRIP_STATUS_SOURCE] decision=completed source=parent_booking_status_update booking=${_chironLogBookingRef(latestParentStatusUpdate.bookingId)} tokens=${tokens.where((t) => t.isNotEmpty).join("|")}',
+        );
+        return _t(
+          nl: 'afgerond',
+          en: 'completed',
+          fr: 'terminée',
+          es: 'finalizado',
+        );
+      }
+    }
+
+    // 3. Roundtrip partial completion: parent has not reached COMPLETED yet,
+    //    but at least one leg-scoped ride_stop (or a leg-scoped completion
+    //    booking_status_update) is on file. Show "gedeeltelijk afgerond" so
+    //    the dossier card matches the customer card's "In behandeling /
+    //    partial" state instead of falsely claiming the booking is done.
+    var hasLegCompletion = false;
+    var hasAnyLegMetadata = false;
+    for (final event in sorted) {
+      if (event.hasLegMetadata) hasAnyLegMetadata = true;
+      final eventType = _normalizeToken(event.eventType);
+      if (eventType == 'ride_stop' && isLegScopedEvent(event)) {
+        hasLegCompletion = true;
+      }
+      if (eventType == 'booking_status_update' && isLegScopedEvent(event)) {
+        final legStatusTokens = <String>[
+          _normalizeToken(event.legStatus),
+          _normalizeToken(event.lifecycleStatus),
+          _normalizeToken(event.status),
+        ];
+        if (legStatusTokens.contains('completed')) hasLegCompletion = true;
+      }
+    }
+    if (hasLegCompletion) {
+      debugPrint(
+        '[CHIRON_UI][ROUNDTRIP_STATUS_SOURCE] decision=partially_completed source=leg_scoped_ride_stop parent_status=${latestParentStatusUpdate?.parentStatus.isNotEmpty == true ? latestParentStatusUpdate!.parentStatus : (latestParentStatusUpdate?.lifecycleStatus ?? "-")} leg_metadata_present=$hasAnyLegMetadata',
+      );
+      return _t(
+        nl: 'gedeeltelijk afgerond',
+        en: 'partially completed',
+        fr: 'partiellement terminée',
+        es: 'parcialmente completado',
+      );
+    }
+
+    // 4. No leg metadata available — fall back to the prior single-leg logic
+    //    so existing dossiers (and legacy events that pre-date the leg
+    //    projection) keep their previous behaviour.
+    if (latestParentStatusUpdate != null) {
+      final tokens = <String>[
+        _normalizeToken(latestParentStatusUpdate.lifecycleStatus),
+        _normalizeToken(latestParentStatusUpdate.status),
+        _normalizeToken(latestParentStatusUpdate.bookingStatus),
+        _normalizeToken(latestParentStatusUpdate.rideStatus),
+      ];
+      if (tokens.contains('pending')) {
+        debugPrint(
+          '[CHIRON_UI][ROUNDTRIP_STATUS_SOURCE] decision=pending source=parent_booking_status_update booking=${_chironLogBookingRef(latestParentStatusUpdate.bookingId)}',
+        );
+        return _t(
+          nl: 'in behandeling',
+          en: 'pending',
+          fr: 'en attente',
+          es: 'pendiente',
+        );
+      }
+    }
+    final hasRideStop = sorted.any(
       (event) => _normalizeToken(event.eventType) == 'ride_stop',
     );
     if (hasRideStop) {
+      // No leg metadata at all — keep legacy single-trip completion semantics.
+      debugPrint(
+        '[CHIRON_UI][ROUNDTRIP_STATUS_SOURCE] decision=completed source=ride_stop_legacy_fallback leg_metadata_present=$hasAnyLegMetadata',
+      );
       return _t(
         nl: 'afgerond',
         en: 'completed',
@@ -9920,6 +10182,9 @@ class _RemoteComplianceEventsSectionState
         es: 'finalizado',
       );
     }
+    debugPrint(
+      '[CHIRON_UI][ROUNDTRIP_STATUS_SOURCE] decision=unknown source=no_status_signal events=${sorted.length}',
+    );
     return _localizedUnknown();
   }
 
@@ -10633,6 +10898,7 @@ class _RemoteComplianceEventsSectionState
         _chip(
           '${_t(nl: 'Betaling', en: 'Payment', fr: 'Paiement', es: 'Pago')}: ${_localizedPaymentStatusLabel(payment.status)}',
         ),
+      ..._roundtripLegAuditChips(e),
       if (producer.isNotEmpty)
         _chip(
           '${_t(nl: 'Aangemaakt door', en: 'Created by', fr: 'Créé par', es: 'Creado por')}: ${_localizedProducerLabel(producer)}',
@@ -10641,11 +10907,171 @@ class _RemoteComplianceEventsSectionState
     ];
   }
 
+  // Roundtrip operational-leg audit chips: show leg type, leg amount, parent
+  // total, distance and the actual stop/start timestamps when the event
+  // carries them. These chips are additive — events without leg metadata
+  // produce no chips so existing one-way audit rows are unchanged.
+  List<Widget> _roundtripLegAuditChips(RemoteComplianceEvent e) {
+    final chips = <Widget>[];
+    final legLabel = _localizedRoundtripLegLabel(e.legType);
+    if (legLabel.isNotEmpty) {
+      chips.add(
+        _chip(
+          '${_t(nl: 'Ritdeel', en: 'Leg', fr: 'Segment', es: 'Tramo')}: $legLabel',
+        ),
+      );
+    }
+    final legStatusToken = e.legStatus.trim();
+    if (legStatusToken.isNotEmpty) {
+      chips.add(
+        _chip(
+          '${_t(nl: 'Legstatus', en: 'Leg status', fr: 'Statut du trajet', es: 'Estado del tramo')}: ${_localizedLifecycleStatusLabel(legStatusToken)}',
+        ),
+      );
+    }
+    final parentStatusToken = e.parentStatus.trim();
+    if (parentStatusToken.isNotEmpty) {
+      chips.add(
+        _chip(
+          '${_t(nl: 'Hoofdboeking', en: 'Parent booking', fr: 'Reservation parente', es: 'Reserva principal')}: ${_localizedLifecycleStatusLabel(parentStatusToken)}',
+        ),
+      );
+    }
+    final legAmount = e.legPriceInclVat;
+    if (legAmount != null && legAmount.isFinite) {
+      chips.add(
+        _chip(
+          '${_t(nl: 'Legbedrag', en: 'Leg amount', fr: 'Montant du segment', es: 'Importe del tramo')}: ${_formatComplianceAmountEur(legAmount)}',
+        ),
+      );
+    }
+    final parentAmount = e.parentPriceInclVat;
+    if (parentAmount != null &&
+        parentAmount.isFinite &&
+        (legAmount == null || parentAmount != legAmount)) {
+      chips.add(
+        _chip(
+          '${_t(nl: 'Totaal hoofdboeking', en: 'Parent total', fr: 'Total parent', es: 'Total principal')}: ${_formatComplianceAmountEur(parentAmount)}',
+        ),
+      );
+    }
+    final distanceKm = e.distanceKm;
+    if (distanceKm != null && distanceKm.isFinite && distanceKm > 0) {
+      chips.add(
+        _chip(
+          '${_t(nl: 'Afstand', en: 'Distance', fr: 'Distance', es: 'Distancia')}: ${distanceKm.toStringAsFixed(1)} km',
+        ),
+      );
+    }
+    final waitMin = e.waitMin;
+    if (waitMin != null && waitMin.isFinite && waitMin > 0) {
+      chips.add(
+        _chip(
+          '${_t(nl: 'Wachttijd', en: 'Wait time', fr: 'Temps dattente', es: 'Tiempo de espera')}: ${waitMin.toStringAsFixed(0)} min',
+        ),
+      );
+    }
+    final startedAt = e.startedAtUtc.trim();
+    if (startedAt.isNotEmpty) {
+      chips.add(
+        _chip(
+          '${_t(nl: 'Gestart', en: 'Started', fr: 'Demarre', es: 'Iniciado')}: ${_formatComplianceTimestampShort(startedAt)}',
+        ),
+      );
+    }
+    final stoppedAt = e.stoppedAtUtc.trim();
+    if (stoppedAt.isNotEmpty) {
+      chips.add(
+        _chip(
+          '${_t(nl: 'Gestopt', en: 'Stopped', fr: 'Arrete', es: 'Detenido')}: ${_formatComplianceTimestampShort(stoppedAt)}',
+        ),
+      );
+    }
+    return chips;
+  }
+
+  String _formatComplianceAmountEur(double value) {
+    final fixed = value.toStringAsFixed(2).replaceAll('.', ',');
+    return '€ $fixed';
+  }
+
+  String _formatComplianceTimestampShort(String iso) {
+    final raw = iso.trim();
+    if (raw.isEmpty) return '-';
+    final dt = DateTime.tryParse(raw);
+    if (dt == null) return raw;
+    String two(int n) => n.toString().padLeft(2, '0');
+    final local = dt.toLocal();
+    return '${two(local.day)}/${two(local.month)} ${two(local.hour)}:${two(local.minute)}';
+  }
+
+  String _localizedLifecycleStatusLabel(String raw) {
+    final token = _normalizeToken(raw);
+    switch (token) {
+      case 'completed':
+      case 'complete':
+      case 'finished':
+        return _t(
+          nl: 'afgerond',
+          en: 'completed',
+          fr: 'terminée',
+          es: 'finalizado',
+        );
+      case 'cancelled':
+      case 'canceled':
+        return _t(
+          nl: 'geannuleerd',
+          en: 'cancelled',
+          fr: 'annulée',
+          es: 'cancelado',
+        );
+      case 'pending':
+      case 'awaiting':
+        return _t(
+          nl: 'in behandeling',
+          en: 'pending',
+          fr: 'en attente',
+          es: 'pendiente',
+        );
+      case 'scheduled':
+      case 'planned':
+      case 'in_planning':
+      case 'confirmed':
+        return _t(
+          nl: 'gepland',
+          en: 'scheduled',
+          fr: 'planifiée',
+          es: 'planificado',
+        );
+      case 'in_progress':
+      case 'started':
+      case 'active':
+        return _t(
+          nl: 'bezig',
+          en: 'in progress',
+          fr: 'en cours',
+          es: 'en curso',
+        );
+      default:
+        return raw.trim().isEmpty ? '-' : raw.trim().toLowerCase();
+    }
+  }
+
   Widget _auditHistoryRow(
     RemoteComplianceEvent e,
     Map<String, RemoteComplianceEvent> latestPaymentUpdates,
   ) {
     final eventTitle = _localizedAuditEventTitle(e);
+    final rideTypeLabel = _localizedAuditRideTypeLabel(e);
+    final legLabel = _localizedRoundtripLegLabel(e.legType);
+    // Roundtrip operational-leg audit row: when the event carries leg_type
+    // (Heenrit / Terugrit) append it so a leg-scoped ride_stop reads
+    // "Rit afgerond • Geplande rit • Heenrit" instead of being indistinguishable
+    // from a parent-level completion.
+    final titleParts = <String>[eventTitle, rideTypeLabel];
+    if (legLabel.isNotEmpty) {
+      titleParts.add(legLabel);
+    }
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
       padding: const EdgeInsets.all(10),
@@ -10658,7 +11084,7 @@ class _RemoteComplianceEventsSectionState
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            '$eventTitle • ${_localizedAuditRideTypeLabel(e)}',
+            titleParts.join(' • '),
             style: TextStyle(
               color: _chironTextPrimary,
               fontWeight: FontWeight.w700,

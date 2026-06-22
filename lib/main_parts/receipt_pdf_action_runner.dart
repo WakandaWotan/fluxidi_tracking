@@ -2082,6 +2082,11 @@ class _ReceiptPdfActionRunner {
         ]) ??
         item.startedAt;
 
+    final legStatuses = _resolveRoundtripLegStatusesForPdf(
+      item: item,
+      pickText: pickText,
+    );
+
     return <String, dynamic>{
       'display_mode': 'completed_roundtrip',
       'original_total_eur': total,
@@ -2096,7 +2101,7 @@ class _ReceiptPdfActionRunner {
       'outbound_to': outboundTo,
       'outbound_pickup_iso': outboundPickup,
       'outbound_price_incl_vat': outboundPrice,
-      'outbound_status': 'COMPLETED',
+      'outbound_status': legStatuses.outbound,
       'outbound_distance_km': segmentAmount(outboundSegment, 'distance_km'),
       'outbound_duration_min': segmentAmount(outboundSegment, 'duration_min'),
       'return_from': returnFrom,
@@ -2110,12 +2115,120 @@ class _ReceiptPdfActionRunner {
         ['record', 'booking', 'return_scheduled_pickup_at'],
       ]),
       'return_price_incl_vat': returnPrice,
-      'return_status': 'COMPLETED',
+      'return_status': legStatuses.returnLeg,
       'return_distance_km': segmentAmount(returnSegment, 'distance_km'),
       'return_duration_min': segmentAmount(returnSegment, 'duration_min'),
       'booked_wait_minutes': bookedWait,
       'waiting_package': bookedWait != null && bookedWait > 0,
     };
+  }
+
+  // Roundtrip receipt projection MUST not assume both legs are completed when
+  // the parent record reaches COMPLETED. After the operational-leg scope patch
+  // the parent only flips to COMPLETED once both legs are terminal, but the
+  // PDF projection runs from per-leg ledger entries (e.g. only the outbound
+  // leg was just stopped) — both can still be present, one of them PENDING.
+  // Prefer the authoritative operational_legs[] snapshot on the trip history
+  // record; fall back to the ledger's own leg_type as the sole completed leg.
+  static ({String outbound, String returnLeg})
+  _resolveRoundtripLegStatusesForPdf({
+    required _TripHistoryItem item,
+    required String? Function(List<List<String>>) pickText,
+  }) {
+    String normalizeStatus(String raw) {
+      final s = raw.trim().toUpperCase();
+      if (s.isEmpty) return '';
+      if (s.contains('COMPLET') || s == 'DONE' || s == 'FINISHED') {
+        return 'COMPLETED';
+      }
+      if (s.contains('CANCEL') || s == 'DELETED') return 'CANCELLED';
+      if (s == 'SCHEDULED' ||
+          s == 'PLANNED' ||
+          s == 'IN_PLANNING' ||
+          s == 'CONFIRMED') {
+        return 'SCHEDULED';
+      }
+      return 'PENDING';
+    }
+
+    String? legStatusFromOperationalLegsList(String legType) {
+      const operationalLegPaths = <List<String>>[
+        ['operational_legs'],
+        ['operationalLegs'],
+        ['booking', 'operational_legs'],
+        ['booking', 'operationalLegs'],
+        ['record', 'operational_legs'],
+        ['record', 'operationalLegs'],
+        ['record', 'booking', 'operational_legs'],
+        ['record', 'booking', 'operationalLegs'],
+      ];
+      for (final path in operationalLegPaths) {
+        final raw = _detailAt(item, path);
+        if (raw is! List) continue;
+        for (final entry in raw) {
+          if (entry is! Map) continue;
+          final entryType = (entry['leg_type'] ?? entry['legType'] ?? '')
+              .toString()
+              .trim()
+              .toLowerCase();
+          if (entryType != legType) continue;
+          final status =
+              (entry['status'] ??
+                      entry['lifecycle_status'] ??
+                      entry['lifecycleStatus'] ??
+                      '')
+                  .toString();
+          final normalized = normalizeStatus(status);
+          if (normalized.isNotEmpty) return normalized;
+        }
+      }
+      return null;
+    }
+
+    final ledgerLegType =
+        (pickText(const [
+                  ['leg_type'],
+                  ['legType'],
+                  ['booking_details', 'leg_type'],
+                  ['booking_details', 'legType'],
+                  ['booking', 'leg_type'],
+                  ['booking', 'legType'],
+                ]) ??
+                '')
+            .trim()
+            .toLowerCase();
+
+    final outboundFromLegs = legStatusFromOperationalLegsList('outbound');
+    final returnFromLegs = legStatusFromOperationalLegsList('return');
+
+    String resolveFor(String legType) {
+      final fromLegs = legType == 'return' ? returnFromLegs : outboundFromLegs;
+      if (fromLegs != null) return fromLegs;
+      // Legacy fallback: this trip-history ledger represents the leg that was
+      // just completed. Only that leg may be assumed COMPLETED; the sibling
+      // stays PENDING until its own ledger lands.
+      if (ledgerLegType == legType) return 'COMPLETED';
+      if (ledgerLegType == 'outbound' || ledgerLegType == 'return') {
+        return 'PENDING';
+      }
+      // No leg metadata at all (single-leg legacy ledger): keep prior behaviour
+      // and mark both legs COMPLETED so existing single-trip receipts are
+      // unchanged.
+      return 'COMPLETED';
+    }
+
+    final outboundStatus = resolveFor('outbound');
+    final returnStatus = resolveFor('return');
+    final outboundSourceTag = outboundFromLegs != null
+        ? 'operational_legs'
+        : (ledgerLegType.isEmpty ? 'legacy_fallback' : 'ledger_leg_type');
+    final returnSourceTag = returnFromLegs != null
+        ? 'operational_legs'
+        : (ledgerLegType.isEmpty ? 'legacy_fallback' : 'ledger_leg_type');
+    debugPrint(
+      '[ROUNDTRIP_RECEIPT][LEG_STATUS_SOURCE] trip=${item.tripId} booking=${_safeRefPreview(item.bookingId ?? item.tripId)} ledger_leg=${ledgerLegType.isEmpty ? "-" : ledgerLegType} outbound=$outboundStatus outbound_source=$outboundSourceTag return=$returnStatus return_source=$returnSourceTag',
+    );
+    return (outbound: outboundStatus, returnLeg: returnStatus);
   }
 
   static bool _isCompletedRoundtripProjection(
@@ -2160,7 +2273,12 @@ class _ReceiptPdfActionRunner {
         es: 'Cancelado',
       );
     }
-    if (token == 'PENDING' || token == 'PLANNED') {
+    if (token == 'PENDING' ||
+        token == 'PLANNED' ||
+        token == 'SCHEDULED' ||
+        token == 'CONFIRMED' ||
+        token == 'IN_PLANNING' ||
+        token == 'AWAITING') {
       return _tr(
         nl: 'Gepland',
         en: 'Planned',

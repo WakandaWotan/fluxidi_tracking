@@ -4980,7 +4980,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     }
   }
 
-  Future<void> _recordPlannedTripStopOnWorker({
+  Future<bool> _recordPlannedTripStopOnWorker({
     required BookingItem booking,
     required double kmTotal,
     required int waitSecondsTotal,
@@ -4992,7 +4992,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         action: 'record_planned_trip_stop',
         showUx: false,
       );
-      if (strictScope == null) return;
+      if (strictScope == null) return false;
       var bookingDetails = _plannedBookingDetailsPayload(booking);
       final authoritativeFields = await _fetchPaymentFieldsForHistory(
         booking.bookingId,
@@ -5110,10 +5110,12 @@ class _DriverHomePageState extends State<DriverHomePage>
         throw Exception('HTTP ${res.statusCode}: ${res.body}');
       }
       debugPrint('[PLANNED_TRIP][HISTORY][OK] booking=${booking.bookingId}');
+      return true;
     } catch (e) {
       debugPrint(
         '[PLANNED_TRIP][HISTORY][WARN] booking=${booking.bookingId} reason=$e',
       );
+      return false;
     }
   }
 
@@ -5644,8 +5646,9 @@ class _DriverHomePageState extends State<DriverHomePage>
       } catch (_) {}
     }
 
+    var plannedTripStopBridgeOk = false;
     if (!wasDirectRide && stoppedBooking != null && plannedSessionStopOk) {
-      await _recordPlannedTripStopOnWorker(
+      plannedTripStopBridgeOk = await _recordPlannedTripStopOnWorker(
         booking: stoppedBooking,
         kmTotal: kmAtStop,
         waitSecondsTotal: _effectiveWaitElapsed.inSeconds,
@@ -5669,7 +5672,10 @@ class _DriverHomePageState extends State<DriverHomePage>
     _stopTrackingInternal();
 
     if (stoppedBooking != null) {
-      await _completeStoppedBooking(stoppedBooking);
+      await _completeStoppedBooking(
+        stoppedBooking,
+        plannedStopBridgeAlreadyCompletedLeg: plannedTripStopBridgeOk,
+      );
     }
     if (!wasDirectRide && stoppedBooking != null) {
       final plannedLedger = _buildCompliancePlannedLedgerRecord(
@@ -5722,7 +5728,10 @@ class _DriverHomePageState extends State<DriverHomePage>
     unawaited(_refreshCompletedTodayCount(reason: 'trip_stop'));
   }
 
-  Future<void> _completeStoppedBooking(BookingItem b) async {
+  Future<void> _completeStoppedBooking(
+    BookingItem b, {
+    bool plannedStopBridgeAlreadyCompletedLeg = false,
+  }) async {
     final bookingId = b.bookingId;
     final rowKey = b.rowKey;
     final legId = b.legId.trim();
@@ -5732,17 +5741,32 @@ class _DriverHomePageState extends State<DriverHomePage>
     debugPrint(
       '[ROUNDTRIP_STATUS][LEG_COMPLETE] parent=$bookingId leg=${legId.isEmpty ? "-" : legId} leg_type=$legType old=${previousStatus.isEmpty ? "-" : previousStatus} new=COMPLETED scope=${isLegScopedCompletion ? "leg" : "parent"} source=driver_cockpit_stop',
     );
-    try {
-      if (isLegScopedCompletion) {
-        // Roundtrip operational-leg completion scope: complete only this leg.
-        // Routing through the parent endpoint cascades COMPLETED onto every
-        // sibling leg and hides the still-open return leg from the driver.
-        await _setOperationalLegStatus(b, 'COMPLETED');
-      } else {
-        await _setBookingStatus(b, 'COMPLETED');
+    // Roundtrip operational-leg false toast suppression: when the planned trip
+    // stop bridge already accepted this leg's completion (worker-side bridge
+    // applies COMPLETED with bypass_future_pickup_guard), a second direct call
+    // through /bookings/:id/legs/:leg/status would be rejected by the future-
+    // pickup guard for legs whose booked pickup is still in the future. That
+    // produced the spurious "Legstatus bijwerken mislukt" toast even though
+    // backend state is already correct. Trust the bridge for leg scope.
+    final shouldSkipLegStatusCall =
+        isLegScopedCompletion && plannedStopBridgeAlreadyCompletedLeg;
+    if (shouldSkipLegStatusCall) {
+      debugPrint(
+        '[ROUNDTRIP_STATUS][FALSE_TOAST_SUPPRESSED] parent=$bookingId leg=${legId.isEmpty ? "-" : legId} leg_type=$legType reason=planned_stop_bridge_already_completed_leg source=driver_cockpit_stop',
+      );
+    } else {
+      try {
+        if (isLegScopedCompletion) {
+          // Roundtrip operational-leg completion scope: complete only this leg.
+          // Routing through the parent endpoint cascades COMPLETED onto every
+          // sibling leg and hides the still-open return leg from the driver.
+          await _setOperationalLegStatus(b, 'COMPLETED');
+        } else {
+          await _setBookingStatus(b, 'COMPLETED');
+        }
+      } catch (e) {
+        debugPrint('[RIDES][STOP_COMPLETE][WARN] $e');
       }
-    } catch (e) {
-      debugPrint('[RIDES][STOP_COMPLETE][WARN] $e');
     }
     if (!mounted) return;
     setState(() {
@@ -5771,6 +5795,24 @@ class _DriverHomePageState extends State<DriverHomePage>
       }
     });
     _markBookingsUiDirty();
+    if (shouldSkipLegStatusCall) {
+      // We skipped _setOperationalLegStatus which normally drives the post-
+      // mutation snapshot fetch and refresh. Trigger the same reconciliation
+      // here so the driver list, customer overlay and worker projection stay
+      // aligned with the bridge-applied leg completion.
+      unawaited(
+        _debugFetchBookingSnapshot(
+          bookingId: bookingId,
+          contextLabel: 'LEG_STATUS_AFTER_PLANNED_STOP_BRIDGE',
+        ),
+      );
+      unawaited(
+        _refreshBookings(
+          force: true,
+          trigger: 'planned_stop_bridge_handled_leg',
+        ),
+      );
+    }
   }
 
   Future<void> _ensureLocationPermission() async {

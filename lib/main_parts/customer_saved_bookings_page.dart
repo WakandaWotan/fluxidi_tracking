@@ -111,6 +111,13 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
           reason: 'customer_saved_bookings',
         );
       }
+      // Roundtrip leg status projection: the bootstrap response carries the
+      // quote snapshot taken at booking creation time (operational_legs all
+      // PENDING). After a driver completes only the outbound leg, the worker
+      // /bookings/:id endpoint exposes the authoritative operational_legs
+      // array (outbound COMPLETED, return PENDING). Without this overlay the
+      // saved-bookings list keeps showing both legs as "Gepland".
+      await _overlayAuthoritativeSavedBookings(reason: 'load_local');
       final items = await CustomerBookingStore.instance.loadAll();
       final visible = await _filterActiveNonHiddenSavedCustomerBookings(items);
       if (!mounted) return;
@@ -140,6 +147,94 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
           es: 'Error al cargar.',
         );
       });
+    }
+  }
+
+  // Roundtrip operational-leg projection: bootstrap and local stores hold
+  // operational_legs[] from quote time only. After driver completion the
+  // authoritative per-booking record carries the true per-leg lifecycle. Pull
+  // it and overlay it into the canonical store so list cards, PDF/ritbon
+  // projection, and detail view all read the current leg statuses.
+  Future<void> _overlayAuthoritativeSavedBookings({
+    required String reason,
+  }) async {
+    try {
+      final snapshot = await CustomerBookingsStore.instance.loadAll();
+      if (snapshot.isEmpty) return;
+      var attempted = 0;
+      var refreshed = 0;
+      for (final item in snapshot) {
+        final id = item.canonicalBookingId.trim();
+        if (id.isEmpty) continue;
+        final itemAliases = _customerBookingAliasesFromStored(item);
+        if (await CustomerBookingsStore.instance.isAnyReferenceAliasHidden(
+          itemAliases,
+        )) {
+          continue;
+        }
+        attempted += 1;
+        try {
+          final proof = await _customerOwnershipProof(
+            bookingId: id,
+            fallbackEmail: item.customerEmail,
+            fallbackPhone: item.customerPhone,
+          );
+          final scope = <String, String>{
+            'tenant_id': item.tenantId,
+            'company_id': item.companyId,
+            'tenantId': item.tenantId,
+            'companyId': item.companyId,
+          };
+          final uri =
+              Uri.parse(
+                '$kBookingBaseUrl/bookings/${Uri.encodeComponent(id)}',
+              ).replace(
+                queryParameters: <String, String>{
+                  ...scope,
+                  if (proof.isNotEmpty) ...proof,
+                },
+              );
+          final res = await http.get(uri).timeout(const Duration(seconds: 8));
+          if (res.statusCode != 200) continue;
+          final decoded = jsonDecode(utf8.decode(res.bodyBytes));
+          if (decoded is! Map<String, dynamic> || decoded['ok'] != true) {
+            continue;
+          }
+          final authoritativeView = CustomerBookingView.fromResponse(
+            id,
+            decoded,
+          );
+          final hydrated = _hydrateStoredCustomerBookingFromView(
+            stored: item,
+            view: authoritativeView,
+            source: 'customer_saved_list_overlay',
+          );
+          final merged = authoritativeView.mergeRoundtripSnapshotIntoStored(
+            hydrated,
+          );
+          await CustomerBookingsStore.instance.upsert(merged);
+          refreshed += 1;
+          final outboundStatus =
+              authoritativeView.customerOutboundLeg?.status ?? '';
+          final returnStatus =
+              authoritativeView.customerReturnLeg?.status ?? '';
+          debugPrint(
+            '[ROUNDTRIP_LEG_UI][CUSTOMER_STATUS_SOURCE] surface=saved_list reason=$reason booking=${_safeRefPreview(id)} parent_status=${authoritativeView.lifecycleStatus} outbound=${outboundStatus.isEmpty ? "-" : outboundStatus} return=${returnStatus.isEmpty ? "-" : returnStatus} source=authoritative_record',
+          );
+        } catch (err) {
+          debugPrint(
+            '[ROUNDTRIP_LEG_UI][CUSTOMER_STATUS_SOURCE] surface=saved_list reason=$reason booking=${_safeRefPreview(id)} source=local_cache_fallback error=$err',
+          );
+          // Keep refresh resilient: skip individual booking failures.
+        }
+      }
+      debugPrint(
+        '[CUSTOMER_BOOKINGS][SAVED_LIST_OVERLAY] reason=$reason attempted=$attempted refreshed=$refreshed total=${snapshot.length}',
+      );
+    } catch (err) {
+      debugPrint(
+        '[CUSTOMER_BOOKINGS][SAVED_LIST_OVERLAY_FAIL] reason=$reason error=$err',
+      );
     }
   }
 

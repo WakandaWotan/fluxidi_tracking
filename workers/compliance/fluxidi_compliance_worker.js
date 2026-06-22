@@ -658,6 +658,40 @@ function projectRecentEvent(key, parsedEvent) {
     ? parsedEvent
     : {};
   const refundAudit = projectRefundAuditFields(event);
+  // Roundtrip operational-leg projection: the booking worker and tracking
+  // worker already stamp leg_id / leg_type / parent_booking_id / parent_status
+  // and friends on the persisted event (see booking_status_update assignment
+  // context and tracking ride_stop emitters). The recent-events response
+  // dropped those scalars on the floor, which made Backendmeldingen unable to
+  // tell a leg-scoped ride_stop apart from a full booking completion. Surface
+  // the fields at the top of the response object so the Flutter dashboard can
+  // render ritdeel / kostprijs / parent status without a second fetch.
+  const legMetadata = projectComplianceLegMetadata(event);
+  if (legMetadata.has_leg_metadata) {
+    const legType =
+      legMetadata.leg_type ||
+      legMetadata.legType ||
+      cleanText(event?.leg_type ?? event?.legType, 64) ||
+      "-";
+    const legId =
+      legMetadata.leg_id ||
+      legMetadata.legId ||
+      cleanText(event?.leg_id ?? event?.legId, 128) ||
+      "-";
+    const parentStatus =
+      legMetadata.parent_status ||
+      legMetadata.parentStatus ||
+      cleanText(event?.parent_status ?? event?.parentStatus, 64) ||
+      "-";
+    const legStatus =
+      legMetadata.leg_status ||
+      legMetadata.legStatus ||
+      cleanText(event?.leg_status ?? event?.legStatus, 64) ||
+      "-";
+    console.log(
+      `[COMPLIANCE_EVENT][LEG_METADATA] event_type=${cleanText(event.event_type, 64) || "-"} booking=${cleanText(event.booking_id, 128) || "-"} leg=${legId} leg_type=${legType} leg_status=${legStatus} parent_status=${parentStatus} source=projectRecentEvent`,
+    );
+  }
   return {
     key,
     event_id: cleanText(event.event_id, 200) || null,
@@ -700,8 +734,267 @@ function projectRecentEvent(key, parsedEvent) {
       event.provenance && typeof event.provenance === "object" && !Array.isArray(event.provenance)
         ? event.provenance
         : {},
+    ...legMetadata.projection,
     ...refundAudit,
   };
+}
+
+// Roundtrip operational-leg projection: extract leg / parent context from a
+// persisted compliance event so the recent-events response carries the same
+// fields the booking worker stamped at append time. Returns a small projection
+// object plus a presence flag for diagnostics. This MUST NOT alter Chiron
+// submission semantics: it only surfaces existing stored data to the client.
+function projectComplianceLegMetadata(event) {
+  if (!event || typeof event !== "object" || Array.isArray(event)) {
+    return { has_leg_metadata: false, projection: {} };
+  }
+  const provenance =
+    event.provenance && typeof event.provenance === "object" && !Array.isArray(event.provenance)
+      ? event.provenance
+      : {};
+  const assignment =
+    event.assignment && typeof event.assignment === "object" && !Array.isArray(event.assignment)
+      ? event.assignment
+      : null;
+  const references =
+    event.references && typeof event.references === "object" && !Array.isArray(event.references)
+      ? event.references
+      : null;
+  const fare =
+    event.fare && typeof event.fare === "object" && !Array.isArray(event.fare)
+      ? event.fare
+      : {};
+  const timestamps =
+    event.timestamps && typeof event.timestamps === "object" && !Array.isArray(event.timestamps)
+      ? event.timestamps
+      : {};
+
+  const pickText = (paths, maxLength) => {
+    for (const path of paths) {
+      const raw = pathValue(event, path);
+      const text = cleanText(raw, maxLength);
+      if (text) return text;
+    }
+    return null;
+  };
+
+  const pickNumber = (paths) => {
+    for (const path of paths) {
+      const raw = pathValue(event, path);
+      if (raw === null || raw === undefined || raw === "") continue;
+      const num = typeof raw === "number" ? raw : Number(raw);
+      if (Number.isFinite(num)) return num;
+    }
+    return null;
+  };
+
+  const legId = pickText(
+    [
+      ["leg_id"],
+      ["legId"],
+      ["booking", "leg_id"],
+      ["booking", "legId"],
+      ["assignment", "leg_id"],
+      ["assignment", "legId"],
+    ],
+    128,
+  );
+  const legTypeRaw = pickText(
+    [
+      ["leg_type"],
+      ["legType"],
+      ["booking", "leg_type"],
+      ["booking", "legType"],
+      ["assignment", "leg_type"],
+      ["assignment", "legType"],
+    ],
+    64,
+  );
+  const legType = legTypeRaw ? legTypeRaw.toLowerCase() : null;
+  const parentBookingId = pickText(
+    [
+      ["parent_booking_id"],
+      ["parentBookingId"],
+      ["booking", "parent_booking_id"],
+      ["booking", "parentBookingId"],
+    ],
+    128,
+  );
+  const parentStatus = pickText(
+    [
+      ["parent_status"],
+      ["parentStatus"],
+      ["booking", "parent_status"],
+      ["booking", "parentStatus"],
+    ],
+    64,
+  );
+  const legStatus = pickText(
+    [
+      ["leg_status"],
+      ["legStatus"],
+      ["booking", "leg_status"],
+      ["booking", "legStatus"],
+    ],
+    64,
+  );
+  const legPriceInclVat = pickNumber([
+    ["leg_price_incl_vat"],
+    ["legPriceInclVat"],
+    ["booking", "leg_price_incl_vat"],
+    ["booking", "legPriceInclVat"],
+  ]);
+  const parentPriceInclVat = pickNumber([
+    ["parent_price_incl_vat"],
+    ["parentPriceInclVat"],
+    ["booking", "parent_price_incl_vat"],
+    ["booking", "parentPriceInclVat"],
+  ]);
+  const waitMin = pickNumber([
+    ["wait_min"],
+    ["waitMin"],
+    ["booking", "wait_min"],
+    ["booking", "waitMin"],
+  ]);
+  const distanceKm = pickNumber([
+    ["distance_km"],
+    ["distanceKm"],
+    ["fare", "distance_km"],
+    ["fare", "distanceKm"],
+  ]);
+  const roundtripDispatchMode = pickText(
+    [
+      ["roundtrip_dispatch_mode"],
+      ["roundtripDispatchMode"],
+      ["booking", "roundtrip_dispatch_mode"],
+      ["booking", "roundtripDispatchMode"],
+    ],
+    32,
+  );
+  const parentAssignmentMode = pickText(
+    [["parent_assignment_mode"], ["parentAssignmentMode"]],
+    32,
+  );
+  const planningReferenceTop = cleanText(event.planning_reference ?? event.planningReference, 128);
+  const planningReference =
+    planningReferenceTop ||
+    cleanText(references?.planning_reference ?? references?.planningReference, 128) ||
+    cleanText(provenance.planning_reference ?? provenance.planningReference, 128) ||
+    null;
+  const startedAtUtc = cleanText(
+    timestamps.started_at_utc ?? event.started_at_utc ?? event.startedAtUtc,
+    64,
+  );
+  const stoppedAtUtc = cleanText(
+    timestamps.stopped_at_utc ?? event.stopped_at_utc ?? event.stoppedAtUtc,
+    64,
+  );
+
+  const projection = {};
+  if (legId) {
+    projection.leg_id = legId;
+    projection.legId = legId;
+  }
+  if (legType) {
+    projection.leg_type = legType;
+    projection.legType = legType;
+  }
+  if (parentBookingId) {
+    projection.parent_booking_id = parentBookingId;
+    projection.parentBookingId = parentBookingId;
+  }
+  if (parentStatus) {
+    projection.parent_status = parentStatus.toLowerCase();
+    projection.parentStatus = parentStatus.toLowerCase();
+  }
+  if (legStatus) {
+    projection.leg_status = legStatus.toLowerCase();
+    projection.legStatus = legStatus.toLowerCase();
+  }
+  if (Number.isFinite(legPriceInclVat)) {
+    projection.leg_price_incl_vat = legPriceInclVat;
+    projection.legPriceInclVat = legPriceInclVat;
+  }
+  if (Number.isFinite(parentPriceInclVat)) {
+    projection.parent_price_incl_vat = parentPriceInclVat;
+    projection.parentPriceInclVat = parentPriceInclVat;
+  }
+  if (Number.isFinite(waitMin)) {
+    projection.wait_min = waitMin;
+    projection.waitMin = waitMin;
+  }
+  if (Number.isFinite(distanceKm)) {
+    projection.distance_km = distanceKm;
+    projection.distanceKm = distanceKm;
+  }
+  if (roundtripDispatchMode) {
+    projection.roundtrip_dispatch_mode = roundtripDispatchMode;
+    projection.roundtripDispatchMode = roundtripDispatchMode;
+  }
+  if (parentAssignmentMode) {
+    projection.parent_assignment_mode = parentAssignmentMode;
+    projection.parentAssignmentMode = parentAssignmentMode;
+  }
+  if (planningReference) {
+    projection.planning_reference = planningReference;
+    projection.planningReference = planningReference;
+  }
+  if (startedAtUtc) {
+    projection.started_at_utc = startedAtUtc;
+    projection.startedAtUtc = startedAtUtc;
+  }
+  if (stoppedAtUtc) {
+    projection.stopped_at_utc = stoppedAtUtc;
+    projection.stoppedAtUtc = stoppedAtUtc;
+  }
+  if (assignment) {
+    projection.assignment = assignment;
+  }
+  if (references) {
+    projection.references = references;
+  }
+  if (fare && Object.keys(fare).length > 0) {
+    // Forward stored fare scalars (total_amount, currency, …) only — already
+    // present in the top-level "fare" map; this keeps a flat copy so the
+    // dashboard can render leg amount without descending into fare again.
+    const fareTotal = pickNumber([
+      ["fare", "total_amount"],
+      ["fare", "totalAmount"],
+    ]);
+    if (Number.isFinite(fareTotal)) {
+      projection.fare_total_amount = fareTotal;
+      projection.fareTotalAmount = fareTotal;
+    }
+  }
+
+  return {
+    has_leg_metadata:
+      Boolean(legId) ||
+      Boolean(legType) ||
+      Boolean(parentBookingId) ||
+      Boolean(parentStatus) ||
+      Boolean(legStatus),
+    projection,
+    leg_id: legId,
+    legId,
+    leg_type: legType,
+    legType,
+    parent_status: projection.parent_status,
+    parentStatus: projection.parentStatus,
+    leg_status: projection.leg_status,
+    legStatus: projection.legStatus,
+  };
+}
+
+function pathValue(root, path) {
+  if (!root || typeof root !== "object" || Array.isArray(path) === false) return undefined;
+  let current = root;
+  for (const segment of path) {
+    if (current === null || current === undefined) return undefined;
+    if (typeof current !== "object" || Array.isArray(current)) return undefined;
+    current = current[segment];
+  }
+  return current;
 }
 
 async function handleRecent(request, url, env, origin) {

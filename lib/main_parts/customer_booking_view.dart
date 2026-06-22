@@ -2204,6 +2204,9 @@ class CustomerBookingView {
       final String status = rawLegStatus.isNotEmpty
           ? rawLegStatus
           : lifecycleStatus;
+      debugPrint(
+        '[ROUNDTRIP_LEG_UI][CUSTOMER_STATUS_SOURCE] booking=${_safeRefPreview(bookingId)} leg_type=$legType leg_id=${leg?.legId.isNotEmpty == true ? leg!.legId : "-"} status=$status source=${rawLegStatus.isNotEmpty ? "operational_leg" : "parent_lifecycle_fallback"} parent_status=$lifecycleStatus',
+      );
       return CustomerRoundtripLegCardView(
         legType: legType,
         legId: leg?.legId ?? '',
