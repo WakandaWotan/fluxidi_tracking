@@ -12,6 +12,7 @@ import 'package:fluxidi_tracking/business_theme_store.dart';
 import 'package:fluxidi_tracking/compliance_ledger_reader.dart';
 import 'package:fluxidi_tracking/compliance_register_receipt_bridge.dart';
 import 'package:fluxidi_tracking/local_ride_assignment_cache.dart';
+import 'package:fluxidi_tracking/company_driver_management_page.dart';
 import 'package:fluxidi_tracking/company_session_store.dart';
 import 'package:fluxidi_tracking/customer_bookings_store.dart';
 import 'package:fluxidi_tracking/driver_documents_store.dart';
@@ -283,10 +284,10 @@ class ChironComplianceDashboardPage extends StatelessWidget {
                   es: 'Checklist y preparación',
                 ),
                 subtitle: _t(
-                  nl: 'Controleer bedrijf, chauffeurs, voertuigen en documenten.',
-                  en: 'Check company, drivers, vehicles and documents.',
-                  fr: 'Vérifiez l’entreprise, les chauffeurs, les véhicules et les documents.',
-                  es: 'Revisa empresa, conductores, vehículos y documentos.',
+                  nl: 'Technische Chiron-readiness voor bedrijf, chauffeurs en voertuigen.',
+                  en: 'Technical Chiron readiness for company, drivers and vehicles.',
+                  fr: 'Préparation technique Chiron pour entreprise, chauffeurs et véhicules.',
+                  es: 'Preparación técnica Chiron para empresa, conductores y vehículos.',
                 ),
                 trailingIcon: Icons.fact_check_outlined,
                 onTap: () {
@@ -2708,15 +2709,35 @@ class _ChironReadinessPanelState extends State<_ChironReadinessPanel> {
 
     final report = response.report;
     final summary = report.summary;
-    final statusVisual = _overallStatusVisual(report.overallStatus);
-    final topAction = report.topBlockers.isNotEmpty
-        ? report.topBlockers.first.nextAction
-        : (report.topWarnings.isNotEmpty
-              ? report.topWarnings.first.nextAction
+    final technicalBlockers = _chironTechnicalBlockers(report.topBlockers);
+    final statusVisual = technicalBlockers.isNotEmpty
+        ? _overallStatusVisual('blocked')
+        : (report.overallStatus == 'blocked'
+              ? _overallStatusVisual('ready_for_chiron_test')
+              : _overallStatusVisual(report.overallStatus));
+    final topAction = technicalBlockers.isNotEmpty
+        ? technicalBlockers.first.nextAction
+        : (report.topWarnings
+                  .where(
+                    (issue) => !_chironReadinessIssueIsOptionalDocument(issue),
+                  )
+                  .isNotEmpty
+              ? report.topWarnings
+                    .where(
+                      (issue) =>
+                          !_chironReadinessIssueIsOptionalDocument(issue),
+                    )
+                    .first
+                    .nextAction
               : '');
     final issueChips = <_ChironReadinessIssue>[];
     final seenGroups = <String>{};
-    for (final issue in [...report.topBlockers, ...report.topWarnings]) {
+    for (final issue in [
+      ...technicalBlockers,
+      ...report.topWarnings.where(
+        (item) => !_chironReadinessIssueIsOptionalDocument(item),
+      ),
+    ]) {
       final key = issue.fieldGroup.isNotEmpty ? issue.fieldGroup : issue.code;
       if (seenGroups.contains(key)) continue;
       seenGroups.add(key);
@@ -2973,6 +2994,69 @@ class _ChironReadinessPanelState extends State<_ChironReadinessPanel> {
       },
     );
   }
+}
+
+enum _ChironReadinessNavTarget {
+  businessSettingsOfficialCompanyDetails,
+  vehicles,
+  drivers,
+  rideRegister,
+  backendMessages,
+}
+
+bool _chironReadinessIssueIsOptionalDocument(_ChironReadinessIssue issue) {
+  final code = issue.code.trim().toLowerCase();
+  final group = issue.fieldGroup.trim().toLowerCase();
+  if (group == 'documents') return true;
+  return code.contains('document');
+}
+
+List<_ChironReadinessIssue> _chironTechnicalBlockers(
+  List<_ChironReadinessIssue> blockers,
+) {
+  return blockers
+      .where((issue) => !_chironReadinessIssueIsOptionalDocument(issue))
+      .toList(growable: false);
+}
+
+List<_ChironReadinessIssue> _chironOptionalDocumentBlockers(
+  List<_ChironReadinessIssue> blockers,
+) {
+  return blockers
+      .where(_chironReadinessIssueIsOptionalDocument)
+      .toList(growable: false);
+}
+
+String _chironTechnicalReadinessScopeNote(AppLanguage lang) {
+  switch (lang) {
+    case AppLanguage.en:
+      return 'Fluxidi checks the technical Chiron connection and ride data. Legal permits and official Chiron access remain the operator\'s responsibility.';
+    case AppLanguage.fr:
+      return 'Fluxidi contrôle la connexion technique Chiron et les données de course. Les autorisations légales et l\'accès officiel Chiron restent la responsabilité de l\'exploitant.';
+    case AppLanguage.es:
+      return 'Fluxidi comprueba la conexión técnica con Chiron y los datos de viaje. Los permisos legales y el acceso oficial a Chiron siguen siendo responsabilidad del operador.';
+    case AppLanguage.nl:
+      return 'Fluxidi controleert de technische Chiron-koppeling en ritdata. Wettelijke vergunningen en officiële Chiron-toegang blijven de verantwoordelijkheid van de uitbater.';
+  }
+}
+
+class _ChironReadinessIssueActionPlan {
+  const _ChironReadinessIssueActionPlan({
+    this.navTargets = const [],
+    this.clarificationText,
+    this.helpTitle,
+    this.helpText,
+  });
+
+  final List<_ChironReadinessNavTarget> navTargets;
+  final String? clarificationText;
+  final String? helpTitle;
+  final String? helpText;
+
+  bool get isEmpty =>
+      navTargets.isEmpty &&
+      (clarificationText == null || clarificationText!.isEmpty) &&
+      (helpText == null || helpText!.isEmpty);
 }
 
 class _ChironReadinessReportPage extends StatelessWidget {
@@ -3734,7 +3818,453 @@ class _ChironReadinessReportPage extends StatelessWidget {
     );
   }
 
-  Widget _issueCard(_ChironReadinessIssue issue) {
+  bool _isSequenceIssue(String code) {
+    if (code.isEmpty) return false;
+    switch (code) {
+      case 'missing_prior_vertrek_or_reservatie_in_batch':
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  bool _readinessHaystackContains(String haystack, List<String> tokens) {
+    for (final token in tokens) {
+      if (token.isNotEmpty && haystack.contains(token)) return true;
+    }
+    return false;
+  }
+
+  bool _isDemoOrTestDriverPassIssue(String code) {
+    if (code.isEmpty) return false;
+    return _isPlaceholderIssue(code) && code.contains('driver');
+  }
+
+  String _demoDriverPassClarification() {
+    return _t(
+      nl: 'Demo- of testwaarden zijn bruikbaar voor app-tests, maar blokkeren officiële Chiron-doorgifte.',
+      en: 'Demo or test values are fine for app testing, but they block official Chiron submission.',
+      fr: 'Les valeurs démo ou test conviennent aux tests applicatifs, mais bloquent l’envoi officiel Chiron.',
+      es: 'Los valores demo o de prueba sirven para pruebas de la app, pero bloquean el envío oficial a Chiron.',
+    );
+  }
+
+  _ChironReadinessIssueActionPlan _driverReadinessActionPlan({
+    String? issueCode,
+  }) {
+    final code = (issueCode ?? '').trim().toLowerCase();
+    return _ChironReadinessIssueActionPlan(
+      navTargets: const [_ChironReadinessNavTarget.drivers],
+      clarificationText: _isDemoOrTestDriverPassIssue(code)
+          ? _demoDriverPassClarification()
+          : null,
+    );
+  }
+
+  _ChironReadinessIssueActionPlan _resolveReadinessIssueAction(
+    _ChironReadinessIssue issue,
+  ) {
+    final code = issue.code.trim().toLowerCase();
+    final group = issue.fieldGroup.trim().toLowerCase();
+    final haystack = '$code $group ${issue.nextAction.trim().toLowerCase()}';
+    final optionalDocumentNote = _t(
+      nl: 'Documenten zijn optioneel voor de technische Chiron-koppeling.',
+      en: 'Documents are optional for the technical Chiron connection.',
+      fr: 'Les documents sont facultatifs pour la connexion technique Chiron.',
+      es: 'Los documentos son opcionales para la conexión técnica con Chiron.',
+    );
+
+    if (_isOptionalDocumentComplianceIssue(issue)) {
+      if (group == 'vehicle_identity' ||
+          _readinessHaystackContains(haystack, const [
+            'vehicle_document',
+            'kenteken',
+            'taxi_plate',
+            'plate',
+          ])) {
+        return _ChironReadinessIssueActionPlan(
+          navTargets: const [_ChironReadinessNavTarget.vehicles],
+          clarificationText: optionalDocumentNote,
+        );
+      }
+      if (group == 'driver_identity' ||
+          _readinessHaystackContains(haystack, const [
+            'driver_pass',
+            'bestuurders',
+            'chauffeur',
+            'driver',
+          ])) {
+        return _ChironReadinessIssueActionPlan(
+          navTargets: const [_ChironReadinessNavTarget.drivers],
+          clarificationText: optionalDocumentNote,
+        );
+      }
+      return _ChironReadinessIssueActionPlan(
+        clarificationText: optionalDocumentNote,
+      );
+    }
+
+    if (_isSequenceIssue(code) ||
+        group == 'sequence' ||
+        _readinessHaystackContains(haystack, const [
+          'missing_prior_vertrek',
+          'reservatie_in_batch',
+          'volgorde',
+          'sequence',
+        ])) {
+      return _ChironReadinessIssueActionPlan(
+        navTargets: const [_ChironReadinessNavTarget.rideRegister],
+        helpTitle: _t(
+          nl: 'Waarom zie ik dit?',
+          en: 'Why am I seeing this?',
+          fr: 'Pourquoi vois-je ceci ?',
+          es: '¿Por qué veo esto?',
+        ),
+        helpText: _t(
+          nl: 'Chiron verwacht een logische volgorde van rit-events (bijv. reservatie/vertrek vóór aankomst). Bureautests of onvolledige testritten kunnen deze melding geven. Controleer het rittenregister na een echte rit met START en STOP.',
+          en: 'Chiron expects a logical order of ride events (e.g. reservation/departure before arrival). Desk tests or incomplete test rides can trigger this. Check the ride register after a real ride with START and STOP.',
+          fr: 'Chiron attend un ordre logique des événements de course (p. ex. réservation/départ avant arrivée). Les tests bureau ou courses de test incomplètes peuvent déclencher cet avis. Vérifiez le registre après une vraie course avec START et STOP.',
+          es: 'Chiron espera un orden lógico de eventos de viaje (p. ej. reserva/salida antes de llegada). Las pruebas de escritorio o viajes de prueba incompletos pueden provocarlo. Revise el registro tras un viaje real con START y STOP.',
+        ),
+      );
+    }
+
+    if (_isRideGeometryIssue(code) ||
+        group == 'ride_geometry' ||
+        _readinessHaystackContains(haystack, const [
+          'gps',
+          'latitude',
+          'longitude',
+          'breedtegraad',
+          'lengtegraad',
+          'coordinate',
+          'coördinaat',
+          'coordinaten',
+          'invalid_zero_coordinate',
+          'afstand',
+        ])) {
+      return _ChironReadinessIssueActionPlan(
+        navTargets: const [
+          _ChironReadinessNavTarget.rideRegister,
+          _ChironReadinessNavTarget.backendMessages,
+        ],
+        helpTitle: _t(
+          nl: 'Waarom zie ik dit?',
+          en: 'Why am I seeing this?',
+          fr: 'Pourquoi vois-je ceci ?',
+          es: '¿Por qué veo esto?',
+        ),
+        helpText: _t(
+          nl: 'Bureautests of ritten zonder echte locatiebeweging kunnen 0/0-coördinaten of afstand 0 geven. Maak een echte testrit met locatie/GPS actief om deze controle correct te valideren.',
+          en: 'Desk tests or rides without real location movement can produce 0/0 coordinates or zero distance. Run a real test ride with location/GPS active to validate this check correctly.',
+          fr: 'Les tests bureau ou courses sans déplacement réel peuvent produire des coordonnées 0/0 ou une distance nulle. Effectuez une vraie course test avec localisation/GPS actif pour valider ce contrôle.',
+          es: 'Las pruebas de escritorio o viajes sin movimiento real pueden dar coordenadas 0/0 o distancia 0. Realice una prueba real con ubicación/GPS activo para validar este control.',
+        ),
+      );
+    }
+
+    if (group == 'business_identity' ||
+        _readinessHaystackContains(haystack, const [
+          'placeholder_business',
+          'placeholder_registration',
+          'invalid_registration',
+          'invalid_business',
+          'business_document',
+          'business_name',
+          'registratie',
+          'kbo',
+          'vies',
+          'naam',
+        ])) {
+      return const _ChironReadinessIssueActionPlan(
+        navTargets: [
+          _ChironReadinessNavTarget.businessSettingsOfficialCompanyDetails,
+        ],
+      );
+    }
+
+    if (group == 'vehicle_identity' ||
+        _readinessHaystackContains(haystack, const [
+          'invalid_flemish_taxi_plate',
+          'placeholder_license_plate',
+          'invalid_license_plate',
+          'taxi_plate',
+          'kenteken',
+          'kentekenplaat',
+          'vehicle_document',
+        ])) {
+      return const _ChironReadinessIssueActionPlan(
+        navTargets: [_ChironReadinessNavTarget.vehicles],
+      );
+    }
+
+    if (group == 'driver_identity' ||
+        _readinessHaystackContains(haystack, const [
+          'placeholder_driver_pass',
+          'invalid_driver_pass',
+          'driver_pass',
+          'bestuurderspas',
+          'chauffeur',
+        ])) {
+      return _driverReadinessActionPlan(issueCode: code);
+    }
+
+    if (group == 'documents') {
+      if (_readinessHaystackContains(haystack, const [
+        'vehicle',
+        'kenteken',
+        'taxi',
+        'plate',
+      ])) {
+        return const _ChironReadinessIssueActionPlan(
+          navTargets: [_ChironReadinessNavTarget.vehicles],
+        );
+      }
+      if (_readinessHaystackContains(haystack, const [
+        'driver',
+        'bestuurders',
+        'chauffeur',
+      ])) {
+        return _driverReadinessActionPlan(issueCode: code);
+      }
+      if (_readinessHaystackContains(haystack, const [
+        'business',
+        'onderneming',
+        'kbo',
+      ])) {
+        return const _ChironReadinessIssueActionPlan(
+          navTargets: [
+            _ChironReadinessNavTarget.businessSettingsOfficialCompanyDetails,
+          ],
+        );
+      }
+    }
+
+    return const _ChironReadinessIssueActionPlan();
+  }
+
+  _ChironReadinessIssueActionPlan _resolveFieldGroupAction(
+    _ChironReadinessFieldGroup group,
+  ) {
+    if (group.blockers.isNotEmpty) {
+      return _resolveReadinessIssueAction(group.blockers.first);
+    }
+    if (group.warnings.isNotEmpty) {
+      return _resolveReadinessIssueAction(group.warnings.first);
+    }
+    switch (group.group) {
+      case 'business_identity':
+        return const _ChironReadinessIssueActionPlan(
+          navTargets: [
+            _ChironReadinessNavTarget.businessSettingsOfficialCompanyDetails,
+          ],
+        );
+      case 'vehicle_identity':
+        return const _ChironReadinessIssueActionPlan(
+          navTargets: [_ChironReadinessNavTarget.vehicles],
+        );
+      case 'driver_identity':
+        final issueCode = group.blockers.isNotEmpty
+            ? group.blockers.first.code
+            : (group.warnings.isNotEmpty ? group.warnings.first.code : '');
+        return _driverReadinessActionPlan(issueCode: issueCode);
+      case 'ride_geometry':
+        return _ChironReadinessIssueActionPlan(
+          navTargets: const [
+            _ChironReadinessNavTarget.rideRegister,
+            _ChironReadinessNavTarget.backendMessages,
+          ],
+          helpTitle: _t(
+            nl: 'Waarom zie ik dit?',
+            en: 'Why am I seeing this?',
+            fr: 'Pourquoi vois-je ceci ?',
+            es: '¿Por qué veo esto?',
+          ),
+          helpText: _t(
+            nl: 'Bureautests of ritten zonder echte locatiebeweging kunnen 0/0-coördinaten of afstand 0 geven. Maak een echte testrit met locatie/GPS actief om deze controle correct te valideren.',
+            en: 'Desk tests or rides without real location movement can produce 0/0 coordinates or zero distance. Run a real test ride with location/GPS active to validate this check correctly.',
+            fr: 'Les tests bureau ou courses sans déplacement réel peuvent produire des coordonnées 0/0 ou une distance nulle. Effectuez une vraie course test avec localisation/GPS actif pour valider ce contrôle.',
+            es: 'Las pruebas de escritorio o viajes sin movimiento real pueden dar coordenadas 0/0 o distancia 0. Realice una prueba real con ubicación/GPS activo para validar este control.',
+          ),
+        );
+      case 'sequence':
+        return _ChironReadinessIssueActionPlan(
+          navTargets: const [_ChironReadinessNavTarget.rideRegister],
+          helpTitle: _t(
+            nl: 'Waarom zie ik dit?',
+            en: 'Why am I seeing this?',
+            fr: 'Pourquoi vois-je ceci ?',
+            es: '¿Por qué veo esto?',
+          ),
+          helpText: _t(
+            nl: 'Chiron verwacht een logische volgorde van rit-events (bijv. reservatie/vertrek vóór aankomst). Bureautests of onvolledige testritten kunnen deze melding geven. Controleer het rittenregister na een echte rit met START en STOP.',
+            en: 'Chiron expects a logical order of ride events (e.g. reservation/departure before arrival). Desk tests or incomplete test rides can trigger this. Check the ride register after a real ride with START and STOP.',
+            fr: 'Chiron attend un ordre logique des événements de course (p. ex. réservation/départ avant arrivée). Les tests bureau ou courses de test incomplètes peuvent déclencher cet avis. Vérifiez le registre après une vraie course avec START et STOP.',
+            es: 'Chiron espera un orden lógico de eventos de viaje (p. ej. reserva/salida antes de llegada). Las pruebas de escritorio o viajes de prueba incompletos pueden provocarlo. Revise el registro tras un viaje real con START y STOP.',
+          ),
+        );
+      default:
+        return const _ChironReadinessIssueActionPlan();
+    }
+  }
+
+  String _readinessNavLabel(_ChironReadinessNavTarget target) {
+    switch (target) {
+      case _ChironReadinessNavTarget.businessSettingsOfficialCompanyDetails:
+        return _t(
+          nl: 'Open officiële bedrijfsgegevens',
+          en: 'Open official company details',
+          fr: 'Ouvrir informations officielles',
+          es: 'Abrir datos oficiales de empresa',
+        );
+      case _ChironReadinessNavTarget.vehicles:
+        return _t(
+          nl: 'Open voertuigen',
+          en: 'Open vehicles',
+          fr: 'Ouvrir véhicules',
+          es: 'Abrir vehículos',
+        );
+      case _ChironReadinessNavTarget.drivers:
+        return _t(
+          nl: 'Open chauffeurs',
+          en: 'Open drivers',
+          fr: 'Ouvrir chauffeurs',
+          es: 'Abrir conductores',
+        );
+      case _ChironReadinessNavTarget.rideRegister:
+        return _t(
+          nl: 'Open rittenregister',
+          en: 'Open ride register',
+          fr: 'Ouvrir registre des trajets',
+          es: 'Abrir registro de viajes',
+        );
+      case _ChironReadinessNavTarget.backendMessages:
+        return _t(
+          nl: 'Bekijk backendmeldingen',
+          en: 'View backend messages',
+          fr: 'Voir messages système',
+          es: 'Ver mensajes del backend',
+        );
+    }
+  }
+
+  void _openReadinessNavTarget(
+    BuildContext context,
+    _ChironReadinessNavTarget target,
+  ) {
+    switch (target) {
+      case _ChironReadinessNavTarget.businessSettingsOfficialCompanyDetails:
+        Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (_) => const BusinessSettingsPage(
+              initialSection:
+                  BusinessSettingsInitialSection.officialCompanyDetails,
+            ),
+          ),
+        );
+      case _ChironReadinessNavTarget.vehicles:
+        Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (_) => const VehicleManagementPage(),
+          ),
+        );
+      case _ChironReadinessNavTarget.drivers:
+        Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (_) => companyDriverManagementPage(),
+          ),
+        );
+      case _ChironReadinessNavTarget.rideRegister:
+        Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (_) => const _ChironLocalLedgerPage(),
+          ),
+        );
+      case _ChironReadinessNavTarget.backendMessages:
+        Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (_) => const _ChironRemoteCompliancePage(),
+          ),
+        );
+    }
+  }
+
+  Widget _readinessIssueActionSection(
+    BuildContext context,
+    _ChironReadinessIssueActionPlan plan,
+  ) {
+    if (plan.isEmpty) return const SizedBox.shrink();
+
+    final buttons = <Widget>[];
+    for (final target in plan.navTargets) {
+      buttons.add(
+        OutlinedButton(
+          onPressed: () => _openReadinessNavTarget(context, target),
+          style: _chironTestAccessSecondaryButtonStyle(),
+          child: Text(
+            _readinessNavLabel(target),
+            style: const TextStyle(fontSize: 11),
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.center,
+          ),
+        ),
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (buttons.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          Wrap(spacing: 8, runSpacing: 6, children: buttons),
+        ],
+        if (plan.clarificationText != null &&
+            plan.clarificationText!.isNotEmpty) ...[
+          SizedBox(height: buttons.isNotEmpty ? 6 : 8),
+          Text(
+            plan.clarificationText!,
+            style: TextStyle(
+              color: _chironTextFaint,
+              fontSize: 11,
+              height: 1.35,
+              fontStyle: FontStyle.italic,
+            ),
+            maxLines: 4,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ],
+        if (plan.helpText != null && plan.helpText!.isNotEmpty) ...[
+          const SizedBox(height: 6),
+          if (plan.helpTitle != null && plan.helpTitle!.isNotEmpty)
+            Text(
+              plan.helpTitle!,
+              style: TextStyle(
+                color: _chironTextSecondary,
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+              ),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+          if (plan.helpTitle != null && plan.helpTitle!.isNotEmpty)
+            const SizedBox(height: 2),
+          Text(
+            plan.helpText!,
+            style: TextStyle(
+              color: _chironTextMuted,
+              fontSize: 11,
+              height: 1.35,
+            ),
+            maxLines: 6,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _issueCard(BuildContext context, _ChironReadinessIssue issue) {
     final technicalCode = issue.code;
     final title = technicalCode.isNotEmpty
         ? _issueLabel(technicalCode)
@@ -3808,12 +4338,19 @@ class _ChironReadinessReportPage extends StatelessWidget {
               overflow: TextOverflow.ellipsis,
             ),
           ],
+          _readinessIssueActionSection(
+            context,
+            _resolveReadinessIssueAction(issue),
+          ),
         ],
       ),
     );
   }
 
-  Widget _fieldGroupCard(_ChironReadinessFieldGroup group) {
+  Widget _fieldGroupCard(
+    BuildContext context,
+    _ChironReadinessFieldGroup group,
+  ) {
     final firstBlocker = group.blockers.isNotEmpty
         ? group.blockers.first
         : null;
@@ -3932,6 +4469,13 @@ class _ChironReadinessReportPage extends StatelessWidget {
               overflow: TextOverflow.ellipsis,
             ),
           ],
+          if (group.status == 'blocked' ||
+              group.blockers.isNotEmpty ||
+              group.warnings.isNotEmpty)
+            _readinessIssueActionSection(
+              context,
+              _resolveFieldGroupAction(group),
+            ),
         ],
       ),
     );
@@ -4112,6 +4656,21 @@ class _ChironReadinessReportPage extends StatelessWidget {
     );
   }
 
+  String _technicalReadinessScopeNote() =>
+      _chironTechnicalReadinessScopeNote(lang);
+
+  String _optionalDocumentReadinessNote() {
+    return _t(
+      nl: 'Optioneel — blokkeert de technische Chiron-koppeling niet.',
+      en: 'Optional — does not block the technical Chiron connection.',
+      fr: 'Facultatif — ne bloque pas la connexion technique Chiron.',
+      es: 'Opcional — no bloquea la conexión técnica con Chiron.',
+    );
+  }
+
+  bool _isOptionalDocumentComplianceIssue(_ChironReadinessIssue issue) =>
+      _chironReadinessIssueIsOptionalDocument(issue);
+
   ({String label, Color color, IconData icon}) _lifecycleStatusVisual() {
     final processed = response.processedCount;
     if (processed <= 0) {
@@ -4127,7 +4686,10 @@ class _ChironReadinessReportPage extends StatelessWidget {
       );
     }
     final summary = response.report.summary;
-    if (summary.officialReadyCount == processed && summary.blockedCount == 0) {
+    final hasTechnicalBlockers = _chironTechnicalBlockers(
+      response.report.topBlockers,
+    ).isNotEmpty;
+    if (!hasTechnicalBlockers && summary.officialReadyCount == processed) {
       return (
         label: _t(
           nl: 'Steekproef klaar',
@@ -4137,6 +4699,18 @@ class _ChironReadinessReportPage extends StatelessWidget {
         ),
         color: _chironSuccess,
         icon: Icons.verified_outlined,
+      );
+    }
+    if (!hasTechnicalBlockers) {
+      return (
+        label: _t(
+          nl: 'Technisch in orde',
+          en: 'Technically healthy',
+          fr: 'Techniquement en ordre',
+          es: 'Técnicamente en orden',
+        ),
+        color: _chironSuccess,
+        icon: Icons.check_circle_outline,
       );
     }
     return (
@@ -4313,17 +4887,31 @@ class _ChironReadinessReportPage extends StatelessWidget {
     );
 
     if (report.topBlockers.isNotEmpty) {
+      final technicalBlockers = _chironTechnicalBlockers(report.topBlockers);
+      final optionalDocumentBlockers = _chironOptionalDocumentBlockers(
+        report.topBlockers,
+      );
       buffer.writeln();
       buffer.writeln(
         _t(
-          nl: 'Belangrijkste blockers (in steekproef):',
-          en: 'Top blockers (in sample):',
-          fr: 'Principaux blocages (dans l\'échantillon) :',
-          es: 'Principales bloqueos (en la muestra):',
+          nl: 'Belangrijkste technische blockers (in steekproef):',
+          en: 'Top technical blockers (in sample):',
+          fr: 'Principaux blocages techniques (dans l\'échantillon) :',
+          es: 'Principales bloqueos técnicos (en la muestra):',
         ),
       );
+      if (technicalBlockers.isEmpty) {
+        buffer.writeln(
+          _t(
+            nl: 'Geen technische blockers gevonden in deze steekproef.',
+            en: 'No technical blockers found in this sample.',
+            fr: 'Aucun blocage technique trouvé dans cet échantillon.',
+            es: 'No se encontraron bloqueos técnicos en esta muestra.',
+          ),
+        );
+      }
       var index = 1;
-      for (final issue in report.topBlockers.take(10)) {
+      for (final issue in technicalBlockers.take(10)) {
         buffer.writeln(
           '${index++}. ${_issueShareTitle(issue)} — ${_sampleFractionLabel(issue.count)}',
         );
@@ -4334,7 +4922,33 @@ class _ChironReadinessReportPage extends StatelessWidget {
           );
         }
       }
+      if (optionalDocumentBlockers.isNotEmpty) {
+        buffer.writeln();
+        buffer.writeln(
+          _t(
+            nl: 'Optioneel documentenbeheer (blokkeert Chiron niet):',
+            en: 'Optional document management (does not block Chiron):',
+            fr: 'Gestion documentaire facultative (ne bloque pas Chiron) :',
+            es: 'Gestión documental opcional (no bloquea Chiron):',
+          ),
+        );
+        index = 1;
+        for (final issue in optionalDocumentBlockers.take(10)) {
+          buffer.writeln(
+            '${index++}. ${_issueShareTitle(issue)} — ${_sampleFractionLabel(issue.count)}',
+          );
+          if (issue.nextAction.isNotEmpty) {
+            buffer.writeln(
+              '   ${_t(nl: 'Actie', en: 'Action', fr: 'Action', es: 'Acción')}: '
+              '${issue.nextAction}',
+            );
+          }
+        }
+      }
     }
+
+    buffer.writeln();
+    buffer.writeln(_technicalReadinessScopeNote());
 
     if (report.topWarnings.isNotEmpty) {
       buffer.writeln();
@@ -4446,6 +5060,10 @@ class _ChironReadinessReportPage extends StatelessWidget {
   Widget build(BuildContext context) {
     final report = response.report;
     final summary = report.summary;
+    final technicalBlockers = _chironTechnicalBlockers(report.topBlockers);
+    final optionalDocumentBlockers = _chironOptionalDocumentBlockers(
+      report.topBlockers,
+    );
 
     return ValueListenableBuilder<BusinessThemeVariant>(
       valueListenable: businessThemeNotifier,
@@ -4599,6 +5217,13 @@ class _ChironReadinessReportPage extends StatelessWidget {
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                       ),
+                      const SizedBox(height: 8),
+                      Text(
+                        _technicalReadinessScopeNote(),
+                        style: TextStyle(color: _chironTextMuted, fontSize: 11),
+                        maxLines: 4,
+                        overflow: TextOverflow.ellipsis,
+                      ),
                     ],
                   ),
                 ),
@@ -4728,12 +5353,12 @@ class _ChironReadinessReportPage extends StatelessWidget {
               ),
               _baseCard(
                 title: _t(
-                  nl: 'Belangrijkste blockers',
-                  en: 'Top blockers',
-                  fr: 'Principaux blocages',
-                  es: 'Principales bloqueos',
+                  nl: 'Belangrijkste technische blockers',
+                  en: 'Top technical blockers',
+                  fr: 'Principaux blocages techniques',
+                  es: 'Principales bloqueos técnicos',
                 ),
-                child: report.topBlockers.isEmpty
+                child: technicalBlockers.isEmpty
                     ? _emptySection(
                         response.processedCount == 0
                             ? _t(
@@ -4743,19 +5368,35 @@ class _ChironReadinessReportPage extends StatelessWidget {
                                 es: 'Aún no probado. Realice un viaje real con START y STOP antes de comprobar el registro del viaje.',
                               )
                             : _t(
-                                nl: 'Geen blockers gevonden in deze steekproef.',
-                                en: 'No blockers found in this sample.',
-                                fr: 'Aucun blocage trouvé dans cet échantillon.',
-                                es: 'No se encontraron bloqueos en esta muestra.',
+                                nl: 'Geen technische blockers gevonden in deze steekproef.',
+                                en: 'No technical blockers found in this sample.',
+                                fr: 'Aucun blocage technique trouvé dans cet échantillon.',
+                                es: 'No se encontraron bloqueos técnicos en esta muestra.',
                               ),
                       )
                     : Column(
-                        children: report.topBlockers
+                        children: technicalBlockers
                             .take(10)
-                            .map(_issueCard)
+                            .map((issue) => _issueCard(context, issue))
                             .toList(growable: false),
                       ),
               ),
+              if (optionalDocumentBlockers.isNotEmpty)
+                _baseCard(
+                  title: _t(
+                    nl: 'Optioneel documentenbeheer',
+                    en: 'Optional document management',
+                    fr: 'Gestion documentaire facultative',
+                    es: 'Gestión documental opcional',
+                  ),
+                  subtitle: _optionalDocumentReadinessNote(),
+                  child: Column(
+                    children: optionalDocumentBlockers
+                        .take(10)
+                        .map((issue) => _issueCard(context, issue))
+                        .toList(growable: false),
+                  ),
+                ),
               _baseCard(
                 title: _t(
                   nl: 'Waarschuwingen',
@@ -4782,7 +5423,7 @@ class _ChironReadinessReportPage extends StatelessWidget {
                     : Column(
                         children: report.topWarnings
                             .take(10)
-                            .map(_issueCard)
+                            .map((issue) => _issueCard(context, issue))
                             .toList(growable: false),
                       ),
               ),
@@ -4804,7 +5445,7 @@ class _ChironReadinessReportPage extends StatelessWidget {
                       )
                     : Column(
                         children: report.fieldGroups
-                            .map(_fieldGroupCard)
+                            .map((group) => _fieldGroupCard(context, group))
                             .toList(growable: false),
                       ),
               ),
@@ -5511,9 +6152,8 @@ class _ChironReadinessChecklistPage extends StatelessWidget {
         final driverScore = _sectionScore(driverChecks);
         final vehicleScore = _sectionScore(vehicleChecks);
         final docScore = _sectionScore(documentChecks);
-        final overallScore =
-            ((companyScore + driverScore + vehicleScore + docScore) / 4)
-                .round();
+        final technicalScore = ((companyScore + driverScore + vehicleScore) / 3)
+            .round();
 
         final companyAttention = <({String text, bool critical})>[];
         final driverAttention = <({String text, bool critical})>[];
@@ -5611,7 +6251,7 @@ class _ChironReadinessChecklistPage extends StatelessWidget {
               fr: 'Il y a des documents expirés ou rejetés.',
               es: 'Hay documentos caducados o rechazados.',
             ),
-            critical: true,
+            critical: false,
           ));
         }
 
@@ -5629,20 +6269,26 @@ class _ChironReadinessChecklistPage extends StatelessWidget {
                 es: 'Completo · verificación pendiente',
               )
             : profile.verificationBadgeLabel(_lang);
-        final allAttention = <({String text, bool critical})>[
+        final technicalAttention = <({String text, bool critical})>[
           ...companyAttention,
           ...driverAttention,
           ...vehicleAttention,
-          ...docAttention,
         ];
-        final criticalAttentionCount = allAttention
+        final criticalAttentionCount = technicalAttention
             .where((x) => x.critical)
             .length;
         final status = _overallStatus(
-          score: overallScore,
+          score: technicalScore,
           criticalCount: criticalAttentionCount,
-          attentionCount: allAttention.length,
+          attentionCount: technicalAttention.length,
         );
+        final optionalDocumentNote = _t(
+          nl: 'Optioneel — blokkeert de technische Chiron-koppeling niet.',
+          en: 'Optional — does not block the technical Chiron connection.',
+          fr: 'Facultatif — ne bloque pas la connexion technique Chiron.',
+          es: 'Opcional — no bloquea la conexión técnica con Chiron.',
+        );
+        final technicalScopeNote = _chironTechnicalReadinessScopeNote(_lang);
 
         return Scaffold(
           backgroundColor: _chironBg,
@@ -5682,16 +6328,16 @@ class _ChironReadinessChecklistPage extends StatelessWidget {
                         Expanded(
                           child: Text(
                             _t(
-                              nl: 'Readiness score',
-                              en: 'Readiness score',
-                              fr: 'Score de préparation',
-                              es: 'Puntuación de preparación',
+                              nl: 'Technische Chiron-readiness',
+                              en: 'Technical Chiron readiness',
+                              fr: 'Préparation technique Chiron',
+                              es: 'Preparación técnica Chiron',
                             ),
                             style: TextStyle(color: _chironTextSecondary),
                           ),
                         ),
                         Text(
-                          '$overallScore%',
+                          '$technicalScore%',
                           style: TextStyle(
                             color: _chironTextPrimary,
                             fontWeight: FontWeight.w800,
@@ -5736,10 +6382,10 @@ class _ChironReadinessChecklistPage extends StatelessWidget {
                         ),
                         Text(
                           _t(
-                            nl: 'Bedrijf $companyScore% • Chauffeurs $driverScore% • Voertuigen $vehicleScore% • Documenten $docScore%',
-                            en: 'Company $companyScore% • Drivers $driverScore% • Vehicles $vehicleScore% • Documents $docScore%',
-                            fr: 'Entreprise $companyScore% • Chauffeurs $driverScore% • Véhicules $vehicleScore% • Documents $docScore%',
-                            es: 'Empresa $companyScore% • Conductores $driverScore% • Vehículos $vehicleScore% • Documentos $docScore%',
+                            nl: 'Bedrijf $companyScore% • Chauffeurs $driverScore% • Voertuigen $vehicleScore%',
+                            en: 'Company $companyScore% • Drivers $driverScore% • Vehicles $vehicleScore%',
+                            fr: 'Entreprise $companyScore% • Chauffeurs $driverScore% • Véhicules $vehicleScore%',
+                            es: 'Empresa $companyScore% • Conductores $driverScore% • Vehículos $vehicleScore%',
                           ),
                           style: TextStyle(
                             color: _chironTextMuted,
@@ -5750,27 +6396,32 @@ class _ChironReadinessChecklistPage extends StatelessWidget {
                     ),
                     const SizedBox(height: 8),
                     LinearProgressIndicator(
-                      value: overallScore / 100,
+                      value: technicalScore / 100,
                       minHeight: 8,
                       backgroundColor: _chironProgressTrack,
                       valueColor: AlwaysStoppedAnimation<Color>(
-                        overallScore >= 80
+                        technicalScore >= 80
                             ? _chironSuccess
-                            : (overallScore >= 50
+                            : (technicalScore >= 50
                                   ? _chironWarning
                                   : _chironWarning),
                       ),
                     ),
                     const SizedBox(height: 10),
+                    Text(
+                      technicalScopeNote,
+                      style: TextStyle(color: _chironTextMuted, fontSize: 11),
+                    ),
+                    const SizedBox(height: 10),
                     _metric(
                       label: _t(
-                        nl: 'Aandachtspunten',
-                        en: 'Attention needed',
-                        fr: 'Points d attention',
-                        es: 'Atención requerida',
+                        nl: 'Technische aandachtspunten',
+                        en: 'Technical attention items',
+                        fr: 'Points d attention technique',
+                        es: 'Puntos técnicos de atención',
                       ),
-                      value: allAttention.length.toString(),
-                      ready: allAttention.isEmpty,
+                      value: technicalAttention.length.toString(),
+                      ready: technicalAttention.isEmpty,
                       accent: status.color,
                     ),
                   ],
@@ -6049,13 +6700,48 @@ class _ChironReadinessChecklistPage extends StatelessWidget {
               ),
               _baseCard(
                 title: _t(
-                  nl: 'Chauffeur documentstatus',
-                  en: 'Driver document status',
-                  fr: 'Statut des documents chauffeurs',
-                  es: 'Estado de documentos de conductores',
+                  nl: 'Optioneel documentenbeheer',
+                  en: 'Optional document management',
+                  fr: 'Gestion documentaire facultative',
+                  es: 'Gestión documental opcional',
                 ),
+                subtitle: optionalDocumentNote,
                 child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            _t(
+                              nl: 'Documentenmap',
+                              en: 'Document folder',
+                              fr: 'Dossier documents',
+                              es: 'Carpeta de documentos',
+                            ),
+                            style: TextStyle(color: _chironTextSecondary),
+                          ),
+                        ),
+                        Text(
+                          '$docScore%',
+                          style: TextStyle(
+                            color: _chironTextPrimary,
+                            fontWeight: FontWeight.w800,
+                            fontSize: 16,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    LinearProgressIndicator(
+                      value: docScore / 100,
+                      minHeight: 6,
+                      backgroundColor: _chironProgressTrack,
+                      valueColor: AlwaysStoppedAnimation<Color>(
+                        docScore >= 80 ? _chironSuccess : _chironTextMuted,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
                     _metric(
                       label: _t(
                         nl: 'Totaal documenten',
@@ -6138,23 +6824,74 @@ class _ChironReadinessChecklistPage extends StatelessWidget {
                           ),
                         ),
                       ),
+                    if (coreGapCount > 0 || docAttention.isNotEmpty) ...[
+                      const SizedBox(height: 10),
+                      if (coreGapCount > 0)
+                        _attentionActionCard(
+                          title: _t(
+                            nl: 'Chauffeurdocumenten aanvullen',
+                            en: 'Complete driver documents',
+                            fr: 'Compléter les documents chauffeurs',
+                            es: 'Completar documentos de conductores',
+                          ),
+                          body: _t(
+                            nl: coreGapCount == 1
+                                ? '1 chauffeur heeft een kern-documentkloof. Dit is optioneel voor Chiron.'
+                                : '$coreGapCount chauffeurs hebben een kern-documentkloof. Dit is optioneel voor Chiron.',
+                            en: coreGapCount == 1
+                                ? '1 driver has a core document gap. This is optional for Chiron.'
+                                : '$coreGapCount drivers have a core document gap. This is optional for Chiron.',
+                            fr: coreGapCount == 1
+                                ? '1 chauffeur a un manque de documents clés. Facultatif pour Chiron.'
+                                : '$coreGapCount chauffeurs ont un manque de documents clés. Facultatif pour Chiron.',
+                            es: coreGapCount == 1
+                                ? '1 conductor tiene una brecha de documentos clave. Opcional para Chiron.'
+                                : '$coreGapCount conductores tienen una brecha de documentos clave. Opcional para Chiron.',
+                          ),
+                          actionLabel: _t(
+                            nl: 'Open chauffeurs',
+                            en: 'Open drivers',
+                            fr: 'Ouvrir chauffeurs',
+                            es: 'Abrir conductores',
+                          ),
+                          icon: Icons.badge_outlined,
+                          accent: _chironTextMuted,
+                          onTap: () {
+                            Navigator.of(context).push(
+                              MaterialPageRoute<void>(
+                                builder: (_) => companyDriverManagementPage(),
+                              ),
+                            );
+                          },
+                        ),
+                      if (docAttention.isNotEmpty)
+                        _attentionGroup(
+                          title: _t(
+                            nl: 'Documentenmap',
+                            en: 'Document folder',
+                            fr: 'Dossier documents',
+                            es: 'Carpeta de documentos',
+                          ),
+                          items: docAttention,
+                        ),
+                    ],
                   ],
                 ),
               ),
               _baseCard(
                 title: _t(
-                  nl: 'Aandacht nodig',
-                  en: 'Attention needed',
-                  fr: 'Attention requise',
-                  es: 'Atención requerida',
+                  nl: 'Technische aandacht nodig',
+                  en: 'Technical attention needed',
+                  fr: 'Attention technique requise',
+                  es: 'Atención técnica requerida',
                 ),
-                child: allAttention.isEmpty
+                child: technicalAttention.isEmpty
                     ? _emptyState(
                         _t(
-                          nl: 'Geen directe aandachtspunten gevonden.',
-                          en: 'No immediate attention items found.',
-                          fr: 'Aucun point d attention immédiat.',
-                          es: 'No se encontraron elementos urgentes.',
+                          nl: 'Geen technische aandachtspunten gevonden.',
+                          en: 'No technical attention items found.',
+                          fr: 'Aucun point d attention technique.',
+                          es: 'No se encontraron puntos técnicos de atención.',
                         ),
                       )
                     : Column(
@@ -6199,37 +6936,6 @@ class _ChironReadinessChecklistPage extends StatelessWidget {
                                 );
                               },
                             ),
-                          if (coreGapCount > 0)
-                            _attentionActionCard(
-                              title: _t(
-                                nl: 'Chauffeurdocumenten aanvullen',
-                                en: 'Complete driver documents',
-                                fr: 'Compléter les documents chauffeurs',
-                                es: 'Completar documentos de conductores',
-                              ),
-                              body: _t(
-                                nl: coreGapCount == 1
-                                    ? '1 chauffeur heeft een kern-documentkloof.'
-                                    : '$coreGapCount chauffeurs hebben een kern-documentkloof.',
-                                en: coreGapCount == 1
-                                    ? '1 driver has a core document gap.'
-                                    : '$coreGapCount drivers have a core document gap.',
-                                fr: coreGapCount == 1
-                                    ? '1 chauffeur a un manque de documents clés.'
-                                    : '$coreGapCount chauffeurs ont un manque de documents clés.',
-                                es: coreGapCount == 1
-                                    ? '1 conductor tiene una brecha de documentos clave.'
-                                    : '$coreGapCount conductores tienen una brecha de documentos clave.',
-                              ),
-                              actionLabel: _t(
-                                nl: 'Documenten controleren',
-                                en: 'Check documents',
-                                fr: 'Vérifier les documents',
-                                es: 'Revisar documentos',
-                              ),
-                              icon: Icons.badge_outlined,
-                              accent: _chironWarning,
-                            ),
                           _attentionGroup(
                             title: _t(
                               nl: 'Bedrijf',
@@ -6256,15 +6962,6 @@ class _ChironReadinessChecklistPage extends StatelessWidget {
                               es: 'Vehículos',
                             ),
                             items: vehicleAttention,
-                          ),
-                          _attentionGroup(
-                            title: _t(
-                              nl: 'Documenten',
-                              en: 'Documents',
-                              fr: 'Documents',
-                              es: 'Documentos',
-                            ),
-                            items: docAttention,
                           ),
                         ],
                       ),

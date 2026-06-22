@@ -1,5 +1,8 @@
+import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:fluxidi_tracking/app_config.dart';
@@ -87,6 +90,324 @@ _VehicleThemeTokens _vehicleThemeTokensFor(BusinessThemeVariant variant) {
   );
 }
 
+abstract final class _VehicleComplianceDocumentTypes {
+  static const taxiPermit = 'taxi_permit';
+  static const registration = 'registration';
+  static const inspection = 'inspection';
+  static const insurance = 'insurance';
+  static const permit = 'permit';
+  static const other = 'other';
+
+  static const all = <String>[
+    taxiPermit,
+    registration,
+    inspection,
+    insurance,
+    permit,
+    other,
+  ];
+}
+
+abstract final class _VehicleComplianceDocumentStatuses {
+  static const pending = 'pending';
+  static const approved = 'approved';
+  static const rejected = 'rejected';
+  static const expired = 'expired';
+
+  static const all = <String>[pending, approved, rejected, expired];
+}
+
+@immutable
+class _VehicleComplianceDocument {
+  const _VehicleComplianceDocument({
+    required this.documentId,
+    required this.tenantId,
+    required this.companyId,
+    required this.vehicleId,
+    required this.type,
+    required this.title,
+    required this.referencePath,
+    required this.expiryDate,
+    required this.status,
+    required this.notes,
+    required this.isTestDocument,
+    required this.createdAt,
+    required this.updatedAt,
+  });
+
+  final String documentId;
+  final String tenantId;
+  final String companyId;
+  final String vehicleId;
+  final String type;
+  final String title;
+  final String referencePath;
+  final String expiryDate;
+  final String status;
+  final String notes;
+  final bool isTestDocument;
+  final String createdAt;
+  final String updatedAt;
+
+  _VehicleComplianceDocument copyWith({
+    String? documentId,
+    String? tenantId,
+    String? companyId,
+    String? vehicleId,
+    String? type,
+    String? title,
+    String? referencePath,
+    String? expiryDate,
+    String? status,
+    String? notes,
+    bool? isTestDocument,
+    String? createdAt,
+    String? updatedAt,
+  }) {
+    return _VehicleComplianceDocument(
+      documentId: documentId ?? this.documentId,
+      tenantId: tenantId ?? this.tenantId,
+      companyId: companyId ?? this.companyId,
+      vehicleId: vehicleId ?? this.vehicleId,
+      type: type ?? this.type,
+      title: title ?? this.title,
+      referencePath: referencePath ?? this.referencePath,
+      expiryDate: expiryDate ?? this.expiryDate,
+      status: status ?? this.status,
+      notes: notes ?? this.notes,
+      isTestDocument: isTestDocument ?? this.isTestDocument,
+      createdAt: createdAt ?? this.createdAt,
+      updatedAt: updatedAt ?? this.updatedAt,
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return <String, dynamic>{
+      'document_id': documentId,
+      'tenant_id': tenantId,
+      'company_id': companyId,
+      'vehicle_id': vehicleId,
+      'type': type,
+      'title': title,
+      'reference_path': referencePath,
+      'expiry_date': expiryDate,
+      'status': status,
+      'notes': notes,
+      'is_test_document': isTestDocument,
+      'created_at': createdAt,
+      'updated_at': updatedAt,
+    };
+  }
+
+  factory _VehicleComplianceDocument.fromJson(Map<String, dynamic> json) {
+    bool boolField(dynamic value, {bool fallback = false}) {
+      if (value is bool) return value;
+      final token = (value ?? '').toString().trim().toLowerCase();
+      if (token == 'true') return true;
+      if (token == 'false') return false;
+      return fallback;
+    }
+
+    String textField(List<String> keys, {String fallback = ''}) {
+      for (final key in keys) {
+        final value = json[key];
+        if (value == null) continue;
+        final text = value.toString().trim();
+        if (text.isNotEmpty) return text;
+      }
+      return fallback;
+    }
+
+    return _VehicleComplianceDocument(
+      documentId: textField(const ['document_id', 'documentId']),
+      tenantId: textField(const ['tenant_id', 'tenantId']),
+      companyId: textField(const ['company_id', 'companyId']),
+      vehicleId: textField(const ['vehicle_id', 'vehicleId']),
+      type: textField(const ['type']),
+      title: textField(const ['title']),
+      referencePath: textField(const [
+        'reference_path',
+        'referencePath',
+        'reference',
+        'path',
+      ]),
+      expiryDate: textField(const ['expiry_date', 'expiryDate']),
+      status: textField(const ['status']),
+      notes: textField(const ['notes']),
+      isTestDocument: boolField(
+        json['is_test_document'] ?? json['isTestDocument'],
+      ),
+      createdAt: textField(const ['created_at', 'createdAt']),
+      updatedAt: textField(const ['updated_at', 'updatedAt']),
+    );
+  }
+}
+
+class _VehicleComplianceDocumentStore {
+  _VehicleComplianceDocumentStore._();
+
+  static final _VehicleComplianceDocumentStore instance =
+      _VehicleComplianceDocumentStore._();
+
+  final List<_VehicleComplianceDocument> _documents =
+      <_VehicleComplianceDocument>[];
+  String _loadedScopeKey = '';
+  bool _loading = false;
+
+  List<_VehicleComplianceDocument> documentsForVehicle({
+    required String tenantId,
+    required String companyId,
+    required String vehicleId,
+  }) {
+    final tid = tenantId.trim();
+    final cid = companyId.trim();
+    final vid = vehicleId.trim();
+    return _documents
+        .where(
+          (doc) =>
+              doc.tenantId == tid &&
+              doc.companyId == cid &&
+              doc.vehicleId == vid,
+        )
+        .toList(growable: false);
+  }
+
+  Future<void> ensureLoaded({
+    required String tenantId,
+    required String companyId,
+  }) async {
+    if (kIsWeb) return;
+    final tid = tenantId.trim();
+    final cid = companyId.trim();
+    if (tid.isEmpty || cid.isEmpty) return;
+    final scopeKey = '$tid::$cid';
+    if (_loading) return;
+    if (_loadedScopeKey == scopeKey) return;
+    _loading = true;
+    try {
+      final file = await _scopeFile(tenantId: tid, companyId: cid);
+      if (!await file.exists()) {
+        _documents.clear();
+        _loadedScopeKey = scopeKey;
+        return;
+      }
+      final decoded = jsonDecode(await file.readAsString());
+      if (decoded is! List) {
+        _documents.clear();
+        _loadedScopeKey = scopeKey;
+        return;
+      }
+      _documents
+        ..clear()
+        ..addAll(
+          decoded
+              .whereType<Map>()
+              .map(
+                (row) => _VehicleComplianceDocument.fromJson(
+                  Map<String, dynamic>.from(row),
+                ),
+              )
+              .where(
+                (doc) =>
+                    doc.documentId.isNotEmpty &&
+                    doc.vehicleId.isNotEmpty &&
+                    doc.tenantId == tid &&
+                    doc.companyId == cid,
+              ),
+        );
+      _loadedScopeKey = scopeKey;
+    } catch (_) {
+      // Local-only foundation: keep UI resilient if storage fails.
+    } finally {
+      _loading = false;
+    }
+  }
+
+  Future<void> upsert(_VehicleComplianceDocument document) async {
+    if (kIsWeb) return;
+    final index = _documents.indexWhere(
+      (doc) => doc.documentId == document.documentId,
+    );
+    if (index >= 0) {
+      _documents[index] = document;
+    } else {
+      _documents.add(document);
+    }
+    await _persistScope(document.tenantId, document.companyId);
+  }
+
+  Future<void> remove({
+    required String tenantId,
+    required String companyId,
+    required String documentId,
+  }) async {
+    if (kIsWeb) return;
+    _documents.removeWhere(
+      (doc) =>
+          doc.documentId == documentId &&
+          doc.tenantId == tenantId.trim() &&
+          doc.companyId == companyId.trim(),
+    );
+    await _persistScope(tenantId, companyId);
+  }
+
+  Future<void> removeAllForVehicle({
+    required String tenantId,
+    required String companyId,
+    required String vehicleId,
+  }) async {
+    if (kIsWeb) return;
+    final tid = tenantId.trim();
+    final cid = companyId.trim();
+    final vid = vehicleId.trim();
+    _documents.removeWhere(
+      (doc) =>
+          doc.tenantId == tid && doc.companyId == cid && doc.vehicleId == vid,
+    );
+    await _persistScope(tid, cid);
+  }
+
+  Future<File> _scopeFile({
+    required String tenantId,
+    required String companyId,
+  }) async {
+    final base = await getApplicationDocumentsDirectory();
+    final sanitizedTenant = tenantId.replaceAll(
+      RegExp(r'[^A-Za-z0-9._-]'),
+      '_',
+    );
+    final sanitizedCompany = companyId.replaceAll(
+      RegExp(r'[^A-Za-z0-9._-]'),
+      '_',
+    );
+    final dir = Directory(
+      '${base.path}${Platform.pathSeparator}tenant_state'
+      '${Platform.pathSeparator}vehicle_compliance'
+      '${Platform.pathSeparator}tenant_$sanitizedTenant'
+      '${Platform.pathSeparator}company_$sanitizedCompany',
+    );
+    if (!await dir.exists()) {
+      await dir.create(recursive: true);
+    }
+    return File(
+      '${dir.path}${Platform.pathSeparator}vehicle_compliance_documents_v1.json',
+    );
+  }
+
+  Future<void> _persistScope(String tenantId, String companyId) async {
+    final tid = tenantId.trim();
+    final cid = companyId.trim();
+    if (tid.isEmpty || cid.isEmpty) return;
+    final file = await _scopeFile(tenantId: tid, companyId: cid);
+    final scoped = _documents
+        .where((doc) => doc.tenantId == tid && doc.companyId == cid)
+        .map((doc) => doc.toJson())
+        .toList(growable: false);
+    await file.writeAsString(jsonEncode(scoped));
+    _loadedScopeKey = '$tid::$cid';
+  }
+}
+
 class VehicleManagementPage extends StatefulWidget {
   const VehicleManagementPage({super.key});
 
@@ -97,6 +418,27 @@ class VehicleManagementPage extends StatefulWidget {
 class _VehicleManagementPageState extends State<VehicleManagementPage> {
   final ImagePicker _imagePicker = ImagePicker();
   static const int _maxPhotosPerVehicle = 5;
+  bool _vehicleDocumentsLoaded = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      unawaited(_ensureVehicleDocumentsLoaded(refreshUi: true));
+    });
+  }
+
+  Future<void> _ensureVehicleDocumentsLoaded({bool refreshUi = false}) async {
+    final scope = _activeFleetScope();
+    if (scope == null) return;
+    await _VehicleComplianceDocumentStore.instance.ensureLoaded(
+      tenantId: scope.tenantId,
+      companyId: scope.companyId,
+    );
+    _vehicleDocumentsLoaded = true;
+    if (refreshUi && mounted) setState(() {});
+  }
+
   _VehicleThemeTokens get _theme =>
       _vehicleThemeTokensFor(businessThemeNotifier.value);
   Color get _pageBg => _theme.pageBg;
@@ -535,6 +877,770 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
     return trimmed;
   }
 
+  ({String tenantId, String companyId})? _activeFleetScope() {
+    final companyId = _activeCompanyIdForFleetUi();
+    if (companyId == null || companyId.trim().isEmpty) return null;
+    final scoped = companyId.trim();
+    return (tenantId: scoped, companyId: scoped);
+  }
+
+  String _vehicleDocumentTypeLabel(String typeId) {
+    switch (typeId) {
+      case _VehicleComplianceDocumentTypes.taxiPermit:
+        return _t(
+          nl: 'Taxivergunning / exploitatievergunning',
+          en: 'Taxi permit / operating licence',
+          fr: 'Licence taxi / licence d’exploitation',
+          es: 'Licencia taxi / licencia de explotación',
+        );
+      case _VehicleComplianceDocumentTypes.registration:
+        return _t(
+          nl: 'Kentekenbewijs / inschrijving',
+          en: 'Registration certificate',
+          fr: 'Certificat d’immatriculation',
+          es: 'Certificado de matriculación',
+        );
+      case _VehicleComplianceDocumentTypes.inspection:
+        return _t(
+          nl: 'Keuringsbewijs',
+          en: 'Inspection certificate',
+          fr: 'Certificat de contrôle',
+          es: 'Certificado de inspección',
+        );
+      case _VehicleComplianceDocumentTypes.insurance:
+        return _t(
+          nl: 'Verzekering',
+          en: 'Insurance',
+          fr: 'Assurance',
+          es: 'Seguro',
+        );
+      case _VehicleComplianceDocumentTypes.permit:
+        return _t(
+          nl: 'Vergunning / machtiging',
+          en: 'Permit / authorization',
+          fr: 'Autorisation / permis',
+          es: 'Permiso / autorización',
+        );
+      case _VehicleComplianceDocumentTypes.other:
+      default:
+        return _t(nl: 'Overig', en: 'Other', fr: 'Autre', es: 'Otro');
+    }
+  }
+
+  String _vehicleDocumentStatusLabel(String statusId) {
+    switch (statusId) {
+      case _VehicleComplianceDocumentStatuses.approved:
+        return _t(
+          nl: 'Goedgekeurd',
+          en: 'Approved',
+          fr: 'Approuvé',
+          es: 'Aprobado',
+        );
+      case _VehicleComplianceDocumentStatuses.rejected:
+        return _t(
+          nl: 'Afgekeurd',
+          en: 'Rejected',
+          fr: 'Refusé',
+          es: 'Rechazado',
+        );
+      case _VehicleComplianceDocumentStatuses.expired:
+        return _t(nl: 'Vervallen', en: 'Expired', fr: 'Expiré', es: 'Caducado');
+      case _VehicleComplianceDocumentStatuses.pending:
+      default:
+        return _t(
+          nl: 'In behandeling',
+          en: 'Pending review',
+          fr: 'En cours',
+          es: 'En revisión',
+        );
+    }
+  }
+
+  Color _vehicleDocumentStatusColor(String statusId) {
+    switch (statusId) {
+      case _VehicleComplianceDocumentStatuses.approved:
+        return _success;
+      case _VehicleComplianceDocumentStatuses.rejected:
+        return _danger;
+      case _VehicleComplianceDocumentStatuses.expired:
+        return const Color(0xFFE6A23C);
+      case _VehicleComplianceDocumentStatuses.pending:
+      default:
+        return _linkedAccent;
+    }
+  }
+
+  String _vehicleDocumentReferenceLabel(String referencePath) {
+    final trimmed = referencePath.trim();
+    if (trimmed.isEmpty) {
+      return _t(
+        nl: 'Geen bijlage',
+        en: 'No attachment',
+        fr: 'Aucune pièce jointe',
+        es: 'Sin adjunto',
+      );
+    }
+    final slash = trimmed.lastIndexOf(Platform.pathSeparator);
+    final altSlash = trimmed.lastIndexOf('/');
+    final start = slash > altSlash ? slash : altSlash;
+    final fileName = start >= 0 ? trimmed.substring(start + 1) : trimmed;
+    if (fileName.length <= 42) return fileName;
+    return '${fileName.substring(0, 18)}…${fileName.substring(fileName.length - 18)}';
+  }
+
+  Future<String?> _persistVehicleComplianceDocumentFile(
+    String sourcePath,
+  ) async {
+    try {
+      final source = sourcePath.trim();
+      if (source.isEmpty) return null;
+      final src = File(source);
+      if (!await src.exists()) return null;
+
+      final base = await getApplicationDocumentsDirectory();
+      final dir = Directory(
+        '${base.path}${Platform.pathSeparator}tenant_state'
+        '${Platform.pathSeparator}vehicle_compliance_files',
+      );
+      if (!await dir.exists()) {
+        await dir.create(recursive: true);
+      }
+
+      final lower = source.toLowerCase();
+      final dot = lower.lastIndexOf('.');
+      final ext = dot > 0 ? lower.substring(dot + 1) : 'bin';
+      final fileName =
+          'vehicle_doc_${DateTime.now().millisecondsSinceEpoch}.$ext';
+      final target = File('${dir.path}${Platform.pathSeparator}$fileName');
+      await src.copy(target.path);
+      return target.path;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<String?> _pickVehicleComplianceDocumentAttachment({
+    required ImageSource source,
+  }) async {
+    try {
+      if (source == ImageSource.camera || source == ImageSource.gallery) {
+        final picked = await _imagePicker.pickImage(
+          source: source,
+          imageQuality: 90,
+        );
+        if (picked == null) return null;
+        return _persistVehicleComplianceDocumentFile(picked.path);
+      }
+      return null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<String?> _pickVehicleComplianceDocumentFile() async {
+    try {
+      final picked = await FilePicker.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: const ['pdf', 'jpg', 'jpeg', 'png', 'webp'],
+        withData: false,
+      );
+      if (picked == null || picked.files.isEmpty) return null;
+      final path = picked.files.single.path;
+      if (path == null || path.trim().isEmpty) return null;
+      return _persistVehicleComplianceDocumentFile(path);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  InputDecoration _vehicleDocumentFieldDecoration(String label) {
+    return InputDecoration(
+      labelText: label,
+      filled: true,
+      fillColor: _inputFill,
+      labelStyle: TextStyle(color: _textSecondary),
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(10),
+        borderSide: BorderSide(color: _inputBorder),
+      ),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(10),
+        borderSide: BorderSide(color: _inputBorder),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(10),
+        borderSide: BorderSide(color: _gold.withOpacity(0.7)),
+      ),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+    );
+  }
+
+  Future<_VehicleComplianceDocument?> _openVehicleDocumentEditor({
+    required String vehicleId,
+    required String tenantId,
+    required String companyId,
+    _VehicleComplianceDocument? existing,
+  }) async {
+    var typeId = existing?.type ?? _VehicleComplianceDocumentTypes.taxiPermit;
+    final titleCtrl = TextEditingController(text: existing?.title ?? '');
+    final referenceCtrl = TextEditingController(
+      text: existing?.referencePath ?? '',
+    );
+    final expiryCtrl = TextEditingController(text: existing?.expiryDate ?? '');
+    final notesCtrl = TextEditingController(text: existing?.notes ?? '');
+    var statusId =
+        existing?.status ?? _VehicleComplianceDocumentStatuses.pending;
+
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (ctx, setDialogState) {
+            return AlertDialog(
+              backgroundColor: _sheetBg,
+              title: Text(
+                existing == null
+                    ? _t(
+                        nl: 'Document toevoegen',
+                        en: 'Add document',
+                        fr: 'Ajouter un document',
+                        es: 'Agregar documento',
+                      )
+                    : _t(
+                        nl: 'Document bewerken',
+                        en: 'Edit document',
+                        fr: 'Modifier le document',
+                        es: 'Editar documento',
+                      ),
+                style: TextStyle(color: _textPrimary),
+              ),
+              content: SizedBox(
+                width: 420,
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      DropdownButtonFormField<String>(
+                        value: typeId,
+                        isExpanded: true,
+                        style: TextStyle(
+                          color: _textPrimary,
+                          fontWeight: FontWeight.w600,
+                        ),
+                        iconEnabledColor: _textPrimary,
+                        dropdownColor: _dropdownBg,
+                        items: _VehicleComplianceDocumentTypes.all
+                            .map(
+                              (type) => DropdownMenuItem(
+                                value: type,
+                                child: Text(
+                                  _vehicleDocumentTypeLabel(type),
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(color: _textPrimary),
+                                ),
+                              ),
+                            )
+                            .toList(growable: false),
+                        onChanged: (value) {
+                          if (value == null) return;
+                          setDialogState(() => typeId = value);
+                        },
+                        decoration: _vehicleDocumentFieldDecoration(
+                          _t(
+                            nl: 'Documenttype',
+                            en: 'Document type',
+                            fr: 'Type de document',
+                            es: 'Tipo de documento',
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      TextField(
+                        controller: titleCtrl,
+                        style: TextStyle(color: _textPrimary),
+                        decoration: _vehicleDocumentFieldDecoration(
+                          _t(
+                            nl: 'Titel (optioneel)',
+                            en: 'Title (optional)',
+                            fr: 'Titre (optionnel)',
+                            es: 'Título (opcional)',
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          OutlinedButton.icon(
+                            onPressed: () async {
+                              final path =
+                                  await _pickVehicleComplianceDocumentAttachment(
+                                    source: ImageSource.camera,
+                                  );
+                              if (path == null) return;
+                              referenceCtrl.text = path;
+                              setDialogState(() {});
+                            },
+                            style: _editorOutlinedStyle(),
+                            icon: const Icon(Icons.photo_camera_outlined),
+                            label: Text(
+                              _t(
+                                nl: 'Foto nemen',
+                                en: 'Take photo',
+                                fr: 'Prendre une photo',
+                                es: 'Tomar foto',
+                              ),
+                            ),
+                          ),
+                          OutlinedButton.icon(
+                            onPressed: () async {
+                              final path =
+                                  await _pickVehicleComplianceDocumentAttachment(
+                                    source: ImageSource.gallery,
+                                  );
+                              if (path == null) return;
+                              referenceCtrl.text = path;
+                              setDialogState(() {});
+                            },
+                            style: _editorOutlinedStyle(),
+                            icon: const Icon(Icons.photo_library_outlined),
+                            label: Text(
+                              _t(
+                                nl: 'Kies uit galerij',
+                                en: 'Choose from gallery',
+                                fr: 'Choisir dans la galerie',
+                                es: 'Elegir de la galería',
+                              ),
+                            ),
+                          ),
+                          OutlinedButton.icon(
+                            onPressed: () async {
+                              final path =
+                                  await _pickVehicleComplianceDocumentFile();
+                              if (path == null) return;
+                              referenceCtrl.text = path;
+                              setDialogState(() {});
+                            },
+                            style: _editorOutlinedStyle(),
+                            icon: const Icon(Icons.attach_file),
+                            label: Text(
+                              _t(
+                                nl: 'Bestand/PDF kiezen',
+                                en: 'Choose file/PDF',
+                                fr: 'Choisir fichier/PDF',
+                                es: 'Elegir archivo/PDF',
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 10),
+                      TextField(
+                        controller: referenceCtrl,
+                        style: TextStyle(color: _textPrimary),
+                        decoration: _vehicleDocumentFieldDecoration(
+                          _t(
+                            nl: 'Referentie / pad / bestandsnaam',
+                            en: 'Reference / path / file label',
+                            fr: 'Référence / chemin / libellé fichier',
+                            es: 'Referencia / ruta / etiqueta de archivo',
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      TextField(
+                        controller: expiryCtrl,
+                        readOnly: true,
+                        style: TextStyle(color: _textPrimary),
+                        onTap: () async {
+                          final initial = DateTime.tryParse(expiryCtrl.text);
+                          final picked = await showDatePicker(
+                            context: ctx,
+                            initialDate: initial ?? DateTime.now(),
+                            firstDate: DateTime(2000),
+                            lastDate: DateTime(2100),
+                          );
+                          if (picked == null) return;
+                          expiryCtrl.text = picked
+                              .toIso8601String()
+                              .split('T')
+                              .first;
+                          setDialogState(() {});
+                        },
+                        decoration: _vehicleDocumentFieldDecoration(
+                          _t(
+                            nl: 'Vervaldatum',
+                            en: 'Expiry date',
+                            fr: 'Date d’expiration',
+                            es: 'Fecha de caducidad',
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      DropdownButtonFormField<String>(
+                        value: statusId,
+                        isExpanded: true,
+                        style: TextStyle(
+                          color: _textPrimary,
+                          fontWeight: FontWeight.w600,
+                        ),
+                        iconEnabledColor: _textPrimary,
+                        dropdownColor: _dropdownBg,
+                        items: _VehicleComplianceDocumentStatuses.all
+                            .map(
+                              (status) => DropdownMenuItem(
+                                value: status,
+                                child: Text(
+                                  _vehicleDocumentStatusLabel(status),
+                                  style: TextStyle(color: _textPrimary),
+                                ),
+                              ),
+                            )
+                            .toList(growable: false),
+                        onChanged: (value) {
+                          if (value == null) return;
+                          setDialogState(() => statusId = value);
+                        },
+                        decoration: _vehicleDocumentFieldDecoration(
+                          _t(
+                            nl: 'Status',
+                            en: 'Status',
+                            fr: 'Statut',
+                            es: 'Estado',
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      TextField(
+                        controller: notesCtrl,
+                        minLines: 2,
+                        maxLines: 4,
+                        style: TextStyle(color: _textPrimary),
+                        decoration: _vehicleDocumentFieldDecoration(
+                          _t(
+                            nl: 'Notities',
+                            en: 'Notes',
+                            fr: 'Notes',
+                            es: 'Notas',
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx, false),
+                  style: TextButton.styleFrom(foregroundColor: _textSecondary),
+                  child: Text(
+                    _t(
+                      nl: 'Annuleren',
+                      en: 'Cancel',
+                      fr: 'Annuler',
+                      es: 'Cancelar',
+                    ),
+                  ),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.pop(ctx, true),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: _gold,
+                    foregroundColor: _theme.palette.textOnAccent,
+                  ),
+                  child: Text(
+                    _t(
+                      nl: 'Opslaan',
+                      en: 'Save',
+                      fr: 'Enregistrer',
+                      es: 'Guardar',
+                    ),
+                  ),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    if (saved != true) {
+      titleCtrl.dispose();
+      referenceCtrl.dispose();
+      expiryCtrl.dispose();
+      notesCtrl.dispose();
+      return null;
+    }
+
+    final now = DateTime.now().toUtc().toIso8601String();
+    final resolvedTitle = titleCtrl.text.trim().isNotEmpty
+        ? titleCtrl.text.trim()
+        : _vehicleDocumentTypeLabel(typeId);
+    final referencePath = referenceCtrl.text.trim();
+    final expiryDate = expiryCtrl.text.trim();
+    final notes = notesCtrl.text.trim();
+    titleCtrl.dispose();
+    referenceCtrl.dispose();
+    expiryCtrl.dispose();
+    notesCtrl.dispose();
+
+    return _VehicleComplianceDocument(
+      documentId:
+          existing?.documentId ??
+          'vehdoc_${DateTime.now().millisecondsSinceEpoch}',
+      tenantId: tenantId,
+      companyId: companyId,
+      vehicleId: vehicleId,
+      type: typeId,
+      title: resolvedTitle,
+      referencePath: referencePath,
+      expiryDate: expiryDate,
+      status: statusId,
+      notes: notes,
+      isTestDocument: false,
+      createdAt: existing?.createdAt ?? now,
+      updatedAt: now,
+    );
+  }
+
+  Widget _vehicleComplianceDocumentChip({
+    required String label,
+    required Color color,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.12),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: color.withOpacity(0.45)),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          color: color,
+          fontSize: 10,
+          fontWeight: FontWeight.w700,
+        ),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      ),
+    );
+  }
+
+  Widget _vehicleComplianceDocumentsSection({
+    required String vehicleId,
+    required String tenantId,
+    required String companyId,
+    required List<_VehicleComplianceDocument> documents,
+    required VoidCallback onChanged,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          _t(
+            nl: 'Documenten & vergunningen',
+            en: 'Documents & permits',
+            fr: 'Documents et autorisations',
+            es: 'Documentos y permisos',
+          ),
+          style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 14),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          _t(
+            nl: 'Documenten zijn optioneel. Gebruik dit als digitale bedrijfsmap voor uw voertuigen.',
+            en: 'Documents are optional. Use this as a digital company folder for your vehicles.',
+            fr: 'Les documents sont facultatifs. Utilisez ceci comme dossier numérique pour vos véhicules.',
+            es: 'Los documentos son opcionales. Use esto como carpeta digital para sus vehículos.',
+          ),
+          style: TextStyle(color: _textMuted, fontSize: 11, height: 1.35),
+        ),
+        const SizedBox(height: 10),
+        if (documents.isEmpty)
+          Text(
+            _t(
+              nl: 'Nog geen voertuigdocumenten opgeslagen.',
+              en: 'No vehicle documents saved yet.',
+              fr: 'Aucun document véhicule enregistré.',
+              es: 'Aún no hay documentos del vehículo guardados.',
+            ),
+            style: TextStyle(color: _textSecondary, fontSize: 12),
+          )
+        else
+          ...documents.map(
+            (doc) => Container(
+              width: double.infinity,
+              margin: const EdgeInsets.only(bottom: 8),
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: _panelBg,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: _inputBorder),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    doc.title.trim().isNotEmpty
+                        ? doc.title.trim()
+                        : _vehicleDocumentTypeLabel(doc.type),
+                    style: TextStyle(
+                      color: _textPrimary,
+                      fontWeight: FontWeight.w700,
+                      fontSize: 13,
+                    ),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  const SizedBox(height: 6),
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 6,
+                    children: [
+                      _vehicleComplianceDocumentChip(
+                        label: _vehicleDocumentTypeLabel(doc.type),
+                        color: _linkedAccent,
+                      ),
+                      _vehicleComplianceDocumentChip(
+                        label: _vehicleDocumentStatusLabel(doc.status),
+                        color: _vehicleDocumentStatusColor(doc.status),
+                      ),
+                    ],
+                  ),
+                  if (doc.expiryDate.trim().isNotEmpty) ...[
+                    const SizedBox(height: 6),
+                    Text(
+                      '${_t(nl: 'Vervalt', en: 'Expires', fr: 'Expire', es: 'Caduca')}: ${doc.expiryDate.trim()}',
+                      style: TextStyle(color: _textSecondary, fontSize: 11),
+                    ),
+                  ],
+                  if (doc.referencePath.trim().isNotEmpty) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      '${_t(nl: 'Referentie', en: 'Reference', fr: 'Référence', es: 'Referencia')}: ${_vehicleDocumentReferenceLabel(doc.referencePath)}',
+                      style: TextStyle(color: _textMuted, fontSize: 11),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                  if (doc.notes.trim().isNotEmpty) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      doc.notes.trim(),
+                      style: TextStyle(color: _textFaint, fontSize: 11),
+                      maxLines: 3,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                  const SizedBox(height: 8),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: OutlinedButton.icon(
+                      onPressed: () async {
+                        final confirmed = await showDialog<bool>(
+                          context: context,
+                          builder: (ctx) => AlertDialog(
+                            backgroundColor: _sheetBg,
+                            title: Text(
+                              _t(
+                                nl: 'Document verwijderen?',
+                                en: 'Remove document?',
+                                fr: 'Supprimer le document ?',
+                                es: '¿Eliminar documento?',
+                              ),
+                            ),
+                            actions: [
+                              TextButton(
+                                onPressed: () => Navigator.pop(ctx, false),
+                                child: Text(
+                                  _t(
+                                    nl: 'Annuleren',
+                                    en: 'Cancel',
+                                    fr: 'Annuler',
+                                    es: 'Cancelar',
+                                  ),
+                                ),
+                              ),
+                              OutlinedButton(
+                                onPressed: () => Navigator.pop(ctx, true),
+                                style: OutlinedButton.styleFrom(
+                                  foregroundColor: _danger,
+                                  side: BorderSide(
+                                    color: _danger.withOpacity(0.55),
+                                  ),
+                                ),
+                                child: Text(
+                                  _t(
+                                    nl: 'Verwijderen',
+                                    en: 'Remove',
+                                    fr: 'Supprimer',
+                                    es: 'Eliminar',
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        );
+                        if (confirmed != true) return;
+                        await _VehicleComplianceDocumentStore.instance.remove(
+                          tenantId: tenantId,
+                          companyId: companyId,
+                          documentId: doc.documentId,
+                        );
+                        onChanged();
+                      },
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: _danger,
+                        side: BorderSide(color: _danger.withOpacity(0.5)),
+                        backgroundColor: _danger.withOpacity(0.12),
+                        visualDensity: VisualDensity.compact,
+                      ),
+                      icon: const Icon(Icons.delete_outline, size: 16),
+                      label: Text(
+                        _t(
+                          nl: 'Verwijderen',
+                          en: 'Remove',
+                          fr: 'Supprimer',
+                          es: 'Eliminar',
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        const SizedBox(height: 8),
+        OutlinedButton.icon(
+          onPressed: () async {
+            final created = await _openVehicleDocumentEditor(
+              vehicleId: vehicleId,
+              tenantId: tenantId,
+              companyId: companyId,
+            );
+            if (created == null) return;
+            await _VehicleComplianceDocumentStore.instance.upsert(created);
+            onChanged();
+          },
+          style: _editorOutlinedStyle(),
+          icon: const Icon(Icons.note_add_outlined),
+          label: Text(
+            _t(
+              nl: 'Document toevoegen',
+              en: 'Add document',
+              fr: 'Ajouter un document',
+              es: 'Agregar documento',
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
   Future<bool> _confirmVehicleUpsellIfNeeded() async {
     final currentCount = vehiclesNotifier.value.length;
     if (currentCount < includedVehicleLimit) return true;
@@ -923,6 +2029,26 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
       }
     }
     var active = resolvedExisting?.isActive ?? true;
+    final fleetScope = _activeFleetScope();
+    final documentTenantId =
+        fleetScope?.tenantId ?? _scopedVehicleCompanyId(resolvedExisting) ?? '';
+    final documentCompanyId =
+        fleetScope?.companyId ??
+        _scopedVehicleCompanyId(resolvedExisting) ??
+        '';
+    if (documentTenantId.isNotEmpty && documentCompanyId.isNotEmpty) {
+      await _VehicleComplianceDocumentStore.instance.ensureLoaded(
+        tenantId: documentTenantId,
+        companyId: documentCompanyId,
+      );
+    }
+    var vehicleDocuments = documentTenantId.isEmpty || documentCompanyId.isEmpty
+        ? <_VehicleComplianceDocument>[]
+        : _VehicleComplianceDocumentStore.instance.documentsForVehicle(
+            tenantId: documentTenantId,
+            companyId: documentCompanyId,
+            vehicleId: vehicleId,
+          );
 
     await showModalBottomSheet<void>(
       context: context,
@@ -1390,7 +2516,29 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                           ),
                         ),
                       ],
-                      const SizedBox(height: 12),
+                      const SizedBox(height: 14),
+                      if (documentTenantId.isNotEmpty &&
+                          documentCompanyId.isNotEmpty)
+                        _vehicleComplianceDocumentsSection(
+                          vehicleId: vehicleId,
+                          tenantId: documentTenantId,
+                          companyId: documentCompanyId,
+                          documents: vehicleDocuments,
+                          onChanged: () {
+                            setLocalState(() {
+                              vehicleDocuments = _VehicleComplianceDocumentStore
+                                  .instance
+                                  .documentsForVehicle(
+                                    tenantId: documentTenantId,
+                                    companyId: documentCompanyId,
+                                    vehicleId: vehicleId,
+                                  );
+                            });
+                          },
+                        ),
+                      if (documentTenantId.isNotEmpty &&
+                          documentCompanyId.isNotEmpty)
+                        const SizedBox(height: 12),
                       _photoPreviewBox(
                         photoRef: primaryPhotoRef,
                         height: 120,
@@ -2094,6 +3242,9 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
         );
       },
     );
+    if (mounted) {
+      await _ensureVehicleDocumentsLoaded(refreshUi: true);
+    }
   }
 
   Widget _txt(
@@ -2538,6 +3689,62 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                   icon: Icons.palette_outlined,
                   tablet: tablet,
                 ),
+                if (_vehicleDocumentsLoaded) ...[
+                  Builder(
+                    builder: (context) {
+                      final scope = _activeFleetScope();
+                      if (scope == null) return const SizedBox.shrink();
+                      final docs = _VehicleComplianceDocumentStore.instance
+                          .documentsForVehicle(
+                            tenantId: scope.tenantId,
+                            companyId: scope.companyId,
+                            vehicleId: v.id,
+                          );
+                      if (docs.isEmpty) return const SizedBox.shrink();
+                      final pendingCount = docs
+                          .where(
+                            (doc) =>
+                                doc.status ==
+                                _VehicleComplianceDocumentStatuses.pending,
+                          )
+                          .length;
+                      final summary = pendingCount > 0
+                          ? _t(
+                              nl: '$pendingCount in behandeling / ${docs.length} totaal',
+                              en: '$pendingCount pending / ${docs.length} total',
+                              fr: '$pendingCount en cours / ${docs.length} au total',
+                              es: '$pendingCount en revisión / ${docs.length} total',
+                            )
+                          : '${docs.length}';
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          SizedBox(height: col3SectionGap),
+                          _compactSectionHeading(
+                            _t(
+                              nl: 'Documenten',
+                              en: 'Documents',
+                              fr: 'Documents',
+                              es: 'Documentos',
+                            ),
+                            tablet: tablet,
+                          ),
+                          _compactCellLine(
+                            _t(
+                              nl: 'Compliance-docs',
+                              en: 'Compliance docs',
+                              fr: 'Docs conformité',
+                              es: 'Docs cumplimiento',
+                            ),
+                            summary,
+                            icon: Icons.description_outlined,
+                            tablet: tablet,
+                          ),
+                        ],
+                      );
+                    },
+                  ),
+                ],
               ],
             ),
           ),
@@ -2620,6 +3827,15 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                   width: double.infinity,
                   child: OutlinedButton.icon(
                     onPressed: () async {
+                      final scope = _activeFleetScope();
+                      if (scope != null) {
+                        await _VehicleComplianceDocumentStore.instance
+                            .removeAllForVehicle(
+                              tenantId: scope.tenantId,
+                              companyId: scope.companyId,
+                              vehicleId: v.id,
+                            );
+                      }
                       deleteVehicle(v.id);
                       await _syncFleetOrShowError();
                     },

@@ -58,6 +58,7 @@ import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/company_session_store.dart';
 import 'package:fluxidi_tracking/company_onboarding_page.dart';
 import 'package:fluxidi_tracking/chiron_compliance_dashboard_page.dart';
+import 'package:fluxidi_tracking/company_driver_management_page.dart';
 import 'package:fluxidi_tracking/compliance_ledger_reader.dart';
 import 'package:fluxidi_tracking/compliance_register_receipt_bridge.dart';
 import 'package:fluxidi_tracking/local_ride_assignment_cache.dart';
@@ -2072,6 +2073,9 @@ Future<void> main() async {
   // screen State) so deep links + lifecycle resume are handled regardless of
   // which page is currently mounted.
   paymentReturnCoordinator.start(bookingBaseUrl: kBookingBaseUrl);
+  registerCompanyDriverManagementPageBuilder(
+    () => const CompanyDriverManagementPage(),
+  );
   runApp(const FluxidiDriverApp());
   WidgetsBinding.instance.addPostFrameCallback((_) {
     unawaited(

@@ -33,6 +33,20 @@ enum _SetupStatus {
   comingSoon,
 }
 
+/// Deep-link target for opening a specific settings section from external
+/// flows (e.g. Chiron readiness actions). Does not affect step-mode wizard
+/// navigation, which continues to use [BusinessSettingsPage.initialFocus].
+enum BusinessSettingsInitialSection { officialCompanyDetails }
+
+extension BusinessSettingsInitialSectionId on BusinessSettingsInitialSection {
+  String get sectionId {
+    switch (this) {
+      case BusinessSettingsInitialSection.officialCompanyDetails:
+        return 'official_company_details';
+    }
+  }
+}
+
 class _SetupItem {
   const _SetupItem({
     required this.title,
@@ -51,6 +65,7 @@ class BusinessSettingsPage extends StatefulWidget {
   const BusinessSettingsPage({
     super.key,
     this.initialFocus,
+    this.initialSection,
     this.stepMode = false,
     this.onStepSaved,
     this.stepTitle,
@@ -72,6 +87,10 @@ class BusinessSettingsPage extends StatefulWidget {
   /// byte-identical to the pre-existing single-page settings cockpit so all
   /// existing call sites (`const BusinessSettingsPage()`) keep working.
   final String? initialFocus;
+
+  /// When set in normal (non-step) mode, opens the matching settings section,
+  /// scrolls it into view after the first frame, and briefly highlights it.
+  final BusinessSettingsInitialSection? initialSection;
 
   /// See [initialFocus]. Default `false` preserves existing behavior. When
   /// `true` and [initialFocus] is unknown/null, the page gracefully falls
@@ -301,6 +320,11 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
   bool _paymentDemoMode = true;
   bool _mollieConnected = false;
   final Set<String> _expandedSections = <String>{};
+  final ScrollController _settingsScrollController = ScrollController();
+  final Map<String, GlobalKey> _sectionAnchorKeys = <String, GlobalKey>{
+    'official_company_details': GlobalKey(),
+  };
+  String? _highlightedSectionId;
   static const List<String> _airportFixedFareDirections = <String>[
     'to_airport',
     'from_airport',
@@ -434,6 +458,39 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     return id == widget.initialFocus;
   }
 
+  String? _resolvedInitialSectionId() {
+    if (_isActiveStepMode || widget.initialSection == null) return null;
+    return widget.initialSection!.sectionId;
+  }
+
+  void _scrollToSection(String sectionId) {
+    final anchorKey = _sectionAnchorKeys[sectionId];
+    final targetContext = anchorKey?.currentContext;
+    if (targetContext == null) return;
+    Scrollable.ensureVisible(
+      targetContext,
+      alignment: 0.08,
+      duration: const Duration(milliseconds: 350),
+      curve: Curves.easeInOut,
+    );
+  }
+
+  void _scheduleInitialSectionFocus(String sectionId) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        _scrollToSection(sectionId);
+      });
+      Future<void>.delayed(const Duration(milliseconds: 2200), () {
+        if (!mounted) return;
+        if (_highlightedSectionId == sectionId) {
+          setState(() => _highlightedSectionId = null);
+        }
+      });
+    });
+  }
+
   /// Localizes the "Step X of Y" progress label rendered in the AppBar
   /// strip when active step mode is on. Returns an empty string when
   /// either index or total is missing so the strip can hide cleanly.
@@ -483,6 +540,12 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         _expandedSections.add(focus);
       }
     }
+    final initialSectionId = _resolvedInitialSectionId();
+    if (initialSectionId != null) {
+      _expandedSections.add(initialSectionId);
+      _highlightedSectionId = initialSectionId;
+      _scheduleInitialSectionFocus(initialSectionId);
+    }
     _hydrateFromSettings(businessSettingsNotifier.value);
     // Prefer locally cached "Officiële bedrijfsgegevens" so user-entered values
     // survive app restarts even when the backend is offline. Falls back to the
@@ -526,6 +589,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
   void dispose() {
     companyProfileNotifier.removeListener(_onLogoSanitizationListeners);
     businessSettingsNotifier.removeListener(_onLogoSanitizationListeners);
+    _settingsScrollController.dispose();
     _companyCtrl.dispose();
     _supportEmailCtrl.dispose();
     _supportPhoneCtrl.dispose();
@@ -6189,11 +6253,14 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     required Widget child,
     _SetupStatus? status,
     int? titleMaxLines,
+    GlobalKey? anchorKey,
+    bool highlighted = false,
   }) {
     final isExpanded = _expandedSections.contains(id);
     final statusResolved = status ?? _SetupStatus.comingSoon;
     final statusColor = _statusColor(statusResolved);
     return Container(
+      key: anchorKey,
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
@@ -6203,7 +6270,12 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
           colors: [_panelBg, _isDark ? _pageBg : _subPanelBg],
         ),
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: _border.withOpacity(_isDark ? 0.55 : 0.95)),
+        border: Border.all(
+          color: highlighted
+              ? _accent.withOpacity(_isDark ? 0.9 : 0.82)
+              : _border.withOpacity(_isDark ? 0.55 : 0.95),
+          width: highlighted ? 1.6 : 1,
+        ),
         boxShadow: [
           BoxShadow(
             color: _shadow.withOpacity(_isDark ? 0.22 : 0.12),
@@ -9173,6 +9245,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                 : null,
           ),
           body: ListView(
+            controller: _settingsScrollController,
             padding: const EdgeInsets.all(12),
             children: [
               if (_backendProfilesLoading) ...[
@@ -9763,6 +9836,9 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
               if (_shouldShowSection('official_company_details'))
                 _collapsibleSettingsCard(
                   id: 'official_company_details',
+                  anchorKey: _sectionAnchorKeys['official_company_details'],
+                  highlighted:
+                      _highlightedSectionId == 'official_company_details',
                   icon: Icons.business_outlined,
                   title: _t(
                     nl: 'Officiële bedrijfsgegevens',
