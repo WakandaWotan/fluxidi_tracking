@@ -41721,6 +41721,32 @@ async function handleBooking(payload, env, request, options = {}) {
       payload?.from_lng ??
       payload?.fromLng ??
       (routeResolvedPickupCoords?.usable === true ? routeResolvedPickupCoords.lng : null);
+    // Roundtrip-leg coord propagation: outbound dropoff coords are also the
+    // return leg's pickup coords for airport roundtrips (return pickup =
+    // airport/outbound dropoff). Without these, the return leg's allocator
+    // route check fires with pickup_lat=null and fails with
+    // route_pickup_coords_usable=false / reason=origin_eta_not_feasible while
+    // /quote succeeded. Hoisted out of the diagnostic try block below so the
+    // dispatch call sites can forward them.
+    const routeResolvedDropoffCoords = _allocatorResolvePointCoordinates({
+      resolved_waypoint: routeOut?.resolved_to_point,
+    });
+    const bookingDropoffLatForAllocator =
+      payload?.dropoff_lat ??
+      payload?.dropoffLat ??
+      payload?.to_lat ??
+      payload?.toLat ??
+      payload?.destination_lat ??
+      payload?.destinationLat ??
+      (routeResolvedDropoffCoords?.usable === true ? routeResolvedDropoffCoords.lat : null);
+    const bookingDropoffLngForAllocator =
+      payload?.dropoff_lng ??
+      payload?.dropoffLng ??
+      payload?.to_lng ??
+      payload?.toLng ??
+      payload?.destination_lng ??
+      payload?.destinationLng ??
+      (routeResolvedDropoffCoords?.usable === true ? routeResolvedDropoffCoords.lng : null);
 
     // Layer 1B: surface the resolved pickup/dropoff coordinates and their
     // source the moment handleBooking has them. If a downstream gate (e.g.
@@ -41729,7 +41755,7 @@ async function handleBooking(payload, env, request, options = {}) {
     // geocode failed, or only one side resolved. Diagnostic only, scope
     // values are not logged here.
     try {
-      const _bookingDropoffLat =
+      const _bodyDropoffLatRaw =
         payload?.dropoff_lat ??
         payload?.dropoffLat ??
         payload?.to_lat ??
@@ -41737,7 +41763,7 @@ async function handleBooking(payload, env, request, options = {}) {
         payload?.destination_lat ??
         payload?.destinationLat ??
         null;
-      const _bookingDropoffLng =
+      const _bodyDropoffLngRaw =
         payload?.dropoff_lng ??
         payload?.dropoffLng ??
         payload?.to_lng ??
@@ -41755,14 +41781,18 @@ async function handleBooking(payload, env, request, options = {}) {
           : routeResolvedPickupCoords?.usable === true
             ? "route_resolved"
             : "none";
-      const _bookingDropoffSource = Number.isFinite(Number(_bookingDropoffLat)) &&
-        Number.isFinite(Number(_bookingDropoffLng))
+      const _bookingDropoffSource = Number.isFinite(Number(_bodyDropoffLatRaw)) &&
+        Number.isFinite(Number(_bodyDropoffLngRaw))
           ? "body_aliases"
-          : "none";
+          : routeResolvedDropoffCoords?.usable === true
+            ? "route_resolved"
+            : "none";
       const _hasPickupLatLng =
         Number.isFinite(Number(bookingPickupLatForAllocator)) &&
         Number.isFinite(Number(bookingPickupLngForAllocator));
-      const _hasDropoffLatLng = _bookingDropoffSource === "body_aliases";
+      const _hasDropoffLatLng =
+        Number.isFinite(Number(bookingDropoffLatForAllocator)) &&
+        Number.isFinite(Number(bookingDropoffLngForAllocator));
       const _bookingAirportIata = safeStr(
         payload?.airport_iata ?? payload?.airportIata ?? payload?.airport_id ?? payload?.airportId,
         16,
@@ -42217,6 +42247,8 @@ async function handleBooking(payload, env, request, options = {}) {
               hasReturnSchedule,
               bookingPickupLatForAllocator,
               bookingPickupLngForAllocator,
+              bookingDropoffLatForAllocator,
+              bookingDropoffLngForAllocator,
               bookingServiceMin,
             });
             const failedLeg = (dispatchOutcome?.legResults || []).find(
@@ -42296,6 +42328,8 @@ async function handleBooking(payload, env, request, options = {}) {
               fleetScope,
               pickupLat: bookingPickupLatForAllocator,
               pickupLng: bookingPickupLngForAllocator,
+              dropoffLat: bookingDropoffLatForAllocator,
+              dropoffLng: bookingDropoffLngForAllocator,
             });
             if (!vehicleCapacity.ok) {
               console.log(
@@ -43123,6 +43157,8 @@ Retour route: ${return_from || to} → ${return_to || from}`,
           hasReturnSchedule,
           bookingPickupLatForAllocator,
           bookingPickupLngForAllocator,
+          bookingDropoffLatForAllocator,
+          bookingDropoffLngForAllocator,
           bookingServiceMin,
         });
         const failedLeg = (dispatchOutcome?.legResults || []).find(
@@ -43202,6 +43238,8 @@ Retour route: ${return_from || to} → ${return_to || from}`,
           fleetScope,
           pickupLat: bookingPickupLatForAllocator,
           pickupLng: bookingPickupLngForAllocator,
+          dropoffLat: bookingDropoffLatForAllocator,
+          dropoffLng: bookingDropoffLngForAllocator,
         });
         if (!vehicleCapacity.ok) {
           console.log(
@@ -47537,11 +47575,15 @@ function _buildSplitRoundtripLegDispatchSpecs({
   outboundTo = "",
   outboundPickupLat = null,
   outboundPickupLng = null,
+  outboundDropoffLat = null,
+  outboundDropoffLng = null,
   returnPickupIso = "",
   returnFrom = "",
   returnTo = "",
   returnPickupLat = null,
   returnPickupLng = null,
+  returnDropoffLat = null,
+  returnDropoffLng = null,
   durationRouteMin = 0,
   returnDurationMin = 0,
   tier = "comfort",
@@ -47578,6 +47620,125 @@ function _buildSplitRoundtripLegDispatchSpecs({
     includeReturnDuration: false,
     env,
   });
+
+  // Roundtrip-leg coord propagation: derive per-leg pickup/dropoff coords
+  // with explicit fallback so the allocator's route check never fires with
+  // pickup_lat=null on the return leg of an airport roundtrip. Outbound
+  // values are kept additive; existing leg-stamped coords (from a persisted
+  // operational leg) always win over the parent-payload fallback.
+  const _legCoordNum = (...candidates) => {
+    for (const v of candidates) {
+      if (v === null || v === undefined) continue;
+      const n = Number(v);
+      if (Number.isFinite(n)) return n;
+    }
+    return null;
+  };
+  const outboundLegPickupLat = _legCoordNum(
+    outboundLeg?.pickup_lat,
+    outboundLeg?.pickupLat,
+    outboundLeg?.from_lat,
+    outboundLeg?.fromLat,
+    outboundPickupLat,
+  );
+  const outboundLegPickupLng = _legCoordNum(
+    outboundLeg?.pickup_lng,
+    outboundLeg?.pickupLng,
+    outboundLeg?.from_lng,
+    outboundLeg?.fromLng,
+    outboundPickupLng,
+  );
+  const outboundLegDropoffLat = _legCoordNum(
+    outboundLeg?.dropoff_lat,
+    outboundLeg?.dropoffLat,
+    outboundLeg?.to_lat,
+    outboundLeg?.toLat,
+    outboundDropoffLat,
+  );
+  const outboundLegDropoffLng = _legCoordNum(
+    outboundLeg?.dropoff_lng,
+    outboundLeg?.dropoffLng,
+    outboundLeg?.to_lng,
+    outboundLeg?.toLng,
+    outboundDropoffLng,
+  );
+  // Return pickup = airport / outbound dropoff. Return dropoff = original
+  // customer pickup (outbound pickup). Both are derived only when the
+  // per-leg explicit value is missing.
+  const returnLegPickupLatExplicit = _legCoordNum(
+    returnLeg?.pickup_lat,
+    returnLeg?.pickupLat,
+    returnLeg?.from_lat,
+    returnLeg?.fromLat,
+    returnPickupLat,
+  );
+  const returnLegPickupLngExplicit = _legCoordNum(
+    returnLeg?.pickup_lng,
+    returnLeg?.pickupLng,
+    returnLeg?.from_lng,
+    returnLeg?.fromLng,
+    returnPickupLng,
+  );
+  const returnLegDropoffLatExplicit = _legCoordNum(
+    returnLeg?.dropoff_lat,
+    returnLeg?.dropoffLat,
+    returnLeg?.to_lat,
+    returnLeg?.toLat,
+    returnDropoffLat,
+  );
+  const returnLegDropoffLngExplicit = _legCoordNum(
+    returnLeg?.dropoff_lng,
+    returnLeg?.dropoffLng,
+    returnLeg?.to_lng,
+    returnLeg?.toLng,
+    returnDropoffLng,
+  );
+  const returnPickupSource =
+    returnLegPickupLatExplicit !== null && returnLegPickupLngExplicit !== null
+      ? "explicit"
+      : (outboundLegDropoffLat !== null && outboundLegDropoffLng !== null
+          ? "outbound_dropoff_fallback"
+          : "unavailable");
+  const returnDropoffSource =
+    returnLegDropoffLatExplicit !== null && returnLegDropoffLngExplicit !== null
+      ? "explicit"
+      : (outboundLegPickupLat !== null && outboundLegPickupLng !== null
+          ? "outbound_pickup_fallback"
+          : "unavailable");
+  const finalReturnPickupLat =
+    returnLegPickupLatExplicit !== null
+      ? returnLegPickupLatExplicit
+      : outboundLegDropoffLat;
+  const finalReturnPickupLng =
+    returnLegPickupLngExplicit !== null
+      ? returnLegPickupLngExplicit
+      : outboundLegDropoffLng;
+  const finalReturnDropoffLat =
+    returnLegDropoffLatExplicit !== null
+      ? returnLegDropoffLatExplicit
+      : outboundLegPickupLat;
+  const finalReturnDropoffLng =
+    returnLegDropoffLngExplicit !== null
+      ? returnLegDropoffLngExplicit
+      : outboundLegPickupLng;
+  const fallbackUsed =
+    returnPickupSource === "outbound_dropoff_fallback" ||
+    returnDropoffSource === "outbound_pickup_fallback";
+  if (returnPickup) {
+    console.log(
+      `[ROUNDTRIP_DISPATCH][LEG_COORDS] booking=${_bookingIntentMask(parentId)} ` +
+        `leg=return pickup_source=${returnPickupSource} ` +
+        `dropoff_source=${returnDropoffSource} ` +
+        `fallback_used=${fallbackUsed ? "true" : "false"} ` +
+        `has_pickup_latlng=${
+          finalReturnPickupLat !== null && finalReturnPickupLng !== null ? "true" : "false"
+        } ` +
+        `has_dropoff_latlng=${
+          finalReturnDropoffLat !== null && finalReturnDropoffLng !== null ? "true" : "false"
+        }`,
+    );
+  }
+
   const specs = [];
   if (outboundPickup) {
     specs.push({
@@ -47592,8 +47753,10 @@ function _buildSplitRoundtripLegDispatchSpecs({
       bags,
       from: safeStr(outboundLeg?.from ?? outboundFrom, 320) || outboundFrom,
       to: safeStr(outboundLeg?.to ?? outboundTo, 320) || outboundTo,
-      pickupLat: outboundPickupLat,
-      pickupLng: outboundPickupLng,
+      pickupLat: outboundLegPickupLat,
+      pickupLng: outboundLegPickupLng,
+      dropoffLat: outboundLegDropoffLat,
+      dropoffLng: outboundLegDropoffLng,
     });
   }
   if (returnPickup) {
@@ -47609,8 +47772,10 @@ function _buildSplitRoundtripLegDispatchSpecs({
       bags,
       from: safeStr(returnLeg?.from ?? returnFrom, 320) || returnFrom,
       to: safeStr(returnLeg?.to ?? returnTo, 320) || returnTo,
-      pickupLat: returnPickupLat,
-      pickupLng: returnPickupLng,
+      pickupLat: finalReturnPickupLat,
+      pickupLng: finalReturnPickupLng,
+      dropoffLat: finalReturnDropoffLat,
+      dropoffLng: finalReturnDropoffLng,
     });
   }
   return specs.filter(
@@ -67610,6 +67775,12 @@ async function _requestFleetLegAllocation(env, spec, fleetScope, sourceLabel = "
     pickup_iso: spec.pickupIso,
     pickup_lat: spec.pickupLat,
     pickup_lng: spec.pickupLng,
+    // Additive: forward dropoff coords so the allocator (and downstream
+    // route diagnostics) can use them without requiring a re-geocode of
+    // the address text. Existing allocator only reads pickup_lat/lng for
+    // its route check; these extras are harmless when ignored.
+    dropoff_lat: spec.dropoffLat ?? null,
+    dropoff_lng: spec.dropoffLng ?? null,
     tenantScope: fleetScope,
   });
   const allowed = alloc?.allowed === true;
@@ -67693,6 +67864,8 @@ async function _vehicleCapacityGateForRoundtripDispatch(env, {
   fleetScope,
   pickupLat = null,
   pickupLng = null,
+  dropoffLat = null,
+  dropoffLng = null,
 } = {}) {
   const mode = resolveRoundtripDispatchMode(rec || bookingFields || {});
   const bookingObj = bookingFields && typeof bookingFields === "object" ? bookingFields : {};
@@ -67714,6 +67887,8 @@ async function _vehicleCapacityGateForRoundtripDispatch(env, {
       pickup_iso: bookingObj.pickup_iso,
       pickup_lat: pickupLat,
       pickup_lng: pickupLng,
+      dropoff_lat: dropoffLat,
+      dropoff_lng: dropoffLng,
     });
   }
   const legSpecs = _buildSplitRoundtripLegDispatchSpecs({
@@ -67725,6 +67900,8 @@ async function _vehicleCapacityGateForRoundtripDispatch(env, {
     outboundTo: bookingObj.to,
     outboundPickupLat: pickupLat,
     outboundPickupLng: pickupLng,
+    outboundDropoffLat: dropoffLat,
+    outboundDropoffLng: dropoffLng,
     returnPickupIso: bookingObj.return_pickup_iso,
     returnFrom: bookingObj.return_from,
     returnTo: bookingObj.return_to,
@@ -67749,6 +67926,8 @@ async function _vehicleCapacityGateForRoundtripDispatch(env, {
       pickup_iso: spec.pickupIso,
       pickup_lat: spec.pickupLat,
       pickup_lng: spec.pickupLng,
+      dropoff_lat: spec.dropoffLat ?? null,
+      dropoff_lng: spec.dropoffLng ?? null,
     });
     if (!gate.ok) return gate;
   }
@@ -67776,6 +67955,8 @@ async function _runBookingCreationFleetDispatch(env, {
   hasReturnSchedule = false,
   bookingPickupLatForAllocator = null,
   bookingPickupLngForAllocator = null,
+  bookingDropoffLatForAllocator = null,
+  bookingDropoffLngForAllocator = null,
   bookingServiceMin = 30,
 } = {}) {
   const bookingFields = {
@@ -67807,6 +67988,17 @@ async function _runBookingCreationFleetDispatch(env, {
     pickup_lng: bookingPickupLngForAllocator,
     pickupLat: bookingPickupLatForAllocator,
     pickupLng: bookingPickupLngForAllocator,
+    // Roundtrip-leg coord propagation: outbound dropoff coords (airport for
+    // airport roundtrips) are required as the return leg's pickup coords
+    // and as the outbound leg's dropoff coords for downstream route checks.
+    dropoff_lat: bookingDropoffLatForAllocator,
+    dropoff_lng: bookingDropoffLngForAllocator,
+    dropoffLat: bookingDropoffLatForAllocator,
+    dropoffLng: bookingDropoffLngForAllocator,
+    to_lat: bookingDropoffLatForAllocator,
+    to_lng: bookingDropoffLngForAllocator,
+    toLat: bookingDropoffLatForAllocator,
+    toLng: bookingDropoffLngForAllocator,
   };
   return _dispatchFleetAssignmentForBooking(env, {
     parentBookingId: canonicalBookingId,
@@ -67937,6 +68129,52 @@ async function _dispatchFleetAssignmentForBooking(
     payloadObj?.from_lng ??
     payloadObj?.fromLng ??
     null;
+  // Outbound dropoff coordinates = airport for airport outbound rides.
+  // These are also the return leg's pickup coordinates for an airport
+  // roundtrip (return pickup = airport / outbound dropoff). Without this
+  // fallback the return leg's allocator route fires with pickup_lat=null
+  // and is rejected with route_pickup_coords_usable=false even though /quote
+  // succeeded with the same payload.
+  const outboundDropoffLat =
+    fields.dropoff_lat ??
+    fields.dropoffLat ??
+    fields.to_lat ??
+    fields.toLat ??
+    fields.destination_lat ??
+    fields.destinationLat ??
+    bookingObj?.dropoff_lat ??
+    bookingObj?.dropoffLat ??
+    bookingObj?.to_lat ??
+    bookingObj?.toLat ??
+    bookingObj?.destination_lat ??
+    bookingObj?.destinationLat ??
+    payloadObj?.dropoff_lat ??
+    payloadObj?.dropoffLat ??
+    payloadObj?.to_lat ??
+    payloadObj?.toLat ??
+    payloadObj?.destination_lat ??
+    payloadObj?.destinationLat ??
+    null;
+  const outboundDropoffLng =
+    fields.dropoff_lng ??
+    fields.dropoffLng ??
+    fields.to_lng ??
+    fields.toLng ??
+    fields.destination_lng ??
+    fields.destinationLng ??
+    bookingObj?.dropoff_lng ??
+    bookingObj?.dropoffLng ??
+    bookingObj?.to_lng ??
+    bookingObj?.toLng ??
+    bookingObj?.destination_lng ??
+    bookingObj?.destinationLng ??
+    payloadObj?.dropoff_lng ??
+    payloadObj?.dropoffLng ??
+    payloadObj?.to_lng ??
+    payloadObj?.toLng ??
+    payloadObj?.destination_lng ??
+    payloadObj?.destinationLng ??
+    null;
 
   if (mode === "split_no_wait") {
     const legSpecs = _buildSplitRoundtripLegDispatchSpecs({
@@ -67951,6 +68189,8 @@ async function _dispatchFleetAssignmentForBooking(
       outboundTo,
       outboundPickupLat,
       outboundPickupLng,
+      outboundDropoffLat,
+      outboundDropoffLng,
       returnPickupIso,
       returnFrom,
       returnTo,
