@@ -24304,6 +24304,39 @@ POST /admin/mollie/connect/disconnect
         });
       }
 
+      if (url.pathname === CHIRON_CONFIG_TEST_CREDENTIALS_PATH) {
+        if (request.method !== "POST") {
+          return json({ ok: false, error: "Method Not Allowed" }, 405);
+        }
+        const body = await safeJson(request);
+        const authScope = await _requireAdminOrCompanySessionForExplicitScope({
+          request,
+          url,
+          env,
+          body,
+          routeLabel: "ADMIN_CHIRON_CONFIG_TEST_CREDENTIALS_POST",
+        });
+        if (!authScope.ok) return authScope.response;
+        const bodyScopeCheck = _validateSettingsPayloadScope(body, authScope.explicitScope);
+        if (!bodyScopeCheck.ok) return json(bodyScopeCheck, 400);
+        const proxyBody =
+          body && typeof body === "object" && !Array.isArray(body)
+            ? {
+                ...body,
+                tenant_id: authScope.explicitScope.tenant_id,
+                company_id: authScope.explicitScope.company_id,
+              }
+            : {
+                tenant_id: authScope.explicitScope.tenant_id,
+                company_id: authScope.explicitScope.company_id,
+              };
+        return _proxyChironConfigStatusToComplianceWorker(env, authScope.explicitScope, {
+          method: "POST",
+          body: proxyBody,
+          compliancePath: CHIRON_CONFIG_TEST_CREDENTIALS_PATH,
+        });
+      }
+
       if (url.pathname === "/admin/business/profile" && request.method === "POST") {
         const body = await safeJson(request);
         const authScope = await _requireAdminOrCompanySessionForExplicitScope({
@@ -34429,6 +34462,7 @@ async function _maybeGenerateBusinessInvoiceForPaidBooking({
 
 const COMPLIANCE_APPEND_PATH = "/compliance/events/append";
 const CHIRON_CONFIG_STATUS_PATH = "/admin/chiron/config/status";
+const CHIRON_CONFIG_TEST_CREDENTIALS_PATH = "/admin/chiron/config/test-credentials";
 const CHIRON_INTERNAL_PROXY_MODE = "booking_worker_v1";
 
 function buildComplianceAppendUrl(baseUrlRaw) {
@@ -39446,8 +39480,17 @@ async function _proxyChironConfigStatusToComplianceWorker(env, explicitScope, op
 
   const method = safeStr(options?.method) || "GET";
   const body = options?.body ?? null;
+  const requestedCompliancePath =
+    safeStr(options?.compliancePath, 256) || CHIRON_CONFIG_STATUS_PATH;
+  const compliancePath = requestedCompliancePath;
+  if (
+    compliancePath !== CHIRON_CONFIG_STATUS_PATH &&
+    compliancePath !== CHIRON_CONFIG_TEST_CREDENTIALS_PATH
+  ) {
+    return json({ ok: false, error: "invalid_compliance_proxy_path" }, 400);
+  }
 
-  const proxyUrl = new URL(`https://fluxidi-compliance-api.internal${CHIRON_CONFIG_STATUS_PATH}`);
+  const proxyUrl = new URL(`https://fluxidi-compliance-api.internal${compliancePath}`);
   proxyUrl.searchParams.set("tenant_id", tenantId);
   proxyUrl.searchParams.set("company_id", companyId);
 
