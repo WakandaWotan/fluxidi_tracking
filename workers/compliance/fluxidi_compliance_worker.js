@@ -5956,8 +5956,8 @@ function buildChironConnectionStatusResponse(tenantId, companyId, stored) {
     environment,
     region,
     production_enabled: productionEnabled,
-    test_credentials_stored: false,
-    production_credentials_stored: false,
+    test_credentials_stored: stored.test_credentials_stored === true,
+    production_credentials_stored: stored.production_credentials_stored === true,
     last_connection_status: lastConnectionStatus,
     last_connection_test_at: cleanText(stored.last_connection_test_at, 64) || null,
     last_connection_status_message:
