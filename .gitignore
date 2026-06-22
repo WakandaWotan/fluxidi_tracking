@@ -46,3 +46,12 @@ app.*.map.json
 
 # Airport catalog source data
 tool/airport_data/*.csv
+# Local runtime/debug artifacts
+.wrangler/
+node_modules/
+_local_runtime_artifacts/
+runtime_*.json
+booking_*.json
+bookings_*.json
+trip_kpis_debug_*.json
+backup_*.patch
