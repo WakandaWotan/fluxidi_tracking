@@ -126,6 +126,76 @@ Color get _chironDangerSoft => _chironTokens().dangerSoft;
 Color get _chironSuccess => _chironTokens().success;
 Color get _chironProgressTrack => _chironTokens().progressTrack;
 
+ButtonStyle _chironTestAccessSecondaryButtonStyle() {
+  final tokens = _chironTokens();
+  final isClean = tokens.variant == BusinessThemeVariant.cleanProfessional;
+  final disabledForeground = tokens.textMuted;
+  final disabledBackground = tokens.border.withOpacity(isClean ? 0.24 : 0.14);
+  final disabledBorder = tokens.border.withOpacity(isClean ? 0.92 : 0.58);
+
+  return ButtonStyle(
+    visualDensity: VisualDensity.compact,
+    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+    foregroundColor: WidgetStateProperty.resolveWith((states) {
+      if (states.contains(WidgetState.disabled)) return disabledForeground;
+      return tokens.accent;
+    }),
+    iconColor: WidgetStateProperty.resolveWith((states) {
+      if (states.contains(WidgetState.disabled)) return disabledForeground;
+      return tokens.accent;
+    }),
+    backgroundColor: WidgetStateProperty.resolveWith((states) {
+      if (states.contains(WidgetState.disabled)) return disabledBackground;
+      return Colors.transparent;
+    }),
+    side: WidgetStateProperty.resolveWith((states) {
+      if (states.contains(WidgetState.disabled)) {
+        return BorderSide(color: disabledBorder);
+      }
+      return BorderSide(color: tokens.border);
+    }),
+    textStyle: const WidgetStatePropertyAll(TextStyle(fontSize: 12)),
+  );
+}
+
+ButtonStyle _chironTestAccessDangerButtonStyle() {
+  final tokens = _chironTokens();
+  final isClean = tokens.variant == BusinessThemeVariant.cleanProfessional;
+  final disabledForeground = Color.lerp(
+    tokens.danger,
+    tokens.textMuted,
+    isClean ? 0.28 : 0.38,
+  )!;
+  final disabledBackground = tokens.dangerSoft.withOpacity(
+    isClean ? 0.55 : 0.35,
+  );
+  final disabledBorder = tokens.danger.withOpacity(isClean ? 0.42 : 0.32);
+
+  return ButtonStyle(
+    visualDensity: VisualDensity.compact,
+    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+    foregroundColor: WidgetStateProperty.resolveWith((states) {
+      if (states.contains(WidgetState.disabled)) return disabledForeground;
+      return tokens.danger;
+    }),
+    iconColor: WidgetStateProperty.resolveWith((states) {
+      if (states.contains(WidgetState.disabled)) return disabledForeground;
+      return tokens.danger;
+    }),
+    backgroundColor: WidgetStateProperty.resolveWith((states) {
+      if (states.contains(WidgetState.disabled)) return disabledBackground;
+      return Colors.transparent;
+    }),
+    side: WidgetStateProperty.resolveWith((states) {
+      if (states.contains(WidgetState.disabled)) {
+        return BorderSide(color: disabledBorder);
+      }
+      return BorderSide(color: tokens.danger.withOpacity(0.55));
+    }),
+    textStyle: const WidgetStatePropertyAll(TextStyle(fontSize: 12)),
+  );
+}
+
 class ChironComplianceDashboardPage extends StatelessWidget {
   const ChironComplianceDashboardPage({super.key});
 
@@ -987,7 +1057,9 @@ void _publishChironDashboardStatusFetch({
   required _ChironPersistedInternalTestStatus internalTest,
 }) {
   updateBackendChironConnectionStatusCache(status);
-  _chironPersistedInternalTestNotifier.value = internalTest;
+  _chironPersistedInternalTestNotifier.value = status.testCredentialsStored
+      ? internalTest
+      : null;
 }
 
 Future<
@@ -1193,12 +1265,13 @@ class _ChironTestAccessCardState extends State<_ChironTestAccessCard> {
       );
       if (!mounted) return;
       setState(() {
-        _persistedInternalTest = fetched.internalTest;
         if (fetched.status.testCredentialsStored) {
+          _persistedInternalTest = fetched.internalTest;
           if (fetched.internalTest.maskedIdentifier.isNotEmpty) {
             _maskedIdentifier = fetched.internalTest.maskedIdentifier;
           }
         } else {
+          _persistedInternalTest = null;
           _maskedIdentifier = '';
           _lastMockTest = null;
         }
@@ -1497,8 +1570,10 @@ class _ChironTestAccessCardState extends State<_ChironTestAccessCard> {
         final officialSubmitEnabled =
             backendStatus?.officialSubmitEnabled ?? false;
         final persistedInternalPassed =
-            _persistedInternalTest?.isPassed ?? false;
+            testCredentialsStored &&
+            (_persistedInternalTest?.isPassed ?? false);
         final sessionMockPassed =
+            testCredentialsStored &&
             _lastMockTest?.credentialDecryptOk == true &&
             _lastMockTest?.credentialPayloadValid == true;
         final mockTestPassed = persistedInternalPassed || sessionMockPassed;
@@ -1508,12 +1583,14 @@ class _ChironTestAccessCardState extends State<_ChironTestAccessCard> {
         final officialChironNotRunYet =
             lastConnectionStatus ==
             ChironBackendLastConnectionStatus.neverTested;
-        final displayMaskedIdentifier = _maskedIdentifier.isNotEmpty
-            ? _maskedIdentifier
-            : (_persistedInternalTest?.maskedIdentifier ?? '');
-        final lastInternalCheckLabel = _formatChironInternalTestTimestamp(
-          _persistedInternalTest?.lastAt,
-        );
+        final displayMaskedIdentifier = testCredentialsStored
+            ? (_maskedIdentifier.isNotEmpty
+                  ? _maskedIdentifier
+                  : (_persistedInternalTest?.maskedIdentifier ?? ''))
+            : '';
+        final lastInternalCheckLabel = testCredentialsStored
+            ? _formatChironInternalTestTimestamp(_persistedInternalTest?.lastAt)
+            : null;
 
         return Container(
           width: double.infinity,
@@ -1558,24 +1635,26 @@ class _ChironTestAccessCardState extends State<_ChironTestAccessCard> {
                 spacing: 6,
                 runSpacing: 6,
                 children: [
-                  _statusChip(
-                    label: _t(
-                      nl: 'Testgegevens opgeslagen',
-                      en: 'Test credentials stored',
-                      fr: 'Identifiants de test enregistrés',
-                      es: 'Credenciales de prueba guardadas',
+                  if (testCredentialsStored)
+                    _statusChip(
+                      label: _t(
+                        nl: 'Testgegevens opgeslagen',
+                        en: 'Test credentials stored',
+                        fr: 'Identifiants de test enregistrés',
+                        es: 'Credenciales de prueba guardadas',
+                      ),
+                      active: true,
                     ),
-                    active: testCredentialsStored,
-                  ),
-                  _statusChip(
-                    label: _t(
-                      nl: 'Interne test geslaagd',
-                      en: 'Internal test passed',
-                      fr: 'Test interne réussi',
-                      es: 'Prueba interna superada',
+                  if (mockTestPassed)
+                    _statusChip(
+                      label: _t(
+                        nl: 'Interne test geslaagd',
+                        en: 'Internal test passed',
+                        fr: 'Test interne réussi',
+                        es: 'Prueba interna superada',
+                      ),
+                      active: true,
                     ),
-                    active: mockTestPassed,
-                  ),
                   if (!mockTestPassed || officialChironNotRunYet)
                     _statusChip(
                       label: _t(
@@ -1628,7 +1707,8 @@ class _ChironTestAccessCardState extends State<_ChironTestAccessCard> {
                   ),
                 ),
               ],
-              if (displayMaskedIdentifier.isNotEmpty) ...[
+              if (testCredentialsStored &&
+                  displayMaskedIdentifier.isNotEmpty) ...[
                 const SizedBox(height: 10),
                 Text(
                   _t(
@@ -1640,7 +1720,7 @@ class _ChironTestAccessCardState extends State<_ChironTestAccessCard> {
                   style: TextStyle(color: _chironTextMuted, fontSize: 11),
                 ),
               ],
-              if (mockTestPassed) ...[
+              if (testCredentialsStored && mockTestPassed) ...[
                 if (persistedInternalPassed &&
                     lastInternalCheckLabel != null) ...[
                   const SizedBox(height: 8),
@@ -1679,11 +1759,7 @@ class _ChironTestAccessCardState extends State<_ChironTestAccessCard> {
                   onPressed: _saving || _testing || _clearingTestCredentials
                       ? null
                       : _clearTestCredentials,
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: _chironDanger,
-                    side: BorderSide(color: _chironDanger.withOpacity(0.55)),
-                    visualDensity: VisualDensity.compact,
-                  ),
+                  style: _chironTestAccessDangerButtonStyle(),
                   icon: _clearingTestCredentials
                       ? SizedBox(
                           width: 14,
@@ -1693,11 +1769,7 @@ class _ChironTestAccessCardState extends State<_ChironTestAccessCard> {
                             color: _chironDanger,
                           ),
                         )
-                      : Icon(
-                          Icons.delete_outline,
-                          size: 16,
-                          color: _chironDanger,
-                        ),
+                      : const Icon(Icons.delete_outline, size: 16),
                   label: Text(
                     _t(
                       nl: 'Testgegevens verwijderen',
@@ -1755,11 +1827,7 @@ class _ChironTestAccessCardState extends State<_ChironTestAccessCard> {
                             _apiTokenController.text.trim().isEmpty
                         ? null
                         : _saveTestCredentials,
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: _chironGold,
-                      side: BorderSide(color: _chironBorder),
-                      visualDensity: VisualDensity.compact,
-                    ),
+                    style: _chironTestAccessSecondaryButtonStyle(),
                     child: _saving
                         ? SizedBox(
                             width: 16,
@@ -1786,11 +1854,7 @@ class _ChironTestAccessCardState extends State<_ChironTestAccessCard> {
                             !testCredentialsStored
                         ? null
                         : _testConnection,
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: _chironGold,
-                      side: BorderSide(color: _chironBorder),
-                      visualDensity: VisualDensity.compact,
-                    ),
+                    style: _chironTestAccessSecondaryButtonStyle(),
                     child: _testing
                         ? SizedBox(
                             width: 16,
