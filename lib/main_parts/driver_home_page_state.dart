@@ -5724,16 +5724,51 @@ class _DriverHomePageState extends State<DriverHomePage>
 
   Future<void> _completeStoppedBooking(BookingItem b) async {
     final bookingId = b.bookingId;
+    final rowKey = b.rowKey;
+    final legId = b.legId.trim();
+    final isLegScopedCompletion = b.isOperationalLeg && legId.isNotEmpty;
+    final legType = isLegScopedCompletion ? _operationalLegTypeToken(b) : '-';
+    final previousStatus = (b.status ?? '').trim();
+    debugPrint(
+      '[ROUNDTRIP_STATUS][LEG_COMPLETE] parent=$bookingId leg=${legId.isEmpty ? "-" : legId} leg_type=$legType old=${previousStatus.isEmpty ? "-" : previousStatus} new=COMPLETED scope=${isLegScopedCompletion ? "leg" : "parent"} source=driver_cockpit_stop',
+    );
     try {
-      await _setBookingStatus(b, 'COMPLETED');
+      if (isLegScopedCompletion) {
+        // Roundtrip operational-leg completion scope: complete only this leg.
+        // Routing through the parent endpoint cascades COMPLETED onto every
+        // sibling leg and hides the still-open return leg from the driver.
+        await _setOperationalLegStatus(b, 'COMPLETED');
+      } else {
+        await _setBookingStatus(b, 'COMPLETED');
+      }
     } catch (e) {
       debugPrint('[RIDES][STOP_COMPLETE][WARN] $e');
     }
     if (!mounted) return;
     setState(() {
-      _bookingStatusOverrides[bookingId] = 'COMPLETED';
-      _bookings.removeWhere((x) => x.bookingId == bookingId);
-      _deletedBookingIds.add(bookingId);
+      if (isLegScopedCompletion) {
+        // Optimistic state is leg-scoped: never stamp the parent booking_id
+        // override or _deletedBookingIds, both of which are matched against
+        // sibling leg rows that share the same bookingId and would hide the
+        // return leg from the driver list before the worker refresh lands.
+        _bookingStatusOverrides[rowKey] = 'COMPLETED';
+        _bookings.removeWhere((x) => x.rowKey == rowKey);
+        final remainingLegRows = _bookings
+            .where(
+              (x) =>
+                  x.bookingId == bookingId &&
+                  x.rowKey != rowKey &&
+                  !_isClosedRideStatus(_effectiveStatusFor(x)),
+            )
+            .length;
+        debugPrint(
+          '[ROUNDTRIP_STATUS][KEEP_RETURN_VISIBLE] parent=$bookingId completed_row_key=$rowKey completed_leg=$legId leg_type=$legType remaining_open_leg_rows=$remainingLegRows',
+        );
+      } else {
+        _bookingStatusOverrides[bookingId] = 'COMPLETED';
+        _bookings.removeWhere((x) => x.bookingId == bookingId);
+        _deletedBookingIds.add(bookingId);
+      }
     });
     _markBookingsUiDirty();
   }

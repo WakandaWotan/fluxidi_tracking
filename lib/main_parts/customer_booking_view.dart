@@ -2195,28 +2195,15 @@ class CustomerBookingView {
       final fallbackPrice = legType == 'return'
           ? priceInclVatReturn
           : priceInclVatMain;
-      // Backend leg status wins when terminal; otherwise inherit a terminal
-      // parent lifecycle so a completed/cancelled parent booking propagates to
-      // legs whose snapshot still carries a stale non-terminal status. This
-      // keeps the customer card chips honest when the backend has marked the
-      // parent COMPLETED but a cached leg row still says PENDING.
+      // Roundtrip operational-leg completion scope: the backend leg status is
+      // the source of truth. A parent COMPLETED / CANCELLED MUST NOT overwrite
+      // a still-open sibling leg (split_no_wait airport roundtrip: outbound
+      // completed, return still PENDING/SCHEDULED). The parent lifecycle is
+      // only inherited when the leg snapshot carries no status of its own.
       final rawLegStatus = leg?.status.trim() ?? '';
-      final legIsTerminal =
-          rawLegStatus.isNotEmpty &&
-          _isCustomerBookingTerminalStatus(rawLegStatus);
-      final parentIsTerminal = _isCustomerBookingTerminalStatus(
-        lifecycleStatus,
-      );
-      final String status;
-      if (legIsTerminal) {
-        status = rawLegStatus;
-      } else if (parentIsTerminal) {
-        status = lifecycleStatus;
-      } else if (rawLegStatus.isNotEmpty) {
-        status = rawLegStatus;
-      } else {
-        status = lifecycleStatus;
-      }
+      final String status = rawLegStatus.isNotEmpty
+          ? rawLegStatus
+          : lifecycleStatus;
       return CustomerRoundtripLegCardView(
         legType: legType,
         legId: leg?.legId ?? '',

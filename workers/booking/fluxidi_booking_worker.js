@@ -25525,7 +25525,8 @@ POST /admin/mollie/connect/disconnect
               : out?.error === "forbidden"
                 ? 403
                 : out?.error === "future_pickup_not_started" ||
-                    out?.error === "future_completion_not_allowed"
+                    out?.error === "future_completion_not_allowed" ||
+                    out?.error === "parent_completion_requires_all_legs_terminal"
                   ? 409
                   : out.ok
                     ? 200
@@ -47068,14 +47069,103 @@ async function applyBookingCompletionFromPlannedTripStopBestEffort(
   if (currentStatus === "CANCELLED") {
     return { ok: true, skipped: true, reason: "parent_cancelled" };
   }
-  if (currentStatus === "COMPLETED") {
-    return { ok: true, skipped: true, reason: "already_completed" };
-  }
+  const safeLegId = safeStr(legId, 200) || null;
+  const safeTripId = safeStr(tripId, 160) || null;
+  const safeStoppedAt = safeStr(stoppedAt, 80) || null;
+  const safeSourceLabel = safeStr(source, 80) || "planned_trip_stop";
   const completionOptions = {
     actor_role: "system",
     source_endpoint: "/track/booking/complete-from-planned-stop",
     bypass_future_pickup_guard: true,
   };
+
+  // Roundtrip operational-leg completion scope: when the planned-stop carries
+  // a leg_id and the booking has operational legs that include it, mutate
+  // ONLY that leg. The parent-completion fallback below cascades COMPLETED
+  // onto every sibling leg via updateBookingStatusAuthoritative, which is
+  // wrong for split_no_wait airport roundtrips (outbound stop must leave the
+  // return leg open and visible to the driver).
+  const operationalLegsForCompletion = _bookingOperationalLegsFromRecord(rec)
+    .map((entry) => (entry && typeof entry === "object" ? entry : null))
+    .filter((entry) => !!entry);
+  const matchingLeg = safeLegId
+    ? operationalLegsForCompletion.find(
+        (entry) => safeStr(entry?.leg_id ?? entry?.legId, 200) === safeLegId,
+      )
+    : null;
+  if (safeLegId && matchingLeg) {
+    const matchingLegStatus = _normLifecycleStatus(
+      matchingLeg?.status ??
+      matchingLeg?.lifecycle_status ??
+      matchingLeg?.lifecycleStatus ??
+      "PENDING",
+    );
+    const matchingLegType =
+      safeStr(matchingLeg?.leg_type ?? matchingLeg?.legType, 24) || "-";
+    if (matchingLegStatus === "COMPLETED") {
+      console.log(
+        `[ROUNDTRIP_STATUS][LEG_COMPLETE] booking=${_bookingIntentMask(safeBookingId)} leg=${_bookingIntentMask(safeLegId)} leg_type=${matchingLegType} old=${matchingLegStatus} new=COMPLETED scope=leg skipped=already_terminal source=${safeSourceLabel}`,
+      );
+      return {
+        ok: true,
+        skipped: true,
+        reason: "leg_already_completed",
+        booking_id: safeBookingId,
+        leg_id: safeLegId,
+        scope: "leg",
+      };
+    }
+    console.log(
+      `[ROUNDTRIP_STATUS][LEG_COMPLETE] booking=${_bookingIntentMask(safeBookingId)} leg=${_bookingIntentMask(safeLegId)} leg_type=${matchingLegType} old=${matchingLegStatus || "-"} new=COMPLETED scope=leg total_legs=${operationalLegsForCompletion.length} source=${safeSourceLabel}`,
+    );
+    const legResult = await updateBookingOperationalLegStatusAuthoritative(
+      safeBookingId,
+      safeLegId,
+      "COMPLETED",
+      env,
+      tenantScope,
+      completionOptions,
+    );
+    if (legResult?.ok !== true) return legResult;
+    if (safeTripId || safeStoppedAt) {
+      try {
+        const reloaded = await loadBookingRecord(env, safeBookingId);
+        const nextRec = reloaded.rec;
+        if (safeTripId) {
+          nextRec.tracking_trip_id = safeTripId;
+          nextRec.trackingTripId = safeTripId;
+          nextRec.last_planned_trip_id = safeTripId;
+          nextRec.lastPlannedTripId = safeTripId;
+        }
+        await env.BOOKING_KV.put(reloaded.key, JSON.stringify(nextRec));
+      } catch (_) {
+        // best effort metadata only
+      }
+    }
+    console.log(
+      `[BOOKING][PLANNED_TRIP_COMPLETION] booking=${_bookingIntentMask(safeBookingId)} leg=${_bookingIntentMask(safeLegId)} trip=${_bookingIntentMask(safeTripId)} status=LEG_COMPLETED parent_status=${legResult?.parent_status || legResult?.status || "-"} source=${safeSourceLabel}`,
+    );
+    return {
+      ok: true,
+      booking_id: safeBookingId,
+      leg_id: safeLegId,
+      status: "COMPLETED",
+      scope: "leg",
+      parent_status: legResult?.parent_status || legResult?.status || null,
+    };
+  }
+
+  // Fallback: parent-level completion path retained for legacy
+  // single-execution bookings (no leg metadata) or planned trips where the
+  // tracker emitted a stale leg_id that no longer exists on the record.
+  if (currentStatus === "COMPLETED") {
+    return { ok: true, skipped: true, reason: "already_completed" };
+  }
+  if (safeLegId && !matchingLeg) {
+    console.log(
+      `[ROUNDTRIP_STATUS][LEG_COMPLETE] booking=${_bookingIntentMask(safeBookingId)} leg=${_bookingIntentMask(safeLegId)} scope=parent_fallback reason=leg_id_not_found_on_record total_legs=${operationalLegsForCompletion.length} source=${safeSourceLabel}`,
+    );
+  }
   // Driver cockpit planned-trip stop completes the authoritative booking as a
   // whole. Leg-first updates leave package/continuous-wait parents PENDING
   // when display legs outnumber the single operational planned execution.
@@ -47084,11 +47174,12 @@ async function applyBookingCompletionFromPlannedTripStopBestEffort(
     "COMPLETED",
     env,
     tenantScope,
-    completionOptions,
+    {
+      ...completionOptions,
+      bypass_operational_leg_completion_guard: true,
+    },
   );
   if (result?.ok !== true) return result;
-  const safeTripId = safeStr(tripId, 160) || null;
-  const safeStoppedAt = safeStr(stoppedAt, 80) || null;
   if (safeTripId || safeStoppedAt) {
     try {
       const reloaded = await loadBookingRecord(env, safeBookingId);
@@ -47109,9 +47200,9 @@ async function applyBookingCompletionFromPlannedTripStopBestEffort(
     }
   }
   console.log(
-    `[BOOKING][PLANNED_TRIP_COMPLETION] booking=${_bookingIntentMask(safeBookingId)} leg=${_bookingIntentMask(safeStr(legId, 200) || null)} trip=${_bookingIntentMask(safeTripId)} status=COMPLETED source=${safeStr(source, 80) || "planned_trip_stop"}`,
+    `[BOOKING][PLANNED_TRIP_COMPLETION] booking=${_bookingIntentMask(safeBookingId)} leg=${_bookingIntentMask(safeLegId)} trip=${_bookingIntentMask(safeTripId)} status=COMPLETED scope=parent source=${safeSourceLabel}`,
   );
-  return { ok: true, booking_id: safeBookingId, status: "COMPLETED" };
+  return { ok: true, booking_id: safeBookingId, status: "COMPLETED", scope: "parent" };
 }
 
 async function repairBookingCompletionFromStoppedPlannedTripsBestEffort(
@@ -52853,13 +52944,14 @@ function _flattenOperationalLegForRidesList(parentBookingId, rec, leg, options =
   );
   const parentStatusUpper = _normLifecycleStatus(parentRow?.status || null);
   const legStatusUpper = _normLifecycleStatus(legStatusRaw || parentStatusUpper || "PENDING");
-  // Operational rows are leg-first. A parent may be an audit/payment container
-  // in a partial cancellation state; it must not make an active sibling leg
-  // look cancelled in company/customer operational lists.
+  // Roundtrip operational-leg completion scope: each leg's own lifecycle is
+  // the source of truth. A parent COMPLETED must never overwrite a sibling
+  // leg's PENDING / SCHEDULED state (split_no_wait airport roundtrips:
+  // outbound completed, return still open). Parent terminal lifecycle is
+  // only projected when the leg itself has no status stamped (legacy /
+  // pre-cascade snapshots).
   let projectedStatusUpper;
-  if (parentStatusUpper === "COMPLETED" && legStatusUpper !== "CANCELLED") {
-    projectedStatusUpper = "COMPLETED";
-  } else if (legStatusRaw) {
+  if (legStatusRaw) {
     projectedStatusUpper = legStatusUpper;
   } else if (isTerminalLifecycleStatus(parentStatusUpper)) {
     projectedStatusUpper = parentStatusUpper;
@@ -63530,6 +63622,54 @@ async function updateBookingStatusAuthoritative(
       return { ok: false, error: "future_pickup_not_started" };
     }
   }
+  // Roundtrip operational-leg completion scope: refuse a parent-level
+  // COMPLETED that would prematurely cascade onto a still-open sibling leg.
+  // Callers performing a legitimate full-booking completion (legacy
+  // single-execution bookings; the planned-trip parent fallback) must opt in
+  // via bypass_operational_leg_completion_guard. Multi-leg roundtrips must
+  // drive completion through /bookings/:id/legs/:legId/status.
+  if (
+    normalized === "COMPLETED" &&
+    options?.bypass_operational_leg_completion_guard !== true
+  ) {
+    const legsForGuard = _bookingOperationalLegsFromRecord(rec)
+      .map((entry) => (entry && typeof entry === "object" ? entry : null))
+      .filter((entry) => !!entry);
+    if (legsForGuard.length >= 2) {
+      const nonTerminalLegs = [];
+      for (const legEntry of legsForGuard) {
+        const legStatus = _normLifecycleStatus(
+          legEntry?.status ??
+            legEntry?.lifecycle_status ??
+            legEntry?.lifecycleStatus ??
+            "PENDING",
+        );
+        if (!isTerminalLifecycleStatus(legStatus)) {
+          nonTerminalLegs.push({
+            leg_id: safeStr(legEntry?.leg_id ?? legEntry?.legId, 200),
+            leg_type: safeStr(legEntry?.leg_type ?? legEntry?.legType, 24) || "-",
+            status: legStatus,
+          });
+        }
+      }
+      if (nonTerminalLegs.length > 0) {
+        const guardDetail = nonTerminalLegs
+          .map(
+            (entry) =>
+              `${_bookingIntentMask(entry.leg_id || "-") || "-"}:${entry.leg_type}:${entry.status}`,
+          )
+          .join("|");
+        console.log(
+          `[ROUNDTRIP_STATUS][PARENT_COMPLETE_GUARD] booking=${_bookingIntentMask(bookingId)} reason=non_terminal_legs_exist total_legs=${legsForGuard.length} non_terminal=${nonTerminalLegs.length} legs=${guardDetail} actor_role=${safeStr(options?.actor_role, 32) || "-"} source_endpoint=${safeStr(options?.source_endpoint, 64) || "-"}`,
+        );
+        return {
+          ok: false,
+          error: "parent_completion_requires_all_legs_terminal",
+          non_terminal_legs: nonTerminalLegs,
+        };
+      }
+    }
+  }
   rec.status = normalized;
   rec.stage = normalized;
   rec.lifecycle_status = normalized.toLowerCase();
@@ -63810,10 +63950,22 @@ async function updateBookingOperationalLegStatusAuthoritative(
 
   let matchedAnyLeg = false;
   let selectedLegStatus = normalizedLegStatus;
+  let previousLegStatus = "PENDING";
+  let previousLegTypeToken = "-";
   const mutateLegEntry = (entry) => {
     if (!entry || typeof entry !== "object") return entry;
     const currentLegId = safeStr(entry?.leg_id ?? entry?.legId, 200);
     if (!currentLegId || currentLegId !== safeLegId) return entry;
+    if (!matchedAnyLeg) {
+      previousLegStatus = _normLifecycleStatus(
+        entry?.status ??
+          entry?.lifecycle_status ??
+          entry?.lifecycleStatus ??
+          "PENDING",
+      );
+      previousLegTypeToken =
+        safeStr(entry?.leg_type ?? entry?.legType, 24) || "-";
+    }
     matchedAnyLeg = true;
     const next = {
       ...entry,
@@ -64092,20 +64244,68 @@ async function updateBookingOperationalLegStatusAuthoritative(
   const selectedLegType = safeStr(
     matchedLeg?.leg_type ?? matchedLeg?.legType,
     24,
-  ) || "-";
+  ) || previousLegTypeToken;
   console.log(
     `[BOOKING_CANCEL][LEG] booking=${_bookingIntentMask(safeBookingId)} leg=${_bookingIntentMask(safeLegId)} leg_type=${selectedLegType} scope=single_leg status=${selectedLegStatus} parent=${derivedParentStatus} progress=${progressState}`,
   );
   console.log(
     `[BOOKING][OPERATIONAL_LEGS][LEG_STATUS] booking=${_bookingIntentMask(safeBookingId)} leg=${_bookingIntentMask(safeLegId)} status=${selectedLegStatus} parent=${derivedParentStatus} progress=${progressState}`,
   );
+  // Roundtrip operational-leg completion scope diagnostics: emit a focused
+  // log family so each split_no_wait leg transition is auditable end-to-end
+  // (driver toast -> /bookings/:id/legs/:legId/status -> parent re-derive).
+  console.log(
+    `[ROUNDTRIP_STATUS][LEG_COMPLETE] booking=${_bookingIntentMask(safeBookingId)} leg=${_bookingIntentMask(safeLegId)} leg_type=${selectedLegType} old=${previousLegStatus} new=${selectedLegStatus} actor_role=${safeStr(options?.actor_role, 32) || "-"} source_endpoint=${safeStr(options?.source_endpoint, 64) || "/bookings/:bookingId/legs/:legId/status"}`,
+  );
+  console.log(
+    `[ROUNDTRIP_STATUS][PARENT_RECOMPUTE] booking=${_bookingIntentMask(safeBookingId)} old=${previousParentStatus} new=${derivedParentStatus} progress=${progressState} completed=${completedLegsCount} cancelled=${cancelledLegsCount} pending=${pendingLegsCount} total=${operationalLegsCount}`,
+  );
+  if (pendingLegsCount > 0 && !isTerminalLifecycleStatus(derivedParentStatus)) {
+    const visibleLegs = allLegs
+      .filter((entry) => {
+        const entryLegId = safeStr(entry?.leg_id ?? entry?.legId, 200);
+        if (!entryLegId || entryLegId === safeLegId) return false;
+        const entryStatus = _normLifecycleStatus(
+          entry?.status ??
+            entry?.lifecycle_status ??
+            entry?.lifecycleStatus ??
+            "PENDING",
+        );
+        return !isTerminalLifecycleStatus(entryStatus);
+      })
+      .map((entry) => {
+        const entryLegId = safeStr(entry?.leg_id ?? entry?.legId, 200);
+        const entryLegType =
+          safeStr(entry?.leg_type ?? entry?.legType, 24) || "-";
+        const entryStatus = _normLifecycleStatus(
+          entry?.status ??
+            entry?.lifecycle_status ??
+            entry?.lifecycleStatus ??
+            "PENDING",
+        );
+        const entryDriverId =
+          safeStr(entry?.assigned_driver_id ?? entry?.assignedDriverId, 96) ||
+          "-";
+        const entryVehicleId =
+          safeStr(entry?.assigned_vehicle_id ?? entry?.assignedVehicleId, 96) ||
+          "-";
+        return `${_bookingIntentMask(entryLegId) || "-"}:${entryLegType}:${entryStatus}:driver=${_bookingIntentMask(entryDriverId) || "-"}:vehicle=${_bookingIntentMask(entryVehicleId) || "-"}`;
+      });
+    if (visibleLegs.length > 0) {
+      console.log(
+        `[ROUNDTRIP_STATUS][KEEP_RETURN_VISIBLE] booking=${_bookingIntentMask(safeBookingId)} parent=${derivedParentStatus} open_legs=${visibleLegs.length} details=${visibleLegs.join("|")}`,
+      );
+    }
+  }
 
   return {
     ok: true,
     booking_id: safeBookingId,
     leg_id: safeLegId,
     leg_status: selectedLegStatus,
+    previous_leg_status: previousLegStatus,
     parent_status: derivedParentStatus,
+    previous_parent_status: previousParentStatus,
     progress_state: progressState,
     completed_legs_count: completedLegsCount,
     cancelled_legs_count: cancelledLegsCount,
