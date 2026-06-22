@@ -191,36 +191,7 @@ class BookingItem {
         j['bags'] ?? j['luggage'] ?? j['bags_count'] ?? j['bagsCount'],
       ),
       status: (j['status'] ?? j['stage'])?.toString(),
-      price: _toNumOrNull(
-        j['price'] ??
-            j['total_price'] ??
-            j['total'] ??
-            j['amount'] ??
-            j['eur'] ??
-            ((j['quote'] is Map) ? (j['quote'] as Map)['price'] : null) ??
-            ((j['quote'] is Map) ? (j['quote'] as Map)['total_price'] : null) ??
-            ((j['quote'] is Map) ? (j['quote'] as Map)['total'] : null) ??
-            ((j['quote'] is Map) ? (j['quote'] as Map)['amount'] : null) ??
-            ((j['quote'] is Map) ? (j['quote'] as Map)['eur'] : null) ??
-            (((j['quote'] is Map) && ((j['quote'] as Map)['pricing'] is Map))
-                ? ((j['quote'] as Map)['pricing'] as Map)['price_incl_vat']
-                : null) ??
-            (((j['quote'] is Map) && ((j['quote'] as Map)['pricing'] is Map))
-                ? ((j['quote'] as Map)['pricing'] as Map)['total_price']
-                : null) ??
-            (((j['quote'] is Map) && ((j['quote'] as Map)['pricing'] is Map))
-                ? ((j['quote'] as Map)['pricing'] as Map)['total']
-                : null) ??
-            (((j['quote'] is Map) && ((j['quote'] as Map)['pricing'] is Map))
-                ? ((j['quote'] as Map)['pricing'] as Map)['price']
-                : null) ??
-            (((j['quote'] is Map) && ((j['quote'] as Map)['pricing'] is Map))
-                ? ((j['quote'] as Map)['pricing'] as Map)['amount']
-                : null) ??
-            (((j['quote'] is Map) && ((j['quote'] as Map)['pricing'] is Map))
-                ? ((j['quote'] as Map)['pricing'] as Map)['eur']
-                : null),
-      ),
+      price: _resolveBookingPriceFromJson(j),
       currency: (j['currency'] ?? 'EUR')?.toString(),
       details: Map<String, dynamic>.from(j),
       sessionId: j['session_id']?.toString(),
@@ -237,6 +208,99 @@ class BookingItem {
     if (v == null) return null;
     if (v is int) return v;
     return int.tryParse(v.toString());
+  }
+
+  static num? _resolveBookingPriceFromJson(Map<String, dynamic> j) {
+    final legId = (j['leg_id'] ?? j['legId'] ?? '').toString().trim();
+    final isOperationalLeg =
+        j['is_operational_leg'] == true ||
+        j['isOperationalLeg'] == true ||
+        legId.isNotEmpty;
+    if (isOperationalLeg) {
+      final legPrice = _toNumOrNull(
+        j['leg_price_incl_vat'] ?? j['legPriceInclVat'],
+      );
+      if (legPrice != null) return legPrice;
+
+      final legType = (j['leg_type'] ?? j['legType'] ?? '')
+          .toString()
+          .trim()
+          .toLowerCase();
+      if (legType == 'return') {
+        final returnPrice = _toNumOrNull(
+          j['price_incl_vat_return'] ??
+              j['priceInclVatReturn'] ??
+              j['return_price_eur'] ??
+              (((j['quote'] is Map) &&
+                      ((j['quote'] as Map)['pricing_return'] is Map))
+                  ? ((j['quote'] as Map)['pricing_return']
+                        as Map)['price_incl_vat']
+                  : null),
+        );
+        if (returnPrice != null) return returnPrice;
+      } else {
+        final mainPrice = _toNumOrNull(
+          j['price_incl_vat_main'] ??
+              j['priceInclVatMain'] ??
+              j['outbound_price_eur'] ??
+              (((j['quote'] is Map) &&
+                      ((j['quote'] as Map)['pricing_main'] is Map))
+                  ? ((j['quote'] as Map)['pricing_main']
+                        as Map)['price_incl_vat']
+                  : null),
+        );
+        if (mainPrice != null) return mainPrice;
+      }
+
+      final segmentPrice = _toNumOrNull(
+        j['segment_price_eur'] ?? j['segmentPriceEur'],
+      );
+      if (segmentPrice != null) return segmentPrice;
+
+      final parentTotal = _toNumOrNull(
+        j['parent_price_incl_vat'] ??
+            j['parentPriceInclVat'] ??
+            j['parent_total_price'] ??
+            j['parentTotalPrice'],
+      );
+      final rowPrice = _toNumOrNull(j['price']);
+      if (rowPrice != null &&
+          (parentTotal == null || rowPrice != parentTotal)) {
+        return rowPrice;
+      }
+      return null;
+    }
+
+    return _toNumOrNull(
+      j['price'] ??
+          j['total_price'] ??
+          j['total'] ??
+          j['amount'] ??
+          j['eur'] ??
+          ((j['quote'] is Map) ? (j['quote'] as Map)['price'] : null) ??
+          ((j['quote'] is Map) ? (j['quote'] as Map)['total_price'] : null) ??
+          ((j['quote'] is Map) ? (j['quote'] as Map)['total'] : null) ??
+          ((j['quote'] is Map) ? (j['quote'] as Map)['amount'] : null) ??
+          ((j['quote'] is Map) ? (j['quote'] as Map)['eur'] : null) ??
+          (((j['quote'] is Map) && ((j['quote'] as Map)['pricing'] is Map))
+              ? ((j['quote'] as Map)['pricing'] as Map)['price_incl_vat']
+              : null) ??
+          (((j['quote'] is Map) && ((j['quote'] as Map)['pricing'] is Map))
+              ? ((j['quote'] as Map)['pricing'] as Map)['total_price']
+              : null) ??
+          (((j['quote'] is Map) && ((j['quote'] as Map)['pricing'] is Map))
+              ? ((j['quote'] as Map)['pricing'] as Map)['total']
+              : null) ??
+          (((j['quote'] is Map) && ((j['quote'] as Map)['pricing'] is Map))
+              ? ((j['quote'] as Map)['pricing'] as Map)['price']
+              : null) ??
+          (((j['quote'] is Map) && ((j['quote'] as Map)['pricing'] is Map))
+              ? ((j['quote'] as Map)['pricing'] as Map)['amount']
+              : null) ??
+          (((j['quote'] is Map) && ((j['quote'] as Map)['pricing'] is Map))
+              ? ((j['quote'] as Map)['pricing'] as Map)['eur']
+              : null),
+    );
   }
 
   static num? _toNumOrNull(dynamic v) {

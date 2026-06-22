@@ -52656,6 +52656,14 @@ function _flattenOperationalLegForRidesList(parentBookingId, rec, leg, options =
   const legPriceInclVat = leg?.price_incl_vat ?? leg?.priceInclVat;
   const legPriceExVat = leg?.price_ex_vat ?? leg?.priceExVat;
   const legPriceVat = leg?.price_vat ?? leg?.priceVat;
+  const legTypeRaw = safeStr(leg?.leg_type ?? leg?.legType, 24).toLowerCase();
+  const legType = legTypeRaw === "return" ? "return" : "outbound";
+  const resolvedLegPriceInclVat =
+    legPriceInclVat != null
+      ? legPriceInclVat
+      : legType === "return"
+        ? _bookingReturnPriceInclVatFromRecord(rec)
+        : _bookingMainPriceInclVatFromRecord(rec);
   const parentBooking = rec?.booking && typeof rec.booking === "object" ? rec.booking : {};
   const parentTotalInclVat =
     parentBooking?.price_incl_vat ??
@@ -52707,8 +52715,6 @@ function _flattenOperationalLegForRidesList(parentBookingId, rec, leg, options =
       parentRow?.assignedVehicleId,
     128,
   );
-  const legTypeRaw = safeStr(leg?.leg_type ?? leg?.legType, 24).toLowerCase();
-  const legType = legTypeRaw === "return" ? "return" : "outbound";
   const legId = safeStr(leg?.leg_id ?? leg?.legId, 200);
   const parentBookingReference = safeStr(
     parentRow?.public_booking_reference ??
@@ -52764,9 +52770,11 @@ function _flattenOperationalLegForRidesList(parentBookingId, rec, leg, options =
     return_enabled: !!_pick(rec, ["booking", "return_enabled"], false),
     returnEnabled: !!_pick(rec, ["booking", "return_enabled"], false),
     price:
-      (legPriceInclVat != null ? legPriceInclVat : parentRow?.price) ?? null,
-    leg_price_incl_vat: legPriceInclVat ?? null,
-    legPriceInclVat: legPriceInclVat ?? null,
+      (resolvedLegPriceInclVat != null
+        ? resolvedLegPriceInclVat
+        : parentRow?.price) ?? null,
+    leg_price_incl_vat: resolvedLegPriceInclVat ?? null,
+    legPriceInclVat: resolvedLegPriceInclVat ?? null,
     leg_price_ex_vat: legPriceExVat ?? null,
     legPriceExVat: legPriceExVat ?? null,
     leg_price_vat: legPriceVat ?? null,

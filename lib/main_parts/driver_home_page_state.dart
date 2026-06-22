@@ -2402,53 +2402,65 @@ class _DriverHomePageState extends State<DriverHomePage>
         return next;
       }
 
+      BookingItem? hydratedActive;
       if (!mounted) return;
       setState(() {
         if (_activeBooking != null && _activeBooking!.bookingId == bookingId) {
-          _activeBooking = _activeBooking!.copyWith(
+          hydratedActive = _activeBooking!.copyWith(
             details: mergeNonEmptyDetails(_activeBooking!.details, j),
           );
+          _activeBooking = hydratedActive;
         }
       });
 
-      final record = (j['record'] is Map)
-          ? (j['record'] as Map).cast<String, dynamic>()
-          : null;
-      final quoteSource = j['quote'] ?? record?['quote'];
-      final quote = (quoteSource is Map)
-          ? quoteSource.cast<String, dynamic>()
-          : null;
-      final pricing = (quote != null && quote['pricing'] is Map)
-          ? (quote['pricing'] as Map).cast<String, dynamic>()
-          : null;
-
-      num? pickNum(dynamic v) {
-        if (v is num) return v;
-        if (v is String) return num.tryParse(v.replaceAll(',', '.'));
-        return null;
+      final activeForPrice = hydratedActive ?? _activeBooking;
+      if (activeForPrice == null || activeForPrice.bookingId != bookingId) {
+        return;
       }
 
-      // Booking worker /quote shapes we've used across versions:
-      // pricing: { price_incl_vat | total_price | total | amount | eur | price }
-      // quote:   { price | total | total_price | amount | eur }
-      final dynamic pMap = pricing;
-      final num? price = (pMap is Map<String, dynamic>)
-          ? (pickNum(pMap['price_incl_vat']) ??
-                pickNum(pMap['total_price']) ??
-                pickNum(pMap['total']) ??
-                pickNum(pMap['price']) ??
-                pickNum(pMap['amount']) ??
-                pickNum(pMap['eur']))
-          : null;
+      num? resolved;
+      if (activeForPrice.isOperationalLeg) {
+        resolved = _driverDisplayPriceForBooking(activeForPrice);
+      } else {
+        final record = (j['record'] is Map)
+            ? (j['record'] as Map).cast<String, dynamic>()
+            : null;
+        final quoteSource = j['quote'] ?? record?['quote'];
+        final quote = (quoteSource is Map)
+            ? quoteSource.cast<String, dynamic>()
+            : null;
+        final pricing = (quote != null && quote['pricing'] is Map)
+            ? (quote['pricing'] as Map).cast<String, dynamic>()
+            : null;
 
-      final num? fallbackFromQuote =
-          pickNum(quote?['price']) ??
-          pickNum(quote?['total_price']) ??
-          pickNum(quote?['total']) ??
-          pickNum(quote?['amount']) ??
-          pickNum(quote?['eur']);
+        num? pickNum(dynamic v) {
+          if (v is num) return v;
+          if (v is String) return num.tryParse(v.replaceAll(',', '.'));
+          return null;
+        }
 
-      final num? resolved = price ?? fallbackFromQuote;
+        // Booking worker /quote shapes we've used across versions:
+        // pricing: { price_incl_vat | total_price | total | amount | eur | price }
+        // quote:   { price | total | total_price | amount | eur }
+        final dynamic pMap = pricing;
+        final num? price = (pMap is Map<String, dynamic>)
+            ? (pickNum(pMap['price_incl_vat']) ??
+                  pickNum(pMap['total_price']) ??
+                  pickNum(pMap['total']) ??
+                  pickNum(pMap['price']) ??
+                  pickNum(pMap['amount']) ??
+                  pickNum(pMap['eur']))
+            : null;
+
+        final num? fallbackFromQuote =
+            pickNum(quote?['price']) ??
+            pickNum(quote?['total_price']) ??
+            pickNum(quote?['total']) ??
+            pickNum(quote?['amount']) ??
+            pickNum(quote?['eur']);
+
+        resolved = price ?? fallbackFromQuote;
+      }
       if (resolved == null) return;
 
       if (!mounted) return;
@@ -2841,6 +2853,181 @@ class _DriverHomePageState extends State<DriverHomePage>
     return null;
   }
 
+  void _driverCollectOperationalLegMaps(
+    Map<String, dynamic> details,
+    List<Map<String, dynamic>> out,
+  ) {
+    void addFromList(dynamic raw) {
+      if (raw is! List) return;
+      for (final entry in raw) {
+        if (entry is Map) {
+          out.add(Map<String, dynamic>.from(entry));
+        }
+      }
+    }
+
+    addFromList(details['operational_legs']);
+    addFromList(details['operationalLegs']);
+    final record = details['record'];
+    if (record is Map) {
+      final recordMap = Map<String, dynamic>.from(record);
+      addFromList(recordMap['operational_legs']);
+      addFromList(recordMap['operationalLegs']);
+      final nestedBooking = recordMap['booking'];
+      if (nestedBooking is Map) {
+        addFromList(nestedBooking['operational_legs']);
+        addFromList(nestedBooking['operationalLegs']);
+      }
+    }
+    final booking = details['booking'];
+    if (booking is Map) {
+      addFromList(booking['operational_legs']);
+      addFromList(booking['operationalLegs']);
+    }
+  }
+
+  List<Map<String, dynamic>> _driverOperationalLegMapsFromDetails(
+    Map<String, dynamic> details,
+  ) {
+    final maps = <Map<String, dynamic>>[];
+    _driverCollectOperationalLegMaps(details, maps);
+    return maps;
+  }
+
+  num? _driverLegPriceFromOperationalLegMap(Map<String, dynamic> map) {
+    return _operationalLegDetailNum(map, const [
+      ['price_incl_vat'],
+      ['priceInclVat'],
+      ['leg_price_incl_vat'],
+      ['legPriceInclVat'],
+      ['amount'],
+      ['total'],
+    ]);
+  }
+
+  num? _driverParentPackageTotalFromDetails(Map<String, dynamic> details) {
+    return _operationalLegDetailNum(details, const [
+      ['parent_price_incl_vat'],
+      ['parentPriceInclVat'],
+      ['parent_total_price'],
+      ['parentTotalPrice'],
+      ['booking_total_eur'],
+      ['quote', 'pricing', 'price_incl_vat'],
+      ['quote', 'pricing', 'total_price'],
+      ['record', 'quote', 'pricing', 'price_incl_vat'],
+      ['record', 'quote', 'pricing', 'total_price'],
+      ['booking', 'price_incl_vat'],
+      ['record', 'booking', 'price_incl_vat'],
+    ]);
+  }
+
+  num? _driverLegTypeSplitPriceFromDetails(
+    Map<String, dynamic> details,
+    String legType,
+  ) {
+    if (legType == 'return') {
+      return _operationalLegDetailNum(details, const [
+        ['price_incl_vat_return'],
+        ['priceInclVatReturn'],
+        ['return_price_eur'],
+        ['booking', 'price_incl_vat_return'],
+        ['booking', 'priceInclVatReturn'],
+        ['record', 'booking', 'price_incl_vat_return'],
+        ['record', 'booking', 'priceInclVatReturn'],
+        ['quote', 'price_incl_vat_return'],
+        ['quote', 'pricing_return', 'price_incl_vat'],
+        ['record', 'quote', 'price_incl_vat_return'],
+        ['record', 'quote', 'pricing_return', 'price_incl_vat'],
+      ]);
+    }
+    return _operationalLegDetailNum(details, const [
+      ['price_incl_vat_main'],
+      ['priceInclVatMain'],
+      ['outbound_price_eur'],
+      ['booking', 'price_incl_vat_main'],
+      ['booking', 'priceInclVatMain'],
+      ['record', 'booking', 'price_incl_vat_main'],
+      ['record', 'booking', 'priceInclVatMain'],
+      ['quote', 'price_incl_vat_main'],
+      ['quote', 'pricing_main', 'price_incl_vat'],
+      ['record', 'quote', 'price_incl_vat_main'],
+      ['record', 'quote', 'pricing_main', 'price_incl_vat'],
+    ]);
+  }
+
+  /// Active ride amount for driver UI + persistence. Operational legs never
+  /// fall back to parent/package totals unless no leg amount exists anywhere.
+  double? _driverDisplayPriceForBooking(BookingItem b) {
+    if (!b.isOperationalLeg) {
+      final p = b.price;
+      if (p != null && p.isFinite) return p.toDouble();
+      return null;
+    }
+
+    final details = b.details;
+    final legId = b.legId.trim();
+    final legType = _operationalLegTypeToken(b);
+
+    num? pickFinite(num? value) {
+      if (value == null || !value.isFinite) return null;
+      return value;
+    }
+
+    final rowLegPrice = pickFinite(
+      _operationalLegDetailNum(details, const [
+        ['leg_price_incl_vat'],
+        ['legPriceInclVat'],
+      ]),
+    );
+    if (rowLegPrice != null) return rowLegPrice.toDouble();
+
+    for (final map in _driverOperationalLegMapsFromDetails(details)) {
+      if (legId.isNotEmpty) {
+        final entryLegId = (map['leg_id'] ?? map['legId'] ?? '')
+            .toString()
+            .trim();
+        if (entryLegId != legId) continue;
+      } else {
+        final entryType = (map['leg_type'] ?? map['legType'] ?? '')
+            .toString()
+            .trim()
+            .toLowerCase();
+        final normalized = entryType == 'return' ? 'return' : 'outbound';
+        if (normalized != legType) continue;
+      }
+      final legPrice = pickFinite(_driverLegPriceFromOperationalLegMap(map));
+      if (legPrice != null) return legPrice.toDouble();
+    }
+
+    final splitPrice = pickFinite(
+      _driverLegTypeSplitPriceFromDetails(details, legType),
+    );
+    if (splitPrice != null) return splitPrice.toDouble();
+
+    final segmentPrice = pickFinite(
+      _operationalLegDetailNum(details, const [
+        ['segment_price_eur'],
+        ['segmentPriceEur'],
+        ['booking', 'segment_price_eur'],
+        ['booking', 'segmentPriceEur'],
+      ]),
+    );
+    if (segmentPrice != null) return segmentPrice.toDouble();
+
+    final parentTotal = pickFinite(
+      _driverParentPackageTotalFromDetails(details),
+    );
+    final rawPrice = b.price;
+    if (rawPrice != null && rawPrice.isFinite) {
+      if (parentTotal == null ||
+          rawPrice.toDouble() != parentTotal.toDouble()) {
+        return rawPrice.toDouble();
+      }
+    }
+
+    return null;
+  }
+
   Future<void> _recordOperationalLegPlannedStopBestEffort(
     BookingItem booking,
   ) async {
@@ -2885,13 +3072,15 @@ class _DriverHomePageState extends State<DriverHomePage>
         ['booking', 'vehicle_id'],
         ['booking', 'vehicleId'],
       ]);
-      final segmentAmount = _operationalLegDetailNum(booking.details, const [
-        ['leg_price_incl_vat'],
-        ['legPriceInclVat'],
-        ['segment_price_eur'],
-        ['booking', 'leg_price_incl_vat'],
-        ['booking', 'legPriceInclVat'],
-      ]);
+      final segmentAmount =
+          _driverDisplayPriceForBooking(booking) ??
+          _operationalLegDetailNum(booking.details, const [
+            ['leg_price_incl_vat'],
+            ['legPriceInclVat'],
+            ['segment_price_eur'],
+            ['booking', 'leg_price_incl_vat'],
+            ['booking', 'legPriceInclVat'],
+          ]);
       final parentAmount = _operationalLegDetailNum(booking.details, const [
         ['parent_total_price'],
         ['parentTotalPrice'],
@@ -3436,9 +3625,7 @@ class _DriverHomePageState extends State<DriverHomePage>
   double? get _fixedBookingPriceEur {
     final b = _activeBooking;
     if (b == null) return null;
-    final p = b.price;
-    if (p is num) return p.toDouble();
-    return null;
+    return _driverDisplayPriceForBooking(b);
   }
 
   ({
@@ -4388,14 +4575,20 @@ class _DriverHomePageState extends State<DriverHomePage>
         number(quote['total_price_incl_vat']) ??
         number(quote['price_incl_vat']) ??
         booking.price;
-    final segmentPrice = booking.bookingId.endsWith('-R')
-        ? (number(bookingMap['price_incl_vat_return']) ??
-              number(pricingReturn['price_incl_vat']) ??
-              number(returnInfo['price_incl_vat']) ??
-              number(asMap(returnInfo['pricing'])['price_incl_vat']))
-        : (number(bookingMap['price_incl_vat_main']) ??
-              number(pricingMain['price_incl_vat']) ??
-              number(quote['price_incl_vat']));
+    final operationalLeg = booking.isOperationalLeg;
+    final legTypeToken = operationalLeg
+        ? _operationalLegTypeToken(booking)
+        : null;
+    final segmentPrice = operationalLeg
+        ? _driverDisplayPriceForBooking(booking)
+        : (booking.bookingId.endsWith('-R')
+              ? (number(bookingMap['price_incl_vat_return']) ??
+                    number(pricingReturn['price_incl_vat']) ??
+                    number(returnInfo['price_incl_vat']) ??
+                    number(asMap(returnInfo['pricing'])['price_incl_vat']))
+              : (number(bookingMap['price_incl_vat_main']) ??
+                    number(pricingMain['price_incl_vat']) ??
+                    number(quote['price_incl_vat'])));
     final returnPickup =
         text(bookingMap['returnPickupIso']) ??
         text(inputs['return_pickup_iso']) ??
@@ -4547,9 +4740,22 @@ class _DriverHomePageState extends State<DriverHomePage>
       if (pickupAddress != null) 'pickup_address': pickupAddress,
       if (destinationAddress != null) 'destination_address': destinationAddress,
       if (scheduledPickup != null) 'scheduled_pickup_at': scheduledPickup,
-      if (booking.bookingId.endsWith('-R')) 'subtype': 'Retourrit',
-      if (!booking.bookingId.endsWith('-R') && hasReturnInfo)
+      if (operationalLeg && legTypeToken == 'return') 'subtype': 'Retourrit',
+      if (operationalLeg && legTypeToken == 'outbound') 'subtype': 'Heenrit',
+      if (!operationalLeg && booking.bookingId.endsWith('-R'))
+        'subtype': 'Retourrit',
+      if (!operationalLeg && !booking.bookingId.endsWith('-R') && hasReturnInfo)
         'subtype': 'Heenrit',
+      if (operationalLeg && booking.legId.trim().isNotEmpty) ...{
+        'leg_id': booking.legId.trim(),
+        'legId': booking.legId.trim(),
+        'is_operational_leg': true,
+        'isOperationalLeg': true,
+      },
+      if (operationalLeg && legTypeToken != null) ...{
+        'leg_type': legTypeToken,
+        'legType': legTypeToken,
+      },
       if (customerName != null) 'customer_name': customerName,
       if (customerPhone != null) 'customer_phone': customerPhone,
       if (customerEmail != null) 'customer_email': customerEmail,
@@ -4621,6 +4827,10 @@ class _DriverHomePageState extends State<DriverHomePage>
       },
       if (totalPackage != null) 'booking_total_eur': totalPackage,
       if (segmentPrice != null) 'segment_price_eur': segmentPrice,
+      if (operationalLeg && segmentPrice != null) ...{
+        'leg_price_incl_vat': segmentPrice,
+        'legPriceInclVat': segmentPrice,
+      },
       if (bookingMap['price_incl_vat_main'] != null ||
           pricingMain['price_incl_vat'] != null)
         'outbound_price_eur': number(
@@ -4828,9 +5038,15 @@ class _DriverHomePageState extends State<DriverHomePage>
           bookingDetails['booking'] = mergedBooking;
         }
       }
+      final legAmount = _driverDisplayPriceForBooking(booking);
       final price =
-          booking.price ??
-          BookingItem._toNumOrNull(bookingDetails['booking_total_eur']);
+          legAmount ??
+          (booking.isOperationalLeg
+              ? null
+              : (booking.price ??
+                    BookingItem._toNumOrNull(
+                      bookingDetails['booking_total_eur'],
+                    )));
       final payload = <String, dynamic>{
         'booking_id': booking.bookingId,
         ...strictScope,
@@ -5095,7 +5311,9 @@ class _DriverHomePageState extends State<DriverHomePage>
       bookingId: bookingId,
       rideId: rideId,
     );
-    final total = booking.price?.toDouble();
+    final total =
+        _driverDisplayPriceForBooking(booking) ??
+        (booking.isOperationalLeg ? null : booking.price?.toDouble());
     final details = booking.details;
     final plannedPaymentStatus = _firstComplianceText([
       details['payment_status'],
@@ -8733,8 +8951,9 @@ class _DriverHomePageState extends State<DriverHomePage>
 
   String _fmtPrice() {
     final b = _activeBooking;
-    if (b?.price == null) return '—';
-    return b!.price!.toStringAsFixed(2);
+    final amount = b == null ? null : _driverDisplayPriceForBooking(b);
+    if (amount == null) return '—';
+    return amount.toStringAsFixed(2);
   }
 
   String _fmtMoney(num amount, String currency) {
@@ -11759,11 +11978,15 @@ class _DriverHomePageState extends State<DriverHomePage>
                   icon: Icons.timer_outlined,
                   text: '${durationMin.round()} min',
                 ),
-              if (nextRide.price != null)
+              if (_driverDisplayPriceForBooking(nextRide) != null)
                 metaChip(
                   icon: Icons.payments_outlined,
-                  text:
-                      'Totaal ${_fmtMoney(nextRide.price!, nextRide.currency ?? 'EUR')}',
+                  text: nextRide.isOperationalLeg
+                      ? _fmtMoney(
+                          _driverDisplayPriceForBooking(nextRide)!,
+                          nextRide.currency ?? 'EUR',
+                        )
+                      : 'Totaal ${_fmtMoney(_driverDisplayPriceForBooking(nextRide)!, nextRide.currency ?? 'EUR')}',
                 ),
             ],
           ),
@@ -14085,9 +14308,12 @@ class _DriverHomePageState extends State<DriverHomePage>
                 textColor: const Color(0xFF9DD8FF),
                 compact: true,
               ),
-              if (b.price != null)
+              if (_driverDisplayPriceForBooking(b) != null)
                 _pill(
-                  text: _fmtMoney(b.price!, b.currency ?? 'EUR'),
+                  text: _fmtMoney(
+                    _driverDisplayPriceForBooking(b)!,
+                    b.currency ?? 'EUR',
+                  ),
                   borderColor: isMidnightBlue
                       ? _midnightBlueBorderColor(0.50)
                       : const Color(0x55FFD36A),
@@ -14500,9 +14726,12 @@ class _DriverHomePageState extends State<DriverHomePage>
                 const SizedBox(height: 10),
                 Row(
                   children: [
-                    if (b.price != null)
+                    if (_driverDisplayPriceForBooking(b) != null)
                       _pill(
-                        text: _fmtMoney(b.price!, b.currency ?? 'EUR'),
+                        text: _fmtMoney(
+                          _driverDisplayPriceForBooking(b)!,
+                          b.currency ?? 'EUR',
+                        ),
                         borderColor: isMidnightBlue
                             ? _midnightBlueBorderColor(0.50)
                             : const Color(0x55FFD36A),
@@ -14749,8 +14978,13 @@ class _DriverHomePageState extends State<DriverHomePage>
                   _pill(text: (b.tier ?? 'premium').toUpperCase()),
                   _pill(text: '${b.pax ?? 0} pax'),
                   _pill(text: bagLabel),
-                  if (b.price != null)
-                    _pill(text: _fmtMoney(b.price!, b.currency ?? 'EUR')),
+                  if (_driverDisplayPriceForBooking(b) != null)
+                    _pill(
+                      text: _fmtMoney(
+                        _driverDisplayPriceForBooking(b)!,
+                        b.currency ?? 'EUR',
+                      ),
+                    ),
                 ],
               ),
               if (cardReference.value.trim().isNotEmpty) ...[
