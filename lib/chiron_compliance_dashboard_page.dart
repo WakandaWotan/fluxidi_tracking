@@ -1247,6 +1247,13 @@ class _ChironMockConnectionTestResult {
     this.officialSubmitEnabled = false,
     this.updatedAt,
     this.errorCode,
+    // Chiron Connect 4B: OAuth2 client credentials live test fields. The UI
+    // shows confirmation only; the access token itself is never sent back.
+    this.authScheme = '',
+    this.accessTokenObtained = false,
+    this.tokenType = '',
+    this.expiresInSeconds,
+    this.sanitizedError,
   });
 
   final bool ok;
@@ -1260,6 +1267,15 @@ class _ChironMockConnectionTestResult {
   final bool officialSubmitEnabled;
   final String? updatedAt;
   final String? errorCode;
+  final String authScheme;
+  final bool accessTokenObtained;
+  final String tokenType;
+  final int? expiresInSeconds;
+  final String? sanitizedError;
+
+  bool get isOAuthScheme =>
+      authScheme.toLowerCase() ==
+      ChironCredentialAuthScheme.authSchemeOAuthClientCredentials;
 
   factory _ChironMockConnectionTestResult.fromJson(Map<String, dynamic> json) {
     bool boolField(List<String> keys, {bool fallback = false}) {
@@ -1283,6 +1299,18 @@ class _ChironMockConnectionTestResult {
         if (text.isNotEmpty) return text;
       }
       return fallback;
+    }
+
+    int? intField(List<String> keys) {
+      for (final key in keys) {
+        final value = json[key];
+        if (value is num) return value.toInt();
+        if (value is String) {
+          final parsed = int.tryParse(value.trim());
+          if (parsed != null) return parsed;
+        }
+      }
+      return null;
     }
 
     return _ChironMockConnectionTestResult(
@@ -1322,6 +1350,20 @@ class _ChironMockConnectionTestResult {
       errorCode: textField(const ['error']).isEmpty
           ? null
           : textField(const ['error']),
+      authScheme: textField(const ['auth_scheme', 'authScheme']),
+      accessTokenObtained: boolField(const [
+        'access_token_obtained',
+        'accessTokenObtained',
+      ]),
+      tokenType: textField(const ['token_type', 'tokenType']),
+      expiresInSeconds: intField(const [
+        'expires_in_seconds',
+        'expiresInSeconds',
+      ]),
+      sanitizedError:
+          textField(const ['sanitized_error', 'sanitizedError']).isEmpty
+          ? null
+          : textField(const ['sanitized_error', 'sanitizedError']),
     );
   }
 }
@@ -1355,7 +1397,15 @@ Future<_ChironMockConnectionTestResult> _runChironMockConnectionTestViaBooking({
     );
   }
   final map = Map<String, dynamic>.from(decoded);
+  // Chiron Connect 4B: failed live OAuth2 exchanges return HTTP 400 with a
+  // structured body (auth_scheme/sanitized_error/last_connection_status) that
+  // we want to surface verbatim to the UI. Generic non-2xx without that shape
+  // is still treated as a plain error.
   if (res.statusCode < 200 || res.statusCode >= 300 || map['ok'] == false) {
+    final externalCall = map['external_call_performed'] == true;
+    if (externalCall) {
+      return _ChironMockConnectionTestResult.fromJson(map);
+    }
     return _ChironMockConnectionTestResult(
       ok: false,
       errorCode: _chironSafeApiErrorCode(map),
@@ -1814,8 +1864,14 @@ class _ChironTestAccessCardState extends State<_ChironTestAccessCard> {
       );
       if (!mounted) return;
       if (!result.ok) {
+        // Chiron Connect 4B: a failed live OAuth2 exchange returns a sanitized
+        // error string from the backend; surface it without ever showing
+        // tokens or secrets. Fallback to localized error code otherwise.
+        final sanitized = result.sanitizedError?.trim() ?? '';
         setState(() {
-          _actionError = _localizedApiError(result.errorCode);
+          _actionError = result.isOAuthScheme && sanitized.isNotEmpty
+              ? sanitized
+              : _localizedApiError(result.errorCode);
         });
         return;
       }
@@ -1827,13 +1883,26 @@ class _ChironTestAccessCardState extends State<_ChironTestAccessCard> {
       });
       await _refreshStatus();
       if (!mounted) return;
+      // Chiron Connect 4B: success copy depends on whether the backend really
+      // performed an external OAuth2 token exchange (oauth_client_credentials)
+      // or merely the legacy mock-only credential roundtrip (api_token). The
+      // access token itself is never shown.
+      final showOAuthSuccess =
+          result.isOAuthScheme && result.accessTokenObtained;
       _showSnack(
-        _t(
-          nl: 'Interne test geslaagd.',
-          en: 'Internal test passed.',
-          fr: 'Test interne réussi.',
-          es: 'Prueba interna superada.',
-        ),
+        showOAuthSuccess
+            ? _t(
+                nl: 'OAuth2-test geslaagd. Access token ontvangen.',
+                en: 'OAuth2 test passed. Access token received.',
+                fr: 'Test OAuth2 réussi. Jeton d’accès reçu.',
+                es: 'Prueba OAuth2 superada. Token de acceso recibido.',
+              )
+            : _t(
+                nl: 'Interne test geslaagd.',
+                en: 'Internal test passed.',
+                fr: 'Test interne réussi.',
+                es: 'Prueba interna superada.',
+              ),
       );
     } catch (_) {
       if (!mounted) return;
@@ -2072,10 +2141,10 @@ class _ChironTestAccessCardState extends State<_ChironTestAccessCard> {
               const SizedBox(height: 6),
               Text(
                 _t(
-                  nl: 'Voer het API-token in dat u via de officiële Chiron-omgeving ontvangt. Sla het op en test de verbinding.',
-                  en: 'Enter the API token you received through the official Chiron environment. Save it and test the connection.',
-                  fr: 'Saisissez le jeton API reçu via l’environnement officiel Chiron. Enregistrez-le et testez la connexion.',
-                  es: 'Introduzca el token API recibido a través del entorno oficial de Chiron. Guárdelo y pruebe la conexión.',
+                  nl: 'Voer de Chiron-toegangsgegevens in die u via de officiële Chiron-omgeving ontvangt. Sla ze op en test de verbinding.',
+                  en: 'Enter the Chiron access details you received from the official Chiron environment. Save them and test the connection.',
+                  fr: 'Saisissez les identifiants Chiron reçus de l’environnement officiel Chiron. Enregistrez-les et testez la connexion.',
+                  es: 'Introduzca los datos de acceso a Chiron recibidos del entorno oficial de Chiron. Guárdelos y pruebe la conexión.',
                 ),
                 style: TextStyle(
                   color: _chironTextSecondary,
@@ -2204,10 +2273,10 @@ class _ChironTestAccessCardState extends State<_ChironTestAccessCard> {
                   ChoiceChip(
                     label: Text(
                       _t(
-                        nl: 'OAuth2 Client Credentials (aanbevolen)',
-                        en: 'OAuth2 Client Credentials (recommended)',
-                        fr: 'OAuth2 Client Credentials (recommandé)',
-                        es: 'OAuth2 Client Credentials (recomendado)',
+                        nl: 'OAuth2 (aanbevolen)',
+                        en: 'OAuth2 (recommended)',
+                        fr: 'OAuth2 (recommandé)',
+                        es: 'OAuth2 (recomendado)',
                       ),
                       style: const TextStyle(fontSize: 11),
                     ),

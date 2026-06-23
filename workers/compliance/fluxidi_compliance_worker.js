@@ -91,6 +91,15 @@ const CHIRON_CREDENTIALS_ALLOWED_AUTH_SCHEMES = new Set([
 ]);
 const CHIRON_OAUTH_CLIENT_ID_MAX_LENGTH = 256;
 const CHIRON_OAUTH_CLIENT_SECRET_MAX_LENGTH = 1024;
+// Chiron Connect 4B: fixed allowlisted OAuth2 token endpoint per environment.
+// We never read this from KV or from request bodies. Production endpoint is
+// intentionally absent from this map until the production credentials route
+// is introduced in a later phase.
+const CHIRON_OAUTH_TOKEN_URL_BY_ENVIRONMENT = {
+  test: "https://mow-acc.api.vlaanderen.be/oauth/token",
+};
+const CHIRON_OAUTH_EXCHANGE_TIMEOUT_MS = 10000;
+const CHIRON_OAUTH_DEFAULT_TEST_MESSAGES_REQUIRED = 10;
 const CHIRON_CREDENTIALS_ENCRYPTION_KEY_MIN_LENGTH = 32;
 const CHIRON_TEST_CREDENTIALS_ALLOWED_TOP_LEVEL_KEYS = new Set([
   "tenant_id",
@@ -2486,12 +2495,35 @@ function buildChironExportStatusKey(tenantSegment, companySegment, eventId) {
 }
 
 function _chironSanitizeExportError(message) {
-  return cleanText(
-    String(message ?? "")
-      .replace(/Bearer\s+\S+/gi, "[redacted]")
-      .replace(/token[=:]\s*\S+/gi, "token=[redacted]"),
-    256,
+  // Chiron Connect 4B: sanitize all forms in which secrets could surface in
+  // upstream/downstream error strings. Covers Authorization headers (Bearer
+  // and Basic), form-encoded `key=value` fragments and JSON-quoted fields
+  // for access_token / refresh_token / client_secret / api_token / password.
+  // Keeps the existing api_token redaction behaviour for back-compat.
+  const SECRET_FIELD_PATTERN =
+    /(access_token|accesstoken|refresh_token|refreshtoken|client_secret|clientsecret|api_token|apitoken|api_key|apikey|password|secret)/i;
+  let safe = String(message ?? "")
+    .replace(/Bearer\s+\S+/gi, "Bearer [redacted]")
+    .replace(/Basic\s+\S+/gi, "Basic [redacted]");
+  // JSON-quoted secret fields: "access_token":"..."
+  safe = safe.replace(
+    new RegExp(
+      `"(${SECRET_FIELD_PATTERN.source.slice(1, -1)})"\\s*:\\s*"[^"]*"`,
+      "gi",
+    ),
+    '"$1":"[redacted]"',
   );
+  // Form / query secret fields: access_token=... or access_token: ...
+  safe = safe.replace(
+    new RegExp(
+      `(${SECRET_FIELD_PATTERN.source.slice(1, -1)})\\s*[=:]\\s*[^\\s&"']+`,
+      "gi",
+    ),
+    "$1=[redacted]",
+  );
+  // Generic legacy fallback: token=... / token: ...
+  safe = safe.replace(/\btoken\s*[=:]\s*\S+/gi, "token=[redacted]");
+  return cleanText(safe, 256);
 }
 
 function _chironExtractExternalReference(data) {
@@ -2507,6 +2539,146 @@ function _chironExtractExternalReference(data) {
       200,
     ) || null
   );
+}
+
+// === Chiron Connect 4B: OAuth2 Client Credentials token exchange =============
+// Performs an RFC 6749 §4.4 client_credentials grant against the fixed,
+// allowlisted Chiron token endpoint for the given environment. The caller is
+// responsible for decrypting the per-company credentials. The access_token is
+// only kept in memory inside this function: it is NEVER persisted, cached or
+// returned to callers / UI. expires_in is normalized to a non-negative number
+// of seconds when present.
+function _chironCoerceOAuthExpiresInSeconds(value) {
+  if (value === null || value === undefined) return null;
+  const num = Number(value);
+  if (!Number.isFinite(num) || num < 0) return null;
+  return Math.floor(num);
+}
+
+async function _chironExchangeOAuthClientCredentials(
+  env,
+  { environment, clientId, clientSecret } = {},
+) {
+  const envKey = cleanText(environment, 32).toLowerCase();
+  if (envKey !== "test") {
+    return { ok: false, error: "unsupported_environment", http_status: null };
+  }
+  const tokenUrl = CHIRON_OAUTH_TOKEN_URL_BY_ENVIRONMENT[envKey];
+  if (!tokenUrl) {
+    return { ok: false, error: "missing_token_url", http_status: null };
+  }
+  if (
+    typeof clientId !== "string" ||
+    typeof clientSecret !== "string" ||
+    !clientId.trim() ||
+    !clientSecret.trim()
+  ) {
+    return { ok: false, error: "missing_credentials", http_status: null };
+  }
+
+  const basicAuth = btoa(`${clientId}:${clientSecret}`);
+  const formBody = "grant_type=client_credentials";
+
+  const controller = new AbortController();
+  const timeout = setTimeout(
+    () => controller.abort(),
+    CHIRON_OAUTH_EXCHANGE_TIMEOUT_MS,
+  );
+
+  let response;
+  try {
+    response = await fetch(tokenUrl, {
+      method: "POST",
+      headers: {
+        accept: "application/json",
+        "content-type": "application/x-www-form-urlencoded",
+        authorization: `Basic ${basicAuth}`,
+      },
+      body: formBody,
+      signal: controller.signal,
+    });
+  } catch (err) {
+    clearTimeout(timeout);
+    const reason =
+      err && err.name === "AbortError" ? "oauth_token_timeout" : "oauth_token_network_error";
+    return {
+      ok: false,
+      error: reason,
+      http_status: null,
+      sanitized_error: _chironSanitizeExportError(err?.message || reason),
+    };
+  }
+  clearTimeout(timeout);
+
+  const httpStatus = response.status;
+  const httpOk = httpStatus >= 200 && httpStatus < 300;
+
+  let parsedBody = null;
+  const contentType = cleanText(response.headers.get("content-type"), 128).toLowerCase();
+  if (contentType.includes("application/json")) {
+    try {
+      parsedBody = await response.json();
+    } catch (_) {
+      parsedBody = null;
+    }
+  }
+
+  if (!httpOk) {
+    // Body may legally be JSON {error,error_description}; we do NOT echo raw
+    // body because it could contain access_token in some non-conformant
+    // servers. Sanitize the canonical RFC 6749 error fields only.
+    const errorCode =
+      (parsedBody && typeof parsedBody === "object" && cleanText(parsedBody.error, 64)) ||
+      `oauth_http_${httpStatus}`;
+    const errorDescription =
+      (parsedBody &&
+        typeof parsedBody === "object" &&
+        cleanText(parsedBody.error_description, 256)) ||
+      "";
+    return {
+      ok: false,
+      error: errorCode,
+      http_status: httpStatus,
+      sanitized_error: _chironSanitizeExportError(
+        errorDescription || `HTTP ${httpStatus}`,
+      ),
+    };
+  }
+
+  if (!parsedBody || typeof parsedBody !== "object" || Array.isArray(parsedBody)) {
+    return {
+      ok: false,
+      error: "invalid_oauth_response",
+      http_status: httpStatus,
+      sanitized_error: "invalid_oauth_response",
+    };
+  }
+
+  const tokenType = cleanText(parsedBody.token_type, 32).toLowerCase();
+  const accessToken = typeof parsedBody.access_token === "string"
+    ? parsedBody.access_token.trim()
+    : "";
+  if (!accessToken || tokenType !== "bearer") {
+    return {
+      ok: false,
+      error: "invalid_oauth_response",
+      http_status: httpStatus,
+      sanitized_error: "invalid_oauth_response",
+    };
+  }
+
+  const expiresInSeconds = _chironCoerceOAuthExpiresInSeconds(parsedBody.expires_in);
+
+  // The access_token is intentionally dropped here; we only surface a boolean
+  // confirmation upstream. There is no caching, no encrypted persistence and
+  // no return-to-caller of the token in this phase (4B).
+  return {
+    ok: true,
+    token_type: "Bearer",
+    expires_in_seconds: expiresInSeconds,
+    access_token_obtained: true,
+    http_status: httpStatus,
+  };
 }
 
 // === Chiron-6A-light: official ride payload draft (additive, opt-in) ===
@@ -6822,6 +6994,55 @@ function buildChironInternalTestPassedStatusFields({
   };
 }
 
+// Chiron Connect 4B: status-doc fragment written after a successful OAuth2
+// client_credentials exchange. last_connection_status flips to "test_passed",
+// production stays gated by parseChironConfigStatusPostInput.
+function buildChironOAuthLiveTestPassedStatusFields({
+  testedAt,
+  environment,
+  tokenType,
+  expiresInSeconds,
+}) {
+  const envRaw = cleanText(environment, 32).toLowerCase();
+  const safeEnvironment = CHIRON_CONNECTION_ALLOWED_ENVIRONMENTS.has(envRaw) ? envRaw : "test";
+  return {
+    last_connection_status: "test_passed",
+    last_connection_test_at: testedAt,
+    last_connection_status_message: null,
+    last_connection_environment: safeEnvironment,
+    last_connection_auth_scheme: "oauth_client_credentials",
+    last_connection_external_call_performed: true,
+    last_connection_token_type: cleanText(tokenType, 32) || "Bearer",
+    last_connection_access_token_obtained: true,
+    last_connection_expires_in_seconds:
+      Number.isFinite(expiresInSeconds) && expiresInSeconds >= 0
+        ? Math.floor(expiresInSeconds)
+        : null,
+    last_connection_sanitized_error: null,
+  };
+}
+
+function buildChironOAuthLiveTestFailedStatusFields({
+  testedAt,
+  environment,
+  sanitizedError,
+}) {
+  const envRaw = cleanText(environment, 32).toLowerCase();
+  const safeEnvironment = CHIRON_CONNECTION_ALLOWED_ENVIRONMENTS.has(envRaw) ? envRaw : "test";
+  return {
+    last_connection_status: "test_failed",
+    last_connection_test_at: testedAt,
+    last_connection_status_message: cleanText(sanitizedError, 256) || null,
+    last_connection_environment: safeEnvironment,
+    last_connection_auth_scheme: "oauth_client_credentials",
+    last_connection_external_call_performed: true,
+    last_connection_token_type: null,
+    last_connection_access_token_obtained: false,
+    last_connection_expires_in_seconds: null,
+    last_connection_sanitized_error: cleanText(sanitizedError, 256) || null,
+  };
+}
+
 function buildChironInternalTestStatusResponseFields(stored) {
   if (!stored || typeof stored !== "object" || Array.isArray(stored)) {
     return {};
@@ -6971,6 +7192,31 @@ function parseChironConfigStatusPostInput(body, existingStored) {
   }
 
   const testMessagesSent = Number(existing.test_messages_sent_count);
+  const safeTestMessagesSent =
+    Number.isFinite(testMessagesSent) && testMessagesSent >= 0
+      ? Math.floor(testMessagesSent)
+      : 0;
+  const testMessagesRequiredRaw = Number(existing.test_messages_required);
+  const safeTestMessagesRequired =
+    Number.isFinite(testMessagesRequiredRaw) && testMessagesRequiredRaw >= 0
+      ? Math.floor(testMessagesRequiredRaw)
+      : CHIRON_OAUTH_DEFAULT_TEST_MESSAGES_REQUIRED;
+
+  // Chiron Connect 4B: tighten production gate. Even with last_connection_status
+  // === "test_passed" (now reachable via the live OAuth2 exchange), production
+  // remains blocked until the operator has completed the required test message
+  // run. Counters land in 4C; default required count is 10.
+  if (
+    productionEnabledRequested &&
+    safeTestMessagesSent < safeTestMessagesRequired
+  ) {
+    return { error: "production_requires_test_messages_complete" };
+  }
+
+  const productionEnabledFinal =
+    productionEnabledRequested &&
+    existingStatus === "test_passed" &&
+    safeTestMessagesSent >= safeTestMessagesRequired;
 
   return {
     value: {
@@ -6978,16 +7224,13 @@ function parseChironConfigStatusPostInput(body, existingStored) {
       enabled,
       environment: environmentRaw,
       region: regionRaw,
-      production_enabled:
-        productionEnabledRequested && existingStatus === "test_passed",
+      production_enabled: productionEnabledFinal,
       last_connection_status: existingStatus,
       last_connection_test_at: cleanText(existing.last_connection_test_at, 64) || null,
       last_connection_status_message:
         cleanText(existing.last_connection_status_message, 256) || "",
-      test_messages_sent_count:
-        Number.isFinite(testMessagesSent) && testMessagesSent >= 0
-          ? Math.floor(testMessagesSent)
-          : 0,
+      test_messages_sent_count: safeTestMessagesSent,
+      test_messages_required: safeTestMessagesRequired,
       official_submission_performed_at:
         cleanText(existing.official_submission_performed_at, 64) || null,
     },
@@ -7457,6 +7700,10 @@ async function handleChironConnectionTestPost(request, url, env, origin) {
   );
   const maskedIdentifier = cleanText(credentialsDoc.masked_identifier, 64);
   const testedAt = nowIso();
+  const decryptedAuthScheme =
+    cleanText(decryptedPayload.auth_scheme, 64).toLowerCase() ||
+    cleanText(credentialsDoc.auth_scheme, 64).toLowerCase() ||
+    "api_token";
 
   const statusRead = await readChironConnectionStatusRaw(env, tenantId, companyId);
   const existingStatusDoc =
@@ -7464,6 +7711,148 @@ async function handleChironConnectionTestPost(request, url, env, origin) {
       ? statusRead.doc
       : {};
 
+  // Chiron Connect 4B: live OAuth2 client_credentials exchange branch. Only
+  // engaged when the stored credential is an oauth_client_credentials envelope.
+  // Legacy api_token credentials keep the existing mock-only behaviour below.
+  if (decryptedAuthScheme === "oauth_client_credentials") {
+    const exchangeResult = await _chironExchangeOAuthClientCredentials(env, {
+      environment,
+      clientId: decryptedPayload.client_id,
+      clientSecret: decryptedPayload.client_secret,
+    });
+
+    if (exchangeResult.ok) {
+      const liveFields = buildChironOAuthLiveTestPassedStatusFields({
+        testedAt,
+        environment,
+        tokenType: exchangeResult.token_type,
+        expiresInSeconds: exchangeResult.expires_in_seconds,
+      });
+      const statusDocToWrite = {
+        ...existingStatusDoc,
+        ...liveFields,
+        updated_at: testedAt,
+      };
+
+      const statusWrite = await writeChironConnectionStatusRaw(
+        env,
+        tenantId,
+        companyId,
+        statusDocToWrite,
+      );
+      if (!statusWrite.ok) {
+        return jsonResponse(
+          { ok: false, error: statusWrite.error || "kv_write_failed" },
+          500,
+          origin,
+        );
+      }
+
+      const statusPayload = buildChironConnectionStatusResponse(
+        tenantId,
+        companyId,
+        statusDocToWrite,
+      );
+
+      console.log(
+        `[CHIRON_CONNECTION_TEST][OAUTH][PASSED] tenant=${_chironMaskScopeId(
+          tenantId,
+        )} company=${_chironMaskScopeId(companyId)} env=${environment} expires_in=${
+          liveFields.last_connection_expires_in_seconds ?? "null"
+        }`,
+      );
+
+      return jsonResponse(
+        {
+          ok: true,
+          mock_only: false,
+          external_call_performed: true,
+          tenant_id: tenantId,
+          company_id: companyId,
+          environment,
+          auth_scheme: "oauth_client_credentials",
+          test_credentials_stored: true,
+          credential_decrypt_ok: true,
+          credential_payload_valid: true,
+          credential_fingerprint_short: credentialFingerprintShort,
+          masked_identifier: maskedIdentifier,
+          access_token_obtained: true,
+          token_type: "Bearer",
+          expires_in_seconds: liveFields.last_connection_expires_in_seconds,
+          last_connection_status: statusPayload.last_connection_status,
+          production_enabled: false,
+          official_submit_enabled: false,
+          updated_at: testedAt,
+        },
+        200,
+        origin,
+      );
+    }
+
+    const sanitizedError =
+      cleanText(exchangeResult.sanitized_error, 256) ||
+      cleanText(exchangeResult.error, 256) ||
+      "oauth_token_exchange_failed";
+    const failedFields = buildChironOAuthLiveTestFailedStatusFields({
+      testedAt,
+      environment,
+      sanitizedError,
+    });
+    const statusDocToWrite = {
+      ...existingStatusDoc,
+      ...failedFields,
+      updated_at: testedAt,
+    };
+
+    const statusWrite = await writeChironConnectionStatusRaw(
+      env,
+      tenantId,
+      companyId,
+      statusDocToWrite,
+    );
+    if (!statusWrite.ok) {
+      return jsonResponse(
+        { ok: false, error: statusWrite.error || "kv_write_failed" },
+        500,
+        origin,
+      );
+    }
+
+    const statusPayload = buildChironConnectionStatusResponse(
+      tenantId,
+      companyId,
+      statusDocToWrite,
+    );
+
+    console.log(
+      `[CHIRON_CONNECTION_TEST][OAUTH][FAILED] tenant=${_chironMaskScopeId(
+        tenantId,
+      )} company=${_chironMaskScopeId(companyId)} env=${environment} http_status=${
+        exchangeResult.http_status ?? "null"
+      } error=${cleanText(exchangeResult.error, 64) || "unknown"}`,
+    );
+
+    return jsonResponse(
+      {
+        ok: false,
+        external_call_performed: true,
+        tenant_id: tenantId,
+        company_id: companyId,
+        environment,
+        auth_scheme: "oauth_client_credentials",
+        error: cleanText(exchangeResult.error, 64) || "oauth_token_exchange_failed",
+        sanitized_error: sanitizedError,
+        last_connection_status: statusPayload.last_connection_status,
+        production_enabled: false,
+        official_submit_enabled: false,
+        updated_at: testedAt,
+      },
+      400,
+      origin,
+    );
+  }
+
+  // Legacy api_token: existing mock-only behaviour preserved exactly.
   const internalTestFields = buildChironInternalTestPassedStatusFields({
     testedAt,
     environment,
@@ -7505,8 +7894,7 @@ async function handleChironConnectionTestPost(request, url, env, origin) {
       tenant_id: tenantId,
       company_id: companyId,
       environment,
-      auth_scheme:
-        cleanText(credentialsDoc.auth_scheme, 64).toLowerCase() || "api_token",
+      auth_scheme: decryptedAuthScheme || "api_token",
       test_credentials_stored: true,
       credential_decrypt_ok: true,
       credential_payload_valid: true,
