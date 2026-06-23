@@ -3918,7 +3918,7 @@ function _chironOfficialPickProfileField(event, profile, ...keys) {
 
 function _chironResolveOfficialRitnummer(event, blueprint) {
   const ride = blueprint?.ride || _chironProjectRide(event);
-  return (
+  const base =
     cleanText(event?.booking_id, 128) ||
     cleanText(ride?.public_booking_reference, 128) ||
     cleanText(event?.trip_id, 128) ||
@@ -3929,8 +3929,31 @@ function _chironResolveOfficialRitnummer(event, blueprint) {
         event?.bookingReference,
       128,
     ) ||
-    null
-  );
+    null;
+  if (!base) return null;
+  // Chiron-3B: roundtrip operational-leg ritnummer scoping. Outbound and
+  // return of the same parent booking MUST NOT share the same official
+  // Chiron ritnummer because the official sequence (reservatie / vertrek /
+  // aankomst) is keyed on ritnummer. When the persisted compliance event
+  // carries leg_id / leg_type the booking/tracking workers stamped, append
+  // a stable leg suffix so each operational leg gets its own ritnummer in
+  // official export, dry-run and readiness aggregation. Non-leg events
+  // (booking_created / booking_confirmed, one-way ride_stop, …) keep the
+  // existing ritnummer untouched, so backwards compatibility is preserved.
+  const legId = cleanText(event?.leg_id ?? event?.legId, 128);
+  const legType = cleanText(event?.leg_type ?? event?.legType, 64);
+  if (!legId && !legType) return base;
+  const legTypeNormalized = legType
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]/g, "");
+  if (legTypeNormalized) return `${base}-${legTypeNormalized}`;
+  const legIdNormalized = legId
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]/g, "");
+  if (!legIdNormalized) return base;
+  const legIdSuffix =
+    legIdNormalized.length > 16 ? legIdNormalized.slice(-16) : legIdNormalized;
+  return `${base}-${legIdSuffix}`;
 }
 
 function _chironResolveOfficialRegistratie(event, profile = null) {
