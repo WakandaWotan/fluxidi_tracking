@@ -3133,6 +3133,14 @@ class _DriverHomePageState extends State<DriverHomePage>
         ['dropoff', 'lon'],
         ['dropoff', 'lng'],
       ]);
+      // Prefer trusted booking drop-off coordinates; otherwise fall back to the
+      // live device GPS, since the driver is physically at this leg's drop-off
+      // when stopping it. This keeps each leg's arrival coordinate (Chiron
+      // aankomstpunt) leg-scoped and never inherits another leg's drop-off.
+      final num? effectiveDropoffLat = dropoffLat ?? _lastPos?.latitude;
+      final num? effectiveDropoffLon = dropoffLon ?? _lastPos?.longitude;
+      final bool hasEffectiveDropoffCoords =
+          effectiveDropoffLat != null && effectiveDropoffLon != null;
       final payload = <String, dynamic>{
         'trip_id': deterministicTripId,
         'booking_id': bookingId,
@@ -3150,8 +3158,8 @@ class _DriverHomePageState extends State<DriverHomePage>
         },
         'destination': <String, dynamic>{
           'label': (booking.to ?? booking.from ?? booking.shortId).toString(),
-          if (dropoffLat != null) 'lat': dropoffLat.toDouble(),
-          if (dropoffLon != null) 'lon': dropoffLon.toDouble(),
+          if (hasEffectiveDropoffCoords) 'lat': effectiveDropoffLat.toDouble(),
+          if (hasEffectiveDropoffCoords) 'lon': effectiveDropoffLon.toDouble(),
         },
         'booking_details': <String, dynamic>{
           ..._plannedBookingDetailsPayload(booking),
@@ -5057,6 +5065,12 @@ class _DriverHomePageState extends State<DriverHomePage>
         },
         'destination': <String, dynamic>{
           'label': (booking.to ?? booking.from ?? booking.shortId).toString(),
+          // The driver is physically at the drop-off when stopping a planned
+          // ride. Booking records for this flow carry no drop-off coordinates,
+          // so the live device GPS is the only trusted arrival coordinate
+          // (Chiron aankomstpunt). Never send 0/0; omit when GPS is unavailable.
+          if (_lastPos != null) 'lat': _lastPos!.latitude,
+          if (_lastPos != null) 'lon': _lastPos!.longitude,
         },
         'booking_details': bookingDetails,
         if (startedAt != null)

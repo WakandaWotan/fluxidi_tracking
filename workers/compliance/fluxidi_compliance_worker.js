@@ -3041,6 +3041,13 @@ function isValidChironCoordinate(value, kind) {
 }
 
 function isInvalidZeroCoordinatePair(lng, lat) {
+  // Only a genuinely-provided numeric 0/0 pair is an "invalid zero coordinate".
+  // Missing values (null / undefined / empty string) are NOT a zero pair: they
+  // are absent coordinates handled separately as missing fields. Without this
+  // guard Number(null) === 0 makes a null/null arrival point falsely trip
+  // invalid_zero_coordinate_pair instead of a plain "missing coordinate".
+  if (lng === null || lng === undefined || lng === "") return false;
+  if (lat === null || lat === undefined || lat === "") return false;
   const lngNum = Number(lng);
   const latNum = Number(lat);
   if (!Number.isFinite(lngNum) || !Number.isFinite(latNum)) return false;
