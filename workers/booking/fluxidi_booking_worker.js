@@ -52714,13 +52714,61 @@ function _bookingMainPriceInclVatFromRecord(rec) {
   return Number.isFinite(num) ? num : null;
 }
 
+// Explicit return origin/destination ONLY (no outbound-address fallback).
+// _bookingReturnFromFromRecord / _bookingReturnToFromRecord intentionally fall
+// back to the swapped outbound addresses (return_from -> outbound.to,
+// return_to -> outbound.from) so that, once we KNOW a leg is a return, it gets
+// sensible from/to. They must NOT be used to DECIDE whether a return exists,
+// because the fallback makes them truthy for every one-way booking.
+function _bookingExplicitReturnFromFromRecord(rec) {
+  const booking = rec?.booking && typeof rec.booking === "object" ? rec.booking : {};
+  return safeStr(
+    rec?.return_from ??
+      rec?.returnFrom ??
+      booking?.return_from ??
+      booking?.returnFrom ??
+      _pick(rec, ["quote", "return", "from"], null) ??
+      _pick(rec, ["quote", "return_from"], null) ??
+      _pick(rec, ["payload", "return_from"], null) ??
+      _pick(rec, ["payload", "returnFrom"], null),
+    320,
+  );
+}
+
+function _bookingExplicitReturnToFromRecord(rec) {
+  const booking = rec?.booking && typeof rec.booking === "object" ? rec.booking : {};
+  return safeStr(
+    rec?.return_to ??
+      rec?.returnTo ??
+      booking?.return_to ??
+      booking?.returnTo ??
+      _pick(rec, ["quote", "return", "to"], null) ??
+      _pick(rec, ["quote", "return_to"], null) ??
+      _pick(rec, ["payload", "return_to"], null) ??
+      _pick(rec, ["payload", "returnTo"], null),
+    320,
+  );
+}
+
 function _bookingHasReturnDisplayData(rec) {
+  // A RETURN leg may only be displayed/synthesized when there is a GENUINE
+  // return signal:
+  //   - return_enabled === true (booking/payload/quote), or
+  //   - an explicit return pickup iso / return schedule, or
+  //   - a positive return price, or
+  //   - an EXPLICIT return origin AND destination.
+  // We deliberately do NOT use _bookingReturnFromFromRecord /
+  // _bookingReturnToFromRecord here: their swapped-outbound-address fallback
+  // would flag every one-way booking as a roundtrip and produce a phantom
+  // RETURN leg. pricing_profile.return_enabled is also intentionally NOT
+  // consulted (only the booking's own return flags).
   if (_bookingReturnEnabledFromRecord(rec)) return true;
+  if (_bookingReturnPickupIsoFromRecord(rec)) return true;
   const returnPrice = _bookingReturnPriceInclVatFromRecord(rec);
   if (returnPrice != null && returnPrice > 0) return true;
-  const returnFrom = _bookingReturnFromFromRecord(rec);
-  const returnTo = _bookingReturnToFromRecord(rec);
-  return !!(returnFrom && returnTo);
+  const explicitReturnFrom = _bookingExplicitReturnFromFromRecord(rec);
+  const explicitReturnTo = _bookingExplicitReturnToFromRecord(rec);
+  return !!(explicitReturnFrom && explicitReturnTo);
 }
 
 function _estimateReturnPickupIsoForReadModel(rec, outboundPickupIso) {
@@ -52808,7 +52856,10 @@ function _bookingOperationalLegsForReadModel(rec, bookingId) {
     safeStr(bookingId, 160);
   let stored = _bookingOperationalLegsFromRecord(rec).map((entry) => ({ ...entry }));
   if (!stored.length) {
-    if (!_bookingHasReturnDisplayData(rec)) return [];
+    // Always synthesize the OUTBOUND leg for a record that has from/to but no
+    // persisted operational legs (e.g. legacy bookings). The RETURN leg is
+    // added below only when there is genuine return data, so one-way bookings
+    // show exactly one (outbound) leg.
     const outbound = _synthesizeOutboundOperationalLegForReadModel(rec, resolvedBookingId);
     if (!outbound) return [];
     stored = [outbound];
