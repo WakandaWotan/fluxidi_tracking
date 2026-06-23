@@ -787,6 +787,14 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
     if (_isPlannedReceipt) {
       final legAmount = _effectiveOperationalLegAmount();
       if (_isPositiveAmount(legAmount)) return legAmount;
+      // Leg-first business rule: prefer `item.totalEur` (the trip-history
+      // leg amount, e.g. €200) over the parent `booking_total_eur`
+      // (e.g. €400) so the on-screen Total / PDF total never surfaces the
+      // parent booking total as a leg ritbon total.
+      if (_ReceiptPdfActionRunner._isLegReceiptItem(item) &&
+          _isPositiveAmount(item.totalEur)) {
+        return item.totalEur;
+      }
       return _detailDouble('booking_total_eur') ?? item.totalEur;
     }
     return item.totalEur;
@@ -799,8 +807,21 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
   /// collects its own slice and the customer is never asked to pay the
   /// full booking total twice — once on each leg's receipt.
   bool _useLegAmountForPayment() {
-    if (!_isPlannedOperationalLegPaymentItem()) return false;
-    return _isPositiveAmount(_effectiveOperationalLegAmount());
+    if (_isPlannedOperationalLegPaymentItem()) {
+      return _isPositiveAmount(_effectiveOperationalLegAmount());
+    }
+    // Leg-first business rule: a ritbon proves ONE operational leg. When
+    // the planned-operational-leg gate misses (no leg_id/leg_type/row_key
+    // on the item, or the trip-history record already flipped past
+    // 'planned' kind) but `_isLegReceiptItem` still fires (leg_type token,
+    // -R bookingId, or receipt_total < booking_total), keep the
+    // payment-zone amount + EPC SEPA QR amount + booking-worker payment
+    // payload scoped to the leg amount rather than silently asking the
+    // customer for the parent €400 booking total.
+    if (_ReceiptPdfActionRunner._isLegReceiptItem(item)) {
+      return _isPositiveAmount(item.totalEur);
+    }
+    return false;
   }
 
   /// Authoritative amount to request from the customer for the current
@@ -1641,6 +1662,37 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
     final outbound = _detailDouble('outbound_price_eur');
     final ret = _detailDouble('return_price_eur');
     final rows = <Widget>[];
+
+    // Leg-first business rule: a ritbon proves ONE operational leg.
+    // Render only the active leg's "Vaste prijs" and suppress every
+    // roundtrip context row (Totaal boeking €400, Pakketprijs, sibling
+    // leg's prijs). Active-leg price priority:
+    //   1. _effectiveOperationalLegAmount() — authoritative leg slice
+    //   2. outbound_price_eur / return_price_eur — split projection
+    //   3. item.totalEur — trip-history leg amount fallback
+    final isLegReceipt = _ReceiptPdfActionRunner._isLegReceiptItem(item);
+    if (isLegReceipt) {
+      final activeLegToken = _ReceiptPdfActionRunner._legReceiptActiveLegToken(
+        item,
+      );
+      double? activePrice;
+      if (_isPositiveAmount(legAmount)) {
+        activePrice = legAmount;
+      } else {
+        final splitPrice = activeLegToken == 'return' ? ret : outbound;
+        if (_isPositiveAmount(splitPrice)) {
+          activePrice = splitPrice;
+        } else if (_isPositiveAmount(item.totalEur)) {
+          activePrice = item.totalEur;
+        }
+      }
+      if (_isPositiveAmount(activePrice)) {
+        rows.add(
+          _receiptRow(_receiptText('fixedPrice'), _moneyText(activePrice)),
+        );
+      }
+      return rows;
+    }
 
     if (_isPlannedOperationalLegPaymentItem() && _isPositiveAmount(legAmount)) {
       rows.add(_receiptRow(_receiptText('fixedPrice'), _moneyText(legAmount)));
@@ -2617,10 +2669,23 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
           _receiptText('notAvailable');
       final roundtripProjection =
           _ReceiptPdfActionRunner._roundtripProjectionForPdf(item);
+      // Leg-first business rule: a ritbon proves ONE operational leg.
+      // Suppress the roundtrip PDF section when this is a leg receipt
+      // even if the derived projection succeeds. Detection lives in
+      // `_isLegReceiptItem`.
+      final isLegReceipt = _ReceiptPdfActionRunner._isLegReceiptItem(item);
       final completedRoundtripReceipt =
+          !isLegReceipt &&
           _ReceiptPdfActionRunner._isCompletedRoundtripProjection(
             roundtripProjection,
           );
+      _ReceiptPdfActionRunner._logReceiptPdfRoute(
+        item: item,
+        source: 'driver_receipt',
+        builder: 'stateful',
+        isRoundtrip: completedRoundtripReceipt,
+        isLegReceipt: isLegReceipt,
+      );
       final businessFields = _resolvedReceiptBusinessFields();
       debugPrint(
         '[RECEIPT][BUSINESS_FIELDS] source=stateful_pdf booking=${_safeRefPreview(item.bookingId ?? item.tripId)} business=${businessFields.isBusinessDocument} invoiceRequested=${businessFields.invoiceRequested} companyFound=${businessFields.companyName.isNotEmpty} vatFound=${businessFields.vatNumber.isNotEmpty} invoiceEmailFound=${businessFields.invoiceEmail.isNotEmpty} invoiceAddressFound=${businessFields.invoiceAddress.isNotEmpty}',
@@ -2746,8 +2811,26 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
             else ...[
               _pdfInfoRow(_receiptText('from'), route.from),
               _pdfInfoRow(_receiptText('to'), route.to),
-              _pdfInfoRow(_receiptText('distance'), _kmText()),
-              _pdfInfoRow(_receiptText('duration'), durationText),
+              _pdfInfoRow(
+                _receiptText('distance'),
+                isLegReceipt
+                    ? _ReceiptPdfActionRunner._legReceiptDistanceText(item)
+                    : _kmText(),
+              ),
+              _pdfInfoRow(
+                _receiptText('duration'),
+                isLegReceipt
+                    ? (_ReceiptPdfActionRunner._legReceiptDurationMinutes(
+                            item,
+                          ) ??
+                          _receiptText('notAvailable'))
+                    : durationText,
+              ),
+              if (isLegReceipt)
+                _pdfInfoRow(
+                  _receiptText('rideStatus'),
+                  _ReceiptPdfActionRunner._legReceiptRideStatusDisplay(item),
+                ),
             ],
             pw.SizedBox(height: 12),
             pw.Text(
@@ -3600,6 +3683,13 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
   }
 
   bool _isParentCompletedRoundtripReceipt() {
+    // Leg-first business rule: a ritbon proves ONE operational leg, not
+    // the parent roundtrip. When `_isLegReceiptItem` fires (explicit
+    // leg_type / -R bookingId / receipt_total below booking_total) we
+    // never treat the current ritbon as the parent roundtrip — that
+    // keeps the on-screen subtype label as "Heenrit" / "Terugrit" and
+    // suppresses the "Heen-en-terug" wording on the leg ritbon.
+    if (_ReceiptPdfActionRunner._isLegReceiptItem(item)) return false;
     final projection = _detailAt(const ['roundtrip_price_projection']);
     if (projection is Map) {
       final mode = (projection['display_mode'] ?? '')
@@ -3729,8 +3819,18 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
   String? _routeSegmentsText() {
     final raw = item.bookingDetails['route_segments'];
     if (raw is! List || raw.isEmpty) return null;
+    // Leg-first business rule: a ritbon proves ONE operational leg, so
+    // the "Route details" row only renders the active leg's segment.
+    // Outbound → route_segments[0], return → route_segments[1].
+    final isLegReceipt = _ReceiptPdfActionRunner._isLegReceiptItem(item);
+    final activeIndex = isLegReceipt
+        ? (_ReceiptPdfActionRunner._legReceiptActiveLegToken(item) == 'return'
+              ? 1
+              : 0)
+        : -1;
     final lines = <String>[];
     for (var i = 0; i < raw.length; i++) {
+      if (activeIndex >= 0 && i != activeIndex) continue;
       final segment = raw[i];
       if (segment is! Map) continue;
       final from = segment['from']?.toString().trim();
@@ -3748,7 +3848,9 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
       final route = parts.isEmpty
           ? '${_receiptText('route')} ${i + 1}'
           : parts.join(' ');
-      lines.add('${i + 1}. $route${meta.isEmpty ? '' : ': $meta'}');
+      // Leg-first: drop the numeric prefix because there's only one row.
+      final prefix = activeIndex >= 0 ? '' : '${i + 1}. ';
+      lines.add('$prefix$route${meta.isEmpty ? '' : ': $meta'}');
     }
     return lines.isEmpty ? null : lines.join('\n');
   }
@@ -4139,23 +4241,32 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
                           _routeSegmentsText(),
                         ),
                         ..._plannedPriceRows(),
-                        _optionalReceiptRow(
-                          _receiptText('returnPlanned'),
-                          _detailText('return_scheduled_pickup_at') == null
-                              ? null
-                              : _formatDate(
-                                  _detailText('return_scheduled_pickup_at'),
-                                ),
-                        ),
-                        _optionalReceiptRow(
-                          _receiptText('returnRoute'),
-                          _detailText('return_route'),
-                        ),
+                        // Leg-first: a ritbon proves ONE operational leg, so
+                        // the Retour gepland / Retour route rows belong on the
+                        // booking-detail page, not on the leg ritbon.
+                        if (!_ReceiptPdfActionRunner._isLegReceiptItem(
+                          item,
+                        )) ...[
+                          _optionalReceiptRow(
+                            _receiptText('returnPlanned'),
+                            _detailText('return_scheduled_pickup_at') == null
+                                ? null
+                                : _formatDate(
+                                    _detailText('return_scheduled_pickup_at'),
+                                  ),
+                          ),
+                          _optionalReceiptRow(
+                            _receiptText('returnRoute'),
+                            _detailText('return_route'),
+                          ),
+                        ],
                       ],
                       _sectionTitle(_receiptText('statusPaymentSection')),
                       _receiptRow(
                         _receiptText('rideStatus'),
-                        _localizedRideStatus(item.status),
+                        _ReceiptPdfActionRunner._legReceiptRideStatusDisplay(
+                          item,
+                        ),
                       ),
                       _receiptRow(
                         _receiptText('paymentStatus'),

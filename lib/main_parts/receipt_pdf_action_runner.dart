@@ -804,8 +804,20 @@ class _ReceiptPdfActionRunner {
         ),
       );
       final projection = _roundtripProjectionForPdf(item);
-      final completedRoundtripReceipt = _isCompletedRoundtripProjection(
-        projection,
+      // Leg-first business rule: a ritbon proves ONE operational leg. Even
+      // when the derived projection has display_mode=completed_roundtrip
+      // (both leg prices + both route endpoints present), we must NOT
+      // render the "Heen-en-terug rit" PDF section if the receipt itself
+      // represents a single leg. Detection lives in `_isLegReceiptItem`.
+      final isLegReceipt = _isLegReceiptItem(item);
+      final completedRoundtripReceipt =
+          !isLegReceipt && _isCompletedRoundtripProjection(projection);
+      _logReceiptPdfRoute(
+        item: item,
+        source: 'local_register',
+        builder: 'static',
+        isRoundtrip: completedRoundtripReceipt,
+        isLegReceipt: isLegReceipt,
       );
       final rideDateText = () {
         final activePickup = projection?['active_pickup_iso']
@@ -980,9 +992,27 @@ class _ReceiptPdfActionRunner {
             else ...[
               _pdfInfoRow(_receiptText('from'), route.from),
               _pdfInfoRow(_receiptText('to'), route.to),
-              ..._roundtripRouteNotePdfRows(item),
-              _pdfInfoRow(_receiptText('distance'), _kmText(item)),
-              _pdfInfoRow(_receiptText('duration'), durationText),
+              // Suppress "Terugrit geannuleerd — niet aangerekend" note on a
+              // leg ritbon: that information belongs on the separate
+              // cancellation / credit document (Historiek → Geannuleerd),
+              // not on the completed sibling-leg's ritbon.
+              if (!isLegReceipt) ..._roundtripRouteNotePdfRows(item),
+              _pdfInfoRow(
+                _receiptText('distance'),
+                isLegReceipt ? _legReceiptDistanceText(item) : _kmText(item),
+              ),
+              _pdfInfoRow(
+                _receiptText('duration'),
+                isLegReceipt
+                    ? (_legReceiptDurationMinutes(item) ??
+                          _receiptText('notAvailable'))
+                    : durationText,
+              ),
+              if (isLegReceipt)
+                _pdfInfoRow(
+                  _receiptText('rideStatus'),
+                  _legReceiptRideStatusDisplay(item),
+                ),
             ],
             pw.SizedBox(height: 12),
             pw.Text(
@@ -1083,7 +1113,7 @@ class _ReceiptPdfActionRunner {
             ),
             _pdfInfoRow(_receiptText('paymentMethod'), paymentMethod),
             _pdfInfoRow(_receiptText('paymentSource'), paymentSource),
-            ..._roundtripProjectionPdfRows(item, boldFont),
+            if (!isLegReceipt) ..._roundtripProjectionPdfRows(item, boldFont),
             pw.Divider(color: PdfColors.grey400),
             _pdfInfoRow(
               _receiptText('subtotalExVat'),
@@ -1698,6 +1728,17 @@ class _ReceiptPdfActionRunner {
     if (item.kind.toLowerCase().trim() == 'planned') {
       final legAmount = _effectiveOperationalLegAmount(item);
       if (_isPositiveAmount(legAmount)) return legAmount;
+      // Leg-first business rule: when the planned-operational-leg gate
+      // misses (no leg_id/leg_type/row_key on the trip-history record, or
+      // the compliance bridge could not forward those signals) but the
+      // receipt is still a leg ritbon per `_isLegReceiptItem`, prefer
+      // `item.totalEur` (the trip-history leg amount, e.g. €200) over the
+      // parent `booking_total_eur` (e.g. €400). This prevents the static
+      // PDF builder from surfacing the parent booking total as the leg
+      // ritbon Total / Betaalzone amount.
+      if (_isLegReceiptItem(item) && _isPositiveAmount(item.totalEur)) {
+        return item.totalEur;
+      }
       return _detailDouble(item, 'booking_total_eur') ?? item.totalEur;
     }
     return item.totalEur;
@@ -1904,6 +1945,244 @@ class _ReceiptPdfActionRunner {
     final explicit = _detailMap(item, 'roundtrip_price_projection');
     if (explicit != null && explicit.isNotEmpty) return explicit;
     return _deriveCompletedRoundtripProjectionForPdf(item);
+  }
+
+  // ---------------------------------------------------------------------
+  // Leg-first receipt detection. A ritbon is the proof of ONE operational
+  // leg (outbound or return), never of the full parent roundtrip booking.
+  // When this returns true we MUST suppress the "Heen-en-terug rit" PDF
+  // section / "Heen-en-terug" subtype label / parent €400 total and instead
+  // render the generic leg layout populated from the active-leg slot of
+  // route_segments[] when item.kmTotal / route_minutes are missing.
+  //
+  // A geannuleerde return leg therefore does NOT appear on the completed
+  // outbound leg's ritbon — it belongs on a separate cancellation/credit
+  // document in Historiek → Geannuleerd (not built in this patch).
+  // ---------------------------------------------------------------------
+  static bool _isLegReceiptItem(_TripHistoryItem item) {
+    // Signal 1: explicit operational-leg / direction / segment metadata.
+    final legToken = _firstPathText(item, const [
+      ['leg_type'],
+      ['legType'],
+      ['segment_type'],
+      ['segmentType'],
+      ['direction'],
+      ['booking', 'leg_type'],
+      ['booking', 'legType'],
+      ['booking', 'segment_type'],
+      ['booking', 'segmentType'],
+      ['booking_details', 'leg_type'],
+      ['booking_details', 'legType'],
+      ['booking_details', 'segment_type'],
+      ['booking_details', 'segmentType'],
+      ['record', 'leg_type'],
+      ['record', 'legType'],
+      ['record', 'booking', 'leg_type'],
+      ['record', 'booking', 'legType'],
+    ]);
+    if (legToken != null) {
+      final norm = legToken.trim().toLowerCase();
+      if (norm == 'outbound' ||
+          norm == 'main' ||
+          norm == 'heenrit' ||
+          norm == 'aller' ||
+          norm == 'return' ||
+          norm == 'terugrit' ||
+          norm == 'retour') {
+        return true;
+      }
+    }
+
+    // Signal 2: legacy `-R` suffix on the bookingId still marks the
+    // return-leg derivative receipt.
+    final bookingId = (item.bookingId ?? '').trim();
+    if (bookingId.toLowerCase().endsWith('-r')) return true;
+
+    // Signal 3: receipt-level total is strictly below the parent booking
+    // total. This catches roundtrip leg receipts where /trips/history kept
+    // the per-leg €200 but /bookings/:id carries a €400 parent total.
+    final receiptTotal = _receiptTotalAmount(item);
+    final bookingTotal = _detailDouble(item, 'booking_total_eur');
+    if (receiptTotal != null &&
+        receiptTotal > 0 &&
+        bookingTotal != null &&
+        bookingTotal > receiptTotal + 0.01) {
+      return true;
+    }
+
+    return false;
+  }
+
+  // Returns 'outbound' or 'return'. Defaults to 'outbound' when leg-first
+  // signals fired (per `_isLegReceiptItem`) but no canonical leg token is
+  // available — outbound is the safe default for a completed single-leg
+  // ritbon (return-leg ritbons always carry `leg_type=return` or `-R`).
+  static String _legReceiptActiveLegToken(_TripHistoryItem item) {
+    final raw = _firstPathText(item, const [
+      ['leg_type'],
+      ['legType'],
+      ['segment_type'],
+      ['segmentType'],
+      ['direction'],
+      ['booking', 'leg_type'],
+      ['booking', 'legType'],
+      ['booking_details', 'leg_type'],
+      ['booking_details', 'legType'],
+      ['record', 'leg_type'],
+      ['record', 'legType'],
+      ['record', 'booking', 'leg_type'],
+    ]);
+    if (raw != null) {
+      final norm = raw.trim().toLowerCase();
+      if (norm == 'return' || norm == 'terugrit' || norm == 'retour') {
+        return 'return';
+      }
+      if (norm == 'outbound' ||
+          norm == 'main' ||
+          norm == 'heenrit' ||
+          norm == 'aller') {
+        return 'outbound';
+      }
+    }
+    final bookingId = (item.bookingId ?? '').trim().toLowerCase();
+    if (bookingId.endsWith('-r')) return 'return';
+    return 'outbound';
+  }
+
+  // Distance text for a leg receipt. Prefers `item.kmTotal` when it's a
+  // positive number, otherwise falls back to the active leg slot of
+  // route_segments[]. Keeps `Niet beschikbaar` for the truly-missing case.
+  // This is what prevents the local-register PDF from rendering 0.00 km
+  // when /trips/history kept route_segments[0].distance_km = 85.60.
+  static List<Map<String, dynamic>> _routeSegmentsList(_TripHistoryItem item) {
+    const paths = <List<String>>[
+      ['route_segments'],
+      ['routeSegments'],
+      ['booking_details', 'route_segments'],
+      ['booking_details', 'routeSegments'],
+      ['booking', 'route_segments'],
+      ['booking', 'routeSegments'],
+      ['record', 'route_segments'],
+      ['record', 'routeSegments'],
+      ['record', 'booking', 'route_segments'],
+      ['record', 'booking', 'routeSegments'],
+    ];
+    for (final path in paths) {
+      final raw = _detailAt(item, path);
+      if (raw is! List || raw.isEmpty) continue;
+      return raw
+          .whereType<Map>()
+          .map((segment) => Map<String, dynamic>.from(segment))
+          .toList(growable: false);
+    }
+    return const <Map<String, dynamic>>[];
+  }
+
+  static double? _segmentNumericField(
+    Map<String, dynamic> segment,
+    List<String> keys,
+  ) {
+    for (final key in keys) {
+      final raw = segment[key];
+      if (raw is num && raw.toDouble() > 0) return raw.toDouble();
+      if (raw is String) {
+        final parsed = double.tryParse(raw.replaceAll(',', '.'));
+        if (parsed != null && parsed > 0) return parsed;
+      }
+    }
+    return null;
+  }
+
+  static String _legReceiptDistanceText(_TripHistoryItem item) {
+    final km = item.kmTotal;
+    if (km != null && km > 0) return '${km.toStringAsFixed(2)} km';
+    final token = _legReceiptActiveLegToken(item);
+    final index = token == 'return' ? 1 : 0;
+    final segments = _routeSegmentsList(item);
+    if (segments.length > index) {
+      final segKm = _segmentNumericField(segments[index], const [
+        'distance_km',
+        'distanceKm',
+        'km',
+        'kilometers',
+        'distance',
+      ]);
+      if (segKm != null) return '${segKm.toStringAsFixed(2)} km';
+    }
+    return _receiptText('notAvailable');
+  }
+
+  // Duration text for a leg receipt. Prefers `duration_route_min` /
+  // `route_minutes` on the trip-history record (which is leg-scoped on
+  // /trips/history), otherwise falls back to the active leg slot of
+  // route_segments[].
+  static String? _legReceiptDurationMinutes(_TripHistoryItem item) {
+    final raw =
+        _firstPathDouble(item, 'duration_route_min') ??
+        _firstPathDouble(item, 'route_minutes');
+    if (raw != null && raw > 0) return _minutesText(raw);
+    final token = _legReceiptActiveLegToken(item);
+    final index = token == 'return' ? 1 : 0;
+    final segments = _routeSegmentsList(item);
+    if (segments.length > index) {
+      final segDur = _segmentNumericField(segments[index], const [
+        'duration_min',
+        'durationMin',
+        'duration_minutes',
+        'durationMinutes',
+        'minutes',
+      ]);
+      if (segDur != null) return _minutesText(segDur);
+    }
+    return null;
+  }
+
+  // Leg-first ride status for a single operational-leg ritbon. A completed
+  // outbound leg must stay "Voltooid/Afgerond" even when the parent
+  // roundtrip booking later cancels the return leg.
+  static String _legReceiptRideStatusRaw(_TripHistoryItem item) {
+    final activeLeg = _legReceiptActiveLegToken(item);
+    String? pickText(List<List<String>> paths) => _firstPathText(item, paths);
+
+    final legStatuses = _resolveRoundtripLegStatusesForPdf(
+      item: item,
+      pickText: pickText,
+    );
+    var token = activeLeg == 'return'
+        ? legStatuses.returnLeg
+        : legStatuses.outbound;
+
+    bool lifecycleLooksCompleted(String? raw) {
+      final norm = (raw ?? '').trim().toLowerCase();
+      return norm == 'completed' ||
+          norm == 'stopped' ||
+          norm == 'voltooid' ||
+          norm == 'afgerond' ||
+          norm == 'finished' ||
+          norm == 'done';
+    }
+
+    if (activeLeg == 'outbound' && token == 'CANCELLED') {
+      final complianceLifecycle = pickText(const [
+        ['lifecycle_status'],
+        ['booking_details', 'lifecycle_status'],
+      ]);
+      if (lifecycleLooksCompleted(complianceLifecycle) ||
+          lifecycleLooksCompleted(item.status) ||
+          ((item.stoppedAt ?? '').trim().isNotEmpty &&
+              (item.totalEur ?? 0) > 0)) {
+        token = 'COMPLETED';
+      }
+    }
+
+    return token;
+  }
+
+  static String _legReceiptRideStatusDisplay(_TripHistoryItem item) {
+    if (!_isLegReceiptItem(item)) {
+      return _localizedRideStatus(item.status);
+    }
+    return _roundtripReceiptStatusText(_legReceiptRideStatusRaw(item));
   }
 
   static Map<String, dynamic>? _deriveCompletedRoundtripProjectionForPdf(
@@ -2135,23 +2414,106 @@ class _ReceiptPdfActionRunner {
     required _TripHistoryItem item,
     required String? Function(List<List<String>>) pickText,
   }) {
+    // Multilingual / multi-form normalisation. Returns one of:
+    //   '' | 'COMPLETED' | 'CANCELLED' | 'SCHEDULED' | 'PENDING'.
+    // CANCELLED catches CANCEL/CANCELLED/CANCELED/GEANNULEERD/ANNULÉ/ANNULE/
+    // ANNULADO/DELETED. COMPLETED catches COMPLETED/DONE/FINISHED/VOLTOOID/
+    // AFGEROND. SCHEDULED catches SCHEDULED/PLANNED/IN_PLANNING/CONFIRMED/
+    // IN_AFWACHTING. Everything else becomes PENDING.
     String normalizeStatus(String raw) {
       final s = raw.trim().toUpperCase();
       if (s.isEmpty) return '';
-      if (s.contains('COMPLET') || s == 'DONE' || s == 'FINISHED') {
+      if (s.contains('COMPLET') ||
+          s == 'DONE' ||
+          s == 'FINISHED' ||
+          s == 'VOLTOOID' ||
+          s == 'AFGEROND') {
         return 'COMPLETED';
       }
-      if (s.contains('CANCEL') || s == 'DELETED') return 'CANCELLED';
+      if (s.contains('CANCEL') ||
+          s == 'DELETED' ||
+          s == 'GEANNULEERD' ||
+          s == 'ANNULE' ||
+          s == 'ANNULÉ' ||
+          s == 'ANNULADO') {
+        return 'CANCELLED';
+      }
       if (s == 'SCHEDULED' ||
           s == 'PLANNED' ||
           s == 'IN_PLANNING' ||
-          s == 'CONFIRMED') {
+          s == 'CONFIRMED' ||
+          s == 'IN_AFWACHTING') {
         return 'SCHEDULED';
       }
       return 'PENDING';
     }
 
-    String? legStatusFromOperationalLegsList(String legType) {
+    // Map any of leg_type/legType/direction/type to canonical
+    // 'outbound' or 'return'. Returns '' when the token doesn't map.
+    String normalizeLegIdentityToken(String raw) {
+      final s = raw.trim().toLowerCase();
+      if (s.isEmpty) return '';
+      if (s == 'return' || s == 'terugrit' || s == 'retour') return 'return';
+      if (s == 'outbound' || s == 'main' || s == 'heenrit' || s == 'aller') {
+        return 'outbound';
+      }
+      return '';
+    }
+
+    bool entryMatchesLegType(Map entry, String target) {
+      for (final key in const ['leg_type', 'legType', 'direction', 'type']) {
+        final raw = entry[key];
+        if (raw == null) continue;
+        final normalized = normalizeLegIdentityToken(raw.toString());
+        if (normalized == target) return true;
+      }
+      return false;
+    }
+
+    // Presence of cancelled_at / canceled_at on the leg entry is the
+    // strongest authoritative cancellation signal — the booking-worker
+    // writes it on the operational_legs row when a cancellation commits.
+    bool entryHasCancellationMarker(Map entry) {
+      for (final key in const [
+        'cancelled_at',
+        'canceled_at',
+        'cancelledAt',
+        'canceledAt',
+      ]) {
+        final raw = entry[key];
+        if (raw == null) continue;
+        final text = raw.toString().trim();
+        if (text.isNotEmpty && text.toLowerCase() != 'null') return true;
+      }
+      return false;
+    }
+
+    // Defensive read order: status → ride_status/rideStatus →
+    // lifecycle_status/lifecycleStatus → cancellation_status/cancellationStatus.
+    // First non-empty wins; cancellation_status only contributes when the
+    // earlier slots were empty, so it can't accidentally upgrade a real
+    // CANCELLED to PENDING via the normaliser.
+    String entryStatusText(Map entry) {
+      for (final key in const [
+        'status',
+        'ride_status',
+        'rideStatus',
+        'lifecycle_status',
+        'lifecycleStatus',
+        'cancellation_status',
+        'cancellationStatus',
+      ]) {
+        final raw = entry[key];
+        if (raw == null) continue;
+        final text = raw.toString().trim();
+        if (text.isNotEmpty && text.toLowerCase() != 'null') return text;
+      }
+      return '';
+    }
+
+    ({String? status, String source}) legStatusFromOperationalLegs(
+      String legType,
+    ) {
       const operationalLegPaths = <List<String>>[
         ['operational_legs'],
         ['operationalLegs'],
@@ -2167,22 +2529,147 @@ class _ReceiptPdfActionRunner {
         if (raw is! List) continue;
         for (final entry in raw) {
           if (entry is! Map) continue;
-          final entryType = (entry['leg_type'] ?? entry['legType'] ?? '')
-              .toString()
-              .trim()
-              .toLowerCase();
-          if (entryType != legType) continue;
-          final status =
-              (entry['status'] ??
-                      entry['lifecycle_status'] ??
-                      entry['lifecycleStatus'] ??
-                      '')
-                  .toString();
-          final normalized = normalizeStatus(status);
-          if (normalized.isNotEmpty) return normalized;
+          if (!entryMatchesLegType(entry, legType)) continue;
+          if (entryHasCancellationMarker(entry)) {
+            return (
+              status: 'CANCELLED',
+              source: 'operational_leg_cancelled_at',
+            );
+          }
+          final normalized = normalizeStatus(entryStatusText(entry));
+          if (normalized.isNotEmpty) {
+            return (status: normalized, source: 'operational_leg');
+          }
         }
       }
-      return null;
+      return (status: null, source: 'operational_leg');
+    }
+
+    bool hasNonEmptyTimestamp(String? text) {
+      if (text == null) return false;
+      final t = text.trim();
+      return t.isNotEmpty && t.toLowerCase() != 'null';
+    }
+
+    // Top-level / projection-shaped overlay for the return leg. Used as
+    // fallback when operational_legs[] has no return entry or carries no
+    // recognisable status.
+    ({String? status, String source}) returnStatusFromOverlays() {
+      final returnCancelledAt = pickText(const [
+        ['return_cancelled_at'],
+        ['returnCancelledAt'],
+        ['return_canceled_at'],
+        ['returnCanceledAt'],
+        ['booking', 'return_cancelled_at'],
+        ['booking', 'returnCancelledAt'],
+        ['record', 'return_cancelled_at'],
+        ['record', 'returnCancelledAt'],
+        ['record', 'booking', 'return_cancelled_at'],
+      ]);
+      if (hasNonEmptyTimestamp(returnCancelledAt)) {
+        return (status: 'CANCELLED', source: 'return_cancelled_at_overlay');
+      }
+
+      final returnCancelledFlag = pickText(const [
+        ['return_cancelled'],
+        ['returnCancelled'],
+        ['returnCanceled'],
+        ['booking', 'return_cancelled'],
+        ['booking', 'returnCancelled'],
+        ['record', 'return_cancelled'],
+        ['record', 'booking', 'return_cancelled'],
+      ]);
+      if (returnCancelledFlag != null) {
+        final token = returnCancelledFlag.trim().toLowerCase();
+        if (token == 'true' ||
+            token == '1' ||
+            token == 'yes' ||
+            token == 'ja') {
+          return (status: 'CANCELLED', source: 'return_cancelled_flag_overlay');
+        }
+      }
+
+      final cancelledLegType = pickText(const [
+        ['cancelled_leg_type'],
+        ['cancelledLegType'],
+        ['booking', 'cancelled_leg_type'],
+        ['booking', 'cancelledLegType'],
+        ['record', 'cancelled_leg_type'],
+        ['record', 'cancelledLegType'],
+        ['record', 'booking', 'cancelled_leg_type'],
+      ]);
+      if (cancelledLegType != null &&
+          normalizeLegIdentityToken(cancelledLegType) == 'return') {
+        return (status: 'CANCELLED', source: 'cancelled_leg_type_overlay');
+      }
+
+      final returnStatusRaw = pickText(const [
+        ['return_status'],
+        ['returnStatus'],
+        ['return_ride_status'],
+        ['returnRideStatus'],
+        ['booking', 'return_status'],
+        ['booking', 'returnStatus'],
+        ['booking', 'return_ride_status'],
+        ['record', 'return_status'],
+        ['record', 'returnStatus'],
+        ['record', 'booking', 'return_status'],
+      ]);
+      if (returnStatusRaw != null) {
+        final normalized = normalizeStatus(returnStatusRaw);
+        if (normalized.isNotEmpty) {
+          return (status: normalized, source: 'return_status_overlay');
+        }
+      }
+
+      return (status: null, source: 'return_overlay');
+    }
+
+    // Same shape for outbound — kept narrow because outbound completion is
+    // already the well-trodden path; we only add explicit cancellation /
+    // status overlays here so a manually cancelled outbound (rare) is
+    // recognised symmetrically.
+    ({String? status, String source}) outboundStatusFromOverlays() {
+      final outboundCancelledAt = pickText(const [
+        ['outbound_cancelled_at'],
+        ['outboundCancelledAt'],
+        ['outbound_canceled_at'],
+        ['outboundCanceledAt'],
+        ['booking', 'outbound_cancelled_at'],
+        ['booking', 'outboundCancelledAt'],
+        ['record', 'outbound_cancelled_at'],
+      ]);
+      if (hasNonEmptyTimestamp(outboundCancelledAt)) {
+        return (status: 'CANCELLED', source: 'outbound_cancelled_at_overlay');
+      }
+
+      final cancelledLegType = pickText(const [
+        ['cancelled_leg_type'],
+        ['cancelledLegType'],
+        ['booking', 'cancelled_leg_type'],
+        ['record', 'cancelled_leg_type'],
+        ['record', 'booking', 'cancelled_leg_type'],
+      ]);
+      if (cancelledLegType != null &&
+          normalizeLegIdentityToken(cancelledLegType) == 'outbound') {
+        return (status: 'CANCELLED', source: 'cancelled_leg_type_overlay');
+      }
+
+      final outboundStatusRaw = pickText(const [
+        ['outbound_status'],
+        ['outboundStatus'],
+        ['booking', 'outbound_status'],
+        ['record', 'outbound_status'],
+        ['record', 'booking', 'outbound_status'],
+      ]);
+      if (outboundStatusRaw != null) {
+        final normalized = normalizeStatus(outboundStatusRaw);
+        if (normalized.isNotEmpty) {
+          return (status: normalized, source: 'outbound_status_overlay');
+        }
+      }
+
+      return (status: null, source: 'outbound_overlay');
     }
 
     final ledgerLegType =
@@ -2198,37 +2685,167 @@ class _ReceiptPdfActionRunner {
             .trim()
             .toLowerCase();
 
-    final outboundFromLegs = legStatusFromOperationalLegsList('outbound');
-    final returnFromLegs = legStatusFromOperationalLegsList('return');
+    final outboundLegs = legStatusFromOperationalLegs('outbound');
+    final returnLegs = legStatusFromOperationalLegs('return');
+    final outboundOverlay = outboundStatusFromOverlays();
+    final returnOverlay = returnStatusFromOverlays();
 
-    String resolveFor(String legType) {
-      final fromLegs = legType == 'return' ? returnFromLegs : outboundFromLegs;
-      if (fromLegs != null) return fromLegs;
-      // Legacy fallback: this trip-history ledger represents the leg that was
-      // just completed. Only that leg may be assumed COMPLETED; the sibling
-      // stays PENDING until its own ledger lands.
-      if (ledgerLegType == legType) return 'COMPLETED';
-      if (ledgerLegType == 'outbound' || ledgerLegType == 'return') {
-        return 'PENDING';
+    // Resolution priority per leg (CANCELLED is sticky to avoid a parent
+    // "in behandeling/gepland" or a partial-completed parent overwriting a
+    // cancelled sibling):
+    //   1. operational_legs[].cancelled_at (operational_leg_cancelled_at)
+    //   2. top-level cancellation overlay (return_cancelled_at_overlay /
+    //      cancelled_leg_type_overlay / return_cancelled_flag_overlay)
+    //   3. operational_legs[].status / ride_status / lifecycle_status
+    //   4. return_status / outbound_status text overlay
+    //   5. ledger_leg_type fallback (this leg is the just-completed one)
+    //   6. legacy single-leg fallback
+    ({String status, String source}) resolveFor(
+      String legType,
+      ({String? status, String source}) fromLegs,
+      ({String? status, String source}) fromOverlay,
+    ) {
+      if (fromLegs.status == 'CANCELLED') {
+        return (status: 'CANCELLED', source: fromLegs.source);
       }
-      // No leg metadata at all (single-leg legacy ledger): keep prior behaviour
-      // and mark both legs COMPLETED so existing single-trip receipts are
-      // unchanged.
-      return 'COMPLETED';
+      if (fromOverlay.status == 'CANCELLED') {
+        return (status: 'CANCELLED', source: fromOverlay.source);
+      }
+      if (fromLegs.status != null) {
+        return (status: fromLegs.status!, source: fromLegs.source);
+      }
+      if (fromOverlay.status != null) {
+        return (status: fromOverlay.status!, source: fromOverlay.source);
+      }
+      if (ledgerLegType == legType) {
+        return (status: 'COMPLETED', source: 'ledger_leg_type');
+      }
+      if (ledgerLegType == 'outbound' || ledgerLegType == 'return') {
+        return (status: 'PENDING', source: 'ledger_sibling_fallback');
+      }
+      return (status: 'COMPLETED', source: 'legacy_single_leg_fallback');
     }
 
-    final outboundStatus = resolveFor('outbound');
-    final returnStatus = resolveFor('return');
-    final outboundSourceTag = outboundFromLegs != null
-        ? 'operational_legs'
-        : (ledgerLegType.isEmpty ? 'legacy_fallback' : 'ledger_leg_type');
-    final returnSourceTag = returnFromLegs != null
-        ? 'operational_legs'
-        : (ledgerLegType.isEmpty ? 'legacy_fallback' : 'ledger_leg_type');
-    debugPrint(
-      '[ROUNDTRIP_RECEIPT][LEG_STATUS_SOURCE] trip=${item.tripId} booking=${_safeRefPreview(item.bookingId ?? item.tripId)} ledger_leg=${ledgerLegType.isEmpty ? "-" : ledgerLegType} outbound=$outboundStatus outbound_source=$outboundSourceTag return=$returnStatus return_source=$returnSourceTag',
+    final outboundResolved = resolveFor(
+      'outbound',
+      outboundLegs,
+      outboundOverlay,
     );
-    return (outbound: outboundStatus, returnLeg: returnStatus);
+    final returnResolved = resolveFor('return', returnLegs, returnOverlay);
+
+    final maskedBooking = _safeRefPreview(item.bookingId ?? item.tripId);
+    debugPrint(
+      '[ROUNDTRIP_RECEIPT][LEG_STATUS_SOURCE] booking=$maskedBooking '
+      'leg=outbound status=${outboundResolved.status} '
+      'source=${outboundResolved.source} '
+      'ledger_leg=${ledgerLegType.isEmpty ? "-" : ledgerLegType}',
+    );
+    debugPrint(
+      '[ROUNDTRIP_RECEIPT][LEG_STATUS_SOURCE] booking=$maskedBooking '
+      'leg=return status=${returnResolved.status} '
+      'source=${returnResolved.source} '
+      'ledger_leg=${ledgerLegType.isEmpty ? "-" : ledgerLegType}',
+    );
+    return (
+      outbound: outboundResolved.status,
+      returnLeg: returnResolved.status,
+    );
+  }
+
+  // Shared diagnostic helper for the two PDF entry points (Route A: local
+  // register / static builder; Route B: driver receipt page / stateful
+  // builder). Emits a single `[RECEIPT_PDF_ROUTE]` line so we can see at
+  // runtime which route was taken, which canonical projection mode was
+  // selected, and what data was available to the canonical projection.
+  // Read-only — never mutates the item, never affects layout.
+  static void _logReceiptPdfRoute({
+    required _TripHistoryItem item,
+    required String source,
+    required String builder,
+    required bool isRoundtrip,
+    bool? isLegReceipt,
+  }) {
+    bool listAt(List<String> path) {
+      final raw = _detailAt(item, path);
+      return raw is List && raw.isNotEmpty;
+    }
+
+    int routeSegmentsCount() => _routeSegmentsList(item).length;
+
+    double? firstSegmentDistance() {
+      final segments = _routeSegmentsList(item);
+      if (segments.isEmpty) return null;
+      return _segmentNumericField(segments.first, const [
+        'distance_km',
+        'distanceKm',
+        'km',
+        'kilometers',
+        'distance',
+      ]);
+    }
+
+    double? firstSegmentDuration() {
+      final segments = _routeSegmentsList(item);
+      if (segments.isEmpty) return null;
+      return _segmentNumericField(segments.first, const [
+        'duration_min',
+        'durationMin',
+        'duration_minutes',
+        'durationMinutes',
+        'minutes',
+      ]);
+    }
+
+    final hasOperationalLegs =
+        listAt(const ['operational_legs']) ||
+        listAt(const ['operationalLegs']) ||
+        listAt(const ['booking', 'operational_legs']) ||
+        listAt(const ['booking', 'operationalLegs']) ||
+        listAt(const ['record', 'operational_legs']) ||
+        listAt(const ['record', 'operationalLegs']) ||
+        listAt(const ['record', 'booking', 'operational_legs']) ||
+        listAt(const ['record', 'booking', 'operationalLegs']);
+    final hasRouteSegments = routeSegmentsCount() > 0;
+    final routeSegmentsCnt = routeSegmentsCount();
+    final receiptTotal = _receiptTotalAmount(item) ?? 0;
+    final bookingTotal = _detailDouble(item, 'booking_total_eur') ?? 0;
+    final itemTotal = item.totalEur ?? 0;
+    final legReceipt = isLegReceipt ?? _isLegReceiptItem(item);
+    final activeLeg = legReceipt ? _legReceiptActiveLegToken(item) : '-';
+    final legTypeToken = _firstPathText(item, const [
+      ['leg_type'],
+      ['legType'],
+      ['booking_details', 'leg_type'],
+      ['booking_details', 'legType'],
+      ['booking', 'leg_type'],
+      ['booking', 'legType'],
+      ['record', 'leg_type'],
+      ['record', 'legType'],
+      ['record', 'booking', 'leg_type'],
+      ['record', 'booking', 'legType'],
+    ]);
+    final legTypeTokenPresent =
+        legTypeToken != null && legTypeToken.trim().isNotEmpty;
+    final statusToken = legReceipt
+        ? _legReceiptRideStatusRaw(item)
+        : item.status;
+    final firstSegDist = firstSegmentDistance();
+    final firstSegDur = firstSegmentDuration();
+    debugPrint(
+      '[RECEIPT_PDF_ROUTE] source=$source builder=$builder '
+      'pdf_mode=${isRoundtrip ? "roundtrip" : "generic"} '
+      'is_leg_receipt=$legReceipt active_leg=$activeLeg '
+      'leg_type_token=$legTypeTokenPresent status_token=$statusToken '
+      'has_operational_legs=$hasOperationalLegs '
+      'has_route_segments=$hasRouteSegments '
+      'route_segments_count=$routeSegmentsCnt '
+      'first_segment_distance=${firstSegDist?.toStringAsFixed(2) ?? "-"} '
+      'first_segment_duration=${firstSegDur?.toStringAsFixed(0) ?? "-"} '
+      'receipt_total=${receiptTotal.toStringAsFixed(2)} '
+      'item_total=${itemTotal.toStringAsFixed(2)} '
+      'booking_total=${bookingTotal.toStringAsFixed(2)} '
+      'booking=${_safeRefPreview(item.bookingId ?? item.tripId)}',
+    );
   }
 
   static bool _isCompletedRoundtripProjection(

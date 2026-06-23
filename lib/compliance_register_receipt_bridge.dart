@@ -260,8 +260,11 @@ Map<String, dynamic> tripHistoryJsonFromLedgerEntry(
   final dropoffLabelClean = extractComplianceRouteScalar(entry.dropoffLabel);
 
   // Strip raw pickup/dropoff Maps from the spread so the same fallback can't
-  // re-introduce empty Maps via rawSource. The merge below repopulates these
-  // keys with backend-authoritative values when hydration succeeds.
+  // re-introduce empty Maps via rawSource. Also strip parent/sibling booking
+  // status keys: compliance `lifecycle_status` on the ledger row is the
+  // authoritative signal for THIS leg (e.g. outbound voltooid) and must not
+  // be overwritten by a stale `status: cancelled` that reflects a later
+  // return-leg cancellation on the parent booking.
   final rawSanitized = <String, dynamic>{};
   for (final entryKv in raw.entries) {
     if (entryKv.key == 'pickup' || entryKv.key == 'dropoff') {
@@ -270,8 +273,41 @@ Map<String, dynamic> tripHistoryJsonFromLedgerEntry(
       rawSanitized[entryKv.key] = scalar;
       continue;
     }
+    if (entryKv.key == 'status' ||
+        entryKv.key == 'lifecycle_status' ||
+        entryKv.key == 'booking_status' ||
+        entryKv.key == 'ride_status') {
+      continue;
+    }
     rawSanitized[entryKv.key] = entryKv.value;
   }
+
+  String firstNonEmptyText(Iterable<Object?> values) {
+    for (final value in values) {
+      final out = text(value);
+      if (out.isNotEmpty) return out;
+    }
+    return '';
+  }
+
+  final legTypeScalar = firstNonEmptyText([
+    raw['leg_type'],
+    raw['legType'],
+    raw['direction'],
+    raw['segment_type'],
+    raw['segmentType'],
+    references['leg_type'],
+    references['legType'],
+  ]);
+  final legIdScalar = firstNonEmptyText([
+    raw['leg_id'],
+    raw['legId'],
+    references['leg_id'],
+    references['legId'],
+  ]);
+  final complianceLifecycle = entry.lifecycleStatus.isNotEmpty
+      ? entry.lifecycleStatus
+      : 'completed';
 
   // Mirror compliance payment status / metadata to ROOT in addition to
   // `booking_details`. This is the compliance ledger's authoritative payment
@@ -295,6 +331,10 @@ Map<String, dynamic> tripHistoryJsonFromLedgerEntry(
       : (text(payment['provider']).isEmpty ? null : text(payment['provider']));
   final paidAtRoot = entry.paidAtUtc?.toUtc().toIso8601String();
 
+  bookingDetails['lifecycle_status'] = complianceLifecycle;
+  if (legTypeScalar.isNotEmpty) bookingDetails['leg_type'] = legTypeScalar;
+  if (legIdScalar.isNotEmpty) bookingDetails['leg_id'] = legIdScalar;
+
   return <String, dynamic>{
     'trip_id': tripId,
     'kind': kind,
@@ -313,9 +353,6 @@ Map<String, dynamic> tripHistoryJsonFromLedgerEntry(
     if (entry.waitSecondsTotal != null)
       'wait_seconds_total': entry.waitSecondsTotal,
     if (entry.fareTotalEur != null) 'total_eur': entry.fareTotalEur,
-    'status': entry.lifecycleStatus.isNotEmpty
-        ? entry.lifecycleStatus
-        : 'completed',
     'currency': entry.currency.isNotEmpty
         ? entry.currency
         : text(fare['currency']).isEmpty
@@ -332,6 +369,13 @@ Map<String, dynamic> tripHistoryJsonFromLedgerEntry(
     if (paymentProviderRoot != null) 'payment_provider': paymentProviderRoot,
     if (entry.paymentId.isNotEmpty) 'payment_id': entry.paymentId,
     if (paidAtRoot != null) 'paid_at': paidAtRoot,
+    // Reassert leg-first compliance authority AFTER `...rawSanitized` so a
+    // sibling-leg / parent-booking cancellation cannot downgrade THIS leg's
+    // lifecycle, leg identity, or payment metadata.
+    if (legTypeScalar.isNotEmpty) 'leg_type': legTypeScalar,
+    if (legIdScalar.isNotEmpty) 'leg_id': legIdScalar,
+    'status': complianceLifecycle,
+    'lifecycle_status': complianceLifecycle,
   };
 }
 
@@ -482,7 +526,61 @@ Map<String, dynamic> mergeBookingRecordIntoTripHistoryJson({
     'bookingReference',
     'receipt_reference',
     'receiptReference',
+    // -----------------------------------------------------------------
+    // Leg-first signals from the booking record. The booking-worker
+    // `/bookings/{id}` response carries these on roundtrip/multi-leg
+    // bookings and the Local Ride Register PDF needs them to:
+    //   * detect leg-first via `_isLegReceiptItem` (leg_type / -R suffix
+    //     / receipt_total < booking_total),
+    //   * resolve the active leg amount via `_isPlannedOperationalLegItem`
+    //     + `_effectiveOperationalLegAmount` (legId / legType / rowKey),
+    //   * fall back to `route_segments[active_index]` for distance /
+    //     duration when the compliance row stored zero km / no minutes.
+    // -----------------------------------------------------------------
+    'leg_type',
+    'legType',
+    'leg_id',
+    'legId',
+    'row_key',
+    'rowKey',
+    'segment_type',
+    'segmentType',
+    'direction',
+    'route_segments',
+    'operational_legs',
+    'operationalLegs',
+    'outbound_price_eur',
+    'return_price_eur',
+    'price_incl_vat_main',
+    'price_incl_vat_return',
+    'booking_total_eur',
+    'duration_route_min',
+    'route_minutes',
   ];
+
+  // Leg-scoped values that the tracking-trip overlay (which runs FIRST in
+  // `_hydrateRegisterReceiptJson`) populates from the authoritative leg
+  // projection. The booking-record overlay (which runs AFTER) may carry
+  // the parent roundtrip totals — overlaying those on top of an already
+  // positive leg value would silently downgrade the receipt from the leg
+  // amount (€200 / 85.60 km) to the parent (€400 / 0.00 km). Skip the
+  // bookingDetails overwrite for these keys whenever the existing value
+  // is positive; the root `overlayRoot` already protects merged[key].
+  const legScopedPositiveKeys = <String>{
+    'total',
+    'total_eur',
+    'km_total',
+    'distance_km',
+  };
+  bool existingPositive(Object? value) {
+    if (value is num) return value.toDouble() > 0;
+    if (value is String) {
+      final parsed = double.tryParse(value.replaceAll(',', '.'));
+      if (parsed != null) return parsed > 0;
+    }
+    return false;
+  }
+
   for (final key in overlayKeys) {
     overlayRoot(key, source[key]);
   }
@@ -508,6 +606,13 @@ Map<String, dynamic> mergeBookingRecordIntoTripHistoryJson({
     if (isPaymentMetadataKey(key) &&
         basePaid &&
         nonEmpty(bookingDetails[key])) {
+      continue;
+    }
+    // Leg-first downgrade guard: never overwrite a positive leg-scoped
+    // total / distance in booking_details with a parent-booking value
+    // from the `/bookings/{id}` record.
+    if (legScopedPositiveKeys.contains(key) &&
+        existingPositive(bookingDetails[key])) {
       continue;
     }
     bookingDetails[key] = v;
@@ -789,6 +894,30 @@ Map<String, dynamic> mergeBookingRecordIntoTripHistoryJson({
     '[LOCAL_RIDE_REGISTER][HYDRATE_ROUTE] from_present=${routeFrom != null} to_present=${routeTo != null} source=$shortSource',
   );
 
+  // Mirror roundtrip leg collections to root + booking_details so
+  // `_detailAt(['route_segments'])` succeeds even when the booking record
+  // only carries them on `record.booking.*` and `_TripHistoryItem.fromJson`
+  // already populated `booking_details` with an empty placeholder list.
+  void mirrorLegCollection(String key) {
+    final candidates = <Object?>[
+      source[key],
+      booking[key],
+      record[key],
+      asMap(record['booking_details'])[key],
+      asMap(booking['booking_details'])[key],
+    ];
+    for (final candidate in candidates) {
+      if (candidate is! List || candidate.isEmpty) continue;
+      merged[key] = candidate;
+      bookingDetails[key] = candidate;
+      break;
+    }
+  }
+
+  mirrorLegCollection('route_segments');
+  mirrorLegCollection('operational_legs');
+  if (bookingDetails.isNotEmpty) merged['booking_details'] = bookingDetails;
+
   return merged;
 }
 
@@ -906,6 +1035,8 @@ Map<String, dynamic> mergeTrackingTripIntoTripHistoryJson({
     'legPriceInclVat',
     'outbound_price_eur',
     'return_price_eur',
+    'price_incl_vat_main',
+    'price_incl_vat_return',
     'booking_status',
     'payment_status',
     'paymentStatus',
@@ -916,6 +1047,29 @@ Map<String, dynamic> mergeTrackingTripIntoTripHistoryJson({
     'payment_provider',
     'paymentProvider',
     'currency',
+    // -----------------------------------------------------------------
+    // Leg-first signals. The Local Ride Register PDF (static builder)
+    // uses these to detect a leg ritbon (`_isLegReceiptItem`) and to
+    // resolve the active leg's amount / distance / duration via the
+    // existing planned-operational-leg path (`_isPlannedOperationalLegItem`
+    // / `_effectiveOperationalLegAmount`). Without them the static
+    // builder falls back to the parent `booking_total_eur` (€400) and
+    // `item.kmTotal=0.0` from the compliance row, producing the wrong
+    // "€400" / "0.00 km" the user reports.
+    // -----------------------------------------------------------------
+    'leg_type',
+    'legType',
+    'leg_id',
+    'legId',
+    'row_key',
+    'rowKey',
+    'segment_type',
+    'segmentType',
+    'direction',
+    'duration_route_min',
+    'route_minutes',
+    'route_segments',
+    'operational_legs',
   ];
   for (final key in detailsKeys) {
     final v = incomingDetails[key];
@@ -947,6 +1101,17 @@ Map<String, dynamic> mergeTrackingTripIntoTripHistoryJson({
 
   // ---------------------------------------------------------------------------
   // Top-level overlay (only when backend value is non-empty).
+  //
+  // Leg-first business rule: a ritbon proves ONE operational leg, so the
+  // tracking-trip projection — which is always leg-scoped (`/trips/history`
+  // returns one row per driver trip = one leg) — is authoritative for
+  // `total_eur` and `km_total`. We mirror these from the trip projection,
+  // protected against downgrade further below in the booking-record overlay.
+  // `route_segments` / `operational_legs` / `duration_route_min` /
+  // `route_minutes` / leg-identity fields are forwarded at root so the
+  // downstream PDF builder (`_ReceiptPdfActionRunner._isLegReceiptItem`,
+  // `_legReceiptDistanceText`, `_legReceiptDurationMinutes`) can find them
+  // without depending on `booking_details` plumbing.
   // ---------------------------------------------------------------------------
   const topLevelKeys = <String>[
     'kind',
@@ -966,6 +1131,14 @@ Map<String, dynamic> mergeTrackingTripIntoTripHistoryJson({
     'paidAt',
     'payment_amount',
     'paymentAmount',
+    // Leg-first signals at root so `_detailAt(['route_segments'])` and
+    // friends hit them without needing `booking_details` traversal.
+    'route_segments',
+    'operational_legs',
+    'duration_route_min',
+    'route_minutes',
+    'leg_type',
+    'legType',
   ];
   for (final key in topLevelKeys) {
     final v = tripJson[key];
@@ -1024,6 +1197,20 @@ Map<String, dynamic> mergeTrackingTripIntoTripHistoryJson({
       mergedDetails[key] = dropoffScalar;
     }
   }
+  if (mergedDetails.isNotEmpty) merged['booking_details'] = mergedDetails;
+
+  // Force-mirror leg collections to both root and booking_details. The
+  // tracking trip projection is leg-scoped and is the authoritative source
+  // for per-leg distance/duration via route_segments[index].
+  void mirrorTripLegCollection(String key) {
+    final candidate = tripJson[key] ?? incomingDetails[key];
+    if (candidate is! List || candidate.isEmpty) return;
+    merged[key] = candidate;
+    mergedDetails[key] = candidate;
+  }
+
+  mirrorTripLegCollection('route_segments');
+  mirrorTripLegCollection('operational_legs');
   if (mergedDetails.isNotEmpty) merged['booking_details'] = mergedDetails;
 
   return merged;
