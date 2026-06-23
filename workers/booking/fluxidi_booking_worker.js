@@ -52251,6 +52251,11 @@ function _bookingChironEnrichmentForComplianceEvent(rec, options = {}) {
     fareExtension.total_amount_cents = Math.max(0, Math.round(parentTotal * 100));
     fareExtension.totalAmountCents = fareExtension.total_amount_cents;
   }
+  const distanceKm = _bookingMainDistanceKmFromRecord(rec);
+  if (distanceKm != null) {
+    fareExtension.distance_km = distanceKm;
+    fareExtension.distanceKm = distanceKm;
+  }
 
   const out = {};
   if (Object.keys(vehicle).length > 0) out.vehicle = vehicle;
@@ -52712,6 +52717,25 @@ function _bookingMainPriceInclVatFromRecord(rec) {
     _pick(rec, ["quote", "pricing", "price_incl_vat"], null);
   const num = Number(raw);
   return Number.isFinite(num) ? num : null;
+}
+
+// Chiron-6B-COORD-HYDRATE: outbound/main route distance (km) from the booking
+// record. Stamped onto the booking_confirmed/booking_created compliance event's
+// fare so the compliance worker can hydrate the arrival (aankomst) draft's
+// `afstand` from a trusted stored source when the tracking ride_stop event
+// carries distance 0 (driver app posted km_total=0). Mirrors the same record
+// fields the quote/route pipeline reads.
+function _bookingMainDistanceKmFromRecord(rec) {
+  const booking = rec?.booking && typeof rec.booking === "object" ? rec.booking : {};
+  const raw =
+    booking?.distance_km ??
+    booking?.distanceKm ??
+    rec?.distance_km ??
+    rec?.distanceKm ??
+    _pick(rec, ["quote", "distance_km"], null) ??
+    _pick(rec, ["quote", "route", "distance_km"], null);
+  const num = Number(raw);
+  return Number.isFinite(num) && num > 0 ? num : null;
 }
 
 // Explicit return origin/destination ONLY (no outbound-address fallback).

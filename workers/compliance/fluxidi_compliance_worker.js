@@ -4670,19 +4670,61 @@ function buildChironOfficialPayloadDraft(event, blueprint, scope, officialStatus
     status: officialStatus,
   };
 
+  // Chiron-6B-COORD-HYDRATE: trusted coords/distance pulled from sibling events
+  // of the same booking/leg in this batch (see
+  // _chironBuildBatchTrustedRideHydrationIndex). Used ONLY to fill values the
+  // event itself lacks; never overrides valid event data and never fabricates.
+  const trustedRide =
+    hydrated?.trustedRide && typeof hydrated.trustedRide === "object"
+      ? hydrated.trustedRide
+      : _chironEmptyTrustedRideEntry();
+
   if (officialStatus === "vertrek" || officialStatus === "aankomst") {
     payload.kentekenplaat = vehicle.kentekenplaat || null;
     payload.bestuurderspasnummer = driver.bestuurderspasnummer || null;
     payload.vertrektijdstip = _chironResolveOfficialVertrekTijdstip(safeEvent, safeBlueprint);
-    payload.vertrekpunt_lengtegraad = normalizeChironCoordinate(pickup?.lng, "lng");
-    payload.vertrekpunt_breedtegraad = normalizeChironCoordinate(pickup?.lat, "lat");
+    let vLng = normalizeChironCoordinate(pickup?.lng, "lng");
+    let vLat = normalizeChironCoordinate(pickup?.lat, "lat");
+    if (
+      !_chironValidTrustedCoordPair(vLng, vLat) &&
+      _chironValidTrustedCoordPair(trustedRide.pickupLng, trustedRide.pickupLat)
+    ) {
+      vLng = trustedRide.pickupLng;
+      vLat = trustedRide.pickupLat;
+    }
+    // Never emit a 0/0 (or otherwise invalid) coordinate pair: leave the fields
+    // null so validation reports them as missing rather than an invalid zero
+    // pair. Genuine missing data therefore still blocks.
+    if (!_chironValidTrustedCoordPair(vLng, vLat)) {
+      vLng = null;
+      vLat = null;
+    }
+    payload.vertrekpunt_lengtegraad = vLng;
+    payload.vertrekpunt_breedtegraad = vLat;
   }
 
   if (officialStatus === "aankomst") {
     payload.aankomsttijdstip = _chironResolveOfficialAankomstTijdstip(safeEvent, safeBlueprint);
-    payload.aankomstpunt_lengtegraad = normalizeChironCoordinate(dropoff?.lng, "lng");
-    payload.aankomstpunt_breedtegraad = normalizeChironCoordinate(dropoff?.lat, "lat");
-    payload.afstand = normalizeChironMoney(fare.distance_km);
+    let aLng = normalizeChironCoordinate(dropoff?.lng, "lng");
+    let aLat = normalizeChironCoordinate(dropoff?.lat, "lat");
+    if (
+      !_chironValidTrustedCoordPair(aLng, aLat) &&
+      _chironValidTrustedCoordPair(trustedRide.dropoffLng, trustedRide.dropoffLat)
+    ) {
+      aLng = trustedRide.dropoffLng;
+      aLat = trustedRide.dropoffLat;
+    }
+    if (!_chironValidTrustedCoordPair(aLng, aLat)) {
+      aLng = null;
+      aLat = null;
+    }
+    payload.aankomstpunt_lengtegraad = aLng;
+    payload.aankomstpunt_breedtegraad = aLat;
+    let afstand = normalizeChironMoney(fare.distance_km);
+    if (!isValidChironDistance(afstand) && isValidChironDistance(trustedRide.distanceKm)) {
+      afstand = normalizeChironMoney(trustedRide.distanceKm);
+    }
+    payload.afstand = afstand;
     payload.kostprijs = normalizeChironMoney(fare.total_amount);
   }
 
@@ -4850,6 +4892,11 @@ function buildChironOfficialDraftEnvelope(event, blueprint, scope, context = {})
     business: hydrateChironOfficialBusinessIdentity(safeEvent, safeBlueprint, scope, context),
     vehicle: hydrateChironOfficialVehicleIdentity(safeEvent, safeBlueprint, context),
     driver: hydrateChironOfficialDriverIdentity(safeEvent, safeBlueprint, context),
+    trustedRide: _chironResolveTrustedRideForDraft(
+      context.trustedRideHydration || null,
+      safeEvent,
+      _chironResolveOfficialRitnummer(safeEvent, safeBlueprint),
+    ),
   };
 
   const payload = buildChironOfficialPayloadDraft(
@@ -4933,6 +4980,165 @@ function _chironBuildBatchRitStatusIndex(entries) {
   return simplified;
 }
 
+// Chiron-6B-COORD-HYDRATE: trusted ride-coordinate / distance index built from
+// the SAME scoped compliance event batch the draft is computed against.
+//
+// Rationale: the aankomst (ride_stop) draft is built from the tracking
+// ride_stop event, whose locations/fare come straight from the driver-app
+// stop body. When the app posts 0/0 (or no) coordinates and km_total=0 the
+// arrival draft gets a 0/0 coordinate pair (invalid_zero_coordinate_pair) and
+// afstand 0. The trusted pickup/dropoff coordinates for the same booking are
+// already stored on sibling events in this very batch — primarily the
+// `booking_confirmed` event, whose locations are projected from the booking
+// record's pickup/dropoff coordinates — and the booking distance_km is carried
+// on its fare once the booking worker stamps it. This index lets the official
+// draft hydrate missing/zero coordinates and distance from those trusted
+// siblings WITHOUT inventing data, geocoding, or reaching outside the batch.
+//
+// Keying:
+//   - perRit:     ritnummer (`_chironResolveOfficialRitnummer`, leg-scoped for
+//                 roundtrips) -> trusted coords/distance from events sharing the
+//                 exact same ritnummer (same leg).
+//   - perBooking: raw booking_id -> trusted coords/distance contributed ONLY by
+//                 parent/non-leg events (booking_confirmed / booking_created /
+//                 one-way ride events). Used as a fallback for OUTBOUND / no-leg
+//                 legs only, so a roundtrip RETURN leg never borrows the
+//                 parent/outbound coordinates or distance.
+function _chironMergeTrustedRideCandidate(target, candidate) {
+  if (!target || !candidate) return target;
+  if (
+    target.pickupLng === null &&
+    target.pickupLat === null &&
+    candidate.pickupLng !== null &&
+    candidate.pickupLat !== null
+  ) {
+    target.pickupLng = candidate.pickupLng;
+    target.pickupLat = candidate.pickupLat;
+  }
+  if (
+    target.dropoffLng === null &&
+    target.dropoffLat === null &&
+    candidate.dropoffLng !== null &&
+    candidate.dropoffLat !== null
+  ) {
+    target.dropoffLng = candidate.dropoffLng;
+    target.dropoffLat = candidate.dropoffLat;
+  }
+  if (target.distanceKm === null && candidate.distanceKm !== null) {
+    target.distanceKm = candidate.distanceKm;
+  }
+  return target;
+}
+
+function _chironEmptyTrustedRideEntry() {
+  return {
+    pickupLng: null,
+    pickupLat: null,
+    dropoffLng: null,
+    dropoffLat: null,
+    distanceKm: null,
+  };
+}
+
+function _chironTrustedRideCandidateFromEvent(event, blueprint) {
+  const locations = blueprint?.locations || _chironProjectLocations(event);
+  const fare = blueprint?.fare || _chironProjectFare(event);
+  const pickup = locations?.pickup || null;
+  const dropoff = locations?.dropoff || null;
+  const candidate = _chironEmptyTrustedRideEntry();
+  // Only accept coordinates that are individually valid AND not a 0/0 pair.
+  if (
+    pickup &&
+    isValidChironCoordinate(pickup.lng, "lng") &&
+    isValidChironCoordinate(pickup.lat, "lat") &&
+    !isInvalidZeroCoordinatePair(pickup.lng, pickup.lat)
+  ) {
+    candidate.pickupLng = normalizeChironCoordinate(pickup.lng, "lng");
+    candidate.pickupLat = normalizeChironCoordinate(pickup.lat, "lat");
+  }
+  if (
+    dropoff &&
+    isValidChironCoordinate(dropoff.lng, "lng") &&
+    isValidChironCoordinate(dropoff.lat, "lat") &&
+    !isInvalidZeroCoordinatePair(dropoff.lng, dropoff.lat)
+  ) {
+    candidate.dropoffLng = normalizeChironCoordinate(dropoff.lng, "lng");
+    candidate.dropoffLat = normalizeChironCoordinate(dropoff.lat, "lat");
+  }
+  if (isValidChironDistance(fare?.distance_km)) {
+    candidate.distanceKm = normalizeChironMoney(fare.distance_km);
+  }
+  return candidate;
+}
+
+function _chironEventHasLegScope(event) {
+  return !!cleanText(
+    event?.leg_id ?? event?.legId ?? event?.leg_type ?? event?.legType,
+    64,
+  );
+}
+
+function _chironBuildBatchTrustedRideHydrationIndex(entries) {
+  const perRit = new Map();
+  const perBooking = new Map();
+  if (!Array.isArray(entries)) return { perRit, perBooking };
+  for (const entry of entries) {
+    const event = entry?.event;
+    if (!event || typeof event !== "object") continue;
+    const built = buildChironDryRunBlueprint(event);
+    const blueprint = built?.blueprint || {};
+    const candidate = _chironTrustedRideCandidateFromEvent(event, blueprint);
+    if (
+      candidate.pickupLng === null &&
+      candidate.dropoffLng === null &&
+      candidate.distanceKm === null
+    ) {
+      continue;
+    }
+    const ritnummer = _chironResolveOfficialRitnummer(event, blueprint);
+    if (ritnummer) {
+      if (!perRit.has(ritnummer)) perRit.set(ritnummer, _chironEmptyTrustedRideEntry());
+      _chironMergeTrustedRideCandidate(perRit.get(ritnummer), candidate);
+    }
+    const bookingId = cleanText(event?.booking_id ?? event?.parent_booking_id, 128);
+    if (bookingId && !_chironEventHasLegScope(event)) {
+      if (!perBooking.has(bookingId)) {
+        perBooking.set(bookingId, _chironEmptyTrustedRideEntry());
+      }
+      _chironMergeTrustedRideCandidate(perBooking.get(bookingId), candidate);
+    }
+  }
+  return { perRit, perBooking };
+}
+
+function _chironResolveTrustedRideForDraft(index, event, ritnummer) {
+  const resolved = _chironEmptyTrustedRideEntry();
+  if (!index || (!index.perRit && !index.perBooking)) return resolved;
+  if (ritnummer && index.perRit instanceof Map && index.perRit.has(ritnummer)) {
+    _chironMergeTrustedRideCandidate(resolved, index.perRit.get(ritnummer));
+  }
+  // Parent/booking-level fallback ONLY for outbound or non-leg legs, so a
+  // roundtrip RETURN leg never inherits the parent/outbound coords or distance.
+  const legType = cleanText(event?.leg_type ?? event?.legType, 64).toLowerCase();
+  const allowBookingFallback =
+    !legType || legType === "outbound" || legType === "oneway" || legType === "one_way";
+  if (allowBookingFallback && index.perBooking instanceof Map) {
+    const bookingId = cleanText(event?.booking_id ?? event?.parent_booking_id, 128);
+    if (bookingId && index.perBooking.has(bookingId)) {
+      _chironMergeTrustedRideCandidate(resolved, index.perBooking.get(bookingId));
+    }
+  }
+  return resolved;
+}
+
+function _chironValidTrustedCoordPair(lng, lat) {
+  return (
+    isValidChironCoordinate(lng, "lng") &&
+    isValidChironCoordinate(lat, "lat") &&
+    !isInvalidZeroCoordinatePair(lng, lat)
+  );
+}
+
 function buildChironExportPayload(event, eventKey, options = {}) {
   const safeEvent =
     event && typeof event === "object" && !Array.isArray(event) ? event : {};
@@ -5012,6 +5218,7 @@ function buildChironExportPayload(event, eventKey, options = {}) {
       {
         batchRitStatuses: options.batchRitStatuses || null,
         scopedHydrationCache: options.scopedHydrationCache || null,
+        trustedRideHydration: options.trustedRideHydration || null,
       },
     );
   }
@@ -5692,12 +5899,16 @@ async function _chironBuildExportDryRunPayloadResponse(
   const batchRitStatuses = effectiveIncludeOfficialDraft
     ? _chironBuildBatchRitStatusIndex(collectResult.limitedEntries)
     : null;
+  const trustedRideHydration = effectiveIncludeOfficialDraft
+    ? _chironBuildBatchTrustedRideHydrationIndex(collectResult.limitedEntries)
+    : null;
   const payloads = collectResult.limitedEntries.map((entry) =>
     buildChironExportPayload(entry.event, entry.key, {
       includeRaw,
       includeOfficialDraft: effectiveIncludeOfficialDraft,
       batchRitStatuses,
       scopedHydrationCache,
+      trustedRideHydration,
     }),
   );
   const exportableCount = payloads.filter((payload) => payload.exportable).length;
@@ -6173,12 +6384,16 @@ async function handleChironTestflowSubmitOnePost(request, env, origin) {
     true,
   );
   const batchRitStatuses = _chironBuildBatchRitStatusIndex(found.contextEntries || []);
+  const trustedRideHydration = _chironBuildBatchTrustedRideHydrationIndex(
+    found.contextEntries || [],
+  );
   const exportPayload = buildChironExportPayload(event, eventKey, {
     includeRaw: parsed.includeRaw,
     includeOfficialDraft: true,
     includeChironApiPayload: parsed.dryRun,
     batchRitStatuses,
     scopedHydrationCache,
+    trustedRideHydration,
   });
 
   const officialDraft = exportPayload?.chiron_official_draft;
@@ -6604,12 +6819,16 @@ async function handleChironExportTest(request, env, origin) {
   const liveBatchRitStatuses = _chironBuildBatchRitStatusIndex(
     collectResult.limitedEntries,
   );
+  const liveTrustedRideHydration = _chironBuildBatchTrustedRideHydrationIndex(
+    collectResult.limitedEntries,
+  );
   const livePayloads = collectResult.limitedEntries.map((entry) =>
     buildChironExportPayload(entry.event, entry.key, {
       includeRaw: false,
       includeOfficialDraft: true,
       batchRitStatuses: liveBatchRitStatuses,
       scopedHydrationCache: liveScopedHydrationCache,
+      trustedRideHydration: liveTrustedRideHydration,
     }),
   );
 
