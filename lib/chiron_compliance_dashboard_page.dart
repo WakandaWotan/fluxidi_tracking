@@ -1515,6 +1515,117 @@ class _ChironPersistedInternalTestStatus {
   }
 }
 
+/// Chiron Connect 4C: lightweight acceptance-testflow progress parsed from the
+/// /admin/chiron/config/status response. Kept local to this page so the shared
+/// BackendChironConnectionStatus model (in app_config.dart) does not need to
+/// change. Never carries secrets.
+class _ChironTestflowProgress {
+  const _ChironTestflowProgress({
+    this.status = 'not_started',
+    this.messagesRequired = 10,
+    this.messagesSent = 0,
+    this.departureRequired = 5,
+    this.departureSent = 0,
+    this.arrivalRequired = 5,
+    this.arrivalSent = 0,
+    this.ridesRequired = 5,
+    this.ridesCompleted = 0,
+    this.completedAt,
+    this.lastError,
+  });
+
+  final String status;
+  final int messagesRequired;
+  final int messagesSent;
+  final int departureRequired;
+  final int departureSent;
+  final int arrivalRequired;
+  final int arrivalSent;
+  final int ridesRequired;
+  final int ridesCompleted;
+  final String? completedAt;
+  final String? lastError;
+
+  bool get isComplete => status.trim().toLowerCase() == 'complete';
+  bool get isInProgress => status.trim().toLowerCase() == 'in_progress';
+
+  factory _ChironTestflowProgress.fromJson(Map<String, dynamic> json) {
+    int intField(List<String> keys, int fallback) {
+      for (final key in keys) {
+        final value = json[key];
+        if (value is num) return value.toInt();
+        if (value is String) {
+          final parsed = int.tryParse(value.trim());
+          if (parsed != null) return parsed;
+        }
+      }
+      return fallback;
+    }
+
+    String textField(List<String> keys, {String fallback = ''}) {
+      for (final key in keys) {
+        final value = json[key];
+        if (value == null) continue;
+        final text = value.toString().trim();
+        if (text.isNotEmpty) return text;
+      }
+      return fallback;
+    }
+
+    String? nullableTextField(List<String> keys) {
+      final text = textField(keys);
+      return text.isEmpty ? null : text;
+    }
+
+    return _ChironTestflowProgress(
+      status: textField(const [
+        'testflow_status',
+        'testflowStatus',
+      ], fallback: 'not_started'),
+      messagesRequired: intField(const [
+        'test_messages_required',
+        'testMessagesRequired',
+      ], 10),
+      messagesSent: intField(const [
+        'test_messages_sent_count',
+        'testMessagesSentCount',
+      ], 0),
+      departureRequired: intField(const [
+        'test_departure_required',
+        'testDepartureRequired',
+      ], 5),
+      departureSent: intField(const [
+        'test_departure_sent_count',
+        'testDepartureSentCount',
+      ], 0),
+      arrivalRequired: intField(const [
+        'test_arrival_required',
+        'testArrivalRequired',
+      ], 5),
+      arrivalSent: intField(const [
+        'test_arrival_sent_count',
+        'testArrivalSentCount',
+      ], 0),
+      ridesRequired: intField(const [
+        'test_rides_required',
+        'testRidesRequired',
+      ], 5),
+      ridesCompleted: intField(const [
+        'test_rides_completed_count',
+        'testRidesCompletedCount',
+      ], 0),
+      completedAt: nullableTextField(const [
+        'testflow_completed_at',
+        'testflowCompletedAt',
+      ]),
+      lastError: nullableTextField(const [
+        'testflow_last_error',
+        'testflowLastError',
+      ]),
+    );
+  }
+}
+
 final ValueNotifier<_ChironPersistedInternalTestStatus?>
 _chironPersistedInternalTestNotifier =
     ValueNotifier<_ChironPersistedInternalTestStatus?>(null);
@@ -1533,6 +1644,7 @@ Future<
   ({
     BackendChironConnectionStatus status,
     _ChironPersistedInternalTestStatus internalTest,
+    _ChironTestflowProgress testflow,
   })
 >
 _fetchChironTestAccessBackendStatus({
@@ -1565,7 +1677,47 @@ _fetchChironTestAccessBackendStatus({
   return (
     status: BackendChironConnectionStatus.fromJson(map),
     internalTest: _ChironPersistedInternalTestStatus.fromJson(map),
+    testflow: _ChironTestflowProgress.fromJson(map),
   );
+}
+
+/// Chiron Connect 4C: reset the acceptance testflow counters/status only.
+/// Credentials and the OAuth connection status are never touched server-side.
+Future<_ChironTestflowProgress> _resetChironTestflowViaBooking({
+  required String tenantId,
+  required String companyId,
+}) async {
+  final endpoint = _chironBookingScopedEndpoint(
+    '/admin/chiron/testflow/reset',
+    tenantId: tenantId,
+    companyId: companyId,
+  );
+  final auth = await resolveCompanyOwnerAuthHeaders();
+  final res = await http
+      .post(
+        endpoint,
+        headers: auth.headers,
+        body: jsonEncode(<String, dynamic>{
+          'tenant_id': tenantId,
+          'company_id': companyId,
+        }),
+      )
+      .timeout(const Duration(seconds: 12));
+  final decoded = jsonDecode(res.body);
+  if (decoded is! Map) {
+    throw BackendChironConnectionApiException(
+      error: 'invalid_response',
+      statusCode: res.statusCode,
+    );
+  }
+  final map = Map<String, dynamic>.from(decoded);
+  if (res.statusCode < 200 || res.statusCode >= 300 || map['ok'] == false) {
+    throw BackendChironConnectionApiException(
+      error: _chironSafeApiErrorCode(map),
+      statusCode: res.statusCode,
+    );
+  }
+  return _ChironTestflowProgress.fromJson(map);
 }
 
 String? _formatChironInternalTestTimestamp(String? iso) {
@@ -1605,6 +1757,10 @@ class _ChironTestAccessCardState extends State<_ChironTestAccessCard> {
   String _maskedIdentifier = '';
   _ChironMockConnectionTestResult? _lastMockTest;
   _ChironPersistedInternalTestStatus? _persistedInternalTest;
+  // Chiron Connect 4C: acceptance testflow progress (5 departures + 5 arrivals).
+  _ChironTestflowProgress? _testflowProgress;
+  String _lastConnectionStatus = 'never_tested';
+  bool _resettingTestflow = false;
 
   @override
   void initState() {
@@ -1743,6 +1899,8 @@ class _ChironTestAccessCardState extends State<_ChironTestAccessCard> {
       );
       if (!mounted) return;
       setState(() {
+        _testflowProgress = fetched.testflow;
+        _lastConnectionStatus = fetched.status.lastConnectionStatus;
         if (fetched.status.testCredentialsStored) {
           _persistedInternalTest = fetched.internalTest;
           if (fetched.internalTest.maskedIdentifier.isNotEmpty) {
@@ -2039,6 +2197,116 @@ class _ChironTestAccessCardState extends State<_ChironTestAccessCard> {
         setState(() => _clearingTestCredentials = false);
       }
     }
+  }
+
+  Future<void> _resetTestflow() async {
+    final scope = _effectiveTenantCompanyIds();
+    if (scope == null) return;
+
+    final confirmed = await _confirmResetTestflow();
+    if (!confirmed || !mounted) return;
+
+    setState(() {
+      _resettingTestflow = true;
+      _actionError = null;
+    });
+    try {
+      final progress = await _resetChironTestflowViaBooking(
+        tenantId: scope.tenantId,
+        companyId: scope.companyId,
+      );
+      if (!mounted) return;
+      setState(() => _testflowProgress = progress);
+      await _refreshStatus();
+      if (!mounted) return;
+      _showSnack(
+        _t(
+          nl: 'Acceptatietest opnieuw gestart.',
+          en: 'Acceptance test reset.',
+          fr: 'Test d’acceptation réinitialisé.',
+          es: 'Prueba de aceptación reiniciada.',
+        ),
+      );
+    } on BackendChironConnectionApiException catch (_) {
+      if (!mounted) return;
+      _showSnack(
+        _t(
+          nl: 'Testflow resetten is niet gelukt.',
+          en: 'Could not reset the testflow.',
+          fr: 'Impossible de réinitialiser le flux de test.',
+          es: 'No se pudo reiniciar el flujo de prueba.',
+        ),
+        isError: true,
+      );
+    } catch (_) {
+      if (!mounted) return;
+      _showSnack(
+        _t(
+          nl: 'Testflow resetten is niet gelukt.',
+          en: 'Could not reset the testflow.',
+          fr: 'Impossible de réinitialiser le flux de test.',
+          es: 'No se pudo reiniciar el flujo de prueba.',
+        ),
+        isError: true,
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _resettingTestflow = false);
+      }
+    }
+  }
+
+  Future<bool> _confirmResetTestflow() async {
+    if (!mounted) return false;
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          backgroundColor: _chironPanel,
+          title: Text(
+            _t(
+              nl: 'Testflow resetten?',
+              en: 'Reset testflow?',
+              fr: 'Réinitialiser le flux de test ?',
+              es: '¿Reiniciar el flujo de prueba?',
+            ),
+          ),
+          content: Text(
+            _t(
+              nl: 'De voortgang van de acceptatietest wordt teruggezet naar 0. Credentials en de verbindingsstatus blijven behouden.',
+              en: 'Acceptance test progress is reset to 0. Credentials and the connection status are kept.',
+              fr: 'La progression du test d’acceptation est remise à 0. Les identifiants et le statut de connexion sont conservés.',
+              es: 'El progreso de la prueba de aceptación se reinicia a 0. Las credenciales y el estado de conexión se conservan.',
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: Text(
+                _t(
+                  nl: 'Annuleren',
+                  en: 'Cancel',
+                  fr: 'Annuler',
+                  es: 'Cancelar',
+                ),
+              ),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              child: Text(
+                _t(
+                  nl: 'Resetten',
+                  en: 'Reset',
+                  fr: 'Réinitialiser',
+                  es: 'Reiniciar',
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+    return result == true;
   }
 
   Widget _statusChip({
@@ -2482,10 +2750,201 @@ class _ChironTestAccessCardState extends State<_ChironTestAccessCard> {
                   ),
                 ],
               ),
+              _buildTestflowProgressSection(),
             ],
           ),
         );
       },
+    );
+  }
+
+  // Chiron Connect 4C: compact acceptance-testflow progress (5 departures +
+  // 5 arrivals = 10 messages) plus a reset action. No production unlock here.
+  Widget _buildTestflowProgressSection() {
+    final progress = _testflowProgress ?? const _ChironTestflowProgress();
+    final connectionPassed =
+        _lastConnectionStatus.trim().toLowerCase() == 'test_passed';
+
+    String statusLabel;
+    Color statusColor;
+    if (progress.isComplete) {
+      statusLabel = _t(
+        nl: 'Voltooid',
+        en: 'Complete',
+        fr: 'Terminé',
+        es: 'Completado',
+      );
+      statusColor = _chironSuccess;
+    } else if (progress.isInProgress) {
+      statusLabel = _t(
+        nl: 'Bezig',
+        en: 'In progress',
+        fr: 'En cours',
+        es: 'En curso',
+      );
+      statusColor = _chironGold;
+    } else {
+      statusLabel = _t(
+        nl: 'Nog niet gestart',
+        en: 'Not started',
+        fr: 'Pas encore commencé',
+        es: 'Aún no iniciada',
+      );
+      statusColor = _chironTextMuted;
+    }
+
+    Widget line(String label, int sent, int required) {
+      final met = sent >= required;
+      return Padding(
+        padding: const EdgeInsets.only(top: 2),
+        child: Row(
+          children: [
+            Expanded(
+              child: Text(
+                label,
+                style: TextStyle(fontSize: 12, color: _chironTextMuted),
+              ),
+            ),
+            Text(
+              '$sent/$required',
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+                color: met ? _chironSuccess : _chironTextPrimary,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(top: 12),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: _chironPanel,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: _chironBorder),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  _t(
+                    nl: 'Acceptatietest',
+                    en: 'Acceptance test',
+                    fr: 'Test d’acceptation',
+                    es: 'Prueba de aceptación',
+                  ),
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: _chironTextPrimary,
+                  ),
+                ),
+              ),
+              _statusChip(
+                label: statusLabel,
+                active: progress.isComplete || progress.isInProgress,
+                activeColor: statusColor,
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            _t(
+              nl: 'Voor productie zijn 5 vertrek- en 5 aankomstberichten nodig.',
+              en: 'Production requires 5 departure and 5 arrival messages.',
+              fr: 'La production nécessite 5 messages de départ et 5 d’arrivée.',
+              es: 'La producción requiere 5 mensajes de salida y 5 de llegada.',
+            ),
+            style: TextStyle(fontSize: 12, color: _chironTextMuted),
+          ),
+          const SizedBox(height: 8),
+          line(
+            _t(
+              nl: 'Voortgang',
+              en: 'Progress',
+              fr: 'Progression',
+              es: 'Progreso',
+            ),
+            progress.messagesSent,
+            progress.messagesRequired,
+          ),
+          line(
+            _t(nl: 'Vertrek', en: 'Departure', fr: 'Départ', es: 'Salida'),
+            progress.departureSent,
+            progress.departureRequired,
+          ),
+          line(
+            _t(nl: 'Aankomst', en: 'Arrival', fr: 'Arrivée', es: 'Llegada'),
+            progress.arrivalSent,
+            progress.arrivalRequired,
+          ),
+          line(
+            _t(
+              nl: 'Ritten afgerond',
+              en: 'Rides completed',
+              fr: 'Trajets terminés',
+              es: 'Viajes completados',
+            ),
+            progress.ridesCompleted,
+            progress.ridesRequired,
+          ),
+          if (!connectionPassed) ...[
+            const SizedBox(height: 8),
+            Text(
+              _t(
+                nl: 'Test eerst de OAuth2-verbinding voordat de acceptatietest kan starten.',
+                en: 'Test the OAuth2 connection first before the acceptance test can start.',
+                fr: 'Testez d’abord la connexion OAuth2 avant de démarrer le test d’acceptation.',
+                es: 'Prueba primero la conexión OAuth2 antes de iniciar la prueba de aceptación.',
+              ),
+              style: TextStyle(fontSize: 12, color: _chironGold),
+            ),
+          ],
+          const SizedBox(height: 4),
+          Text(
+            _t(
+              nl: 'Productie pas na geslaagde OAuth2-test én volledige acceptatietest.',
+              en: 'Production only after a passed OAuth2 test and a complete acceptance test.',
+              fr: 'Production uniquement après un test OAuth2 réussi et un test d’acceptation complet.',
+              es: 'Producción solo tras una prueba OAuth2 superada y una prueba de aceptación completa.',
+            ),
+            style: TextStyle(fontSize: 11, color: _chironTextMuted),
+          ),
+          const SizedBox(height: 8),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: OutlinedButton(
+              onPressed: _resettingTestflow ? null : _resetTestflow,
+              style: _chironTestAccessSecondaryButtonStyle(),
+              child: _resettingTestflow
+                  ? SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: _chironGold,
+                      ),
+                    )
+                  : Text(
+                      _t(
+                        nl: 'Testflow resetten',
+                        en: 'Reset testflow',
+                        fr: 'Réinitialiser le flux de test',
+                        es: 'Reiniciar flujo de prueba',
+                      ),
+                      style: const TextStyle(fontSize: 12),
+                    ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

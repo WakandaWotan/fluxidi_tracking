@@ -41,6 +41,7 @@ const CHIRON_CONFIG_TEST_CREDENTIALS_PATH = "/admin/chiron/config/test-credentia
 const CHIRON_CONFIG_TEST_CREDENTIALS_CLEAR_PATH =
   "/admin/chiron/config/test-credentials/clear";
 const CHIRON_CONNECTION_TEST_PATH = "/admin/chiron/connection/test";
+const CHIRON_TESTFLOW_RESET_PATH = "/admin/chiron/testflow/reset";
 const CHIRON_CONNECTION_STATUS_SCHEMA = "chiron_connection_status_v1";
 const CHIRON_CONNECTION_KV_SUFFIX = "chiron_connection:v1";
 const CHIRON_INTERNAL_PROXY_MODE = "booking_worker_v1";
@@ -100,6 +101,17 @@ const CHIRON_OAUTH_TOKEN_URL_BY_ENVIRONMENT = {
 };
 const CHIRON_OAUTH_EXCHANGE_TIMEOUT_MS = 10000;
 const CHIRON_OAUTH_DEFAULT_TEST_MESSAGES_REQUIRED = 10;
+// Chiron Connect 4C: acceptance testflow requirements. 5 rides x (departure +
+// arrival) = 10 status messages, no error codes, correct order, unique rides.
+const CHIRON_TESTFLOW_DEFAULT_RIDES_REQUIRED = 5;
+const CHIRON_TESTFLOW_DEFAULT_DEPARTURE_REQUIRED = 5;
+const CHIRON_TESTFLOW_DEFAULT_ARRIVAL_REQUIRED = 5;
+const CHIRON_TESTFLOW_RITNUMMER_HISTORY_MAX = 20;
+const CHIRON_TESTFLOW_ALLOWED_STATUSES = new Set([
+  "not_started",
+  "in_progress",
+  "complete",
+]);
 const CHIRON_CREDENTIALS_ENCRYPTION_KEY_MIN_LENGTH = 32;
 const CHIRON_TEST_CREDENTIALS_ALLOWED_TOP_LEVEL_KEYS = new Set([
   "tenant_id",
@@ -6907,6 +6919,220 @@ function buildChironTestCredentialsClearedStatusDoc(
   };
 }
 
+// === Chiron Connect 4C: acceptance testflow progress model ===================
+
+function _chironTestflowIntOr(value, fallback) {
+  const num = Number(value);
+  return Number.isFinite(num) && num >= 0 ? Math.floor(num) : fallback;
+}
+
+// Normalizes a ritnummer history array: trims, dedupes, caps to the history
+// max. Never returns an unbounded array.
+function _chironTestflowRitList(value) {
+  if (!Array.isArray(value)) return [];
+  const out = [];
+  for (const item of value) {
+    const text = cleanText(item, 256);
+    if (text && !out.includes(text)) out.push(text);
+    if (out.length >= CHIRON_TESTFLOW_RITNUMMER_HISTORY_MAX) break;
+  }
+  return out;
+}
+
+function _chironTestflowAppendRit(list, rit) {
+  const base = Array.isArray(list) ? [...list] : [];
+  const text = cleanText(rit, 256);
+  if (text && !base.includes(text)) base.push(text);
+  if (base.length > CHIRON_TESTFLOW_RITNUMMER_HISTORY_MAX) {
+    return base.slice(base.length - CHIRON_TESTFLOW_RITNUMMER_HISTORY_MAX);
+  }
+  return base;
+}
+
+// Pure projection of a connection status doc into normalized testflow progress,
+// applying defaults for older docs that predate these fields. testflow_status
+// is derived from the counters so it can never claim "complete" unless every
+// required count is met.
+function getChironTestflowProgress(statusDoc) {
+  const doc =
+    statusDoc && typeof statusDoc === "object" && !Array.isArray(statusDoc)
+      ? statusDoc
+      : {};
+
+  const messagesRequired = _chironTestflowIntOr(
+    doc.test_messages_required,
+    CHIRON_OAUTH_DEFAULT_TEST_MESSAGES_REQUIRED,
+  );
+  const ridesRequired = _chironTestflowIntOr(
+    doc.test_rides_required,
+    CHIRON_TESTFLOW_DEFAULT_RIDES_REQUIRED,
+  );
+  const departureRequired = _chironTestflowIntOr(
+    doc.test_departure_required,
+    CHIRON_TESTFLOW_DEFAULT_DEPARTURE_REQUIRED,
+  );
+  const arrivalRequired = _chironTestflowIntOr(
+    doc.test_arrival_required,
+    CHIRON_TESTFLOW_DEFAULT_ARRIVAL_REQUIRED,
+  );
+
+  const messagesSent = _chironTestflowIntOr(doc.test_messages_sent_count, 0);
+  const departureSent = _chironTestflowIntOr(doc.test_departure_sent_count, 0);
+  const arrivalSent = _chironTestflowIntOr(doc.test_arrival_sent_count, 0);
+  const ridesCompleted = _chironTestflowIntOr(doc.test_rides_completed_count, 0);
+
+  const requirementsMet =
+    messagesSent >= messagesRequired &&
+    departureSent >= departureRequired &&
+    arrivalSent >= arrivalRequired &&
+    ridesCompleted >= ridesRequired;
+
+  let testflowStatus;
+  if (requirementsMet) {
+    testflowStatus = "complete";
+  } else if (
+    messagesSent > 0 ||
+    departureSent > 0 ||
+    arrivalSent > 0 ||
+    ridesCompleted > 0
+  ) {
+    testflowStatus = "in_progress";
+  } else {
+    testflowStatus = "not_started";
+  }
+
+  return {
+    test_messages_required: messagesRequired,
+    test_rides_required: ridesRequired,
+    test_departure_required: departureRequired,
+    test_arrival_required: arrivalRequired,
+    test_messages_sent_count: messagesSent,
+    test_departure_sent_count: departureSent,
+    test_arrival_sent_count: arrivalSent,
+    test_rides_completed_count: ridesCompleted,
+    testflow_status: testflowStatus,
+    testflow_completed_at: cleanText(doc.testflow_completed_at, 64) || null,
+    testflow_updated_at: cleanText(doc.testflow_updated_at, 64) || null,
+    testflow_last_error: cleanText(doc.testflow_last_error, 256) || null,
+    requirements_met: requirementsMet,
+  };
+}
+
+// Chiron Connect 4C: pure helper that folds one submit result into the testflow
+// counters of a status doc. NOT wired to any real submit yet (that is 4D). It is
+// idempotent per (ritnummer, status): the same departure/arrival ritnummer can
+// never be counted twice. Only successful results (ok === true) advance
+// counters; failures only record a sanitized last error.
+function recordChironTestflowSubmitResult(
+  existingStatusDoc,
+  { officialStatus, ritnummer, ok, foutenCount, sanitizedError } = {},
+) {
+  const existing =
+    existingStatusDoc &&
+    typeof existingStatusDoc === "object" &&
+    !Array.isArray(existingStatusDoc)
+      ? existingStatusDoc
+      : {};
+  const progress = getChironTestflowProgress(existing);
+  const updatedAt = nowIso();
+  const status = cleanText(officialStatus, 32).toLowerCase();
+  const cleanRit = cleanText(ritnummer, 256);
+
+  const departureRits = _chironTestflowRitList(existing.testflow_ritnummers_departure);
+  const arrivalRits = _chironTestflowRitList(existing.testflow_ritnummers_arrival);
+  const completedRits = _chironTestflowRitList(existing.testflow_ritnummers_completed);
+
+  const base = {
+    ...existing,
+    test_messages_required: progress.test_messages_required,
+    test_rides_required: progress.test_rides_required,
+    test_departure_required: progress.test_departure_required,
+    test_arrival_required: progress.test_arrival_required,
+    test_messages_sent_count: progress.test_messages_sent_count,
+    test_departure_sent_count: progress.test_departure_sent_count,
+    test_arrival_sent_count: progress.test_arrival_sent_count,
+    test_rides_completed_count: progress.test_rides_completed_count,
+    testflow_ritnummers_departure: departureRits,
+    testflow_ritnummers_arrival: arrivalRits,
+    testflow_ritnummers_completed: completedRits,
+    testflow_updated_at: updatedAt,
+  };
+
+  const safeFoutenCount = Number(foutenCount);
+  if (ok !== true || (Number.isFinite(safeFoutenCount) && safeFoutenCount > 0)) {
+    base.testflow_last_error =
+      cleanText(sanitizedError, 256) || "chiron_testflow_submit_failed";
+    const failedProgress = getChironTestflowProgress(base);
+    base.testflow_status = failedProgress.testflow_status;
+    base.testflow_completed_at =
+      failedProgress.testflow_status === "complete"
+        ? cleanText(existing.testflow_completed_at, 64) || updatedAt
+        : null;
+    return base;
+  }
+
+  base.testflow_last_error = null;
+
+  if (status === "vertrek" && cleanRit && !departureRits.includes(cleanRit)) {
+    base.test_departure_sent_count = progress.test_departure_sent_count + 1;
+    base.test_messages_sent_count = progress.test_messages_sent_count + 1;
+    base.testflow_ritnummers_departure = _chironTestflowAppendRit(departureRits, cleanRit);
+  } else if (status === "aankomst" && cleanRit && !arrivalRits.includes(cleanRit)) {
+    base.test_arrival_sent_count = progress.test_arrival_sent_count + 1;
+    base.test_messages_sent_count = progress.test_messages_sent_count + 1;
+    base.testflow_ritnummers_arrival = _chironTestflowAppendRit(arrivalRits, cleanRit);
+    if (!completedRits.includes(cleanRit)) {
+      base.test_rides_completed_count = progress.test_rides_completed_count + 1;
+      base.testflow_ritnummers_completed = _chironTestflowAppendRit(completedRits, cleanRit);
+    }
+  }
+
+  const newProgress = getChironTestflowProgress(base);
+  base.testflow_status = newProgress.testflow_status;
+  base.testflow_completed_at =
+    newProgress.testflow_status === "complete"
+      ? cleanText(existing.testflow_completed_at, 64) || updatedAt
+      : null;
+  return base;
+}
+
+function buildChironTestflowResetStatusDoc(
+  existingStored,
+  tenantId,
+  companyId,
+  updatedAt,
+  updatedBy,
+) {
+  const existing =
+    existingStored && typeof existingStored === "object" && !Array.isArray(existingStored)
+      ? { ...existingStored }
+      : {};
+
+  // Reset only testflow counters/status + ritnummer history. Credentials,
+  // last_connection_status and environment are preserved. production_enabled is
+  // forced false because a reset invalidates any prior completion (stricter).
+  return {
+    ...existing,
+    schema_version: CHIRON_CONNECTION_STATUS_SCHEMA,
+    tenant_id: tenantId,
+    company_id: companyId,
+    production_enabled: false,
+    test_messages_sent_count: 0,
+    test_departure_sent_count: 0,
+    test_arrival_sent_count: 0,
+    test_rides_completed_count: 0,
+    testflow_ritnummers_departure: [],
+    testflow_ritnummers_arrival: [],
+    testflow_ritnummers_completed: [],
+    testflow_status: "not_started",
+    testflow_completed_at: null,
+    testflow_last_error: null,
+    testflow_updated_at: updatedAt,
+    updated_at: updatedAt,
+    updated_by: updatedBy,
+  };
+}
+
 function defaultChironConnectionStatusDoc(tenantId, companyId) {
   return {
     ok: true,
@@ -6926,6 +7152,17 @@ function defaultChironConnectionStatusDoc(tenantId, companyId) {
     official_submission_performed_at: null,
     test_messages_required: 10,
     test_messages_sent_count: 0,
+    // Chiron Connect 4C: acceptance testflow defaults.
+    test_rides_required: CHIRON_TESTFLOW_DEFAULT_RIDES_REQUIRED,
+    test_departure_required: CHIRON_TESTFLOW_DEFAULT_DEPARTURE_REQUIRED,
+    test_arrival_required: CHIRON_TESTFLOW_DEFAULT_ARRIVAL_REQUIRED,
+    test_departure_sent_count: 0,
+    test_arrival_sent_count: 0,
+    test_rides_completed_count: 0,
+    testflow_status: "not_started",
+    testflow_completed_at: null,
+    testflow_updated_at: null,
+    testflow_last_error: null,
     updated_at: null,
   };
 }
@@ -7094,9 +7331,15 @@ function buildChironConnectionStatusResponse(tenantId, companyId, stored) {
     ? regionRaw
     : defaults.region;
 
-  const testMessagesSent = Number(stored.test_messages_sent_count);
+  // Chiron Connect 4C: testflow progress (with defaults for older docs).
+  const testflow = getChironTestflowProgress(stored);
+
+  // Production stays false unless the OAuth test passed AND the full acceptance
+  // testflow is complete. OAuth test_passed alone is never sufficient.
   const productionEnabled =
-    stored.production_enabled === true && lastConnectionStatus === "test_passed";
+    stored.production_enabled === true &&
+    lastConnectionStatus === "test_passed" &&
+    testflow.testflow_status === "complete";
 
   return {
     ok: true,
@@ -7116,11 +7359,19 @@ function buildChironConnectionStatusResponse(tenantId, companyId, stored) {
     official_submit_enabled: false,
     official_submission_performed_at:
       cleanText(stored.official_submission_performed_at, 64) || null,
-    test_messages_required: 10,
-    test_messages_sent_count:
-      Number.isFinite(testMessagesSent) && testMessagesSent >= 0
-        ? Math.floor(testMessagesSent)
-        : 0,
+    test_messages_required: testflow.test_messages_required,
+    test_messages_sent_count: testflow.test_messages_sent_count,
+    // Chiron Connect 4C: acceptance testflow projection.
+    test_rides_required: testflow.test_rides_required,
+    test_departure_required: testflow.test_departure_required,
+    test_arrival_required: testflow.test_arrival_required,
+    test_departure_sent_count: testflow.test_departure_sent_count,
+    test_arrival_sent_count: testflow.test_arrival_sent_count,
+    test_rides_completed_count: testflow.test_rides_completed_count,
+    testflow_status: testflow.testflow_status,
+    testflow_completed_at: testflow.testflow_completed_at,
+    testflow_updated_at: testflow.testflow_updated_at,
+    testflow_last_error: testflow.testflow_last_error,
     updated_at: cleanText(stored.updated_at, 64) || null,
     ...buildChironInternalTestStatusResponseFields(stored),
   };
@@ -7205,7 +7456,7 @@ function parseChironConfigStatusPostInput(body, existingStored) {
   // Chiron Connect 4B: tighten production gate. Even with last_connection_status
   // === "test_passed" (now reachable via the live OAuth2 exchange), production
   // remains blocked until the operator has completed the required test message
-  // run. Counters land in 4C; default required count is 10.
+  // run. Default required count is 10.
   if (
     productionEnabledRequested &&
     safeTestMessagesSent < safeTestMessagesRequired
@@ -7213,10 +7464,19 @@ function parseChironConfigStatusPostInput(body, existingStored) {
     return { error: "production_requires_test_messages_complete" };
   }
 
+  // Chiron Connect 4C: production also requires the full acceptance testflow
+  // (5 departures + 5 arrivals across 5 unique rides) to be complete. This is
+  // strictly additive: it can only block, never unlock.
+  const testflowProgress = getChironTestflowProgress(existing);
+  if (productionEnabledRequested && testflowProgress.testflow_status !== "complete") {
+    return { error: "production_requires_testflow_complete" };
+  }
+
   const productionEnabledFinal =
     productionEnabledRequested &&
     existingStatus === "test_passed" &&
-    safeTestMessagesSent >= safeTestMessagesRequired;
+    safeTestMessagesSent >= safeTestMessagesRequired &&
+    testflowProgress.testflow_status === "complete";
 
   return {
     value: {
@@ -7231,6 +7491,27 @@ function parseChironConfigStatusPostInput(body, existingStored) {
         cleanText(existing.last_connection_status_message, 256) || "",
       test_messages_sent_count: safeTestMessagesSent,
       test_messages_required: safeTestMessagesRequired,
+      // Chiron Connect 4C: preserve acceptance testflow progress across config
+      // status writes so a toggle save never wipes the counters/history.
+      test_rides_required: testflowProgress.test_rides_required,
+      test_departure_required: testflowProgress.test_departure_required,
+      test_arrival_required: testflowProgress.test_arrival_required,
+      test_departure_sent_count: testflowProgress.test_departure_sent_count,
+      test_arrival_sent_count: testflowProgress.test_arrival_sent_count,
+      test_rides_completed_count: testflowProgress.test_rides_completed_count,
+      testflow_status: testflowProgress.testflow_status,
+      testflow_completed_at: testflowProgress.testflow_completed_at,
+      testflow_updated_at: testflowProgress.testflow_updated_at,
+      testflow_last_error: testflowProgress.testflow_last_error,
+      testflow_ritnummers_departure: _chironTestflowRitList(
+        existing.testflow_ritnummers_departure,
+      ),
+      testflow_ritnummers_arrival: _chironTestflowRitList(
+        existing.testflow_ritnummers_arrival,
+      ),
+      testflow_ritnummers_completed: _chironTestflowRitList(
+        existing.testflow_ritnummers_completed,
+      ),
       official_submission_performed_at:
         cleanText(existing.official_submission_performed_at, 64) || null,
     },
@@ -7521,6 +7802,101 @@ async function handleChironConfigTestCredentialsPost(request, url, env, origin) 
       test_credentials_stored: true,
       credential_fingerprint_short: credentialFingerprintShort,
       masked_identifier: maskedIdentifier,
+      updated_at: updatedAt,
+    },
+    200,
+    origin,
+  );
+}
+
+// Chiron Connect 4C: reset only the acceptance testflow counters/status for a
+// tenant/company. Credentials, last_connection_status and environment are left
+// untouched; production stays locked.
+async function handleChironTestflowResetPost(request, url, env, origin) {
+  if (!requireJsonRequest(request)) {
+    return jsonResponse(
+      { ok: false, error: "Content-Type must be application/json" },
+      400,
+      origin,
+    );
+  }
+
+  const body = await readJsonBody(request);
+  if (body === null) {
+    return jsonResponse({ ok: false, error: "Invalid JSON body" }, 400, origin);
+  }
+
+  // Reuse the strict clear-input parser: it only accepts tenant_id/company_id
+  // and rejects any secret-bearing or forbidden top-level keys.
+  const parsed = parseChironTestCredentialsClearInput(body);
+  if (parsed.error) {
+    return jsonResponse({ ok: false, error: parsed.error }, 400, origin);
+  }
+
+  const { tenantId, companyId } = parsed;
+
+  const authError = ensureAuthorizedOrInternalProxy(request, env, {
+    tenantId,
+    companyId,
+  });
+  if (authError) return authError;
+
+  if (!env?.COMPLIANCE_KV || typeof env.COMPLIANCE_KV.put !== "function") {
+    return jsonResponse({ ok: false, error: "missing_kv" }, 500, origin);
+  }
+
+  const updatedAt = nowIso();
+  const statusRead = await readChironConnectionStatusRaw(env, tenantId, companyId);
+  const statusDoc = buildChironTestflowResetStatusDoc(
+    statusRead.doc,
+    tenantId,
+    companyId,
+    updatedAt,
+    _resolveChironConfigUpdatedBy(request),
+  );
+
+  const statusWrite = await writeChironConnectionStatusRaw(
+    env,
+    tenantId,
+    companyId,
+    statusDoc,
+  );
+  if (!statusWrite.ok) {
+    return jsonResponse(
+      { ok: false, error: statusWrite.error || "kv_write_failed" },
+      500,
+      origin,
+    );
+  }
+
+  const statusPayload = buildChironConnectionStatusResponse(
+    tenantId,
+    companyId,
+    statusDoc,
+  );
+
+  console.log(
+    `[CHIRON_TESTFLOW_RESET] tenant=${_chironMaskScopeId(
+      tenantId,
+    )} company=${_chironMaskScopeId(companyId)} result=ok`,
+  );
+
+  return jsonResponse(
+    {
+      ok: true,
+      tenant_id: tenantId,
+      company_id: companyId,
+      testflow_status: statusPayload.testflow_status,
+      test_messages_sent_count: statusPayload.test_messages_sent_count,
+      test_departure_sent_count: statusPayload.test_departure_sent_count,
+      test_arrival_sent_count: statusPayload.test_arrival_sent_count,
+      test_rides_completed_count: statusPayload.test_rides_completed_count,
+      test_messages_required: statusPayload.test_messages_required,
+      test_departure_required: statusPayload.test_departure_required,
+      test_arrival_required: statusPayload.test_arrival_required,
+      test_rides_required: statusPayload.test_rides_required,
+      last_connection_status: statusPayload.last_connection_status,
+      production_enabled: statusPayload.production_enabled,
       updated_at: updatedAt,
     },
     200,
@@ -7942,7 +8318,8 @@ export default {
       url.pathname !== CHIRON_CONFIG_STATUS_PATH &&
       url.pathname !== CHIRON_CONFIG_TEST_CREDENTIALS_PATH &&
       url.pathname !== CHIRON_CONFIG_TEST_CREDENTIALS_CLEAR_PATH &&
-      url.pathname !== CHIRON_CONNECTION_TEST_PATH
+      url.pathname !== CHIRON_CONNECTION_TEST_PATH &&
+      url.pathname !== CHIRON_TESTFLOW_RESET_PATH
     ) {
       return jsonResponse(
         { ok: false, error: "Not Found", path: url.pathname },
@@ -8029,6 +8406,12 @@ export default {
           return jsonResponse({ ok: false, error: "Method Not Allowed" }, 405, origin);
         }
         return await handleChironConnectionTestPost(request, url, env, origin);
+      }
+      if (url.pathname === CHIRON_TESTFLOW_RESET_PATH) {
+        if (request.method !== "POST") {
+          return jsonResponse({ ok: false, error: "Method Not Allowed" }, 405, origin);
+        }
+        return await handleChironTestflowResetPost(request, url, env, origin);
       }
       if (request.method !== "GET") {
         return jsonResponse({ ok: false, error: "Method Not Allowed" }, 405, origin);
