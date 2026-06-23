@@ -572,6 +572,8 @@ class _ChironComplianceOverviewState extends State<_ChironComplianceOverview> {
             style: TextStyle(color: _chironTextSecondary, fontSize: 13),
           ),
           const SizedBox(height: 12),
+          _ChironOnboardingHelpCard(lang: widget.lang),
+          const SizedBox(height: 12),
           _ChironHubStatusCard(
             lang: widget.lang,
             onConfigureConnection: () {
@@ -593,6 +595,306 @@ class _ChironComplianceOverviewState extends State<_ChironComplianceOverview> {
           KeyedSubtree(
             key: _testAccessSectionKey,
             child: _ChironTestAccessCard(lang: widget.lang),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ChironOnboardingHelpCard extends StatefulWidget {
+  const _ChironOnboardingHelpCard({required this.lang});
+
+  final AppLanguage lang;
+
+  @override
+  State<_ChironOnboardingHelpCard> createState() =>
+      _ChironOnboardingHelpCardState();
+}
+
+class _ChironOnboardingHelpCardState extends State<_ChironOnboardingHelpCard> {
+  bool _expanded = false;
+
+  String _t({
+    required String nl,
+    required String en,
+    required String fr,
+    required String es,
+  }) {
+    switch (widget.lang) {
+      case AppLanguage.nl:
+        return nl;
+      case AppLanguage.en:
+        return en;
+      case AppLanguage.fr:
+        return fr;
+      case AppLanguage.es:
+        return es;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final steps = [
+      _ChironOnboardingStep(
+        title: _t(
+          nl: 'Registreer uw bedrijf in de Chiron-testomgeving',
+          en: 'Register your company in the Chiron test environment',
+          fr: 'Enregistrez votre entreprise dans l’environnement de test Chiron',
+          es: 'Registre su empresa en el entorno de prueba de Chiron',
+        ),
+        body: _t(
+          nl: 'De wettelijke vertegenwoordiger meldt zich aan met eID, itsme of een officiële aanmeldmethode. Controleer dat het bedrijf correct gekoppeld is en dat de taxi-/VVB-gegevens in orde zijn.',
+          en: 'The legal representative signs in with eID, itsme or an official login method. Check that the company is linked correctly and that taxi/VVB data is complete.',
+          fr: 'Le représentant légal se connecte avec eID, itsme ou une méthode officielle. Vérifiez que l’entreprise est correctement liée et que les données taxi/VVB sont complètes.',
+          es: 'El representante legal inicia sesión con eID, itsme u otro método oficial. Compruebe que la empresa esté vinculada y que los datos taxi/VVB estén completos.',
+        ),
+      ),
+      _ChironOnboardingStep(
+        title: _t(
+          nl: 'Kopieer de testgegevens',
+          en: 'Copy the test credentials',
+          fr: 'Copiez les identifiants de test',
+          es: 'Copie las credenciales de prueba',
+        ),
+        body: _t(
+          nl: 'Na registratie toont Chiron meestal een Client ID en Secret. Soms wordt met een publieke sleutel/JWKS gewerkt. Fluxidi toont secrets nooit opnieuw zichtbaar.',
+          en: 'After registration Chiron usually shows a Client ID and Secret. In some cases a public key/JWKS is used. Fluxidi never shows secrets again.',
+          fr: 'Après l’enregistrement, Chiron affiche généralement un Client ID et un Secret. Dans certains cas, une clé publique/JWKS est utilisée. Fluxidi ne réaffiche jamais les secrets.',
+          es: 'Tras el registro, Chiron suele mostrar un Client ID y Secret. En algunos casos se usa una clave pública/JWKS. Fluxidi nunca vuelve a mostrar los secretos.',
+        ),
+      ),
+      _ChironOnboardingStep(
+        title: _t(
+          nl: 'Voer de testgegevens in Fluxidi in',
+          en: 'Enter the test credentials in Fluxidi',
+          fr: 'Saisissez les identifiants de test dans Fluxidi',
+          es: 'Introduzca las credenciales de prueba en Fluxidi',
+        ),
+        body: _t(
+          nl: 'Fluxidi bewaart de gegevens per bedrijf en gebruikt ze alleen om de eigen Chiron-koppeling te testen en later ritberichten door te sturen.',
+          en: 'Fluxidi stores credentials per company and only uses them to test that company’s Chiron connection and later send ride messages.',
+          fr: 'Fluxidi conserve les identifiants par entreprise et les utilise uniquement pour tester la connexion Chiron puis envoyer les messages de course.',
+          es: 'Fluxidi guarda las credenciales por empresa y solo las usa para probar su conexión Chiron y más adelante enviar mensajes de viaje.',
+        ),
+      ),
+      _ChironOnboardingStep(
+        title: _t(
+          nl: 'Test de verbinding',
+          en: 'Test the connection',
+          fr: 'Testez la connexion',
+          es: 'Pruebe la conexión',
+        ),
+        body: _t(
+          nl: 'Fluxidi voert een OAuth2-test uit. Mogelijke statussen: verbinding geslaagd, verbinding mislukt of testgegevens ontbreken.',
+          en: 'Fluxidi runs an OAuth2 test. Possible statuses: connection passed, connection failed or test credentials missing.',
+          fr: 'Fluxidi effectue un test OAuth2. Statuts possibles : connexion réussie, connexion échouée ou identifiants manquants.',
+          es: 'Fluxidi ejecuta una prueba OAuth2. Estados posibles: conexión correcta, conexión fallida o faltan credenciales de prueba.',
+        ),
+      ),
+      _ChironOnboardingStep(
+        title: _t(
+          nl: 'Controleer de rit- en bedrijfsgegevens',
+          en: 'Check ride and company data',
+          fr: 'Vérifiez les données de course et d’entreprise',
+          es: 'Revise los datos de viaje y empresa',
+        ),
+        body: _t(
+          nl: 'Chiron heeft correcte gegevens nodig: ondernemingsnummer/KBO, voertuig en nummerplaat, chauffeursgegevens, bestuurderspasnummer, ritnummer, vertrek- en aankomstgegevens, afstand en prijs of contractgegevens.',
+          en: 'Chiron needs correct data: company number, vehicle and plate, driver details, driver permit number, ride number, departure and arrival data, distance and price or contract data.',
+          fr: 'Chiron exige des données correctes : numéro d’entreprise, véhicule et plaque, données chauffeur, numéro de carte chauffeur, numéro de course, départ et arrivée, distance, prix ou contrat.',
+          es: 'Chiron necesita datos correctos: número de empresa, vehículo y matrícula, datos del conductor, número de permiso, número de viaje, salida y llegada, distancia y precio o contrato.',
+        ),
+      ),
+      _ChironOnboardingStep(
+        title: _t(
+          nl: 'Doorloop de acceptatietest',
+          en: 'Complete the acceptance test',
+          fr: 'Effectuez le test d’acceptation',
+          es: 'Complete la prueba de aceptación',
+        ),
+        body: _t(
+          nl: 'Er zijn minstens 10 correcte testberichten nodig: 5 vertrekberichten en 5 aankomstberichten. Fluxidi toont de voortgang van deze testflow.',
+          en: 'At least 10 correct test messages are required: 5 departure messages and 5 arrival messages. Fluxidi shows the testflow progress.',
+          fr: 'Au moins 10 messages de test corrects sont requis : 5 départs et 5 arrivées. Fluxidi affiche la progression du test.',
+          es: 'Se requieren al menos 10 mensajes correctos: 5 salidas y 5 llegadas. Fluxidi muestra el progreso del flujo de prueba.',
+        ),
+      ),
+      _ChironOnboardingStep(
+        title: _t(
+          nl: 'Controleer fouten',
+          en: 'Review errors',
+          fr: 'Contrôlez les erreurs',
+          es: 'Revise errores',
+        ),
+        body: _t(
+          nl: 'Als Chiron berichten weigert, volgt de exploitant de fout op. Fluxidi kan tonen wat aandacht nodig heeft. Fouten kunnen ook in het Chiron-portaal of via e-mail verschijnen.',
+          en: 'If Chiron rejects messages, the operator follows up the error. Fluxidi can show what needs attention. Errors may also appear in the Chiron portal or by email.',
+          fr: 'Si Chiron refuse des messages, l’exploitant suit l’erreur. Fluxidi peut indiquer les points à vérifier. Les erreurs peuvent aussi apparaître dans le portail Chiron ou par e-mail.',
+          es: 'Si Chiron rechaza mensajes, el operador debe revisar el error. Fluxidi puede indicar qué requiere atención. Los errores también pueden aparecer en el portal Chiron o por email.',
+        ),
+      ),
+      _ChironOnboardingStep(
+        title: _t(
+          nl: 'Activeer productie pas na succesvolle test',
+          en: 'Activate production only after a successful test',
+          fr: 'Activez la production seulement après un test réussi',
+          es: 'Active producción solo tras una prueba correcta',
+        ),
+        body: _t(
+          nl: 'Productie gebruikt andere toegangsgegevens dan test. Fluxidi houdt productie geblokkeerd tot de testverbinding geslaagd is, de acceptatietest voltooid is, productiegegevens aanwezig zijn en de productieverbinding gecontroleerd is.',
+          en: 'Production uses different credentials than test. Fluxidi keeps production blocked until the test connection passed, the acceptance test is complete, production credentials exist and the production connection is checked.',
+          fr: 'La production utilise d’autres identifiants que le test. Fluxidi bloque la production tant que la connexion de test, le test d’acceptation, les identifiants production et la connexion production ne sont pas validés.',
+          es: 'Producción usa credenciales distintas de prueba. Fluxidi mantiene producción bloqueada hasta superar la prueba, completar la aceptación, añadir credenciales de producción y comprobar la conexión.',
+        ),
+      ),
+    ];
+
+    return Card(
+      color: _chironCard,
+      elevation: 0,
+      margin: EdgeInsets.zero,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(14),
+        side: BorderSide(color: _chironBorder),
+      ),
+      child: Theme(
+        data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+        child: ExpansionTile(
+          initiallyExpanded: false,
+          tilePadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 2),
+          childrenPadding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
+          onExpansionChanged: (expanded) =>
+              setState(() => _expanded = expanded),
+          leading: Icon(Icons.route_outlined, color: _chironGold),
+          title: Text(
+            _t(
+              nl: 'Chiron aansluiten met Fluxidi',
+              en: 'Connect Chiron with Fluxidi',
+              fr: 'Connecter Chiron avec Fluxidi',
+              es: 'Conectar Chiron con Fluxidi',
+            ),
+            style: TextStyle(
+              color: _chironGold,
+              fontWeight: FontWeight.w800,
+              fontSize: 15,
+            ),
+          ),
+          subtitle: Text(
+            _expanded
+                ? _t(
+                    nl: 'Volg de stappen om test, acceptatie en productie veilig voor te bereiden.',
+                    en: 'Follow the steps to prepare test, acceptance and production safely.',
+                    fr: 'Suivez les étapes pour préparer test, acceptation et production en sécurité.',
+                    es: 'Siga los pasos para preparar prueba, aceptación y producción de forma segura.',
+                  )
+                : _t(
+                    nl: 'Compacte startersgids voor taxi-/VVB-bedrijven.',
+                    en: 'Compact starter guide for taxi/VVB companies.',
+                    fr: 'Guide de démarrage compact pour entreprises taxi/VVB.',
+                    es: 'Guía compacta para empresas taxi/VVB.',
+                  ),
+            style: TextStyle(color: _chironTextSecondary, fontSize: 12),
+          ),
+          children: [
+            const SizedBox(height: 4),
+            ...steps.asMap().entries.map((entry) {
+              final number = entry.key + 1;
+              final step = entry.value;
+              return _ChironOnboardingStepTile(number: number, step: step);
+            }),
+            const SizedBox(height: 8),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: _chironPanel,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: _chironBorder),
+              ),
+              child: Text(
+                _t(
+                  nl: 'Fluxidi begeleidt uw bedrijf technisch door de Chiron-aansluiting. De officiële registratie, toegangsrechten en wettelijke verantwoordelijkheid blijven bij de taxi-exploitant. De officiële informatie en voorwaarden van Chiron blijven altijd leidend.',
+                  en: 'Fluxidi guides your company technically through the Chiron connection. Official registration, access rights and legal responsibility remain with the taxi operator. Chiron’s official information and conditions always remain leading.',
+                  fr: 'Fluxidi accompagne techniquement votre entreprise dans la connexion Chiron. L’enregistrement officiel, les droits d’accès et la responsabilité légale restent chez l’exploitant taxi. Les informations et conditions officielles de Chiron restent toujours prioritaires.',
+                  es: 'Fluxidi guía técnicamente a su empresa en la conexión Chiron. El registro oficial, los derechos de acceso y la responsabilidad legal siguen siendo del operador de taxi. La información y condiciones oficiales de Chiron siempre prevalecen.',
+                ),
+                style: TextStyle(
+                  color: _chironTextSecondary,
+                  fontSize: 12,
+                  height: 1.35,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ChironOnboardingStep {
+  const _ChironOnboardingStep({required this.title, required this.body});
+
+  final String title;
+  final String body;
+}
+
+class _ChironOnboardingStepTile extends StatelessWidget {
+  const _ChironOnboardingStepTile({required this.number, required this.step});
+
+  final int number;
+  final _ChironOnboardingStep step;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 26,
+            height: 26,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: _chironGold.withOpacity(0.14),
+              borderRadius: BorderRadius.circular(999),
+              border: Border.all(color: _chironGold.withOpacity(0.45)),
+            ),
+            child: Text(
+              '$number',
+              style: TextStyle(
+                color: _chironGold,
+                fontSize: 12,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  step.title,
+                  style: TextStyle(
+                    color: _chironTextPrimary,
+                    fontWeight: FontWeight.w800,
+                    fontSize: 12.5,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  step.body,
+                  style: TextStyle(
+                    color: _chironTextSecondary,
+                    fontSize: 12,
+                    height: 1.35,
+                  ),
+                ),
+              ],
+            ),
           ),
         ],
       ),
@@ -1754,13 +2056,13 @@ class _ChironTestAccessCardState extends State<_ChironTestAccessCard> {
   bool _testing = false;
   bool _clearingTestCredentials = false;
   String? _actionError;
-  String _maskedIdentifier = '';
   _ChironMockConnectionTestResult? _lastMockTest;
   _ChironPersistedInternalTestStatus? _persistedInternalTest;
   // Chiron Connect 4C: acceptance testflow progress (5 departures + 5 arrivals).
   _ChironTestflowProgress? _testflowProgress;
   String _lastConnectionStatus = 'never_tested';
   bool _resettingTestflow = false;
+  bool _editingTestCredentials = false;
 
   @override
   void initState() {
@@ -1903,13 +2205,15 @@ class _ChironTestAccessCardState extends State<_ChironTestAccessCard> {
         _lastConnectionStatus = fetched.status.lastConnectionStatus;
         if (fetched.status.testCredentialsStored) {
           _persistedInternalTest = fetched.internalTest;
-          if (fetched.internalTest.maskedIdentifier.isNotEmpty) {
-            _maskedIdentifier = fetched.internalTest.maskedIdentifier;
+          if (!_editingTestCredentials) {
+            _apiTokenController.clear();
+            _clientIdController.clear();
+            _clientSecretController.clear();
           }
         } else {
           _persistedInternalTest = null;
-          _maskedIdentifier = '';
           _lastMockTest = null;
+          _editingTestCredentials = true;
         }
       });
     } catch (_) {
@@ -1934,6 +2238,10 @@ class _ChironTestAccessCardState extends State<_ChironTestAccessCard> {
       ChironCredentialAuthScheme.authSchemeOAuthClientCredentials;
 
   bool get _canSaveCredentials {
+    final credentialsStored =
+        backendChironConnectionStatusNotifier.value?.testCredentialsStored ??
+        false;
+    if (credentialsStored && !_editingTestCredentials) return false;
     if (_isOAuthSchemeSelected) {
       return _clientIdController.text.trim().isNotEmpty &&
           _clientSecretController.text.trim().isNotEmpty;
@@ -1961,25 +2269,26 @@ class _ChironTestAccessCardState extends State<_ChironTestAccessCard> {
       _actionError = null;
     });
     try {
-      final maskedIdentifier = isOAuth
-          ? await _saveChironOAuthClientCredentialsViaBooking(
-              tenantId: scope.tenantId,
-              companyId: scope.companyId,
-              clientId: clientId,
-              clientSecret: clientSecret,
-            )
-          : await _saveChironTestCredentialsViaBooking(
-              tenantId: scope.tenantId,
-              companyId: scope.companyId,
-              apiToken: apiToken,
-            );
-      // Never retain secrets after a successful save. The client_id may remain
-      // visible; the backend only ever returns a masked identifier.
-      _apiTokenController.clear();
-      _clientSecretController.clear();
-      if (maskedIdentifier.isNotEmpty) {
-        _maskedIdentifier = maskedIdentifier;
+      if (isOAuth) {
+        await _saveChironOAuthClientCredentialsViaBooking(
+          tenantId: scope.tenantId,
+          companyId: scope.companyId,
+          clientId: clientId,
+          clientSecret: clientSecret,
+        );
+      } else {
+        await _saveChironTestCredentialsViaBooking(
+          tenantId: scope.tenantId,
+          companyId: scope.companyId,
+          apiToken: apiToken,
+        );
       }
+      // Screenshot safety: never retain credential material in text controllers
+      // after save.
+      _apiTokenController.clear();
+      _clientIdController.clear();
+      _clientSecretController.clear();
+      _editingTestCredentials = false;
       await _refreshStatus();
       if (!mounted) return;
       _showSnack(
@@ -2035,9 +2344,6 @@ class _ChironTestAccessCardState extends State<_ChironTestAccessCard> {
       }
       setState(() {
         _lastMockTest = result;
-        if (result.maskedIdentifier.isNotEmpty) {
-          _maskedIdentifier = result.maskedIdentifier;
-        }
       });
       await _refreshStatus();
       if (!mounted) return;
@@ -2156,9 +2462,9 @@ class _ChironTestAccessCardState extends State<_ChironTestAccessCard> {
       _clientSecretController.clear();
       if (!mounted) return;
       setState(() {
-        _maskedIdentifier = '';
         _lastMockTest = null;
         _persistedInternalTest = null;
+        _editingTestCredentials = true;
       });
       await _refreshStatus();
       if (!mounted) return;
@@ -2365,6 +2671,8 @@ class _ChironTestAccessCardState extends State<_ChironTestAccessCard> {
         final testCredentialsStored =
             backendStatus?.testCredentialsStored ?? false;
         final productionEnabled = backendStatus?.productionEnabled ?? false;
+        final connectionPassed =
+            _lastConnectionStatus.trim().toLowerCase() == 'test_passed';
         final persistedInternalPassed =
             testCredentialsStored &&
             (_persistedInternalTest?.isPassed ?? false);
@@ -2373,11 +2681,8 @@ class _ChironTestAccessCardState extends State<_ChironTestAccessCard> {
             _lastMockTest?.credentialDecryptOk == true &&
             _lastMockTest?.credentialPayloadValid == true;
         final mockTestPassed = persistedInternalPassed || sessionMockPassed;
-        final displayMaskedIdentifier = testCredentialsStored
-            ? (_maskedIdentifier.isNotEmpty
-                  ? _maskedIdentifier
-                  : (_persistedInternalTest?.maskedIdentifier ?? ''))
-            : '';
+        final showCredentialEditor =
+            !testCredentialsStored || _editingTestCredentials;
         final lastInternalCheckLabel = testCredentialsStored
             ? _formatChironInternalTestTimestamp(_persistedInternalTest?.lastAt)
             : null;
@@ -2395,10 +2700,10 @@ class _ChironTestAccessCardState extends State<_ChironTestAccessCard> {
             children: [
               Text(
                 _t(
-                  nl: 'Chiron-toegang',
-                  en: 'Chiron access',
-                  fr: 'Accès Chiron',
-                  es: 'Acceso Chiron',
+                  nl: 'Chiron-koppeling',
+                  en: 'Chiron connection',
+                  fr: 'Connexion Chiron',
+                  es: 'Conexión Chiron',
                 ),
                 style: TextStyle(
                   color: _chironGold,
@@ -2408,12 +2713,26 @@ class _ChironTestAccessCardState extends State<_ChironTestAccessCard> {
               ),
               const SizedBox(height: 6),
               Text(
-                _t(
-                  nl: 'Voer de Chiron-toegangsgegevens in die u via de officiële Chiron-omgeving ontvangt. Sla ze op en test de verbinding.',
-                  en: 'Enter the Chiron access details you received from the official Chiron environment. Save them and test the connection.',
-                  fr: 'Saisissez les identifiants Chiron reçus de l’environnement officiel Chiron. Enregistrez-les et testez la connexion.',
-                  es: 'Introduzca los datos de acceso a Chiron recibidos del entorno oficial de Chiron. Guárdelos y pruebe la conexión.',
-                ),
+                testCredentialsStored && connectionPassed
+                    ? _t(
+                        nl: 'Uw testgegevens zijn veilig opgeslagen. Fluxidi kan verbinden met Chiron ACC/test.',
+                        en: 'Your test credentials are stored securely. Fluxidi can connect to Chiron ACC/test.',
+                        fr: 'Vos identifiants de test sont enregistrés en sécurité. Fluxidi peut se connecter à Chiron ACC/test.',
+                        es: 'Sus credenciales de prueba están guardadas de forma segura. Fluxidi puede conectar con Chiron ACC/test.',
+                      )
+                    : testCredentialsStored
+                    ? _t(
+                        nl: 'Uw testgegevens zijn veilig opgeslagen. Test de verbinding met Chiron ACC/test.',
+                        en: 'Your test credentials are stored securely. Test the connection to Chiron ACC/test.',
+                        fr: 'Vos identifiants de test sont enregistrés en sécurité. Testez la connexion à Chiron ACC/test.',
+                        es: 'Sus credenciales de prueba están guardadas de forma segura. Pruebe la conexión con Chiron ACC/test.',
+                      )
+                    : _t(
+                        nl: 'Voer de Chiron-testgegevens in en test de verbinding met Chiron ACC/test.',
+                        en: 'Enter the Chiron test credentials and test the connection to Chiron ACC/test.',
+                        fr: 'Saisissez les identifiants de test Chiron et testez la connexion à Chiron ACC/test.',
+                        es: 'Introduzca las credenciales de prueba Chiron y pruebe la conexión con Chiron ACC/test.',
+                      ),
                 style: TextStyle(
                   color: _chironTextSecondary,
                   fontSize: 12,
@@ -2438,289 +2757,39 @@ class _ChironTestAccessCardState extends State<_ChironTestAccessCard> {
                   if (mockTestPassed)
                     _statusChip(
                       label: _t(
-                        nl: 'Interne test geslaagd',
-                        en: 'Internal test passed',
-                        fr: 'Test interne réussi',
-                        es: 'Prueba interna superada',
+                        nl: 'OAuth2-test geslaagd',
+                        en: 'OAuth2 test passed',
+                        fr: 'Test OAuth2 réussi',
+                        es: 'Prueba OAuth2 superada',
                       ),
                       active: true,
                     ),
-                  if (productionEnabled)
-                    _statusChip(
-                      label: _t(
-                        nl: 'Productie actief',
-                        en: 'Production active',
-                        fr: 'Production active',
-                        es: 'Producción activa',
-                      ),
-                      active: true,
-                    ),
-                ],
-              ),
-              if (_loadingStatus) ...[
-                const SizedBox(height: 10),
-                SizedBox(
-                  height: 18,
-                  width: 18,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2,
-                    color: _chironGold,
-                  ),
-                ),
-              ],
-              if (testCredentialsStored &&
-                  displayMaskedIdentifier.isNotEmpty) ...[
-                const SizedBox(height: 10),
-                Text(
-                  _t(
-                    nl: 'Opgeslagen token: $displayMaskedIdentifier',
-                    en: 'Stored token: $displayMaskedIdentifier',
-                    fr: 'Jeton enregistré : $displayMaskedIdentifier',
-                    es: 'Token guardado: $displayMaskedIdentifier',
-                  ),
-                  style: TextStyle(color: _chironTextMuted, fontSize: 11),
-                ),
-              ],
-              if (testCredentialsStored && mockTestPassed) ...[
-                if (persistedInternalPassed &&
-                    lastInternalCheckLabel != null) ...[
-                  const SizedBox(height: 8),
-                  Text(
-                    _t(
-                      nl: 'Laatste interne controle: $lastInternalCheckLabel',
-                      en: 'Last internal check: $lastInternalCheckLabel',
-                      fr: 'Dernier contrôle interne : $lastInternalCheckLabel',
-                      es: 'Último control interno: $lastInternalCheckLabel',
-                    ),
-                    style: TextStyle(color: _chironTextMuted, fontSize: 11),
-                  ),
-                ],
-              ],
-              if (testCredentialsStored) ...[
-                const SizedBox(height: 10),
-                OutlinedButton.icon(
-                  onPressed: _saving || _testing || _clearingTestCredentials
-                      ? null
-                      : _clearTestCredentials,
-                  style: _chironTestAccessDangerButtonStyle(),
-                  icon: _clearingTestCredentials
-                      ? SizedBox(
-                          width: 14,
-                          height: 14,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: _chironDanger,
-                          ),
-                        )
-                      : const Icon(Icons.delete_outline, size: 16),
-                  label: Text(
-                    _t(
-                      nl: 'Testgegevens verwijderen',
-                      en: 'Remove test credentials',
-                      fr: 'Supprimer les identifiants de test',
-                      es: 'Eliminar credenciales de prueba',
-                    ),
-                    style: const TextStyle(fontSize: 12),
-                  ),
-                ),
-              ],
-              if (_actionError != null) ...[
-                const SizedBox(height: 10),
-                Text(
-                  _actionError!,
-                  style: TextStyle(color: _chironDanger, fontSize: 12),
-                ),
-              ],
-              const SizedBox(height: 10),
-              // Chiron Connect 4A: scheme chooser. OAuth2 client credentials is
-              // the recommended default; legacy API token stays available.
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  ChoiceChip(
-                    label: Text(
-                      _t(
-                        nl: 'OAuth2 (aanbevolen)',
-                        en: 'OAuth2 (recommended)',
-                        fr: 'OAuth2 (recommandé)',
-                        es: 'OAuth2 (recomendado)',
-                      ),
-                      style: const TextStyle(fontSize: 11),
-                    ),
-                    selected: _isOAuthSchemeSelected,
-                    onSelected:
-                        (_saving || _testing || _clearingTestCredentials)
-                        ? null
-                        : (selected) {
-                            if (!selected) return;
-                            setState(() {
-                              _selectedAuthScheme = ChironCredentialAuthScheme
-                                  .authSchemeOAuthClientCredentials;
-                              _actionError = null;
-                            });
-                          },
-                  ),
-                  ChoiceChip(
-                    label: Text(
-                      _t(
-                        nl: 'Legacy API-token',
-                        en: 'Legacy API token',
-                        fr: 'Jeton API hérité',
-                        es: 'Token API heredado',
-                      ),
-                      style: const TextStyle(fontSize: 11),
-                    ),
-                    selected: !_isOAuthSchemeSelected,
-                    onSelected:
-                        (_saving || _testing || _clearingTestCredentials)
-                        ? null
-                        : (selected) {
-                            if (!selected) return;
-                            setState(() {
-                              _selectedAuthScheme =
-                                  ChironCredentialAuthScheme.authSchemeApiToken;
-                              _actionError = null;
-                            });
-                          },
-                  ),
-                ],
-              ),
-              const SizedBox(height: 8),
-              Text(
-                _t(
-                  nl: 'Gebruik de test/ACC-gegevens uit het Chiron-portaal. Productie blijft geblokkeerd tot de testflow geslaagd is.',
-                  en: 'Use the test/ACC details from the Chiron portal. Production stays blocked until the test flow has passed.',
-                  fr: 'Utilisez les données test/ACC du portail Chiron. La production reste bloquée tant que le test n’est pas réussi.',
-                  es: 'Usa los datos de test/ACC del portal de Chiron. La producción permanece bloqueada hasta que la prueba se complete.',
-                ),
-                style: TextStyle(
-                  color: _chironTextMuted,
-                  fontSize: 11,
-                  height: 1.35,
-                ),
-              ),
-              const SizedBox(height: 10),
-              if (_isOAuthSchemeSelected) ...[
-                TextField(
-                  controller: _clientIdController,
-                  enableSuggestions: false,
-                  autocorrect: false,
-                  decoration: InputDecoration(
-                    isDense: true,
-                    labelText: _t(
-                      nl: 'Chiron Client ID',
-                      en: 'Chiron Client ID',
-                      fr: 'Chiron Client ID',
-                      es: 'Chiron Client ID',
-                    ),
-                    labelStyle: TextStyle(
-                      color: _chironTextMuted,
-                      fontSize: 12,
-                    ),
-                    enabledBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(10),
-                      borderSide: BorderSide(color: _chironBorder),
-                    ),
-                    focusedBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(10),
-                      borderSide: BorderSide(color: _chironGold),
-                    ),
-                  ),
-                  style: TextStyle(color: _chironTextPrimary, fontSize: 13),
-                ),
-                const SizedBox(height: 10),
-                TextField(
-                  controller: _clientSecretController,
-                  obscureText: true,
-                  enableSuggestions: false,
-                  autocorrect: false,
-                  decoration: InputDecoration(
-                    isDense: true,
-                    labelText: _t(
-                      nl: 'Chiron Client secret',
-                      en: 'Chiron Client secret',
-                      fr: 'Chiron Client secret',
-                      es: 'Chiron Client secret',
-                    ),
-                    labelStyle: TextStyle(
-                      color: _chironTextMuted,
-                      fontSize: 12,
-                    ),
-                    enabledBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(10),
-                      borderSide: BorderSide(color: _chironBorder),
-                    ),
-                    focusedBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(10),
-                      borderSide: BorderSide(color: _chironGold),
-                    ),
-                  ),
-                  style: TextStyle(color: _chironTextPrimary, fontSize: 13),
-                ),
-              ] else ...[
-                TextField(
-                  controller: _apiTokenController,
-                  obscureText: true,
-                  enableSuggestions: false,
-                  autocorrect: false,
-                  decoration: InputDecoration(
-                    isDense: true,
-                    labelText: _t(
-                      nl: 'Chiron API-token',
-                      en: 'Chiron API token',
-                      fr: 'Jeton API Chiron',
-                      es: 'Token API Chiron',
-                    ),
-                    labelStyle: TextStyle(
-                      color: _chironTextMuted,
-                      fontSize: 12,
-                    ),
-                    enabledBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(10),
-                      borderSide: BorderSide(color: _chironBorder),
-                    ),
-                    focusedBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(10),
-                      borderSide: BorderSide(color: _chironGold),
-                    ),
-                  ),
-                  style: TextStyle(color: _chironTextPrimary, fontSize: 13),
-                ),
-              ],
-              const SizedBox(height: 10),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  OutlinedButton(
-                    onPressed:
-                        _saving ||
-                            _testing ||
-                            _clearingTestCredentials ||
-                            !_canSaveCredentials
-                        ? null
-                        : _saveTestCredentials,
-                    style: _chironTestAccessSecondaryButtonStyle(),
-                    child: _saving
-                        ? SizedBox(
-                            width: 16,
-                            height: 16,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: _chironGold,
-                            ),
+                  _statusChip(
+                    label: productionEnabled
+                        ? _t(
+                            nl: 'Productie actief',
+                            en: 'Production active',
+                            fr: 'Production active',
+                            es: 'Producción activa',
                           )
-                        : Text(
-                            _t(
-                              nl: 'Testgegevens opslaan',
-                              en: 'Save test credentials',
-                              fr: 'Enregistrer les identifiants de test',
-                              es: 'Guardar credenciales de prueba',
-                            ),
-                            style: const TextStyle(fontSize: 12),
+                        : _t(
+                            nl: 'Productie geblokkeerd',
+                            en: 'Production blocked',
+                            fr: 'Production bloquée',
+                            es: 'Producción bloqueada',
                           ),
+                    active: true,
+                    activeColor: productionEnabled
+                        ? _chironSuccess
+                        : _chironGold,
                   ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
                   OutlinedButton(
                     onPressed:
                         _testing ||
@@ -2748,8 +2817,372 @@ class _ChironTestAccessCardState extends State<_ChironTestAccessCard> {
                             style: const TextStyle(fontSize: 12),
                           ),
                   ),
+                  if (testCredentialsStored)
+                    OutlinedButton.icon(
+                      onPressed: _saving || _testing || _clearingTestCredentials
+                          ? null
+                          : () {
+                              setState(() {
+                                _editingTestCredentials = true;
+                                _apiTokenController.clear();
+                                _clientIdController.clear();
+                                _clientSecretController.clear();
+                                _actionError = null;
+                              });
+                            },
+                      style: _chironTestAccessSecondaryButtonStyle(),
+                      icon: const Icon(Icons.edit_outlined, size: 16),
+                      label: Text(
+                        _t(
+                          nl: 'Testgegevens vervangen',
+                          en: 'Replace test credentials',
+                          fr: 'Remplacer les identifiants de test',
+                          es: 'Sustituir credenciales de prueba',
+                        ),
+                        style: const TextStyle(fontSize: 12),
+                      ),
+                    ),
                 ],
               ),
+              if (_loadingStatus) ...[
+                const SizedBox(height: 10),
+                SizedBox(
+                  height: 18,
+                  width: 18,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: _chironGold,
+                  ),
+                ),
+              ],
+              if (testCredentialsStored && mockTestPassed) ...[
+                if (persistedInternalPassed &&
+                    lastInternalCheckLabel != null) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    _t(
+                      nl: 'Laatste interne controle: $lastInternalCheckLabel',
+                      en: 'Last internal check: $lastInternalCheckLabel',
+                      fr: 'Dernier contrôle interne : $lastInternalCheckLabel',
+                      es: 'Último control interno: $lastInternalCheckLabel',
+                    ),
+                    style: TextStyle(color: _chironTextMuted, fontSize: 11),
+                  ),
+                ],
+              ],
+              if (testCredentialsStored && showCredentialEditor) ...[
+                const SizedBox(height: 10),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    OutlinedButton.icon(
+                      onPressed: _saving || _testing || _clearingTestCredentials
+                          ? null
+                          : _clearTestCredentials,
+                      style: _chironTestAccessDangerButtonStyle(),
+                      icon: _clearingTestCredentials
+                          ? SizedBox(
+                              width: 14,
+                              height: 14,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: _chironDanger,
+                              ),
+                            )
+                          : const Icon(Icons.delete_outline, size: 16),
+                      label: Text(
+                        _t(
+                          nl: 'Testgegevens verwijderen',
+                          en: 'Remove test credentials',
+                          fr: 'Supprimer les identifiants de test',
+                          es: 'Eliminar credenciales de prueba',
+                        ),
+                        style: const TextStyle(fontSize: 12),
+                      ),
+                    ),
+                    TextButton(
+                      onPressed: _saving || _testing || _clearingTestCredentials
+                          ? null
+                          : () {
+                              setState(() {
+                                _editingTestCredentials = false;
+                                _apiTokenController.clear();
+                                _clientIdController.clear();
+                                _clientSecretController.clear();
+                                _actionError = null;
+                              });
+                            },
+                      child: Text(
+                        _t(
+                          nl: 'Annuleren',
+                          en: 'Cancel',
+                          fr: 'Annuler',
+                          es: 'Cancelar',
+                        ),
+                        style: const TextStyle(fontSize: 12),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+              if (_actionError != null) ...[
+                const SizedBox(height: 10),
+                Text(
+                  _actionError!,
+                  style: TextStyle(color: _chironDanger, fontSize: 12),
+                ),
+              ],
+              const SizedBox(height: 10),
+              if (showCredentialEditor) ...[
+                // Chiron Connect 4A: scheme chooser. OAuth2 client credentials
+                // is the recommended default; legacy API token stays available.
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    ChoiceChip(
+                      label: Text(
+                        _t(
+                          nl: 'OAuth2 (aanbevolen)',
+                          en: 'OAuth2 (recommended)',
+                          fr: 'OAuth2 (recommandé)',
+                          es: 'OAuth2 (recomendado)',
+                        ),
+                        style: const TextStyle(fontSize: 11),
+                      ),
+                      selected: _isOAuthSchemeSelected,
+                      onSelected:
+                          (_saving || _testing || _clearingTestCredentials)
+                          ? null
+                          : (selected) {
+                              if (!selected) return;
+                              setState(() {
+                                _selectedAuthScheme = ChironCredentialAuthScheme
+                                    .authSchemeOAuthClientCredentials;
+                                _apiTokenController.clear();
+                                _actionError = null;
+                              });
+                            },
+                    ),
+                    ChoiceChip(
+                      label: Text(
+                        _t(
+                          nl: 'Legacy API-token',
+                          en: 'Legacy API token',
+                          fr: 'Jeton API hérité',
+                          es: 'Token API heredado',
+                        ),
+                        style: const TextStyle(fontSize: 11),
+                      ),
+                      selected: !_isOAuthSchemeSelected,
+                      onSelected:
+                          (_saving || _testing || _clearingTestCredentials)
+                          ? null
+                          : (selected) {
+                              if (!selected) return;
+                              setState(() {
+                                _selectedAuthScheme = ChironCredentialAuthScheme
+                                    .authSchemeApiToken;
+                                _clientIdController.clear();
+                                _clientSecretController.clear();
+                                _actionError = null;
+                              });
+                            },
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  _t(
+                    nl: 'Gebruik de test/ACC-gegevens uit het Chiron-portaal. Productie blijft geblokkeerd tot de testflow geslaagd is.',
+                    en: 'Use the test/ACC details from the Chiron portal. Production stays blocked until the test flow has passed.',
+                    fr: 'Utilisez les données test/ACC du portail Chiron. La production reste bloquée tant que le test n’est pas réussi.',
+                    es: 'Usa los datos de test/ACC del portal de Chiron. La producción permanece bloqueada hasta que la prueba se complete.',
+                  ),
+                  style: TextStyle(
+                    color: _chironTextMuted,
+                    fontSize: 11,
+                    height: 1.35,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                if (_isOAuthSchemeSelected) ...[
+                  TextField(
+                    controller: _clientIdController,
+                    enableSuggestions: false,
+                    autocorrect: false,
+                    decoration: InputDecoration(
+                      isDense: true,
+                      labelText: _t(
+                        nl: 'Chiron Client ID',
+                        en: 'Chiron Client ID',
+                        fr: 'Chiron Client ID',
+                        es: 'Chiron Client ID',
+                      ),
+                      helperText: testCredentialsStored
+                          ? _t(
+                              nl: 'Vul opnieuw in om de opgeslagen Client ID te vervangen.',
+                              en: 'Enter again to replace the stored Client ID.',
+                              fr: 'Saisissez à nouveau pour remplacer le Client ID enregistré.',
+                              es: 'Introduzca de nuevo para sustituir el Client ID guardado.',
+                            )
+                          : null,
+                      labelStyle: TextStyle(
+                        color: _chironTextMuted,
+                        fontSize: 12,
+                      ),
+                      helperStyle: TextStyle(
+                        color: _chironTextMuted,
+                        fontSize: 11,
+                      ),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+                        borderSide: BorderSide(color: _chironBorder),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+                        borderSide: BorderSide(color: _chironGold),
+                      ),
+                    ),
+                    style: TextStyle(color: _chironTextPrimary, fontSize: 13),
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: _clientSecretController,
+                    obscureText: true,
+                    enableSuggestions: false,
+                    autocorrect: false,
+                    decoration: InputDecoration(
+                      isDense: true,
+                      labelText: _t(
+                        nl: 'Chiron Client secret',
+                        en: 'Chiron Client secret',
+                        fr: 'Chiron Client secret',
+                        es: 'Chiron Client secret',
+                      ),
+                      helperText: testCredentialsStored
+                          ? _t(
+                              nl: 'Secret wordt nooit opnieuw getoond. Vul opnieuw in om te vervangen.',
+                              en: 'The secret is never shown again. Enter again to replace it.',
+                              fr: 'Le secret n’est jamais réaffiché. Saisissez à nouveau pour le remplacer.',
+                              es: 'El secret nunca se vuelve a mostrar. Introdúzcalo de nuevo para sustituirlo.',
+                            )
+                          : null,
+                      labelStyle: TextStyle(
+                        color: _chironTextMuted,
+                        fontSize: 12,
+                      ),
+                      helperStyle: TextStyle(
+                        color: _chironTextMuted,
+                        fontSize: 11,
+                      ),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+                        borderSide: BorderSide(color: _chironBorder),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+                        borderSide: BorderSide(color: _chironGold),
+                      ),
+                    ),
+                    style: TextStyle(color: _chironTextPrimary, fontSize: 13),
+                  ),
+                ] else ...[
+                  TextField(
+                    controller: _apiTokenController,
+                    obscureText: true,
+                    enableSuggestions: false,
+                    autocorrect: false,
+                    decoration: InputDecoration(
+                      isDense: true,
+                      labelText: _t(
+                        nl: 'Chiron API-token',
+                        en: 'Chiron API token',
+                        fr: 'Jeton API Chiron',
+                        es: 'Token API Chiron',
+                      ),
+                      helperText: testCredentialsStored
+                          ? _t(
+                              nl: 'Token wordt nooit opnieuw getoond. Vul opnieuw in om te vervangen.',
+                              en: 'The token is never shown again. Enter again to replace it.',
+                              fr: 'Le jeton n’est jamais réaffiché. Saisissez à nouveau pour le remplacer.',
+                              es: 'El token nunca se vuelve a mostrar. Introdúzcalo de nuevo para sustituirlo.',
+                            )
+                          : null,
+                      labelStyle: TextStyle(
+                        color: _chironTextMuted,
+                        fontSize: 12,
+                      ),
+                      helperStyle: TextStyle(
+                        color: _chironTextMuted,
+                        fontSize: 11,
+                      ),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+                        borderSide: BorderSide(color: _chironBorder),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+                        borderSide: BorderSide(color: _chironGold),
+                      ),
+                    ),
+                    style: TextStyle(color: _chironTextPrimary, fontSize: 13),
+                  ),
+                ],
+              ] else ...[
+                const SizedBox(height: 2),
+                Text(
+                  _t(
+                    nl: 'Voor screenshots worden opgeslagen Chiron-credentials standaard verborgen. Kies “Testgegevens vervangen” om nieuwe waarden in te voeren.',
+                    en: 'For screenshots, stored Chiron credentials are hidden by default. Choose “Replace test credentials” to enter new values.',
+                    fr: 'Pour les captures d’écran, les identifiants Chiron enregistrés sont masqués par défaut. Choisissez « Remplacer » pour saisir de nouvelles valeurs.',
+                    es: 'Para capturas de pantalla, las credenciales Chiron guardadas se ocultan por defecto. Elija “Sustituir” para introducir nuevos valores.',
+                  ),
+                  style: TextStyle(
+                    color: _chironTextMuted,
+                    fontSize: 11,
+                    height: 1.35,
+                  ),
+                ),
+              ],
+              if (showCredentialEditor) ...[
+                const SizedBox(height: 10),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    OutlinedButton(
+                      onPressed:
+                          _saving ||
+                              _testing ||
+                              _clearingTestCredentials ||
+                              !_canSaveCredentials
+                          ? null
+                          : _saveTestCredentials,
+                      style: _chironTestAccessSecondaryButtonStyle(),
+                      child: _saving
+                          ? SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: _chironGold,
+                              ),
+                            )
+                          : Text(
+                              _t(
+                                nl: 'Testgegevens opslaan',
+                                en: 'Save test credentials',
+                                fr: 'Enregistrer les identifiants de test',
+                                es: 'Guardar credenciales de prueba',
+                              ),
+                              style: const TextStyle(fontSize: 12),
+                            ),
+                    ),
+                  ],
+                ),
+              ],
               _buildTestflowProgressSection(),
             ],
           ),
