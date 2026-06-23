@@ -42,6 +42,7 @@ const CHIRON_CONFIG_TEST_CREDENTIALS_CLEAR_PATH =
   "/admin/chiron/config/test-credentials/clear";
 const CHIRON_CONNECTION_TEST_PATH = "/admin/chiron/connection/test";
 const CHIRON_TESTFLOW_RESET_PATH = "/admin/chiron/testflow/reset";
+const CHIRON_TESTFLOW_SUBMIT_ONE_PATH = "/admin/chiron/testflow/submit-one";
 const CHIRON_CONNECTION_STATUS_SCHEMA = "chiron_connection_status_v1";
 const CHIRON_CONNECTION_KV_SUFFIX = "chiron_connection:v1";
 const CHIRON_INTERNAL_PROXY_MODE = "booking_worker_v1";
@@ -5972,6 +5973,423 @@ async function _chironPostChironExportTestPayload(env, payload) {
   return parseChironTaxiritSubmitResponse(response.status, responseBody);
 }
 
+function parseChironTestflowSubmitOneInput(body) {
+  const scope = parseChironExportScopeFromBody(body);
+  if (scope.error) return { error: scope.error };
+
+  const eventId = cleanText(body?.event_id, 200);
+  const complianceEventKey = cleanText(body?.compliance_event_key, 1024);
+  if (!eventId && !complianceEventKey) {
+    return { error: "missing_event_selector" };
+  }
+  if (eventId && complianceEventKey) {
+    return { error: "ambiguous_event_selector" };
+  }
+
+  const messageType = cleanText(body?.message_type, 32).toLowerCase();
+  if (messageType !== "departure" && messageType !== "arrival") {
+    return { error: "invalid_message_type" };
+  }
+
+  return {
+    ...scope,
+    eventId,
+    complianceEventKey,
+    messageType,
+    dryRun: body?.dry_run !== false,
+    includeRaw: body?.include_raw === true,
+  };
+}
+
+function _chironMessageTypeAllowedForEvent(messageType, eventType) {
+  const type = cleanText(eventType, 64).toLowerCase();
+  if (messageType === "departure") return CHIRON_OFFICIAL_DEPARTURE_EVENT_TYPES.has(type);
+  if (messageType === "arrival") return CHIRON_OFFICIAL_ARRIVAL_EVENT_TYPES.has(type);
+  return false;
+}
+
+function _chironExpectedOfficialStatusForMessageType(messageType) {
+  if (messageType === "departure") return "vertrek";
+  if (messageType === "arrival") return "aankomst";
+  return "";
+}
+
+function _chironExportBaseUrlLooksTestOrAcc(env) {
+  if (String(env?.CHIRON_EXPORT_TEST_TARGET_VERIFIED || "").trim().toLowerCase() === "true") {
+    return true;
+  }
+  const targetEnv = cleanText(env?.CHIRON_EXPORT_TARGET_ENV, 32).toLowerCase();
+  if (targetEnv === "test" || targetEnv === "acc") return true;
+  const raw = cleanText(env?.CHIRON_EXPORT_BASE_URL, 512);
+  if (!raw) return false;
+  try {
+    const parsed = new URL(raw);
+    const marker = `${parsed.hostname} ${parsed.pathname}`.toLowerCase();
+    return /(^|[.\-_/ ])(acc|test)([.\-_/ ]|$)/.test(marker);
+  } catch (_) {
+    return false;
+  }
+}
+
+function _chironTestflowLiveGate(statusPayload, env) {
+  if (!statusPayload || typeof statusPayload !== "object") return "missing_connection_status";
+  if (statusPayload.enabled !== true) return "chiron_not_enabled";
+  if (cleanText(statusPayload.environment, 32).toLowerCase() !== "test") {
+    return "chiron_environment_must_be_test";
+  }
+  if (statusPayload.production_enabled === true) return "production_must_be_disabled";
+  if (statusPayload.official_submit_enabled === true) return "official_submit_must_be_disabled";
+  if (statusPayload.test_credentials_stored !== true) return "missing_test_credentials";
+  if (cleanText(statusPayload.last_connection_status, 64).toLowerCase() !== "test_passed") {
+    return "production_requires_test_passed";
+  }
+  if (cleanText(env?.CHIRON_EXPORT_MODE, 32).toLowerCase() !== "test") {
+    return "chiron_export_mode_must_be_test";
+  }
+  if (!chironExportTestModeEnabled(env)) return "chiron_export_test_mode_disabled";
+  if (!_chironExportBaseUrlLooksTestOrAcc(env)) {
+    return "chiron_export_target_not_verified_test";
+  }
+  return null;
+}
+
+async function _chironFindSingleScopedComplianceEvent(env, parsedInput) {
+  if (!env?.COMPLIANCE_KV || typeof env.COMPLIANCE_KV.list !== "function" || typeof env.COMPLIANCE_KV.get !== "function") {
+    return { error: "missing_kv" };
+  }
+
+  const prefix = buildCompliancePrefixForScope(parsedInput.tenantSegment, parsedInput.companySegment);
+  let keyNames;
+  try {
+    keyNames = await listScopedComplianceEventKeys(env, prefix);
+  } catch (_) {
+    return { error: "Failed to list compliance events." };
+  }
+
+  const contextEntries = [];
+  const matches = [];
+  const wantedKey = cleanText(parsedInput.complianceEventKey, 1024);
+  const wantedId = cleanText(parsedInput.eventId, 200);
+
+  if (wantedKey && !wantedKey.startsWith(prefix)) {
+    return { error: "event_scope_mismatch" };
+  }
+
+  for (const key of keyNames) {
+    let raw;
+    try {
+      raw = await env.COMPLIANCE_KV.get(key);
+    } catch (_) {
+      continue;
+    }
+    if (!raw) continue;
+    let event;
+    try {
+      event = JSON.parse(raw);
+    } catch (_) {
+      continue;
+    }
+    if (!event || typeof event !== "object" || Array.isArray(event)) continue;
+    const entry = { key, event };
+    contextEntries.push(entry);
+    if ((wantedKey && key === wantedKey) || (!wantedKey && cleanText(event.event_id, 200) === wantedId)) {
+      matches.push(entry);
+    }
+  }
+
+  if (matches.length === 0) return { error: "event_not_found", contextEntries };
+  if (matches.length > 1) return { error: "ambiguous_event_id", contextEntries };
+  return { entry: matches[0], contextEntries };
+}
+
+function _chironBuildTestflowCountersResponse(statusPayload) {
+  const progress = getChironTestflowProgress(statusPayload);
+  return {
+    test_messages_required: progress.test_messages_required,
+    test_messages_sent_count: progress.test_messages_sent_count,
+    test_departure_required: progress.test_departure_required,
+    test_departure_sent_count: progress.test_departure_sent_count,
+    test_arrival_required: progress.test_arrival_required,
+    test_arrival_sent_count: progress.test_arrival_sent_count,
+    test_rides_required: progress.test_rides_required,
+    test_rides_completed_count: progress.test_rides_completed_count,
+    testflow_status: progress.testflow_status,
+    testflow_completed_at: progress.testflow_completed_at,
+    testflow_updated_at: progress.testflow_updated_at,
+    testflow_last_error: progress.testflow_last_error,
+  };
+}
+
+async function handleChironTestflowSubmitOnePost(request, env, origin) {
+  const authError = ensureAuthorized(request, env);
+  if (authError) return authError;
+
+  if (!requireJsonRequest(request)) {
+    return jsonResponse(
+      { ok: false, error: "Content-Type must be application/json" },
+      400,
+      origin,
+    );
+  }
+
+  const body = await readJsonBody(request);
+  if (body === null) {
+    return jsonResponse({ ok: false, error: "Invalid JSON body" }, 400, origin);
+  }
+
+  const parsed = parseChironTestflowSubmitOneInput(body);
+  if (parsed.error) {
+    return jsonResponse({ ok: false, error: parsed.error }, 400, origin);
+  }
+
+  const statusRead = await readChironConnectionStatusRaw(env, parsed.tenantId, parsed.companyId);
+  const statusPayload = buildChironConnectionStatusResponse(
+    parsed.tenantId,
+    parsed.companyId,
+    statusRead.doc,
+  );
+
+  const liveGateError = parsed.dryRun ? null : _chironTestflowLiveGate(statusPayload, env);
+  if (liveGateError) {
+    return jsonResponse({ ok: false, error: liveGateError }, 403, origin);
+  }
+
+  const found = await _chironFindSingleScopedComplianceEvent(env, parsed);
+  if (found.error) {
+    const status = found.error === "event_not_found" ? 404 : 400;
+    return jsonResponse({ ok: false, error: found.error }, status, origin);
+  }
+
+  const event = found.entry.event;
+  const eventKey = found.entry.key;
+  const eventType = cleanText(event.event_type, 64).toLowerCase();
+  if (!_chironMessageTypeAllowedForEvent(parsed.messageType, eventType)) {
+    return jsonResponse({ ok: false, error: "message_type_event_mismatch" }, 400, origin);
+  }
+
+  const scopedHydrationCache = await _chironLoadScopedHydrationCache(
+    env,
+    { tenant_id: parsed.tenantId, company_id: parsed.companyId },
+    true,
+  );
+  const batchRitStatuses = _chironBuildBatchRitStatusIndex(found.contextEntries || []);
+  const exportPayload = buildChironExportPayload(event, eventKey, {
+    includeRaw: parsed.includeRaw,
+    includeOfficialDraft: true,
+    includeChironApiPayload: parsed.dryRun,
+    batchRitStatuses,
+    scopedHydrationCache,
+  });
+
+  const officialDraft = exportPayload?.chiron_official_draft;
+  const officialValidation = officialDraft?.validation || {};
+  const officialPayload = officialDraft?.payload;
+  const expectedOfficialStatus = _chironExpectedOfficialStatusForMessageType(parsed.messageType);
+  const officialStatus = cleanText(officialDraft?.status, 32).toLowerCase();
+  const officialIdempotencyKey = cleanText(officialDraft?.idempotency_key, 256);
+  const ritnummer = cleanText(officialPayload?.ritnummer, 256);
+
+  const baseResponse = {
+    ok: true,
+    dry_run: parsed.dryRun,
+    submitted: false,
+    message_type: parsed.messageType,
+    event_id: cleanText(event.event_id, 200) || null,
+    event_type: eventType || null,
+    compliance_event_key: eventKey,
+    official_status: officialStatus || null,
+    official_ritnummer: ritnummer || null,
+    idempotency_key: officialIdempotencyKey || null,
+    validation_status: cleanText(officialValidation.status, 64) || null,
+    validation_exportable: officialValidation.exportable === true,
+    validation_sequence_safe: officialValidation.sequence_safe !== false,
+    validation_blockers: Array.isArray(officialValidation.blockers)
+      ? officialValidation.blockers.slice(0, 20)
+      : [],
+    validation_warnings: Array.isArray(officialValidation.warnings)
+      ? officialValidation.warnings.slice(0, 20)
+      : [],
+    testflow: _chironBuildTestflowCountersResponse(statusPayload),
+  };
+
+  if (
+    !officialDraft ||
+    officialDraft.category !== "ride_payload" ||
+    officialStatus !== expectedOfficialStatus ||
+    officialValidation.exportable !== true ||
+    officialValidation.status !== "ready" ||
+    !officialPayload ||
+    typeof officialPayload !== "object" ||
+    Array.isArray(officialPayload) ||
+    !officialIdempotencyKey ||
+    !ritnummer
+  ) {
+    return jsonResponse(
+      {
+        ...baseResponse,
+        ok: false,
+        error: "official_payload_not_ready",
+      },
+      400,
+      origin,
+    );
+  }
+
+  const chironApiPayload = buildChironTaxiritApiPayload(officialPayload);
+  if (!chironApiPayload) {
+    return jsonResponse(
+      {
+        ...baseResponse,
+        ok: false,
+        error: "official_payload_serialization_failed",
+      },
+      400,
+      origin,
+    );
+  }
+
+  if (parsed.dryRun) {
+    return jsonResponse(
+      {
+        ...baseResponse,
+        chiron_api_payload: chironApiPayload,
+      },
+      200,
+      origin,
+    );
+  }
+
+  const statusKey = buildChironExportStatusKey(
+    parsed.tenantSegment,
+    parsed.companySegment,
+    officialIdempotencyKey,
+  );
+  const previousStatus = await _chironReadExportStatus(env, statusKey);
+  const attemptCount = Number(previousStatus?.attempt_count || 0) + 1;
+  const attemptedAt = nowIso();
+  const pendingDoc = {
+    schema_version: CHIRON_EXPORT_STATUS_SCHEMA,
+    tenant_id: parsed.tenantId,
+    company_id: parsed.companyId,
+    event_id: baseResponse.event_id,
+    official_idempotency_key: officialIdempotencyKey,
+    official_ritnummer: ritnummer,
+    official_status: officialStatus,
+    official_payload_shape: "chiron_taxirit_api_v1",
+    sync_state: "pending",
+    external_status_code: null,
+    external_reference: null,
+    response_shape: null,
+    fouten_count: null,
+    last_attempt_at: attemptedAt,
+    attempt_count: attemptCount,
+    sanitized_error: null,
+    testflow_submit_one: true,
+  };
+  await _chironWriteExportStatus(env, statusKey, pendingDoc);
+
+  const postResult = await _chironPostChironExportTestPayload(env, chironApiPayload);
+  const foutenCount = Number(postResult.fouten_count ?? 0);
+  const hasChironErrors = Number.isFinite(foutenCount) && foutenCount > 0;
+  const acceptedByChiron = postResult.ok === true && !hasChironErrors;
+  const finalDoc = {
+    ...pendingDoc,
+    sync_state: acceptedByChiron ? "synced" : "failed",
+    external_status_code: postResult.external_status_code ?? null,
+    external_reference: postResult.external_reference ?? null,
+    response_shape: postResult.response_shape ?? null,
+    fouten_count: postResult.fouten_count ?? null,
+    sanitized_error: postResult.sanitized_error ?? null,
+    last_attempt_at: nowIso(),
+  };
+  await _chironWriteExportStatus(env, statusKey, finalDoc);
+
+  let nextStatusPayload = statusPayload;
+  if (acceptedByChiron) {
+    const nextStatusDoc = recordChironTestflowSubmitResult(statusRead.doc, {
+      officialStatus,
+      ritnummer,
+      ok: true,
+      foutenCount: postResult.fouten_count ?? 0,
+      sanitizedError: null,
+    });
+    const writeStatus = await writeChironConnectionStatusRaw(
+      env,
+      parsed.tenantId,
+      parsed.companyId,
+      nextStatusDoc,
+    );
+    if (!writeStatus.ok) {
+      return jsonResponse(
+        {
+          ...baseResponse,
+          ok: false,
+          submitted: true,
+          error: writeStatus.error || "kv_write_failed",
+          chiron_response_sanitized: {
+            ok: acceptedByChiron,
+            external_status_code: postResult.external_status_code ?? null,
+            external_reference: postResult.external_reference ?? null,
+            response_shape: postResult.response_shape ?? null,
+            fouten_count: postResult.fouten_count ?? null,
+            sanitized_error: postResult.sanitized_error ?? null,
+          },
+        },
+        500,
+        origin,
+      );
+    }
+    nextStatusPayload = buildChironConnectionStatusResponse(
+      parsed.tenantId,
+      parsed.companyId,
+      nextStatusDoc,
+    );
+  } else {
+    const nextStatusDoc = recordChironTestflowSubmitResult(statusRead.doc, {
+      officialStatus,
+      ritnummer,
+      ok: false,
+      foutenCount: postResult.fouten_count ?? 0,
+      sanitizedError: postResult.sanitized_error || "chiron_testflow_submit_failed",
+    });
+    const writeStatus = await writeChironConnectionStatusRaw(
+      env,
+      parsed.tenantId,
+      parsed.companyId,
+      nextStatusDoc,
+    );
+    if (writeStatus.ok) {
+      nextStatusPayload = buildChironConnectionStatusResponse(
+        parsed.tenantId,
+        parsed.companyId,
+        nextStatusDoc,
+      );
+    }
+  }
+
+  return jsonResponse(
+    {
+      ...baseResponse,
+      ok: acceptedByChiron,
+      submitted: true,
+      sync_state: finalDoc.sync_state,
+      attempt_count: finalDoc.attempt_count,
+      export_status_stored: true,
+      chiron_response_sanitized: {
+        ok: acceptedByChiron,
+        external_status_code: postResult.external_status_code ?? null,
+        external_reference: postResult.external_reference ?? null,
+        response_shape: postResult.response_shape ?? null,
+        fouten_count: postResult.fouten_count ?? null,
+        sanitized_error: postResult.sanitized_error ?? null,
+      },
+      testflow: _chironBuildTestflowCountersResponse(nextStatusPayload),
+    },
+    acceptedByChiron ? 200 : 502,
+    origin,
+  );
+}
+
 async function handleChironExportDryRun(request, url, env, origin) {
   const authError = ensureAuthorized(request, env);
   if (authError) return authError;
@@ -8319,7 +8737,8 @@ export default {
       url.pathname !== CHIRON_CONFIG_TEST_CREDENTIALS_PATH &&
       url.pathname !== CHIRON_CONFIG_TEST_CREDENTIALS_CLEAR_PATH &&
       url.pathname !== CHIRON_CONNECTION_TEST_PATH &&
-      url.pathname !== CHIRON_TESTFLOW_RESET_PATH
+      url.pathname !== CHIRON_TESTFLOW_RESET_PATH &&
+      url.pathname !== CHIRON_TESTFLOW_SUBMIT_ONE_PATH
     ) {
       return jsonResponse(
         { ok: false, error: "Not Found", path: url.pathname },
@@ -8412,6 +8831,12 @@ export default {
           return jsonResponse({ ok: false, error: "Method Not Allowed" }, 405, origin);
         }
         return await handleChironTestflowResetPost(request, url, env, origin);
+      }
+      if (url.pathname === CHIRON_TESTFLOW_SUBMIT_ONE_PATH) {
+        if (request.method !== "POST") {
+          return jsonResponse({ ok: false, error: "Method Not Allowed" }, 405, origin);
+        }
+        return await handleChironTestflowSubmitOnePost(request, env, origin);
       }
       if (request.method !== "GET") {
         return jsonResponse({ ok: false, error: "Method Not Allowed" }, 405, origin);
