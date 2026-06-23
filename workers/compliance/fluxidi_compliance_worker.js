@@ -788,6 +788,16 @@ function projectComplianceLegMetadata(event) {
     return null;
   };
 
+  // Chiron Fase 2A: positive-finite picker for leg-scoped monetary fallbacks.
+  // Used so that fare.total_amount / fare_total_amount only contributes to
+  // leg_price_incl_vat when it is an actual amount (> 0), never zero or
+  // negative, and never NaN.
+  const pickPositiveNumber = (paths) => {
+    const value = pickNumber(paths);
+    if (value === null || !Number.isFinite(value) || value <= 0) return null;
+    return value;
+  };
+
   const legId = pickText(
     [
       ["leg_id"],
@@ -811,6 +821,13 @@ function projectComplianceLegMetadata(event) {
     64,
   );
   const legType = legTypeRaw ? legTypeRaw.toLowerCase() : null;
+  // Chiron Fase 2A: an event is "leg-scoped" once we have a leg_id or
+  // leg_type stamped on it. Only leg-scoped events are allowed to fall
+  // back to lifecycle/ride/status or fare.total_amount when filling in
+  // leg_status / leg_price_incl_vat. Parent-scoped status updates keep
+  // their own status field exclusively to avoid status/amount poisoning
+  // of sibling legs in the Backendmeldingen UI.
+  const isLegScoped = Boolean(legId) || Boolean(legType);
   const parentBookingId = pickText(
     [
       ["parent_booking_id"],
@@ -829,7 +846,7 @@ function projectComplianceLegMetadata(event) {
     ],
     64,
   );
-  const legStatus = pickText(
+  let legStatus = pickText(
     [
       ["leg_status"],
       ["legStatus"],
@@ -838,12 +855,45 @@ function projectComplianceLegMetadata(event) {
     ],
     64,
   );
-  const legPriceInclVat = pickNumber([
+  // Leg-scoped fallback: many ride_stop / lifecycle events do not carry an
+  // explicit leg_status but still describe a single leg's transition (the
+  // status is on lifecycle_status / ride_status / status). Only fall back
+  // when the event is itself leg-scoped, never on parent booking updates.
+  if (!legStatus && isLegScoped) {
+    legStatus = pickText(
+      [
+        ["lifecycle_status"],
+        ["lifecycleStatus"],
+        ["ride_status"],
+        ["rideStatus"],
+        ["status"],
+      ],
+      64,
+    );
+  }
+  let legPriceInclVat = pickNumber([
     ["leg_price_incl_vat"],
     ["legPriceInclVat"],
     ["booking", "leg_price_incl_vat"],
     ["booking", "legPriceInclVat"],
   ]);
+  // Leg-scoped fallback: events stamped by the booking/tracking worker for a
+  // single operational leg may emit the amount only via fare.total_amount /
+  // fare_total_amount (e.g. ride_stop, lifecycle_progress). For these we
+  // promote that amount into leg_price_incl_vat so the Chiron UI shows the
+  // correct leg total instead of leaving the field empty. We never do this
+  // for parent-scoped events, otherwise a parent booking_status_update could
+  // project the full roundtrip total as a leg amount. Only positive finite
+  // amounts are allowed via the fallback path.
+  if (!Number.isFinite(legPriceInclVat) && isLegScoped) {
+    const fareFallback = pickPositiveNumber([
+      ["fare_total_amount"],
+      ["fareTotalAmount"],
+      ["fare", "total_amount"],
+      ["fare", "totalAmount"],
+    ]);
+    if (fareFallback !== null) legPriceInclVat = fareFallback;
+  }
   const parentPriceInclVat = pickNumber([
     ["parent_price_incl_vat"],
     ["parentPriceInclVat"],
@@ -861,6 +911,17 @@ function projectComplianceLegMetadata(event) {
     ["distanceKm"],
     ["fare", "distance_km"],
     ["fare", "distanceKm"],
+  ]);
+  // Chiron Fase 2A: additive duration projection so leg events can render
+  // route duration alongside distance_km. Read from top-level, fare.* and
+  // route.* without overwriting any existing field.
+  const durationMin = pickNumber([
+    ["duration_min"],
+    ["durationMin"],
+    ["fare", "duration_min"],
+    ["fare", "durationMin"],
+    ["route", "duration_min"],
+    ["route", "durationMin"],
   ]);
   const roundtripDispatchMode = pickText(
     [
@@ -927,6 +988,10 @@ function projectComplianceLegMetadata(event) {
     projection.distance_km = distanceKm;
     projection.distanceKm = distanceKm;
   }
+  if (Number.isFinite(durationMin)) {
+    projection.duration_min = durationMin;
+    projection.durationMin = durationMin;
+  }
   if (roundtripDispatchMode) {
     projection.roundtrip_dispatch_mode = roundtripDispatchMode;
     projection.roundtripDispatchMode = roundtripDispatchMode;
@@ -953,18 +1018,20 @@ function projectComplianceLegMetadata(event) {
   if (references) {
     projection.references = references;
   }
-  if (fare && Object.keys(fare).length > 0) {
-    // Forward stored fare scalars (total_amount, currency, …) only — already
-    // present in the top-level "fare" map; this keeps a flat copy so the
-    // dashboard can render leg amount without descending into fare again.
-    const fareTotal = pickNumber([
-      ["fare", "total_amount"],
-      ["fare", "totalAmount"],
-    ]);
-    if (Number.isFinite(fareTotal)) {
-      projection.fare_total_amount = fareTotal;
-      projection.fareTotalAmount = fareTotal;
-    }
+  // Forward stored fare scalars (total_amount, currency, …) — keep a flat
+  // copy so the dashboard / score-summary can render the leg fare amount
+  // without descending into the fare map again. Chiron Fase 2A also reads
+  // top-level fare_total_amount / fareTotalAmount so older events that
+  // stamped the amount outside the fare sub-object are still picked up.
+  const fareTotal = pickNumber([
+    ["fare_total_amount"],
+    ["fareTotalAmount"],
+    ["fare", "total_amount"],
+    ["fare", "totalAmount"],
+  ]);
+  if (Number.isFinite(fareTotal)) {
+    projection.fare_total_amount = fareTotal;
+    projection.fareTotalAmount = fareTotal;
   }
 
   return {
@@ -2285,6 +2352,13 @@ async function handleChironScoreSummary(request, url, env, origin) {
     }
 
     if (newestEvents.length < newestEventsLimit) {
+      // Chiron Fase 2A: surface leg-first context on each newest event so the
+      // dashboard can render leg_id / leg_type / leg_status / parent_status
+      // and the per-leg amount/distance/duration without doing a second
+      // recent-events fetch. The fields are additive and stay null when not
+      // applicable, so existing consumers of newest_events keep working.
+      const newestLegMetadata = projectComplianceLegMetadata(parsedEvent);
+      const newestLegProjection = newestLegMetadata?.projection || {};
       newestEvents.push({
         event_id: cleanText(parsedEvent.event_id, 200) || null,
         event_type: eventType || null,
@@ -2296,6 +2370,22 @@ async function handleChironScoreSummary(request, url, env, origin) {
         classification,
         bucket,
         created_at_utc: cleanText(parsedEvent.created_at_utc, 64) || null,
+        leg_id: newestLegProjection.leg_id || null,
+        leg_type: newestLegProjection.leg_type || null,
+        leg_status: newestLegProjection.leg_status || null,
+        parent_status: newestLegProjection.parent_status || null,
+        leg_price_incl_vat: Number.isFinite(newestLegProjection.leg_price_incl_vat)
+          ? newestLegProjection.leg_price_incl_vat
+          : null,
+        fare_total_amount: Number.isFinite(newestLegProjection.fare_total_amount)
+          ? newestLegProjection.fare_total_amount
+          : null,
+        distance_km: Number.isFinite(newestLegProjection.distance_km)
+          ? newestLegProjection.distance_km
+          : null,
+        duration_min: Number.isFinite(newestLegProjection.duration_min)
+          ? newestLegProjection.duration_min
+          : null,
       });
     }
   }
