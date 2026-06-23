@@ -43095,22 +43095,16 @@ Retour route: ${return_from || to} → ${return_to || from}`,
           console.log(`[CALENDAR_CREATE][DONE] bookingId=${canonicalBookingId} eventId=${calendar_event_id || ""}`);
         }
       } catch (calendarErr) {
-        const calendarErrorText = String(
-          calendarErr?.message || calendarErr?.error || calendarErr || "",
-        ).toLowerCase();
-        const isCalendarIntegrationError =
-          calendarErrorText.includes("google") ||
-          calendarErrorText.includes("calendar") ||
-          calendarErrorText.includes("oauth") ||
-          calendarErrorText.includes("freebusy") ||
-          calendarErrorText.includes("access token") ||
-          calendarErrorText.includes("invalid_grant") ||
-          calendarErrorText.includes("expired or revoked") ||
-          calendarErrorText.includes("unauthorized_client") ||
-          calendarErrorText.includes("invalid_client");
-        if (!isCalendarIntegrationError) {
-          throw calendarErr;
-        }
+        // Calendar sync is best-effort during booking creation. ANY calendar
+        // failure (including a generic Google API 4xx/5xx such as a bare
+        // "Bad Request", invalid/forbidden/unauthorized/not found/rate
+        // limit/quota, etc.) must NEVER block booking persistence. Previously
+        // only a small keyword set was suppressed and every other calendar
+        // error was re-thrown, which made handleBooking return
+        // { ok:false, error } BEFORE the KV persist step. We now suppress all
+        // calendar errors and surface them only as a non-blocking sync
+        // warning, so booking creation continues to KV persist, email/push and
+        // the success response.
         const isAuthError = isGoogleCalendarAuthError(calendarErr);
         calendarSyncSuppressed = true;
         calendarSyncStatus = isAuthError ? "auth_required" : "failed";
@@ -43130,7 +43124,7 @@ Retour route: ${return_from || to} → ${return_to || from}`,
           calendarSyncFailedAt: calendarSyncFailedAt,
         };
         console.log(
-          `[CALENDAR_SYNC][WARN] bookingId=${canonicalBookingId} status=${calendarSyncStatus} code=${calendarSyncErrorCode} reason=${safeStr(calendarErr?.message || calendarErr, 160) || "unknown"}`,
+          `[CALENDAR_SYNC][WARN] booking=${_bookingIntentMask(canonicalBookingId)} reason=best_effort status=${calendarSyncStatus} code=${calendarSyncErrorCode} error=${safeStr(calendarErr?.message || calendarErr, 160) || "unknown"}`,
         );
       }
     }
@@ -44320,6 +44314,13 @@ return {
     };
   } catch (e) {
     await releaseAllocatorReservationSafely();
+    // Safe, non-sensitive diagnostic only: no stacktrace, no payload dump, no
+    // secrets/tokens. booking id is block-scoped to the try above so it is not
+    // available here; we intentionally log "-" rather than risk a reference
+    // error. The sanitized message lets us correlate fatal booking failures.
+    console.log(
+      `[BOOK][FATAL] booking=- reason=handle_booking_exception error=${safeStr(e?.message || e, 200) || "unknown"}`,
+    );
     return { ok: false, error: String(e?.message || e) };
   }
 }
