@@ -13,6 +13,11 @@ class ChironCredentialAuthScheme {
   ChironCredentialAuthScheme._();
 
   static const String authSchemeApiToken = 'api_token';
+
+  /// Chiron Connect 4A: OAuth2 client credentials (test/ACC). Stored encrypted
+  /// server-side as client_id + client_secret; the secret never returns to UI.
+  static const String authSchemeOAuthClientCredentials =
+      'oauth_client_credentials';
 }
 
 class ChironConnectionStatus {

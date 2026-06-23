@@ -1149,6 +1149,55 @@ Future<String> _saveChironTestCredentialsViaBooking({
   return masked == null ? '' : masked.toString().trim();
 }
 
+/// Chiron Connect 4A: store per-company OAuth2 client credentials (test/ACC).
+/// Only client_id + client_secret are sent; the secret never returns from the
+/// backend (response is masked-only).
+Future<String> _saveChironOAuthClientCredentialsViaBooking({
+  required String tenantId,
+  required String companyId,
+  required String clientId,
+  required String clientSecret,
+}) async {
+  final endpoint = _chironBookingScopedEndpoint(
+    '/admin/chiron/config/test-credentials',
+    tenantId: tenantId,
+    companyId: companyId,
+  );
+  final auth = await resolveCompanyOwnerAuthHeaders();
+  final res = await http
+      .post(
+        endpoint,
+        headers: auth.headers,
+        body: jsonEncode(<String, dynamic>{
+          'tenant_id': tenantId,
+          'company_id': companyId,
+          'auth_scheme':
+              ChironCredentialAuthScheme.authSchemeOAuthClientCredentials,
+          'credential_fields': <String, dynamic>{
+            'client_id': clientId,
+            'client_secret': clientSecret,
+          },
+        }),
+      )
+      .timeout(const Duration(seconds: 12));
+  final decoded = jsonDecode(res.body);
+  if (decoded is! Map) {
+    throw BackendChironConnectionApiException(
+      error: 'invalid_response',
+      statusCode: res.statusCode,
+    );
+  }
+  final map = Map<String, dynamic>.from(decoded);
+  if (res.statusCode < 200 || res.statusCode >= 300 || map['ok'] == false) {
+    throw BackendChironConnectionApiException(
+      error: _chironSafeApiErrorCode(map),
+      statusCode: res.statusCode,
+    );
+  }
+  final masked = map['masked_identifier'] ?? map['maskedIdentifier'];
+  return masked == null ? '' : masked.toString().trim();
+}
+
 Future<void> _clearChironTestCredentialsViaBooking({
   required String tenantId,
   required String companyId,
@@ -1493,6 +1542,11 @@ class _ChironTestAccessCard extends StatefulWidget {
 
 class _ChironTestAccessCardState extends State<_ChironTestAccessCard> {
   final TextEditingController _apiTokenController = TextEditingController();
+  // Chiron Connect 4A: OAuth2 client credentials inputs (test/ACC).
+  final TextEditingController _clientIdController = TextEditingController();
+  final TextEditingController _clientSecretController = TextEditingController();
+  String _selectedAuthScheme =
+      ChironCredentialAuthScheme.authSchemeOAuthClientCredentials;
   bool _loadingStatus = false;
   bool _saving = false;
   bool _testing = false;
@@ -1505,18 +1559,24 @@ class _ChironTestAccessCardState extends State<_ChironTestAccessCard> {
   @override
   void initState() {
     super.initState();
-    _apiTokenController.addListener(_onApiTokenChanged);
+    _apiTokenController.addListener(_onCredentialFieldChanged);
+    _clientIdController.addListener(_onCredentialFieldChanged);
+    _clientSecretController.addListener(_onCredentialFieldChanged);
     unawaited(_refreshStatus());
   }
 
-  void _onApiTokenChanged() {
+  void _onCredentialFieldChanged() {
     if (mounted) setState(() {});
   }
 
   @override
   void dispose() {
-    _apiTokenController.removeListener(_onApiTokenChanged);
+    _apiTokenController.removeListener(_onCredentialFieldChanged);
+    _clientIdController.removeListener(_onCredentialFieldChanged);
+    _clientSecretController.removeListener(_onCredentialFieldChanged);
     _apiTokenController.dispose();
+    _clientIdController.dispose();
+    _clientSecretController.dispose();
     super.dispose();
   }
 
@@ -1661,23 +1721,54 @@ class _ChironTestAccessCardState extends State<_ChironTestAccessCard> {
     }
   }
 
+  bool get _isOAuthSchemeSelected =>
+      _selectedAuthScheme ==
+      ChironCredentialAuthScheme.authSchemeOAuthClientCredentials;
+
+  bool get _canSaveCredentials {
+    if (_isOAuthSchemeSelected) {
+      return _clientIdController.text.trim().isNotEmpty &&
+          _clientSecretController.text.trim().isNotEmpty;
+    }
+    return _apiTokenController.text.trim().isNotEmpty;
+  }
+
   Future<void> _saveTestCredentials() async {
     final scope = _effectiveTenantCompanyIds();
     if (scope == null) return;
+
+    final isOAuth = _isOAuthSchemeSelected;
     final apiToken = _apiTokenController.text.trim();
-    if (apiToken.isEmpty) return;
+    final clientId = _clientIdController.text.trim();
+    final clientSecret = _clientSecretController.text.trim();
+
+    if (isOAuth) {
+      if (clientId.isEmpty || clientSecret.isEmpty) return;
+    } else {
+      if (apiToken.isEmpty) return;
+    }
 
     setState(() {
       _saving = true;
       _actionError = null;
     });
     try {
-      final maskedIdentifier = await _saveChironTestCredentialsViaBooking(
-        tenantId: scope.tenantId,
-        companyId: scope.companyId,
-        apiToken: apiToken,
-      );
+      final maskedIdentifier = isOAuth
+          ? await _saveChironOAuthClientCredentialsViaBooking(
+              tenantId: scope.tenantId,
+              companyId: scope.companyId,
+              clientId: clientId,
+              clientSecret: clientSecret,
+            )
+          : await _saveChironTestCredentialsViaBooking(
+              tenantId: scope.tenantId,
+              companyId: scope.companyId,
+              apiToken: apiToken,
+            );
+      // Never retain secrets after a successful save. The client_id may remain
+      // visible; the backend only ever returns a masked identifier.
       _apiTokenController.clear();
+      _clientSecretController.clear();
       if (maskedIdentifier.isNotEmpty) {
         _maskedIdentifier = maskedIdentifier;
       }
@@ -1834,6 +1925,8 @@ class _ChironTestAccessCardState extends State<_ChironTestAccessCard> {
         companyId: scope.companyId,
       );
       _apiTokenController.clear();
+      _clientIdController.clear();
+      _clientSecretController.clear();
       if (!mounted) return;
       setState(() {
         _maskedIdentifier = '';
@@ -2102,31 +2195,162 @@ class _ChironTestAccessCardState extends State<_ChironTestAccessCard> {
                 ),
               ],
               const SizedBox(height: 10),
-              TextField(
-                controller: _apiTokenController,
-                obscureText: true,
-                enableSuggestions: false,
-                autocorrect: false,
-                decoration: InputDecoration(
-                  isDense: true,
-                  labelText: _t(
-                    nl: 'Chiron API-token',
-                    en: 'Chiron API token',
-                    fr: 'Jeton API Chiron',
-                    es: 'Token API Chiron',
+              // Chiron Connect 4A: scheme chooser. OAuth2 client credentials is
+              // the recommended default; legacy API token stays available.
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  ChoiceChip(
+                    label: Text(
+                      _t(
+                        nl: 'OAuth2 Client Credentials (aanbevolen)',
+                        en: 'OAuth2 Client Credentials (recommended)',
+                        fr: 'OAuth2 Client Credentials (recommandé)',
+                        es: 'OAuth2 Client Credentials (recomendado)',
+                      ),
+                      style: const TextStyle(fontSize: 11),
+                    ),
+                    selected: _isOAuthSchemeSelected,
+                    onSelected:
+                        (_saving || _testing || _clearingTestCredentials)
+                        ? null
+                        : (selected) {
+                            if (!selected) return;
+                            setState(() {
+                              _selectedAuthScheme = ChironCredentialAuthScheme
+                                  .authSchemeOAuthClientCredentials;
+                              _actionError = null;
+                            });
+                          },
                   ),
-                  labelStyle: TextStyle(color: _chironTextMuted, fontSize: 12),
-                  enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(10),
-                    borderSide: BorderSide(color: _chironBorder),
+                  ChoiceChip(
+                    label: Text(
+                      _t(
+                        nl: 'Legacy API-token',
+                        en: 'Legacy API token',
+                        fr: 'Jeton API hérité',
+                        es: 'Token API heredado',
+                      ),
+                      style: const TextStyle(fontSize: 11),
+                    ),
+                    selected: !_isOAuthSchemeSelected,
+                    onSelected:
+                        (_saving || _testing || _clearingTestCredentials)
+                        ? null
+                        : (selected) {
+                            if (!selected) return;
+                            setState(() {
+                              _selectedAuthScheme =
+                                  ChironCredentialAuthScheme.authSchemeApiToken;
+                              _actionError = null;
+                            });
+                          },
                   ),
-                  focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(10),
-                    borderSide: BorderSide(color: _chironGold),
-                  ),
-                ),
-                style: TextStyle(color: _chironTextPrimary, fontSize: 13),
+                ],
               ),
+              const SizedBox(height: 8),
+              Text(
+                _t(
+                  nl: 'Gebruik de test/ACC-gegevens uit het Chiron-portaal. Productie blijft geblokkeerd tot de testflow geslaagd is.',
+                  en: 'Use the test/ACC details from the Chiron portal. Production stays blocked until the test flow has passed.',
+                  fr: 'Utilisez les données test/ACC du portail Chiron. La production reste bloquée tant que le test n’est pas réussi.',
+                  es: 'Usa los datos de test/ACC del portal de Chiron. La producción permanece bloqueada hasta que la prueba se complete.',
+                ),
+                style: TextStyle(
+                  color: _chironTextMuted,
+                  fontSize: 11,
+                  height: 1.35,
+                ),
+              ),
+              const SizedBox(height: 10),
+              if (_isOAuthSchemeSelected) ...[
+                TextField(
+                  controller: _clientIdController,
+                  enableSuggestions: false,
+                  autocorrect: false,
+                  decoration: InputDecoration(
+                    isDense: true,
+                    labelText: _t(
+                      nl: 'Chiron Client ID',
+                      en: 'Chiron Client ID',
+                      fr: 'Chiron Client ID',
+                      es: 'Chiron Client ID',
+                    ),
+                    labelStyle: TextStyle(
+                      color: _chironTextMuted,
+                      fontSize: 12,
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(10),
+                      borderSide: BorderSide(color: _chironBorder),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(10),
+                      borderSide: BorderSide(color: _chironGold),
+                    ),
+                  ),
+                  style: TextStyle(color: _chironTextPrimary, fontSize: 13),
+                ),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: _clientSecretController,
+                  obscureText: true,
+                  enableSuggestions: false,
+                  autocorrect: false,
+                  decoration: InputDecoration(
+                    isDense: true,
+                    labelText: _t(
+                      nl: 'Chiron Client secret',
+                      en: 'Chiron Client secret',
+                      fr: 'Chiron Client secret',
+                      es: 'Chiron Client secret',
+                    ),
+                    labelStyle: TextStyle(
+                      color: _chironTextMuted,
+                      fontSize: 12,
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(10),
+                      borderSide: BorderSide(color: _chironBorder),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(10),
+                      borderSide: BorderSide(color: _chironGold),
+                    ),
+                  ),
+                  style: TextStyle(color: _chironTextPrimary, fontSize: 13),
+                ),
+              ] else ...[
+                TextField(
+                  controller: _apiTokenController,
+                  obscureText: true,
+                  enableSuggestions: false,
+                  autocorrect: false,
+                  decoration: InputDecoration(
+                    isDense: true,
+                    labelText: _t(
+                      nl: 'Chiron API-token',
+                      en: 'Chiron API token',
+                      fr: 'Jeton API Chiron',
+                      es: 'Token API Chiron',
+                    ),
+                    labelStyle: TextStyle(
+                      color: _chironTextMuted,
+                      fontSize: 12,
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(10),
+                      borderSide: BorderSide(color: _chironBorder),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(10),
+                      borderSide: BorderSide(color: _chironGold),
+                    ),
+                  ),
+                  style: TextStyle(color: _chironTextPrimary, fontSize: 13),
+                ),
+              ],
               const SizedBox(height: 10),
               Wrap(
                 spacing: 8,
@@ -2137,7 +2361,7 @@ class _ChironTestAccessCardState extends State<_ChironTestAccessCard> {
                         _saving ||
                             _testing ||
                             _clearingTestCredentials ||
-                            _apiTokenController.text.trim().isEmpty
+                            !_canSaveCredentials
                         ? null
                         : _saveTestCredentials,
                     style: _chironTestAccessSecondaryButtonStyle(),

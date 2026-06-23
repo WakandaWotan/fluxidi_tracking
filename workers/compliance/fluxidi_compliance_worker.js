@@ -85,7 +85,12 @@ const CHIRON_CONFIG_FORBIDDEN_BODY_KEYS = new Set([
 // Phase 2A: Chiron credentials encryption/storage foundation (helpers only; no routes).
 const CHIRON_CREDENTIALS_SCHEMA_VERSION = "chiron_credentials_v1";
 const CHIRON_CREDENTIALS_PAYLOAD_SCHEMA_VERSION = "chiron_credentials_payload_v1";
-const CHIRON_CREDENTIALS_ALLOWED_AUTH_SCHEMES = new Set(["api_token"]);
+const CHIRON_CREDENTIALS_ALLOWED_AUTH_SCHEMES = new Set([
+  "api_token",
+  "oauth_client_credentials",
+]);
+const CHIRON_OAUTH_CLIENT_ID_MAX_LENGTH = 256;
+const CHIRON_OAUTH_CLIENT_SECRET_MAX_LENGTH = 1024;
 const CHIRON_CREDENTIALS_ENCRYPTION_KEY_MIN_LENGTH = 32;
 const CHIRON_TEST_CREDENTIALS_ALLOWED_TOP_LEVEL_KEYS = new Set([
   "tenant_id",
@@ -6428,6 +6433,41 @@ function parseChironTestCredentialsPostInput(body) {
     return { tenantId, companyId, authScheme, apiToken };
   }
 
+  // Chiron Connect 4A: OAuth2 client credentials (test/ACC only). We store the
+  // client_id + client_secret encrypted; the actual token exchange and live
+  // connection test land in 4B. token_url / scope / production credentials are
+  // intentionally not accepted in this patch.
+  if (authScheme === "oauth_client_credentials") {
+    const fieldKeys = Object.keys(credentialFields);
+    if (
+      fieldKeys.length !== 2 ||
+      !fieldKeys.includes("client_id") ||
+      !fieldKeys.includes("client_secret")
+    ) {
+      return { error: "invalid_credential_fields" };
+    }
+    const rawClientId = credentialFields.client_id;
+    const rawClientSecret = credentialFields.client_secret;
+    if (typeof rawClientId !== "string" || typeof rawClientSecret !== "string") {
+      return { error: "invalid_credential_fields" };
+    }
+    const clientId = rawClientId.trim();
+    if (!clientId) {
+      return { error: "missing_client_id" };
+    }
+    if (clientId.length > CHIRON_OAUTH_CLIENT_ID_MAX_LENGTH) {
+      return { error: "invalid_client_id" };
+    }
+    const clientSecret = rawClientSecret.trim();
+    if (!clientSecret) {
+      return { error: "missing_client_secret" };
+    }
+    if (clientSecret.length > CHIRON_OAUTH_CLIENT_SECRET_MAX_LENGTH) {
+      return { error: "invalid_client_secret" };
+    }
+    return { tenantId, companyId, authScheme, clientId, clientSecret };
+  }
+
   return { error: "unsupported_auth_scheme" };
 }
 
@@ -6505,20 +6545,36 @@ function _chironDecryptedCredentialPayloadValid(parsed) {
   if (cleanText(parsed.schema_version, 64) !== CHIRON_CREDENTIALS_PAYLOAD_SCHEMA_VERSION) {
     return false;
   }
-  if (cleanText(parsed.auth_scheme, 64).toLowerCase() !== "api_token") {
-    return false;
+  const scheme = cleanText(parsed.auth_scheme, 64).toLowerCase();
+
+  if (scheme === "api_token") {
+    const rawApiToken = parsed.api_token;
+    if (typeof rawApiToken !== "string") return false;
+    if (!rawApiToken.trim()) return false;
+    return true;
   }
-  const rawApiToken = parsed.api_token;
-  if (typeof rawApiToken !== "string") return false;
-  if (!rawApiToken.trim()) return false;
-  return true;
+
+  // Chiron Connect 4A: OAuth2 client credentials are valid when both
+  // client_id and client_secret survived the decrypt roundtrip.
+  if (scheme === "oauth_client_credentials") {
+    const rawClientId = parsed.client_id;
+    const rawClientSecret = parsed.client_secret;
+    if (typeof rawClientId !== "string" || typeof rawClientSecret !== "string") {
+      return false;
+    }
+    if (!rawClientId.trim() || !rawClientSecret.trim()) return false;
+    return true;
+  }
+
+  return false;
 }
 
 function _chironCredentialsDocReadyForMockTest(doc) {
   if (!doc || typeof doc !== "object" || Array.isArray(doc)) return false;
   if (cleanText(doc.schema_version, 64) !== CHIRON_CREDENTIALS_SCHEMA_VERSION) return false;
   if (cleanText(doc.environment, 32).toLowerCase() !== "test") return false;
-  if (cleanText(doc.auth_scheme, 64).toLowerCase() !== "api_token") return false;
+  const scheme = cleanText(doc.auth_scheme, 64).toLowerCase();
+  if (!CHIRON_CREDENTIALS_ALLOWED_AUTH_SCHEMES.has(scheme)) return false;
   const encrypted = doc.credential_payload_encrypted;
   return !!(encrypted && typeof encrypted === "object" && !Array.isArray(encrypted));
 }
@@ -7090,7 +7146,7 @@ async function handleChironConfigTestCredentialsPost(request, url, env, origin) 
     return jsonResponse({ ok: false, error: parsed.error }, 400, origin);
   }
 
-  const { tenantId, companyId, authScheme, apiToken } = parsed;
+  const { tenantId, companyId, authScheme } = parsed;
 
   const authError = ensureAuthorizedOrInternalProxy(request, env, {
     tenantId,
@@ -7102,19 +7158,41 @@ async function handleChironConfigTestCredentialsPost(request, url, env, origin) 
     return jsonResponse({ ok: false, error: "missing_kv" }, 500, origin);
   }
 
-  const plaintextEnvelope = JSON.stringify({
-    schema_version: CHIRON_CREDENTIALS_PAYLOAD_SCHEMA_VERSION,
-    auth_scheme: authScheme,
-    api_token: apiToken,
-  });
+  // Chiron Connect 4A: build the encrypted plaintext envelope, fingerprint seed
+  // and masked identifier per auth scheme. The client_secret is only ever used
+  // for encryption + fingerprinting; it never appears in a response or log.
+  let plaintextEnvelope;
+  let fingerprintSeed;
+  let maskedSeed;
+  if (authScheme === "oauth_client_credentials") {
+    plaintextEnvelope = JSON.stringify({
+      schema_version: CHIRON_CREDENTIALS_PAYLOAD_SCHEMA_VERSION,
+      auth_scheme: authScheme,
+      client_id: parsed.clientId,
+      client_secret: parsed.clientSecret,
+    });
+    // Fingerprint must not be derivable from the public client_id alone, so it
+    // is seeded with client_id + ":" + client_secret.
+    fingerprintSeed = `${parsed.clientId}:${parsed.clientSecret}`;
+    // Masked identifier is based on the public client_id, never the secret.
+    maskedSeed = parsed.clientId;
+  } else {
+    plaintextEnvelope = JSON.stringify({
+      schema_version: CHIRON_CREDENTIALS_PAYLOAD_SCHEMA_VERSION,
+      auth_scheme: authScheme,
+      api_token: parsed.apiToken,
+    });
+    fingerprintSeed = parsed.apiToken;
+    maskedSeed = parsed.apiToken;
+  }
 
   let credentialPayloadEncrypted;
   let credentialFingerprintShort;
   let maskedIdentifier;
   try {
     credentialPayloadEncrypted = await encryptChironCredentialBlob(plaintextEnvelope, env);
-    credentialFingerprintShort = await chironCredentialFingerprintShort(apiToken);
-    maskedIdentifier = chironMaskTrailingIdentifier(apiToken);
+    credentialFingerprintShort = await chironCredentialFingerprintShort(fingerprintSeed);
+    maskedIdentifier = chironMaskTrailingIdentifier(maskedSeed);
   } catch (_) {
     return jsonResponse({ ok: false, error: "credential_encrypt_failed" }, 500, origin);
   }
@@ -7427,7 +7505,8 @@ async function handleChironConnectionTestPost(request, url, env, origin) {
       tenant_id: tenantId,
       company_id: companyId,
       environment,
-      auth_scheme: "api_token",
+      auth_scheme:
+        cleanText(credentialsDoc.auth_scheme, 64).toLowerCase() || "api_token",
       test_credentials_stored: true,
       credential_decrypt_ok: true,
       credential_payload_valid: true,
