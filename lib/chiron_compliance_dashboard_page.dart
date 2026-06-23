@@ -8080,6 +8080,7 @@ class RemoteComplianceEvent {
 
     final provenance = asMap(json['provenance']);
     final payment = asMap(json['payment']);
+    final fareMap = asMap(json['fare']);
     final timestamps = asMap(json['timestamps']);
     final refundStatus =
         firstText(const <String>[
@@ -8200,11 +8201,22 @@ class RemoteComplianceEvent {
       return null;
     }
 
+    double? positiveLegNumber(
+      List<String> keys, {
+      Map<String, dynamic>? source,
+    }) {
+      final value = legNumber(keys, source: source);
+      if (value == null || !value.isFinite || value <= 0) return null;
+      return value;
+    }
+
     final legIdResolved = legText(const <String>['leg_id', 'legId']);
     final legTypeResolved = legText(const <String>[
       'leg_type',
       'legType',
     ]).toLowerCase();
+    final isLegScopedEvent =
+        legIdResolved.isNotEmpty || legTypeResolved.isNotEmpty;
     final parentBookingIdResolved = legText(const <String>[
       'parent_booking_id',
       'parentBookingId',
@@ -8217,10 +8229,21 @@ class RemoteComplianceEvent {
       'leg_status',
       'legStatus',
     ]).toLowerCase();
-    final legPriceInclVatResolved = legNumber(const <String>[
-      'leg_price_incl_vat',
-      'legPriceInclVat',
-    ]);
+    final legPriceInclVatResolved =
+        positiveLegNumber(const <String>[
+          'leg_price_incl_vat',
+          'legPriceInclVat',
+        ]) ??
+        (isLegScopedEvent
+            ? (positiveLegNumber(const <String>[
+                    'fare_total_amount',
+                    'fareTotalAmount',
+                  ]) ??
+                  positiveLegNumber(const <String>[
+                    'total_amount',
+                    'totalAmount',
+                  ], source: fareMap))
+            : null);
     final parentPriceInclVatResolved = legNumber(const <String>[
       'parent_price_incl_vat',
       'parentPriceInclVat',
@@ -8309,7 +8332,7 @@ class RemoteComplianceEvent {
       createdAtUtc: text('created_at_utc'),
       timestamps: asMap(json['timestamps']),
       payment: payment,
-      fare: asMap(json['fare']),
+      fare: fareMap,
       provenance: provenance,
       refundStatus: refundStatus,
       refundProvider: refundProvider,
