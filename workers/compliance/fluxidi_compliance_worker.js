@@ -5139,6 +5139,168 @@ function _chironValidTrustedCoordPair(lng, lat) {
   );
 }
 
+// Chiron-3B-LEG-CONSISTENCY: the official Chiron ritnummer is leg-scoped
+// (`${bookingId}-${legType}`) via _chironResolveOfficialRitnummer so OUTBOUND
+// and RETURN of a roundtrip never share a sequence. Problem: only some events
+// carry leg metadata. The tracking ride_stop (aankomst) event is stamped with
+// leg_type by the planned-stop pipeline, but the planned ride_start (vertrek)
+// event — produced from a tracking session — carries booking_id only, no
+// leg_type/leg_id. So departure resolves to `${bookingId}` while arrival
+// resolves to `${bookingId}-outbound`, breaking the prior-vertrek sequence
+// check (missing_prior_vertrek_or_reservatie_in_batch) and splitting the
+// idempotency key.
+//
+// Fix: resolve the operational-leg type from the booking RECORD and stamp it
+// (in-memory only) onto the booking's events that lack any leg metadata, so the
+// existing centralized ritnummer / idempotency / batch-status logic all derive
+// the SAME leg-scoped ritnummer for departure and arrival.
+//
+// Safety: we only stamp when the booking is unambiguously single-leg (a booking
+// with zero or one operational leg can never be a roundtrip). Multi-leg
+// (roundtrip) bookings keep the existing per-event behavior — a legless event
+// stays on the base ritnummer rather than risk being attributed to the wrong
+// leg — so roundtrips still map strictly per leg with no idempotency drift.
+function _chironBookingRecordOperationalLegs(rec) {
+  if (!rec || typeof rec !== "object") return [];
+  const source = Array.isArray(rec?.operational_legs)
+    ? rec.operational_legs
+    : Array.isArray(rec?.operationalLegs)
+      ? rec.operationalLegs
+      : Array.isArray(rec?.booking?.operational_legs)
+        ? rec.booking.operational_legs
+        : Array.isArray(rec?.booking?.operationalLegs)
+          ? rec.booking.operationalLegs
+          : [];
+  return source.filter((leg) => leg && typeof leg === "object");
+}
+
+function _chironBoolStrictTrue(value) {
+  return value === true || value === "true" || value === 1 || value === "1";
+}
+
+function _chironBoolStrictFalse(value) {
+  return value === false || value === "false" || value === 0 || value === "0";
+}
+
+// Booking-LEVEL return signal only. We deliberately ignore
+// quote.pricing_profile.return_enabled (that is the tenant's *capability*, not
+// this booking's intent). A return signal means a legless event can NOT be
+// safely attributed to a single leg => no stamping.
+function _chironBookingRecordHasReturnSignal(rec) {
+  if (!rec || typeof rec !== "object") return false;
+  const booking = rec?.booking && typeof rec.booking === "object" ? rec.booking : {};
+  const quote = rec?.quote && typeof rec.quote === "object" ? rec.quote : {};
+  const quoteReturn = quote?.return && typeof quote.return === "object" ? quote.return : {};
+  if (
+    _chironBoolStrictTrue(rec?.return_enabled) ||
+    _chironBoolStrictTrue(booking?.return_enabled) ||
+    _chironBoolStrictTrue(quoteReturn?.enabled)
+  ) {
+    return true;
+  }
+  const returnPickup = cleanText(
+    rec?.returnPickupIso ??
+      rec?.return_pickup_iso ??
+      booking?.returnPickupIso ??
+      booking?.return_pickup_iso ??
+      booking?.return_scheduled_pickup_at ??
+      quoteReturn?.pickup_iso,
+    64,
+  );
+  if (returnPickup) return true;
+  for (const leg of _chironBookingRecordOperationalLegs(rec)) {
+    const t = cleanText(leg.leg_type ?? leg.legType, 64).toLowerCase();
+    if (t.includes("return")) return true;
+  }
+  return false;
+}
+
+// Positive one-way assertion: return is explicitly disabled at booking level
+// AND there is no return pickup/schedule. Absence of the flag is NOT enough.
+function _chironBookingRecordIsExplicitlyOneWay(rec) {
+  if (!rec || typeof rec !== "object") return false;
+  if (_chironBookingRecordHasReturnSignal(rec)) return false;
+  const booking = rec?.booking && typeof rec.booking === "object" ? rec.booking : {};
+  const quote = rec?.quote && typeof rec.quote === "object" ? rec.quote : {};
+  const quoteReturn = quote?.return && typeof quote.return === "object" ? quote.return : {};
+  return (
+    _chironBoolStrictFalse(rec?.return_enabled) ||
+    _chironBoolStrictFalse(booking?.return_enabled) ||
+    _chironBoolStrictFalse(quoteReturn?.enabled)
+  );
+}
+
+function _chironSingleLegTypeFromBookingRecord(rec) {
+  if (!rec || typeof rec !== "object") return null;
+  // Any booking-level return signal => potential roundtrip (even if the return
+  // leg is not materialized yet) => never attribute a legless event to a leg.
+  if (_chironBookingRecordHasReturnSignal(rec)) return null;
+  const distinct = new Set();
+  for (const leg of _chironBookingRecordOperationalLegs(rec)) {
+    const t = cleanText(leg.leg_type ?? leg.legType, 64)
+      .toLowerCase()
+      .replace(/[^a-z0-9_-]/g, "");
+    if (t) distinct.add(t);
+  }
+  // Exactly one distinct leg type and no return signal => single-leg booking.
+  if (distinct.size === 1) return [...distinct][0];
+  // More than one distinct type without a return signal is contradictory =>
+  // stay safe and fall back to the base ritnummer.
+  if (distinct.size > 1) return null;
+  // No materialized legs: only default to outbound when the record is
+  // EXPLICITLY one-way (return_enabled === false). An incomplete/unknown record
+  // (no explicit one-way assertion) keeps the base fallback.
+  if (_chironBookingRecordIsExplicitlyOneWay(rec)) return "outbound";
+  return null;
+}
+
+async function _chironLoadBookingLegTypeMap(env, entries) {
+  const map = new Map();
+  const kv = _chironScopedProfileKv(env);
+  if (!kv || !Array.isArray(entries)) return map;
+  const wanted = new Set();
+  for (const entry of entries) {
+    const event = entry?.event;
+    if (!event || typeof event !== "object") continue;
+    if (_chironEventHasLegScope(event)) continue;
+    const bookingId = cleanText(event?.booking_id ?? event?.parent_booking_id, 128);
+    if (bookingId) wanted.add(bookingId);
+  }
+  if (wanted.size === 0) return map;
+  await Promise.all(
+    [...wanted].map(async (bookingId) => {
+      try {
+        const rec = await kv.get(`booking:${bookingId}`, { type: "json" });
+        const legType = _chironSingleLegTypeFromBookingRecord(rec);
+        if (legType) map.set(bookingId, legType);
+      } catch (_) {
+        // Best-effort: a KV miss/error simply leaves the event on its base
+        // ritnummer fallback (existing behavior).
+      }
+    }),
+  );
+  return map;
+}
+
+function _chironStampResolvedLegTypeOnEntries(entries, legTypeMap) {
+  if (!Array.isArray(entries) || !(legTypeMap instanceof Map) || legTypeMap.size === 0) {
+    return;
+  }
+  for (const entry of entries) {
+    const event = entry?.event;
+    if (!event || typeof event !== "object") continue;
+    if (_chironEventHasLegScope(event)) continue;
+    const bookingId = cleanText(event?.booking_id ?? event?.parent_booking_id, 128);
+    if (!bookingId) continue;
+    const legType = legTypeMap.get(bookingId);
+    if (!legType) continue;
+    // In-memory only; never persisted back to COMPLIANCE_KV. Stamp both
+    // snake/camel so every downstream reader sees the resolved leg.
+    event.leg_type = legType;
+    event.legType = legType;
+  }
+}
+
 function buildChironExportPayload(event, eventKey, options = {}) {
   const safeEvent =
     event && typeof event === "object" && !Array.isArray(event) ? event : {};
@@ -5896,6 +6058,13 @@ async function _chironBuildExportDryRunPayloadResponse(
     scope,
     effectiveIncludeOfficialDraft,
   );
+  if (effectiveIncludeOfficialDraft) {
+    // Stamp resolved operational-leg type onto legless events BEFORE building
+    // the rit-status / trusted-ride indexes so departure and arrival of the
+    // same leg derive the same leg-scoped ritnummer.
+    const legTypeMap = await _chironLoadBookingLegTypeMap(env, collectResult.limitedEntries);
+    _chironStampResolvedLegTypeOnEntries(collectResult.limitedEntries, legTypeMap);
+  }
   const batchRitStatuses = effectiveIncludeOfficialDraft
     ? _chironBuildBatchRitStatusIndex(collectResult.limitedEntries)
     : null;
@@ -6383,6 +6552,12 @@ async function handleChironTestflowSubmitOnePost(request, env, origin) {
     { tenant_id: parsed.tenantId, company_id: parsed.companyId },
     true,
   );
+  // Stamp resolved operational-leg type onto legless events (incl. the target
+  // event, which is a contextEntries member) so departure and arrival of the
+  // same leg derive the same leg-scoped ritnummer for the official draft,
+  // idempotency key and sequence index.
+  const legTypeMap = await _chironLoadBookingLegTypeMap(env, found.contextEntries || []);
+  _chironStampResolvedLegTypeOnEntries(found.contextEntries || [], legTypeMap);
   const batchRitStatuses = _chironBuildBatchRitStatusIndex(found.contextEntries || []);
   const trustedRideHydration = _chironBuildBatchTrustedRideHydrationIndex(
     found.contextEntries || [],
@@ -6816,6 +6991,11 @@ async function handleChironExportTest(request, env, origin) {
     liveOfficialScope,
     true,
   );
+  const liveLegTypeMap = await _chironLoadBookingLegTypeMap(
+    env,
+    collectResult.limitedEntries,
+  );
+  _chironStampResolvedLegTypeOnEntries(collectResult.limitedEntries, liveLegTypeMap);
   const liveBatchRitStatuses = _chironBuildBatchRitStatusIndex(
     collectResult.limitedEntries,
   );
