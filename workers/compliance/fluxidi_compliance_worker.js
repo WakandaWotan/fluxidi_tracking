@@ -4826,6 +4826,24 @@ function buildChironExportPayload(event, eventKey, options = {}) {
     );
   }
 
+  // Chiron Connect 4A0: optional, opt-in inspection of the nested official
+  // Chiron Rit API body. Never attached by default so normal export/dry-run
+  // responses keep their existing flat shape.
+  if (options.includeChironApiPayload === true) {
+    const officialDraft = payload.chiron_official_draft;
+    const officialPayload =
+      officialDraft && typeof officialDraft === "object" ? officialDraft.payload : null;
+    if (
+      officialDraft &&
+      officialDraft.category === "ride_payload" &&
+      officialPayload &&
+      typeof officialPayload === "object" &&
+      !Array.isArray(officialPayload)
+    ) {
+      payload.chiron_api_payload = buildChironTaxiritApiPayload(officialPayload);
+    }
+  }
+
   return payload;
 }
 
@@ -5565,6 +5583,162 @@ async function _chironWriteExportStatus(env, statusKey, statusDoc) {
   }
 }
 
+// Chiron Connect 4A0: numeric coercion helpers for the official Rit API body.
+// Coordinates stay raw numbers; afstand/kostprijs are rounded to the decimal
+// precision the Chiron technical manual r3.0 expects.
+function _chironApiNumber(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const num = Number(value);
+  return Number.isFinite(num) ? num : null;
+}
+
+function _chironApiRoundedNumber(value, maxDecimals) {
+  const num = _chironApiNumber(value);
+  if (num === null) return null;
+  const factor = Math.pow(10, maxDecimals);
+  return Math.round(num * factor) / factor;
+}
+
+// Chiron Connect 4A0: serialize the deliberately flat internal
+// officialDraft.payload into the nested official Chiron Rit API JSON body
+// (technical manual r3.0). The internal payload stays flat on purpose; this
+// is the only place that knows the nested wire shape. Null/undefined fields
+// are never emitted. Returns null when the payload is not a serializable
+// reservatie/vertrek/aankomst ride status.
+function buildChironTaxiritApiPayload(officialPayload) {
+  if (
+    !officialPayload ||
+    typeof officialPayload !== "object" ||
+    Array.isArray(officialPayload)
+  ) {
+    return null;
+  }
+
+  const status = cleanText(officialPayload.status, 32);
+  if (!["reservatie", "vertrek", "aankomst"].includes(status)) {
+    return null;
+  }
+
+  const ritnummer = cleanText(officialPayload.ritnummer, 256);
+  const registratie = cleanText(officialPayload.registratie, 64);
+  const naam = cleanText(officialPayload.naam, 256);
+  const broncreatiedatum = cleanText(officialPayload.broncreatiedatum, 64);
+
+  const aanbieder = {};
+  if (registratie) aanbieder.registratie = registratie;
+  if (naam) aanbieder.naam = naam;
+
+  const rit = {
+    taxibedrijf: {
+      aanbieder,
+    },
+  };
+
+  const body = {};
+  if (status) body.status = status;
+  if (ritnummer) body.ritnummer = ritnummer;
+  body.rit = rit;
+  if (broncreatiedatum) body.broncreatiedatum = broncreatiedatum;
+
+  if (status === "vertrek" || status === "aankomst") {
+    const nummerplaat = cleanText(officialPayload.kentekenplaat, 32);
+    const bestuurderspasnummer = cleanText(officialPayload.bestuurderspasnummer, 64);
+    const vertrektijdstip = cleanText(officialPayload.vertrektijdstip, 64);
+    const vLng = _chironApiNumber(officialPayload.vertrekpunt_lengtegraad);
+    const vLat = _chironApiNumber(officialPayload.vertrekpunt_breedtegraad);
+
+    if (nummerplaat) rit.voertuig = { nummerplaat };
+    if (bestuurderspasnummer) rit.uitvoerder = { bestuurderspasnummer };
+    if (vertrektijdstip) rit.vertrektijdstip = vertrektijdstip;
+    if (vLng !== null || vLat !== null) {
+      rit.vertrekpunt = {};
+      if (vLng !== null) rit.vertrekpunt.lengtegraad = vLng;
+      if (vLat !== null) rit.vertrekpunt.breedtegraad = vLat;
+    }
+
+    // Chiron 4A0: kostprijs is optional for vertrek; only attach when present.
+    if (status === "vertrek") {
+      const kostprijs = _chironApiRoundedNumber(officialPayload.kostprijs, 2);
+      if (kostprijs !== null) rit.kostprijs = { waarde: kostprijs };
+    }
+  }
+
+  if (status === "aankomst") {
+    const aankomsttijdstip = cleanText(officialPayload.aankomsttijdstip, 64);
+    const aLng = _chironApiNumber(officialPayload.aankomstpunt_lengtegraad);
+    const aLat = _chironApiNumber(officialPayload.aankomstpunt_breedtegraad);
+    const afstand = _chironApiRoundedNumber(officialPayload.afstand, 3);
+    const kostprijs = _chironApiRoundedNumber(officialPayload.kostprijs, 2);
+
+    if (aankomsttijdstip) rit.aankomsttijdstip = aankomsttijdstip;
+    if (aLng !== null || aLat !== null) {
+      rit.aankomstpunt = {};
+      if (aLng !== null) rit.aankomstpunt.lengtegraad = aLng;
+      if (aLat !== null) rit.aankomstpunt.breedtegraad = aLat;
+    }
+    if (afstand !== null) rit.afstand = { waarde: afstand };
+    if (kostprijs !== null) rit.kostprijs = { waarde: kostprijs };
+  }
+
+  return body;
+}
+
+// Chiron Connect 4A0: interpret a submit response. The official Chiron Rit API
+// can return HTTP 200 with a `fouten` array; a non-empty array is a rejection,
+// not a success. Stays backward compatible with the internal test receiver
+// (no `fouten` field) via response_shape. Never surfaces tokens/secrets.
+function parseChironTaxiritSubmitResponse(httpStatus, responseBody) {
+  const parsedStatus = Number(httpStatus);
+  const statusCode = Number.isFinite(parsedStatus) ? parsedStatus : null;
+  const httpOk = statusCode !== null && statusCode >= 200 && statusCode < 300;
+
+  const bodyIsObject =
+    responseBody && typeof responseBody === "object" && !Array.isArray(responseBody);
+  const hasFoutenArray = bodyIsObject && Array.isArray(responseBody.fouten);
+  const foutenCount = hasFoutenArray ? responseBody.fouten.length : 0;
+  const responseShape = hasFoutenArray
+    ? "chiron_taxirit_api_v1"
+    : "non_chiron_test_receiver";
+
+  const externalReference = _chironExtractExternalReference(responseBody);
+  const bodyMessage = bodyIsObject
+    ? cleanText(responseBody.message ?? responseBody.error, 256)
+    : "";
+
+  if (!httpOk) {
+    return {
+      ok: false,
+      response_shape: responseShape,
+      external_status_code: statusCode,
+      external_reference: externalReference,
+      fouten_count: foutenCount,
+      sanitized_error: _chironSanitizeExportError(
+        bodyMessage || `HTTP ${statusCode ?? "error"}`,
+      ),
+    };
+  }
+
+  if (hasFoutenArray && foutenCount > 0) {
+    return {
+      ok: false,
+      response_shape: responseShape,
+      external_status_code: statusCode,
+      external_reference: externalReference,
+      fouten_count: foutenCount,
+      sanitized_error: "chiron_response_contains_errors",
+    };
+  }
+
+  return {
+    ok: true,
+    response_shape: responseShape,
+    external_status_code: statusCode,
+    external_reference: externalReference,
+    fouten_count: foutenCount,
+    sanitized_error: null,
+  };
+}
+
 async function _chironPostChironExportTestPayload(env, payload) {
   const baseUrl = cleanText(env?.CHIRON_EXPORT_BASE_URL, 512).replace(/\/+$/, "");
   const token = cleanText(env?.CHIRON_EXPORT_API_TOKEN, 512);
@@ -5585,7 +5759,10 @@ async function _chironPostChironExportTestPayload(env, payload) {
   } catch (err) {
     return {
       ok: false,
+      response_shape: "non_chiron_test_receiver",
       external_status_code: null,
+      external_reference: null,
+      fouten_count: 0,
       sanitized_error: _chironSanitizeExportError(err?.message || "network_error"),
     };
   }
@@ -5600,26 +5777,10 @@ async function _chironPostChironExportTestPayload(env, payload) {
     }
   }
 
-  if (!response.ok) {
-    const message =
-      (responseBody &&
-        typeof responseBody === "object" &&
-        cleanText(responseBody.error ?? responseBody.message, 256)) ||
-      `HTTP ${response.status}`;
-    return {
-      ok: false,
-      external_status_code: response.status,
-      sanitized_error: _chironSanitizeExportError(message),
-      external_reference: _chironExtractExternalReference(responseBody),
-    };
-  }
-
-  return {
-    ok: true,
-    external_status_code: response.status,
-    external_reference: _chironExtractExternalReference(responseBody),
-    sanitized_error: null,
-  };
+  // Chiron Connect 4A0: ok/error is decided by parseChironTaxiritSubmitResponse
+  // so that a HTTP 200 carrying a non-empty `fouten` array is treated as a
+  // rejection rather than a successful submit.
+  return parseChironTaxiritSubmitResponse(response.status, responseBody);
 }
 
 async function handleChironExportDryRun(request, url, env, origin) {
@@ -5850,6 +6011,12 @@ async function handleChironExportTest(request, env, origin) {
     const officialIdempotencyKey = cleanText(officialDraft.idempotency_key, 256);
     if (!officialIdempotencyKey) continue;
 
+    // Chiron Connect 4A0: serialize the flat official draft into the nested
+    // official Chiron Rit API body just before submit. If serialization fails
+    // (unexpected for a "ready" payload) we never submit a malformed body.
+    const chironApiPayload = buildChironTaxiritApiPayload(officialPayload);
+    if (!chironApiPayload) continue;
+
     // Status / dedupe key is keyed on the official idempotency key so
     // outbound and return legs of a roundtrip get distinct entries (3B)
     // and re-runs against the same ritnummer/status combination collapse
@@ -5870,6 +6037,7 @@ async function handleChironExportTest(request, env, origin) {
       official_idempotency_key: officialIdempotencyKey,
       official_ritnummer: cleanText(officialPayload.ritnummer, 256) || null,
       official_status: cleanText(officialDraft.status, 32) || null,
+      official_payload_shape: "chiron_taxirit_api_v1",
       sync_state: "pending",
       external_status_code: null,
       external_reference: null,
@@ -5879,15 +6047,17 @@ async function handleChironExportTest(request, env, origin) {
     };
     await _chironWriteExportStatus(env, statusKey, pendingDoc);
 
-    // Chiron Fase 3F: only the official Chiron payload shape is sent
-    // externally. No tenant_id, event_id, payment_status, amount, vat_*
+    // Chiron Fase 3F + 4A0: only the nested official Chiron Rit API body is
+    // sent externally. No tenant_id, event_id, payment_status, amount, vat_*
     // or other generic wrapper fields leak to the test receiver.
-    const postResult = await _chironPostChironExportTestPayload(env, officialPayload);
+    const postResult = await _chironPostChironExportTestPayload(env, chironApiPayload);
     const finalDoc = {
       ...pendingDoc,
       sync_state: postResult.ok ? "synced" : "failed",
       external_status_code: postResult.external_status_code ?? null,
       external_reference: postResult.external_reference ?? null,
+      response_shape: postResult.response_shape ?? null,
+      fouten_count: postResult.fouten_count ?? null,
       sanitized_error: postResult.sanitized_error ?? null,
       last_attempt_at: new Date().toISOString(),
     };
@@ -5898,9 +6068,12 @@ async function handleChironExportTest(request, env, origin) {
       idempotency_key: officialIdempotencyKey,
       official_ritnummer: pendingDoc.official_ritnummer,
       official_status: pendingDoc.official_status,
+      official_payload_shape: pendingDoc.official_payload_shape,
       sync_state: finalDoc.sync_state,
       external_status_code: finalDoc.external_status_code,
       external_reference: finalDoc.external_reference,
+      response_shape: finalDoc.response_shape,
+      fouten_count: finalDoc.fouten_count,
       attempt_count: finalDoc.attempt_count,
       sanitized_error: finalDoc.sanitized_error,
       status_key: statusKey,
