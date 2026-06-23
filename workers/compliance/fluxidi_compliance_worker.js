@@ -6188,6 +6188,23 @@ async function handleChironTestflowSubmitOnePost(request, env, origin) {
   const officialStatus = cleanText(officialDraft?.status, 32).toLowerCase();
   const officialIdempotencyKey = cleanText(officialDraft?.idempotency_key, 256);
   const ritnummer = cleanText(officialPayload?.ritnummer, 256);
+  const validationStatus = cleanText(officialValidation.status, 64).toLowerCase();
+  const validationMissing = Array.isArray(officialValidation.missing)
+    ? officialValidation.missing
+    : [];
+  const validationErrors = Array.isArray(officialValidation.errors)
+    ? officialValidation.errors
+    : [];
+  const validationBlockers = Array.isArray(officialValidation.blockers)
+    ? officialValidation.blockers
+    : [];
+  const officialValidationAcceptable =
+    officialValidation.exportable === true &&
+    (validationStatus === "ready" || validationStatus === "warning") &&
+    validationMissing.length === 0 &&
+    validationErrors.length === 0 &&
+    validationBlockers.length === 0 &&
+    officialValidation.sequence_safe !== false;
 
   const baseResponse = {
     ok: true,
@@ -6200,12 +6217,10 @@ async function handleChironTestflowSubmitOnePost(request, env, origin) {
     official_status: officialStatus || null,
     official_ritnummer: ritnummer || null,
     idempotency_key: officialIdempotencyKey || null,
-    validation_status: cleanText(officialValidation.status, 64) || null,
+    validation_status: validationStatus || null,
     validation_exportable: officialValidation.exportable === true,
     validation_sequence_safe: officialValidation.sequence_safe !== false,
-    validation_blockers: Array.isArray(officialValidation.blockers)
-      ? officialValidation.blockers.slice(0, 20)
-      : [],
+    validation_blockers: validationBlockers.slice(0, 20),
     validation_warnings: Array.isArray(officialValidation.warnings)
       ? officialValidation.warnings.slice(0, 20)
       : [],
@@ -6216,8 +6231,7 @@ async function handleChironTestflowSubmitOnePost(request, env, origin) {
     !officialDraft ||
     officialDraft.category !== "ride_payload" ||
     officialStatus !== expectedOfficialStatus ||
-    officialValidation.exportable !== true ||
-    officialValidation.status !== "ready" ||
+    !officialValidationAcceptable ||
     !officialPayload ||
     typeof officialPayload !== "object" ||
     Array.isArray(officialPayload) ||
