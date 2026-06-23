@@ -1108,10 +1108,10 @@ class _ChironHubStatusCardState extends State<_ChironHubStatusCard> {
                         children: [
                           Text(
                             _t(
-                              nl: 'Chiron-koppeling',
-                              en: 'Chiron connection',
-                              fr: 'Connexion Chiron',
-                              es: 'Conexión Chiron',
+                              nl: 'Chiron-instellingen',
+                              en: 'Chiron settings',
+                              fr: 'Paramètres Chiron',
+                              es: 'Configuración Chiron',
                             ),
                             style: TextStyle(
                               color: _chironGold,
@@ -1143,10 +1143,10 @@ class _ChironHubStatusCardState extends State<_ChironHubStatusCard> {
                       const SizedBox(height: 8),
                       Text(
                         _t(
-                          nl: 'Vul de Chiron-toegang in die u via de officiële Chiron-omgeving ontvangt. Fluxidi gebruikt deze om ritdata door te sturen.',
-                          en: 'Enter the Chiron access you received through the official Chiron environment. Fluxidi uses it to forward ride data.',
-                          fr: 'Saisissez l’accès Chiron reçu via l’environnement officiel Chiron. Fluxidi l’utilise pour transmettre les données de course.',
-                          es: 'Introduzca el acceso Chiron recibido a través del entorno oficial de Chiron. Fluxidi lo usa para reenviar los datos de viaje.',
+                          nl: 'Beheer regio, testomgeving en productie-instellingen in Bedrijfsinstellingen.',
+                          en: 'Manage region, test environment and production settings in Business Settings.',
+                          fr: 'Gérez la région, l’environnement de test et les paramètres de production dans les paramètres entreprise.',
+                          es: 'Gestiona región, entorno de prueba y ajustes de producción en la configuración de empresa.',
                         ),
                         style: TextStyle(
                           color: _chironTextSecondary,
@@ -1172,10 +1172,10 @@ class _ChironHubStatusCardState extends State<_ChironHubStatusCard> {
                             ),
                             child: Text(
                               _t(
-                                nl: 'Koppeling instellen',
-                                en: 'Configure connection',
-                                fr: 'Configurer la connexion',
-                                es: 'Configurar conexión',
+                                nl: 'Open instellingen',
+                                en: 'Open settings',
+                                fr: 'Ouvrir les paramètres',
+                                es: 'Abrir configuración',
                               ),
                               style: const TextStyle(
                                 fontWeight: FontWeight.w800,
@@ -2700,10 +2700,10 @@ class _ChironTestAccessCardState extends State<_ChironTestAccessCard> {
             children: [
               Text(
                 _t(
-                  nl: 'Chiron-koppeling',
-                  en: 'Chiron connection',
-                  fr: 'Connexion Chiron',
-                  es: 'Conexión Chiron',
+                  nl: 'Testgegevens & acceptatie',
+                  en: 'Test credentials & acceptance',
+                  fr: 'Identifiants de test et acceptation',
+                  es: 'Credenciales de prueba y aceptación',
                 ),
                 style: TextStyle(
                   color: _chironGold,
