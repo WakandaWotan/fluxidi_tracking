@@ -5807,17 +5807,57 @@ async function handleChironExportTest(request, env, origin) {
 
   const exportAttempts = [];
   const nowIso = new Date().toISOString();
-  const payloads = collectResult.limitedEntries.map((entry) =>
-    buildChironExportPayload(entry.event, entry.key, { includeRaw: false }),
+
+  // Chiron Fase 3F: live test-submit MUST use the validated official draft
+  // payload (chiron_official_draft.payload), not the older generic
+  // buildChironExportPayload wrapper. We hydrate the same scoped
+  // business/fleet/driver cache as the dry-run/readiness flow and build a
+  // per-batch ritnummer status index so sequence checks match dry-run.
+  const liveOfficialScope = { tenant_id: tenantId, company_id: companyId };
+  const liveScopedHydrationCache = await _chironLoadScopedHydrationCache(
+    env,
+    liveOfficialScope,
+    true,
+  );
+  const liveBatchRitStatuses = _chironBuildBatchRitStatusIndex(
+    collectResult.limitedEntries,
+  );
+  const livePayloads = collectResult.limitedEntries.map((entry) =>
+    buildChironExportPayload(entry.event, entry.key, {
+      includeRaw: false,
+      includeOfficialDraft: true,
+      batchRitStatuses: liveBatchRitStatuses,
+      scopedHydrationCache: liveScopedHydrationCache,
+    }),
   );
 
-  for (const payload of payloads) {
-    if (!payload.exportable || !payload.event_id) continue;
+  for (const payload of livePayloads) {
+    // Chiron Fase 3F strict gating. We never submit when the official
+    // draft is missing, when the event is not a ride_payload (e.g.
+    // payment_update / cancellation), when validation does not allow
+    // export, or when validation status is anything other than "ready".
+    // Warning / required_review submits are intentionally blocked here
+    // and may only be enabled later behind an explicit feature flag.
+    const officialDraft = payload?.chiron_official_draft;
+    if (!officialDraft || officialDraft.category !== "ride_payload") continue;
+    const officialValidation = officialDraft.validation || {};
+    if (officialValidation.exportable !== true) continue;
+    if (officialValidation.status !== "ready") continue;
+    const officialPayload = officialDraft.payload;
+    if (!officialPayload || typeof officialPayload !== "object" || Array.isArray(officialPayload)) {
+      continue;
+    }
+    const officialIdempotencyKey = cleanText(officialDraft.idempotency_key, 256);
+    if (!officialIdempotencyKey) continue;
 
+    // Status / dedupe key is keyed on the official idempotency key so
+    // outbound and return legs of a roundtrip get distinct entries (3B)
+    // and re-runs against the same ritnummer/status combination collapse
+    // onto the same status doc.
     const statusKey = buildChironExportStatusKey(
       tenantSegment,
       companySegment,
-      payload.event_id,
+      officialIdempotencyKey,
     );
     const previousStatus = await _chironReadExportStatus(env, statusKey);
     const attemptCount = Number(previousStatus?.attempt_count || 0) + 1;
@@ -5827,6 +5867,9 @@ async function handleChironExportTest(request, env, origin) {
       tenant_id: tenantId,
       company_id: companyId,
       event_id: payload.event_id,
+      official_idempotency_key: officialIdempotencyKey,
+      official_ritnummer: cleanText(officialPayload.ritnummer, 256) || null,
+      official_status: cleanText(officialDraft.status, 32) || null,
       sync_state: "pending",
       external_status_code: null,
       external_reference: null,
@@ -5836,7 +5879,10 @@ async function handleChironExportTest(request, env, origin) {
     };
     await _chironWriteExportStatus(env, statusKey, pendingDoc);
 
-    const postResult = await _chironPostChironExportTestPayload(env, payload);
+    // Chiron Fase 3F: only the official Chiron payload shape is sent
+    // externally. No tenant_id, event_id, payment_status, amount, vat_*
+    // or other generic wrapper fields leak to the test receiver.
+    const postResult = await _chironPostChironExportTestPayload(env, officialPayload);
     const finalDoc = {
       ...pendingDoc,
       sync_state: postResult.ok ? "synced" : "failed",
@@ -5849,7 +5895,9 @@ async function handleChironExportTest(request, env, origin) {
 
     exportAttempts.push({
       event_id: payload.event_id,
-      idempotency_key: payload.idempotency_key,
+      idempotency_key: officialIdempotencyKey,
+      official_ritnummer: pendingDoc.official_ritnummer,
+      official_status: pendingDoc.official_status,
       sync_state: finalDoc.sync_state,
       external_status_code: finalDoc.external_status_code,
       external_reference: finalDoc.external_reference,
