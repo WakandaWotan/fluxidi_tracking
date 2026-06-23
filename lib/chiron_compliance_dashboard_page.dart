@@ -9939,6 +9939,19 @@ class _RemoteComplianceEventsSectionState
     return 'event:index_$index';
   }
 
+  bool _isLegScopedEvent(RemoteComplianceEvent event) {
+    if (event.legType.trim().isNotEmpty) return true;
+    if (event.legId.trim().isNotEmpty) return true;
+    return false;
+  }
+
+  bool _isParentScopedStatusUpdate(RemoteComplianceEvent event) {
+    if (_normalizeToken(event.eventType) != 'booking_status_update') {
+      return false;
+    }
+    return !_isLegScopedEvent(event);
+  }
+
   int _compareRemoteEventsNewestFirst(
     RemoteComplianceEvent a,
     RemoteComplianceEvent b,
@@ -10050,16 +10063,11 @@ class _RemoteComplianceEventsSectionState
     // progress without misreading it as a full completion.
     final sorted = [...events]..sort(_compareRemoteEventsNewestFirst);
 
-    bool isLegScopedEvent(RemoteComplianceEvent event) {
-      if (event.legType.trim().isNotEmpty) return true;
-      if (event.legId.trim().isNotEmpty) return true;
-      return false;
-    }
-
-    // 1. Cancellation always wins.
+    // 1. Parent-scope cancellation always wins. Leg-scoped cancellation
+    // (e.g. return leg cancelled after outbound completed) stays visible in
+    // the audit row, but must not poison the dossier/other-leg status chip.
     for (final event in sorted) {
-      final eventType = _normalizeToken(event.eventType);
-      if (eventType != 'booking_status_update') continue;
+      if (!_isParentScopedStatusUpdate(event)) continue;
       final statusTokens = <String>[
         _normalizeToken(event.lifecycleStatus),
         _normalizeToken(event.status),
@@ -10087,7 +10095,7 @@ class _RemoteComplianceEventsSectionState
     for (final event in sorted) {
       final eventType = _normalizeToken(event.eventType);
       if (eventType != 'booking_status_update') continue;
-      if (isLegScopedEvent(event)) continue;
+      if (_isLegScopedEvent(event)) continue;
       latestParentStatusUpdate = event;
       break;
     }
@@ -10121,10 +10129,10 @@ class _RemoteComplianceEventsSectionState
     for (final event in sorted) {
       if (event.hasLegMetadata) hasAnyLegMetadata = true;
       final eventType = _normalizeToken(event.eventType);
-      if (eventType == 'ride_stop' && isLegScopedEvent(event)) {
+      if (eventType == 'ride_stop' && _isLegScopedEvent(event)) {
         hasLegCompletion = true;
       }
-      if (eventType == 'booking_status_update' && isLegScopedEvent(event)) {
+      if (eventType == 'booking_status_update' && _isLegScopedEvent(event)) {
         final legStatusTokens = <String>[
           _normalizeToken(event.legStatus),
           _normalizeToken(event.lifecycleStatus),
