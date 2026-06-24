@@ -65944,6 +65944,77 @@ function buildDocumentReferenceIndexKey(scope, sequenceType, documentReference) 
   return `doc_ref:${tenantPart}:${companyPart}:${typePart}:${reference}`;
 }
 
+/* Read-only document idempotency lookup (Patch 2G-G).
+ *
+ * For FUTURE document issue endpoints ONLY. Idempotency MUST be checked BEFORE
+ * any sequence allocation: a duplicate retry (same tenant/company + document
+ * type + idempotency key) must return the already-issued document instead of
+ * allocating a NEW number. This helper is intentionally inert in this patch:
+ *   - read-only (one BOOKING_KV.get); no writes
+ *   - no DOCUMENT_REFERENCE_SEQUENCE / Durable Object calls
+ *   - no number allocation, no registry create/update, no audit events
+ *   - no routes; it is not invoked from any existing runtime path.
+ *
+ * Returns null when not found / not resolvable, or a small neutral result when
+ * found. Never throws on missing scope or malformed stored data.
+ */
+async function findDocumentByIdempotency(env, scope, documentType, idempotencyKey) {
+  if (!env?.BOOKING_KV) return null;
+
+  let key;
+  try {
+    key = buildDocumentIdempotencyKey(scope, documentType, idempotencyKey);
+  } catch (_) {
+    // Missing tenant/company scope, document type, or idempotency key.
+    return null;
+  }
+
+  // Read as text so a plain document_id string is tolerated as a future
+  // fallback (KV { type: "json" } would throw on a non-JSON value).
+  const raw = await env.BOOKING_KV.get(key);
+  const stored = safeStr(raw);
+  if (!stored) return null;
+
+  let record = null;
+  if (stored.startsWith("{")) {
+    try {
+      record = JSON.parse(stored);
+    } catch (_) {
+      // Tolerate malformed data: log a PII-free diagnostic and treat as miss.
+      console.log(
+        `[DOCUMENT_IDEMPOTENCY][PARSE_WARN] malformed json (type=${documentReferenceTypePart(documentType, "")})`,
+      );
+      return null;
+    }
+  }
+
+  if (record && typeof record === "object") {
+    const documentId = safeStr(record.document_id || record.documentId);
+    if (!documentId) return null;
+    return {
+      document_id: documentId,
+      document_number:
+        safeStr(record.document_number || record.documentNumber) || null,
+      proof_reference:
+        safeStr(record.proof_reference || record.proofReference) || null,
+      document_type:
+        safeStr(record.document_type || record.documentType) ||
+        safeStr(documentType) ||
+        null,
+      idempotent_replay: true,
+    };
+  }
+
+  // Plain document_id string fallback.
+  return {
+    document_id: stored,
+    document_number: null,
+    proof_reference: null,
+    document_type: safeStr(documentType) || null,
+    idempotent_replay: true,
+  };
+}
+
 function attachPublicBookingReferenceAliases(target, publicBookingReference) {
   if (!target || typeof target !== "object") return target;
   const value = safeStr(publicBookingReference);
