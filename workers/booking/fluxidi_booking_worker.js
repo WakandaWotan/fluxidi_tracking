@@ -67571,12 +67571,33 @@ async function _issueCreditNoteCore({
     }
 
     // 7. Derive credit context (leg-first, totals + currency + VAT).
+    //
+    // 2G-S-B6: scoped server-side currency fallback for legacy records.
+    // Some historical bookings were stamped without a currency on any of
+    // leg/record/booking/quote/payload. The same tenant/company has, by
+    // contract, an authoritative pricing profile (used at booking creation)
+    // that carries the strict ISO-3 currency. We load it here -- scoped to
+    // EXACTLY the request's tenant_id/company_id that already passed the
+    // scope-match check above -- and pass it to deriveServerSideCreditContext
+    // as `server_pricing_profile`. The derivation function uses it ONLY
+    // when record-side resolution returns empty, and re-validates ISO-3.
+    // This is a read-only, server-only fallback: no KV write, no backfill,
+    // no client-supplied currency is trusted, no EUR default.
+    let serverScopedPricingProfile = null;
+    try {
+      serverScopedPricingProfile = await _loadTenantPricingProfile(env, scope, {
+        allowTenantLegacyFallback: true,
+      });
+    } catch (_) {
+      serverScopedPricingProfile = null;
+    }
     const credit = deriveServerSideCreditContext(rec, {
       source_leg_id: sourceLegId,
       source_leg_type: sourceLegTypeRaw,
       expected_currency: currency,
       expected_totals: expectedTotals,
       booking_id: canonicalBookingId,
+      server_pricing_profile: serverScopedPricingProfile,
     });
     if (!credit.ok) {
       const errCode = credit.error || "internal_error";
@@ -68008,27 +68029,138 @@ function deriveServerSideCreditContext(rec, options = {}) {
   const creditedAmountInclVat = creditedAmountCents / 100;
 
   // ---- 4. Currency ----------------------------------------------------------
-  // Currency lives on the booking, never on the leg in practice. Read all the
-  // standard aliases; refuse if missing or if it disagrees with the caller's
-  // expected_currency.
-  const currencyCandidates = [
-    sourceKind === "leg" ? legEntry?.currency : null,
-    rec?.currency,
-    rec?.booking?.currency,
-    rec?.payload?.currency,
-    _pick(rec, ["quote", "currency"], null),
-    _pick(rec, ["payload", "quote", "currency"], null),
-    _pick(rec, ["booking", "quote", "currency"], null),
-  ];
-  let currency = "";
-  for (const candidate of currencyCandidates) {
-    const c = safeStr(candidate, 8).toUpperCase();
-    if (c) {
-      currency = c;
-      break;
+  // Leg-first preserved: a leg-scoped credit context uses legEntry.currency
+  // when present (2G-N-E stamps it at credit-decision time). Otherwise reuse
+  // the SAME canonical reader that write-side stamping already uses
+  // (resolveExplicitBookingCurrencyFromRecordOrPayload via
+  // _resolveDocumentReadyCreditCurrency at credit-decision time), so reader
+  // and writer agree on which booking paths constitute "the currency": the
+  // booking_currency aliases, quote.pricing.currency, quote.pricing_main /
+  // pricing_return.currency, pricing_profile.currency, payload.payment
+  // .currency, etc. Strict ISO-3 only via normalizeExplicitIsoCurrency
+  // inside the canonical reader; never synthesize EUR (2G-S-B3).
+  const pricingProfile =
+    (rec?.pricing_profile && typeof rec.pricing_profile === "object"
+      ? rec.pricing_profile
+      : null) ||
+    (rec?.pricingProfile && typeof rec.pricingProfile === "object"
+      ? rec.pricingProfile
+      : null) ||
+    (rec?.payload?.pricing_profile &&
+    typeof rec.payload.pricing_profile === "object"
+      ? rec.payload.pricing_profile
+      : null) ||
+    (rec?.payload?.pricingProfile &&
+    typeof rec.payload.pricingProfile === "object"
+      ? rec.payload.pricingProfile
+      : null) ||
+    null;
+  let currency =
+    (sourceKind === "leg" ? safeStr(legEntry?.currency, 8).toUpperCase() : "") ||
+    resolveExplicitBookingCurrencyFromRecordOrPayload({
+      payload: rec?.payload,
+      quote: rec?.quote,
+      pricingProfile,
+      booking: rec?.booking,
+    });
+  let currencySource = currency ? "record" : "";
+
+  // 2G-S-B6: scoped server-side pricing-profile currency fallback. Applied
+  // ONLY when leg/record/booking/payload/quote resolution returned empty.
+  // `options.server_pricing_profile` is the normalized profile returned by
+  // `_loadTenantPricingProfile` for the request's tenant_id/company_id
+  // (see _issueCreditNoteCore). `_normalizeTenantPricingProfile` already
+  // validates `.currency` via `normalizeExplicitIsoCurrency`; we re-check
+  // here so this branch is independent of the loader's invariants. No EUR
+  // default, no client-trusted currency, no record mutation.
+  if (!currency) {
+    const serverFallbackCurrency = normalizeExplicitIsoCurrency(
+      options?.server_pricing_profile?.currency ??
+        options?.serverPricingProfile?.currency,
+    );
+    if (serverFallbackCurrency) {
+      currency = serverFallbackCurrency;
+      currencySource = "server_pricing_profile";
+      warnings.push("legacy_server_scope_currency_applied");
     }
   }
-  if (!currency) return { ok: false, error: "currency_missing" };
+  if (!currency) {
+    // 2G-S-B5: diagnostic-only probe. Runs ONLY when the canonical reader +
+    // leg-first path returned no ISO-3 currency. Logs the boolean presence of
+    // every currency-bearing path the reader (resolveExplicitBookingCurrency
+    // FromRecordOrPayload) and the write-side stamper (_stampExplicitBooking
+    // CurrencyOnQuoteOut / OnPersistedRecord) touch, so we can tell whether
+    // the record genuinely lacks a currency or whether it lives on a path the
+    // reader does not visit. No PII, no amounts, no payload/record dump.
+    // Behaviour is unchanged: the original currency_missing return follows.
+    try {
+      const probeBookingIdRaw = safeStr(
+        options?.booking_id ?? options?.bookingId,
+        200,
+      );
+      const probeBookingMask = _bookingIntentMask(probeBookingIdRaw) || "-";
+      const probeLegMask = _bookingIntentMask(resolvedLegId) || "-";
+      const probePayloadObj =
+        rec?.payload && typeof rec.payload === "object" ? rec.payload : {};
+      const probeQuoteObj =
+        rec?.quote && typeof rec.quote === "object" ? rec.quote : {};
+      const probeBookingObj =
+        rec?.booking && typeof rec.booking === "object" ? rec.booking : {};
+      const probePayloadQuoteObj =
+        probePayloadObj.quote && typeof probePayloadObj.quote === "object"
+          ? probePayloadObj.quote
+          : {};
+      const probeBookingQuoteObj =
+        probeBookingObj.quote && typeof probeBookingObj.quote === "object"
+          ? probeBookingObj.quote
+          : {};
+      const probeQuotePricingObj =
+        probeQuoteObj.pricing && typeof probeQuoteObj.pricing === "object"
+          ? probeQuoteObj.pricing
+          : {};
+      const probeQuotePricingMainObj =
+        probeQuoteObj.pricing_main &&
+        typeof probeQuoteObj.pricing_main === "object"
+          ? probeQuoteObj.pricing_main
+          : {};
+      const probeQuotePricingReturnObj =
+        probeQuoteObj.pricing_return &&
+        typeof probeQuoteObj.pricing_return === "object"
+          ? probeQuoteObj.pricing_return
+          : {};
+      const probePayloadPaymentObj =
+        probePayloadObj.payment && typeof probePayloadObj.payment === "object"
+          ? probePayloadObj.payment
+          : {};
+      const probeHas = (value) => (safeStr(value, 8) ? "true" : "false");
+      const probeAnyHas = (...values) =>
+        values.some((v) => safeStr(v, 8)) ? "true" : "false";
+      const probeLegCurrencyValue =
+        normalizeExplicitIsoCurrency(legEntry?.currency) || "";
+      console.log(
+        `[CREDIT_NOTE_CURRENCY_PROBE] source_kind=${sourceKind} ` +
+          `booking=${probeBookingMask} leg=${probeLegMask} ` +
+          `has_leg_currency=${probeHas(legEntry?.currency)} ` +
+          `leg_currency_value=${probeLegCurrencyValue} ` +
+          `has_rec_currency=${probeAnyHas(rec?.currency, rec?.booking_currency, rec?.bookingCurrency)} ` +
+          `has_rec_booking_currency=${probeAnyHas(probeBookingObj.currency, probeBookingObj.booking_currency, probeBookingObj.bookingCurrency)} ` +
+          `has_payload_currency=${probeAnyHas(probePayloadObj.currency, probePayloadObj.booking_currency, probePayloadObj.bookingCurrency)} ` +
+          `has_quote_currency=${probeHas(probeQuoteObj.currency)} ` +
+          `has_payload_quote_currency=${probeHas(probePayloadQuoteObj.currency)} ` +
+          `has_booking_quote_currency=${probeHas(probeBookingQuoteObj.currency)} ` +
+          `has_quote_pricing_currency=${probeHas(probeQuotePricingObj.currency)} ` +
+          `has_quote_pricing_main_currency=${probeHas(probeQuotePricingMainObj.currency)} ` +
+          `has_quote_pricing_return_currency=${probeHas(probeQuotePricingReturnObj.currency)} ` +
+          `has_pricing_profile_currency=${probeAnyHas(pricingProfile?.currency, pricingProfile?.booking_currency, pricingProfile?.bookingCurrency)} ` +
+          `has_payload_payment_currency=${probeHas(probePayloadPaymentObj.currency)} ` +
+          `has_server_pricing_profile_currency=${probeHas(options?.server_pricing_profile?.currency ?? options?.serverPricingProfile?.currency)} ` +
+          `resolved_currency=false`,
+      );
+    } catch (_) {
+      // Diagnostic must never affect behaviour.
+    }
+    return { ok: false, error: "currency_missing" };
+  }
   if (expectedCurrencyRaw && expectedCurrencyRaw !== currency) {
     return { ok: false, error: "currency_mismatch" };
   }
@@ -68230,6 +68362,7 @@ function deriveServerSideCreditContext(rec, options = {}) {
       credited_amount_cents: creditedAmountCents,
       credited_amount_incl_vat: creditedAmountInclVat,
       currency,
+      currency_source: currencySource || "record",
       totals: {
         total_incl_vat: creditedAmountInclVat,
         subtotal_ex_vat: subtotalExVat,

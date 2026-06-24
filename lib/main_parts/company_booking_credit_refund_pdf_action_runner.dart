@@ -1,5 +1,61 @@
 part of '../main.dart';
 
+/// 2G-S-B4: resolve the canonical (parent) booking id used by BOTH the
+/// credit-note issue request and the Documents section GET. Must always be a
+/// `booking:<id>` KV storage key, NEVER a public/display reference.
+///
+/// Storage-key sources only. The backend list projector emits both `booking_id`
+/// and `parent_booking_id` as the parent record's actual KV storage key (e.g.
+/// `2026-06-628854` for a PLN roundtrip leg row). The companion
+/// `parent_booking_reference`, `linked_order_reference`, `planning_reference`,
+/// `public_booking_reference` and `booking_reference` fields (surfaced via
+/// `_CompanyBookingOverviewItem.parentReferenceText`) are DISPLAY-ONLY refs
+/// allocated by the booking-reference sequence DO (e.g. `2026-06-000079`,
+/// `PLN-2026-000293`). They are never `booking:<id>` keys and MUST NOT be
+/// used as `canonical_booking_id` — sending them yields a backend 404
+/// `source_booking_not_found`.
+///
+/// 2G-S-B2-hardening regression note: a previous tier preferred
+/// `parentReferenceText` whenever it matched `YYYY-MM-NNNNNN`. That
+/// surfaced the public sequence id and bypassed the real storage key.
+/// Removed in 2G-S-B4.
+String _resolveCompanyBookingDocumentsCanonicalId(
+  _CompanyBookingOverviewItem item,
+) {
+  String stripLegSuffix(String value) {
+    final colon = value.indexOf(':');
+    return colon > 0 ? value.substring(0, colon) : value;
+  }
+
+  final ownId = item.bookingId.trim();
+  final parentId = item.parentBookingId.trim();
+  // 1. Explicit parent_booking_id from the backend, ONLY when genuinely
+  //    different from the row's own bookingId (i.e. not the
+  //    `_CompanyBookingOverviewItem.fromMap` fallback that copies
+  //    `bookingId` into `parentBookingId`). Strip any defensive ":LEG"
+  //    suffix in case a parent slot ever carries a leg id directly.
+  if (parentId.isNotEmpty && parentId != ownId) {
+    return stripLegSuffix(parentId);
+  }
+  // 2. Fallback: the row's own bookingId stripped of any ":LEG" suffix.
+  //    For roundtrip operational-leg rows the backend projector already
+  //    puts the parent's storage key into `booking_id`, so this is the
+  //    correct parent canonical id (e.g. `2026-06-628854` for the PLN
+  //    leg row). For parent/full booking rows the bookingId is itself
+  //    the storage key.
+  if (ownId.isEmpty) return '';
+  return stripLegSuffix(ownId);
+}
+
+/// 2G-S-B2 diagnostics: short, PII-free booking-ref mask for `[REQ]`/`[FETCH]`
+/// logs. Mirrors the existing `_safeBookingRefForDiag` style.
+String _bookingRefMaskForCreditIssueLog(String value) {
+  final text = value.trim();
+  if (text.isEmpty) return '-';
+  if (text.length <= 8) return text;
+  return '${text.substring(0, 4)}…${text.substring(text.length - 2)}';
+}
+
 /// Patch-1 local document runner for company-bookings credit / refund PDFs.
 ///
 /// This runner is intentionally provider-neutral and fully local:
@@ -32,7 +88,33 @@ class _CompanyBookingCreditRefundPdfActionRunner {
       _showPreflightBlocked(context);
       return;
     }
-    final bytes = await _buildDocumentBytes(item: item, kind: _kindCreditNote);
+
+    // 2G-S-B2: issue (or idempotently replay) an OFFICIAL Document Core credit
+    // note before rendering, so the PDF carries the backend-authoritative FCN-*
+    // number and the Documents section can show it. Never blocks the preview:
+    // on any failure we fall back to the existing local (unnumbered) PDF.
+    final canonicalBookingId = _canonicalBookingId(item);
+    final issue = await _issueCompanyCreditNote(
+      item: item,
+      canonicalBookingId: canonicalBookingId,
+    );
+    if (!context.mounted) return;
+    String? documentNumber;
+    String? issueTimestampIso;
+    if (issue != null && issue.ok) {
+      documentNumber = issue.documentNumber;
+      issueTimestampIso = issue.issueTimestamp;
+      _BookingDocumentsRefreshBus.instance.requestRefresh(canonicalBookingId);
+    } else if (issue != null) {
+      _showIssueFallbackNotice(context);
+    }
+
+    final bytes = await _buildDocumentBytes(
+      item: item,
+      kind: _kindCreditNote,
+      documentNumber: documentNumber,
+      issueTimestampIso: issueTimestampIso,
+    );
     if (!context.mounted) return;
     if (bytes == null) {
       _showGenerationFailed(context);
@@ -40,7 +122,8 @@ class _CompanyBookingCreditRefundPdfActionRunner {
     }
     debugPrint(
       '[COMPANY_BOOKINGS][CREDIT_NOTE_PDF][PREVIEW] '
-      'leg=${_CompanyBookingOverviewItem.isRoundtripOperationalLegRow(item)} hasPdf=true',
+      'leg=${_CompanyBookingOverviewItem.isRoundtripOperationalLegRow(item)} '
+      'hasPdf=true numbered=${(documentNumber ?? '').isNotEmpty}',
     );
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
@@ -161,9 +244,173 @@ class _CompanyBookingCreditRefundPdfActionRunner {
     );
   }
 
+  static void _showIssueFallbackNotice(BuildContext context) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          _tr(
+            nl: 'Officiële creditnota kon nu niet worden uitgegeven; er wordt een lokaal voorbeeld getoond.',
+            en: 'Official credit note could not be issued right now; showing a local preview.',
+            fr: 'La note de crédit officielle n’a pas pu être émise ; aperçu local affiché.',
+            es: 'No se pudo emitir la nota de crédito oficial ahora; se muestra una vista previa local.',
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Canonical (parent) booking id used for issuing/listing documents.
+  /// Delegates to the shared resolver so this file and the booking-overview
+  /// page agree on the same canonical id for both issue + Documents list.
+  static String _canonicalBookingId(_CompanyBookingOverviewItem item) {
+    return _resolveCompanyBookingDocumentsCanonicalId(item);
+  }
+
+  /// Deterministic FNV-1a hash (lowercase hex) used for `client_draft_hash`.
+  /// Stable across taps on the same device (no randomized seed), contains no
+  /// PII (inputs are ids/amounts only).
+  static String _stableHashHex(String input) {
+    var hash = 0xcbf29ce484222325;
+    const prime = 0x100000001b3;
+    for (final unit in input.codeUnits) {
+      hash ^= unit;
+      hash = (hash * prime) & 0xFFFFFFFFFFFFFFFF;
+    }
+    return hash.toRadixString(16).padLeft(16, '0');
+  }
+
+  /// 2G-S-B2: issue (or idempotently replay) an official company-scoped credit
+  /// note via POST /company/documents/credit-note/issue (2G-S-B1). Returns:
+  ///   - null            when issuing should not be attempted (skip, no notice)
+  ///   - outcome.ok=false on an attempted-but-failed request (caller notices)
+  ///   - outcome.ok=true  with the backend-authoritative document_number.
+  /// Never throws; never allocates a number client-side.
+  static Future<_CreditNoteIssueOutcome?> _issueCompanyCreditNote({
+    required _CompanyBookingOverviewItem item,
+    required String canonicalBookingId,
+  }) async {
+    if (canonicalBookingId.isEmpty) return null;
+    final creditedCents = item.creditedAmountCents ?? 0;
+    if (creditedCents <= 0) return null;
+    final currency = item.currency.trim().toUpperCase();
+    if (currency.isEmpty) return null;
+
+    final scope = _activeBookingScopeQuery();
+    final tenantId = (scope['tenant_id'] ?? scope['tenantId'] ?? '').trim();
+    final companyId = (scope['company_id'] ?? scope['companyId'] ?? '').trim();
+
+    final isLeg = _CompanyBookingOverviewItem.isRoundtripOperationalLegRow(
+      item,
+    );
+    final legId = isLeg ? item.legId.trim() : '';
+    final legType = isLeg ? item.legType.trim() : '';
+    final legOrParent = legId.isNotEmpty ? legId : canonicalBookingId;
+
+    var idempotencyKey =
+        'credit-note:v1:$tenantId:$companyId:$canonicalBookingId:$legOrParent:$creditedCents:$currency';
+    if (idempotencyKey.length > 200) {
+      idempotencyKey = idempotencyKey.substring(0, 200);
+    }
+
+    final clientDraftHash = _stableHashHex(
+      'cn|v1|$canonicalBookingId|$legOrParent|$creditedCents|$currency|${item.creditDecision.trim()}',
+    );
+
+    final body = <String, dynamic>{
+      'canonical_booking_id': canonicalBookingId,
+      'currency': currency,
+      'expected_totals': <String, dynamic>{
+        'credited_amount_incl_vat': creditedCents / 100,
+      },
+      'idempotency_key': idempotencyKey,
+      'created_by_role': 'company_owner',
+      'client_draft_hash': clientDraftHash,
+    };
+    if (legId.isNotEmpty) body['source_leg_id'] = legId;
+    if (legType.isNotEmpty) body['source_leg_type'] = legType;
+
+    try {
+      final uri = _withActiveBookingScope(
+        kBookingBaseUrl,
+        '/company/documents/credit-note/issue',
+      );
+      final auth = await resolveCompanyOwnerAuthHeaders();
+      // 2G-S-B2 fix: explicitly stamp JSON Content-Type/Accept on top of the
+      // auth headers so the request is always interpreted as JSON regardless
+      // of how resolveCompanyOwnerAuthHeaders defaults change in future.
+      final requestHeaders = <String, String>{
+        ...auth.headers,
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      };
+      // 2G-S-B2 hardening: temporary safe diagnostic. Logs only short masks
+      // of the booking ids — no tokens, no PII, no body contents.
+      debugPrint(
+        '[COMPANY_BOOKINGS][CREDIT_NOTE_ISSUE][REQ] '
+        'canonical=${_bookingRefMaskForCreditIssueLog(canonicalBookingId)} '
+        'leg=${_bookingRefMaskForCreditIssueLog(legId)} '
+        'parent=${_bookingRefMaskForCreditIssueLog(item.parentBookingId)} '
+        'isLeg=$isLeg',
+      );
+      final res = await http
+          .post(uri, headers: requestHeaders, body: jsonEncode(body))
+          .timeout(const Duration(seconds: 15));
+      if (res.statusCode != 200) {
+        final raw = res.body;
+        final truncated = raw.length > 300 ? raw.substring(0, 300) : raw;
+        debugPrint(
+          '[COMPANY_BOOKINGS][CREDIT_NOTE_ISSUE][FAIL] '
+          'status=${res.statusCode} body=$truncated',
+        );
+        return const _CreditNoteIssueOutcome(ok: false);
+      }
+      final decoded = jsonDecode(res.body);
+      if (decoded is! Map || decoded['ok'] != true) {
+        String reason = '';
+        if (decoded is Map) {
+          reason =
+              (decoded['error'] ??
+                      decoded['reason'] ??
+                      decoded['message'] ??
+                      '')
+                  .toString()
+                  .trim();
+        }
+        if (reason.length > 300) reason = reason.substring(0, 300);
+        debugPrint(
+          '[COMPANY_BOOKINGS][CREDIT_NOTE_ISSUE][FAIL] '
+          'body_not_ok reason=${reason.isEmpty ? '-' : reason}',
+        );
+        return const _CreditNoteIssueOutcome(ok: false);
+      }
+      final documentNumber = (decoded['document_number'] ?? '')
+          .toString()
+          .trim();
+      final issueTimestamp = (decoded['issue_timestamp'] ?? '')
+          .toString()
+          .trim();
+      final replay = decoded['idempotent_replay'] == true;
+      debugPrint(
+        '[COMPANY_BOOKINGS][CREDIT_NOTE_ISSUE][OK] '
+        'replay=$replay hasNumber=${documentNumber.isNotEmpty}',
+      );
+      return _CreditNoteIssueOutcome(
+        ok: true,
+        documentNumber: documentNumber,
+        issueTimestamp: issueTimestamp,
+        replay: replay,
+      );
+    } catch (err) {
+      debugPrint('[COMPANY_BOOKINGS][CREDIT_NOTE_ISSUE][ERROR] $err');
+      return const _CreditNoteIssueOutcome(ok: false);
+    }
+  }
+
   static Future<Uint8List?> _buildDocumentBytes({
     required _CompanyBookingOverviewItem item,
     required String kind,
+    String? documentNumber,
+    String? issueTimestampIso,
   }) async {
     try {
       final seller = await _ReceiptPdfActionRunner._buildSellerProfile();
@@ -220,6 +467,8 @@ class _CompanyBookingCreditRefundPdfActionRunner {
               item: item,
               isCreditNote: isCreditNote,
               isLegRow: isLegRow,
+              documentNumber: documentNumber,
+              issueTimestampIso: issueTimestampIso,
             ),
             pw.SizedBox(height: 18),
             pw.Container(
@@ -314,8 +563,26 @@ class _CompanyBookingCreditRefundPdfActionRunner {
     required _CompanyBookingOverviewItem item,
     required bool isCreditNote,
     required bool isLegRow,
+    String? documentNumber,
+    String? issueTimestampIso,
   }) {
-    final rows = <pw.Widget>[
+    final rows = <pw.Widget>[];
+    // 2G-S-B2: stamp the backend-authoritative document number when the
+    // official credit note was issued/replayed. Never synthesized client-side.
+    if (isCreditNote && (documentNumber ?? '').trim().isNotEmpty) {
+      rows.add(
+        _pdfInfoRow(
+          _tr(
+            nl: 'Documentnummer',
+            en: 'Document number',
+            fr: 'Numéro de document',
+            es: 'Número de documento',
+          ),
+          documentNumber!.trim(),
+        ),
+      );
+    }
+    rows.add(
       _pdfInfoRow(
         _tr(
           nl: 'Documentdatum',
@@ -323,8 +590,10 @@ class _CompanyBookingCreditRefundPdfActionRunner {
           fr: 'Date du document',
           es: 'Fecha del documento',
         ),
-        _formatNowDate(),
+        _formatIsoDateOrNow(issueTimestampIso),
       ),
+    );
+    rows.add(
       _pdfInfoRow(
         _tr(
           nl: 'Boekingsreferentie',
@@ -334,7 +603,7 @@ class _CompanyBookingCreditRefundPdfActionRunner {
         ),
         _referenceText(item),
       ),
-    ];
+    );
 
     if (isLegRow) {
       rows.add(
@@ -631,4 +900,34 @@ class _CompanyBookingCreditRefundPdfActionRunner {
     String two(int v) => v.toString().padLeft(2, '0');
     return '${two(dt.day)}-${two(dt.month)}-${dt.year}';
   }
+
+  /// Format an ISO issue timestamp as a local dd-MM-yyyy document date; falls
+  /// back to "now" when absent or unparseable.
+  static String _formatIsoDateOrNow(String? iso) {
+    final trimmed = (iso ?? '').trim();
+    if (trimmed.isNotEmpty) {
+      final parsed = DateTime.tryParse(trimmed);
+      if (parsed != null) {
+        final dt = parsed.toLocal();
+        String two(int v) => v.toString().padLeft(2, '0');
+        return '${two(dt.day)}-${two(dt.month)}-${dt.year}';
+      }
+    }
+    return _formatNowDate();
+  }
+}
+
+/// 2G-S-B2: outcome of a company-scoped credit-note issue/replay attempt.
+class _CreditNoteIssueOutcome {
+  final bool ok;
+  final String documentNumber;
+  final String issueTimestamp;
+  final bool replay;
+
+  const _CreditNoteIssueOutcome({
+    required this.ok,
+    this.documentNumber = '',
+    this.issueTimestamp = '',
+    this.replay = false,
+  });
 }

@@ -3469,14 +3469,11 @@ class _CompanyBookingsOverviewPageState
   }
 
   /// Canonical (parent) booking id used to list issued documents for a card.
-  /// Prefers the roundtrip parent id and strips any `:LEG` suffix so leg rows
-  /// resolve to the same canonical booking the registry indexes under.
+  /// Delegates to the shared 3-tier resolver so this lookup uses the same
+  /// canonical id the credit-note issue action uses (2G-S-B2 hardening: never
+  /// the operational leg id).
   String _documentsBookingId(_CompanyBookingOverviewItem item) {
-    final parent = item.parentBookingId.trim();
-    final base = parent.isNotEmpty ? parent : item.bookingId.trim();
-    if (base.isEmpty) return '';
-    final colon = base.indexOf(':');
-    return colon > 0 ? base.substring(0, colon) : base;
+    return _resolveCompanyBookingDocumentsCanonicalId(item);
   }
 
   Widget _filterChip(

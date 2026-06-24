@@ -1,5 +1,35 @@
 part of '../main.dart';
 
+/// 2G-S-B2: lightweight per-booking refresh signal bus.
+///
+/// The credit-note issue action (`_CompanyBookingCreditRefundPdfActionRunner`)
+/// calls [requestRefresh] after a successful issue/replay so an already-built
+/// [_BookingDocumentsSection] for that booking reloads and shows the new
+/// official document — without rebuilding the whole bookings list. Sections key
+/// on the same canonical booking id used by the 2G-P lookup, so leg rows and
+/// their parent share one signal.
+class _BookingDocumentsRefreshBus {
+  _BookingDocumentsRefreshBus._();
+
+  static final _BookingDocumentsRefreshBus instance =
+      _BookingDocumentsRefreshBus._();
+
+  final Map<String, ValueNotifier<int>> _signals =
+      <String, ValueNotifier<int>>{};
+
+  /// Get-or-create the shared signal for [bookingId]. Sections call this in
+  /// initState so the signal exists before any [requestRefresh].
+  ValueNotifier<int> notifierFor(String bookingId) =>
+      _signals.putIfAbsent(bookingId.trim(), () => ValueNotifier<int>(0));
+
+  /// Bump the signal for [bookingId] if a section is listening. No-op when no
+  /// section for that booking is currently built.
+  void requestRefresh(String bookingId) {
+    final signal = _signals[bookingId.trim()];
+    if (signal != null) signal.value = signal.value + 1;
+  }
+}
+
 /// 2G-Q: read-only typed model for a single issued Document Core record as
 /// returned by `GET /admin/bookings/:bookingId/documents` (2G-P backend).
 ///
@@ -99,6 +129,34 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
   bool _error = false;
   List<_BookingDocumentMetadata> _documents =
       const <_BookingDocumentMetadata>[];
+  late final ValueNotifier<int> _refreshSignal;
+
+  @override
+  void initState() {
+    super.initState();
+    _refreshSignal = _BookingDocumentsRefreshBus.instance.notifierFor(
+      widget.bookingId,
+    );
+    _refreshSignal.addListener(_handleExternalRefresh);
+  }
+
+  @override
+  void dispose() {
+    _refreshSignal.removeListener(_handleExternalRefresh);
+    super.dispose();
+  }
+
+  /// 2G-S-B2: an external producer (credit-note issue) asked us to reload.
+  /// Expand and force a fresh fetch so the newly issued document appears.
+  void _handleExternalRefresh() {
+    if (!mounted) return;
+    setState(() {
+      _expanded = true;
+      _loaded = false;
+      _error = false;
+    });
+    _loadDocuments();
+  }
 
   Future<void> _loadDocuments() async {
     if (_loading) return;
@@ -107,6 +165,12 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
       _error = false;
     });
     try {
+      // 2G-S-B2 hardening: temporary safe diagnostic. Masked booking id only;
+      // no tokens, no PII, no response body contents.
+      debugPrint(
+        '[COMPANY_BOOKINGS][DOCUMENTS][FETCH] '
+        'booking=${_bookingRefMaskForCreditIssueLog(widget.bookingId)}',
+      );
       final uri = _withActiveBookingScope(
         kBookingBaseUrl,
         '/admin/bookings/${Uri.encodeComponent(widget.bookingId)}/documents',
