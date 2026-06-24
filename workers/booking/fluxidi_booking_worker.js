@@ -22650,16 +22650,38 @@ POST /admin/mollie/connect/disconnect
                 `[CREDIT_NOTE_ISSUE][REPLAY_WARN] no_client_draft_hash_provided booking=${bookingMask} idem=${idemMask}`,
               );
             }
+            // Load the canonical registry record (read-only) so the replay
+            // response mirrors the original success contract: lifecycle_state,
+            // issue_timestamp, currency, content_hash. No allocation, no write,
+            // no duplicate compliance event. Fields absent on an older stored
+            // record stay null rather than being guessed.
+            const replayRegistry = await loadIssuedDocumentRegistryRecordById(
+              env,
+              scope,
+              idemHit.document_id,
+            );
+            if (!replayRegistry) {
+              console.log(
+                `[CREDIT_NOTE_ISSUE][REPLAY_REGISTRY_MISS] booking=${bookingMask} idem=${idemMask}`,
+              );
+            }
+            const replaySafe = buildCreditNoteReplaySafeFields(
+              idemHit,
+              replayRegistry,
+            );
             console.log(
-              `[CREDIT_NOTE_ISSUE][REPLAY_OK] booking=${bookingMask} idem=${idemMask}`,
+              `[CREDIT_NOTE_ISSUE][REPLAY_OK] booking=${bookingMask} idem=${idemMask} lifecycle=${replaySafe.lifecycle_state || "-"} currency=${replaySafe.currency || "-"}`,
             );
             return json({
               ok: true,
-              idempotent_replay: true,
-              document_id: idemHit.document_id,
+              document_id: replaySafe.document_id,
               document_type: "credit_note",
-              document_number: idemHit.document_number || null,
-              content_hash: null,
+              document_number: replaySafe.document_number,
+              lifecycle_state: replaySafe.lifecycle_state,
+              content_hash: replaySafe.content_hash,
+              issue_timestamp: replaySafe.issue_timestamp,
+              currency: replaySafe.currency,
+              idempotent_replay: true,
               warnings: replayWarnings,
             });
           }
@@ -66936,6 +66958,65 @@ async function findDocumentByIdempotency(env, scope, documentType, idempotencyKe
     proof_reference: null,
     document_type: safeStr(documentType) || null,
     idempotent_replay: true,
+  };
+}
+
+// 2G-N-I: read-only loader for the canonical issued registry record by
+// document_id. Used by the credit-note issue route's idempotent-replay branch
+// so the replay response can mirror the original success contract
+// (lifecycle_state / issue_timestamp / currency / content_hash) without
+// re-deriving anything. Pure read: no allocation, no write, no compliance emit.
+// Returns the parsed registry record object or null when missing/unreadable.
+async function loadIssuedDocumentRegistryRecordById(env, scope, documentId) {
+  if (!env?.BOOKING_KV) return null;
+  const safeDocumentId = safeStr(documentId, 200);
+  if (!safeDocumentId) return null;
+  let key;
+  try {
+    key = buildDocumentRegistryKey(scope, safeDocumentId);
+  } catch (_) {
+    return null;
+  }
+  let record = null;
+  try {
+    record = await env.BOOKING_KV.get(key, { type: "json" });
+  } catch (_) {
+    return null;
+  }
+  if (!record || typeof record !== "object" || Array.isArray(record)) return null;
+  return record;
+}
+
+// 2G-N-I: build the safe public replay field set from the idempotency hit and
+// (optionally) the canonical registry record. Mirrors the original success
+// response contract for POST /admin/documents/credit-note/issue. Any field that
+// is genuinely absent on an older stored record is returned as null rather than
+// guessed. No PII (buyer/seller snapshots) is ever surfaced here.
+function buildCreditNoteReplaySafeFields(idemHit, registryRecord) {
+  const rec =
+    registryRecord && typeof registryRecord === "object" ? registryRecord : {};
+  const documentId =
+    safeStr(idemHit?.document_id, 200) ||
+    safeStr(rec.document_id ?? rec.documentId, 200) ||
+    null;
+  const documentNumber =
+    safeStr(idemHit?.document_number, 80) ||
+    safeStr(rec.document_number ?? rec.documentNumber, 80) ||
+    null;
+  const lifecycleState =
+    safeStr(rec.lifecycle_state ?? rec.lifecycleState ?? rec.document_status, 40) ||
+    null;
+  const issueTimestamp =
+    safeStr(rec.issue_timestamp ?? rec.issueTimestamp, 80) || null;
+  const currency = safeStr(rec.currency, 8).toUpperCase() || null;
+  const contentHash = safeStr(rec.content_hash ?? rec.contentHash, 128) || null;
+  return {
+    document_id: documentId,
+    document_number: documentNumber,
+    lifecycle_state: lifecycleState,
+    issue_timestamp: issueTimestamp,
+    currency,
+    content_hash: contentHash,
   };
 }
 
