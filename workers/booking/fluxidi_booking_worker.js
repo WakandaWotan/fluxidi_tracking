@@ -66589,6 +66589,210 @@ async function buildIssuedDocumentRegistryRecord(input = {}) {
   };
 }
 
+/* Pure document registry write-plan builder (Patch 2G-L).
+ *
+ * For FUTURE document issue endpoints ONLY. Given an already-built issued
+ * registry record (from buildIssuedDocumentRegistryRecord), this computes the
+ * ORDERED list of KV writes a future issue endpoint must perform, plus an
+ * optional provider-neutral audit_event payload. It is PURE / inert:
+ *   - it does NOT execute any write (no env.BOOKING_KV.put/get/list/delete)
+ *   - it does NOT touch any KV namespace, DO, or service binding
+ *   - it does NOT allocate references (allocateCreditNoteReference/...)
+ *   - it does NOT call findDocumentByIdempotency
+ *   - it does NOT emit/append the audit_event — it only RETURNS it for a later
+ *     best-effort emitter
+ *   - it is NOT wired to any route and is not invoked anywhere in this patch.
+ *
+ * Write order (the future executor must follow primary_writes in order):
+ *   1. registry_record          (canonical source of truth)
+ *   2. document number / proof reference index
+ *   3. booking index
+ *   4. leg index                (ONLY when is_leg_scoped + source_leg_id)
+ *   5. refund index             (ONLY when refund_proof + source_refund_id)
+ *   6. idempotency_record       (INTENTIONALLY LAST: only after the document is
+ *                                fully persisted may a retry replay it; writing
+ *                                it earlier would replay a half-issued document)
+ *
+ * Uses the 2G-E key builders, which require tenant/company scope and throw
+ * "missing_<field>" on bad input — consistent with the rest of Document Core.
+ */
+function buildDocumentRegistryWritePlan(record) {
+  if (!record || typeof record !== "object") {
+    throw new Error("missing_registry_record");
+  }
+
+  const tenantId = safeStr(record.tenant_id ?? record.tenantId);
+  const companyId = safeStr(record.company_id ?? record.companyId);
+  if (!tenantId || !companyId) throw new Error("missing_tenant_scope");
+  const scope = { tenant_id: tenantId, company_id: companyId };
+
+  const documentId = safeStr(record.document_id ?? record.documentId);
+  if (!documentId) throw new Error("missing_document_id");
+
+  const documentType = documentReferenceTypePart(
+    record.document_type ?? record.documentType,
+    "",
+  );
+  if (!documentType) throw new Error("missing_document_type");
+
+  const documentNumber = safeStr(record.document_number ?? record.documentNumber);
+  const proofReference = safeStr(record.proof_reference ?? record.proofReference);
+  // Type-specific reference rule (mirrors buildIssuedDocumentRegistryRecord):
+  // credit_note carries an accounting number; refund_proof a proof reference.
+  let referenceForIndex = "";
+  if (documentType === DOCUMENT_TYPE_CREDIT_NOTE) {
+    if (!documentNumber) throw new Error("missing_document_number");
+    referenceForIndex = documentNumber;
+  } else if (documentType === DOCUMENT_TYPE_REFUND_PROOF) {
+    if (!proofReference) throw new Error("missing_proof_reference");
+    referenceForIndex = proofReference;
+  } else {
+    throw new Error("unsupported_document_type");
+  }
+
+  const sourceBookingId = safeStr(
+    record.source_booking_id ?? record.sourceBookingId,
+  );
+  if (!sourceBookingId) throw new Error("missing_source_booking_id");
+
+  const contentHash = safeStr(record.content_hash ?? record.contentHash);
+  if (!contentHash) throw new Error("missing_content_hash");
+
+  const issueTimestamp = safeStr(
+    record.issue_timestamp ?? record.issueTimestamp,
+  );
+  if (!issueTimestamp) throw new Error("missing_issue_timestamp");
+
+  const sourceLegId = safeStr(record.source_leg_id ?? record.sourceLegId);
+  const isLegScoped =
+    record.is_leg_scoped === true || record.isLegScoped === true;
+  const sourceRefundId = safeStr(
+    record.source_refund_id ?? record.sourceRefundId,
+  );
+  const idempotencyKey = safeStr(
+    record.idempotency_key ?? record.idempotencyKey,
+  );
+
+  const primary_writes = [];
+
+  // 1. Canonical registry record.
+  primary_writes.push({
+    label: "registry_record",
+    key: buildDocumentRegistryKey(scope, documentId),
+    value: JSON.stringify(record),
+  });
+
+  // 2. Number (credit_note) / proof reference (refund_proof) index → document_id.
+  primary_writes.push({
+    label:
+      documentType === DOCUMENT_TYPE_REFUND_PROOF
+        ? "proof_reference_index"
+        : "document_number_index",
+    key: buildDocumentNumberIndexKey(scope, documentType, referenceForIndex),
+    value: documentId,
+  });
+
+  // 3. Booking index → document_id (plain string, matching existing doc_ref style).
+  primary_writes.push({
+    label: "booking_index",
+    key: buildDocumentsByBookingKey(
+      scope,
+      sourceBookingId,
+      documentType,
+      documentId,
+    ),
+    value: documentId,
+  });
+
+  // 4. Leg index — leg-first: only when the document is genuinely leg-scoped.
+  if (isLegScoped && sourceLegId) {
+    primary_writes.push({
+      label: "leg_index",
+      key: buildDocumentsByLegKey(
+        scope,
+        sourceBookingId,
+        sourceLegId,
+        documentType,
+        documentId,
+      ),
+      value: documentId,
+    });
+  }
+
+  // 5. Refund index — only for refund_proof with a refund id.
+  if (documentType === DOCUMENT_TYPE_REFUND_PROOF && sourceRefundId) {
+    primary_writes.push({
+      label: "refund_index",
+      key: buildDocumentsByRefundKey(scope, sourceRefundId, documentId),
+      value: documentId,
+    });
+  }
+
+  // 6. Idempotency record LAST. Shape matches findDocumentByIdempotency()'s
+  //    reader so a future retry replays the same document.
+  if (idempotencyKey) {
+    primary_writes.push({
+      label: "idempotency_record",
+      key: buildDocumentIdempotencyKey(scope, documentType, idempotencyKey),
+      value: JSON.stringify({
+        document_id: documentId,
+        document_type: documentType,
+        document_number: documentNumber || null,
+        proof_reference: proofReference || null,
+        content_hash: contentHash,
+        issued_at: issueTimestamp,
+        issue_timestamp: issueTimestamp,
+        idempotent_replay: true,
+      }),
+    });
+  }
+
+  // Provider-neutral audit payload matching the future "document_issued" shape
+  // documented in the Compliance Worker. RETURNED ONLY — not emitted here.
+  const totals = record.totals && typeof record.totals === "object"
+    ? record.totals
+    : {};
+  const audit_event = {
+    event_type: "document_issued",
+    payload: {
+      tenant_id: tenantId,
+      company_id: companyId,
+      document_id: documentId,
+      document_type: documentType,
+      document_number: documentNumber || null,
+      proof_reference: proofReference || null,
+      document_status: safeStr(record.lifecycle_state ?? record.document_status) || "issued",
+      source_booking_id: sourceBookingId,
+      source_parent_booking_id:
+        safeStr(record.source_parent_booking_id ?? record.sourceParentBookingId) || null,
+      source_leg_id: sourceLegId || null,
+      source_leg_type: safeStr(record.source_leg_type ?? record.sourceLegType) || null,
+      source_refund_id: sourceRefundId || null,
+      currency: safeStr(record.currency) || null,
+      totals: {
+        total_incl_vat: totals.total_incl_vat ?? null,
+        subtotal_ex_vat: totals.subtotal_ex_vat ?? null,
+        vat_amount: totals.vat_amount ?? null,
+        vat_rate_percent: totals.vat_rate_percent ?? null,
+        credited_amount_incl_vat: totals.credited_amount_incl_vat ?? null,
+        refunded_amount_incl_vat: totals.refunded_amount_incl_vat ?? null,
+      },
+      content_hash: contentHash,
+      issue_timestamp: issueTimestamp,
+      created_by_role: safeStr(record.created_by_role ?? record.createdByRole) || null,
+      provider_name: safeStr(record.provider_name ?? record.providerName) || null,
+      provider_document_id:
+        safeStr(record.provider_document_id ?? record.providerDocumentId) || null,
+      provider_export_status:
+        safeStr(record.provider_export_status ?? record.providerExportStatus) || null,
+      provider_rejected_reason:
+        safeStr(record.provider_rejected_reason ?? record.providerRejectedReason) || null,
+    },
+  };
+
+  return { primary_writes, audit_event };
+}
+
 /* ===================== PUSHBULLET ===================== */
 
 async function sendPushbulletNote(env, { title, body, device_iden = "" }) {
