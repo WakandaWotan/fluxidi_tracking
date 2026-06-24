@@ -22549,431 +22549,17 @@ POST /admin/mollie/connect/disconnect
             company_id: scopedRoute.scope.company_id,
           };
 
-          // 2. Required body fields.
-          const canonicalBookingId = safeStr(
-            body.canonical_booking_id ??
-              body.canonicalBookingId ??
-              body.source_booking_id ??
-              body.sourceBookingId,
-          );
-          if (!canonicalBookingId) {
-            return json({ ok: false, error: "missing_source_booking_id" }, 400);
-          }
-          const currency = safeStr(body.currency, 8).toUpperCase();
-          if (!currency) return json({ ok: false, error: "missing_currency" }, 400);
-          if (!/^[A-Z]{3}$/.test(currency)) {
-            return json({ ok: false, error: "invalid_currency" }, 400);
-          }
-          const expectedTotals = body.expected_totals ?? body.expectedTotals;
-          if (
-            !expectedTotals ||
-            typeof expectedTotals !== "object" ||
-            Array.isArray(expectedTotals)
-          ) {
-            return json({ ok: false, error: "missing_expected_totals" }, 400);
-          }
-          const idempotencyKey = safeStr(
-            body.idempotency_key ?? body.idempotencyKey,
-            200,
-          );
-          if (!idempotencyKey) {
-            return json({ ok: false, error: "missing_idempotency_key" }, 400);
-          }
-          const createdByRole = safeStr(
-            body.created_by_role ?? body.createdByRole,
-            32,
-          );
-          if (!createdByRole) {
-            return json({ ok: false, error: "missing_created_by_role" }, 400);
-          }
-          const createdByDeviceId =
-            safeStr(body.created_by_device_id ?? body.createdByDeviceId, 200) ||
-            null;
-          const sourceLegId =
-            safeStr(body.source_leg_id ?? body.sourceLegId, 200) || null;
-          const sourceLegTypeRaw =
-            safeStr(body.source_leg_type ?? body.sourceLegType, 24) || null;
-          const clientDraftHash =
-            safeStr(body.client_draft_hash ?? body.clientDraftHash, 200) || null;
-
-          // 3. Binding checks.
-          if (!env?.BOOKING_KV) {
-            return json({ ok: false, error: "missing_binding" }, 503);
-          }
-          if (!env?.DOCUMENT_REFERENCE_SEQUENCE) {
-            return json({ ok: false, error: "missing_binding" }, 503);
-          }
-
-          const bookingMask = _bookingIntentMask(canonicalBookingId);
-          const idemMask = idempotencyKey.slice(0, 8);
-          const warnings = [];
-
-          // 4. Early idempotency lookup (Option A from 2G-N-C: dedup before
-          //    spending an expensive booking read).
-          const idemHit = await findDocumentByIdempotency(
+          // 2G-S-B1: delegate steps 2–14 to the shared issue core. Admin
+          // behavior is unchanged: body role honored (no override), default
+          // log prefix, and the booking scope match uses the same explicit
+          // scope object as before.
+          return await _issueCreditNoteCore({
             env,
+            body,
             scope,
-            DOCUMENT_TYPE_CREDIT_NOTE,
-            idempotencyKey,
-          );
-          if (idemHit) {
-            // Compare client_draft_hash if both supplied. Missing on either
-            // side is a soft-warn in v1 (see 2G-N-C §7).
-            let storedHash = null;
-            try {
-              const idemKey = buildDocumentIdempotencyKey(
-                scope,
-                DOCUMENT_TYPE_CREDIT_NOTE,
-                idempotencyKey,
-              );
-              const raw = await env.BOOKING_KV.get(idemKey);
-              if (raw && raw.startsWith("{")) {
-                const parsed = JSON.parse(raw);
-                storedHash = safeStr(parsed?.client_draft_hash) || null;
-              }
-            } catch (_) {
-              // ignore — replay still safe; fall through with storedHash=null
-            }
-            if (clientDraftHash && storedHash && clientDraftHash !== storedHash) {
-              console.log(
-                `[CREDIT_NOTE_ISSUE][REPLAY_HASH_MISMATCH] booking=${bookingMask} idem=${idemMask}`,
-              );
-              return json(
-                { ok: false, error: "idempotency_key_reuse_with_different_payload" },
-                409,
-              );
-            }
-            const replayWarnings = [];
-            if (!clientDraftHash || !storedHash) {
-              replayWarnings.push("replay_without_client_draft_hash");
-              console.log(
-                `[CREDIT_NOTE_ISSUE][REPLAY_WARN] no_client_draft_hash_provided booking=${bookingMask} idem=${idemMask}`,
-              );
-            }
-            // Load the canonical registry record (read-only) so the replay
-            // response mirrors the original success contract: lifecycle_state,
-            // issue_timestamp, currency, content_hash. No allocation, no write,
-            // no duplicate compliance event. Fields absent on an older stored
-            // record stay null rather than being guessed.
-            const replayRegistry = await loadIssuedDocumentRegistryRecordById(
-              env,
-              scope,
-              idemHit.document_id,
-            );
-            if (!replayRegistry) {
-              console.log(
-                `[CREDIT_NOTE_ISSUE][REPLAY_REGISTRY_MISS] booking=${bookingMask} idem=${idemMask}`,
-              );
-            }
-            const replaySafe = buildCreditNoteReplaySafeFields(
-              idemHit,
-              replayRegistry,
-            );
-            console.log(
-              `[CREDIT_NOTE_ISSUE][REPLAY_OK] booking=${bookingMask} idem=${idemMask} lifecycle=${replaySafe.lifecycle_state || "-"} currency=${replaySafe.currency || "-"}`,
-            );
-            return json({
-              ok: true,
-              document_id: replaySafe.document_id,
-              document_type: "credit_note",
-              document_number: replaySafe.document_number,
-              lifecycle_state: replaySafe.lifecycle_state,
-              content_hash: replaySafe.content_hash,
-              issue_timestamp: replaySafe.issue_timestamp,
-              currency: replaySafe.currency,
-              idempotent_replay: true,
-              warnings: replayWarnings,
-            });
-          }
-
-          // 5. Load source booking (read-only).
-          const rec = await env.BOOKING_KV.get(
-            `booking:${canonicalBookingId}`,
-            { type: "json" },
-          );
-          if (!rec || typeof rec !== "object" || Array.isArray(rec)) {
-            return json({ ok: false, error: "source_booking_not_found" }, 404);
-          }
-
-          // 6. Scope match between request scope and booking record.
-          if (!bookingMatchesRequestedTenantScope(rec, scopedRoute.scope)) {
-            console.log(
-              `[CREDIT_NOTE_ISSUE][SCOPE_REJECT] booking=${bookingMask} idem=${idemMask}`,
-            );
-            return json({ ok: false, error: "not_in_scope" }, 403);
-          }
-
-          // 7. Derive credit context (leg-first, totals + currency + VAT).
-          const credit = deriveServerSideCreditContext(rec, {
-            source_leg_id: sourceLegId,
-            source_leg_type: sourceLegTypeRaw,
-            expected_currency: currency,
-            expected_totals: expectedTotals,
-            booking_id: canonicalBookingId,
-          });
-          if (!credit.ok) {
-            const errCode = credit.error || "internal_error";
-            const status =
-              errCode === "missing_booking_record"
-                ? 500
-                : errCode === "source_leg_not_found"
-                  ? 404
-                  : 409;
-            console.log(
-              `[CREDIT_NOTE_ISSUE][DERIVE_REJECT] booking=${bookingMask} reason=${errCode}`,
-            );
-            return json({ ok: false, error: errCode }, status);
-          }
-          if (Array.isArray(credit.warnings)) {
-            for (const w of credit.warnings) warnings.push(w);
-          }
-          const ctx = credit.context;
-
-          // 8. Allocate FCN reference (DO + doc_ref: index). Only AFTER all
-          //    validation gates above pass.
-          let fcnReference = "";
-          try {
-            const pickupIso =
-              safeStr(
-                rec?.pickup_iso ??
-                  rec?.pickupIso ??
-                  rec?.booking?.pickup_iso ??
-                  rec?.booking?.pickupIso ??
-                  rec?.payload?.pickup_iso ??
-                  rec?.payload?.pickupIso,
-              ) || null;
-            fcnReference = await allocateCreditNoteReference(env, scope, {
-              canonical_booking_id: canonicalBookingId,
-              pickup_iso: pickupIso,
-            });
-          } catch (allocErr) {
-            console.log(
-              `[CREDIT_NOTE_ISSUE][ALLOC_FAILED] booking=${bookingMask} reason=${safeStr(allocErr?.message, 160) || "unknown"}`,
-            );
-            return json({ ok: false, error: "allocation_failed" }, 500);
-          }
-
-          // 9. Server-side identity: seller_snapshot from BOOKING_KV business
-          //    profile (NEVER from body), buyer_snapshot best-effort from rec.
-          const issueTimestamp = new Date().toISOString();
-          const documentId = crypto.randomUUID();
-
-          let businessProfile = null;
-          try {
-            businessProfile = await loadBusinessProfile(env, scope, {
-              allowTenantLegacyFallback: true,
-            });
-          } catch (_) {
-            // tolerate; seller_snapshot will be a minimal placeholder
-            businessProfile = null;
-          }
-          const sellerSnapshot = {
-            name:
-              safeStr(
-                businessProfile?.companyName ?? businessProfile?.company_name,
-                240,
-              ) || null,
-            legal_name:
-              safeStr(
-                businessProfile?.legalName ?? businessProfile?.legal_name,
-                240,
-              ) || null,
-            vat_number:
-              safeStr(
-                businessProfile?.vatNumber ?? businessProfile?.vat_number,
-                64,
-              ) || null,
-            registration_number:
-              safeStr(
-                businessProfile?.companyRegistrationNumber ??
-                  businessProfile?.company_registration_number ??
-                  businessProfile?.enterpriseNumber ??
-                  businessProfile?.enterprise_number ??
-                  businessProfile?.kboNumber ??
-                  businessProfile?.kbo_number,
-                64,
-              ) || null,
-            email:
-              safeStr(
-                businessProfile?.invoiceEmail ??
-                  businessProfile?.invoice_email ??
-                  businessProfile?.billingEmail ??
-                  businessProfile?.billing_email ??
-                  businessProfile?.companyEmail ??
-                  businessProfile?.company_email ??
-                  businessProfile?.email,
-                240,
-              ) || null,
-            address_line:
-              safeStr(businessProfile?.address, 240) || null,
-            postal_code:
-              safeStr(businessProfile?.postcode ?? businessProfile?.postal_code, 32) ||
-              null,
-            city: safeStr(businessProfile?.city, 120) || null,
-            country_code:
-              safeStr(businessProfile?.country, 8).toUpperCase() || null,
-          };
-
-          const buyerBooking = rec?.booking && typeof rec.booking === "object" ? rec.booking : {};
-          const buyerPayload = rec?.payload && typeof rec.payload === "object" ? rec.payload : {};
-          const buyerNameRaw =
-            safeStr(
-              rec?.customer_name ??
-                rec?.customerName ??
-                buyerBooking?.customer_name ??
-                buyerBooking?.customerName ??
-                buyerPayload?.customer_name ??
-                buyerPayload?.customerName,
-              240,
-            ) || null;
-          const buyerEmailRaw =
-            safeStr(
-              rec?.customer_email ??
-                rec?.customerEmail ??
-                buyerBooking?.customer_email ??
-                buyerBooking?.customerEmail ??
-                buyerPayload?.customer_email ??
-                buyerPayload?.customerEmail,
-              240,
-            ) || null;
-          const buyerSnapshot =
-            buyerNameRaw || buyerEmailRaw
-              ? {
-                  name: buyerNameRaw,
-                  email: buyerEmailRaw,
-                  vat_number: null,
-                  address_line: null,
-                  postal_code: null,
-                  city: null,
-                  country_code: null,
-                }
-              : null;
-          if (!buyerSnapshot || !buyerNameRaw || !buyerEmailRaw) {
-            warnings.push("buyer_snapshot_incomplete");
-          }
-
-          // 10. Build registry record (snapshot + content_hash inside).
-          let record;
-          try {
-            record = await buildIssuedDocumentRegistryRecord({
-              scope,
-              document_id: documentId,
-              document_type: "credit_note",
-              document_number: fcnReference,
-              proof_reference: null,
-              lifecycle_state: "issued",
-              source_booking_id: canonicalBookingId,
-              source_parent_booking_id: ctx.source_parent_booking_id,
-              source_leg_id: ctx.source_leg_id,
-              source_leg_type: ctx.source_leg_type,
-              is_leg_scoped: ctx.is_leg_scoped,
-              source_refund_id: null,
-              source_credit_decision: ctx.credit_decision,
-              currency: ctx.currency,
-              totals: ctx.totals,
-              seller_snapshot: sellerSnapshot,
-              buyer_snapshot: buyerSnapshot,
-              issue_timestamp: issueTimestamp,
-              created_by_role: createdByRole,
-              created_by_device_id: createdByDeviceId,
-              idempotency_key: idempotencyKey,
-            });
-          } catch (buildErr) {
-            console.log(
-              `[CREDIT_NOTE_ISSUE][STRANDED_FCN] reference=${fcnReference} booking=${bookingMask} reason=build_failed:${safeStr(buildErr?.message, 120)}`,
-            );
-            return json({ ok: false, error: "build_failed" }, 500);
-          }
-
-          // 11. Build write plan and inject client_draft_hash into the
-          //     idempotency record so future replays can compare it.
-          let plan;
-          try {
-            plan = buildDocumentRegistryWritePlan(record);
-          } catch (planErr) {
-            console.log(
-              `[CREDIT_NOTE_ISSUE][STRANDED_FCN] reference=${fcnReference} booking=${bookingMask} reason=plan_failed:${safeStr(planErr?.message, 120)}`,
-            );
-            return json({ ok: false, error: "plan_failed" }, 500);
-          }
-          if (clientDraftHash && Array.isArray(plan?.primary_writes)) {
-            const idemWrite = plan.primary_writes.find(
-              (w) => w?.label === "idempotency_record",
-            );
-            if (idemWrite && typeof idemWrite.value === "string") {
-              try {
-                const parsed = JSON.parse(idemWrite.value);
-                parsed.client_draft_hash = clientDraftHash;
-                idemWrite.value = JSON.stringify(parsed);
-              } catch (_) {
-                // tolerate — older shape; idempotency replay just won't compare hash
-              }
-            }
-          }
-
-          // 12. Execute primary_writes in 2G-L-guaranteed order. registry_record
-          //     is canonical; later index failures are partial (registry exists);
-          //     idempotency_record is LAST — its failure is a non-fatal warning.
-          for (const w of plan.primary_writes) {
-            try {
-              await env.BOOKING_KV.put(w.key, w.value);
-            } catch (writeErr) {
-              const reasonText = safeStr(writeErr?.message, 160) || "unknown";
-              if (w.label === "registry_record") {
-                console.log(
-                  `[CREDIT_NOTE_ISSUE][STRANDED_FCN] reference=${fcnReference} booking=${bookingMask} reason=registry_write_failed:${reasonText}`,
-                );
-                return json({ ok: false, error: "registry_write_failed" }, 500);
-              }
-              if (w.label === "idempotency_record") {
-                console.log(
-                  `[CREDIT_NOTE_ISSUE][IDEMPOTENCY_PARTIAL] reference=${fcnReference} booking=${bookingMask} reason=${reasonText}`,
-                );
-                warnings.push("idempotency_record_write_failed");
-                break;
-              }
-              console.log(
-                `[CREDIT_NOTE_ISSUE][PARTIAL_INDEX] label=${w.label} reference=${fcnReference} booking=${bookingMask} reason=${reasonText}`,
-              );
-              return json({ ok: false, error: "registry_index_partial" }, 500);
-            }
-          }
-
-          // 13. Best-effort compliance event emit (never fails the issue).
-          try {
-            const auditEvent = {
-              event_type: plan.audit_event.event_type,
-              schema_version: "compliance_event_v1",
-              tenant_id: scope.tenant_id,
-              company_id: scope.company_id,
-              booking_id: canonicalBookingId,
-              payload: plan.audit_event.payload,
-            };
-            const emit = await emitComplianceEventBestEffort(env, auditEvent, {
-              logLabel: "document_issued",
-              timeoutMs: 1500,
-            });
-            if (!emit?.ok) warnings.push("compliance_event_emit_failed");
-          } catch (_) {
-            warnings.push("compliance_event_emit_failed");
-          }
-
-          console.log(
-            `[CREDIT_NOTE_ISSUE][OK] reference=${fcnReference} booking=${bookingMask} idem=${idemMask} warnings=${warnings.length}`,
-          );
-
-          // 14. Success response.
-          return json({
-            ok: true,
-            document_id: documentId,
-            document_type: "credit_note",
-            document_number: fcnReference,
-            lifecycle_state: "issued",
-            content_hash: record.content_hash,
-            issue_timestamp: issueTimestamp,
-            currency: ctx.currency,
-            idempotent_replay: false,
-            warnings,
+            scopeForBookingMatch: scopedRoute.scope,
+            createdByRoleOverride: null,
+            routeLabel: "CREDIT_NOTE_ISSUE",
           });
         } catch (err) {
           const message = String(err?.message || "internal_error");
@@ -22982,6 +22568,62 @@ POST /admin/mollie/connect/disconnect
           );
           return json({ ok: false, error: "internal_error" }, 500);
         }
+      }
+
+      // 2G-S-B1: company-scoped credit note issue.
+      //   POST /company/documents/credit-note/issue
+      // SaaS path so an authenticated company owner/session can issue a credit
+      // note for ITS OWN scoped booking WITHOUT shipping ADMIN_TOKEN. Reuses
+      // the exact same internals (_issueCreditNoteCore) as the admin route:
+      // identical validations, the SINGLE FCN-* allocation, and the ONE
+      // registry/index/idempotency write path. It differs ONLY in auth
+      // (_requireAdminOrCompanySessionForExplicitScope — admin token OR a
+      // matching company session) and in created_by_role normalization (never
+      // honors elevated client roles). No second numbering path, no extra
+      // writes, no PDF/Mollie/Chiron/refund/receipt/invoice/allocation effects.
+      if (
+        url.pathname === "/company/documents/credit-note/issue" &&
+        request.method === "POST"
+      ) {
+        let body = null;
+        try {
+          body = await safeJson(request);
+        } catch (_) {
+          body = null;
+        }
+        // Auth + explicit scope FIRST (admin token OR company session that
+        // matches the requested tenant/company). 401 no session, 400 missing
+        // scope, 403 scope mismatch — all handled by the shared helper.
+        const authScope = await _requireAdminOrCompanySessionForExplicitScope({
+          request,
+          url,
+          env,
+          body,
+          routeLabel: "COMPANY_CREDIT_NOTE_ISSUE",
+        });
+        if (!authScope.ok) return authScope.response;
+        if (!body || typeof body !== "object" || Array.isArray(body)) {
+          return json({ ok: false, error: "invalid_body" }, 400);
+        }
+        const explicitScope = authScope.explicitScope;
+        const scope = {
+          tenant_id: explicitScope.tenant_id,
+          company_id: explicitScope.company_id,
+        };
+        // Restrict created_by_role to an allowed company role; never honor an
+        // elevated role (e.g. "admin") supplied by a company client. Empty
+        // input falls through to the core's missing_created_by_role check.
+        const normalizedCreatedByRole = _normalizeCompanyCreatedByRole(
+          body.created_by_role ?? body.createdByRole,
+        );
+        return await _issueCreditNoteCore({
+          env,
+          body,
+          scope,
+          scopeForBookingMatch: explicitScope,
+          createdByRoleOverride: normalizedCreatedByRole,
+          routeLabel: "COMPANY_CREDIT_NOTE_ISSUE",
+        });
       }
 
       // 2G-O: read-only issued Document Core registry lookup.
@@ -67731,6 +67373,482 @@ function stableDocumentJson(value) {
 // sha256Hex() helper. Async because crypto.subtle.digest is async.
 async function hashDocumentSnapshot(snapshot) {
   return sha256Hex(stableDocumentJson(snapshot));
+}
+
+// 2G-S-B1: normalize a client-supplied created_by_role for the COMPANY issue
+// route to an allowed company role. Never honors elevated roles (e.g. "admin")
+// from a company client. Returns "" when the client supplied nothing so the
+// core still enforces the existing "created_by_role required" validation.
+function _normalizeCompanyCreatedByRole(rawRole) {
+  const role = safeStr(rawRole, 32).toLowerCase();
+  if (!role) return "";
+  if (role === "company_owner" || role === "company_admin") return role;
+  return "company_owner";
+}
+
+/* 2G-S-B1: shared credit-note issue core.
+ *
+ * Used by BOTH the admin route (POST /admin/documents/credit-note/issue) and
+ * the company route (POST /company/documents/credit-note/issue). Auth, scope
+ * resolution, and created_by_role policy are performed by each route BEFORE
+ * calling this; the core is auth-agnostic and runs the IDENTICAL validations,
+ * the SINGLE FCN-* allocation, and the ONE registry/index/idempotency write
+ * path. There is intentionally no second numbering path and no unrelated side
+ * effects (no PDF / Mollie / Chiron / refund / receipt / invoice / fleet
+ * allocation / payment writes).
+ *
+ * Params:
+ *   env, body              the parsed request env + JSON body.
+ *   scope                  { tenant_id, company_id } for registry + allocation.
+ *   scopeForBookingMatch   full scope object (has hasScope) passed to
+ *                          bookingMatchesRequestedTenantScope.
+ *   createdByRoleOverride  when non-null, REPLACES the body-supplied role
+ *                          (company route passes a normalized company role);
+ *                          when null, the body role is used (admin route).
+ *   routeLabel             log prefix only; no behavioral effect.
+ */
+async function _issueCreditNoteCore({
+  env,
+  body,
+  scope,
+  scopeForBookingMatch,
+  createdByRoleOverride = null,
+  routeLabel = "CREDIT_NOTE_ISSUE",
+}) {
+  try {
+    // 2. Required body fields.
+    const canonicalBookingId = safeStr(
+      body.canonical_booking_id ??
+        body.canonicalBookingId ??
+        body.source_booking_id ??
+        body.sourceBookingId,
+    );
+    if (!canonicalBookingId) {
+      return json({ ok: false, error: "missing_source_booking_id" }, 400);
+    }
+    const currency = safeStr(body.currency, 8).toUpperCase();
+    if (!currency) return json({ ok: false, error: "missing_currency" }, 400);
+    if (!/^[A-Z]{3}$/.test(currency)) {
+      return json({ ok: false, error: "invalid_currency" }, 400);
+    }
+    const expectedTotals = body.expected_totals ?? body.expectedTotals;
+    if (
+      !expectedTotals ||
+      typeof expectedTotals !== "object" ||
+      Array.isArray(expectedTotals)
+    ) {
+      return json({ ok: false, error: "missing_expected_totals" }, 400);
+    }
+    const idempotencyKey = safeStr(
+      body.idempotency_key ?? body.idempotencyKey,
+      200,
+    );
+    if (!idempotencyKey) {
+      return json({ ok: false, error: "missing_idempotency_key" }, 400);
+    }
+    const createdByRole =
+      createdByRoleOverride != null
+        ? createdByRoleOverride
+        : safeStr(body.created_by_role ?? body.createdByRole, 32);
+    if (!createdByRole) {
+      return json({ ok: false, error: "missing_created_by_role" }, 400);
+    }
+    const createdByDeviceId =
+      safeStr(body.created_by_device_id ?? body.createdByDeviceId, 200) ||
+      null;
+    const sourceLegId =
+      safeStr(body.source_leg_id ?? body.sourceLegId, 200) || null;
+    const sourceLegTypeRaw =
+      safeStr(body.source_leg_type ?? body.sourceLegType, 24) || null;
+    const clientDraftHash =
+      safeStr(body.client_draft_hash ?? body.clientDraftHash, 200) || null;
+
+    // 3. Binding checks.
+    if (!env?.BOOKING_KV) {
+      return json({ ok: false, error: "missing_binding" }, 503);
+    }
+    if (!env?.DOCUMENT_REFERENCE_SEQUENCE) {
+      return json({ ok: false, error: "missing_binding" }, 503);
+    }
+
+    const bookingMask = _bookingIntentMask(canonicalBookingId);
+    const idemMask = idempotencyKey.slice(0, 8);
+    const warnings = [];
+
+    // 4. Early idempotency lookup (Option A from 2G-N-C: dedup before
+    //    spending an expensive booking read).
+    const idemHit = await findDocumentByIdempotency(
+      env,
+      scope,
+      DOCUMENT_TYPE_CREDIT_NOTE,
+      idempotencyKey,
+    );
+    if (idemHit) {
+      // Compare client_draft_hash if both supplied. Missing on either
+      // side is a soft-warn in v1 (see 2G-N-C §7).
+      let storedHash = null;
+      try {
+        const idemKey = buildDocumentIdempotencyKey(
+          scope,
+          DOCUMENT_TYPE_CREDIT_NOTE,
+          idempotencyKey,
+        );
+        const raw = await env.BOOKING_KV.get(idemKey);
+        if (raw && raw.startsWith("{")) {
+          const parsed = JSON.parse(raw);
+          storedHash = safeStr(parsed?.client_draft_hash) || null;
+        }
+      } catch (_) {
+        // ignore — replay still safe; fall through with storedHash=null
+      }
+      if (clientDraftHash && storedHash && clientDraftHash !== storedHash) {
+        console.log(
+          `[${routeLabel}][REPLAY_HASH_MISMATCH] booking=${bookingMask} idem=${idemMask}`,
+        );
+        return json(
+          { ok: false, error: "idempotency_key_reuse_with_different_payload" },
+          409,
+        );
+      }
+      const replayWarnings = [];
+      if (!clientDraftHash || !storedHash) {
+        replayWarnings.push("replay_without_client_draft_hash");
+        console.log(
+          `[${routeLabel}][REPLAY_WARN] no_client_draft_hash_provided booking=${bookingMask} idem=${idemMask}`,
+        );
+      }
+      // Load the canonical registry record (read-only) so the replay
+      // response mirrors the original success contract: lifecycle_state,
+      // issue_timestamp, currency, content_hash. No allocation, no write,
+      // no duplicate compliance event. Fields absent on an older stored
+      // record stay null rather than being guessed.
+      const replayRegistry = await loadIssuedDocumentRegistryRecordById(
+        env,
+        scope,
+        idemHit.document_id,
+      );
+      if (!replayRegistry) {
+        console.log(
+          `[${routeLabel}][REPLAY_REGISTRY_MISS] booking=${bookingMask} idem=${idemMask}`,
+        );
+      }
+      const replaySafe = buildCreditNoteReplaySafeFields(
+        idemHit,
+        replayRegistry,
+      );
+      console.log(
+        `[${routeLabel}][REPLAY_OK] booking=${bookingMask} idem=${idemMask} lifecycle=${replaySafe.lifecycle_state || "-"} currency=${replaySafe.currency || "-"}`,
+      );
+      return json({
+        ok: true,
+        document_id: replaySafe.document_id,
+        document_type: "credit_note",
+        document_number: replaySafe.document_number,
+        lifecycle_state: replaySafe.lifecycle_state,
+        content_hash: replaySafe.content_hash,
+        issue_timestamp: replaySafe.issue_timestamp,
+        currency: replaySafe.currency,
+        idempotent_replay: true,
+        warnings: replayWarnings,
+      });
+    }
+
+    // 5. Load source booking (read-only).
+    const rec = await env.BOOKING_KV.get(
+      `booking:${canonicalBookingId}`,
+      { type: "json" },
+    );
+    if (!rec || typeof rec !== "object" || Array.isArray(rec)) {
+      return json({ ok: false, error: "source_booking_not_found" }, 404);
+    }
+
+    // 6. Scope match between request scope and booking record.
+    if (!bookingMatchesRequestedTenantScope(rec, scopeForBookingMatch)) {
+      console.log(
+        `[${routeLabel}][SCOPE_REJECT] booking=${bookingMask} idem=${idemMask}`,
+      );
+      return json({ ok: false, error: "not_in_scope" }, 403);
+    }
+
+    // 7. Derive credit context (leg-first, totals + currency + VAT).
+    const credit = deriveServerSideCreditContext(rec, {
+      source_leg_id: sourceLegId,
+      source_leg_type: sourceLegTypeRaw,
+      expected_currency: currency,
+      expected_totals: expectedTotals,
+      booking_id: canonicalBookingId,
+    });
+    if (!credit.ok) {
+      const errCode = credit.error || "internal_error";
+      const status =
+        errCode === "missing_booking_record"
+          ? 500
+          : errCode === "source_leg_not_found"
+            ? 404
+            : 409;
+      console.log(
+        `[${routeLabel}][DERIVE_REJECT] booking=${bookingMask} reason=${errCode}`,
+      );
+      return json({ ok: false, error: errCode }, status);
+    }
+    if (Array.isArray(credit.warnings)) {
+      for (const w of credit.warnings) warnings.push(w);
+    }
+    const ctx = credit.context;
+
+    // 8. Allocate FCN reference (DO + doc_ref: index). Only AFTER all
+    //    validation gates above pass.
+    let fcnReference = "";
+    try {
+      const pickupIso =
+        safeStr(
+          rec?.pickup_iso ??
+            rec?.pickupIso ??
+            rec?.booking?.pickup_iso ??
+            rec?.booking?.pickupIso ??
+            rec?.payload?.pickup_iso ??
+            rec?.payload?.pickupIso,
+        ) || null;
+      fcnReference = await allocateCreditNoteReference(env, scope, {
+        canonical_booking_id: canonicalBookingId,
+        pickup_iso: pickupIso,
+      });
+    } catch (allocErr) {
+      console.log(
+        `[${routeLabel}][ALLOC_FAILED] booking=${bookingMask} reason=${safeStr(allocErr?.message, 160) || "unknown"}`,
+      );
+      return json({ ok: false, error: "allocation_failed" }, 500);
+    }
+
+    // 9. Server-side identity: seller_snapshot from BOOKING_KV business
+    //    profile (NEVER from body), buyer_snapshot best-effort from rec.
+    const issueTimestamp = new Date().toISOString();
+    const documentId = crypto.randomUUID();
+
+    let businessProfile = null;
+    try {
+      businessProfile = await loadBusinessProfile(env, scope, {
+        allowTenantLegacyFallback: true,
+      });
+    } catch (_) {
+      // tolerate; seller_snapshot will be a minimal placeholder
+      businessProfile = null;
+    }
+    const sellerSnapshot = {
+      name:
+        safeStr(
+          businessProfile?.companyName ?? businessProfile?.company_name,
+          240,
+        ) || null,
+      legal_name:
+        safeStr(
+          businessProfile?.legalName ?? businessProfile?.legal_name,
+          240,
+        ) || null,
+      vat_number:
+        safeStr(
+          businessProfile?.vatNumber ?? businessProfile?.vat_number,
+          64,
+        ) || null,
+      registration_number:
+        safeStr(
+          businessProfile?.companyRegistrationNumber ??
+            businessProfile?.company_registration_number ??
+            businessProfile?.enterpriseNumber ??
+            businessProfile?.enterprise_number ??
+            businessProfile?.kboNumber ??
+            businessProfile?.kbo_number,
+          64,
+        ) || null,
+      email:
+        safeStr(
+          businessProfile?.invoiceEmail ??
+            businessProfile?.invoice_email ??
+            businessProfile?.billingEmail ??
+            businessProfile?.billing_email ??
+            businessProfile?.companyEmail ??
+            businessProfile?.company_email ??
+            businessProfile?.email,
+          240,
+        ) || null,
+      address_line:
+        safeStr(businessProfile?.address, 240) || null,
+      postal_code:
+        safeStr(businessProfile?.postcode ?? businessProfile?.postal_code, 32) ||
+        null,
+      city: safeStr(businessProfile?.city, 120) || null,
+      country_code:
+        safeStr(businessProfile?.country, 8).toUpperCase() || null,
+    };
+
+    const buyerBooking = rec?.booking && typeof rec.booking === "object" ? rec.booking : {};
+    const buyerPayload = rec?.payload && typeof rec.payload === "object" ? rec.payload : {};
+    const buyerNameRaw =
+      safeStr(
+        rec?.customer_name ??
+          rec?.customerName ??
+          buyerBooking?.customer_name ??
+          buyerBooking?.customerName ??
+          buyerPayload?.customer_name ??
+          buyerPayload?.customerName,
+        240,
+      ) || null;
+    const buyerEmailRaw =
+      safeStr(
+        rec?.customer_email ??
+          rec?.customerEmail ??
+          buyerBooking?.customer_email ??
+          buyerBooking?.customerEmail ??
+          buyerPayload?.customer_email ??
+          buyerPayload?.customerEmail,
+        240,
+      ) || null;
+    const buyerSnapshot =
+      buyerNameRaw || buyerEmailRaw
+        ? {
+            name: buyerNameRaw,
+            email: buyerEmailRaw,
+            vat_number: null,
+            address_line: null,
+            postal_code: null,
+            city: null,
+            country_code: null,
+          }
+        : null;
+    if (!buyerSnapshot || !buyerNameRaw || !buyerEmailRaw) {
+      warnings.push("buyer_snapshot_incomplete");
+    }
+
+    // 10. Build registry record (snapshot + content_hash inside).
+    let record;
+    try {
+      record = await buildIssuedDocumentRegistryRecord({
+        scope,
+        document_id: documentId,
+        document_type: "credit_note",
+        document_number: fcnReference,
+        proof_reference: null,
+        lifecycle_state: "issued",
+        source_booking_id: canonicalBookingId,
+        source_parent_booking_id: ctx.source_parent_booking_id,
+        source_leg_id: ctx.source_leg_id,
+        source_leg_type: ctx.source_leg_type,
+        is_leg_scoped: ctx.is_leg_scoped,
+        source_refund_id: null,
+        source_credit_decision: ctx.credit_decision,
+        currency: ctx.currency,
+        totals: ctx.totals,
+        seller_snapshot: sellerSnapshot,
+        buyer_snapshot: buyerSnapshot,
+        issue_timestamp: issueTimestamp,
+        created_by_role: createdByRole,
+        created_by_device_id: createdByDeviceId,
+        idempotency_key: idempotencyKey,
+      });
+    } catch (buildErr) {
+      console.log(
+        `[${routeLabel}][STRANDED_FCN] reference=${fcnReference} booking=${bookingMask} reason=build_failed:${safeStr(buildErr?.message, 120)}`,
+      );
+      return json({ ok: false, error: "build_failed" }, 500);
+    }
+
+    // 11. Build write plan and inject client_draft_hash into the
+    //     idempotency record so future replays can compare it.
+    let plan;
+    try {
+      plan = buildDocumentRegistryWritePlan(record);
+    } catch (planErr) {
+      console.log(
+        `[${routeLabel}][STRANDED_FCN] reference=${fcnReference} booking=${bookingMask} reason=plan_failed:${safeStr(planErr?.message, 120)}`,
+      );
+      return json({ ok: false, error: "plan_failed" }, 500);
+    }
+    if (clientDraftHash && Array.isArray(plan?.primary_writes)) {
+      const idemWrite = plan.primary_writes.find(
+        (w) => w?.label === "idempotency_record",
+      );
+      if (idemWrite && typeof idemWrite.value === "string") {
+        try {
+          const parsed = JSON.parse(idemWrite.value);
+          parsed.client_draft_hash = clientDraftHash;
+          idemWrite.value = JSON.stringify(parsed);
+        } catch (_) {
+          // tolerate — older shape; idempotency replay just won't compare hash
+        }
+      }
+    }
+
+    // 12. Execute primary_writes in 2G-L-guaranteed order. registry_record
+    //     is canonical; later index failures are partial (registry exists);
+    //     idempotency_record is LAST — its failure is a non-fatal warning.
+    for (const w of plan.primary_writes) {
+      try {
+        await env.BOOKING_KV.put(w.key, w.value);
+      } catch (writeErr) {
+        const reasonText = safeStr(writeErr?.message, 160) || "unknown";
+        if (w.label === "registry_record") {
+          console.log(
+            `[${routeLabel}][STRANDED_FCN] reference=${fcnReference} booking=${bookingMask} reason=registry_write_failed:${reasonText}`,
+          );
+          return json({ ok: false, error: "registry_write_failed" }, 500);
+        }
+        if (w.label === "idempotency_record") {
+          console.log(
+            `[${routeLabel}][IDEMPOTENCY_PARTIAL] reference=${fcnReference} booking=${bookingMask} reason=${reasonText}`,
+          );
+          warnings.push("idempotency_record_write_failed");
+          break;
+        }
+        console.log(
+          `[${routeLabel}][PARTIAL_INDEX] label=${w.label} reference=${fcnReference} booking=${bookingMask} reason=${reasonText}`,
+        );
+        return json({ ok: false, error: "registry_index_partial" }, 500);
+      }
+    }
+
+    // 13. Best-effort compliance event emit (never fails the issue).
+    try {
+      const auditEvent = {
+        event_type: plan.audit_event.event_type,
+        schema_version: "compliance_event_v1",
+        tenant_id: scope.tenant_id,
+        company_id: scope.company_id,
+        booking_id: canonicalBookingId,
+        payload: plan.audit_event.payload,
+      };
+      const emit = await emitComplianceEventBestEffort(env, auditEvent, {
+        logLabel: "document_issued",
+        timeoutMs: 1500,
+      });
+      if (!emit?.ok) warnings.push("compliance_event_emit_failed");
+    } catch (_) {
+      warnings.push("compliance_event_emit_failed");
+    }
+
+    console.log(
+      `[${routeLabel}][OK] reference=${fcnReference} booking=${bookingMask} idem=${idemMask} warnings=${warnings.length}`,
+    );
+
+    // 14. Success response.
+    return json({
+      ok: true,
+      document_id: documentId,
+      document_type: "credit_note",
+      document_number: fcnReference,
+      lifecycle_state: "issued",
+      content_hash: record.content_hash,
+      issue_timestamp: issueTimestamp,
+      currency: ctx.currency,
+      idempotent_replay: false,
+      warnings,
+    });
+  } catch (err) {
+    const message = String(err?.message || "internal_error");
+    console.log(
+      `[${routeLabel}][ERR] ${safeStr(message, 200) || "unknown"}`,
+    );
+    return json({ ok: false, error: "internal_error" }, 500);
+  }
 }
 
 /* Pure server-side credit-note context derivation (Patch 2G-N-B).
