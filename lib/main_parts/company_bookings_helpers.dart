@@ -612,6 +612,42 @@ class _CompanyBookingOverviewItem {
     return true;
   }
 
+  /// Patch-1 gate: local "Creditnota" (credit note) PDF document action.
+  ///
+  /// A credit note is a local correction document for a cancelled/credited
+  /// booking or leg. It is only shown once a credit decision has been recorded
+  /// ([hasCreditDecisionRecorded]) or a refund has reached a final refunded
+  /// state ([isRefundLifecycleRefunded], which implies a credit correction
+  /// exists). Leg-first: on a roundtrip booking the credit/refund belongs to a
+  /// leg row, so the action is suppressed on the (non-leg) roundtrip parent
+  /// row and surfaced on the operational leg row instead.
+  static bool canShowCreditNotePdfAction(_CompanyBookingOverviewItem item) {
+    if (!hasCanonicalBookingIdentity(item)) return false;
+    if (!_isCancelledStatus(item.statusText)) return false;
+    if (!isPaidPaymentStatus(item.paymentStatus)) return false;
+    final hasCorrection =
+        hasCreditDecisionRecorded(item) || isRefundLifecycleRefunded(item);
+    if (!hasCorrection) return false;
+    if (item.isRoundtripParent && !isRoundtripOperationalLegRow(item)) {
+      return false;
+    }
+    return true;
+  }
+
+  /// Patch-1 gate: local "Terugbetalingsbewijs" (refund proof) PDF action.
+  ///
+  /// Shown only for a final refunded lifecycle row ([isRefundLifecycleRefunded]);
+  /// never for refund pending or refund failed. Mirrors the leg-first
+  /// suppression of [canShowCreditNotePdfAction].
+  static bool canShowRefundProofPdfAction(_CompanyBookingOverviewItem item) {
+    if (!hasCanonicalBookingIdentity(item)) return false;
+    if (!isRefundLifecycleRefunded(item)) return false;
+    if (item.isRoundtripParent && !isRoundtripOperationalLegRow(item)) {
+      return false;
+    }
+    return true;
+  }
+
   static ({
     String bookingId,
     String legId,

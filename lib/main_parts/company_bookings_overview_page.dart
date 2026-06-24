@@ -2659,6 +2659,10 @@ class _CompanyBookingsOverviewPageState
         !showMollieRefundAction &&
         !showMollieRefundStatusRefresh &&
         _canShowMollieRefundAuditResyncAction(item);
+    final showCreditNotePdfAction =
+        _CompanyBookingOverviewItem.canShowCreditNotePdfAction(item);
+    final showRefundProofPdfAction =
+        _CompanyBookingOverviewItem.canShowRefundProofPdfAction(item);
     final mollieRefundTargetId = creditTargetId;
     final mollieRefundBusy = _isRefundingBooking(mollieRefundTargetId);
     final localizedMollieRefund = _localizedMollieRefundStatus(item);
@@ -3366,6 +3370,89 @@ class _CompanyBookingsOverviewPageState
                     ),
                   ),
                 ),
+              ),
+            ],
+            if (showCreditNotePdfAction || showRefundProofPdfAction) ...[
+              const SizedBox(height: 10),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  if (showCreditNotePdfAction)
+                    OutlinedButton.icon(
+                      onPressed: () =>
+                          _CompanyBookingCreditRefundPdfActionRunner.previewCreditNotePdf(
+                            context: context,
+                            item: item,
+                          ),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: tokens.accent.withOpacity(0.96),
+                        side: BorderSide(
+                          color: tokens.accent.withOpacity(0.42),
+                        ),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 8,
+                        ),
+                        minimumSize: const Size(0, 32),
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      ),
+                      icon: Icon(
+                        Icons.description_outlined,
+                        size: 16,
+                        color: tokens.accent.withOpacity(0.96),
+                      ),
+                      label: Text(
+                        _t(
+                          nl: 'Creditnota PDF',
+                          en: 'Credit note PDF',
+                          fr: 'PDF note de crédit',
+                          es: 'PDF nota de crédito',
+                        ),
+                        style: const TextStyle(
+                          fontSize: 11.1,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                  if (showRefundProofPdfAction)
+                    OutlinedButton.icon(
+                      onPressed: () =>
+                          _CompanyBookingCreditRefundPdfActionRunner.previewRefundProofPdf(
+                            context: context,
+                            item: item,
+                          ),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: tokens.accent.withOpacity(0.96),
+                        side: BorderSide(
+                          color: tokens.accent.withOpacity(0.42),
+                        ),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 8,
+                        ),
+                        minimumSize: const Size(0, 32),
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      ),
+                      icon: Icon(
+                        Icons.receipt_long_outlined,
+                        size: 16,
+                        color: tokens.accent.withOpacity(0.96),
+                      ),
+                      label: Text(
+                        _t(
+                          nl: 'Terugbetalingsbewijs PDF',
+                          en: 'Refund proof PDF',
+                          fr: 'PDF preuve de remboursement',
+                          es: 'PDF comprobante de reembolso',
+                        ),
+                        style: const TextStyle(
+                          fontSize: 11.1,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                ],
               ),
             ],
           ],
