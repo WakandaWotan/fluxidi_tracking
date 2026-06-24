@@ -10,6 +10,7 @@ const ALLOWED_EVENT_TYPES = new Set([
   "correction_event",
   "sync_success",
   "sync_failed",
+  "document_issued", // 2G-N activation; voided/provider events stay inert.
 ]);
 
 /* ===================== DOCUMENT AUDIT EVENT SHAPES (future, inert) =====================
