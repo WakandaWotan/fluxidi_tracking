@@ -3455,10 +3455,28 @@ class _CompanyBookingsOverviewPageState
                 ],
               ),
             ],
+            if (_documentsBookingId(item).isNotEmpty) ...[
+              const SizedBox(height: 10),
+              _BookingDocumentsSection(
+                bookingId: _documentsBookingId(item),
+                tokens: tokens,
+              ),
+            ],
           ],
         ),
       ),
     );
+  }
+
+  /// Canonical (parent) booking id used to list issued documents for a card.
+  /// Prefers the roundtrip parent id and strips any `:LEG` suffix so leg rows
+  /// resolve to the same canonical booking the registry indexes under.
+  String _documentsBookingId(_CompanyBookingOverviewItem item) {
+    final parent = item.parentBookingId.trim();
+    final base = parent.isNotEmpty ? parent : item.bookingId.trim();
+    if (base.isEmpty) return '';
+    final colon = base.indexOf(':');
+    return colon > 0 ? base.substring(0, colon) : base;
   }
 
   Widget _filterChip(
