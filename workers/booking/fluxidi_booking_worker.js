@@ -23152,15 +23152,18 @@ POST /admin/mollie/connect/disconnect
             const documents = Array.isArray(listed.documents)
               ? listed.documents
               : [];
+            const warnings = Array.isArray(listed.warnings)
+              ? listed.warnings
+              : [];
             console.log(
-              `[DOCUMENT_LIST][OK] booking=${_bookingIntentMask(sourceBookingId)} count=${documents.length}`,
+              `[DOCUMENT_LIST][OK] booking=${_bookingIntentMask(sourceBookingId)} count=${documents.length} warnings=${warnings.length}`,
             );
             return json({
               ok: true,
               source_booking_id: sourceBookingId,
               documents,
               count: documents.length,
-              warnings: [],
+              warnings,
             });
           } catch (err) {
             const message = String(err?.message || "internal_error");
@@ -67235,6 +67238,17 @@ function buildIssuedDocumentPublicMetadata(record) {
   };
 }
 
+// 2G-R: normalize a booking identifier for canonical-booking equality checks.
+// Trims and strips any trailing operational-leg suffix (":OUTBOUND" / ":RETURN"
+// or any ":<LEG>") so a leg id and its parent canonical booking compare equal.
+// Performs NO fuzzy matching beyond canonical-booking equality.
+function _normalizeCanonicalBookingIdForMatch(value) {
+  const base = safeStr(value, 200);
+  if (!base) return "";
+  const colon = base.indexOf(":");
+  return colon > 0 ? base.slice(0, colon) : base;
+}
+
 // 2G-P: scoped prefix for the per-booking document index written at issue time
 // (doc_by_booking:<tenant>:<company>:<bookingPart>:<type>:<documentId>). Pure
 // key-string builder — performs no I/O. Throws missing_<field> on bad scope.
@@ -67260,8 +67274,12 @@ async function listIssuedDocumentsForBooking(env, scope, canonicalBookingId) {
   } catch (_) {
     return { ok: false, error: "missing_tenant_scope" };
   }
+  const requestedCanonical = _normalizeCanonicalBookingIdForMatch(
+    canonicalBookingId,
+  );
   const seenDocumentIds = new Set();
   const documents = [];
+  let staleSkippedCount = 0;
   let cursor = undefined;
   do {
     const listed = await env.BOOKING_KV.list({ prefix, limit: 1000, cursor });
@@ -67292,11 +67310,43 @@ async function listIssuedDocumentsForBooking(env, scope, canonicalBookingId) {
       ) {
         continue;
       }
+      // 2G-R: defensive source-booking binding check. A stale or mis-indexed
+      // doc_by_booking entry could surface a document whose stored source
+      // booking is NOT the requested booking. buildIssuedDocumentRegistryRecord
+      // ALWAYS persists source_booking_id at issue time, so a record that is
+      // missing both source_booking_id and source_parent_booking_id is treated
+      // as untrustworthy and skipped (conservative). Comparison is strict
+      // canonical-booking equality (leg suffix stripped on both sides); tenant/
+      // company matching above is NOT loosened by this check.
+      const recordSourceBookingId =
+        safeStr(record?.source_booking_id ?? record?.sourceBookingId, 200) ||
+        safeStr(
+          record?.source_parent_booking_id ?? record?.sourceParentBookingId,
+          200,
+        );
+      const normalizedRecordSource = _normalizeCanonicalBookingIdForMatch(
+        recordSourceBookingId,
+      );
+      if (
+        !normalizedRecordSource ||
+        normalizedRecordSource !== requestedCanonical
+      ) {
+        staleSkippedCount += 1;
+        const docMask = documentId.slice(0, 8);
+        console.log(
+          `[DOCUMENT_LIST][STALE_INDEX_SKIP] requested=${_bookingIntentMask(canonicalBookingId)} doc=${docMask} reason=source_booking_mismatch`,
+        );
+        continue;
+      }
       documents.push(buildIssuedDocumentPublicMetadata(record));
     }
     cursor = listed?.list_complete ? undefined : listed?.cursor;
   } while (cursor);
-  return { ok: true, documents };
+  const warnings = [];
+  if (staleSkippedCount > 0) {
+    warnings.push("stale_document_index_entry_skipped");
+  }
+  return { ok: true, documents, warnings };
 }
 
 function attachPublicBookingReferenceAliases(target, publicBookingReference) {
