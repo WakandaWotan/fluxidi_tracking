@@ -35691,6 +35691,251 @@ function _applyCreditDecisionFieldsToLeg(legEntry, fields) {
   legEntry.creditedBy = creditedBy;
 }
 
+// ---------------------------------------------------------------------------
+// 2G-N-E: Document-ready credit context enrichment.
+//
+// These helpers stamp ADDITIVE document-ready fields next to the existing
+// credit-decision fields (credit_status, credit_decision, credited_amount_cents,
+// credited_at, credited_by, refund_status, refund_required). They are forward-
+// only: they enrich NEW credit-decision writes and never repair historical
+// records.
+//
+// Fields stamped (when derivable):
+//   currency, total_incl_vat, credited_amount_incl_vat, subtotal_ex_vat,
+//   vat_amount, vat_rate_percent, credit_decision_at, credit_decision_source
+//
+// Semantics:
+//   * currency is read via the existing strict-ISO resolver
+//     resolveExplicitBookingCurrencyFromRecordOrPayload; never defaulted to EUR.
+//   * total_incl_vat equals credited_amount_incl_vat (the credit-note line total
+//     for the SELECTED context). The leg's source price stays in price_incl_vat.
+//   * For full_credit, subtotal_ex_vat and vat_amount come from the source
+//     baseline (leg price_ex_vat / price_vat, or quote main/return split as
+//     fallback) — no computation, no guessing.
+//   * For partial_credit, subtotal_ex_vat and vat_amount are derived
+//     proportionally from an explicit vat_rate_percent via
+//     _partialCreditVatBreakdownFromRate; if rate is unavailable they are
+//     intentionally NOT stamped.
+//   * For no_refund / handled_manually, only currency, credited_amount_incl_vat
+//     (= 0), total_incl_vat (= 0), credit_decision_at, credit_decision_source
+//     are stamped; no VAT breakdown is invented for a zero credit.
+// ---------------------------------------------------------------------------
+
+function _resolveDocumentReadyCreditCurrency(rec) {
+  if (!rec || typeof rec !== "object") return "";
+  try {
+    const pricingProfile =
+      (rec.pricing_profile && typeof rec.pricing_profile === "object" ? rec.pricing_profile : null) ||
+      (rec.pricingProfile && typeof rec.pricingProfile === "object" ? rec.pricingProfile : null) ||
+      (rec.payload && typeof rec.payload === "object"
+        ? (rec.payload.pricing_profile && typeof rec.payload.pricing_profile === "object"
+            ? rec.payload.pricing_profile
+            : (rec.payload.pricingProfile && typeof rec.payload.pricingProfile === "object"
+                ? rec.payload.pricingProfile
+                : null))
+        : null);
+    return resolveExplicitBookingCurrencyFromRecordOrPayload({
+      payload: rec.payload,
+      quote: rec.quote,
+      pricingProfile,
+      booking: rec.booking,
+    });
+  } catch (_) {
+    return "";
+  }
+}
+
+function _docReadyFiniteNonNegative(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 0) return null;
+  return n;
+}
+
+function _docReadyFinitePositive(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return n;
+}
+
+function _readDocumentReadyLegPriceBreakdown(legEntry, rec) {
+  if (!legEntry || typeof legEntry !== "object") return null;
+  const legEx = _docReadyFiniteNonNegative(legEntry.price_ex_vat ?? legEntry.priceExVat);
+  const legVat = _docReadyFiniteNonNegative(legEntry.price_vat ?? legEntry.priceVat);
+  const legIncl = _docReadyFinitePositive(legEntry.price_incl_vat ?? legEntry.priceInclVat);
+  if (legIncl !== null && legEx !== null && legVat !== null) {
+    return { source: "leg", ex: legEx, vat: legVat, incl: legIncl };
+  }
+  const legType = safeStr(legEntry.leg_type ?? legEntry.legType, 24).toLowerCase();
+  if (legType !== "outbound" && legType !== "return") return null;
+  const suffix = legType === "return" ? "return" : "main";
+  const camel = legType === "return" ? "Return" : "Main";
+  const layers = [rec, rec?.booking, rec?.payload];
+  for (const layer of layers) {
+    if (!layer || typeof layer !== "object") continue;
+    const ex = _docReadyFiniteNonNegative(
+      layer[`price_ex_vat_${suffix}`] ?? layer[`priceExVat${camel}`],
+    );
+    const vat = _docReadyFiniteNonNegative(
+      layer[`price_vat_${suffix}`] ?? layer[`priceVat${camel}`],
+    );
+    const incl = _docReadyFinitePositive(
+      layer[`price_incl_vat_${suffix}`] ?? layer[`priceInclVat${camel}`],
+    );
+    if (incl !== null && ex !== null && vat !== null) {
+      return { source: `quote_split_${suffix}`, ex, vat, incl };
+    }
+  }
+  return null;
+}
+
+function _readDocumentReadyRecordPriceBreakdown(rec) {
+  if (!rec || typeof rec !== "object") return null;
+  const layers = [
+    rec,
+    rec.booking,
+    rec.payload,
+    rec.quote && typeof rec.quote === "object" ? rec.quote.pricing : null,
+    rec.quote,
+  ];
+  for (const layer of layers) {
+    if (!layer || typeof layer !== "object") continue;
+    const ex = _docReadyFiniteNonNegative(
+      layer.total_price_ex_vat ?? layer.totalPriceExVat ?? layer.price_ex_vat ?? layer.priceExVat,
+    );
+    const vat = _docReadyFiniteNonNegative(
+      layer.total_price_vat ?? layer.totalPriceVat ?? layer.price_vat ?? layer.priceVat,
+    );
+    const incl = _docReadyFinitePositive(
+      layer.total_price_incl_vat ?? layer.totalPriceInclVat ?? layer.price_incl_vat ?? layer.priceInclVat,
+    );
+    if (incl !== null && ex !== null && vat !== null) {
+      return { source: "record", ex, vat, incl };
+    }
+  }
+  return null;
+}
+
+function _deriveDocumentReadyVatRatePercentFromBaseline(baseline) {
+  if (!baseline) return null;
+  const ex = Number(baseline.ex);
+  const vat = Number(baseline.vat);
+  if (!Number.isFinite(ex) || ex <= 0) return null;
+  if (!Number.isFinite(vat) || vat < 0) return null;
+  const rate = (vat / ex) * 100;
+  if (!Number.isFinite(rate) || rate < 0) return null;
+  return Math.round(rate * 100) / 100;
+}
+
+// Proportional VAT split derived from an explicit vat_rate_percent. Only used
+// for partial_credit, and only when vat_rate_percent is available. Returns
+// null otherwise so callers can refuse to stamp invented VAT fields.
+function _partialCreditVatBreakdownFromRate(creditedInclVat, vatRatePercent) {
+  const rate = Number(vatRatePercent);
+  const incl = Number(creditedInclVat);
+  if (!Number.isFinite(rate) || rate < 0) return null;
+  if (!Number.isFinite(incl) || incl <= 0) return null;
+  const ex = incl / (1 + rate / 100);
+  const vat = incl - ex;
+  if (!Number.isFinite(ex) || !Number.isFinite(vat)) return null;
+  return { ex: round2(ex), vat: round2(vat) };
+}
+
+function buildDocumentReadyCreditContext({
+  baseline = null,
+  currency = "",
+  creditDecision = "",
+  creditedAmountCents = 0,
+  decisionAtIso = "",
+  decisionSource = "",
+} = {}) {
+  const out = {};
+  const safeCurrency = safeStr(currency, 8).toUpperCase();
+  if (/^[A-Z]{3}$/.test(safeCurrency)) {
+    out.currency = safeCurrency;
+  }
+  const safeDecisionAt = safeStr(decisionAtIso, 80);
+  if (safeDecisionAt) {
+    out.credit_decision_at = safeDecisionAt;
+    out.creditDecisionAt = safeDecisionAt;
+  }
+  const safeDecisionSource = safeStr(decisionSource, 120);
+  if (safeDecisionSource) {
+    out.credit_decision_source = safeDecisionSource;
+    out.creditDecisionSource = safeDecisionSource;
+  }
+  const centsNum = Number(creditedAmountCents);
+  const creditedInclVat =
+    Number.isFinite(centsNum) ? Math.max(0, round2(centsNum / 100)) : null;
+  if (creditedInclVat !== null) {
+    out.credited_amount_incl_vat = creditedInclVat;
+    out.creditedAmountInclVat = creditedInclVat;
+    out.total_incl_vat = creditedInclVat;
+    out.totalInclVat = creditedInclVat;
+  }
+
+  const decision = safeStr(creditDecision, 64).toLowerCase().replaceAll("-", "_");
+  const ratePercent = _deriveDocumentReadyVatRatePercentFromBaseline(baseline);
+
+  if (decision === "full_credit") {
+    if (baseline) {
+      // Cents-safety: only stamp the source baseline's ex/vat when the
+      // baseline's incl matches credited_amount_incl_vat within 1 cent. If
+      // the finance resolver chose a different source than the baseline
+      // reader, the breakdown would not sum to the credited amount; stamp
+      // only vat_rate_percent in that case so downstream callers can re-
+      // derive a proportional split if they need one. Never invent values.
+      const inclMatchesCents =
+        creditedInclVat !== null &&
+        Math.abs(round2(baseline.incl) * 100 - creditedInclVat * 100) <= 1;
+      if (inclMatchesCents) {
+        out.subtotal_ex_vat = round2(baseline.ex);
+        out.subtotalExVat = round2(baseline.ex);
+        out.vat_amount = round2(baseline.vat);
+        out.vatAmount = round2(baseline.vat);
+      }
+      if (ratePercent !== null) {
+        out.vat_rate_percent = ratePercent;
+        out.vatRatePercent = ratePercent;
+      }
+    }
+  } else if (decision === "partial_credit") {
+    if (ratePercent !== null && creditedInclVat !== null && creditedInclVat > 0) {
+      const split = _partialCreditVatBreakdownFromRate(creditedInclVat, ratePercent);
+      if (split) {
+        out.subtotal_ex_vat = split.ex;
+        out.subtotalExVat = split.ex;
+        out.vat_amount = split.vat;
+        out.vatAmount = split.vat;
+        out.vat_rate_percent = ratePercent;
+        out.vatRatePercent = ratePercent;
+      }
+    }
+  }
+  return out;
+}
+
+function applyDocumentReadyCreditFieldsToLeg(legEntry, ctx) {
+  if (!legEntry || typeof legEntry !== "object") return;
+  if (!ctx || typeof ctx !== "object") return;
+  for (const key of Object.keys(ctx)) {
+    legEntry[key] = ctx[key];
+  }
+}
+
+function applyDocumentReadyCreditFieldsToRecord(rec, ctx) {
+  if (!rec || typeof rec !== "object") return;
+  if (!ctx || typeof ctx !== "object") return;
+  const writeLayer = (target) => {
+    if (!target || typeof target !== "object") return;
+    for (const key of Object.keys(ctx)) {
+      target[key] = ctx[key];
+    }
+  };
+  writeLayer(rec);
+  writeLayer(rec.booking);
+  writeLayer(rec.payload);
+}
+
 function _operationalLegCreditStatusRaw(legEntry) {
   return safeStr(legEntry?.credit_status ?? legEntry?.creditStatus, 64)
     .toLowerCase()
@@ -36297,6 +36542,20 @@ async function applyBookingCreditDecisionAuthoritative(
     const nowIso = new Date().toISOString();
     const creditedBy =
       safeStr(actorRoleRaw, 32).toLowerCase() === "company" ? "company" : "admin";
+    // 2G-N-E: derive document-ready credit context BEFORE mutation so the
+    // baseline reads the pre-mutation leg snapshot. Currency is strict-ISO or
+    // empty (never defaulted to EUR). Stamping is additive and never repairs
+    // historical fields.
+    const docReadyLegBaseline = _readDocumentReadyLegPriceBreakdown(legEntry, rec);
+    const docReadyCurrency = _resolveDocumentReadyCreditCurrency(rec);
+    const docReadyContextForLeg = buildDocumentReadyCreditContext({
+      baseline: docReadyLegBaseline,
+      currency: docReadyCurrency,
+      creditDecision,
+      creditedAmountCents,
+      decisionAtIso: nowIso,
+      decisionSource: safeStr(source_endpoint, 120) || "/bookings/:id/credit-decision",
+    });
     const matched = _mutateOperationalLegEntryInRecord(rec, safeLegId, (entry) => {
       const next = { ...(entry && typeof entry === "object" ? entry : {}) };
       _applyCreditDecisionFieldsToLeg(next, {
@@ -36308,11 +36567,15 @@ async function applyBookingCreditDecisionAuthoritative(
         creditedAt: nowIso,
         creditedBy,
       });
+      applyDocumentReadyCreditFieldsToLeg(next, docReadyContextForLeg);
       return next;
     });
     if (!matched) {
       return { ok: false, error: "operational_leg_not_found" };
     }
+    console.log(
+      `[BOOKING][CREDIT_DECISION][DOC_READY] booking=${_bookingIntentMask(bookingId)} leg=${_bookingIntentMask(safeLegId)} currency=${docReadyContextForLeg.currency || "-"} baseline=${docReadyLegBaseline?.source || "-"} has_vat_rate=${docReadyContextForLeg.vat_rate_percent != null} has_breakdown=${docReadyContextForLeg.subtotal_ex_vat != null}`,
+    );
     rec.updatedAt = nowIso;
     rec.updated_at = nowIso;
     if (rec.booking && typeof rec.booking === "object") {
@@ -36498,6 +36761,24 @@ async function applyBookingCreditDecisionAuthoritative(
     creditedAt: nowIso,
     creditedBy,
   });
+  // 2G-N-E: stamp document-ready credit context onto parent layers (rec,
+  // rec.booking, rec.payload) — same layers _applyCreditDecisionFieldsToRecord
+  // already writes. Additive only; never mutates operational legs in this
+  // parent-scoped branch.
+  const docReadyParentBaseline = _readDocumentReadyRecordPriceBreakdown(rec);
+  const docReadyCurrencyParent = _resolveDocumentReadyCreditCurrency(rec);
+  const docReadyContextForRecord = buildDocumentReadyCreditContext({
+    baseline: docReadyParentBaseline,
+    currency: docReadyCurrencyParent,
+    creditDecision,
+    creditedAmountCents,
+    decisionAtIso: nowIso,
+    decisionSource: safeStr(source_endpoint, 120) || "/bookings/:id/credit-decision",
+  });
+  applyDocumentReadyCreditFieldsToRecord(rec, docReadyContextForRecord);
+  console.log(
+    `[BOOKING][CREDIT_DECISION][DOC_READY] booking=${_bookingIntentMask(bookingId)} scope=parent currency=${docReadyContextForRecord.currency || "-"} baseline=${docReadyParentBaseline?.source || "-"} has_vat_rate=${docReadyContextForRecord.vat_rate_percent != null} has_breakdown=${docReadyContextForRecord.subtotal_ex_vat != null}`,
+  );
   rec.updatedAt = nowIso;
   rec.updated_at = nowIso;
   if (rec.booking && typeof rec.booking === "object") {
