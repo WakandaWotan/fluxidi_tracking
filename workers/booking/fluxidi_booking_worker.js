@@ -22319,6 +22319,191 @@ POST /admin/mollie/connect/disconnect
         return json(out, out?.ok ? 200 : 400);
       }
 
+      // =========================
+      // DOCUMENT CORE — ADMIN ISSUE DRY-RUN (Patch 2G-M)
+      // =========================
+      // Backend developer / admin smoke-test endpoint ONLY.
+      //
+      // This route EXERCISES the pure Document Core builder chain (record +
+      // write-plan) WITHOUT issuing a real document. It deliberately:
+      //   - does NOT allocate a sequence number (no DOCUMENT_REFERENCE_SEQUENCE)
+      //   - does NOT read or write KV (no BOOKING_KV.get/put/list/delete)
+      //   - does NOT look up or persist an idempotency record
+      //   - does NOT emit a compliance event
+      //   - does NOT modify booking/payment/refund state
+      //
+      // It is NOT proof of an official issue and MUST NOT be used as one.
+      // The fake document_id / document_number / proof_reference returned here
+      // are clearly prefixed with "DRYRUN-" and "dryrun_" so they cannot be
+      // confused with real allocations.
+      if (
+        url.pathname === "/admin/documents/issue/dry-run" &&
+        request.method === "POST"
+      ) {
+        try {
+          _requireAdmin(request, url, env);
+        } catch (err) {
+          const message = String(err?.message || "Unauthorized");
+          return json(
+            {
+              ok: false,
+              error: message === "Unauthorized" ? "unauthorized" : "admin_unavailable",
+            },
+            message === "Unauthorized" ? 401 : 500,
+          );
+        }
+
+        try {
+          const body = await safeJson(request);
+          if (!body || typeof body !== "object" || Array.isArray(body)) {
+            return json({ ok: false, error: "invalid_body" }, 400);
+          }
+
+          const tenantId = safeStr(body.tenant_id ?? body.tenantId);
+          const companyId = safeStr(body.company_id ?? body.companyId);
+          if (!tenantId || !companyId) {
+            return json({ ok: false, error: "missing_tenant_scope" }, 400);
+          }
+
+          const documentType = documentReferenceTypePart(
+            body.document_type ?? body.documentType,
+            "",
+          );
+          if (!documentType) {
+            return json({ ok: false, error: "missing_document_type" }, 400);
+          }
+          if (
+            documentType !== DOCUMENT_TYPE_CREDIT_NOTE &&
+            documentType !== DOCUMENT_TYPE_REFUND_PROOF
+          ) {
+            return json({ ok: false, error: "unsupported_document_type" }, 400);
+          }
+
+          const sourceBookingId = safeStr(
+            body.source_booking_id ?? body.sourceBookingId,
+          );
+          if (!sourceBookingId) {
+            return json({ ok: false, error: "missing_source_booking_id" }, 400);
+          }
+
+          const currency = safeStr(body.currency).toUpperCase();
+          if (!currency) {
+            return json({ ok: false, error: "missing_currency" }, 400);
+          }
+
+          const totals = body.totals;
+          if (!totals || typeof totals !== "object" || Array.isArray(totals)) {
+            return json({ ok: false, error: "missing_totals" }, 400);
+          }
+
+          const sellerSnapshot = body.seller_snapshot ?? body.sellerSnapshot;
+          if (
+            !sellerSnapshot ||
+            typeof sellerSnapshot !== "object" ||
+            Array.isArray(sellerSnapshot)
+          ) {
+            return json({ ok: false, error: "missing_seller_snapshot" }, 400);
+          }
+
+          const rawBuyer = body.buyer_snapshot ?? body.buyerSnapshot;
+          const buyerSnapshot =
+            rawBuyer && typeof rawBuyer === "object" && !Array.isArray(rawBuyer)
+              ? rawBuyer
+              : null;
+
+          // FAKE identifiers — clearly marked. NEVER allocated from
+          // DOCUMENT_REFERENCE_SEQUENCE and NEVER stored.
+          const issueTimestamp = new Date().toISOString();
+          const dryRunDocumentId = `dryrun_${
+            (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function")
+              ? crypto.randomUUID()
+              : `${Date.now()}_${Math.random().toString(36).slice(2, 10)}`
+          }`;
+          const dryRunDocumentNumber =
+            documentType === DOCUMENT_TYPE_CREDIT_NOTE
+              ? `DRYRUN-${DOCUMENT_PREFIX_CREDIT_NOTE}-000000`
+              : null;
+          const dryRunProofReference =
+            documentType === DOCUMENT_TYPE_REFUND_PROOF
+              ? `DRYRUN-${DOCUMENT_PREFIX_REFUND_PROOF}-000000`
+              : null;
+
+          // Build the pure record + write plan. These helpers do NOT touch KV,
+          // DOs, allocator wrappers, idempotency or compliance.
+          //
+          // IMPORTANT — this dry-run endpoint does NOT read BOOKING_KV, so:
+          //   - source_booking_id is NOT verified to exist
+          //   - source_refund_id (for refund_proof) is NOT verified to exist
+          //   - totals are NOT re-derived from the real booking / refund
+          //   - leg-first context (source_leg_id / is_leg_scoped) is NOT
+          //     cross-checked against the parent booking's legs
+          // The route only exercises document_record + write_plan construction
+          // from the supplied in-memory inputs. A green response is NOT proof
+          // that a real issue would succeed; the future real issue endpoint
+          // (2G-N / 2G-O) will perform the missing server-side revalidation.
+          const record = await buildIssuedDocumentRegistryRecord({
+            scope: { tenant_id: tenantId, company_id: companyId },
+            document_id: dryRunDocumentId,
+            document_type: documentType,
+            document_number: dryRunDocumentNumber,
+            proof_reference: dryRunProofReference,
+            lifecycle_state: "draft_preview",
+            source_booking_id: sourceBookingId,
+            source_parent_booking_id:
+              body.source_parent_booking_id ?? body.sourceParentBookingId,
+            source_leg_id: body.source_leg_id ?? body.sourceLegId,
+            source_leg_type: body.source_leg_type ?? body.sourceLegType,
+            is_leg_scoped:
+              body.is_leg_scoped === true || body.isLegScoped === true,
+            source_refund_id: body.source_refund_id ?? body.sourceRefundId,
+            source_credit_decision:
+              body.source_credit_decision ?? body.sourceCreditDecision,
+            currency,
+            totals,
+            seller_snapshot: sellerSnapshot,
+            buyer_snapshot: buyerSnapshot,
+            issue_timestamp: issueTimestamp,
+            created_by_role: body.created_by_role ?? body.createdByRole,
+            created_by_device_id:
+              body.created_by_device_id ?? body.createdByDeviceId,
+            idempotency_key: body.idempotency_key ?? body.idempotencyKey,
+          });
+
+          const writePlan = buildDocumentRegistryWritePlan(record);
+
+          const warnings = [
+            "dry_run_only_no_reference_allocated",
+            "dry_run_only_no_registry_write",
+            "dry_run_only_no_compliance_event_emitted",
+            // Highlighted because the endpoint does not perform any BOOKING_KV
+            // read; source ids/totals/leg context are caller-supplied only.
+            "dry_run_only_no_source_booking_validation",
+          ];
+          if (!buyerSnapshot) warnings.push("dry_run_buyer_snapshot_missing");
+
+          console.log(
+            `[DOCUMENT_DRYRUN][OK] type=${documentType} writes=${writePlan.primary_writes.length} content_hash=${safeStr(record.content_hash).slice(0, 12)}`,
+          );
+
+          return json({
+            ok: true,
+            dry_run: true,
+            document_record: record,
+            write_plan: writePlan,
+            warnings,
+          });
+        } catch (err) {
+          const message = String(err?.message || "internal_error");
+          // Map known builder validation errors to 400; everything else to 500.
+          // Do NOT leak the raw message for unexpected exceptions.
+          if (message.startsWith("missing_") || message === "unsupported_document_type") {
+            return json({ ok: false, error: message }, 400);
+          }
+          console.log(`[DOCUMENT_DRYRUN][ERR] ${message}`);
+          return json({ ok: false, error: "internal_error" }, 500);
+        }
+      }
+
       // AVAILABILITY
       if (url.pathname === "/availability" && request.method === "POST") {
         const body = await safeJson(request);
