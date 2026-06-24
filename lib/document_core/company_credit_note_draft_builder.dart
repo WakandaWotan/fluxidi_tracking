@@ -75,6 +75,37 @@ DocumentCoreParty _documentCoreSellerFromProfile(
   );
 }
 
+/// Patch 2G-C: read-only tenant/company identity snapshot from local context.
+///
+/// Reads already-available values only (the passed [BackendBusinessProfile] and
+/// the in-memory company session/profile notifiers). No network call, no
+/// persistence, no number allocation. tenant/company ids fall back to the
+/// active company session when the profile omits them.
+DocumentCoreCompanyScopeSnapshot _documentCoreCompanyScope(
+  BackendBusinessProfile? profile,
+) {
+  final companyProfile = companyProfileNotifier.value;
+  final session = activeCompanySessionNotifier.value;
+
+  final companyId = _nullIfEmpty(
+    companyProfile?.companyId ?? session?.companyId,
+  );
+  final tenantId = _nullIfEmpty(companyProfile?.tenantId) ?? companyId;
+
+  return DocumentCoreCompanyScopeSnapshot(
+    tenantId: tenantId,
+    companyId: companyId,
+    companyCode: _nullIfEmpty(profile?.companyCode ?? session?.companyCode),
+    companyDisplayName: _nullIfEmpty(
+      profile?.companyName ?? companyProfile?.companyName,
+    ),
+    legalName: _nullIfEmpty(profile?.legalName),
+    vatNumber: _nullIfEmpty(profile?.vatNumber ?? companyProfile?.vatNumber),
+    registrationNumber: _nullIfEmpty(profile?.companyRegistrationNumber),
+    countryCode: _nullIfEmpty(profile?.country ?? companyProfile?.countryCode),
+  );
+}
+
 DocumentCoreParty _documentCoreBuyerFromItem(_CompanyBookingOverviewItem item) {
   final name = item.customerName.trim();
   // Patch 2D: customer name + email are present in the company-bookings
@@ -150,6 +181,7 @@ DocumentCoreCreditNoteDraft buildCompanyCreditNoteDraftFromOverviewItem(
 
   final seller = _documentCoreSellerFromProfile(companyProfile);
   final buyer = _documentCoreBuyerFromItem(item);
+  final companyScope = _documentCoreCompanyScope(companyProfile);
   final totals = _documentCoreTotals(
     item,
     totalInclVat: totalIncl,
@@ -188,6 +220,7 @@ DocumentCoreCreditNoteDraft buildCompanyCreditNoteDraftFromOverviewItem(
     buyer: buyer,
     totals: totals,
     references: references,
+    companyScope: companyScope,
     customerType: customerType,
     countryCode: buyer.countryCode,
     languageCode: languageCode ?? _documentCoreLanguageCode(),
@@ -224,6 +257,7 @@ DocumentCoreRefundProofDraft buildCompanyRefundProofDraftFromOverviewItem(
 
   final seller = _documentCoreSellerFromProfile(companyProfile);
   final buyer = _documentCoreBuyerFromItem(item);
+  final companyScope = _documentCoreCompanyScope(companyProfile);
   final totals = _documentCoreTotals(
     item,
     totalInclVat: legFirstAmount,
@@ -249,6 +283,7 @@ DocumentCoreRefundProofDraft buildCompanyRefundProofDraftFromOverviewItem(
     buyer: buyer,
     totals: totals,
     references: references,
+    companyScope: companyScope,
     customerType: DocumentCoreCustomerType.unknown,
     countryCode: buyer.countryCode,
     languageCode: languageCode ?? _documentCoreLanguageCode(),

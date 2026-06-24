@@ -173,6 +173,50 @@ class DocumentCoreReferenceContext {
   });
 }
 
+/// Provider-neutral, read-only tenant/company identity snapshot (Patch 2G-C).
+///
+/// Captured from local context at draft time so a future registry/numbering
+/// layer can scope a document to its company without re-resolving it. Every
+/// field is nullable: this is a non-authoritative snapshot, NOT an issued
+/// record, and it allocates no number and persists nothing. Field names align
+/// with [DocumentCoreRegistryRecord] for later mapping.
+class DocumentCoreCompanyScopeSnapshot {
+  final String? tenantId;
+  final String? companyId;
+  final String? companyCode;
+  final String? companyDisplayName;
+  final String? legalName;
+  final String? vatNumber;
+  final String? registrationNumber;
+  final String? countryCode;
+
+  const DocumentCoreCompanyScopeSnapshot({
+    this.tenantId,
+    this.companyId,
+    this.companyCode,
+    this.companyDisplayName,
+    this.legalName,
+    this.vatNumber,
+    this.registrationNumber,
+    this.countryCode,
+  });
+
+  bool get hasTenantId => tenantId != null && tenantId!.isNotEmpty;
+
+  bool get hasCompanyId => companyId != null && companyId!.isNotEmpty;
+
+  /// True when no scope field is populated.
+  bool get isEmpty =>
+      (tenantId == null || tenantId!.isEmpty) &&
+      (companyId == null || companyId!.isEmpty) &&
+      (companyCode == null || companyCode!.isEmpty) &&
+      (companyDisplayName == null || companyDisplayName!.isEmpty) &&
+      (legalName == null || legalName!.isEmpty) &&
+      (vatNumber == null || vatNumber!.isEmpty) &&
+      (registrationNumber == null || registrationNumber!.isEmpty) &&
+      (countryCode == null || countryCode!.isEmpty);
+}
+
 /// Provider-neutral internal credit note draft. NOT a UBL document.
 class DocumentCoreCreditNoteDraft {
   final DateTime issueDate;
@@ -180,6 +224,7 @@ class DocumentCoreCreditNoteDraft {
   final DocumentCoreParty buyer;
   final DocumentCoreMonetaryTotals totals;
   final DocumentCoreReferenceContext references;
+  final DocumentCoreCompanyScopeSnapshot companyScope;
   final DocumentCoreCustomerType customerType;
   final String? countryCode;
   final String? languageCode;
@@ -195,6 +240,7 @@ class DocumentCoreCreditNoteDraft {
     required this.buyer,
     required this.totals,
     required this.references,
+    this.companyScope = const DocumentCoreCompanyScopeSnapshot(),
     this.customerType = DocumentCoreCustomerType.unknown,
     this.countryCode,
     this.languageCode,
@@ -218,6 +264,7 @@ class DocumentCoreRefundProofDraft {
   final DocumentCoreParty buyer;
   final DocumentCoreMonetaryTotals totals;
   final DocumentCoreReferenceContext references;
+  final DocumentCoreCompanyScopeSnapshot companyScope;
   final DocumentCoreCustomerType customerType;
   final String? countryCode;
   final String? languageCode;
@@ -235,6 +282,7 @@ class DocumentCoreRefundProofDraft {
     required this.buyer,
     required this.totals,
     required this.references,
+    this.companyScope = const DocumentCoreCompanyScopeSnapshot(),
     this.customerType = DocumentCoreCustomerType.unknown,
     this.countryCode,
     this.languageCode,

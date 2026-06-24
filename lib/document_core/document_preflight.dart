@@ -72,6 +72,21 @@ bool _hasIdentity(DocumentCoreReferenceContext refs) =>
 
 bool _isPositive(num? value) => value != null && value > 0;
 
+/// Patch 2G-C: non-blocking tenant/company scope warnings. These never block a
+/// local PDF preview; they only surface PII-free diagnostic codes so a future
+/// registry/numbering layer can detect missing scope early.
+void _addCompanyScopeWarnings(
+  List<DocumentPreflightIssue> issues,
+  DocumentCoreCompanyScopeSnapshot scope,
+) {
+  if (!scope.hasTenantId) {
+    issues.add(const DocumentPreflightIssue.warning('missing_tenant_id'));
+  }
+  if (!scope.hasCompanyId) {
+    issues.add(const DocumentPreflightIssue.warning('missing_company_id'));
+  }
+}
+
 /// Validates a provider-neutral credit note draft before local PDF rendering.
 ///
 /// [creditContextValid] is computed by the caller from existing visibility
@@ -144,6 +159,7 @@ DocumentPreflightResult validateCreditNoteDraft(
       );
     }
   }
+  _addCompanyScopeWarnings(issues, draft.companyScope);
 
   return DocumentPreflightResult(
     List<DocumentPreflightIssue>.unmodifiable(issues),
@@ -213,6 +229,7 @@ DocumentPreflightResult validateRefundProofDraft(
       );
     }
   }
+  _addCompanyScopeWarnings(issues, draft.companyScope);
 
   return DocumentPreflightResult(
     List<DocumentPreflightIssue>.unmodifiable(issues),
