@@ -23,6 +23,15 @@ class _CompanyBookingCreditRefundPdfActionRunner {
     required BuildContext context,
     required _CompanyBookingOverviewItem item,
   }) async {
+    final preflight = _creditNotePreflight(item);
+    debugPrint(
+      '[COMPANY_BOOKINGS][CREDIT_NOTE_PDF][PREFLIGHT] '
+      'ref=${_referenceText(item)} ${preflight.diagnostic}',
+    );
+    if (preflight.isBlocked) {
+      _showPreflightBlocked(context);
+      return;
+    }
     final bytes = await _buildDocumentBytes(item: item, kind: _kindCreditNote);
     if (!context.mounted) return;
     if (bytes == null) {
@@ -54,6 +63,15 @@ class _CompanyBookingCreditRefundPdfActionRunner {
     required BuildContext context,
     required _CompanyBookingOverviewItem item,
   }) async {
+    final preflight = _refundProofPreflight(item);
+    debugPrint(
+      '[COMPANY_BOOKINGS][REFUND_PROOF_PDF][PREFLIGHT] '
+      'ref=${_referenceText(item)} ${preflight.diagnostic}',
+    );
+    if (preflight.isBlocked) {
+      _showPreflightBlocked(context);
+      return;
+    }
     final bytes = await _buildDocumentBytes(item: item, kind: _kindRefundProof);
     if (!context.mounted) return;
     if (bytes == null) {
@@ -74,6 +92,55 @@ class _CompanyBookingCreditRefundPdfActionRunner {
             es: 'Comprobante de reembolso',
           ),
           bytes: bytes,
+        ),
+      ),
+    );
+  }
+
+  /// Non-destructive Document Core preflight for the credit note. Builds a
+  /// provider-neutral draft (no writes, no backend, no numbering) and validates
+  /// it. Reuses the existing visibility gate as the "credit context valid"
+  /// signal so business logic is not duplicated here.
+  static DocumentPreflightResult _creditNotePreflight(
+    _CompanyBookingOverviewItem item,
+  ) {
+    final draft = buildCompanyCreditNoteDraftFromOverviewItem(
+      item,
+      companyProfile: localBackendBusinessProfileNotifier.value,
+    );
+    return validateCreditNoteDraft(
+      draft,
+      creditContextValid:
+          _CompanyBookingOverviewItem.canShowCreditNotePdfAction(item),
+    );
+  }
+
+  /// Non-destructive Document Core preflight for the refund proof. Reuses the
+  /// existing refund lifecycle helper for the "definitively refunded" signal.
+  static DocumentPreflightResult _refundProofPreflight(
+    _CompanyBookingOverviewItem item,
+  ) {
+    final draft = buildCompanyRefundProofDraftFromOverviewItem(
+      item,
+      companyProfile: localBackendBusinessProfileNotifier.value,
+    );
+    return validateRefundProofDraft(
+      draft,
+      refundLifecycleRefunded:
+          _CompanyBookingOverviewItem.isRefundLifecycleRefunded(item),
+    );
+  }
+
+  static void _showPreflightBlocked(BuildContext context) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          _tr(
+            nl: 'Documentgegevens zijn onvolledig; PDF kan niet veilig worden aangemaakt.',
+            en: 'Document data is incomplete; the PDF cannot be generated safely.',
+            fr: 'Données du document incomplètes ; le PDF ne peut pas être généré en toute sécurité.',
+            es: 'Los datos del documento están incompletos; el PDF no se puede generar de forma segura.',
+          ),
         ),
       ),
     );
