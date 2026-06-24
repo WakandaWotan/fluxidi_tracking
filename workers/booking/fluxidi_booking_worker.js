@@ -22984,6 +22984,105 @@ POST /admin/mollie/connect/disconnect
         }
       }
 
+      // 2G-O: read-only issued Document Core registry lookup.
+      //   GET /admin/documents/:documentId
+      // Returns SAFE metadata only (no PII, no buyer/seller snapshots, no raw
+      // registry object). Strictly read-only:
+      //   - admin auth (same _requireAdmin contract as the issue route)
+      //   - explicit tenant/company scope required; no legacy/global fallback
+      //   - scoped registry key only; a cross-tenant document is simply not
+      //     found (existence is not leaked)
+      //   - never allocates, never writes KV, never emits compliance events,
+      //     never calls Mollie/Chiron/refund/PDF; does not touch the issue,
+      //     dry-run, or refund-proof routes.
+      if (
+        request.method === "GET" &&
+        url.pathname.startsWith("/admin/documents/")
+      ) {
+        const docLookupSegments = url.pathname.split("/").filter(Boolean);
+        // Only the single-document shape: ["admin","documents","<documentId>"].
+        // Longer paths (e.g. issue/dry-run sub-routes) are left for their own
+        // handlers and never collide with this 3-segment GET.
+        if (
+          docLookupSegments.length === 3 &&
+          docLookupSegments[0] === "admin" &&
+          docLookupSegments[1] === "documents"
+        ) {
+          try {
+            _requireAdmin(request, url, env);
+          } catch (err) {
+            const message = String(err?.message || "Unauthorized");
+            return json(
+              {
+                ok: false,
+                error:
+                  message === "Unauthorized" ? "unauthorized" : "admin_unavailable",
+              },
+              message === "Unauthorized" ? 401 : 500,
+            );
+          }
+
+          try {
+            const scopedRoute = requireExplicitBookingRouteScope({ request, url });
+            if (!scopedRoute.ok) return scopedRoute.response;
+            const scope = {
+              tenant_id: scopedRoute.scope.tenant_id,
+              company_id: scopedRoute.scope.company_id,
+            };
+
+            const documentId =
+              safeStr(decodeURIComponent(docLookupSegments[2]), 200) || "";
+            if (!documentId) {
+              return json({ ok: false, error: "missing_document_id" }, 400);
+            }
+
+            if (!env?.BOOKING_KV) {
+              return json({ ok: false, error: "missing_binding" }, 503);
+            }
+
+            const record = await loadIssuedDocumentRegistryRecordById(
+              env,
+              scope,
+              documentId,
+            );
+            const docMask = documentId.slice(0, 8);
+            // Defense-in-depth: the registry key is already tenant/company
+            // scoped, so a cross-tenant document never resolves here. Re-check
+            // the stored scope and treat any mismatch as not-found so existence
+            // is never leaked across tenants.
+            const recordTenant = safeStr(record?.tenant_id ?? record?.tenantId, 80);
+            const recordCompany = safeStr(
+              record?.company_id ?? record?.companyId,
+              80,
+            );
+            if (
+              !record ||
+              (recordTenant && recordTenant !== scope.tenant_id) ||
+              (recordCompany && recordCompany !== scope.company_id)
+            ) {
+              console.log(`[DOCUMENT_LOOKUP][NOT_FOUND] doc=${docMask}`);
+              return json({ ok: false, error: "document_not_found" }, 404);
+            }
+
+            const meta = buildIssuedDocumentPublicMetadata(record);
+            console.log(
+              `[DOCUMENT_LOOKUP][OK] doc=${docMask} type=${meta.document_type || "-"} lifecycle=${meta.lifecycle_state || "-"}`,
+            );
+            return json({
+              ok: true,
+              ...meta,
+              warnings: [],
+            });
+          } catch (err) {
+            const message = String(err?.message || "internal_error");
+            console.log(
+              `[DOCUMENT_LOOKUP][ERR] ${safeStr(message, 200) || "unknown"}`,
+            );
+            return json({ ok: false, error: "internal_error" }, 500);
+          }
+        }
+      }
+
       // AVAILABILITY
       if (url.pathname === "/availability" && request.method === "POST") {
         const body = await safeJson(request);
@@ -67017,6 +67116,33 @@ function buildCreditNoteReplaySafeFields(idemHit, registryRecord) {
     issue_timestamp: issueTimestamp,
     currency,
     content_hash: contentHash,
+  };
+}
+
+// 2G-O: build the safe public metadata projection of a canonical issued
+// registry record for GET /admin/documents/:documentId. Surfaces ONLY
+// non-sensitive document/reference metadata. Never exposes buyer/seller
+// snapshots, names, emails, phones, addresses, IBANs, idempotency keys,
+// provider tokens, the immutable snapshot, or the raw registry object. Absent
+// fields are returned as null rather than guessed.
+function buildIssuedDocumentPublicMetadata(record) {
+  const rec = record && typeof record === "object" ? record : {};
+  return {
+    document_id: safeStr(rec.document_id ?? rec.documentId, 200) || null,
+    document_type: safeStr(rec.document_type ?? rec.documentType, 40) || null,
+    document_number: safeStr(rec.document_number ?? rec.documentNumber, 80) || null,
+    proof_reference: safeStr(rec.proof_reference ?? rec.proofReference, 80) || null,
+    lifecycle_state:
+      safeStr(rec.lifecycle_state ?? rec.lifecycleState, 40) || null,
+    document_status:
+      safeStr(rec.document_status ?? rec.documentStatus, 40) || null,
+    issue_timestamp: safeStr(rec.issue_timestamp ?? rec.issueTimestamp, 80) || null,
+    currency: safeStr(rec.currency, 8).toUpperCase() || null,
+    content_hash: safeStr(rec.content_hash ?? rec.contentHash, 128) || null,
+    source_booking_id:
+      safeStr(rec.source_booking_id ?? rec.sourceBookingId, 200) || null,
+    source_leg_id: safeStr(rec.source_leg_id ?? rec.sourceLegId, 200) || null,
+    source_leg_type: safeStr(rec.source_leg_type ?? rec.sourceLegType, 24) || null,
   };
 }
 
