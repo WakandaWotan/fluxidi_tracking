@@ -66584,6 +66584,399 @@ async function hashDocumentSnapshot(snapshot) {
   return sha256Hex(stableDocumentJson(snapshot));
 }
 
+/* Pure server-side credit-note context derivation (Patch 2G-N-B).
+ *
+ * For FUTURE POST /admin/documents/credit-note/issue ONLY. Given an already-
+ * loaded booking record (from BOOKING_KV.get('booking:<id>')) and optional
+ * caller-supplied source_leg_id / expected_currency / expected_totals, this
+ * helper figures out which credit context applies (leg-first or booking-level),
+ * verifies it is eligible for a credit note, and returns the canonical totals
+ * the future route should pass to buildIssuedDocumentRegistryRecord().
+ *
+ * It is PURE / inert:
+ *   - no KV reads or writes (the caller already loaded the record)
+ *   - no allocation, no DOCUMENT_REFERENCE_SEQUENCE, no DO calls
+ *   - no findDocumentByIdempotency / allocateCreditNoteReference / etc.
+ *   - no compliance emit, no routes, no runtime call-sites in this patch.
+ *
+ * Leg-first correctness: when source_leg_id is supplied, totals/decision/
+ * currency are read from THAT leg only. Falling back to parent roundtrip
+ * totals for a leg-scoped credit note is explicitly REFUSED, because it would
+ * over-credit the customer. Multi-leg parents without source_leg_id are
+ * refused with leg_required_for_roundtrip.
+ *
+ * Never mutates the input record (reads only; the leg copy is plain object
+ * access). Returns either { ok: true, context, warnings: [] } or
+ * { ok: false, error: "<code>" } using stable error codes documented inline.
+ */
+function deriveServerSideCreditContext(rec, options = {}) {
+  if (!rec || typeof rec !== "object" || Array.isArray(rec)) {
+    return { ok: false, error: "missing_booking_record" };
+  }
+
+  const requestedLegId = safeStr(options?.source_leg_id ?? options?.sourceLegId);
+  const requestedLegTypeRaw = safeStr(
+    options?.source_leg_type ?? options?.sourceLegType,
+    24,
+  );
+  const expectedCurrencyRaw = safeStr(
+    options?.expected_currency ?? options?.expectedCurrency,
+    8,
+  ).toUpperCase();
+  const expectedTotals =
+    options?.expected_totals && typeof options.expected_totals === "object"
+      ? options.expected_totals
+      : options?.expectedTotals && typeof options.expectedTotals === "object"
+        ? options.expectedTotals
+        : null;
+
+  const warnings = [];
+
+  // Non-mutating walk of every operational_legs container that may live on the
+  // record (mirrors the read style used by _ensurePendingCreditStateOnCancelledPaidLegs,
+  // but without producing a mutated copy).
+  const legContainers = [];
+  if (Array.isArray(rec?.operational_legs)) legContainers.push(rec.operational_legs);
+  if (Array.isArray(rec?.operationalLegs)) legContainers.push(rec.operationalLegs);
+  if (rec?.booking && typeof rec.booking === "object") {
+    if (Array.isArray(rec.booking.operational_legs)) {
+      legContainers.push(rec.booking.operational_legs);
+    }
+    if (Array.isArray(rec.booking.operationalLegs)) {
+      legContainers.push(rec.booking.operationalLegs);
+    }
+  }
+  if (rec?.payload && typeof rec.payload === "object") {
+    if (Array.isArray(rec.payload.operational_legs)) {
+      legContainers.push(rec.payload.operational_legs);
+    }
+    if (Array.isArray(rec.payload.operationalLegs)) {
+      legContainers.push(rec.payload.operationalLegs);
+    }
+  }
+  // De-duplicate by length+first-id signature so a record that exposes the
+  // same leg list on multiple aliases is not counted twice.
+  const allLegs = [];
+  const seenSignatures = new Set();
+  for (const list of legContainers) {
+    if (!Array.isArray(list) || list.length === 0) continue;
+    const firstId =
+      safeStr(list[0]?.leg_id ?? list[0]?.legId) || `len:${list.length}`;
+    const signature = `${list.length}:${firstId}`;
+    if (seenSignatures.has(signature)) continue;
+    seenSignatures.add(signature);
+    for (const leg of list) {
+      if (leg && typeof leg === "object" && !Array.isArray(leg)) allLegs.push(leg);
+    }
+  }
+  const hasMultipleLegs = allLegs.length > 1;
+
+  // ---- 1. Select credit context (leg vs booking) ----------------------------
+  let sourceKind = "booking";
+  let legEntry = null;
+  let resolvedLegId = "";
+  let resolvedLegType = "";
+
+  if (requestedLegId) {
+    legEntry = allLegs.find(
+      (leg) => safeStr(leg?.leg_id ?? leg?.legId) === requestedLegId,
+    ) || null;
+    if (!legEntry) return { ok: false, error: "source_leg_not_found" };
+    sourceKind = "leg";
+    resolvedLegId = requestedLegId;
+    resolvedLegType =
+      safeStr(legEntry?.leg_type ?? legEntry?.legType, 24) || requestedLegTypeRaw || "";
+  } else if (hasMultipleLegs) {
+    // Refuse to credit a parent roundtrip without explicit leg selection;
+    // parent totals would over-credit one leg.
+    return { ok: false, error: "leg_required_for_roundtrip" };
+  }
+
+  // ---- 2. Credit decision ---------------------------------------------------
+  // Eligible credit decisions for a credit-note document. Mirrors the existing
+  // BOOKING_CREDIT_DECISION_TYPES vocabulary; no_refund / handled_manually
+  // resolve the credit lifecycle WITHOUT producing a credit note.
+  const creditDecisionRaw =
+    sourceKind === "leg"
+      ? _operationalLegCreditDecisionRaw(legEntry)
+      : _bookingCreditDecisionRaw(rec);
+  if (
+    creditDecisionRaw === "no_refund" ||
+    creditDecisionRaw === "handled_manually"
+  ) {
+    return { ok: false, error: "credit_decision_excludes_credit_note" };
+  }
+  if (creditDecisionRaw !== "full_credit" && creditDecisionRaw !== "partial_credit") {
+    return { ok: false, error: "credit_decision_required" };
+  }
+
+  // ---- 3. Credited amount (cents, leg-first) --------------------------------
+  // Walk known projection paths in the SELECTED context only. Never fall back
+  // to parent amounts for a leg-scoped context.
+  const creditedCandidates =
+    sourceKind === "leg"
+      ? [
+          legEntry?.credited_amount_cents,
+          legEntry?.creditedAmountCents,
+        ]
+      : [
+          rec?.credited_amount_cents,
+          rec?.creditedAmountCents,
+          rec?.booking?.credited_amount_cents,
+          rec?.booking?.creditedAmountCents,
+          rec?.payload?.credited_amount_cents,
+          rec?.payload?.creditedAmountCents,
+        ];
+  let creditedAmountCents = null;
+  for (const candidate of creditedCandidates) {
+    if (candidate === null || candidate === undefined || candidate === "") continue;
+    const n = Number(candidate);
+    if (!Number.isFinite(n)) continue;
+    creditedAmountCents = Math.round(n);
+    break;
+  }
+  if (!Number.isFinite(creditedAmountCents) || creditedAmountCents <= 0) {
+    return { ok: false, error: "credit_amount_unreliable" };
+  }
+  const creditedAmountInclVat = creditedAmountCents / 100;
+
+  // ---- 4. Currency ----------------------------------------------------------
+  // Currency lives on the booking, never on the leg in practice. Read all the
+  // standard aliases; refuse if missing or if it disagrees with the caller's
+  // expected_currency.
+  const currencyCandidates = [
+    sourceKind === "leg" ? legEntry?.currency : null,
+    rec?.currency,
+    rec?.booking?.currency,
+    rec?.payload?.currency,
+    _pick(rec, ["quote", "currency"], null),
+    _pick(rec, ["payload", "quote", "currency"], null),
+    _pick(rec, ["booking", "quote", "currency"], null),
+  ];
+  let currency = "";
+  for (const candidate of currencyCandidates) {
+    const c = safeStr(candidate, 8).toUpperCase();
+    if (c) {
+      currency = c;
+      break;
+    }
+  }
+  if (!currency) return { ok: false, error: "currency_missing" };
+  if (expectedCurrencyRaw && expectedCurrencyRaw !== currency) {
+    return { ok: false, error: "currency_mismatch" };
+  }
+
+  // ---- 5. VAT breakdown (leg-first) -----------------------------------------
+  // Try the leg-level breakdown first, then booking/record/payload/quote
+  // paths the existing pricing layer already populates (see
+  // _bookingChironRecordVatAmount / _bookingChironRecordNetAmount).
+  function _firstFiniteNonNegative(candidates) {
+    for (const candidate of candidates) {
+      if (candidate === null || candidate === undefined || candidate === "") continue;
+      const n = Number(candidate);
+      if (Number.isFinite(n) && n >= 0) return n;
+    }
+    return null;
+  }
+  const subtotalExVatCandidates =
+    sourceKind === "leg"
+      ? [
+          legEntry?.subtotal_ex_vat,
+          legEntry?.subtotalExVat,
+          legEntry?.price_ex_vat,
+          legEntry?.priceExVat,
+          legEntry?.net_amount,
+          legEntry?.netAmount,
+        ]
+      : [
+          rec?.subtotal_ex_vat,
+          rec?.subtotalExVat,
+          rec?.booking?.subtotal_ex_vat,
+          rec?.booking?.subtotalExVat,
+          rec?.payload?.subtotal_ex_vat,
+          rec?.payload?.subtotalExVat,
+          rec?.price_ex_vat,
+          rec?.priceExVat,
+          rec?.booking?.price_ex_vat,
+          rec?.booking?.priceExVat,
+          rec?.payload?.price_ex_vat,
+          rec?.payload?.priceExVat,
+          _pick(rec, ["quote", "pricing", "price_ex_vat"], null),
+          _pick(rec, ["quote", "total_price_ex_vat"], null),
+          _pick(rec, ["payload", "quote", "total_price_ex_vat"], null),
+          _pick(rec, ["booking", "quote", "total_price_ex_vat"], null),
+        ];
+  const vatAmountCandidates =
+    sourceKind === "leg"
+      ? [
+          legEntry?.vat_amount,
+          legEntry?.vatAmount,
+          legEntry?.price_vat,
+          legEntry?.priceVat,
+        ]
+      : [
+          rec?.vat_amount,
+          rec?.vatAmount,
+          rec?.booking?.vat_amount,
+          rec?.booking?.vatAmount,
+          rec?.payload?.vat_amount,
+          rec?.payload?.vatAmount,
+          rec?.price_vat,
+          rec?.priceVat,
+          rec?.booking?.price_vat,
+          rec?.booking?.priceVat,
+          rec?.payload?.price_vat,
+          rec?.payload?.priceVat,
+          _pick(rec, ["quote", "pricing", "price_vat"], null),
+          _pick(rec, ["quote", "total_price_vat"], null),
+          _pick(rec, ["payload", "quote", "total_price_vat"], null),
+          _pick(rec, ["booking", "quote", "total_price_vat"], null),
+        ];
+  const vatRateCandidates =
+    sourceKind === "leg"
+      ? [legEntry?.vat_rate_percent, legEntry?.vatRatePercent, legEntry?.vat_rate, legEntry?.vatRate]
+      : [
+          rec?.vat_rate_percent,
+          rec?.vatRatePercent,
+          rec?.booking?.vat_rate_percent,
+          rec?.booking?.vatRatePercent,
+          rec?.payload?.vat_rate_percent,
+          rec?.payload?.vatRatePercent,
+          rec?.vat_rate,
+          rec?.vatRate,
+          rec?.booking?.vat_rate,
+          rec?.booking?.vatRate,
+          rec?.payload?.vat_rate,
+          rec?.payload?.vatRate,
+          _pick(rec, ["quote", "vat_rate_percent"], null),
+          _pick(rec, ["quote", "vatRatePercent"], null),
+          _pick(rec, ["quote", "vat_rate"], null),
+          _pick(rec, ["quote", "vatRate"], null),
+        ];
+  const subtotalExVat = _firstFiniteNonNegative(subtotalExVatCandidates);
+  const vatAmount = _firstFiniteNonNegative(vatAmountCandidates);
+  let vatRatePercent = _firstFiniteNonNegative(vatRateCandidates);
+  // Existing pricing layer stores vat_rate as a fraction (e.g. 0.06); convert
+  // sub-1 values to percent so the registry always carries percent-form.
+  if (vatRatePercent !== null && vatRatePercent > 0 && vatRatePercent < 1) {
+    vatRatePercent = vatRatePercent * 100;
+  }
+  if (subtotalExVat === null || vatAmount === null) {
+    return { ok: false, error: "vat_breakdown_missing" };
+  }
+
+  // ---- 6. Compare against expected_totals (cents-safe) ----------------------
+  function _amountCentsEqualOrNull(expected, actual) {
+    if (expected === null || expected === undefined || expected === "") return true;
+    const expNum = Number(expected);
+    if (!Number.isFinite(expNum)) return true;
+    if (actual === null || actual === undefined) return false;
+    return Math.round(expNum * 100) === Math.round(actual * 100);
+  }
+  function _percentEqualOrNull(expected, actual) {
+    if (expected === null || expected === undefined || expected === "") return true;
+    const expNum = Number(expected);
+    if (!Number.isFinite(expNum)) return true;
+    if (actual === null || actual === undefined) return false;
+    // Mirror the sub-1 → percent coercion above so callers can pass either form.
+    const norm = expNum > 0 && expNum < 1 ? expNum * 100 : expNum;
+    return Math.round(norm * 100) === Math.round(actual * 100);
+  }
+  if (expectedTotals) {
+    const expCreditedInclVat =
+      expectedTotals.credited_amount_incl_vat ?? expectedTotals.creditedAmountInclVat;
+    if (!_amountCentsEqualOrNull(expCreditedInclVat, creditedAmountInclVat)) {
+      return { ok: false, error: "totals_mismatch" };
+    }
+    if (
+      !_amountCentsEqualOrNull(
+        expectedTotals.subtotal_ex_vat ?? expectedTotals.subtotalExVat,
+        subtotalExVat,
+      )
+    ) {
+      return { ok: false, error: "totals_mismatch" };
+    }
+    if (
+      !_amountCentsEqualOrNull(
+        expectedTotals.vat_amount ?? expectedTotals.vatAmount,
+        vatAmount,
+      )
+    ) {
+      return { ok: false, error: "totals_mismatch" };
+    }
+    if (
+      !_percentEqualOrNull(
+        expectedTotals.vat_rate_percent ?? expectedTotals.vatRatePercent,
+        vatRatePercent,
+      )
+    ) {
+      return { ok: false, error: "totals_mismatch" };
+    }
+    const expTotalInclVat =
+      expectedTotals.total_incl_vat ?? expectedTotals.totalInclVat;
+    if (expTotalInclVat !== null && expTotalInclVat !== undefined && expTotalInclVat !== "") {
+      const expNum = Number(expTotalInclVat);
+      if (
+        Number.isFinite(expNum) &&
+        Math.round(expNum * 100) !== Math.round(creditedAmountInclVat * 100)
+      ) {
+        // The total_incl_vat on a credit-note context equals the credited
+        // amount incl VAT for the SELECTED context; anything else is a
+        // caller/projection bug.
+        return { ok: false, error: "totals_mismatch" };
+      }
+    }
+  }
+
+  // ---- 7. Optional warnings (non-blocking) ----------------------------------
+  if (vatRatePercent === null) warnings.push("vat_rate_percent_missing");
+
+  const refundRequired =
+    (sourceKind === "leg" ? legEntry?.refund_required ?? legEntry?.refundRequired : null) ??
+    rec?.refund_required ??
+    rec?.refundRequired ??
+    rec?.booking?.refund_required ??
+    rec?.booking?.refundRequired ??
+    rec?.payload?.refund_required ??
+    rec?.payload?.refundRequired ??
+    null;
+
+  const parentBookingId =
+    safeStr(
+      rec?.parent_booking_id ??
+        rec?.parentBookingId ??
+        rec?.booking?.parent_booking_id ??
+        rec?.booking?.parentBookingId ??
+        rec?.payload?.parent_booking_id ??
+        rec?.payload?.parentBookingId,
+    ) || null;
+
+  return {
+    ok: true,
+    context: {
+      is_leg_scoped: sourceKind === "leg",
+      source_kind: sourceKind,
+      source_leg_id: resolvedLegId || null,
+      source_leg_type: resolvedLegType || null,
+      source_parent_booking_id: parentBookingId,
+      credit_decision: creditDecisionRaw,
+      credited_amount_cents: creditedAmountCents,
+      credited_amount_incl_vat: creditedAmountInclVat,
+      currency,
+      totals: {
+        total_incl_vat: creditedAmountInclVat,
+        subtotal_ex_vat: subtotalExVat,
+        vat_amount: vatAmount,
+        vat_rate_percent: vatRatePercent,
+        credited_amount_incl_vat: creditedAmountInclVat,
+        refunded_amount_incl_vat: null,
+      },
+      refund_required: refundRequired === true,
+    },
+    warnings,
+  };
+}
+
 /* Pure issued document registry record builder (Patch 2G-J).
  *
  * For FUTURE document issue endpoints ONLY, to be called AFTER:
