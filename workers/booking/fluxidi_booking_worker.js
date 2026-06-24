@@ -65807,6 +65807,143 @@ function documentReferenceScopeName(tenantId, companyId, sequenceType, year) {
   return `doc_ref_seq:${tenantPart}:${companyPart}:${typePart}:${year}`;
 }
 
+/* ===================== DOCUMENT REGISTRY KEY SPACE (Patch 2G-E) =====================
+ * Pure constants + key builders for the FUTURE provider-neutral document
+ * registry/numbering recommended by the 2G-D audit. This block is intentionally
+ * inert:
+ *   - no KV reads/writes
+ *   - no Durable Object calls
+ *   - no number allocation
+ *   - no routes / endpoints
+ *   - no persistence / no behavior change
+ * It only standardizes the registry key vocabulary so later patches stay
+ * consistent. Scope/type segments reuse the existing normalization
+ * (bookingReferenceScopePart / documentReferenceTypePart). Opaque id segments in
+ * the NEW keys are normalized the same way for KV-key safety; because reads and
+ * writes will both go through these builders, the normalization stays symmetric.
+ */
+const DOCUMENT_TYPE_CREDIT_NOTE = "credit_note";
+const DOCUMENT_TYPE_REFUND_PROOF = "refund_proof";
+
+// Human-facing reference prefixes (used ONLY by future sequence allocation).
+const DOCUMENT_PREFIX_CREDIT_NOTE = "FCN"; // Fluxidi Credit Note
+const DOCUMENT_PREFIX_REFUND_PROOF = "FRP"; // Fluxidi Refund Proof
+
+// Base sequence-type tokens for DOCUMENT_REFERENCE_SEQUENCE. Future allocation
+// appends year/month, mirroring the existing invoice sequence pattern.
+const DOCUMENT_SEQUENCE_TYPE_CREDIT_NOTE = "credit_note";
+const DOCUMENT_SEQUENCE_TYPE_REFUND_PROOF = "refund_proof";
+
+// Requires a tenant AND company scope, consistent with nextInvoiceNumber /
+// allocateScopedInvoiceSequence (which throw "missing_tenant_scope").
+function documentRegistryScopeParts(scope) {
+  const tenantRaw = safeStr(scope?.tenant_id ?? scope?.tenantId);
+  const companyRaw = safeStr(scope?.company_id ?? scope?.companyId);
+  if (!tenantRaw || !companyRaw) {
+    throw new Error("missing_tenant_scope");
+  }
+  const tenantPart = bookingReferenceScopePart(tenantRaw, "fluxidi");
+  const companyPart = bookingReferenceScopePart(companyRaw, tenantPart);
+  return { tenantPart, companyPart };
+}
+
+// Normalizes an opaque id/number segment for a NEW registry key. Throws a
+// descriptive "missing_<label>" error when empty.
+function documentRegistrySegment(value, label) {
+  const part = bookingReferenceScopePart(value, "");
+  if (!part) throw new Error(`missing_${label}`);
+  return part;
+}
+
+function documentRegistryTypePart(documentType) {
+  const typePart = documentReferenceTypePart(documentType, "");
+  if (!typePart) throw new Error("missing_document_type");
+  return typePart;
+}
+
+// doc_registry:<tenant>:<company>:<documentId> — canonical registry record key.
+function buildDocumentRegistryKey(scope, documentId) {
+  const { tenantPart, companyPart } = documentRegistryScopeParts(scope);
+  const docPart = documentRegistrySegment(documentId, "document_id");
+  return `doc_registry:${tenantPart}:${companyPart}:${docPart}`;
+}
+
+// doc_number_idx:<tenant>:<company>:<type>:<documentNumber> — number lookup.
+function buildDocumentNumberIndexKey(scope, documentType, documentNumber) {
+  const { tenantPart, companyPart } = documentRegistryScopeParts(scope);
+  const typePart = documentRegistryTypePart(documentType);
+  const numberPart = documentRegistrySegment(documentNumber, "document_number");
+  return `doc_number_idx:${tenantPart}:${companyPart}:${typePart}:${numberPart}`;
+}
+
+// doc_by_booking:<tenant>:<company>:<canonicalBookingId>:<type>:<documentId>
+function buildDocumentsByBookingKey(
+  scope,
+  canonicalBookingId,
+  documentType,
+  documentId,
+) {
+  const { tenantPart, companyPart } = documentRegistryScopeParts(scope);
+  const bookingPart = documentRegistrySegment(
+    canonicalBookingId,
+    "canonical_booking_id",
+  );
+  const typePart = documentRegistryTypePart(documentType);
+  const docPart = documentRegistrySegment(documentId, "document_id");
+  return `doc_by_booking:${tenantPart}:${companyPart}:${bookingPart}:${typePart}:${docPart}`;
+}
+
+// doc_by_leg:<tenant>:<company>:<canonicalBookingId>:<legId>:<type>:<documentId>
+// Leg-first: leg-scoped documents index under their own leg id so a roundtrip
+// parent never aggregates leg documents.
+function buildDocumentsByLegKey(
+  scope,
+  canonicalBookingId,
+  legId,
+  documentType,
+  documentId,
+) {
+  const { tenantPart, companyPart } = documentRegistryScopeParts(scope);
+  const bookingPart = documentRegistrySegment(
+    canonicalBookingId,
+    "canonical_booking_id",
+  );
+  const legPart = documentRegistrySegment(legId, "leg_id");
+  const typePart = documentRegistryTypePart(documentType);
+  const docPart = documentRegistrySegment(documentId, "document_id");
+  return `doc_by_leg:${tenantPart}:${companyPart}:${bookingPart}:${legPart}:${typePart}:${docPart}`;
+}
+
+// doc_by_refund:<tenant>:<company>:<refundId>:<documentId>
+function buildDocumentsByRefundKey(scope, refundId, documentId) {
+  const { tenantPart, companyPart } = documentRegistryScopeParts(scope);
+  const refundPart = documentRegistrySegment(refundId, "refund_id");
+  const docPart = documentRegistrySegment(documentId, "document_id");
+  return `doc_by_refund:${tenantPart}:${companyPart}:${refundPart}:${docPart}`;
+}
+
+// doc_idempotency:<tenant>:<company>:<type>:<idempotencyKey> — future issue dedup.
+function buildDocumentIdempotencyKey(scope, documentType, idempotencyKey) {
+  const { tenantPart, companyPart } = documentRegistryScopeParts(scope);
+  const typePart = documentRegistryTypePart(documentType);
+  const idemPart = documentRegistrySegment(idempotencyKey, "idempotency_key");
+  return `doc_idempotency:${tenantPart}:${companyPart}:${typePart}:${idemPart}`;
+}
+
+// doc_ref:<tenant>:<company>:<type>:<documentReference> — READ-SIDE mirror of the
+// EXISTING putDocumentReferenceIndex() key. Uses the same case-preserving
+// safeStr() for the reference so, for properly tenant/company-scoped input, it
+// returns a byte-identical key. Do NOT normalize the reference here or it would
+// diverge from the existing writes.
+function buildDocumentReferenceIndexKey(scope, sequenceType, documentReference) {
+  const { tenantPart, companyPart } = documentRegistryScopeParts(scope);
+  const typePart = documentReferenceTypePart(sequenceType, "");
+  const reference = safeStr(documentReference);
+  if (!typePart) throw new Error("missing_sequence_type");
+  if (!reference) throw new Error("missing_document_reference");
+  return `doc_ref:${tenantPart}:${companyPart}:${typePart}:${reference}`;
+}
+
 function attachPublicBookingReferenceAliases(target, publicBookingReference) {
   if (!target || typeof target !== "object") return target;
   const value = safeStr(publicBookingReference);
