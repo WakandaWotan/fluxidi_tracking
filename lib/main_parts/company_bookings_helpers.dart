@@ -649,21 +649,36 @@ class _CompanyBookingOverviewItem {
     return false;
   }
 
+  /// Patch 2F-C: the strict, document-grade credit amount rule.
+  ///
+  /// True only when a reliable credited amount > 0 exists for this row. This is
+  /// exactly the value the credit note PDF renders as "Gecrediteerd bedrag"
+  /// (`creditedAmountCents / 100`) and the same value the Document Core preflight
+  /// requires (`missing_credited_amount`). Deliberately NOT derived from
+  /// `refundedAmountCents` or the leg/original amount, so the Creditnota button
+  /// is never shown when the preview would always be blocked.
+  static bool hasReliableCreditNoteAmount(_CompanyBookingOverviewItem item) {
+    return (item.creditedAmountCents ?? 0) > 0;
+  }
+
   /// Patch-1 gate: local "Creditnota" (credit note) PDF document action.
   ///
   /// A credit note is a local correction document for a cancelled/credited
-  /// booking or leg. Patch 2E-A: it is shown only when an *effective* credit
-  /// correction exists ([hasEffectiveCreditCorrection]) — an actual full/partial
-  /// credit, a recorded credited amount, or a finalised refund. A `NO_REFUND` /
-  /// `HANDLED_MANUALLY` decision does NOT surface a credit note. Leg-first: on a
-  /// roundtrip booking the credit/refund belongs to a leg row, so the action is
-  /// suppressed on the (non-leg) roundtrip parent row and surfaced on the
-  /// operational leg row instead.
+  /// booking or leg. Patch 2E-A excludes `NO_REFUND` / `HANDLED_MANUALLY`
+  /// (an administrator decision that credits nothing). Patch 2F-C tightens this
+  /// further to align visibility with the preflight: the button is shown only
+  /// when a reliable credited amount > 0 exists ([hasReliableCreditNoteAmount]),
+  /// i.e. exactly the amount the PDF would render. A row that is only
+  /// refunded (no `creditedAmountCents`) therefore hides the Creditnota button
+  /// while the Terugbetalingsbewijs button remains governed by the refund
+  /// lifecycle. Leg-first: on a roundtrip booking the credit belongs to a leg
+  /// row, so the action is suppressed on the (non-leg) roundtrip parent row and
+  /// surfaced on the operational leg row instead.
   static bool canShowCreditNotePdfAction(_CompanyBookingOverviewItem item) {
     if (!hasCanonicalBookingIdentity(item)) return false;
     if (!_isCancelledStatus(item.statusText)) return false;
     if (!isPaidPaymentStatus(item.paymentStatus)) return false;
-    if (!hasEffectiveCreditCorrection(item)) return false;
+    if (!hasReliableCreditNoteAmount(item)) return false;
     if (item.isRoundtripParent && !isRoundtripOperationalLegRow(item)) {
       return false;
     }
