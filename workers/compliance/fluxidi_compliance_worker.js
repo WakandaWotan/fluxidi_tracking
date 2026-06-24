@@ -12,6 +12,61 @@ const ALLOWED_EVENT_TYPES = new Set([
   "sync_failed",
 ]);
 
+/* ===================== DOCUMENT AUDIT EVENT SHAPES (future, inert) =====================
+ * Provider-neutral naming + payload shape for FUTURE append-only document audit
+ * events recommended by the 2G-D audit (Booking Worker owns registry/numbering;
+ * Compliance Worker later receives the audit trail). This block is intentionally
+ * inert:
+ *   - it is NOT added to ALLOWED_EVENT_TYPES, so append validation is unchanged
+ *     and none of these event types can be stored yet;
+ *   - no routes / handlers / KV get/put/list/delete / service bindings;
+ *   - no event emission and no Billit/Peppol/OAuth implementation.
+ * It only reserves stable vocabulary so a later patch can wire append() without
+ * renaming. Nothing here changes runtime behavior.
+ */
+const FUTURE_DOCUMENT_AUDIT_EVENT_TYPES = Object.freeze({
+  ISSUED: "document_issued",
+  VOIDED: "document_voided",
+  PROVIDER_EXPORTED: "document_provider_exported",
+  PROVIDER_ACCEPTED: "document_provider_accepted",
+  PROVIDER_REJECTED: "document_provider_rejected",
+});
+
+// Future document audit event payload shape (DOCUMENTATION ONLY). When wired,
+// these events ride on the existing compliance_event_v1 envelope (tenant/company
+// scoped, append-only); the fields below describe the event-specific `payload`:
+//   {
+//     tenant_id: string,
+//     company_id: string,
+//     document_id: string,                      // backend-allocated UUID
+//     document_type: "credit_note" | "refund_proof",
+//     document_number: string | null,           // credit_note accounting number
+//     proof_reference: string | null,           // refund_proof non-accounting ref
+//     document_status: "issued" | "voided" | "exported_to_provider"
+//                      | "provider_accepted" | "provider_rejected",
+//     source_booking_id: string,
+//     source_parent_booking_id: string | null,  // roundtrip parent (context only)
+//     source_leg_id: string | null,             // leg-first scope
+//     source_leg_type: string | null,           // "outbound" | "return"
+//     source_refund_id: string | null,
+//     currency: string,                          // hard currency frozen at issue
+//     totals: {                                  // frozen snapshot summary
+//       total_incl_vat: number | null,
+//       subtotal_ex_vat: number | null,
+//       vat_amount: number | null,
+//       vat_rate_percent: number | null,
+//       credited_amount_incl_vat: number | null,
+//       refunded_amount_incl_vat: number | null
+//     },
+//     content_hash: string,                      // SHA-256 of canonical snapshot
+//     issue_timestamp: string,                   // backend UTC ISO timestamp
+//     created_by_role: string | null,
+//     provider_name: string | null,             // generic; no provider impl here
+//     provider_document_id: string | null,
+//     provider_export_status: string | null,
+//     provider_rejected_reason: string | null
+//   }
+
 const SCHEMA_VERSION = "compliance_event_v1";
 const SYNC_STATE = "not_configured";
 const RETRY_OUTBOX_STATE_DIRECT = "direct_append_v1";
