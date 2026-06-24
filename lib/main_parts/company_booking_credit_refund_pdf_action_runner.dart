@@ -126,9 +126,7 @@ class _CompanyBookingCreditRefundPdfActionRunner {
               es: 'Comprobante de reembolso',
             );
 
-      final footerText = (seller['footer']?.trim().isNotEmpty ?? false)
-          ? seller['footer']!.trim()
-          : '';
+      final footerText = _localizedFooterText();
 
       doc.addPage(
         pw.MultiPage(
@@ -150,15 +148,18 @@ class _CompanyBookingCreditRefundPdfActionRunner {
                 font: boldFont,
               ),
             ),
-            pw.SizedBox(height: 10),
+            pw.SizedBox(height: 12),
             ..._documentInfoRows(
               item: item,
               isCreditNote: isCreditNote,
               isLegRow: isLegRow,
             ),
-            pw.SizedBox(height: 16),
+            pw.SizedBox(height: 18),
             pw.Container(
-              padding: const pw.EdgeInsets.all(10),
+              padding: const pw.EdgeInsets.symmetric(
+                horizontal: 12,
+                vertical: 11,
+              ),
               decoration: pw.BoxDecoration(
                 border: pw.Border.all(color: PdfColors.grey400),
                 borderRadius: pw.BorderRadius.circular(6),
@@ -171,16 +172,11 @@ class _CompanyBookingCreditRefundPdfActionRunner {
                 ),
               ),
             ),
-            if (footerText.isNotEmpty) ...[
-              pw.SizedBox(height: 16),
-              pw.Text(
-                footerText,
-                style: const pw.TextStyle(
-                  color: PdfColors.grey700,
-                  fontSize: 10,
-                ),
-              ),
-            ],
+            pw.SizedBox(height: 18),
+            pw.Text(
+              footerText,
+              style: const pw.TextStyle(color: PdfColors.grey700, fontSize: 10),
+            ),
           ],
         ),
       );
@@ -253,7 +249,7 @@ class _CompanyBookingCreditRefundPdfActionRunner {
     required bool isLegRow,
   }) {
     final rows = <pw.Widget>[
-      _ReceiptPdfActionRunner._pdfInfoRow(
+      _pdfInfoRow(
         _tr(
           nl: 'Documentdatum',
           en: 'Document date',
@@ -262,7 +258,7 @@ class _CompanyBookingCreditRefundPdfActionRunner {
         ),
         _formatNowDate(),
       ),
-      _ReceiptPdfActionRunner._pdfInfoRow(
+      _pdfInfoRow(
         _tr(
           nl: 'Boekingsreferentie',
           en: 'Booking reference',
@@ -275,7 +271,7 @@ class _CompanyBookingCreditRefundPdfActionRunner {
 
     if (isLegRow) {
       rows.add(
-        _ReceiptPdfActionRunner._pdfInfoRow(
+        _pdfInfoRow(
           _tr(nl: 'Rit-deel', en: 'Ride leg', fr: 'Segment', es: 'Tramo'),
           _legLabel(item.legType),
         ),
@@ -285,7 +281,7 @@ class _CompanyBookingCreditRefundPdfActionRunner {
           : item.parentBookingId.trim();
       if (parentRef.isNotEmpty) {
         rows.add(
-          _ReceiptPdfActionRunner._pdfInfoRow(
+          _pdfInfoRow(
             _tr(
               nl: 'Bovenliggende boeking',
               en: 'Parent booking',
@@ -301,7 +297,7 @@ class _CompanyBookingCreditRefundPdfActionRunner {
     if (item.customerName.trim().isNotEmpty &&
         item.customerName.trim() != '—') {
       rows.add(
-        _ReceiptPdfActionRunner._pdfInfoRow(
+        _pdfInfoRow(
           _tr(nl: 'Klant', en: 'Customer', fr: 'Client', es: 'Cliente'),
           item.customerName.trim(),
         ),
@@ -316,7 +312,7 @@ class _CompanyBookingCreditRefundPdfActionRunner {
 
     if (isCreditNote) {
       rows.add(
-        _ReceiptPdfActionRunner._pdfInfoRow(
+        _pdfInfoRow(
           _tr(
             nl: 'Oorspronkelijk bedrag',
             en: 'Original amount',
@@ -328,7 +324,7 @@ class _CompanyBookingCreditRefundPdfActionRunner {
       );
       if (item.creditedAmountCents != null && item.creditedAmountCents! > 0) {
         rows.add(
-          _ReceiptPdfActionRunner._pdfInfoRow(
+          _pdfInfoRow(
             _tr(
               nl: 'Gecrediteerd bedrag',
               en: 'Credited amount',
@@ -341,7 +337,7 @@ class _CompanyBookingCreditRefundPdfActionRunner {
       }
       if (item.creditDecision.trim().isNotEmpty) {
         rows.add(
-          _ReceiptPdfActionRunner._pdfInfoRow(
+          _pdfInfoRow(
             _tr(
               nl: 'Creditbeslissing',
               en: 'Credit decision',
@@ -360,7 +356,7 @@ class _CompanyBookingCreditRefundPdfActionRunner {
           ? item.refundedAmountCents! / 100
           : originalAmount;
       rows.add(
-        _ReceiptPdfActionRunner._pdfInfoRow(
+        _pdfInfoRow(
           _tr(
             nl: 'Terugbetaald bedrag',
             en: 'Refunded amount',
@@ -371,7 +367,7 @@ class _CompanyBookingCreditRefundPdfActionRunner {
         ),
       );
       rows.add(
-        _ReceiptPdfActionRunner._pdfInfoRow(
+        _pdfInfoRow(
           _tr(
             nl: 'Terugbetalingsstatus',
             en: 'Refund status',
@@ -388,7 +384,7 @@ class _CompanyBookingCreditRefundPdfActionRunner {
       );
       if (item.refundedAt.trim().isNotEmpty) {
         rows.add(
-          _ReceiptPdfActionRunner._pdfInfoRow(
+          _pdfInfoRow(
             _tr(
               nl: 'Terugbetaald op',
               en: 'Refunded on',
@@ -401,7 +397,7 @@ class _CompanyBookingCreditRefundPdfActionRunner {
       }
       if (item.refundProvider.trim().isNotEmpty) {
         rows.add(
-          _ReceiptPdfActionRunner._pdfInfoRow(
+          _pdfInfoRow(
             _tr(
               nl: 'Terugbetaalmethode',
               en: 'Refund provider',
@@ -414,7 +410,7 @@ class _CompanyBookingCreditRefundPdfActionRunner {
       }
       if (item.mollieRefundId.trim().isNotEmpty) {
         rows.add(
-          _ReceiptPdfActionRunner._pdfInfoRow(
+          _pdfInfoRow(
             _tr(
               nl: 'Terugbetaal-ID',
               en: 'Refund id',
@@ -428,6 +424,32 @@ class _CompanyBookingCreditRefundPdfActionRunner {
     }
 
     return rows;
+  }
+
+  static pw.Widget _pdfInfoRow(String label, String value) {
+    return pw.Padding(
+      padding: const pw.EdgeInsets.only(bottom: 7),
+      child: pw.Row(
+        crossAxisAlignment: pw.CrossAxisAlignment.start,
+        children: <pw.Widget>[
+          pw.Container(
+            width: 178,
+            padding: const pw.EdgeInsets.only(right: 16),
+            child: pw.Text(
+              label,
+              style: pw.TextStyle(
+                fontWeight: pw.FontWeight.bold,
+                color: PdfColors.grey800,
+              ),
+              softWrap: true,
+            ),
+          ),
+          pw.Expanded(
+            child: pw.Text(value, textAlign: pw.TextAlign.left, softWrap: true),
+          ),
+        ],
+      ),
+    );
   }
 
   static String _documentNote({
@@ -454,6 +476,15 @@ class _CompanyBookingCreditRefundPdfActionRunner {
       en: 'This document proves the registration of the refund within Fluxidi. It is not a ride receipt and does not prove an executed ride.',
       fr: 'Ce document atteste l’enregistrement du remboursement dans Fluxidi. Ce n’est pas un reçu de course.',
       es: 'Este documento acredita el registro del reembolso dentro de Fluxidi. No es un recibo de viaje.',
+    );
+  }
+
+  static String _localizedFooterText() {
+    return _tr(
+      nl: 'Bedankt voor uw vertrouwen in Fluxidi.',
+      en: 'Thank you for your trust in Fluxidi.',
+      fr: 'Merci pour votre confiance en Fluxidi.',
+      es: 'Gracias por confiar en Fluxidi.',
     );
   }
 
