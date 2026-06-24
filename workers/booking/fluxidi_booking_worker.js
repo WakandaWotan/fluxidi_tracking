@@ -66399,6 +66399,196 @@ async function hashDocumentSnapshot(snapshot) {
   return sha256Hex(stableDocumentJson(snapshot));
 }
 
+/* Pure issued document registry record builder (Patch 2G-J).
+ *
+ * For FUTURE document issue endpoints ONLY, to be called AFTER:
+ *   1) idempotency has been checked (findDocumentByIdempotency), AND
+ *   2) a reference/number has already been allocated
+ *      (allocateCreditNoteReference / allocateRefundProofReference).
+ *
+ * This helper is PURE / inert:
+ *   - it does NOT allocate numbers (number/reference must already be in `input`)
+ *   - it does NOT read or write KV
+ *   - it does NOT call the idempotency lookup or allocator wrappers
+ *   - it does NOT call DOCUMENT_REFERENCE_SEQUENCE
+ *   - it does NOT persist a registry record or append compliance events
+ *   - it is NOT wired to any route and is not invoked anywhere in this patch.
+ *
+ * It builds, from already-resolved in-memory inputs:
+ *   1) a normalized immutable_snapshot (the frozen document content), and
+ *   2) a content_hash over THAT snapshot via hashDocumentSnapshot().
+ *      The content_hash covers the IMMUTABLE SNAPSHOT, not the registry
+ *      envelope, so audit/provider metadata changes never alter the hash.
+ *
+ * Product rule preserved:
+ *   - credit_note carries an official accounting document_number.
+ *   - refund_proof carries a non-accounting proof_reference (proof/audit),
+ *     never an accounting credit-note number.
+ *
+ * Issued snapshots MUST NOT be recalculated from mutable booking data later;
+ * a future caller persists the returned immutable_snapshot + content_hash at
+ * issue time and treats them as immutable.
+ *
+ * Field names align with the Flutter DocumentCoreRegistryRecord (snake_case).
+ * Strict in-memory validation throws "missing_<field>" (consistent with the
+ * registry key builders), but the helper is not connected to any runtime path.
+ */
+async function buildIssuedDocumentRegistryRecord(input = {}) {
+  const scope = input?.scope || {};
+  const tenantId = safeStr(scope?.tenant_id ?? scope?.tenantId);
+  const companyId = safeStr(scope?.company_id ?? scope?.companyId);
+  if (!tenantId || !companyId) throw new Error("missing_tenant_scope");
+
+  const documentId = safeStr(input?.document_id ?? input?.documentId);
+  if (!documentId) throw new Error("missing_document_id");
+
+  const documentType = documentReferenceTypePart(
+    input?.document_type ?? input?.documentType,
+    "",
+  );
+  if (!documentType) throw new Error("missing_document_type");
+
+  const currency = safeStr(input?.currency).toUpperCase();
+  if (!currency) throw new Error("missing_currency");
+
+  const issueTimestamp = safeStr(
+    input?.issue_timestamp ?? input?.issueTimestamp,
+  );
+  if (!issueTimestamp) throw new Error("missing_issue_timestamp");
+
+  const sourceBookingId = safeStr(
+    input?.source_booking_id ?? input?.sourceBookingId,
+  );
+  if (!sourceBookingId) throw new Error("missing_source_booking_id");
+
+  // Type-specific reference rule: exactly one applies. credit_note = accounting
+  // number; refund_proof = non-accounting proof reference.
+  let documentNumber = null;
+  let proofReference = null;
+  if (documentType === DOCUMENT_TYPE_CREDIT_NOTE) {
+    documentNumber = safeStr(input?.document_number ?? input?.documentNumber);
+    if (!documentNumber) throw new Error("missing_document_number");
+  } else if (documentType === DOCUMENT_TYPE_REFUND_PROOF) {
+    proofReference = safeStr(input?.proof_reference ?? input?.proofReference);
+    if (!proofReference) throw new Error("missing_proof_reference");
+  } else {
+    throw new Error("unsupported_document_type");
+  }
+
+  const totals = input?.totals;
+  if (!totals || typeof totals !== "object") throw new Error("missing_totals");
+
+  const sellerSnapshot = input?.seller_snapshot ?? input?.sellerSnapshot;
+  if (!sellerSnapshot || typeof sellerSnapshot !== "object") {
+    throw new Error("missing_seller_snapshot");
+  }
+
+  // Buyer snapshot may be incomplete/nullable for now, but it must be explicit
+  // (null rather than silently absent) so the envelope shape stays stable.
+  const buyerSnapshot = input?.buyer_snapshot ?? input?.buyerSnapshot ?? null;
+
+  const lifecycleState =
+    safeStr(input?.lifecycle_state ?? input?.lifecycleState) || "issued";
+
+  // Source / correction context (leg-first preserved; never inferred here).
+  const sourceParentBookingId =
+    safeStr(input?.source_parent_booking_id ?? input?.sourceParentBookingId) ||
+    null;
+  const sourceLegId =
+    safeStr(input?.source_leg_id ?? input?.sourceLegId) || null;
+  const sourceLegType =
+    safeStr(input?.source_leg_type ?? input?.sourceLegType) || null;
+  const isLegScoped =
+    input?.is_leg_scoped === true || input?.isLegScoped === true;
+  const sourceRefundId =
+    safeStr(input?.source_refund_id ?? input?.sourceRefundId) || null;
+  const sourceCreditDecision =
+    safeStr(input?.source_credit_decision ?? input?.sourceCreditDecision) ||
+    null;
+
+  // Audit metadata.
+  const createdByRole =
+    safeStr(input?.created_by_role ?? input?.createdByRole) || null;
+  const createdByDeviceId =
+    safeStr(input?.created_by_device_id ?? input?.createdByDeviceId) || null;
+  const idempotencyKey =
+    safeStr(input?.idempotency_key ?? input?.idempotencyKey) || null;
+
+  // Provider placeholders: populated only if explicitly supplied, else null.
+  const provider = input?.provider || {};
+  const providerName =
+    safeStr(provider?.name ?? provider?.provider_name) || null;
+  const providerDocumentId =
+    safeStr(provider?.document_id ?? provider?.providerDocumentId) || null;
+  const providerExportStatus =
+    safeStr(provider?.export_status ?? provider?.providerExportStatus) || null;
+  const providerAcceptedAt =
+    safeStr(provider?.accepted_at ?? provider?.providerAcceptedAt) || null;
+  const providerRejectedReason =
+    safeStr(provider?.rejected_reason ?? provider?.providerRejectedReason) ||
+    null;
+
+  // 1) Immutable snapshot: the frozen document content the content_hash covers.
+  //    Reference/number + issue timestamp are part of it (hash AFTER they exist).
+  const immutableSnapshot = canonicalizeDocumentSnapshot({
+    tenant_id: tenantId,
+    company_id: companyId,
+    document_id: documentId,
+    document_type: documentType,
+    document_number: documentNumber,
+    proof_reference: proofReference,
+    issue_timestamp: issueTimestamp,
+    source_booking_id: sourceBookingId,
+    source_parent_booking_id: sourceParentBookingId,
+    source_leg_id: sourceLegId,
+    source_leg_type: sourceLegType,
+    is_leg_scoped: isLegScoped,
+    source_refund_id: sourceRefundId,
+    source_credit_decision: sourceCreditDecision,
+    currency,
+    totals,
+    seller_snapshot: sellerSnapshot,
+    buyer_snapshot: buyerSnapshot,
+  });
+
+  // 2) content_hash over the IMMUTABLE SNAPSHOT only (not the envelope below).
+  const contentHash = await hashDocumentSnapshot(immutableSnapshot);
+
+  // Registry envelope aligned with the Flutter DocumentCoreRegistryRecord.
+  return {
+    tenant_id: tenantId,
+    company_id: companyId,
+    document_id: documentId,
+    document_type: documentType,
+    document_number: documentNumber,
+    proof_reference: proofReference,
+    lifecycle_state: lifecycleState,
+    document_status: lifecycleState,
+    source_booking_id: sourceBookingId,
+    source_parent_booking_id: sourceParentBookingId,
+    source_leg_id: sourceLegId,
+    source_leg_type: sourceLegType,
+    is_leg_scoped: isLegScoped,
+    source_refund_id: sourceRefundId,
+    source_credit_decision: sourceCreditDecision,
+    currency,
+    totals,
+    buyer_snapshot: buyerSnapshot,
+    seller_snapshot: sellerSnapshot,
+    issue_timestamp: issueTimestamp,
+    created_by_role: createdByRole,
+    created_by_device_id: createdByDeviceId,
+    idempotency_key: idempotencyKey,
+    content_hash: contentHash,
+    immutable_snapshot: immutableSnapshot,
+    provider_name: providerName,
+    provider_document_id: providerDocumentId,
+    provider_export_status: providerExportStatus,
+    provider_accepted_at: providerAcceptedAt,
+    provider_rejected_reason: providerRejectedReason,
+  };
+}
+
 /* ===================== PUSHBULLET ===================== */
 
 async function sendPushbulletNote(env, { title, body, device_iden = "" }) {
