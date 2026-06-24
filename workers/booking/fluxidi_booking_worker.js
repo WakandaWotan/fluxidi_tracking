@@ -66333,6 +66333,72 @@ async function allocateRefundProofReference(env, scope, options = {}) {
   });
 }
 
+/* Pure document snapshot canonicalizer + content hash (Patch 2G-I).
+ *
+ * For FUTURE issued (immutable) document snapshots ONLY. When a document is
+ * issued, the backend freezes a snapshot together with its issue timestamp,
+ * document reference and document number, then stores a content_hash so the
+ * snapshot can later be verified as unchanged. These helpers are PURE and inert:
+ *   - no KV read/write, no DOCUMENT_REFERENCE_SEQUENCE, no allocation
+ *   - no registry records, no idempotency keys, no compliance events, no routes
+ *   - not invoked anywhere in this patch.
+ *
+ * Rules for the future caller:
+ *   - content_hash MUST be computed AFTER the backend issue timestamp /
+ *     reference / number are known (they are part of the snapshot input).
+ *   - An issued snapshot's hash MUST NOT be recalculated from mutable booking
+ *     data later — persist the canonical JSON + hash at issue time and treat
+ *     them as immutable.
+ *   - These helpers do NOT allocate numbers and do NOT persist anything.
+ *
+ * Example (SHAPE ONLY — not runtime data) of a future snapshot input:
+ *   {
+ *     document_type, document_number, document_reference, issued_at,
+ *     tenant_id, company_id, canonical_booking_id, leg_id,
+ *     seller: {...}, buyer: {...}, totals: {...}, lines: [...]
+ *   }
+ */
+
+// Recursively normalizes a snapshot into a deterministic structure: object keys
+// sorted, arrays kept in order, `undefined` omitted (object keys) or coerced to
+// null (array slots), `null` preserved. Does NOT mutate the input.
+function canonicalizeDocumentSnapshot(snapshot) {
+  const normalize = (value) => {
+    if (value === null) return null;
+    if (Array.isArray(value)) {
+      // Arrays keep their order; undefined slots become null for determinism.
+      return value.map((item) =>
+        item === undefined ? null : normalize(item),
+      );
+    }
+    if (typeof value === "object") {
+      const out = {};
+      for (const key of Object.keys(value).sort()) {
+        const child = normalize(value[key]);
+        // Omit undefined-valued keys so output is stable regardless of input.
+        if (child !== undefined) out[key] = child;
+      }
+      return out;
+    }
+    // Primitives pass through unchanged (undefined stays undefined → omitted).
+    return value;
+  };
+  const root = normalize(snapshot);
+  // A top-level undefined/primitive snapshot still canonicalizes consistently.
+  return root === undefined ? null : root;
+}
+
+// Deterministic JSON string for a snapshot (stable, recursively-sorted keys).
+function stableDocumentJson(value) {
+  return JSON.stringify(canonicalizeDocumentSnapshot(value));
+}
+
+// SHA-256 (lowercase hex) over the canonical JSON. Reuses the existing
+// sha256Hex() helper. Async because crypto.subtle.digest is async.
+async function hashDocumentSnapshot(snapshot) {
+  return sha256Hex(stableDocumentJson(snapshot));
+}
+
 /* ===================== PUSHBULLET ===================== */
 
 async function sendPushbulletNote(env, { title, body, device_iden = "" }) {
