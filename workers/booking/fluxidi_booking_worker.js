@@ -66281,6 +66281,58 @@ async function allocateAndReserveDocumentReference(env, params = {}) {
   );
 }
 
+/* Future document reference allocator wrappers (Patch 2G-H).
+ *
+ * Thin wrappers that delegate ALL allocation semantics to the existing
+ * allocateAndReserveDocumentReference() (DOCUMENT_REFERENCE_SEQUENCE Durable
+ * Object + doc_ref index). They only pin the correct sequence type and prefix
+ * per document type — no allocator logic is duplicated, no new DO pattern is
+ * introduced, and KV is never manually incremented.
+ *
+ * They are intentionally inert in this patch:
+ *   - FUTURE document issue endpoints ONLY.
+ *   - Idempotency (findDocumentByIdempotency) MUST be checked BEFORE calling
+ *     these wrappers, so a duplicate retry returns the SAME document instead of
+ *     allocating a new number.
+ *   - MUST NOT be called during PDF preview.
+ *   - MUST NOT be invoked from Flutter / local UI directly.
+ *   - Credit note references and refund proof references are SEPARATE sequences
+ *     (DOCUMENT_SEQUENCE_TYPE_CREDIT_NOTE vs DOCUMENT_SEQUENCE_TYPE_REFUND_PROOF)
+ *     so their numbering never shares a counter or collides.
+ * They do not write registry records, read/write idempotency keys, append
+ * compliance events, or create snapshots — that is the future caller's job.
+ *
+ * Tenant/company scope is required: documentRegistryScopeParts(scope) throws
+ * "missing_tenant_scope" when absent, before any allocation is attempted. The
+ * raw scope ids are then passed through so the allocator keeps its own
+ * (case-preserving) normalization unchanged. Sequence type / prefix are applied
+ * AFTER spreading options so callers cannot override them.
+ */
+async function allocateCreditNoteReference(env, scope, options = {}) {
+  documentRegistryScopeParts(scope);
+  return allocateAndReserveDocumentReference(env, {
+    ...options,
+    tenant_id: scope?.tenant_id ?? scope?.tenantId,
+    company_id: scope?.company_id ?? scope?.companyId,
+    sequence_type: DOCUMENT_SEQUENCE_TYPE_CREDIT_NOTE,
+    prefix: DOCUMENT_PREFIX_CREDIT_NOTE,
+  });
+}
+
+/* A refund proof reference is an AUDIT / PROOF reference, NOT an accounting
+ * credit-note number. It uses its own sequence + "FRP" prefix and must never be
+ * treated as (or merged with) a fiscal credit-note sequence. */
+async function allocateRefundProofReference(env, scope, options = {}) {
+  documentRegistryScopeParts(scope);
+  return allocateAndReserveDocumentReference(env, {
+    ...options,
+    tenant_id: scope?.tenant_id ?? scope?.tenantId,
+    company_id: scope?.company_id ?? scope?.companyId,
+    sequence_type: DOCUMENT_SEQUENCE_TYPE_REFUND_PROOF,
+    prefix: DOCUMENT_PREFIX_REFUND_PROOF,
+  });
+}
+
 /* ===================== PUSHBULLET ===================== */
 
 async function sendPushbulletNote(env, { title, body, device_iden = "" }) {
