@@ -32,6 +32,10 @@ class _CompanyBookingOverviewItem {
   final String fromAddress;
   final String toAddress;
   final String customerName;
+  // Patch 2D: buyer email is present in the company-bookings list payload
+  // (customer_email/email) and is safe to map. Buyer tax identity (VAT,
+  // address, country) is NOT in this payload and stays unmapped on purpose.
+  final String customerEmail;
   final String assignedDriverText;
   final String assignedVehicleText;
   final String statusText;
@@ -53,6 +57,14 @@ class _CompanyBookingOverviewItem {
   final bool isPendingCredit;
   final num? amount;
   final num? parentAmount;
+  // Patch 2D: leg-first VAT breakdown when present in the list payload.
+  // For operational legs these come from leg_price_ex_vat / leg_price_vat;
+  // for parent/full rows from price_ex_vat / total_price_ex_vat. They stay
+  // null when the backend did not project a split (then the document draft
+  // remains structurally incomplete).
+  final num? subtotalExVat;
+  final num? vatAmount;
+  final num? vatRatePercent;
   final String currency;
   final _CompanyBookingsFilter bucket;
 
@@ -69,6 +81,7 @@ class _CompanyBookingOverviewItem {
     required this.fromAddress,
     required this.toAddress,
     required this.customerName,
+    required this.customerEmail,
     required this.assignedDriverText,
     required this.assignedVehicleText,
     required this.statusText,
@@ -90,6 +103,9 @@ class _CompanyBookingOverviewItem {
     required this.isPendingCredit,
     required this.amount,
     required this.parentAmount,
+    required this.subtotalExVat,
+    required this.vatAmount,
+    required this.vatRatePercent,
     required this.currency,
     required this.bucket,
   });
@@ -1571,6 +1587,63 @@ class _CompanyBookingOverviewItem {
       'booking.currency',
       'record.booking.currency',
     ]);
+    final customerEmail = _firstText(raw, const <String>[
+      'customer_email',
+      'customerEmail',
+      'custEmail',
+      'email',
+      'customer.email',
+      'booking.customer_email',
+      'booking.customerEmail',
+      'record.customer_email',
+      'record.customerEmail',
+      'record.booking.customer_email',
+      'record.booking.customerEmail',
+    ]);
+    // Patch 2D leg-first VAT breakdown. Operational legs prefer their own
+    // leg_price_* fields; parent/full rows use the booking/quote split. No
+    // value is invented: fields stay null when the payload omits them.
+    final num? subtotalExVat = isOperationalLeg
+        ? _firstNum(raw, const <String>['leg_price_ex_vat', 'legPriceExVat'])
+        : _firstNum(raw, const <String>[
+            'price_ex_vat',
+            'priceExVat',
+            'total_price_ex_vat',
+            'parent_price_ex_vat',
+            'parentPriceExVat',
+            'quote.pricing.price_ex_vat',
+            'record.quote.pricing.price_ex_vat',
+          ]);
+    final num? vatAmount = isOperationalLeg
+        ? _firstNum(raw, const <String>['leg_price_vat', 'legPriceVat'])
+        : _firstNum(raw, const <String>[
+            'price_vat',
+            'priceVat',
+            'total_price_vat',
+            'parent_price_vat',
+            'parentPriceVat',
+            'quote.pricing.price_vat',
+            'record.quote.pricing.price_vat',
+          ]);
+    final num? vatRatePercentRaw = _firstNum(raw, const <String>[
+      'vat_rate',
+      'vatRate',
+      'quote.pricing.vat_rate',
+      'record.quote.pricing.vat_rate',
+    ]);
+    // Backend stores vat_rate as a fraction (e.g. 0.06). Normalize to percent
+    // when below 1; otherwise treat as an already-percent value. When no rate
+    // is present, derive it from ex + vat only (never guessed otherwise).
+    num? vatRatePercent;
+    if (vatRatePercentRaw != null) {
+      vatRatePercent = vatRatePercentRaw <= 1
+          ? vatRatePercentRaw * 100
+          : vatRatePercentRaw;
+    } else if (subtotalExVat != null &&
+        subtotalExVat != 0 &&
+        vatAmount != null) {
+      vatRatePercent = (vatAmount / subtotalExVat) * 100;
+    }
     final isPendingCredit = _deriveIsPendingCredit(
       raw: raw,
       statusRaw: statusRaw,
@@ -1620,6 +1693,7 @@ class _CompanyBookingOverviewItem {
       fromAddress: fromAddress.isEmpty ? '—' : fromAddress,
       toAddress: toAddress.isEmpty ? '—' : toAddress,
       customerName: customerName,
+      customerEmail: customerEmail,
       assignedDriverText: assignedDriver.isEmpty ? '—' : assignedDriver,
       assignedVehicleText: assignedVehicle.isEmpty ? '—' : assignedVehicle,
       statusText: _normStatus(statusRaw),
@@ -1642,6 +1716,9 @@ class _CompanyBookingOverviewItem {
       isPendingCredit: isPendingCredit,
       amount: amount,
       parentAmount: parentAmount,
+      subtotalExVat: subtotalExVat,
+      vatAmount: vatAmount,
+      vatRatePercent: vatRatePercent,
       currency: currency,
       bucket: bucket,
     );

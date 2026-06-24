@@ -77,9 +77,34 @@ DocumentCoreParty _documentCoreSellerFromProfile(
 
 DocumentCoreParty _documentCoreBuyerFromItem(_CompanyBookingOverviewItem item) {
   final name = item.customerName.trim();
-  // Only the customer name is reliably available on the company overview item.
-  // Buyer VAT/address/country/email are intentionally left null (not guessed).
-  return DocumentCoreParty(name: (name.isEmpty || name == '—') ? null : name);
+  // Patch 2D: customer name + email are present in the company-bookings
+  // payload and are mapped. Buyer VAT/address/country remain null on purpose
+  // (not in this payload; would require a future backend projection).
+  return DocumentCoreParty(
+    name: (name.isEmpty || name == '—') ? null : name,
+    email: _nullIfEmpty(item.customerEmail),
+  );
+}
+
+DocumentCoreMonetaryTotals _documentCoreTotals(
+  _CompanyBookingOverviewItem item, {
+  required num? totalInclVat,
+  num? creditedAmountInclVat,
+  num? refundedAmountInclVat,
+}) {
+  final currency = item.currency.trim().isNotEmpty
+      ? item.currency.trim().toUpperCase()
+      : 'EUR';
+  return DocumentCoreMonetaryTotals(
+    currency: currency,
+    totalInclVat: totalInclVat,
+    // Patch 2D leg-first VAT breakdown (null when the payload omits a split).
+    subtotalExVat: item.subtotalExVat,
+    vatAmount: item.vatAmount,
+    vatRatePercent: item.vatRatePercent,
+    creditedAmountInclVat: creditedAmountInclVat,
+    refundedAmountInclVat: refundedAmountInclVat,
+  );
 }
 
 DocumentCoreReferenceContext _documentCoreReferences(
@@ -118,9 +143,6 @@ DocumentCoreCreditNoteDraft buildCompanyCreditNoteDraftFromOverviewItem(
   final num? totalIncl = legScoped
       ? item.amount
       : _CompanyBookingOverviewItem.creditDecisionMaxAmount(item);
-  final currency = item.currency.trim().isNotEmpty
-      ? item.currency.trim().toUpperCase()
-      : 'EUR';
   final creditedIncl =
       (item.creditedAmountCents != null && item.creditedAmountCents! > 0)
       ? item.creditedAmountCents! / 100
@@ -128,11 +150,10 @@ DocumentCoreCreditNoteDraft buildCompanyCreditNoteDraftFromOverviewItem(
 
   final seller = _documentCoreSellerFromProfile(companyProfile);
   final buyer = _documentCoreBuyerFromItem(item);
-  final totals = DocumentCoreMonetaryTotals(
-    currency: currency,
+  final totals = _documentCoreTotals(
+    item,
     totalInclVat: totalIncl,
     creditedAmountInclVat: creditedIncl,
-    // VAT split (subtotal/vat/rate) is not available on the company item.
   );
   final references = _documentCoreReferences(item, legScoped: legScoped);
 
@@ -196,9 +217,6 @@ DocumentCoreRefundProofDraft buildCompanyRefundProofDraftFromOverviewItem(
   final num? legFirstAmount = legScoped
       ? item.amount
       : _CompanyBookingOverviewItem.creditDecisionMaxAmount(item);
-  final currency = item.currency.trim().isNotEmpty
-      ? item.currency.trim().toUpperCase()
-      : 'EUR';
   final refundedIncl =
       (item.refundedAmountCents != null && item.refundedAmountCents! > 0)
       ? item.refundedAmountCents! / 100
@@ -206,8 +224,8 @@ DocumentCoreRefundProofDraft buildCompanyRefundProofDraftFromOverviewItem(
 
   final seller = _documentCoreSellerFromProfile(companyProfile);
   final buyer = _documentCoreBuyerFromItem(item);
-  final totals = DocumentCoreMonetaryTotals(
-    currency: currency,
+  final totals = _documentCoreTotals(
+    item,
     totalInclVat: legFirstAmount,
     refundedAmountInclVat: refundedIncl,
   );
