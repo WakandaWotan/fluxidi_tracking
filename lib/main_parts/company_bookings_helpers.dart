@@ -628,22 +628,42 @@ class _CompanyBookingOverviewItem {
     return true;
   }
 
+  /// True when an *effective* credit correction exists for the row: an actual
+  /// full/partial credit decision, a credited/partial credit status, a recorded
+  /// credited amount, or a finalised refund.
+  ///
+  /// Patch 2E-A: this intentionally EXCLUDES `NO_REFUND` and `HANDLED_MANUALLY`.
+  /// Those record an administrator decision but apply no credit to the invoice,
+  /// so a credit note (a correction document that credits the booking) would be
+  /// misleading. A credit note is only meaningful when money is actually
+  /// credited or refunded.
+  static bool hasEffectiveCreditCorrection(_CompanyBookingOverviewItem item) {
+    final decision = _normStatus(item.creditDecision);
+    if (decision == 'FULL_CREDIT' || decision == 'PARTIAL_CREDIT') return true;
+    final creditStatus = _normStatus(item.creditStatus);
+    if (creditStatus == 'CREDITED' || creditStatus == 'PARTIAL_CREDIT') {
+      return true;
+    }
+    if ((item.creditedAmountCents ?? 0) > 0) return true;
+    if (isRefundLifecycleRefunded(item)) return true;
+    return false;
+  }
+
   /// Patch-1 gate: local "Creditnota" (credit note) PDF document action.
   ///
   /// A credit note is a local correction document for a cancelled/credited
-  /// booking or leg. It is only shown once a credit decision has been recorded
-  /// ([hasCreditDecisionRecorded]) or a refund has reached a final refunded
-  /// state ([isRefundLifecycleRefunded], which implies a credit correction
-  /// exists). Leg-first: on a roundtrip booking the credit/refund belongs to a
-  /// leg row, so the action is suppressed on the (non-leg) roundtrip parent
-  /// row and surfaced on the operational leg row instead.
+  /// booking or leg. Patch 2E-A: it is shown only when an *effective* credit
+  /// correction exists ([hasEffectiveCreditCorrection]) — an actual full/partial
+  /// credit, a recorded credited amount, or a finalised refund. A `NO_REFUND` /
+  /// `HANDLED_MANUALLY` decision does NOT surface a credit note. Leg-first: on a
+  /// roundtrip booking the credit/refund belongs to a leg row, so the action is
+  /// suppressed on the (non-leg) roundtrip parent row and surfaced on the
+  /// operational leg row instead.
   static bool canShowCreditNotePdfAction(_CompanyBookingOverviewItem item) {
     if (!hasCanonicalBookingIdentity(item)) return false;
     if (!_isCancelledStatus(item.statusText)) return false;
     if (!isPaidPaymentStatus(item.paymentStatus)) return false;
-    final hasCorrection =
-        hasCreditDecisionRecorded(item) || isRefundLifecycleRefunded(item);
-    if (!hasCorrection) return false;
+    if (!hasEffectiveCreditCorrection(item)) return false;
     if (item.isRoundtripParent && !isRoundtripOperationalLegRow(item)) {
       return false;
     }
