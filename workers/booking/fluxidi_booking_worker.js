@@ -23083,6 +23083,95 @@ POST /admin/mollie/connect/disconnect
         }
       }
 
+      // 2G-P: read-only list of issued Document Core records for one booking.
+      //   GET /admin/bookings/:bookingId/documents
+      // Returns SAFE metadata only via the existing scoped doc_by_booking index
+      // (no unbounded scan, no PII, no raw registry object). Strictly read-only:
+      //   - admin auth (same _requireAdmin contract as the issue/lookup routes)
+      //   - explicit tenant/company scope required; no legacy/global fallback
+      //   - only records whose stored scope matches are returned; cross-tenant
+      //     existence is not leaked
+      //   - never allocates, never writes KV, never emits compliance events,
+      //     never calls Mollie/Chiron/refund/PDF; does not touch the issue,
+      //     dry-run, replay, lookup, or refund-proof routes.
+      if (
+        request.method === "GET" &&
+        url.pathname.startsWith("/admin/bookings/") &&
+        url.pathname.endsWith("/documents")
+      ) {
+        const bookingDocsSegments = url.pathname.split("/").filter(Boolean);
+        // Only the per-booking list shape:
+        //   ["admin","bookings","<bookingId>","documents"].
+        if (
+          bookingDocsSegments.length === 4 &&
+          bookingDocsSegments[0] === "admin" &&
+          bookingDocsSegments[1] === "bookings" &&
+          bookingDocsSegments[3] === "documents"
+        ) {
+          try {
+            _requireAdmin(request, url, env);
+          } catch (err) {
+            const message = String(err?.message || "Unauthorized");
+            return json(
+              {
+                ok: false,
+                error:
+                  message === "Unauthorized" ? "unauthorized" : "admin_unavailable",
+              },
+              message === "Unauthorized" ? 401 : 500,
+            );
+          }
+
+          try {
+            const scopedRoute = requireExplicitBookingRouteScope({ request, url });
+            if (!scopedRoute.ok) return scopedRoute.response;
+            const scope = {
+              tenant_id: scopedRoute.scope.tenant_id,
+              company_id: scopedRoute.scope.company_id,
+            };
+
+            const sourceBookingId =
+              safeStr(decodeURIComponent(bookingDocsSegments[2]), 200) || "";
+            if (!sourceBookingId) {
+              return json({ ok: false, error: "missing_source_booking_id" }, 400);
+            }
+
+            if (!env?.BOOKING_KV) {
+              return json({ ok: false, error: "missing_binding" }, 503);
+            }
+
+            const listed = await listIssuedDocumentsForBooking(
+              env,
+              scope,
+              sourceBookingId,
+            );
+            if (!listed.ok) {
+              const status = listed.error === "missing_binding" ? 503 : 400;
+              return json({ ok: false, error: listed.error }, status);
+            }
+            const documents = Array.isArray(listed.documents)
+              ? listed.documents
+              : [];
+            console.log(
+              `[DOCUMENT_LIST][OK] booking=${_bookingIntentMask(sourceBookingId)} count=${documents.length}`,
+            );
+            return json({
+              ok: true,
+              source_booking_id: sourceBookingId,
+              documents,
+              count: documents.length,
+              warnings: [],
+            });
+          } catch (err) {
+            const message = String(err?.message || "internal_error");
+            console.log(
+              `[DOCUMENT_LIST][ERR] ${safeStr(message, 200) || "unknown"}`,
+            );
+            return json({ ok: false, error: "internal_error" }, 500);
+          }
+        }
+      }
+
       // AVAILABILITY
       if (url.pathname === "/availability" && request.method === "POST") {
         const body = await safeJson(request);
@@ -67144,6 +67233,70 @@ function buildIssuedDocumentPublicMetadata(record) {
     source_leg_id: safeStr(rec.source_leg_id ?? rec.sourceLegId, 200) || null,
     source_leg_type: safeStr(rec.source_leg_type ?? rec.sourceLegType, 24) || null,
   };
+}
+
+// 2G-P: scoped prefix for the per-booking document index written at issue time
+// (doc_by_booking:<tenant>:<company>:<bookingPart>:<type>:<documentId>). Pure
+// key-string builder — performs no I/O. Throws missing_<field> on bad scope.
+function buildDocumentsByBookingPrefix(scope, canonicalBookingId) {
+  const { tenantPart, companyPart } = documentRegistryScopeParts(scope);
+  const bookingPart = documentRegistrySegment(
+    canonicalBookingId,
+    "canonical_booking_id",
+  );
+  return `doc_by_booking:${tenantPart}:${companyPart}:${bookingPart}:`;
+}
+
+// 2G-P: read-only listing of issued document metadata for one booking. Uses the
+// existing scoped doc_by_booking index (no scan of unrelated keys, no writes).
+// For each index entry it loads the canonical registry record and projects only
+// the safe public metadata (buildIssuedDocumentPublicMetadata). Cross-tenant
+// records are skipped defensively. Never allocates, writes, or emits events.
+async function listIssuedDocumentsForBooking(env, scope, canonicalBookingId) {
+  if (!env?.BOOKING_KV) return { ok: false, error: "missing_binding" };
+  let prefix;
+  try {
+    prefix = buildDocumentsByBookingPrefix(scope, canonicalBookingId);
+  } catch (_) {
+    return { ok: false, error: "missing_tenant_scope" };
+  }
+  const seenDocumentIds = new Set();
+  const documents = [];
+  let cursor = undefined;
+  do {
+    const listed = await env.BOOKING_KV.list({ prefix, limit: 1000, cursor });
+    const keys = Array.isArray(listed?.keys) ? listed.keys : [];
+    for (const item of keys) {
+      const key = safeStr(item?.name, 320);
+      if (!key || !key.startsWith(prefix)) continue;
+      // The index value is the documentId; fall back to the trailing key
+      // segment if the value is somehow empty.
+      let documentId = safeStr(await env.BOOKING_KV.get(key), 200);
+      if (!documentId) {
+        const parts = key.split(":");
+        documentId = safeStr(parts[parts.length - 1], 200);
+      }
+      if (!documentId || seenDocumentIds.has(documentId)) continue;
+      seenDocumentIds.add(documentId);
+      const record = await loadIssuedDocumentRegistryRecordById(
+        env,
+        scope,
+        documentId,
+      );
+      if (!record) continue;
+      const recTenant = safeStr(record?.tenant_id ?? record?.tenantId, 80);
+      const recCompany = safeStr(record?.company_id ?? record?.companyId, 80);
+      if (
+        (recTenant && recTenant !== scope.tenant_id) ||
+        (recCompany && recCompany !== scope.company_id)
+      ) {
+        continue;
+      }
+      documents.push(buildIssuedDocumentPublicMetadata(record));
+    }
+    cursor = listed?.list_complete ? undefined : listed?.cursor;
+  } while (cursor);
+  return { ok: true, documents };
 }
 
 function attachPublicBookingReferenceAliases(target, publicBookingReference) {
