@@ -518,14 +518,20 @@ function resolveBillitOAuthConfig(env) {
   const clientId = safeStr(env?.BILLIT_CLIENT_ID, 300);
   const clientSecret = safeStr(env?.BILLIT_CLIENT_SECRET, 600);
   const redirectUri = safeStr(env?.BILLIT_REDIRECT_URI, 600);
-  // TODO(billit): confirm the EXACT Billit authorize/token paths + required
-  // scopes against Billit's official OAuth docs once the sandbox Client ID /
-  // Secret are provisioned. These standard-OAuth defaults are derived from the
-  // API base and are overridable via BILLIT_AUTHORIZE_URL / BILLIT_TOKEN_URL.
+  // Defaults per Billit's official OAuth docs. The authorize/login URL lives on
+  // the my.* host; the token endpoint lives on the api.* host. All three are
+  // overridable via BILLIT_AUTHORIZE_URL / BILLIT_TOKEN_URL / BILLIT_API_BASE_URL.
+  const defaultAuthorizeUrl =
+    environment === "production"
+      ? "https://my.billit.be/Account/Logon"
+      : "https://my.sandbox.billit.be/Account/Logon";
+  const defaultTokenUrl =
+    environment === "production"
+      ? "https://api.billit.be/OAuth2/token"
+      : "https://api.sandbox.billit.be/OAuth2/token";
   const authorizeUrl =
-    safeStr(env?.BILLIT_AUTHORIZE_URL, 600) || `${apiBaseUrl}/oauth/authorize`;
-  const tokenUrl =
-    safeStr(env?.BILLIT_TOKEN_URL, 600) || `${apiBaseUrl}/oauth/token`;
+    safeStr(env?.BILLIT_AUTHORIZE_URL, 600) || defaultAuthorizeUrl;
+  const tokenUrl = safeStr(env?.BILLIT_TOKEN_URL, 600) || defaultTokenUrl;
   const scope = safeStr(env?.BILLIT_OAUTH_SCOPE, 300) || "";
   const missingFields = [];
   if (!clientId) missingFields.push("BILLIT_CLIENT_ID");
@@ -652,26 +658,27 @@ function buildBillitAuthorizationUrl(config, state) {
   return authUrl.toString();
 }
 
-/* ISOLATED token exchange. Standard OAuth2 authorization_code grant via
- * application/x-www-form-urlencoded. Returns { ok:true, token_type,
- * access_token, refresh_token, expires_in, scope } or { ok:false, error }.
- * NEVER logs the request body, code, client_secret, or any token. */
+/* ISOLATED token exchange. Per Billit docs: POST to /OAuth2/token with a JSON
+ * body (Content-Type + Accept application/json, NO Authorization header).
+ * Returns { ok:true, token_type, access_token, refresh_token, expires_in,
+ * scope } or { ok:false, error }. NEVER logs the request body, code,
+ * client_secret, or any token. */
 async function exchangeBillitOAuthCodeForToken(config, code) {
-  const form = new URLSearchParams();
-  form.set("grant_type", "authorization_code");
-  form.set("code", String(code || ""));
-  form.set("client_id", config.client_id);
-  form.set("client_secret", config.client_secret);
-  form.set("redirect_uri", config.redirect_uri);
   let resp;
   try {
     resp = await fetch(config.token_url, {
       method: "POST",
       headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
+        "Content-Type": "application/json",
         Accept: "application/json",
       },
-      body: form.toString(),
+      body: JSON.stringify({
+        grant_type: "authorization_code",
+        code: String(code || ""),
+        client_id: config.client_id,
+        client_secret: config.client_secret,
+        redirect_uri: config.redirect_uri,
+      }),
     });
   } catch (_) {
     return { ok: false, error: "token_request_failed" };
@@ -695,6 +702,53 @@ async function exchangeBillitOAuthCodeForToken(config, code) {
     refresh_token: safeStr(data.refresh_token, 8000) || "",
     expires_in: Number.isFinite(expiresInRaw) ? expiresInRaw : null,
     scope: safeStr(data.scope, 300) || "",
+  };
+}
+
+/* ISOLATED token refresh helper for the FUTURE invoice-send patch. Per Billit
+ * docs: POST to /OAuth2/token with a JSON refresh_token grant (NO Authorization
+ * header). Billit refresh tokens are SINGLE-USE, so callers must persist the
+ * newly returned refresh_token. NOT wired into any route here; performs no
+ * decryption and is not invoked by this foundation. NEVER logs the request
+ * body, client_secret, refresh_token, or any token. */
+async function refreshBillitOAuthToken(config, refreshToken) {
+  let resp;
+  try {
+    resp = await fetch(config.token_url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify({
+        client_id: config.client_id,
+        client_secret: config.client_secret,
+        grant_type: "refresh_token",
+        refresh_token: String(refreshToken || ""),
+      }),
+    });
+  } catch (_) {
+    return { ok: false, error: "token_refresh_failed" };
+  }
+  let data = null;
+  try {
+    data = await resp.json();
+  } catch (_) {
+    data = null;
+  }
+  if (!resp.ok || !data || typeof data !== "object" || Array.isArray(data)) {
+    return { ok: false, error: "token_refresh_rejected" };
+  }
+  const accessToken = safeStr(data.access_token, 8000);
+  if (!accessToken) return { ok: false, error: "token_refresh_missing_access_token" };
+  const expiresInRaw = Number(data.expires_in);
+  return {
+    ok: true,
+    token_type: safeStr(data.token_type, 40) || "Bearer",
+    access_token: accessToken,
+    refresh_token: safeStr(data.refresh_token, 8000) || "",
+    expires_in: Number.isFinite(expiresInRaw) ? expiresInRaw : null,
+    scope: null,
   };
 }
 
