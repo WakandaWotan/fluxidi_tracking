@@ -66321,16 +66321,22 @@ function _invoiceRoundtripLegsForReceiptPdf(rec, booking = {}) {
       rec?.price_incl_vat_main ??
       _bookingMainPriceInclVatFromRecord(rec),
   });
+  // Use EXPLICIT return origin/destination only. The non-explicit helpers
+  // (_bookingReturnFromFromRecord / _bookingReturnToFromRecord) intentionally
+  // swap-fallback to the outbound destination/origin, which makes one-way
+  // bookings look like roundtrips and renders a phantom "Terugrit EUR 0.00"
+  // row on the invoice PDF. Address-swap fallback is applied LATER, only
+  // after a real return has been independently confirmed.
   const returnLeg = buildLeg("return", ret, {
     pickupIso:
       safeStr(bookingObj?.return_pickup_iso || bookingObj?.returnPickupIso) ||
       _bookingReturnPickupIsoFromRecord(rec),
     from:
       safeStr(bookingObj?.return_from || bookingObj?.returnFrom) ||
-      _bookingReturnFromFromRecord(rec),
+      _bookingExplicitReturnFromFromRecord(rec),
     to:
       safeStr(bookingObj?.return_to || bookingObj?.returnTo) ||
-      _bookingReturnToFromRecord(rec),
+      _bookingExplicitReturnToFromRecord(rec),
     distanceKm:
       bookingObj?.return_distance_km ??
       bookingObj?.returnDistanceKm ??
@@ -66351,15 +66357,31 @@ function _invoiceRoundtripLegsForReceiptPdf(rec, booking = {}) {
   if (!outboundLeg.from && !outboundLeg.to && !returnLeg.from && !returnLeg.to) {
     return [];
   }
-  // Suppress the synthetic empty return leg when no real return exists. The
-  // return row is only included if there is an operational return leg, the
-  // return leg has a from/to address, or it carries a strictly positive price.
-  const returnLegHasMeaningfulData =
+  // A real return exists when ANY of the following independent signals fires:
+  //   - an operational return leg, or
+  //   - explicit return from/to addresses (set by buildLeg above via the
+  //     explicit-only helpers; the swap-fallback variant is NOT used here), or
+  //   - a strictly positive return price.
+  // Address-swap fallback is intentionally NOT in this list - it is truthy for
+  // every one-way booking and would re-introduce the phantom return row.
+  const returnExists =
     !!ret ||
     !!returnLeg.from ||
     !!returnLeg.to ||
     (returnLeg.price_incl_vat != null && returnLeg.price_incl_vat > 0);
-  return returnLegHasMeaningfulData ? [outboundLeg, returnLeg] : [outboundLeg];
+  if (!returnExists) {
+    return [outboundLeg];
+  }
+  // Real return confirmed. If explicit return addresses were missing, apply
+  // the swap-fallback ONLY for display readability so the row still reads
+  // "<outbound.to> -> <outbound.from>" instead of "- -> -".
+  if (!returnLeg.from) {
+    returnLeg.from = _bookingReturnFromFromRecord(rec);
+  }
+  if (!returnLeg.to) {
+    returnLeg.to = _bookingReturnToFromRecord(rec);
+  }
+  return [outboundLeg, returnLeg];
 }
 
 async function updateBookingStatusAuthoritative(
