@@ -23709,6 +23709,72 @@ POST /admin/mollie/connect/disconnect
         }
       }
 
+      // 2G-* DRY-RUN admin-only billing customer identity validation.
+      //   POST /admin/documents/billing-customer/validate?tenant_id=...&company_id=...
+      // Pure / inert: normalizes a proposed billing_customer payload via the
+      // shared normalizeBillingCustomerIdentityInput helper and projects
+      // readiness via buildBillingCustomerIdentityReadiness. Strictly:
+      //   - admin auth + explicit tenant/company scope, fail-closed,
+      //   - NO KV read or write, NO DO, NO allocator, NO compliance emit,
+      //   - NO fetch / Billit API call, NO Billit token / OAuth credential,
+      //   - never issues a document, never mutates any booking or registry.
+      if (
+        request.method === "POST" &&
+        url.pathname === "/admin/documents/billing-customer/validate"
+      ) {
+        try {
+          _requireAdmin(request, url, env);
+        } catch (err) {
+          const message = String(err?.message || "Unauthorized");
+          return json(
+            {
+              ok: false,
+              error:
+                message === "Unauthorized" ? "unauthorized" : "admin_unavailable",
+            },
+            message === "Unauthorized" ? 401 : 500,
+          );
+        }
+        try {
+          const scopedRoute = requireExplicitBookingRouteScope({ request, url });
+          if (!scopedRoute.ok) return scopedRoute.response;
+          let body;
+          try {
+            body = await request.json();
+          } catch (_) {
+            return json({ ok: false, error: "invalid_json_body" }, 400);
+          }
+          if (!body || typeof body !== "object" || Array.isArray(body)) {
+            return json({ ok: false, error: "invalid_body" }, 400);
+          }
+          const normalized = normalizeBillingCustomerIdentityInput(body);
+          const readiness = buildBillingCustomerIdentityReadiness(normalized);
+          const warnings = []
+            .concat(Array.isArray(normalized.warnings) ? normalized.warnings : [])
+            .concat(Array.isArray(readiness.warnings) ? readiness.warnings : []);
+          const seen = new Set();
+          const dedupedWarnings = [];
+          for (const w of warnings) {
+            if (!w || seen.has(w)) continue;
+            seen.add(w);
+            dedupedWarnings.push(w);
+          }
+          return json({
+            ok: true,
+            dry_run: true,
+            normalized_billing_customer: normalized,
+            readiness,
+            warnings: dedupedWarnings,
+          });
+        } catch (err) {
+          const message = String(err?.message || "internal_error");
+          console.log(
+            `[BILLING_CUSTOMER_VALIDATE][ERR] ${safeStr(message, 200) || "unknown"}`,
+          );
+          return json({ ok: false, error: "internal_error" }, 500);
+        }
+      }
+
       // 2G-O: read-only issued Document Core registry lookup.
       // Billit payload preview (DRY-RUN / read-only) for a single document.
       //   GET /admin/documents/:documentId/billit-payload-preview
@@ -43922,6 +43988,38 @@ async function handleBooking(payload, env, request, options = {}) {
     const business_detected = !!biz.vat_number;
     const customerContact = normalizeCustomerContact(payload);
     const customerEmailLanguage = normalizeCustomerEmailLanguage(payload);
+    // 2G-* OPTIONAL billing customer identity (future Peppol / Billit readiness).
+    // Pure normalization only - if the payload carries no billing_customer /
+    // buyer / buyer_identity object, normalized.legal_name/vat_number/etc are
+    // all null and we do NOT attach billing_customer_snapshot to the booking
+    // record at all (existing behavior unchanged). When present, we attach an
+    // additive snapshot field; nothing else is altered.
+    const billingCustomerNormalized =
+      normalizeBillingCustomerIdentityInput(payload);
+    const _hasExplicitBillingCustomerInput = !!(
+      payload?.billing_customer ||
+      payload?.billingCustomer ||
+      payload?.buyer ||
+      payload?.buyer_identity ||
+      payload?.buyerIdentity
+    );
+    const _billingCustomerHasAnyMeaningfulField = !!(
+      billingCustomerNormalized.legal_name ||
+      billingCustomerNormalized.vat_number ||
+      billingCustomerNormalized.company_registration_number ||
+      billingCustomerNormalized.buyer_reference ||
+      billingCustomerNormalized.customer_type ||
+      billingCustomerNormalized.billing_address.street ||
+      billingCustomerNormalized.billing_address.postal_code ||
+      billingCustomerNormalized.billing_address.city ||
+      billingCustomerNormalized.billing_address.country ||
+      billingCustomerNormalized.peppol.endpoint_id ||
+      billingCustomerNormalized.peppol.scheme
+    );
+    const billingCustomerSnapshotForBooking =
+      _hasExplicitBillingCustomerInput && _billingCustomerHasAnyMeaningfulField
+        ? billingCustomerNormalized
+        : null;
     const payloadLinkModeRaw = safeStr(
       payload?.customer_link_mode ?? payload?.customerLinkMode,
       40,
@@ -46358,6 +46456,12 @@ Retour route: ${return_from || to} → ${return_to || from}`,
       custEmail: customerContact.email,
       customerLanguage: customerEmailLanguage.normalizedLanguage,
       customerLanguageDetected: customerEmailLanguage.detectedLanguage,
+      ...(billingCustomerSnapshotForBooking
+        ? {
+            billing_customer_snapshot: billingCustomerSnapshotForBooking,
+            billingCustomerSnapshot: billingCustomerSnapshotForBooking,
+          }
+        : {}),
 
       // trip
       from,
@@ -46492,6 +46596,12 @@ Retour route: ${return_from || to} → ${return_to || from}`,
           }
         : {}),
       business_detected,
+      ...(billingCustomerSnapshotForBooking
+        ? {
+            billing_customer_snapshot: billingCustomerSnapshotForBooking,
+            billingCustomerSnapshot: billingCustomerSnapshotForBooking,
+          }
+        : {}),
       roundtrip_dispatch_mode: handleBookingDispatchMode,
       roundtripDispatchMode: handleBookingDispatchMode,
       ...(handleBookingDispatchMode === "split_no_wait"
@@ -69228,6 +69338,424 @@ function classifyDocumentExportReadiness(record, businessProfile) {
   };
 }
 
+/* 2G-* — pure billing customer identity normalizer (DRY / read-only).
+ *
+ * Accepts an OPTIONAL future payload that carries explicit billing customer
+ * identity for future bookings or future documents. Returns a normalized,
+ * provider-neutral object. Never invents legal_name from passenger display
+ * names. Never derives billing_address from pickup/dropoff. Never infers a
+ * Peppol endpoint from a VAT number (no such convention exists in this
+ * codebase yet). Pure: no KV/DO/fetch, no token/secret, never mutates input.
+ *
+ * Accepted input shapes (first hit wins):
+ *   input.billing_customer | input.billingCustomer
+ *   input.buyer | input.buyer_identity | input.buyerIdentity
+ *
+ * Contact display fields (display_name / contact_email / contact_phone) may
+ * additionally fall back to existing customer fields on the same input
+ * (custName / customer_name / etc). Legal/billing/peppol fields NEVER fall
+ * back to passenger fields.
+ */
+function normalizeBillingCustomerIdentityInput(input) {
+  const src =
+    input && typeof input === "object" && !Array.isArray(input) ? input : {};
+  const bc =
+    (src.billing_customer && typeof src.billing_customer === "object" && !Array.isArray(src.billing_customer)
+      ? src.billing_customer
+      : null) ||
+    (src.billingCustomer && typeof src.billingCustomer === "object" && !Array.isArray(src.billingCustomer)
+      ? src.billingCustomer
+      : null) ||
+    (src.buyer && typeof src.buyer === "object" && !Array.isArray(src.buyer)
+      ? src.buyer
+      : null) ||
+    (src.buyer_identity && typeof src.buyer_identity === "object" && !Array.isArray(src.buyer_identity)
+      ? src.buyer_identity
+      : null) ||
+    (src.buyerIdentity && typeof src.buyerIdentity === "object" && !Array.isArray(src.buyerIdentity)
+      ? src.buyerIdentity
+      : null) ||
+    {};
+  const ba =
+    (bc.billing_address && typeof bc.billing_address === "object" && !Array.isArray(bc.billing_address)
+      ? bc.billing_address
+      : null) ||
+    (bc.billingAddress && typeof bc.billingAddress === "object" && !Array.isArray(bc.billingAddress)
+      ? bc.billingAddress
+      : null) ||
+    (bc.address && typeof bc.address === "object" && !Array.isArray(bc.address)
+      ? bc.address
+      : null) ||
+    {};
+  const pp =
+    (bc.peppol && typeof bc.peppol === "object" && !Array.isArray(bc.peppol)
+      ? bc.peppol
+      : null) ||
+    {};
+
+  function pick(maxLen, ...vals) {
+    for (const v of vals) {
+      const s = safeStr(v, maxLen);
+      if (s) return s;
+    }
+    return null;
+  }
+
+  const warnings = [];
+  const sourceMap = {
+    display_name: null,
+    contact_email: null,
+    contact_phone: null,
+    legal_identity: null,
+    billing_address: null,
+    peppol_target: null,
+  };
+
+  // Display / contact: explicit billing customer first, then fall back to
+  // existing payload customer fields for convenience (display-only fallback).
+  const displayName = pick(240, bc.display_name, bc.displayName, bc.name);
+  const displayFallback =
+    displayName ||
+    pick(
+      240,
+      src.customer?.name,
+      src.customer?.full_name,
+      src.customer_name,
+      src.customerName,
+      src.custName,
+      src.name,
+    );
+  if (displayName) sourceMap.display_name = "billing_customer";
+  else if (displayFallback) sourceMap.display_name = "payload_customer_fallback";
+
+  const contactEmail = pick(240, bc.contact_email, bc.contactEmail, bc.email);
+  const contactEmailFallback =
+    contactEmail ||
+    pick(
+      240,
+      src.customer?.email,
+      src.customer_email,
+      src.customerEmail,
+      src.custEmail,
+      src.email,
+    );
+  if (contactEmail) sourceMap.contact_email = "billing_customer";
+  else if (contactEmailFallback)
+    sourceMap.contact_email = "payload_customer_fallback";
+
+  const contactPhone = pick(64, bc.contact_phone, bc.contactPhone, bc.phone);
+  const contactPhoneFallback =
+    contactPhone ||
+    pick(
+      64,
+      src.customer?.phone,
+      src.customer_phone,
+      src.customerPhone,
+      src.custPhone,
+      src.phone,
+    );
+  if (contactPhone) sourceMap.contact_phone = "billing_customer";
+  else if (contactPhoneFallback)
+    sourceMap.contact_phone = "payload_customer_fallback";
+
+  // Customer type (private | business | null). Never inferred.
+  const customerTypeRaw = pick(
+    32,
+    bc.customer_type,
+    bc.customerType,
+    bc.type,
+  );
+  let customerType = null;
+  if (customerTypeRaw) {
+    const v = customerTypeRaw.toLowerCase();
+    if (v === "private" || v === "business") customerType = v;
+    else warnings.push("billing_customer_unknown_customer_type");
+  }
+
+  // Legal identity (NEVER inferred from display name / passenger fields).
+  const legalName = pick(
+    240,
+    bc.legal_name,
+    bc.legalName,
+    bc.company_name,
+    bc.companyName,
+  );
+  if (legalName) sourceMap.legal_identity = "billing_customer";
+
+  const vatRaw = pick(64, bc.vat_number, bc.vatNumber, bc.vat);
+  // Reuse the existing project-wide normalizer (uppercases, strips dots/spaces,
+  // adds BE prefix for 9-12 digit BE-style numbers). Returns "" when blank;
+  // never rejects aggressively.
+  const vatNormalized = vatRaw ? normalizeVatNumber(vatRaw) : "";
+  const vatNumber = vatNormalized || null;
+  if (vatRaw && !vatNumber) warnings.push("billing_customer_vat_unrecognized");
+
+  const registrationNumberRaw = pick(
+    80,
+    bc.company_registration_number,
+    bc.companyRegistrationNumber,
+    bc.registration_number,
+    bc.registrationNumber,
+    bc.kbo_number,
+    bc.kboNumber,
+    bc.enterprise_number,
+    bc.enterpriseNumber,
+  );
+  const registrationNumber = registrationNumberRaw
+    ? registrationNumberRaw.replace(/[.\s]/g, "")
+    : null;
+
+  const buyerReference = pick(
+    120,
+    bc.buyer_reference,
+    bc.buyerReference,
+    bc.purchase_order,
+    bc.purchaseOrder,
+    bc.po_number,
+    bc.poNumber,
+  );
+
+  // Billing address (buyer-supplied invoice address only; passenger pickup /
+  // dropoff is NEVER used here).
+  const street = pick(
+    240,
+    ba.street,
+    ba.address_line,
+    ba.addressLine,
+    ba.line1,
+    bc.street,
+    bc.address_line,
+    bc.addressLine,
+  );
+  const postalCode = pick(
+    32,
+    ba.postal_code,
+    ba.postalCode,
+    ba.zip,
+    bc.postal_code,
+    bc.postalCode,
+    bc.zip,
+  );
+  const city = pick(120, ba.city, bc.city);
+  const countryRaw = pick(
+    8,
+    ba.country,
+    ba.country_code,
+    ba.countryCode,
+    bc.country,
+    bc.country_code,
+    bc.countryCode,
+  );
+  const country = countryRaw ? countryRaw.toUpperCase().slice(0, 2) : null;
+  if (countryRaw && (!country || !/^[A-Z]{2}$/.test(country))) {
+    warnings.push("billing_customer_country_unrecognized");
+  }
+  const hasAnyBillingField = !!(street || postalCode || city || country);
+  if (hasAnyBillingField) sourceMap.billing_address = "billing_customer";
+
+  // Peppol target: explicit endpoint id + scheme only. Never inferred from
+  // VAT (no such mapping convention exists in this codebase).
+  const peppolEndpointId = pick(
+    80,
+    pp.endpoint_id,
+    pp.endpointId,
+    pp.participant_id,
+    pp.participantId,
+    bc.peppol_endpoint_id,
+    bc.peppolEndpointId,
+  );
+  const peppolScheme = pick(40, pp.scheme, bc.peppol_scheme, bc.peppolScheme);
+  if (peppolEndpointId || peppolScheme) {
+    sourceMap.peppol_target = "billing_customer";
+    if (peppolEndpointId && !peppolScheme) {
+      warnings.push("billing_customer_peppol_scheme_missing");
+    }
+    if (peppolScheme && !peppolEndpointId) {
+      warnings.push("billing_customer_peppol_endpoint_id_missing");
+    }
+  }
+
+  return {
+    display_name: displayFallback || null,
+    contact_email: contactEmailFallback || null,
+    contact_phone: contactPhoneFallback || null,
+    customer_type: customerType,
+    legal_name: legalName,
+    vat_number: vatNumber,
+    company_registration_number: registrationNumber,
+    buyer_reference: buyerReference,
+    billing_address: {
+      street: street,
+      postal_code: postalCode,
+      city: city,
+      country: country,
+    },
+    peppol: {
+      endpoint_id: peppolEndpointId,
+      scheme: peppolScheme,
+    },
+    source: sourceMap,
+    warnings,
+  };
+}
+
+/* 2G-* — pure billing customer readiness helper (DRY / read-only).
+ *
+ * Mirrors buildProviderNeutralBuyerIdentityPreview's readiness contract for
+ * a normalized billing customer (typically produced by
+ * normalizeBillingCustomerIdentityInput). Pure: no KV/DO/fetch, no
+ * token/secret, never mutates input.
+ */
+function buildBillingCustomerIdentityReadiness(normalizedBillingCustomer) {
+  const n =
+    normalizedBillingCustomer &&
+    typeof normalizedBillingCustomer === "object" &&
+    !Array.isArray(normalizedBillingCustomer)
+      ? normalizedBillingCustomer
+      : {};
+  const ba =
+    n.billing_address && typeof n.billing_address === "object" ? n.billing_address : {};
+  const pp =
+    n.peppol && typeof n.peppol === "object" ? n.peppol : {};
+  const street = safeStr(ba.street, 240) || null;
+  const postalCode = safeStr(ba.postal_code, 32) || null;
+  const city = safeStr(ba.city, 120) || null;
+  const country = safeStr(ba.country, 8).toUpperCase() || null;
+  const legalName = safeStr(n.legal_name, 240) || null;
+  const vatNumber = safeStr(n.vat_number, 64) || null;
+  const registrationNumber =
+    safeStr(n.company_registration_number, 80) || null;
+  const peppolEndpointId = safeStr(pp.endpoint_id, 80) || null;
+  const peppolScheme = safeStr(pp.scheme, 40) || null;
+
+  const hasFullBillingAddress = !!(street && postalCode && city && country);
+  const legalIdentityReady = !!(
+    legalName &&
+    (vatNumber || registrationNumber || hasFullBillingAddress)
+  );
+  const peppolTargetReady = !!(peppolEndpointId && peppolScheme);
+
+  const missingFields = [];
+  if (!legalName) missingFields.push("customer_legal_name_missing");
+  if (!hasFullBillingAddress) missingFields.push("customer_billing_address_missing");
+  if (!country) missingFields.push("customer_country_missing");
+  if (!vatNumber && !registrationNumber) {
+    missingFields.push("customer_vat_or_registration_missing");
+  }
+  if (!peppolTargetReady) missingFields.push("customer_peppol_target_missing");
+
+  const warnings = missingFields.slice();
+  if (!legalIdentityReady) warnings.push("customer_identity_missing");
+
+  return {
+    ready: legalIdentityReady,
+    legal_identity_ready: legalIdentityReady,
+    peppol_target_ready: peppolTargetReady,
+    missing_fields: missingFields,
+    warnings,
+  };
+}
+
+/* 2G-* — pure composer: build the registry buyer_snapshot for a NEW issued
+ * document by preferring the booking's billing_customer_snapshot (when
+ * present) and falling back to name/email captured at issue time. Returns
+ * null when nothing is known.
+ *
+ * Hard rules:
+ *   - never mutates inputs,
+ *   - never invents legal/address/peppol fields,
+ *   - the existing-shape contract is preserved: name/email/vat_number/
+ *     address_line/postal_code/city/country_code remain present (null when
+ *     unknown); extra legal/peppol fields are added only when known.
+ */
+function composeRegistryBuyerSnapshotForIssue({
+  buyerNameRaw,
+  buyerEmailRaw,
+  billingCustomerSnapshot,
+}) {
+  const fromBilling = _buyerSnapshotFromBillingCustomerSnapshot(
+    billingCustomerSnapshot,
+  );
+  const name =
+    safeStr(buyerNameRaw, 240) ||
+    (fromBilling && fromBilling.name) ||
+    null;
+  const email =
+    safeStr(buyerEmailRaw, 240) ||
+    (fromBilling && fromBilling.email) ||
+    null;
+  if (!name && !email && !fromBilling) return null;
+  const base = {
+    name,
+    email,
+    vat_number: (fromBilling && fromBilling.vat_number) || null,
+    address_line: (fromBilling && fromBilling.address_line) || null,
+    postal_code: (fromBilling && fromBilling.postal_code) || null,
+    city: (fromBilling && fromBilling.city) || null,
+    country_code: (fromBilling && fromBilling.country_code) || null,
+  };
+  if (!fromBilling) return base;
+  // Additive: only the fields actually present on the billing snapshot.
+  if (fromBilling.phone) base.phone = fromBilling.phone;
+  if (fromBilling.legal_name) base.legal_name = fromBilling.legal_name;
+  if (fromBilling.registration_number) {
+    base.registration_number = fromBilling.registration_number;
+  }
+  if (fromBilling.buyer_reference) {
+    base.buyer_reference = fromBilling.buyer_reference;
+  }
+  if (fromBilling.peppol_endpoint_id) {
+    base.peppol_endpoint_id = fromBilling.peppol_endpoint_id;
+  }
+  if (fromBilling.peppol_scheme) base.peppol_scheme = fromBilling.peppol_scheme;
+  return base;
+}
+
+/* 2G-* — pure converter: normalized billing customer -> registry buyer_snapshot
+ * shape used by the existing _projectBuyerSnapshotSafe / issue paths. Returns
+ * null when the snapshot is empty so callers can safely skip it.
+ */
+function _buyerSnapshotFromBillingCustomerSnapshot(snap) {
+  if (!snap || typeof snap !== "object" || Array.isArray(snap)) return null;
+  const ba =
+    snap.billing_address && typeof snap.billing_address === "object"
+      ? snap.billing_address
+      : {};
+  const pp =
+    snap.peppol && typeof snap.peppol === "object" ? snap.peppol : {};
+  const out = {
+    name: safeStr(snap.display_name, 240) || null,
+    email: safeStr(snap.contact_email, 240) || null,
+    phone: safeStr(snap.contact_phone, 64) || null,
+    legal_name: safeStr(snap.legal_name, 240) || null,
+    vat_number: safeStr(snap.vat_number, 64) || null,
+    registration_number:
+      safeStr(snap.company_registration_number, 80) || null,
+    buyer_reference: safeStr(snap.buyer_reference, 120) || null,
+    address_line: safeStr(ba.street, 240) || null,
+    postal_code: safeStr(ba.postal_code, 32) || null,
+    city: safeStr(ba.city, 120) || null,
+    country_code: safeStr(ba.country, 8).toUpperCase() || null,
+    peppol_endpoint_id: safeStr(pp.endpoint_id, 80) || null,
+    peppol_scheme: safeStr(pp.scheme, 40) || null,
+  };
+  const hasAny =
+    out.name ||
+    out.email ||
+    out.phone ||
+    out.legal_name ||
+    out.vat_number ||
+    out.registration_number ||
+    out.buyer_reference ||
+    out.address_line ||
+    out.postal_code ||
+    out.city ||
+    out.country_code ||
+    out.peppol_endpoint_id ||
+    out.peppol_scheme;
+  return hasAny ? out : null;
+}
+
 /* 2G-* — pure provider-neutral buyer/customer legal-identity readiness
  * projector (DRY / read-only).
  *
@@ -69547,21 +70075,46 @@ function buildDocumentExportPreview(record, classification, displayOverlay = nul
     const projected = {
       name: safeStr(snap.name ?? snap.customer_name ?? snap.customerName, 240) || null,
       email: safeStr(snap.email ?? snap.customer_email ?? snap.customerEmail, 240) || null,
+      // 2G-* additive legal/peppol fields: present only when the issued
+      // document was created from a billing_customer_snapshot. Older records
+      // simply leave these null, matching the prior public projection shape.
+      phone: safeStr(snap.phone ?? snap.customer_phone ?? snap.customerPhone, 64) || null,
+      legal_name: safeStr(snap.legal_name ?? snap.legalName, 240) || null,
       vat_number: safeStr(snap.vat_number ?? snap.vatNumber, 64) || null,
+      registration_number:
+        safeStr(
+          snap.registration_number ??
+            snap.registrationNumber ??
+            snap.company_registration_number ??
+            snap.companyRegistrationNumber,
+          80,
+        ) || null,
+      buyer_reference:
+        safeStr(snap.buyer_reference ?? snap.buyerReference, 120) || null,
       address_line: safeStr(snap.address_line ?? snap.addressLine, 240) || null,
       postal_code: safeStr(snap.postal_code ?? snap.postalCode, 32) || null,
       city: safeStr(snap.city, 120) || null,
       country_code:
         safeStr(snap.country_code ?? snap.countryCode, 8).toUpperCase() || null,
+      peppol_endpoint_id:
+        safeStr(snap.peppol_endpoint_id ?? snap.peppolEndpointId, 80) || null,
+      peppol_scheme:
+        safeStr(snap.peppol_scheme ?? snap.peppolScheme, 40) || null,
     };
     const hasAny =
       projected.name ||
       projected.email ||
+      projected.phone ||
+      projected.legal_name ||
       projected.vat_number ||
+      projected.registration_number ||
+      projected.buyer_reference ||
       projected.address_line ||
       projected.postal_code ||
       projected.city ||
-      projected.country_code;
+      projected.country_code ||
+      projected.peppol_endpoint_id ||
+      projected.peppol_scheme;
     return hasAny ? projected : null;
   }
 
@@ -71101,18 +71654,26 @@ async function _issueCreditNoteCore({
           buyerPayload?.customerEmail,
         240,
       ) || null;
-    const buyerSnapshot =
-      buyerNameRaw || buyerEmailRaw
-        ? {
-            name: buyerNameRaw,
-            email: buyerEmailRaw,
-            vat_number: null,
-            address_line: null,
-            postal_code: null,
-            city: null,
-            country_code: null,
-          }
-        : null;
+    // 2G-* Prefer the booking's explicit billing_customer_snapshot (when the
+    // booking was created with one) so legal_name / VAT / billing address /
+    // Peppol target carry into buyer_snapshot for future Billit / Peppol
+    // readiness. Legacy bookings without a snapshot keep the existing
+    // name/email-only shape exactly.
+    const _billingCustomerSnapshotOnRec =
+      (rec && typeof rec === "object" &&
+        (rec.billing_customer_snapshot ?? rec.billingCustomerSnapshot)) ||
+      (buyerBooking && typeof buyerBooking === "object" &&
+        (buyerBooking.billing_customer_snapshot ??
+          buyerBooking.billingCustomerSnapshot)) ||
+      (buyerPayload && typeof buyerPayload === "object" &&
+        (buyerPayload.billing_customer_snapshot ??
+          buyerPayload.billingCustomerSnapshot)) ||
+      null;
+    const buyerSnapshot = composeRegistryBuyerSnapshotForIssue({
+      buyerNameRaw,
+      buyerEmailRaw,
+      billingCustomerSnapshot: _billingCustomerSnapshotOnRec,
+    });
     if (!buyerSnapshot || !buyerNameRaw || !buyerEmailRaw) {
       warnings.push("buyer_snapshot_incomplete");
     }
@@ -71664,18 +72225,26 @@ async function _issueRefundProofCore({
           buyerPayload?.customerEmail,
         240,
       ) || null;
-    const buyerSnapshot =
-      buyerNameRaw || buyerEmailRaw
-        ? {
-            name: buyerNameRaw,
-            email: buyerEmailRaw,
-            vat_number: null,
-            address_line: null,
-            postal_code: null,
-            city: null,
-            country_code: null,
-          }
-        : null;
+    // 2G-* Prefer the booking's explicit billing_customer_snapshot (when the
+    // booking was created with one) so legal_name / VAT / billing address /
+    // Peppol target carry into buyer_snapshot for future Billit / Peppol
+    // readiness. Legacy bookings without a snapshot keep the existing
+    // name/email-only shape exactly.
+    const _billingCustomerSnapshotOnRec =
+      (rec && typeof rec === "object" &&
+        (rec.billing_customer_snapshot ?? rec.billingCustomerSnapshot)) ||
+      (buyerBooking && typeof buyerBooking === "object" &&
+        (buyerBooking.billing_customer_snapshot ??
+          buyerBooking.billingCustomerSnapshot)) ||
+      (buyerPayload && typeof buyerPayload === "object" &&
+        (buyerPayload.billing_customer_snapshot ??
+          buyerPayload.billingCustomerSnapshot)) ||
+      null;
+    const buyerSnapshot = composeRegistryBuyerSnapshotForIssue({
+      buyerNameRaw,
+      buyerEmailRaw,
+      billingCustomerSnapshot: _billingCustomerSnapshotOnRec,
+    });
     if (!buyerSnapshot || !buyerNameRaw || !buyerEmailRaw) {
       warnings.push("buyer_snapshot_incomplete");
     }
@@ -72308,18 +72877,26 @@ async function _issueInvoiceCore({
           buyerPayload?.customerEmail,
         240,
       ) || null;
-    const buyerSnapshot =
-      buyerNameRaw || buyerEmailRaw
-        ? {
-            name: buyerNameRaw,
-            email: buyerEmailRaw,
-            vat_number: null,
-            address_line: null,
-            postal_code: null,
-            city: null,
-            country_code: null,
-          }
-        : null;
+    // 2G-* Prefer the booking's explicit billing_customer_snapshot (when the
+    // booking was created with one) so legal_name / VAT / billing address /
+    // Peppol target carry into buyer_snapshot for future Billit / Peppol
+    // readiness. Legacy bookings without a snapshot keep the existing
+    // name/email-only shape exactly.
+    const _billingCustomerSnapshotOnRec =
+      (rec && typeof rec === "object" &&
+        (rec.billing_customer_snapshot ?? rec.billingCustomerSnapshot)) ||
+      (buyerBooking && typeof buyerBooking === "object" &&
+        (buyerBooking.billing_customer_snapshot ??
+          buyerBooking.billingCustomerSnapshot)) ||
+      (buyerPayload && typeof buyerPayload === "object" &&
+        (buyerPayload.billing_customer_snapshot ??
+          buyerPayload.billingCustomerSnapshot)) ||
+      null;
+    const buyerSnapshot = composeRegistryBuyerSnapshotForIssue({
+      buyerNameRaw,
+      buyerEmailRaw,
+      billingCustomerSnapshot: _billingCustomerSnapshotOnRec,
+    });
     if (!buyerSnapshot || !buyerNameRaw || !buyerEmailRaw) {
       warnings.push("buyer_snapshot_incomplete");
     }
