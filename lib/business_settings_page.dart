@@ -303,6 +303,11 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
   Map<String, dynamic>? _mollieConnectStatus;
   String? _mollieTerminalsError;
   Map<String, dynamic>? _mollieTerminalsSnapshot;
+  bool _billitLoading = false;
+  bool _billitStartLoading = false;
+  bool _billitDisconnectLoading = false;
+  String? _billitStatusError;
+  Map<String, dynamic>? _billitStatus;
   bool _showAdvancedLogoPath = false;
   bool _showAdvancedPublicMediaUrls = false;
   final ImagePicker _imagePicker = ImagePicker();
@@ -576,6 +581,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     _loadGoogleCalendarStatus();
     _loadMollieConnectStatus();
     _loadMollieTerminalsSnapshot();
+    _loadBillitIntegrationStatus();
     _loadAirportFixedFareRules();
     _loadChironConnectionStatus();
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -2808,6 +2814,298 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     }
   }
 
+  Future<void> _loadBillitIntegrationStatus({
+    bool showErrorSnack = false,
+  }) async {
+    setState(() {
+      _billitLoading = true;
+      _billitStatusError = null;
+    });
+    try {
+      final scope = _activeSettingsScopeStrict();
+      if (scope == null) {
+        debugPrint(
+          '[BUSINESS_SETTINGS_SCOPE][SKIP] reason=missing_strict_company_scope action=load_billit_status',
+        );
+        return;
+      }
+      final data = await fetchCompanyBillitIntegrationStatus(
+        tenantId: scope.tenantId,
+        companyId: scope.companyId,
+      );
+      if (!mounted) return;
+      setState(() {
+        _billitStatus = data;
+      });
+    } on BillitIntegrationApiException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _billitStatusError = e.error;
+      });
+      if (showErrorSnack) {
+        final forbidden = e.statusCode == 401 || e.statusCode == 403;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              forbidden
+                  ? _t(
+                      nl: 'Geen toegang tot Billit-instellingen voor dit bedrijf.',
+                      en: 'No access to Billit settings for this company.',
+                      fr: 'Pas d’accès aux paramètres Billit pour cette entreprise.',
+                      es: 'Sin acceso a la configuración de Billit para esta empresa.',
+                    )
+                  : _t(
+                      nl: 'Billit-status kon niet worden opgehaald.',
+                      en: 'Billit status could not be loaded.',
+                      fr: 'Le statut Billit n’a pas pu être chargé.',
+                      es: 'No se pudo cargar el estado de Billit.',
+                    ),
+            ),
+          ),
+        );
+      }
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _billitStatusError = 'network_error';
+      });
+      if (showErrorSnack) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              _t(
+                nl: 'Billit-status kon niet worden opgehaald.',
+                en: 'Billit status could not be loaded.',
+                fr: 'Le statut Billit n’a pas pu être chargé.',
+                es: 'No se pudo cargar el estado de Billit.',
+              ),
+            ),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _billitLoading = false);
+      }
+    }
+  }
+
+  Future<void> _startBillitConnect() async {
+    final configured = _billitStatus?['configured'] == true;
+    final connected = _billitStatus?['connected'] == true;
+    if (!configured || connected) return;
+    setState(() => _billitStartLoading = true);
+    try {
+      final scope = _strictSettingsScopeForAction(action: 'start_billit_oauth');
+      if (scope == null) return;
+      final data = await startCompanyBillitOAuth(
+        tenantId: scope.tenantId,
+        companyId: scope.companyId,
+      );
+      final ok = data['ok'] == true;
+      final error = (data['error'] ?? '').toString().trim();
+      final authUrl = (data['authorization_url'] ?? '').toString().trim();
+      if (!ok || error == 'billit_oauth_not_configured' || authUrl.isEmpty) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              _t(
+                nl: 'Billit-koppeling is nog niet geactiveerd voor Fluxidi.',
+                en: 'Billit connection is not activated for Fluxidi yet.',
+                fr: 'La connexion Billit n’est pas encore activée pour Fluxidi.',
+                es: 'La conexión con Billit aún no está activada para Fluxidi.',
+              ),
+            ),
+          ),
+        );
+        return;
+      }
+      final launched = await launchUrl(
+        Uri.parse(authUrl),
+        mode: LaunchMode.externalApplication,
+      );
+      if (!launched) throw Exception('launch_failed');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Billit geopend. Rond de koppeling af in je browser en vernieuw daarna de status.',
+              en: 'Billit opened. Finish the connection in your browser, then refresh the status.',
+              fr: 'Billit ouvert. Terminez la connexion dans votre navigateur, puis actualisez le statut.',
+              es: 'Billit abierto. Termina la conexión en tu navegador y luego actualiza el estado.',
+            ),
+          ),
+        ),
+      );
+      unawaited(_loadBillitIntegrationStatus());
+    } on BillitIntegrationApiException catch (e) {
+      if (!mounted) return;
+      final forbidden = e.statusCode == 401 || e.statusCode == 403;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            forbidden
+                ? _t(
+                    nl: 'Geen toegang tot Billit-instellingen voor dit bedrijf.',
+                    en: 'No access to Billit settings for this company.',
+                    fr: 'Pas d’accès aux paramètres Billit pour cette entreprise.',
+                    es: 'Sin acceso a la configuración de Billit para esta empresa.',
+                  )
+                : _t(
+                    nl: 'Billit-koppeling kon niet gestart worden.',
+                    en: 'Billit connection could not be started.',
+                    fr: 'La connexion Billit n’a pas pu être démarrée.',
+                    es: 'No se pudo iniciar la conexión de Billit.',
+                  ),
+          ),
+        ),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Billit-koppeling kon niet gestart worden.',
+              en: 'Billit connection could not be started.',
+              fr: 'La connexion Billit n’a pas pu être démarrée.',
+              es: 'No se pudo iniciar la conexión de Billit.',
+            ),
+          ),
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _billitStartLoading = false);
+      }
+    }
+  }
+
+  Future<bool> _confirmBillitDisconnect() async {
+    final decision = await showDialog<bool>(
+      context: context,
+      builder: (ctx) {
+        return AlertDialog(
+          title: Text(
+            _t(
+              nl: 'Billit loskoppelen?',
+              en: 'Disconnect Billit?',
+              fr: 'Déconnecter Billit ?',
+              es: '¿Desconectar Billit?',
+            ),
+          ),
+          content: Text(
+            _t(
+              nl: 'Je kunt later opnieuw koppelen. Facturen, creditnota’s en Peppol-verzending via Billit worden daarna pas weer voorbereid zodra je opnieuw koppelt.',
+              en: 'You can reconnect later. Invoices, credit notes and Peppol sending via Billit are only prepared again once you reconnect.',
+              fr: 'Vous pourrez reconnecter plus tard. Les factures, notes de crédit et l’envoi Peppol via Billit ne seront préparés à nouveau qu’après reconnexion.',
+              es: 'Puedes volver a conectar más tarde. Las facturas, notas de crédito y el envío Peppol mediante Billit solo se preparan de nuevo al reconectar.',
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: Text(
+                _t(
+                  nl: 'Annuleren',
+                  en: 'Cancel',
+                  fr: 'Annuler',
+                  es: 'Cancelar',
+                ),
+              ),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(ctx).pop(true),
+              child: Text(
+                _t(
+                  nl: 'Loskoppelen',
+                  en: 'Disconnect',
+                  fr: 'Déconnecter',
+                  es: 'Desconectar',
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+    return decision == true;
+  }
+
+  Future<void> _disconnectBillit() async {
+    final connected = _billitStatus?['connected'] == true;
+    if (!connected) return;
+    final confirmed = await _confirmBillitDisconnect();
+    if (!confirmed || !mounted) return;
+    setState(() => _billitDisconnectLoading = true);
+    try {
+      final scope = _strictSettingsScopeForAction(
+        action: 'disconnect_billit_oauth',
+      );
+      if (scope == null) return;
+      await disconnectCompanyBillitOAuth(
+        tenantId: scope.tenantId,
+        companyId: scope.companyId,
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Billit is losgekoppeld.',
+              en: 'Billit is disconnected.',
+              fr: 'Billit est déconnecté.',
+              es: 'Billit está desconectado.',
+            ),
+          ),
+        ),
+      );
+      unawaited(_loadBillitIntegrationStatus());
+    } on BillitIntegrationApiException catch (e) {
+      if (!mounted) return;
+      final forbidden = e.statusCode == 401 || e.statusCode == 403;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            forbidden
+                ? _t(
+                    nl: 'Geen toegang tot Billit-instellingen voor dit bedrijf.',
+                    en: 'No access to Billit settings for this company.',
+                    fr: 'Pas d’accès aux paramètres Billit pour cette entreprise.',
+                    es: 'Sin acceso a la configuración de Billit para esta empresa.',
+                  )
+                : _t(
+                    nl: 'Billit kon niet worden losgekoppeld.',
+                    en: 'Billit could not be disconnected.',
+                    fr: 'Billit n’a pas pu être déconnecté.',
+                    es: 'No se pudo desconectar Billit.',
+                  ),
+          ),
+        ),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Billit kon niet worden losgekoppeld.',
+              en: 'Billit could not be disconnected.',
+              fr: 'Billit n’a pas pu être déconnecté.',
+              es: 'No se pudo desconectar Billit.',
+            ),
+          ),
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _billitDisconnectLoading = false);
+      }
+    }
+  }
+
   Future<void> _startGoogleCalendarReconnect() async {
     setState(() => _googleCalendarReconnectLoading = true);
     try {
@@ -3569,6 +3867,267 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
               value,
               style: TextStyle(color: _textPrimary, fontSize: 13),
             ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _billitStatusField(String key) {
+    final raw = (_billitStatus?[key] ?? '').toString().trim();
+    return raw;
+  }
+
+  ({String label, _SetupStatus status}) _billitStatusDescriptor() {
+    final configured = _billitStatus?['configured'] == true;
+    final connected = _billitStatus?['connected'] == true;
+    final statusCode = _billitStatusField('status');
+    if (connected) {
+      return (
+        label: _t(
+          nl: 'Gekoppeld',
+          en: 'Connected',
+          fr: 'Connecté',
+          es: 'Conectado',
+        ),
+        status: _SetupStatus.complete,
+      );
+    }
+    if (statusCode == 'error') {
+      return (
+        label: _t(
+          nl: 'Aandacht nodig',
+          en: 'Needs attention',
+          fr: 'Attention requise',
+          es: 'Requiere atención',
+        ),
+        status: _SetupStatus.attention,
+      );
+    }
+    if (statusCode == 'authorization_started') {
+      return (
+        label: _t(
+          nl: 'Koppeling gestart',
+          en: 'Connection started',
+          fr: 'Connexion démarrée',
+          es: 'Conexión iniciada',
+        ),
+        status: _SetupStatus.attention,
+      );
+    }
+    if (configured) {
+      return (
+        label: _t(
+          nl: 'Klaar om te koppelen',
+          en: 'Ready to connect',
+          fr: 'Prêt à connecter',
+          es: 'Listo para conectar',
+        ),
+        status: _SetupStatus.incomplete,
+      );
+    }
+    return (
+      label: _t(
+        nl: 'Nog niet geconfigureerd',
+        en: 'Not configured yet',
+        fr: 'Pas encore configuré',
+        es: 'Aún no configurado',
+      ),
+      status: _SetupStatus.comingSoon,
+    );
+  }
+
+  Widget _billitIntegrationCard() {
+    final configured = _billitStatus?['configured'] == true;
+    final connected = _billitStatus?['connected'] == true;
+    final descriptor = _billitStatusDescriptor();
+    final environment = _billitStatusField('environment');
+    final connectedAt = _billitStatusField('connected_at');
+    final updatedAt = _billitStatusField('updated_at');
+    final lastErrorCode = _billitStatusField('last_error_code');
+    final loadingInitial = _billitLoading && _billitStatus == null;
+    final busy = _billitStartLoading || _billitDisconnectLoading;
+    return _collapsibleSettingsCard(
+      id: 'billit_peppol',
+      icon: Icons.receipt_long_outlined,
+      title: _t(
+        nl: 'Billit & Peppol',
+        en: 'Billit & Peppol',
+        fr: 'Billit & Peppol',
+        es: 'Billit y Peppol',
+      ),
+      subtitle: descriptor.label,
+      status: descriptor.status,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            _t(
+              nl: 'Koppel je eigen Billit-account om facturen, creditnota’s en Peppol-verzending vanuit Fluxidi voor te bereiden.',
+              en: 'Connect your own Billit account to prepare invoices, credit notes and Peppol sending from Fluxidi.',
+              fr: 'Connectez votre propre compte Billit pour préparer factures, notes de crédit et envoi Peppol depuis Fluxidi.',
+              es: 'Conecta tu propia cuenta de Billit para preparar facturas, notas de crédito y envío Peppol desde Fluxidi.',
+            ),
+            style: TextStyle(color: _textSecondary, height: 1.45),
+          ),
+          if (loadingInitial)
+            const Padding(
+              padding: EdgeInsets.only(top: 10),
+              child: SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+            ),
+          const SizedBox(height: 12),
+          _paymentOwnershipInfoRow(
+            _t(nl: 'Status', en: 'Status', fr: 'Statut', es: 'Estado'),
+            descriptor.label,
+          ),
+          if (environment.isNotEmpty)
+            _paymentOwnershipInfoRow(
+              _t(
+                nl: 'Omgeving',
+                en: 'Environment',
+                fr: 'Environnement',
+                es: 'Entorno',
+              ),
+              environment,
+            ),
+          if (connectedAt.isNotEmpty)
+            _paymentOwnershipInfoRow(
+              _t(
+                nl: 'Gekoppeld op',
+                en: 'Connected at',
+                fr: 'Connecté le',
+                es: 'Conectado el',
+              ),
+              connectedAt,
+            ),
+          if (updatedAt.isNotEmpty)
+            _paymentOwnershipInfoRow(
+              _t(
+                nl: 'Laatst bijgewerkt',
+                en: 'Last updated',
+                fr: 'Dernière mise à jour',
+                es: 'Última actualización',
+              ),
+              updatedAt,
+            ),
+          if (lastErrorCode.isNotEmpty)
+            _paymentOwnershipInfoRow(
+              _t(
+                nl: 'Laatste fout',
+                en: 'Last error',
+                fr: 'Dernière erreur',
+                es: 'Último error',
+              ),
+              lastErrorCode,
+            ),
+          if (!configured)
+            Padding(
+              padding: const EdgeInsets.only(top: 4, bottom: 4),
+              child: Text(
+                _t(
+                  nl: 'Fluxidi wacht nog op de Billit OAuth-gegevens. De koppeling wordt actief zodra deze zijn ingesteld.',
+                  en: 'Fluxidi is still waiting for the Billit OAuth credentials. The connection becomes available once these are set.',
+                  fr: 'Fluxidi attend encore les identifiants OAuth Billit. La connexion sera disponible dès qu’ils seront configurés.',
+                  es: 'Fluxidi aún espera las credenciales OAuth de Billit. La conexión estará disponible una vez configuradas.',
+                ),
+                style: TextStyle(
+                  color: _textSecondary,
+                  fontSize: 12,
+                  height: 1.4,
+                ),
+              ),
+            ),
+          if (_billitStatusError != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 4, bottom: 4),
+              child: Text(
+                _billitStatusError == 'forbidden'
+                    ? _t(
+                        nl: 'Geen toegang tot Billit-instellingen voor dit bedrijf.',
+                        en: 'No access to Billit settings for this company.',
+                        fr: 'Pas d’accès aux paramètres Billit pour cette entreprise.',
+                        es: 'Sin acceso a la configuración de Billit para esta empresa.',
+                      )
+                    : _t(
+                        nl: 'Billit-status kon niet worden opgehaald.',
+                        en: 'Billit status could not be loaded.',
+                        fr: 'Le statut Billit n’a pas pu être chargé.',
+                        es: 'No se pudo cargar el estado de Billit.',
+                      ),
+                style: TextStyle(color: _danger, fontSize: 12),
+              ),
+            ),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              OutlinedButton.icon(
+                onPressed: _billitLoading
+                    ? null
+                    : () => _loadBillitIntegrationStatus(showErrorSnack: true),
+                icon: _billitLoading
+                    ? const SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.refresh_outlined),
+                label: Text(
+                  _t(
+                    nl: 'Status vernieuwen',
+                    en: 'Refresh status',
+                    fr: 'Actualiser le statut',
+                    es: 'Actualizar estado',
+                  ),
+                ),
+              ),
+              FilledButton.icon(
+                onPressed: (!configured || connected || busy)
+                    ? null
+                    : _startBillitConnect,
+                icon: _billitStartLoading
+                    ? const SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.link_outlined),
+                label: Text(
+                  _t(
+                    nl: 'Billit koppelen',
+                    en: 'Connect Billit',
+                    fr: 'Connecter Billit',
+                    es: 'Conectar Billit',
+                  ),
+                ),
+              ),
+              if (connected)
+                OutlinedButton.icon(
+                  onPressed: _billitDisconnectLoading
+                      ? null
+                      : _disconnectBillit,
+                  icon: _billitDisconnectLoading
+                      ? const SizedBox(
+                          width: 14,
+                          height: 14,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.link_off_outlined),
+                  label: Text(
+                    _t(
+                      nl: 'Koppeling verbreken',
+                      en: 'Disconnect',
+                      fr: 'Déconnecter',
+                      es: 'Desconectar',
+                    ),
+                  ),
+                ),
+            ],
           ),
         ],
       ),
@@ -10057,6 +10616,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                 _paymentOwnershipCard(),
               if (_shouldShowSection('mollie_terminal_payments'))
                 _mollieTerminalPaymentsCard(),
+              if (_shouldShowSection('billit_peppol')) _billitIntegrationCard(),
               if (_shouldShowSection('vat_settings'))
                 _collapsibleSettingsCard(
                   id: 'vat_settings',

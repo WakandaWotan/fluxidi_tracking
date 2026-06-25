@@ -7250,6 +7250,205 @@ Future<Map<String, dynamic>> disconnectBackendMollieConnect({
   return _safeMollieConnectMap(decoded);
 }
 
+/// Thrown by the company-facing Billit integration helpers so the UI can
+/// distinguish auth failures (401/403) from generic backend/network errors.
+/// Never carries tokens or secrets.
+class BillitIntegrationApiException implements Exception {
+  final String error;
+  final int statusCode;
+  const BillitIntegrationApiException({
+    required this.error,
+    required this.statusCode,
+  });
+
+  @override
+  String toString() =>
+      'BillitIntegrationApiException(error: $error, statusCode: $statusCode)';
+}
+
+/// Whitelisted projection of the backend Billit integration response. Only
+/// safe status metadata is copied through - access/refresh tokens, client
+/// secret, and any other sensitive fields are NEVER surfaced even if present.
+Map<String, dynamic> _safeBillitIntegrationMap(Map<dynamic, dynamic> raw) {
+  String textAny(List<String> keys) {
+    for (final key in keys) {
+      final value = raw[key];
+      if (value == null) continue;
+      final text = value.toString().trim();
+      if (text.isNotEmpty) return text;
+    }
+    return '';
+  }
+
+  bool boolAny(List<String> keys) {
+    for (final key in keys) {
+      final value = raw[key];
+      if (value is bool) return value;
+      if (value is String) {
+        final token = value.trim().toLowerCase();
+        if (token == 'true') return true;
+        if (token == 'false') return false;
+      }
+    }
+    return false;
+  }
+
+  final warnings = <String>[];
+  final warningsRaw = raw['warnings'];
+  if (warningsRaw is List) {
+    for (final w in warningsRaw) {
+      final text = (w ?? '').toString().trim();
+      if (text.isNotEmpty) warnings.add(text);
+    }
+  }
+
+  return <String, dynamic>{
+    'ok': boolAny(const ['ok']),
+    'provider': textAny(const ['provider']),
+    'configured': boolAny(const ['configured']),
+    'connected': boolAny(const ['connected']),
+    'environment': textAny(const ['environment']),
+    'api_base_url': textAny(const ['api_base_url']),
+    'redirect_uri_configured': boolAny(const ['redirect_uri_configured']),
+    'client_id_configured': boolAny(const ['client_id_configured']),
+    'client_secret_configured': boolAny(const ['client_secret_configured']),
+    'party_id': textAny(const ['party_id']),
+    'status': textAny(const ['status']),
+    'connected_at': textAny(const ['connected_at']),
+    'updated_at': textAny(const ['updated_at']),
+    'last_error_code': textAny(const ['last_error_code']),
+    'authorization_url': textAny(const ['authorization_url']),
+    'error': textAny(const ['error']),
+    'warnings': warnings,
+  };
+}
+
+/// GET /company/integrations/billit/status (company-session auth, no admin
+/// token requirement beyond the shared company-owner header resolver).
+Future<Map<String, dynamic>> fetchCompanyBillitIntegrationStatus({
+  String? tenantId,
+  String? companyId,
+}) async {
+  final endpoint = _withAdminTenantCompanyScope(
+    Uri.parse('${appConfig.bookingBaseUrl}/company/integrations/billit/status'),
+    tenantId: tenantId,
+    companyId: companyId,
+  );
+  final auth = await resolveCompanyOwnerAuthHeaders();
+  final res = await http
+      .get(endpoint, headers: auth.headers)
+      .timeout(const Duration(seconds: 12));
+  final decoded = jsonDecode(utf8.decode(res.bodyBytes));
+  if (decoded is! Map) throw Exception('Invalid response');
+  final map = _safeBillitIntegrationMap(decoded);
+  if (res.statusCode == 401 || res.statusCode == 403) {
+    throw BillitIntegrationApiException(
+      error: 'forbidden',
+      statusCode: res.statusCode,
+    );
+  }
+  if (res.statusCode < 200 || res.statusCode >= 300) {
+    throw BillitIntegrationApiException(
+      error: map['error']?.toString().isNotEmpty == true
+          ? map['error'].toString()
+          : 'billit_status_failed',
+      statusCode: res.statusCode,
+    );
+  }
+  return map;
+}
+
+/// POST /company/integrations/billit/oauth/start (company-session auth).
+/// Returns the safe map for both success (ok:true + authorization_url) and a
+/// structured 400 (ok:false + error, e.g. billit_oauth_not_configured) so the
+/// UI can branch. Throws [BillitIntegrationApiException] on 401/403 or 5xx.
+Future<Map<String, dynamic>> startCompanyBillitOAuth({
+  String? tenantId,
+  String? companyId,
+}) async {
+  final endpoint = _withAdminTenantCompanyScope(
+    Uri.parse(
+      '${appConfig.bookingBaseUrl}/company/integrations/billit/oauth/start',
+    ),
+    tenantId: tenantId,
+    companyId: companyId,
+  );
+  final scope = _resolveAdminTenantCompanyScope(
+    tenantId: tenantId,
+    companyId: companyId,
+  );
+  final auth = await resolveCompanyOwnerAuthHeaders();
+  final res = await http
+      .post(
+        endpoint,
+        headers: auth.headers,
+        body: jsonEncode(<String, dynamic>{...scope}),
+      )
+      .timeout(const Duration(seconds: 12));
+  final decoded = jsonDecode(utf8.decode(res.bodyBytes));
+  if (decoded is! Map) throw Exception('Invalid response');
+  final map = _safeBillitIntegrationMap(decoded);
+  if (res.statusCode == 401 || res.statusCode == 403) {
+    throw BillitIntegrationApiException(
+      error: 'forbidden',
+      statusCode: res.statusCode,
+    );
+  }
+  if (res.statusCode >= 500) {
+    throw BillitIntegrationApiException(
+      error: map['error']?.toString().isNotEmpty == true
+          ? map['error'].toString()
+          : 'billit_start_failed',
+      statusCode: res.statusCode,
+    );
+  }
+  return map;
+}
+
+/// POST /company/integrations/billit/disconnect (company-session auth).
+Future<Map<String, dynamic>> disconnectCompanyBillitOAuth({
+  String? tenantId,
+  String? companyId,
+}) async {
+  final endpoint = _withAdminTenantCompanyScope(
+    Uri.parse(
+      '${appConfig.bookingBaseUrl}/company/integrations/billit/disconnect',
+    ),
+    tenantId: tenantId,
+    companyId: companyId,
+  );
+  final scope = _resolveAdminTenantCompanyScope(
+    tenantId: tenantId,
+    companyId: companyId,
+  );
+  final auth = await resolveCompanyOwnerAuthHeaders();
+  final res = await http
+      .post(
+        endpoint,
+        headers: auth.headers,
+        body: jsonEncode(<String, dynamic>{...scope}),
+      )
+      .timeout(const Duration(seconds: 12));
+  final decoded = jsonDecode(utf8.decode(res.bodyBytes));
+  if (decoded is! Map) throw Exception('Invalid response');
+  final map = _safeBillitIntegrationMap(decoded);
+  if (res.statusCode == 401 || res.statusCode == 403) {
+    throw BillitIntegrationApiException(
+      error: 'forbidden',
+      statusCode: res.statusCode,
+    );
+  }
+  if (res.statusCode < 200 || res.statusCode >= 300) {
+    throw BillitIntegrationApiException(
+      error: map['error']?.toString().isNotEmpty == true
+          ? map['error'].toString()
+          : 'billit_disconnect_failed',
+      statusCode: res.statusCode,
+    );
+  }
+  return map;
+}
+
 Future<Map<String, dynamic>> fetchCompanyMollieTerminals({
   String? tenantId,
   String? companyId,
