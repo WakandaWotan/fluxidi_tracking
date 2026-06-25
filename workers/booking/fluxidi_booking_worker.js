@@ -22940,6 +22940,140 @@ POST /admin/mollie/connect/disconnect
         }
       }
 
+      // 2G-T: read-only Document Core EXPORT-READINESS classification.
+      //   GET /admin/bookings/:bookingId/documents/export-readiness
+      //
+      // Returns a classification snapshot per issued document, never mutates
+      // anything. Strictly read-only:
+      //   - admin auth (same `_requireAdmin` contract as the issue + list
+      //     + lookup routes)
+      //   - explicit tenant/company scope required; no legacy/global
+      //     fallback (same `requireExplicitBookingRouteScope` as the
+      //     per-booking documents list)
+      //   - only records whose stored scope matches and whose stored
+      //     source_booking_id matches the requested booking are returned
+      //     (cross-tenant existence is not leaked; 2G-R defensive equality
+      //     is reused inside listIssuedDocumentRecordsForBooking)
+      //   - the classifier is pure: no KV write, no allocator, no DO call,
+      //     no compliance event, no Billit/Peppol/Mollie/Chiron network
+      //     call. It NEVER touches the booking lifecycle, payment, refund,
+      //     credit, Mollie, Chiron, dashboard, KPI, tracking, fleet,
+      //     allocator, calendar, pricing, or document-issue paths.
+      //   - safe to call repeatedly; idempotent classification snapshot.
+      //
+      // The route is intentionally additive: it never modifies
+      // /admin/documents/credit-note/issue, /admin/documents/refund-proof/
+      // issue, /admin/documents/:documentId, or
+      // /admin/bookings/:bookingId/documents.
+      if (
+        request.method === "GET" &&
+        url.pathname.startsWith("/admin/bookings/") &&
+        url.pathname.endsWith("/documents/export-readiness")
+      ) {
+        const readinessSegments = url.pathname.split("/").filter(Boolean);
+        // Only the export-readiness shape:
+        //   ["admin","bookings","<bookingId>","documents","export-readiness"].
+        if (
+          readinessSegments.length === 5 &&
+          readinessSegments[0] === "admin" &&
+          readinessSegments[1] === "bookings" &&
+          readinessSegments[3] === "documents" &&
+          readinessSegments[4] === "export-readiness"
+        ) {
+          try {
+            _requireAdmin(request, url, env);
+          } catch (err) {
+            const message = String(err?.message || "Unauthorized");
+            return json(
+              {
+                ok: false,
+                error:
+                  message === "Unauthorized" ? "unauthorized" : "admin_unavailable",
+              },
+              message === "Unauthorized" ? 401 : 500,
+            );
+          }
+
+          try {
+            const scopedRoute = requireExplicitBookingRouteScope({ request, url });
+            if (!scopedRoute.ok) return scopedRoute.response;
+            const scope = {
+              tenant_id: scopedRoute.scope.tenant_id,
+              company_id: scopedRoute.scope.company_id,
+            };
+
+            const sourceBookingId =
+              safeStr(decodeURIComponent(readinessSegments[2]), 200) || "";
+            if (!sourceBookingId) {
+              return json({ ok: false, error: "missing_source_booking_id" }, 400);
+            }
+
+            if (!env?.BOOKING_KV) {
+              return json({ ok: false, error: "missing_binding" }, 503);
+            }
+
+            // Load the scoped business profile ONCE so the classifier can
+            // evaluate company VAT/KBO completeness without a per-document
+            // KV fetch. `loadBusinessProfile` is read-only; the tenant
+            // legacy fallback mirrors the credit-note / refund-proof issue
+            // cores so legacy scopes degrade gracefully.
+            let businessProfile = null;
+            try {
+              businessProfile = await loadBusinessProfile(env, scope, {
+                allowTenantLegacyFallback: true,
+              });
+            } catch (_) {
+              businessProfile = null;
+            }
+
+            const listed = await listIssuedDocumentRecordsForBooking(
+              env,
+              scope,
+              sourceBookingId,
+            );
+            if (!listed.ok) {
+              const status = listed.error === "missing_binding" ? 503 : 400;
+              return json({ ok: false, error: listed.error }, status);
+            }
+            const records = Array.isArray(listed.records) ? listed.records : [];
+            const warnings = Array.isArray(listed.warnings)
+              ? listed.warnings
+              : [];
+
+            const documents = records.map((rec) =>
+              classifyDocumentExportReadiness(rec, businessProfile),
+            );
+
+            // Tiny per-call aggregate counters for ops visibility. No PII,
+            // no document_ids, no refund/idempotency tokens; only counts
+            // and the masked booking id.
+            let peppolReadyCount = 0;
+            let accountingReadyCount = 0;
+            for (const d of documents) {
+              if (d.exportable_to_peppol === true) peppolReadyCount += 1;
+              if (d.exportable_to_accounting === true) accountingReadyCount += 1;
+            }
+            console.log(
+              `[DOCUMENT_EXPORT_READINESS][OK] booking=${_bookingIntentMask(sourceBookingId)} count=${documents.length} peppol_ready=${peppolReadyCount} accounting_ready=${accountingReadyCount} warnings=${warnings.length}`,
+            );
+
+            return json({
+              ok: true,
+              source_booking_id: sourceBookingId,
+              documents,
+              count: documents.length,
+              warnings,
+            });
+          } catch (err) {
+            const message = String(err?.message || "internal_error");
+            console.log(
+              `[DOCUMENT_EXPORT_READINESS][ERR] ${safeStr(message, 200) || "unknown"}`,
+            );
+            return json({ ok: false, error: "internal_error" }, 500);
+          }
+        }
+      }
+
       // AVAILABILITY
       if (url.pathname === "/availability" && request.method === "POST") {
         const body = await safeJson(request);
@@ -67159,6 +67293,272 @@ async function listIssuedDocumentsForBooking(env, scope, canonicalBookingId) {
     warnings.push("stale_document_index_entry_skipped");
   }
   return { ok: true, documents, warnings };
+}
+
+/* 2G-T — read-only list of issued document REGISTRY RECORDS for one booking.
+ *
+ * Sibling of `listIssuedDocumentsForBooking` (which projects safe public
+ * metadata). The metadata projection intentionally omits buyer_snapshot /
+ * seller_snapshot (PII) — fine for the public list route, but the export-
+ * readiness classifier needs those fields to evaluate customer/business
+ * identity completeness without fabricating data. This helper therefore
+ * yields the FULL canonical registry record per match.
+ *
+ * Same iteration shape, same defensive guards, same masked log line family
+ * — only the projection differs:
+ *   - same scoped `doc_by_booking:` prefix (no broad scan)
+ *   - same tenant/company cross-check (cross-tenant rows skipped silently)
+ *   - same 2G-R `source_booking_id` defensive equality (stale index skipped)
+ *   - same `seenDocumentIds` dedup
+ *
+ * READ-ONLY: no `BOOKING_KV.put/delete`, no allocation, no DO call, no
+ * compliance event emit, no Mollie/Chiron/Peppol/Billit network call.
+ * Safe to call repeatedly; never affects any existing route.
+ */
+async function listIssuedDocumentRecordsForBooking(
+  env,
+  scope,
+  canonicalBookingId,
+) {
+  if (!env?.BOOKING_KV) return { ok: false, error: "missing_binding" };
+  let prefix;
+  try {
+    prefix = buildDocumentsByBookingPrefix(scope, canonicalBookingId);
+  } catch (_) {
+    return { ok: false, error: "missing_tenant_scope" };
+  }
+  const requestedCanonical = _normalizeCanonicalBookingIdForMatch(
+    canonicalBookingId,
+  );
+  const seenDocumentIds = new Set();
+  const records = [];
+  let staleSkippedCount = 0;
+  let cursor = undefined;
+  do {
+    const listed = await env.BOOKING_KV.list({ prefix, limit: 1000, cursor });
+    const keys = Array.isArray(listed?.keys) ? listed.keys : [];
+    for (const item of keys) {
+      const key = safeStr(item?.name, 320);
+      if (!key || !key.startsWith(prefix)) continue;
+      let documentId = safeStr(await env.BOOKING_KV.get(key), 200);
+      if (!documentId) {
+        const parts = key.split(":");
+        documentId = safeStr(parts[parts.length - 1], 200);
+      }
+      if (!documentId || seenDocumentIds.has(documentId)) continue;
+      seenDocumentIds.add(documentId);
+      const record = await loadIssuedDocumentRegistryRecordById(
+        env,
+        scope,
+        documentId,
+      );
+      if (!record) continue;
+      const recTenant = safeStr(record?.tenant_id ?? record?.tenantId, 80);
+      const recCompany = safeStr(record?.company_id ?? record?.companyId, 80);
+      if (
+        (recTenant && recTenant !== scope.tenant_id) ||
+        (recCompany && recCompany !== scope.company_id)
+      ) {
+        continue;
+      }
+      const recordSourceBookingId =
+        safeStr(record?.source_booking_id ?? record?.sourceBookingId, 200) ||
+        safeStr(
+          record?.source_parent_booking_id ?? record?.sourceParentBookingId,
+          200,
+        );
+      const normalizedRecordSource = _normalizeCanonicalBookingIdForMatch(
+        recordSourceBookingId,
+      );
+      if (
+        !normalizedRecordSource ||
+        normalizedRecordSource !== requestedCanonical
+      ) {
+        staleSkippedCount += 1;
+        const docMask = documentId.slice(0, 8);
+        console.log(
+          `[DOCUMENT_EXPORT_READINESS][STALE_INDEX_SKIP] requested=${_bookingIntentMask(canonicalBookingId)} doc=${docMask} reason=source_booking_mismatch`,
+        );
+        continue;
+      }
+      records.push(record);
+    }
+    cursor = listed?.list_complete ? undefined : listed?.cursor;
+  } while (cursor);
+  const warnings = [];
+  if (staleSkippedCount > 0) {
+    warnings.push("stale_document_index_entry_skipped");
+  }
+  return { ok: true, records, warnings };
+}
+
+/* 2G-T — pure document export-readiness classifier.
+ *
+ * Read-only / inert. Given an already-loaded canonical registry record and an
+ * already-loaded scoped business profile, returns the safe public projection
+ * for the export-readiness route:
+ *
+ *   - the same safe public metadata fields surfaced by
+ *     `buildIssuedDocumentPublicMetadata` (document_id, document_type,
+ *     document_number, proof_reference, lifecycle_state, document_status,
+ *     issue_timestamp, currency, source_booking_id, source_leg_id,
+ *     source_leg_type) — never the immutable snapshot, never buyer/seller
+ *     names/emails/addresses/IBANs/idempotency keys/provider tokens.
+ *   - a conservative classification (export_role, export_target_suggestion,
+ *     exportable_to_accounting, exportable_to_peppol).
+ *   - `blocking_reasons[]` and `warnings[]` containing only stable enum
+ *     codes (no PII, no error text).
+ *
+ * Purity / inertness contract:
+ *   - no KV read/write, no DO call, no allocation, no compliance event,
+ *     no Billit/Peppol/Mollie/Chiron network call,
+ *   - never mutates the input record / business profile,
+ *   - never invents data: an absent field stays absent → it becomes a
+ *     blocking_reason or warning, never a fabricated value,
+ *   - never gates an existing issue/replay/list/dry-run route.
+ *
+ * Classification rules (Fluxidi Document Core — export readiness foundation):
+ *
+ *   invoice       → einvoice; accounting=true; peppol=true if biz/identity OK
+ *   credit_note   → einvoice_credit_note; accounting=true; peppol=true if OK
+ *   refund_proof  → accounting_attachment_or_archive; accounting=true;
+ *                   peppol=false (refund_proof is evidence, not an invoice);
+ *                   field findings degrade to warnings only.
+ *   receipt|ritbon→ operational_receipt; accounting=false; peppol=false.
+ *   unknown       → null target; accounting=false; peppol=false;
+ *                   blocking_reasons includes "unsupported_document_type".
+ */
+function classifyDocumentExportReadiness(record, businessProfile) {
+  const rec = record && typeof record === "object" ? record : {};
+  const bp =
+    businessProfile && typeof businessProfile === "object" ? businessProfile : {};
+
+  const documentType =
+    safeStr(rec.document_type ?? rec.documentType, 40).toLowerCase() || null;
+  const documentId =
+    safeStr(rec.document_id ?? rec.documentId, 200) || null;
+  const documentNumber =
+    safeStr(rec.document_number ?? rec.documentNumber, 80) || null;
+  const proofReference =
+    safeStr(rec.proof_reference ?? rec.proofReference, 80) || null;
+  const lifecycleState =
+    safeStr(rec.lifecycle_state ?? rec.lifecycleState, 40) || null;
+  const documentStatus =
+    safeStr(rec.document_status ?? rec.documentStatus, 40) || null;
+  const issueTimestamp =
+    safeStr(rec.issue_timestamp ?? rec.issueTimestamp, 80) || null;
+  const currency =
+    safeStr(rec.currency, 8).toUpperCase() || null;
+  const sourceBookingId =
+    safeStr(rec.source_booking_id ?? rec.sourceBookingId, 200) || null;
+  const sourceLegId =
+    safeStr(rec.source_leg_id ?? rec.sourceLegId, 200) || null;
+  const sourceLegType =
+    safeStr(rec.source_leg_type ?? rec.sourceLegType, 24) || null;
+  const isLegScoped =
+    rec.is_leg_scoped === true || rec.isLegScoped === true;
+
+  // ---- Generic field-readiness findings (conservative, no invented data) --
+  // These are computed once and then routed to either blocking_reasons[] or
+  // warnings[] depending on whether the document type can be exported to
+  // Peppol at all. Stable enum codes only — never error text or PII.
+  const findings = [];
+  const recTenant = safeStr(rec.tenant_id ?? rec.tenantId, 80);
+  const recCompany = safeStr(rec.company_id ?? rec.companyId, 80);
+  if (!recTenant || !recCompany) findings.push("missing_tenant_scope");
+  if (!sourceBookingId) findings.push("missing_source_invoice_reference");
+  if (!currency) findings.push("missing_currency");
+  if (isLegScoped && !sourceLegId) findings.push("missing_source_leg_binding");
+
+  // Customer/business identity from the issued record's buyer_snapshot ONLY.
+  // The snapshot is frozen at issue time; absence of every identity field
+  // means there is no party we can address an e-invoice to.
+  const buyer = rec.buyer_snapshot ?? rec.buyerSnapshot;
+  const buyerName = safeStr(buyer?.name, 240);
+  const buyerEmail = safeStr(buyer?.email, 240);
+  const buyerVat = safeStr(buyer?.vat_number ?? buyer?.vatNumber, 64);
+  if (!buyerName && !buyerEmail && !buyerVat) {
+    findings.push("missing_customer_business_identity");
+  }
+
+  // Company VAT/KBO from the scoped business profile (already loaded by the
+  // caller). Either a VAT number or a registration/enterprise/KBO number is
+  // enough for an outbound e-invoice header.
+  const companyVat = safeStr(bp.vatNumber ?? bp.vat_number, 64);
+  const companyKbo =
+    safeStr(bp.kboNumber ?? bp.kbo_number, 64) ||
+    safeStr(bp.enterpriseNumber ?? bp.enterprise_number, 64) ||
+    safeStr(
+      bp.companyRegistrationNumber ?? bp.company_registration_number,
+      80,
+    );
+  if (!companyVat && !companyKbo) findings.push("missing_company_vat_or_kbo");
+
+  // ---- Per-type classification --------------------------------------------
+  let exportRole = "unknown";
+  let exportTargetSuggestion = null;
+  let exportableToAccounting = false;
+  let exportableToPeppol = false;
+  const blockingReasons = [];
+  const warnings = [];
+
+  const uniq = (arr) => Array.from(new Set(arr));
+
+  if (documentType === "invoice") {
+    exportRole = "invoice";
+    exportTargetSuggestion = "einvoice";
+    exportableToAccounting = true;
+    if (!documentNumber) findings.push("missing_source_invoice_reference");
+    for (const f of uniq(findings)) blockingReasons.push(f);
+    exportableToPeppol = blockingReasons.length === 0;
+  } else if (documentType === "credit_note") {
+    exportRole = "credit_note";
+    exportTargetSuggestion = "einvoice_credit_note";
+    exportableToAccounting = true;
+    if (!documentNumber) findings.push("missing_source_invoice_reference");
+    for (const f of uniq(findings)) blockingReasons.push(f);
+    exportableToPeppol = blockingReasons.length === 0;
+  } else if (documentType === "refund_proof") {
+    exportRole = "refund_evidence";
+    exportTargetSuggestion = "accounting_attachment_or_archive";
+    exportableToAccounting = true;
+    exportableToPeppol = false;
+    warnings.push("refund_proof_is_not_an_invoice");
+    for (const f of uniq(findings)) warnings.push(f);
+  } else if (documentType === "receipt" || documentType === "ritbon") {
+    exportRole = "ride_receipt";
+    exportTargetSuggestion = "operational_receipt";
+    exportableToAccounting = false;
+    exportableToPeppol = false;
+    for (const f of uniq(findings)) warnings.push(f);
+  } else {
+    exportRole = "unknown";
+    exportTargetSuggestion = null;
+    exportableToAccounting = false;
+    exportableToPeppol = false;
+    blockingReasons.push("unsupported_document_type");
+    for (const f of uniq(findings)) warnings.push(f);
+  }
+
+  return {
+    document_id: documentId,
+    document_type: documentType,
+    document_number: documentNumber,
+    proof_reference: proofReference,
+    lifecycle_state: lifecycleState,
+    document_status: documentStatus,
+    issue_timestamp: issueTimestamp,
+    currency,
+    source_booking_id: sourceBookingId,
+    source_leg_id: sourceLegId,
+    source_leg_type: sourceLegType,
+    export_role: exportRole,
+    export_target_suggestion: exportTargetSuggestion,
+    exportable_to_accounting: exportableToAccounting,
+    exportable_to_peppol: exportableToPeppol,
+    blocking_reasons: uniq(blockingReasons),
+    warnings: uniq(warnings),
+  };
 }
 
 function attachPublicBookingReferenceAliases(target, publicBookingReference) {
