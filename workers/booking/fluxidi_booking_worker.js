@@ -23074,6 +23074,153 @@ POST /admin/mollie/connect/disconnect
         }
       }
 
+      // 2G-U: read-only Document Core EXPORT PREVIEW.
+      //   GET /admin/bookings/:bookingId/documents/export-preview
+      //
+      // Returns a provider-neutral export preview snapshot per issued
+      // document. Strictly read-only:
+      //   - admin auth (same `_requireAdmin` contract as the issue + list +
+      //     lookup + readiness routes)
+      //   - explicit tenant/company scope required; no legacy/global
+      //     fallback (same `requireExplicitBookingRouteScope` as the
+      //     per-booking documents list + readiness routes)
+      //   - reuses `listIssuedDocumentRecordsForBooking` (the SAME 2G-R
+      //     defensive equality and tenant/company cross-check the readiness
+      //     route uses) — cross-tenant existence is not leaked
+      //   - reuses `classifyDocumentExportReadiness` so this route AGREES
+      //     with the readiness route on export_role / export_target /
+      //     exportable_to_* / blocking_reasons / warnings
+      //   - `buildDocumentExportPreview` is pure: no KV write, no
+      //     allocator, no DO call, no compliance event, no fetch /
+      //     Billit / Peppol / Mollie / Chiron network call.
+      //   - safe to call repeatedly; idempotent preview snapshot.
+      //
+      // The route is strictly additive: it never modifies
+      // /admin/documents/credit-note/issue, /admin/documents/refund-proof/
+      // issue, /admin/documents/:documentId,
+      // /admin/bookings/:bookingId/documents, or
+      // /admin/bookings/:bookingId/documents/export-readiness.
+      if (
+        request.method === "GET" &&
+        url.pathname.startsWith("/admin/bookings/") &&
+        url.pathname.endsWith("/documents/export-preview")
+      ) {
+        const previewSegments = url.pathname.split("/").filter(Boolean);
+        // Only the export-preview shape:
+        //   ["admin","bookings","<bookingId>","documents","export-preview"].
+        if (
+          previewSegments.length === 5 &&
+          previewSegments[0] === "admin" &&
+          previewSegments[1] === "bookings" &&
+          previewSegments[3] === "documents" &&
+          previewSegments[4] === "export-preview"
+        ) {
+          try {
+            _requireAdmin(request, url, env);
+          } catch (err) {
+            const message = String(err?.message || "Unauthorized");
+            return json(
+              {
+                ok: false,
+                error:
+                  message === "Unauthorized" ? "unauthorized" : "admin_unavailable",
+              },
+              message === "Unauthorized" ? 401 : 500,
+            );
+          }
+
+          try {
+            const scopedRoute = requireExplicitBookingRouteScope({ request, url });
+            if (!scopedRoute.ok) return scopedRoute.response;
+            const scope = {
+              tenant_id: scopedRoute.scope.tenant_id,
+              company_id: scopedRoute.scope.company_id,
+            };
+
+            const sourceBookingId =
+              safeStr(decodeURIComponent(previewSegments[2]), 200) || "";
+            if (!sourceBookingId) {
+              return json({ ok: false, error: "missing_source_booking_id" }, 400);
+            }
+
+            if (!env?.BOOKING_KV) {
+              return json({ ok: false, error: "missing_binding" }, 503);
+            }
+
+            // Load the scoped business profile ONCE so the readiness
+            // classifier can evaluate company VAT/KBO completeness without
+            // a per-document KV fetch. `loadBusinessProfile` is read-only;
+            // the tenant legacy fallback mirrors the credit-note / refund-
+            // proof issue cores and the readiness route.
+            let businessProfile = null;
+            try {
+              businessProfile = await loadBusinessProfile(env, scope, {
+                allowTenantLegacyFallback: true,
+              });
+            } catch (_) {
+              businessProfile = null;
+            }
+
+            const listed = await listIssuedDocumentRecordsForBooking(
+              env,
+              scope,
+              sourceBookingId,
+            );
+            if (!listed.ok) {
+              const status = listed.error === "missing_binding" ? 503 : 400;
+              return json({ ok: false, error: listed.error }, status);
+            }
+            const records = Array.isArray(listed.records) ? listed.records : [];
+            const warnings = Array.isArray(listed.warnings)
+              ? listed.warnings
+              : [];
+
+            const documents = records.map((rec) => {
+              const classification = classifyDocumentExportReadiness(
+                rec,
+                businessProfile,
+              );
+              return buildDocumentExportPreview(rec, classification);
+            });
+
+            // Per-call aggregate counters for ops visibility. No PII, no
+            // document_ids, no refund/idempotency tokens — only counts and
+            // the masked booking id (matches the readiness route's log
+            // line family).
+            let peppolReadyCount = 0;
+            let accountingReadyCount = 0;
+            let notExportedCount = 0;
+            for (const d of documents) {
+              if (d.exportable_to_peppol === true) peppolReadyCount += 1;
+              if (d.exportable_to_accounting === true) accountingReadyCount += 1;
+              if (
+                d.provider_neutral_preview &&
+                d.provider_neutral_preview.not_exported_reason
+              ) {
+                notExportedCount += 1;
+              }
+            }
+            console.log(
+              `[DOCUMENT_EXPORT_PREVIEW][OK] booking=${_bookingIntentMask(sourceBookingId)} count=${documents.length} peppol_ready=${peppolReadyCount} accounting_ready=${accountingReadyCount} not_exported=${notExportedCount} warnings=${warnings.length}`,
+            );
+
+            return json({
+              ok: true,
+              source_booking_id: sourceBookingId,
+              documents,
+              count: documents.length,
+              warnings,
+            });
+          } catch (err) {
+            const message = String(err?.message || "internal_error");
+            console.log(
+              `[DOCUMENT_EXPORT_PREVIEW][ERR] ${safeStr(message, 200) || "unknown"}`,
+            );
+            return json({ ok: false, error: "internal_error" }, 500);
+          }
+        }
+      }
+
       // AVAILABILITY
       if (url.pathname === "/availability" && request.method === "POST") {
         const body = await safeJson(request);
@@ -67558,6 +67705,336 @@ function classifyDocumentExportReadiness(record, businessProfile) {
     exportable_to_peppol: exportableToPeppol,
     blocking_reasons: uniq(blockingReasons),
     warnings: uniq(warnings),
+  };
+}
+
+/* 2G-U — pure provider-neutral Document Export Preview builder.
+ *
+ * Read-only / inert. Given an already-loaded canonical registry record AND
+ * the corresponding `classifyDocumentExportReadiness` output, returns the
+ * same safe public projection as the readiness route PLUS a per-document
+ * `provider_neutral_preview` envelope. The envelope is a diagnostic snapshot
+ * of EXISTING registry fields — never invents seller/buyer/totals/tax/line
+ * data, never derives an outbound e-invoice/Peppol payload, never calls
+ * Billit/Peppol/Mollie/Chiron, never mutates anything.
+ *
+ * Purity / inertness contract:
+ *   - no KV read/write, no DO call, no allocation,
+ *   - no compliance event emit, no fetch / external network call,
+ *   - never mutates the input record / classification,
+ *   - never invents data: an absent registry field stays absent (null / []
+ *     / `not_yet_available_in_registry` note),
+ *   - never gates an existing issue/replay/list/readiness/lookup/dry-run
+ *     route — strictly additive.
+ *
+ * Refund-proof + receipt/ritbon + unknown types ALWAYS get a
+ * `not_exported_reason` and never produce an e-invoice payload, mirroring
+ * the runtime-proven readiness contract.
+ */
+function buildDocumentExportPreview(record, classification) {
+  const rec = record && typeof record === "object" ? record : {};
+  const cls =
+    classification && typeof classification === "object" ? classification : {};
+
+  // Safe shallow projection of a snapshot object: only the well-known
+  // identity fields, no spreading of unknown keys. Returns `null` when every
+  // field is empty so callers can short-circuit a `null` snapshot.
+  function _projectSellerSnapshotSafe(snap) {
+    if (!snap || typeof snap !== "object" || Array.isArray(snap)) return null;
+    const projected = {
+      name: safeStr(snap.name ?? snap.companyName ?? snap.company_name, 240) || null,
+      legal_name: safeStr(snap.legal_name ?? snap.legalName, 240) || null,
+      vat_number: safeStr(snap.vat_number ?? snap.vatNumber, 64) || null,
+      registration_number:
+        safeStr(
+          snap.registration_number ??
+            snap.registrationNumber ??
+            snap.kbo_number ??
+            snap.kboNumber ??
+            snap.enterprise_number ??
+            snap.enterpriseNumber ??
+            snap.company_registration_number ??
+            snap.companyRegistrationNumber,
+          80,
+        ) || null,
+      email: safeStr(snap.email, 240) || null,
+      address_line: safeStr(snap.address_line ?? snap.addressLine, 240) || null,
+      postal_code: safeStr(snap.postal_code ?? snap.postalCode, 32) || null,
+      city: safeStr(snap.city, 120) || null,
+      country_code:
+        safeStr(snap.country_code ?? snap.countryCode, 8).toUpperCase() || null,
+    };
+    const hasAny =
+      projected.name ||
+      projected.legal_name ||
+      projected.vat_number ||
+      projected.registration_number ||
+      projected.email ||
+      projected.address_line ||
+      projected.postal_code ||
+      projected.city ||
+      projected.country_code;
+    return hasAny ? projected : null;
+  }
+  function _projectBuyerSnapshotSafe(snap) {
+    if (!snap || typeof snap !== "object" || Array.isArray(snap)) return null;
+    const projected = {
+      name: safeStr(snap.name ?? snap.customer_name ?? snap.customerName, 240) || null,
+      email: safeStr(snap.email ?? snap.customer_email ?? snap.customerEmail, 240) || null,
+      vat_number: safeStr(snap.vat_number ?? snap.vatNumber, 64) || null,
+      address_line: safeStr(snap.address_line ?? snap.addressLine, 240) || null,
+      postal_code: safeStr(snap.postal_code ?? snap.postalCode, 32) || null,
+      city: safeStr(snap.city, 120) || null,
+      country_code:
+        safeStr(snap.country_code ?? snap.countryCode, 8).toUpperCase() || null,
+    };
+    const hasAny =
+      projected.name ||
+      projected.email ||
+      projected.vat_number ||
+      projected.address_line ||
+      projected.postal_code ||
+      projected.city ||
+      projected.country_code;
+    return hasAny ? projected : null;
+  }
+
+  function _firstFiniteNumberOrNull(...candidates) {
+    for (const c of candidates) {
+      if (c === null || c === undefined || c === "") continue;
+      const n = Number(c);
+      if (Number.isFinite(n)) return n;
+    }
+    return null;
+  }
+  // Mirrors `deriveServerSideCreditContext`'s vat_rate normalisation: pricing
+  // layer sometimes stores rate as a fraction (0.21) instead of percent (21).
+  function _normalizeVatRatePercentOrNull(value) {
+    const n = _firstFiniteNumberOrNull(value);
+    if (n === null) return null;
+    if (n > 0 && n < 1) return n * 100;
+    return n;
+  }
+  function _projectTotalsSafe(totalsRaw) {
+    if (!totalsRaw || typeof totalsRaw !== "object" || Array.isArray(totalsRaw)) {
+      return null;
+    }
+    const totalInclVat = _firstFiniteNumberOrNull(
+      totalsRaw.total_incl_vat,
+      totalsRaw.totalInclVat,
+    );
+    const subtotalExVat = _firstFiniteNumberOrNull(
+      totalsRaw.subtotal_ex_vat,
+      totalsRaw.subtotalExVat,
+    );
+    const vatAmount = _firstFiniteNumberOrNull(
+      totalsRaw.vat_amount,
+      totalsRaw.vatAmount,
+    );
+    const vatRatePercent = _normalizeVatRatePercentOrNull(
+      totalsRaw.vat_rate_percent ?? totalsRaw.vatRatePercent,
+    );
+    const creditedInclVat = _firstFiniteNumberOrNull(
+      totalsRaw.credited_amount_incl_vat,
+      totalsRaw.creditedAmountInclVat,
+    );
+    const refundedInclVat = _firstFiniteNumberOrNull(
+      totalsRaw.refunded_amount_incl_vat,
+      totalsRaw.refundedAmountInclVat,
+    );
+    const hasAny =
+      totalInclVat !== null ||
+      subtotalExVat !== null ||
+      vatAmount !== null ||
+      vatRatePercent !== null ||
+      creditedInclVat !== null ||
+      refundedInclVat !== null;
+    if (!hasAny) return null;
+    return {
+      total_incl_vat: totalInclVat,
+      subtotal_ex_vat: subtotalExVat,
+      vat_amount: vatAmount,
+      vat_rate_percent: vatRatePercent,
+      credited_amount_incl_vat: creditedInclVat,
+      refunded_amount_incl_vat: refundedInclVat,
+    };
+  }
+  function _buildSingleTaxBreakdownEntry(totals, currency) {
+    if (!totals) return [];
+    const taxable = _firstFiniteNumberOrNull(totals.subtotal_ex_vat);
+    const tax = _firstFiniteNumberOrNull(totals.vat_amount);
+    if (taxable === null && tax === null) return [];
+    return [
+      {
+        category:
+          tax !== null && tax > 0
+            ? "standard"
+            : tax === 0
+              ? "zero"
+              : "unknown",
+        taxable_amount: taxable,
+        tax_amount: tax,
+        tax_rate_percent: _normalizeVatRatePercentOrNull(totals.vat_rate_percent),
+        currency: currency || null,
+      },
+    ];
+  }
+
+  // Identity / binding / classification fields (from the already-computed
+  // classification — never re-derived here).
+  const docId = cls.document_id || null;
+  const docType = cls.document_type || null;
+  const docNumber = cls.document_number || null;
+  const proofRef = cls.proof_reference || null;
+  const lifecycleState = cls.lifecycle_state || null;
+  const documentStatus = cls.document_status || null;
+  const issueTimestamp = cls.issue_timestamp || null;
+  const currency = cls.currency || null;
+  const sourceBookingId = cls.source_booking_id || null;
+  const sourceLegId = cls.source_leg_id || null;
+  const sourceLegType = cls.source_leg_type || null;
+
+  const sourceRefundId =
+    safeStr(rec.source_refund_id ?? rec.sourceRefundId, 200) || null;
+  // Reserved for the future POST /admin/documents/invoice/issue route. When
+  // it lands, credit-note registry records will carry the parent invoice
+  // number on `source_invoice_reference` / `sourceInvoiceReference`. Today
+  // those fields are absent so we project `null` rather than fabricating.
+  const sourceInvoiceReference =
+    safeStr(rec.source_invoice_reference ?? rec.sourceInvoiceReference, 80) ||
+    null;
+
+  // Per-type export preview kind/target/exclusion.
+  let exportKind = "unknown";
+  let targetKind = null;
+  let notExportedReason = null;
+  let includeFullBusinessIdentity = false;
+  let includeTaxBreakdown = false;
+  let includeRefundContextOnly = false;
+
+  if (docType === "invoice") {
+    exportKind = "invoice";
+    targetKind = "einvoice";
+    includeFullBusinessIdentity = true;
+    includeTaxBreakdown = true;
+  } else if (docType === "credit_note") {
+    exportKind = "credit_note";
+    targetKind = "einvoice_credit_note";
+    includeFullBusinessIdentity = true;
+    includeTaxBreakdown = true;
+  } else if (docType === "refund_proof") {
+    exportKind = "refund_evidence";
+    targetKind = "accounting_attachment_or_archive";
+    notExportedReason = "refund_proof_is_not_an_invoice";
+    includeRefundContextOnly = true;
+  } else if (docType === "receipt" || docType === "ritbon") {
+    exportKind = "ride_receipt";
+    targetKind = "operational_receipt";
+    notExportedReason = "ride_receipt_is_not_an_einvoice";
+  } else {
+    exportKind = "unknown";
+    targetKind = null;
+    notExportedReason = "unsupported_document_type";
+  }
+
+  // If invoice/credit_note is not Peppol-ready surface the existing
+  // classification blockers as a single, stable reason. Never overwrites a
+  // type-driven not_exported_reason (refund_proof / receipt / unknown).
+  if (
+    !notExportedReason &&
+    (docType === "invoice" || docType === "credit_note") &&
+    cls.exportable_to_peppol !== true
+  ) {
+    notExportedReason = "fields_incomplete_for_peppol";
+  }
+
+  // Snapshots from the registry record. For invoice/credit_note we surface
+  // both seller + buyer. For refund_proof we still surface them when present
+  // (the document is admin-only and these fields were captured at issue
+  // time) so the diagnostic preview is useful, but the not_exported_reason
+  // keeps Peppol export off. For receipt/ritbon/unknown we leave snapshots
+  // null to avoid implying these are exportable identities.
+  let sellerSnapshot = null;
+  let buyerSnapshot = null;
+  if (includeFullBusinessIdentity || includeRefundContextOnly) {
+    sellerSnapshot = _projectSellerSnapshotSafe(
+      rec.seller_snapshot ?? rec.sellerSnapshot,
+    );
+    buyerSnapshot = _projectBuyerSnapshotSafe(
+      rec.buyer_snapshot ?? rec.buyerSnapshot,
+    );
+  }
+
+  // Totals are always safe to surface when present in the registry. They are
+  // small numeric facts already covered by content_hash and never PII.
+  const totals = _projectTotalsSafe(rec.totals);
+  const taxBreakdown = includeTaxBreakdown
+    ? _buildSingleTaxBreakdownEntry(totals, currency)
+    : [];
+
+  // Notes — small, stable, PII-free diagnostics about what an external
+  // exporter would still need to compose a real e-invoice. Always
+  // deterministic from registry presence; never includes counts, ids, error
+  // text, or any free-form description.
+  const notes = [];
+  if (docType === "invoice" || docType === "credit_note") {
+    notes.push("line_items_not_yet_available_in_registry");
+    notes.push("attachments_not_yet_available_in_registry");
+  }
+  if (docType === "credit_note" && !sourceInvoiceReference) {
+    notes.push("source_invoice_reference_not_yet_available");
+  }
+
+  const providerNeutralPreview = {
+    preview_version: "document_export_preview_v1",
+    export_kind: exportKind,
+    target_kind: targetKind,
+    document_identity: {
+      document_id: docId,
+      document_type: docType,
+      document_number: docNumber,
+      proof_reference: proofRef,
+      issue_timestamp: issueTimestamp,
+      currency,
+    },
+    source_binding: {
+      source_booking_id: sourceBookingId,
+      source_leg_id: sourceLegId,
+      source_leg_type: sourceLegType,
+      source_refund_id: sourceRefundId,
+      source_invoice_reference: sourceInvoiceReference,
+    },
+    seller_snapshot: sellerSnapshot,
+    buyer_snapshot: buyerSnapshot,
+    totals,
+    tax_breakdown: taxBreakdown,
+    line_items: [],
+    attachments: [],
+    notes,
+    not_exported_reason: notExportedReason,
+  };
+
+  return {
+    document_id: docId,
+    document_type: docType,
+    document_number: docNumber,
+    proof_reference: proofRef,
+    lifecycle_state: lifecycleState,
+    document_status: documentStatus,
+    issue_timestamp: issueTimestamp,
+    currency,
+    source_booking_id: sourceBookingId,
+    source_leg_id: sourceLegId,
+    source_leg_type: sourceLegType,
+    export_role: cls.export_role || "unknown",
+    export_target_suggestion: cls.export_target_suggestion || null,
+    exportable_to_accounting: cls.exportable_to_accounting === true,
+    exportable_to_peppol: cls.exportable_to_peppol === true,
+    blocking_reasons: Array.isArray(cls.blocking_reasons)
+      ? cls.blocking_reasons.slice()
+      : [],
+    warnings: Array.isArray(cls.warnings) ? cls.warnings.slice() : [],
+    provider_neutral_preview: providerNeutralPreview,
   };
 }
 
