@@ -23259,12 +23259,63 @@ POST /admin/mollie/connect/disconnect
               ? listed.warnings
               : [];
 
+            // Polish - index issued invoices by (leg_id|leg_type) so older
+            // credit_note records whose stored source_invoice_reference is
+            // null can still surface a best-effort reference in
+            // provider_neutral_preview.source_binding. Display only; the
+            // registry record is never mutated, and the Peppol gate inside
+            // classifyDocumentExportReadiness keeps using the unmutated
+            // record's getDocumentSourceInvoiceReference probe.
+            const invoiceIndex = new Map();
+            for (const r of records) {
+              const t = safeStr(
+                r?.document_type ?? r?.documentType,
+                40,
+              ).toLowerCase();
+              if (t !== "invoice") continue;
+              const rLegId =
+                safeStr(r?.source_leg_id ?? r?.sourceLegId, 200) || "";
+              const rLegType =
+                safeStr(r?.source_leg_type ?? r?.sourceLegType, 24) || "";
+              const key = `${rLegId}|${rLegType}`;
+              if (!invoiceIndex.has(key)) invoiceIndex.set(key, []);
+              invoiceIndex.get(key).push(r);
+            }
+
             const documents = records.map((rec) => {
               const classification = classifyDocumentExportReadiness(
                 rec,
                 businessProfile,
               );
-              return buildDocumentExportPreview(rec, classification);
+              let overlay = null;
+              const docType = safeStr(
+                rec?.document_type ?? rec?.documentType,
+                40,
+              ).toLowerCase();
+              if (
+                docType === "credit_note" &&
+                !getDocumentSourceInvoiceReference(rec)
+              ) {
+                const rLegId =
+                  safeStr(rec?.source_leg_id ?? rec?.sourceLegId, 200) || "";
+                const rLegType =
+                  safeStr(rec?.source_leg_type ?? rec?.sourceLegType, 24) ||
+                  "";
+                const matches =
+                  invoiceIndex.get(`${rLegId}|${rLegType}`) || [];
+                if (matches.length === 1) {
+                  const inv = matches[0];
+                  const invNumber =
+                    safeStr(
+                      inv?.document_number ?? inv?.documentNumber,
+                      80,
+                    ) || null;
+                  if (invNumber) {
+                    overlay = { source_invoice_reference: invNumber };
+                  }
+                }
+              }
+              return buildDocumentExportPreview(rec, classification, overlay);
             });
 
             // Per-call aggregate counters for ops visibility. No PII, no
@@ -67954,10 +68005,19 @@ function classifyDocumentExportReadiness(record, businessProfile) {
  * `not_exported_reason` and never produce an e-invoice payload, mirroring
  * the runtime-proven readiness contract.
  */
-function buildDocumentExportPreview(record, classification) {
+function buildDocumentExportPreview(record, classification, displayOverlay = null) {
   const rec = record && typeof record === "object" ? record : {};
   const cls =
     classification && typeof classification === "object" ? classification : {};
+  // Polish - optional, display-only overlay for the provider_neutral_preview.
+  // Currently used to surface a best-effort source_invoice_reference for older
+  // credit_note records whose stored field is null. The classifier's Peppol
+  // gate is NOT bypassed - it still uses getDocumentSourceInvoiceReference(rec)
+  // on the unmutated record. Overlay never alters the registry record.
+  const overlay =
+    displayOverlay && typeof displayOverlay === "object" && !Array.isArray(displayOverlay)
+      ? displayOverlay
+      : null;
 
   // Safe shallow projection of a snapshot object: only the well-known
   // identity fields, no spreading of unknown keys. Returns `null` when every
@@ -68054,9 +68114,25 @@ function buildDocumentExportPreview(record, classification) {
       totalsRaw.vat_amount,
       totalsRaw.vatAmount,
     );
-    const vatRatePercent = _normalizeVatRatePercentOrNull(
+    let vatRatePercent = _normalizeVatRatePercentOrNull(
       totalsRaw.vat_rate_percent ?? totalsRaw.vatRatePercent,
     );
+    // Polish - read-only fallback for OLDER records whose stored rate is null
+    // but whose subtotal_ex_vat + vat_amount are present. Display only; never
+    // mutates the registry record (caller writes nothing). Mirrors the
+    // arithmetic fallback used by _resolveBestVatRatePercent in the issue
+    // cores so preview + future issues agree.
+    if (
+      vatRatePercent === null &&
+      subtotalExVat !== null &&
+      subtotalExVat > 0 &&
+      vatAmount !== null &&
+      Number.isFinite(vatAmount) &&
+      vatAmount >= 0
+    ) {
+      vatRatePercent =
+        Math.round((vatAmount / subtotalExVat) * 100 * 100) / 100;
+    }
     const creditedInclVat = _firstFiniteNumberOrNull(
       totalsRaw.credited_amount_incl_vat,
       totalsRaw.creditedAmountInclVat,
@@ -68125,8 +68201,16 @@ function buildDocumentExportPreview(record, classification) {
   // (no KV/DO/fetch/allocator) and never invents data; when no safe
   // registry field carries a parent-invoice number it returns "" and we
   // project `null` here.
+  // Polish - when the record itself has no source_invoice_reference, fall back
+  // to a caller-supplied display overlay (e.g. preview enrichment for older
+  // credit notes resolved from a sibling issued invoice). Never mutates rec;
+  // the Peppol gate in classifyDocumentExportReadiness still inspects the
+  // unmutated rec via getDocumentSourceInvoiceReference, so the gate stays
+  // strict.
   const sourceInvoiceReference =
-    getDocumentSourceInvoiceReference(rec) || null;
+    getDocumentSourceInvoiceReference(rec) ||
+    safeStr(overlay?.source_invoice_reference, 80) ||
+    null;
 
   // Per-type export preview kind/target/exclusion.
   let exportKind = "unknown";
@@ -68706,6 +68790,46 @@ function _normalizeCompanyCreatedByRole(rawRole) {
  *                          when null, the body role is used (admin route).
  *   routeLabel             log prefix only; no behavioral effect.
  */
+/* Polish - resolve a strict VAT/tax rate percent from the safest available
+ * sources, in order:
+ *   1) explicit candidates (first finite wins) - caller-supplied list typically
+ *      contains record-side fields, then expected_totals.vat_rate_percent /
+ *      tax_rate_percent / camelCase variants, then top-level body rate fields,
+ *   2) arithmetic fallback, only when subtotal_ex_vat > 0 AND vat_amount is a
+ *      finite non-negative number: round((vat_amount / subtotal_ex_vat)*100, 2).
+ *
+ * Accepts a fraction (0.21) OR a percent (21); normalises to percent rounded
+ * to 2 decimals. Pure / inert; never invents data; returns null when nothing
+ * is reliable. Used by deriveServerSide{Invoice,Credit}Context to also honour
+ * client-supplied rates so a request that carries the rate doesn't lose it.
+ */
+function _resolveBestVatRatePercent(candidates, subtotalExVat, vatAmount) {
+  const _normalize = (value) => {
+    if (value === null || value === undefined || value === "") return null;
+    const n = Number(value);
+    if (!Number.isFinite(n) || n < 0) return null;
+    const percent = n > 0 && n < 1 ? n * 100 : n;
+    return Math.round(percent * 100) / 100;
+  };
+  if (Array.isArray(candidates)) {
+    for (const c of candidates) {
+      const v = _normalize(c);
+      if (v !== null) return v;
+    }
+  }
+  const sub = Number(subtotalExVat);
+  const vat = Number(vatAmount);
+  if (
+    Number.isFinite(sub) &&
+    sub > 0 &&
+    Number.isFinite(vat) &&
+    vat >= 0
+  ) {
+    return Math.round((vat / sub) * 100 * 100) / 100;
+  }
+  return null;
+}
+
 async function _issueCreditNoteCore({
   env,
   body,
@@ -68890,11 +69014,21 @@ async function _issueCreditNoteCore({
     } catch (_) {
       serverScopedPricingProfile = null;
     }
+    // Polish - forward any top-level VAT/tax rate body fields so the rate
+    // resolver in deriveServerSideCreditContext can fall back to them when
+    // the booking record itself carries no rate. Pure passthrough, no defaults.
+    const topLevelVatRatePercent =
+      body?.vat_rate_percent ??
+      body?.vatRatePercent ??
+      body?.tax_rate_percent ??
+      body?.taxRatePercent ??
+      null;
     const credit = deriveServerSideCreditContext(rec, {
       source_leg_id: sourceLegId,
       source_leg_type: sourceLegTypeRaw,
       expected_currency: currency,
       expected_totals: expectedTotals,
+      top_level_vat_rate_percent: topLevelVatRatePercent,
       booking_id: canonicalBookingId,
       server_pricing_profile: serverScopedPricingProfile,
     });
@@ -69039,6 +69173,83 @@ async function _issueCreditNoteCore({
       warnings.push("buyer_snapshot_incomplete");
     }
 
+    // Polish - source-invoice binding for credit_note. Order:
+    //   1) honour body-supplied source_invoice_reference / _document_id,
+    //   2) else best-effort SCOPED lookup for the SOLE matching issued invoice
+    //      on the same tenant/company scope + canonical_booking_id (+ leg_id
+    //      and leg_type when present). Uses the existing booking-scoped
+    //      document index (listIssuedDocumentRecordsForBooking) - never a
+    //      global KV.list.
+    //   3) else null (preserves the Peppol gate via getDocumentSourceInvoice
+    //      Reference / classifyDocumentExportReadiness).
+    let resolvedSourceInvoiceReference =
+      safeStr(
+        body?.source_invoice_reference ?? body?.sourceInvoiceReference,
+        80,
+      ) || null;
+    let resolvedSourceInvoiceDocumentId =
+      safeStr(
+        body?.source_invoice_document_id ?? body?.sourceInvoiceDocumentId,
+        200,
+      ) || null;
+    if (!resolvedSourceInvoiceReference || !resolvedSourceInvoiceDocumentId) {
+      try {
+        const lookup = await listIssuedDocumentRecordsForBooking(
+          env,
+          scope,
+          canonicalBookingId,
+        );
+        if (lookup?.ok && Array.isArray(lookup.records)) {
+          const matches = [];
+          for (const r of lookup.records) {
+            const t = safeStr(
+              r?.document_type ?? r?.documentType,
+              40,
+            ).toLowerCase();
+            if (t !== "invoice") continue;
+            const rLegId =
+              safeStr(r?.source_leg_id ?? r?.sourceLegId, 200) || null;
+            const rLegType =
+              safeStr(r?.source_leg_type ?? r?.sourceLegType, 24) || null;
+            if (ctx.source_leg_id && rLegId && rLegId !== ctx.source_leg_id) {
+              continue;
+            }
+            if (
+              ctx.source_leg_type &&
+              rLegType &&
+              rLegType !== ctx.source_leg_type
+            ) {
+              continue;
+            }
+            matches.push(r);
+          }
+          if (matches.length === 1) {
+            const inv = matches[0];
+            if (!resolvedSourceInvoiceReference) {
+              resolvedSourceInvoiceReference =
+                safeStr(
+                  inv?.document_number ?? inv?.documentNumber,
+                  80,
+                ) || null;
+            }
+            if (!resolvedSourceInvoiceDocumentId) {
+              resolvedSourceInvoiceDocumentId =
+                safeStr(inv?.document_id ?? inv?.documentId, 200) || null;
+            }
+            if (resolvedSourceInvoiceReference) {
+              warnings.push(
+                "source_invoice_reference_resolved_from_existing_invoice",
+              );
+            }
+          } else if (matches.length > 1) {
+            warnings.push("source_invoice_reference_ambiguous_skipped");
+          }
+        }
+      } catch (_) {
+        // best-effort only; keep null and let the Peppol gate handle it.
+      }
+    }
+
     // 10. Build registry record (snapshot + content_hash inside).
     let record;
     try {
@@ -69058,6 +69269,8 @@ async function _issueCreditNoteCore({
         source_credit_decision: ctx.credit_decision,
         currency: ctx.currency,
         totals: ctx.totals,
+        source_invoice_reference: resolvedSourceInvoiceReference,
+        source_invoice_document_id: resolvedSourceInvoiceDocumentId,
         seller_snapshot: sellerSnapshot,
         buyer_snapshot: buyerSnapshot,
         issue_timestamp: issueTimestamp,
@@ -69868,11 +70081,21 @@ async function _issueInvoiceCore({
     } catch (_) {
       serverScopedPricingProfile = null;
     }
+    // Polish - forward any top-level VAT/tax rate body fields so the rate
+    // resolver in deriveServerSideInvoiceContext can fall back to them when
+    // the booking record itself carries no rate. Pure passthrough, no defaults.
+    const topLevelVatRatePercent =
+      body?.vat_rate_percent ??
+      body?.vatRatePercent ??
+      body?.tax_rate_percent ??
+      body?.taxRatePercent ??
+      null;
     const invoiceDerivation = deriveServerSideInvoiceContext(rec, {
       source_leg_id: sourceLegId,
       source_leg_type: sourceLegTypeRaw,
       expected_currency: currency,
       expected_totals: expectedTotals,
+      top_level_vat_rate_percent: topLevelVatRatePercent,
       booking_id: canonicalBookingId,
       server_pricing_profile: serverScopedPricingProfile,
     });
@@ -70680,6 +70903,30 @@ function deriveServerSideCreditContext(rec, options = {}) {
   if (vatRatePercent !== null && vatRatePercent > 0 && vatRatePercent < 1) {
     vatRatePercent = vatRatePercent * 100;
   }
+  // Polish - when the record carries no rate, also consider the caller's
+  // expected_totals rate fields (snake + camel + tax_* alias), then the
+  // request-level top-level rate fields, then a strict arithmetic fallback
+  // from subtotal_ex_vat + vat_amount. Never overrides a record-derived rate.
+  if (vatRatePercent === null) {
+    vatRatePercent = _resolveBestVatRatePercent(
+      [
+        options?.expected_totals?.vat_rate_percent,
+        options?.expected_totals?.vatRatePercent,
+        options?.expected_totals?.tax_rate_percent,
+        options?.expected_totals?.taxRatePercent,
+        options?.expectedTotals?.vat_rate_percent,
+        options?.expectedTotals?.vatRatePercent,
+        options?.expectedTotals?.tax_rate_percent,
+        options?.expectedTotals?.taxRatePercent,
+        options?.top_level_vat_rate_percent,
+        options?.top_level_tax_rate_percent,
+        options?.topLevelVatRatePercent,
+        options?.topLevelTaxRatePercent,
+      ],
+      subtotalExVat,
+      vatAmount,
+    );
+  }
   if (subtotalExVat === null || vatAmount === null) {
     return { ok: false, error: "vat_breakdown_missing" };
   }
@@ -71401,6 +71648,29 @@ function deriveServerSideInvoiceContext(rec, options = {}) {
   if (vatRatePercent !== null && vatRatePercent > 0 && vatRatePercent < 1) {
     vatRatePercent = vatRatePercent * 100;
   }
+  // Polish - extend rate resolution to caller expected_totals + top-level rate
+  // body fields, then strict arithmetic from subtotal_ex_vat + vat_amount.
+  // Never overrides a record-derived rate; never invents data.
+  if (vatRatePercent === null) {
+    vatRatePercent = _resolveBestVatRatePercent(
+      [
+        options?.expected_totals?.vat_rate_percent,
+        options?.expected_totals?.vatRatePercent,
+        options?.expected_totals?.tax_rate_percent,
+        options?.expected_totals?.taxRatePercent,
+        options?.expectedTotals?.vat_rate_percent,
+        options?.expectedTotals?.vatRatePercent,
+        options?.expectedTotals?.tax_rate_percent,
+        options?.expectedTotals?.taxRatePercent,
+        options?.top_level_vat_rate_percent,
+        options?.top_level_tax_rate_percent,
+        options?.topLevelVatRatePercent,
+        options?.topLevelTaxRatePercent,
+      ],
+      subtotalExVat,
+      vatAmount,
+    );
+  }
 
   let totalInclVat = _firstFiniteNonNegative(totalInclVatCandidates);
   if (
@@ -71686,13 +71956,17 @@ async function buildIssuedDocumentRegistryRecord(input = {}) {
     provider_rejected_reason: providerRejectedReason,
   };
 
-  // 2G-W: invoice-only forward-compatible source-binding fields. Added ONLY for
-  // the invoice type so credit_note / refund_proof envelopes remain byte-for-byte
-  // identical. These are envelope-only (NOT part of immutable_snapshot), so the
-  // content_hash is unaffected for every type. Both default to null in this
-  // patch; a future patch may stamp them when binding an invoice/credit note to
-  // a source invoice. getDocumentSourceInvoiceReference() already reads these.
-  if (documentType === DOCUMENT_TYPE_INVOICE) {
+  // 2G-W + polish: forward-compatible source-binding fields. Added for invoice
+  // AND credit_note so a credit note can record the original invoice it
+  // credits. Refund_proof envelopes stay byte-for-byte identical. These fields
+  // are envelope-only (NOT part of immutable_snapshot), so the content_hash is
+  // unaffected for every type. Both default to null when not supplied;
+  // getDocumentSourceInvoiceReference() already probes them safely, so the
+  // Peppol gate in classifyDocumentExportReadiness stays consistent.
+  if (
+    documentType === DOCUMENT_TYPE_INVOICE ||
+    documentType === DOCUMENT_TYPE_CREDIT_NOTE
+  ) {
     record.source_invoice_reference = sourceInvoiceReference;
     record.source_invoice_document_id = sourceInvoiceDocumentId;
   }
