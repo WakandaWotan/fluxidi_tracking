@@ -3229,6 +3229,22 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
   final TextEditingController _companyNameCtrl = TextEditingController();
   final TextEditingController _vatNumberCtrl = TextEditingController();
   final TextEditingController _messageCtrl = TextEditingController();
+  // Optional company-invoice (billing customer) details. Off by default; when
+  // off no billing_customer is sent and the booking payload is unchanged.
+  bool _billingDetailsEnabled = false;
+  bool _billingPeppolExpanded = false;
+  final TextEditingController _billingLegalNameCtrl = TextEditingController();
+  final TextEditingController _billingVatCtrl = TextEditingController();
+  final TextEditingController _billingStreetCtrl = TextEditingController();
+  final TextEditingController _billingPostalCtrl = TextEditingController();
+  final TextEditingController _billingCityCtrl = TextEditingController();
+  final TextEditingController _billingCountryCtrl = TextEditingController();
+  final TextEditingController _billingContactEmailCtrl =
+      TextEditingController();
+  final TextEditingController _billingPeppolEndpointCtrl =
+      TextEditingController();
+  final TextEditingController _billingPeppolSchemeCtrl =
+      TextEditingController();
   bool _submitting = false;
   String? _submitState;
   bool _submitStateIsError = false;
@@ -3303,10 +3319,24 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
       setIfBlank(_nameCtrl, profile.name);
       setIfBlank(_phoneCtrl, profile.phone);
       setIfBlank(_emailCtrl, profile.email);
+      // Keep legacy holders populated for backend payload compatibility, but the
+      // business invoice UI now lives only in the billing details section.
       setIfBlank(_companyNameCtrl, profile.companyName);
       setIfBlank(_vatNumberCtrl, profile.vatNumber);
+      setIfBlank(_billingLegalNameCtrl, profile.companyName);
+      setIfBlank(_billingVatCtrl, profile.vatNumber);
+      final profileHasBusinessIdentity =
+          profile.companyName.trim().isNotEmpty ||
+          profile.vatNumber.trim().isNotEmpty;
+      if (profileHasBusinessIdentity) {
+        setIfBlank(_billingContactEmailCtrl, profile.email);
+        setIfBlank(_billingCountryCtrl, 'BE');
+        if (!_billingDetailsEnabled && mounted) {
+          setState(() => _billingDetailsEnabled = true);
+        }
+      }
       debugPrint(
-        '[CALCULATOR][BUSINESS_PREFILL] skipProfileBusiness=false explicitPrivateIntent=$explicitPrivateIntent companyPrefilled=${_companyNameCtrl.text.trim().isNotEmpty} vatPrefilled=${_vatNumberCtrl.text.trim().isNotEmpty}',
+        '[CALCULATOR][BUSINESS_PREFILL] skipProfileBusiness=false explicitPrivateIntent=$explicitPrivateIntent companyPrefilled=${_companyNameCtrl.text.trim().isNotEmpty} vatPrefilled=${_vatNumberCtrl.text.trim().isNotEmpty} billingEnabled=$_billingDetailsEnabled',
       );
     } catch (_) {
       // Keep booking flow resilient if local profile load fails.
@@ -3418,6 +3448,15 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
     _companyNameCtrl.dispose();
     _vatNumberCtrl.dispose();
     _messageCtrl.dispose();
+    _billingLegalNameCtrl.dispose();
+    _billingVatCtrl.dispose();
+    _billingStreetCtrl.dispose();
+    _billingPostalCtrl.dispose();
+    _billingCityCtrl.dispose();
+    _billingCountryCtrl.dispose();
+    _billingContactEmailCtrl.dispose();
+    _billingPeppolEndpointCtrl.dispose();
+    _billingPeppolSchemeCtrl.dispose();
     super.dispose();
   }
 
@@ -4764,6 +4803,106 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
     );
   }
 
+  void _onBillingDetailsToggled(bool enabled) {
+    setState(() {
+      _billingDetailsEnabled = enabled;
+      if (enabled) {
+        // Helpful, non-destructive prefills only. Never copy the passenger
+        // name into the legal company name and never touch pickup/dropoff.
+        if (_billingLegalNameCtrl.text.trim().isEmpty &&
+            _companyNameCtrl.text.trim().isNotEmpty) {
+          _billingLegalNameCtrl.text = _companyNameCtrl.text.trim();
+        }
+        if (_billingVatCtrl.text.trim().isEmpty &&
+            _vatNumberCtrl.text.trim().isNotEmpty) {
+          _billingVatCtrl.text = _vatNumberCtrl.text.trim();
+        }
+        if (_billingContactEmailCtrl.text.trim().isEmpty &&
+            _emailCtrl.text.trim().isNotEmpty) {
+          _billingContactEmailCtrl.text = _emailCtrl.text.trim();
+        }
+        if (_billingCountryCtrl.text.trim().isEmpty) {
+          _billingCountryCtrl.text = 'BE';
+        }
+      }
+    });
+  }
+
+  bool get _billingAddressComplete =>
+      _billingStreetCtrl.text.trim().isNotEmpty &&
+      _billingPostalCtrl.text.trim().isNotEmpty &&
+      _billingCityCtrl.text.trim().isNotEmpty &&
+      _billingCountryCtrl.text.trim().isNotEmpty;
+
+  /// Builds the optional `billing_customer` payload fragment. Returns an empty
+  /// map when the toggle is off or nothing meaningful was entered, so the
+  /// existing booking payload stays byte-identical for non-business bookings.
+  Map<String, dynamic> _buildBillingCustomerPayloadFields({
+    required String defaultEmail,
+    required String defaultPhone,
+  }) {
+    if (!_billingDetailsEnabled) return const <String, dynamic>{};
+    final legalName = _billingLegalNameCtrl.text.trim();
+    final vat = _billingVatCtrl.text.trim();
+    final street = _billingStreetCtrl.text.trim();
+    final postal = _billingPostalCtrl.text.trim();
+    final city = _billingCityCtrl.text.trim();
+    final country = _billingCountryCtrl.text.trim().toUpperCase();
+    final contactEmail = _billingContactEmailCtrl.text.trim().isNotEmpty
+        ? _billingContactEmailCtrl.text.trim()
+        : defaultEmail.trim();
+    final contactPhone = defaultPhone.trim();
+    final peppolEndpoint = _billingPeppolEndpointCtrl.text.trim();
+    final peppolScheme = _billingPeppolSchemeCtrl.text.trim();
+
+    final hasAny =
+        legalName.isNotEmpty ||
+        vat.isNotEmpty ||
+        street.isNotEmpty ||
+        postal.isNotEmpty ||
+        city.isNotEmpty ||
+        country.isNotEmpty ||
+        peppolEndpoint.isNotEmpty ||
+        peppolScheme.isNotEmpty;
+    if (!hasAny) return const <String, dynamic>{};
+
+    final billingCustomer = <String, dynamic>{
+      'customer_type': 'business',
+      'display_name': legalName.isNotEmpty ? legalName : null,
+      'contact_email': contactEmail.isNotEmpty ? contactEmail : null,
+      'contact_phone': contactPhone.isNotEmpty ? contactPhone : null,
+      'legal_name': legalName.isNotEmpty ? legalName : null,
+      'vat_number': vat.isNotEmpty ? vat : null,
+      'billing_address': <String, dynamic>{
+        'street': street.isNotEmpty ? street : null,
+        'postal_code': postal.isNotEmpty ? postal : null,
+        'city': city.isNotEmpty ? city : null,
+        'country': country.isNotEmpty ? country : null,
+      },
+      'peppol': <String, dynamic>{
+        'endpoint_id': peppolEndpoint.isNotEmpty ? peppolEndpoint : null,
+        'scheme': peppolScheme.isNotEmpty ? peppolScheme : null,
+      },
+    };
+    return <String, dynamic>{'billing_customer': billingCustomer};
+  }
+
+  /// Light, non-blocking on-device check. Returns a localized warning string
+  /// when the company invoice toggle is on but legal name / VAT / address are
+  /// incomplete; null when nothing to warn about. Never blocks the booking.
+  String? _billingCustomerValidationWarning() {
+    if (!_billingDetailsEnabled) return null;
+    final hasLegal = _billingLegalNameCtrl.text.trim().isNotEmpty;
+    final hasVat = _billingVatCtrl.text.trim().isNotEmpty;
+    if (hasLegal && hasVat && _billingAddressComplete) return null;
+    return _localizedText(
+      nl: 'Factuurgegevens lijken onvolledig (bedrijfsnaam, btw of adres). Je boeking gaat gewoon door.',
+      en: 'Billing details look incomplete (company name, VAT or address). Your booking still continues.',
+      fr: 'Les données de facturation semblent incomplètes (nom, TVA ou adresse). Votre réservation se poursuit.',
+      es: 'Los datos de facturación parecen incompletos (nombre, IVA o dirección). Tu reserva continúa igualmente.',
+    );
+  }
+
   Future<void> _onConfirmBooking() async {
     FocusScope.of(context).unfocus();
     if (_quoteAvailabilityBlocksBooking()) {
@@ -4785,8 +4924,17 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
     final name = _nameCtrl.text.trim();
     final phone = _phoneCtrl.text.trim();
     final email = _emailCtrl.text.trim();
-    final companyName = _companyNameCtrl.text.trim();
-    final vatNumber = _vatNumberCtrl.text.trim();
+    // Business identity now lives in the billing details section. Prefer it when
+    // enabled and non-empty; fall back to the legacy hidden holders otherwise so
+    // every existing backend payload key stays populated exactly as before.
+    final billingLegalName = _billingLegalNameCtrl.text.trim();
+    final billingVat = _billingVatCtrl.text.trim();
+    final companyName = (_billingDetailsEnabled && billingLegalName.isNotEmpty)
+        ? billingLegalName
+        : _companyNameCtrl.text.trim();
+    final vatNumber = (_billingDetailsEnabled && billingVat.isNotEmpty)
+        ? billingVat
+        : _vatNumberCtrl.text.trim();
     final invoiceAddressFromQuote = _calcBusinessText(
       widget.payload['invoice_address'] ??
           widget.payload['invoiceAddress'] ??
@@ -4847,6 +4995,11 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
         widget.strings.bookingRequiredFieldsError.of(widget.language),
       );
       return;
+    }
+    // Optional company-invoice details: warn (non-blocking) if incomplete.
+    final billingWarning = _billingCustomerValidationWarning();
+    if (billingWarning != null) {
+      _showThemedSnackBar(billingWarning);
     }
     if (selectedScope.isMissing) {
       if (widget.entryContext == BookingEntryContext.driver) {
@@ -4929,6 +5082,23 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
     );
 
     final paymentSelection = _bookingPaymentSelection;
+
+    // Optional billing_customer fragment (empty map when toggle off / blank).
+    final billingCustomerFields = _buildBillingCustomerPayloadFields(
+      defaultEmail: email,
+      defaultPhone: payloadPhone,
+    );
+    final billingCustomerMap =
+        billingCustomerFields['billing_customer'] as Map<String, dynamic>?;
+    final billingPeppolMap =
+        billingCustomerMap?['peppol'] as Map<String, dynamic>?;
+    debugPrint(
+      '[BILLING_CUSTOMER][PAYLOAD] enabled=$_billingDetailsEnabled '
+      'legalNameSet=${_billingLegalNameCtrl.text.trim().isNotEmpty} '
+      'vatSet=${_billingVatCtrl.text.trim().isNotEmpty} '
+      'addressSet=$_billingAddressComplete '
+      'peppolSet=${(billingPeppolMap?['endpoint_id'] != null) || (billingPeppolMap?['scheme'] != null)}',
+    );
 
     final payload = <String, dynamic>{
       ...widget.payload, // keep quote payload keys unchanged
@@ -5031,6 +5201,9 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
       'company_name': effectiveCompanyName,
       'vat_number': effectiveVatNumber,
       ...businessPayload,
+      // Optional, provider-neutral company invoice identity for future
+      // Billit/Peppol readiness. Omitted entirely when the toggle is off.
+      ...billingCustomerFields,
       'message': _messageCtrl.text.trim(),
       // Website contract includes full quote object under "quote"
       'quote': widget.quote,
@@ -5625,49 +5798,6 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
                 ),
                 const SizedBox(height: 8),
                 _input(
-                  _companyNameCtrl,
-                  widget.strings.bookingCompanyNameOptionalLabel.of(
-                    widget.language,
-                  ),
-                  icon: Icons.business_outlined,
-                ),
-                const SizedBox(height: 8),
-                ValueListenableBuilder<TextEditingValue>(
-                  valueListenable: _vatNumberCtrl,
-                  builder: (_, value, __) => _input(
-                    _vatNumberCtrl,
-                    widget.strings.bookingVatNumberOptionalLabel.of(
-                      widget.language,
-                    ),
-                    icon: Icons.receipt_long_outlined,
-                    suffixIcon: value.text.trim().isEmpty
-                        ? null
-                        : IconButton(
-                            tooltip: _localizedText(
-                              nl: 'BTW-nummer wissen',
-                              en: 'Clear VAT number',
-                              fr: 'Effacer le numéro de TVA',
-                              es: 'Borrar número de IVA',
-                            ),
-                            icon: Icon(
-                              Icons.delete_outline,
-                              size: 18,
-                              color: _gold.withOpacity(0.92),
-                            ),
-                            onPressed: () => _vatNumberCtrl.clear(),
-                          ),
-                  ),
-                ),
-                const SizedBox(height: 6),
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    widget.strings.bookingVatNumberHelpText.of(widget.language),
-                    style: TextStyle(color: _textMuted, fontSize: 12),
-                  ),
-                ),
-                const SizedBox(height: 8),
-                _input(
                   _messageCtrl,
                   widget.strings.bookingMessageOptionalLabel.of(
                     widget.language,
@@ -5678,6 +5808,8 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
               ],
             ),
           ),
+          const SizedBox(height: 9),
+          _billingDetailsSectionCard(),
           const SizedBox(height: 16),
           GestureDetector(
             onTap: _submitting ? null : _onConfirmBooking,
@@ -5770,6 +5902,193 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
                   ),
                 ],
               ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _billingDetailsSectionCard() {
+    return _sectionCard(
+      title: _localizedText(
+        nl: 'Factuurgegevens',
+        en: 'Billing details',
+        fr: 'Données de facturation',
+        es: 'Datos de facturación',
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SwitchListTile.adaptive(
+            contentPadding: EdgeInsets.zero,
+            dense: true,
+            value: _billingDetailsEnabled,
+            onChanged: _submitting ? null : _onBillingDetailsToggled,
+            activeColor: _gold,
+            title: Text(
+              _localizedText(
+                nl: 'Ik wil een factuur op bedrijf',
+                en: 'I need a company invoice',
+                fr: 'Je souhaite une facture au nom d’une entreprise',
+                es: 'Necesito una factura de empresa',
+              ),
+              style: TextStyle(
+                color: _textPrimary,
+                fontWeight: FontWeight.w600,
+                fontSize: 13,
+              ),
+            ),
+          ),
+          if (_billingDetailsEnabled) ...[
+            const SizedBox(height: 4),
+            _input(
+              _billingLegalNameCtrl,
+              _localizedText(
+                nl: 'Bedrijfsnaam',
+                en: 'Company name',
+                fr: 'Nom de l’entreprise',
+                es: 'Nombre de la empresa',
+              ),
+              icon: Icons.business_outlined,
+            ),
+            const SizedBox(height: 8),
+            _input(
+              _billingVatCtrl,
+              _localizedText(
+                nl: 'Btw-/KBO-nummer',
+                en: 'VAT / company number',
+                fr: 'Numéro de TVA / BCE',
+                es: 'Número de IVA / empresa',
+              ),
+              icon: Icons.receipt_long_outlined,
+            ),
+            const SizedBox(height: 8),
+            _input(
+              _billingStreetCtrl,
+              _localizedText(
+                nl: 'Straat en nummer',
+                en: 'Street and number',
+                fr: 'Rue et numéro',
+                es: 'Calle y número',
+              ),
+              icon: Icons.location_on_outlined,
+            ),
+            const SizedBox(height: 8),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: _input(
+                    _billingPostalCtrl,
+                    _localizedText(
+                      nl: 'Postcode',
+                      en: 'Postal code',
+                      fr: 'Code postal',
+                      es: 'Código postal',
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  flex: 2,
+                  child: _input(
+                    _billingCityCtrl,
+                    _localizedText(
+                      nl: 'Gemeente',
+                      en: 'City',
+                      fr: 'Ville',
+                      es: 'Ciudad',
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            _input(
+              _billingCountryCtrl,
+              _localizedText(
+                nl: 'Land (bv. BE)',
+                en: 'Country (e.g. BE)',
+                fr: 'Pays (ex. BE)',
+                es: 'País (p. ej. BE)',
+              ),
+              icon: Icons.public_outlined,
+            ),
+            const SizedBox(height: 8),
+            _input(
+              _billingContactEmailCtrl,
+              _localizedText(
+                nl: 'Factuur e-mail (optioneel)',
+                en: 'Invoice email (optional)',
+                fr: 'E-mail de facturation (optionnel)',
+                es: 'Correo de factura (opcional)',
+              ),
+              keyboardType: TextInputType.emailAddress,
+              icon: Icons.alternate_email,
+            ),
+            const SizedBox(height: 8),
+            InkWell(
+              onTap: () => setState(
+                () => _billingPeppolExpanded = !_billingPeppolExpanded,
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    _billingPeppolExpanded
+                        ? Icons.expand_less
+                        : Icons.expand_more,
+                    size: 18,
+                    color: _gold,
+                  ),
+                  const SizedBox(width: 4),
+                  Text(
+                    _localizedText(
+                      nl: 'Geavanceerd (Peppol) - optioneel',
+                      en: 'Advanced (Peppol) - optional',
+                      fr: 'Avancé (Peppol) - optionnel',
+                      es: 'Avanzado (Peppol) - opcional',
+                    ),
+                    style: TextStyle(
+                      color: _textMuted,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            if (_billingPeppolExpanded) ...[
+              const SizedBox(height: 8),
+              _input(
+                _billingPeppolEndpointCtrl,
+                _localizedText(
+                  nl: 'Peppol endpoint-ID (optioneel)',
+                  en: 'Peppol endpoint ID (optional)',
+                  fr: 'ID de point d’accès Peppol (optionnel)',
+                  es: 'ID de endpoint Peppol (opcional)',
+                ),
+              ),
+              const SizedBox(height: 8),
+              _input(
+                _billingPeppolSchemeCtrl,
+                _localizedText(
+                  nl: 'Peppol scheme (optioneel)',
+                  en: 'Peppol scheme (optional)',
+                  fr: 'Schéma Peppol (optionnel)',
+                  es: 'Esquema Peppol (opcional)',
+                ),
+              ),
+            ],
+            const SizedBox(height: 6),
+            Text(
+              _localizedText(
+                nl: 'Optioneel. Alleen nodig als je een bedrijfsfactuur wilt. Niet je passagiersnaam of op-/afstapadres.',
+                en: 'Optional. Only needed for a company invoice. Not your passenger name or pickup/dropoff address.',
+                fr: 'Optionnel. Uniquement pour une facture d’entreprise. Pas votre nom de passager ni l’adresse de prise en charge.',
+                es: 'Opcional. Solo para una factura de empresa. No el nombre del pasajero ni la dirección de recogida.',
+              ),
+              style: TextStyle(color: _textMuted, fontSize: 12),
             ),
           ],
         ],
