@@ -22374,7 +22374,8 @@ POST /admin/mollie/connect/disconnect
           }
           if (
             documentType !== DOCUMENT_TYPE_CREDIT_NOTE &&
-            documentType !== DOCUMENT_TYPE_REFUND_PROOF
+            documentType !== DOCUMENT_TYPE_REFUND_PROOF &&
+            documentType !== DOCUMENT_TYPE_INVOICE
           ) {
             return json({ ok: false, error: "unsupported_document_type" }, 400);
           }
@@ -22419,10 +22420,15 @@ POST /admin/mollie/connect/disconnect
               ? crypto.randomUUID()
               : `${Date.now()}_${Math.random().toString(36).slice(2, 10)}`
           }`;
+          // 2G-W: invoice dry-run uses the FIXED literal DRYRUN-INV-000000. No
+          // real INV number is ever allocated here (allocateInvoiceReference is
+          // NOT called by this route).
           const dryRunDocumentNumber =
             documentType === DOCUMENT_TYPE_CREDIT_NOTE
               ? `DRYRUN-${DOCUMENT_PREFIX_CREDIT_NOTE}-000000`
-              : null;
+              : documentType === DOCUMENT_TYPE_INVOICE
+                ? `DRYRUN-${DOCUMENT_PREFIX_INVOICE}-000000`
+                : null;
           const dryRunProofReference =
             documentType === DOCUMENT_TYPE_REFUND_PROOF
               ? `DRYRUN-${DOCUMENT_PREFIX_REFUND_PROOF}-000000`
@@ -22467,6 +22473,14 @@ POST /admin/mollie/connect/disconnect
             created_by_device_id:
               body.created_by_device_id ?? body.createdByDeviceId,
             idempotency_key: body.idempotency_key ?? body.idempotencyKey,
+            // 2G-W: forward-compatible invoice source-binding passthrough. The
+            // builder only attaches these for document_type === "invoice" and
+            // defaults them to null, so credit_note / refund_proof dry-runs are
+            // unaffected.
+            source_invoice_reference:
+              body.source_invoice_reference ?? body.sourceInvoiceReference,
+            source_invoice_document_id:
+              body.source_invoice_document_id ?? body.sourceInvoiceDocumentId,
           });
 
           const writePlan = buildDocumentRegistryWritePlan(record);
@@ -67007,15 +67021,29 @@ function documentReferenceScopeName(tenantId, companyId, sequenceType, year) {
  */
 const DOCUMENT_TYPE_CREDIT_NOTE = "credit_note";
 const DOCUMENT_TYPE_REFUND_PROOF = "refund_proof";
+// Patch 2G-W: Document Core invoice type. DRY-RUN + ADDITIVE-SHAPE only in this
+// patch — there is NO real invoice issue route, NO real INV allocation, and NO
+// KV persistence yet. This is the future official accounting/e-invoice (Peppol)
+// document type, kept SEPARATE from the legacy FLX-YYYY-MM-#### invoice/PDF
+// pipeline (renderInvoiceHtml / nextInvoiceNumber / INVOICE_KV), which this
+// patch does not touch.
+const DOCUMENT_TYPE_INVOICE = "invoice";
 
 // Human-facing reference prefixes (used ONLY by future sequence allocation).
 const DOCUMENT_PREFIX_CREDIT_NOTE = "FCN"; // Fluxidi Credit Note
 const DOCUMENT_PREFIX_REFUND_PROOF = "FRP"; // Fluxidi Refund Proof
+// Patch 2G-W: Document Core invoice prefix. Real numbers will be INV-YYYY-######
+// when a real allocator/issue route lands LATER; this patch only ever emits the
+// fixed dry-run literal DRYRUN-INV-000000 and never allocates a real INV number.
+const DOCUMENT_PREFIX_INVOICE = "INV"; // Fluxidi Document Core Invoice
 
 // Base sequence-type tokens for DOCUMENT_REFERENCE_SEQUENCE. Future allocation
 // appends year/month, mirroring the existing invoice sequence pattern.
 const DOCUMENT_SEQUENCE_TYPE_CREDIT_NOTE = "credit_note";
 const DOCUMENT_SEQUENCE_TYPE_REFUND_PROOF = "refund_proof";
+// Patch 2G-W: Document Core invoice sequence type. Its own counter, never shared
+// with credit_note / refund_proof and never the legacy FLX invoice sequence.
+const DOCUMENT_SEQUENCE_TYPE_INVOICE = "invoice";
 
 // Requires a tenant AND company scope, consistent with nextInvoiceNumber /
 // allocateScopedInvoiceSequence (which throw "missing_tenant_scope").
@@ -68435,6 +68463,34 @@ async function allocateRefundProofReference(env, scope, options = {}) {
     company_id: scope?.company_id ?? scope?.companyId,
     sequence_type: DOCUMENT_SEQUENCE_TYPE_REFUND_PROOF,
     prefix: DOCUMENT_PREFIX_REFUND_PROOF,
+  });
+}
+
+/* Patch 2G-W: invoice reference allocator wrapper (FUTURE symmetry ONLY).
+ *
+ * Mirrors allocateCreditNoteReference exactly: scope is required up-front
+ * (documentRegistryScopeParts throws "missing_tenant_scope"), then it defers to
+ * the generic allocateAndReserveDocumentReference with the invoice sequence type
+ * + "INV" prefix applied AFTER spreading options so callers cannot override them.
+ *
+ * An invoice is an OFFICIAL accounting / e-invoice number. It uses its OWN
+ * sequence (DOCUMENT_SEQUENCE_TYPE_INVOICE) so it never shares a counter with
+ * credit notes, refund proofs, or the legacy FLX-YYYY-MM-#### invoice sequence.
+ *
+ * IMPORTANT (this patch):
+ *   - NOT called by any live route. The dry-run endpoint NEVER calls it.
+ *   - It is wired to nothing; it allocates nothing until a future real invoice
+ *     issue route invokes it. It exists now only so the real route can reuse the
+ *     same allocation shape the other document types already use.
+ */
+async function allocateInvoiceReference(env, scope, options = {}) {
+  documentRegistryScopeParts(scope);
+  return allocateAndReserveDocumentReference(env, {
+    ...options,
+    tenant_id: scope?.tenant_id ?? scope?.tenantId,
+    company_id: scope?.company_id ?? scope?.companyId,
+    sequence_type: DOCUMENT_SEQUENCE_TYPE_INVOICE,
+    prefix: DOCUMENT_PREFIX_INVOICE,
   });
 }
 
@@ -70319,6 +70375,365 @@ function deriveServerSideRefundProofContext(rec, options = {}) {
   };
 }
 
+/* Patch 2G-W — Pure server-side INVOICE context derivation (FUTURE use ONLY).
+ *
+ * Mirrors the contract + PURE/inert guarantees of deriveServerSideCreditContext
+ * and deriveServerSideRefundProofContext, but for the (future) invoice flow.
+ * Given an already-loaded BOOKING_KV booking record, it figures out, leg-first:
+ *
+ *   - which sale context applies (explicit leg, or booking-level when single-leg),
+ *   - the canonical currency (conservatively, via the SAME safe helpers the
+ *     other derivations use; never synthesizes EUR),
+ *   - the VAT breakdown (subtotal_ex_vat / vat_amount / vat_rate_percent) and a
+ *     total_incl_vat, taken from amounts ALREADY on the record (never invented),
+ *
+ * and returns either { ok: true, context, warnings } or { ok: false, error }.
+ *
+ * Purity / inertness contract (this patch):
+ *   - no KV reads or writes (the caller loaded the record),
+ *   - no allocation, no DOCUMENT_REFERENCE_SEQUENCE, no DO / service calls,
+ *   - no idempotency lookup, no allocateInvoiceReference, no compliance emit,
+ *   - NOT wired to any route. Nothing calls this in 2G-W (no invoice issue route
+ *     exists yet). It exists so a future real invoice issue route can reuse it.
+ *
+ * Amount safety: this helper NEVER invents amounts. It only reads amounts the
+ * pricing layer already stored. total_incl_vat is preferred from explicit total
+ * fields; if those are absent but a full subtotal+VAT breakdown exists, the sum
+ * is used (a definitional total, not a fabricated one) and a non-blocking
+ * warning is added. If no usable amount exists, it returns "invoice_amount_unreliable".
+ * A technical booking id is NEVER used as an invoice number (numbering is the
+ * future allocator's job, not this read-only helper's).
+ *
+ * Leg-first: refuses a multi-leg parent without an explicit source_leg_id
+ * (parent totals would double-count one leg), matching the credit derivation.
+ */
+function deriveServerSideInvoiceContext(rec, options = {}) {
+  if (!rec || typeof rec !== "object" || Array.isArray(rec)) {
+    return { ok: false, error: "missing_booking_record" };
+  }
+
+  const requestedLegId = safeStr(options?.source_leg_id ?? options?.sourceLegId);
+  const requestedLegTypeRaw = safeStr(
+    options?.source_leg_type ?? options?.sourceLegType,
+    24,
+  );
+  const expectedCurrencyRaw = safeStr(
+    options?.expected_currency ?? options?.expectedCurrency,
+    8,
+  ).toUpperCase();
+  const expectedTotals =
+    options?.expected_totals && typeof options.expected_totals === "object"
+      ? options.expected_totals
+      : options?.expectedTotals && typeof options.expectedTotals === "object"
+        ? options.expectedTotals
+        : null;
+
+  const warnings = [];
+
+  // Non-mutating walk of every operational_legs container (same de-dup style as
+  // deriveServerSideCreditContext) so leg-first selection is identical.
+  const legContainers = [];
+  if (Array.isArray(rec?.operational_legs)) legContainers.push(rec.operational_legs);
+  if (Array.isArray(rec?.operationalLegs)) legContainers.push(rec.operationalLegs);
+  if (rec?.booking && typeof rec.booking === "object") {
+    if (Array.isArray(rec.booking.operational_legs)) {
+      legContainers.push(rec.booking.operational_legs);
+    }
+    if (Array.isArray(rec.booking.operationalLegs)) {
+      legContainers.push(rec.booking.operationalLegs);
+    }
+  }
+  if (rec?.payload && typeof rec.payload === "object") {
+    if (Array.isArray(rec.payload.operational_legs)) {
+      legContainers.push(rec.payload.operational_legs);
+    }
+    if (Array.isArray(rec.payload.operationalLegs)) {
+      legContainers.push(rec.payload.operationalLegs);
+    }
+  }
+  const allLegs = [];
+  const seenSignatures = new Set();
+  for (const list of legContainers) {
+    if (!Array.isArray(list) || list.length === 0) continue;
+    const firstId =
+      safeStr(list[0]?.leg_id ?? list[0]?.legId) || `len:${list.length}`;
+    const signature = `${list.length}:${firstId}`;
+    if (seenSignatures.has(signature)) continue;
+    seenSignatures.add(signature);
+    for (const leg of list) {
+      if (leg && typeof leg === "object" && !Array.isArray(leg)) allLegs.push(leg);
+    }
+  }
+  const hasMultipleLegs = allLegs.length > 1;
+
+  // ---- 1. Select sale context (leg vs booking) ------------------------------
+  let sourceKind = "booking";
+  let legEntry = null;
+  let resolvedLegId = "";
+  let resolvedLegType = "";
+  if (requestedLegId) {
+    legEntry =
+      allLegs.find(
+        (leg) => safeStr(leg?.leg_id ?? leg?.legId) === requestedLegId,
+      ) || null;
+    if (!legEntry) return { ok: false, error: "source_leg_not_found" };
+    sourceKind = "leg";
+    resolvedLegId = requestedLegId;
+    resolvedLegType =
+      safeStr(legEntry?.leg_type ?? legEntry?.legType, 24) ||
+      requestedLegTypeRaw ||
+      "";
+  } else if (hasMultipleLegs) {
+    return { ok: false, error: "leg_required_for_roundtrip" };
+  }
+
+  // ---- 2. Currency (same canonical reader + scoped fallback as credit) -------
+  const pricingProfile =
+    (rec?.pricing_profile && typeof rec.pricing_profile === "object"
+      ? rec.pricing_profile
+      : null) ||
+    (rec?.pricingProfile && typeof rec.pricingProfile === "object"
+      ? rec.pricingProfile
+      : null) ||
+    (rec?.payload?.pricing_profile &&
+    typeof rec.payload.pricing_profile === "object"
+      ? rec.payload.pricing_profile
+      : null) ||
+    (rec?.payload?.pricingProfile &&
+    typeof rec.payload.pricingProfile === "object"
+      ? rec.payload.pricingProfile
+      : null) ||
+    null;
+  let currency =
+    (sourceKind === "leg" ? safeStr(legEntry?.currency, 8).toUpperCase() : "") ||
+    resolveExplicitBookingCurrencyFromRecordOrPayload({
+      payload: rec?.payload,
+      quote: rec?.quote,
+      pricingProfile,
+      booking: rec?.booking,
+    });
+  let currencySource = currency ? "record" : "";
+  if (!currency) {
+    const serverFallbackCurrency = normalizeExplicitIsoCurrency(
+      options?.server_pricing_profile?.currency ??
+        options?.serverPricingProfile?.currency,
+    );
+    if (serverFallbackCurrency) {
+      currency = serverFallbackCurrency;
+      currencySource = "server_pricing_profile";
+      warnings.push("legacy_server_scope_currency_applied");
+    }
+  }
+  if (!currency) return { ok: false, error: "currency_missing" };
+  if (expectedCurrencyRaw && expectedCurrencyRaw !== currency) {
+    return { ok: false, error: "currency_mismatch" };
+  }
+
+  // ---- 3. VAT breakdown + total (leg-first; amounts are READ, never invented) -
+  function _firstFiniteNonNegative(candidates) {
+    for (const candidate of candidates) {
+      if (candidate === null || candidate === undefined || candidate === "") {
+        continue;
+      }
+      const n = Number(candidate);
+      if (Number.isFinite(n) && n >= 0) return n;
+    }
+    return null;
+  }
+  const totalInclVatCandidates =
+    sourceKind === "leg"
+      ? [
+          legEntry?.total_incl_vat,
+          legEntry?.totalInclVat,
+          legEntry?.price_incl_vat,
+          legEntry?.priceInclVat,
+          legEntry?.amount_incl_vat,
+          legEntry?.amountInclVat,
+          legEntry?.total_amount,
+          legEntry?.totalAmount,
+        ]
+      : [
+          rec?.total_incl_vat,
+          rec?.totalInclVat,
+          rec?.booking?.total_incl_vat,
+          rec?.booking?.totalInclVat,
+          rec?.payload?.total_incl_vat,
+          rec?.payload?.totalInclVat,
+          rec?.price_incl_vat,
+          rec?.priceInclVat,
+          rec?.booking?.price_incl_vat,
+          rec?.booking?.priceInclVat,
+          rec?.payload?.price_incl_vat,
+          rec?.payload?.priceInclVat,
+          _pick(rec, ["quote", "pricing", "price_incl_vat"], null),
+          _pick(rec, ["quote", "total_price_incl_vat"], null),
+          _pick(rec, ["payload", "quote", "total_price_incl_vat"], null),
+          _pick(rec, ["booking", "quote", "total_price_incl_vat"], null),
+        ];
+  const subtotalExVatCandidates =
+    sourceKind === "leg"
+      ? [
+          legEntry?.subtotal_ex_vat,
+          legEntry?.subtotalExVat,
+          legEntry?.price_ex_vat,
+          legEntry?.priceExVat,
+          legEntry?.net_amount,
+          legEntry?.netAmount,
+        ]
+      : [
+          rec?.subtotal_ex_vat,
+          rec?.subtotalExVat,
+          rec?.booking?.subtotal_ex_vat,
+          rec?.booking?.subtotalExVat,
+          rec?.payload?.subtotal_ex_vat,
+          rec?.payload?.subtotalExVat,
+          rec?.price_ex_vat,
+          rec?.priceExVat,
+          rec?.booking?.price_ex_vat,
+          rec?.booking?.priceExVat,
+          rec?.payload?.price_ex_vat,
+          rec?.payload?.priceExVat,
+          _pick(rec, ["quote", "pricing", "price_ex_vat"], null),
+          _pick(rec, ["quote", "total_price_ex_vat"], null),
+          _pick(rec, ["payload", "quote", "total_price_ex_vat"], null),
+          _pick(rec, ["booking", "quote", "total_price_ex_vat"], null),
+        ];
+  const vatAmountCandidates =
+    sourceKind === "leg"
+      ? [
+          legEntry?.vat_amount,
+          legEntry?.vatAmount,
+          legEntry?.price_vat,
+          legEntry?.priceVat,
+        ]
+      : [
+          rec?.vat_amount,
+          rec?.vatAmount,
+          rec?.booking?.vat_amount,
+          rec?.booking?.vatAmount,
+          rec?.payload?.vat_amount,
+          rec?.payload?.vatAmount,
+          rec?.price_vat,
+          rec?.priceVat,
+          rec?.booking?.price_vat,
+          rec?.booking?.priceVat,
+          rec?.payload?.price_vat,
+          rec?.payload?.priceVat,
+          _pick(rec, ["quote", "pricing", "price_vat"], null),
+          _pick(rec, ["quote", "total_price_vat"], null),
+          _pick(rec, ["payload", "quote", "total_price_vat"], null),
+          _pick(rec, ["booking", "quote", "total_price_vat"], null),
+        ];
+  const vatRateCandidates =
+    sourceKind === "leg"
+      ? [
+          legEntry?.vat_rate_percent,
+          legEntry?.vatRatePercent,
+          legEntry?.vat_rate,
+          legEntry?.vatRate,
+        ]
+      : [
+          rec?.vat_rate_percent,
+          rec?.vatRatePercent,
+          rec?.booking?.vat_rate_percent,
+          rec?.booking?.vatRatePercent,
+          rec?.payload?.vat_rate_percent,
+          rec?.payload?.vatRatePercent,
+          rec?.vat_rate,
+          rec?.vatRate,
+          rec?.booking?.vat_rate,
+          rec?.booking?.vatRate,
+          rec?.payload?.vat_rate,
+          rec?.payload?.vatRate,
+          _pick(rec, ["quote", "vat_rate_percent"], null),
+          _pick(rec, ["quote", "vatRatePercent"], null),
+          _pick(rec, ["quote", "vat_rate"], null),
+          _pick(rec, ["quote", "vatRate"], null),
+        ];
+
+  const subtotalExVat = _firstFiniteNonNegative(subtotalExVatCandidates);
+  const vatAmount = _firstFiniteNonNegative(vatAmountCandidates);
+  let vatRatePercent = _firstFiniteNonNegative(vatRateCandidates);
+  if (vatRatePercent !== null && vatRatePercent > 0 && vatRatePercent < 1) {
+    vatRatePercent = vatRatePercent * 100;
+  }
+
+  let totalInclVat = _firstFiniteNonNegative(totalInclVatCandidates);
+  if (
+    (totalInclVat === null || totalInclVat <= 0) &&
+    subtotalExVat !== null &&
+    vatAmount !== null
+  ) {
+    // Definitional sum of an existing breakdown — NOT an invented amount.
+    totalInclVat = subtotalExVat + vatAmount;
+    warnings.push("total_incl_vat_derived_from_breakdown");
+  }
+  if (totalInclVat === null || !(totalInclVat > 0)) {
+    return { ok: false, error: "invoice_amount_unreliable" };
+  }
+  const totalAmountCents = Math.round(totalInclVat * 100);
+  if (subtotalExVat === null || vatAmount === null) {
+    warnings.push("vat_breakdown_missing");
+  }
+  if (vatRatePercent === null) warnings.push("vat_rate_percent_missing");
+
+  // ---- 4. Optional expected_totals / expected total cross-check --------------
+  if (expectedTotals) {
+    const expTotalInclVat =
+      expectedTotals.total_incl_vat ?? expectedTotals.totalInclVat;
+    if (
+      expTotalInclVat !== null &&
+      expTotalInclVat !== undefined &&
+      expTotalInclVat !== ""
+    ) {
+      const expNum = Number(expTotalInclVat);
+      if (
+        Number.isFinite(expNum) &&
+        Math.round(expNum * 100) !== totalAmountCents
+      ) {
+        return { ok: false, error: "totals_mismatch" };
+      }
+    }
+  }
+
+  const parentBookingId =
+    safeStr(
+      rec?.parent_booking_id ??
+        rec?.parentBookingId ??
+        rec?.booking?.parent_booking_id ??
+        rec?.booking?.parentBookingId ??
+        rec?.payload?.parent_booking_id ??
+        rec?.payload?.parentBookingId,
+    ) || null;
+
+  return {
+    ok: true,
+    context: {
+      is_leg_scoped: sourceKind === "leg",
+      source_kind: sourceKind,
+      source_leg_id: resolvedLegId || null,
+      source_leg_type: resolvedLegType || null,
+      source_parent_booking_id: parentBookingId,
+      // 2G-W: source-invoice binding is null for an invoice (an invoice is the
+      // SOURCE document, it has no parent invoice). Kept explicit for symmetry
+      // with the forward-compatible registry envelope fields.
+      source_invoice_reference: null,
+      source_invoice_document_id: null,
+      currency,
+      currency_source: currencySource || "record",
+      totals: {
+        total_incl_vat: totalInclVat,
+        subtotal_ex_vat: subtotalExVat,
+        vat_amount: vatAmount,
+        vat_rate_percent: vatRatePercent,
+        credited_amount_incl_vat: null,
+        refunded_amount_incl_vat: null,
+      },
+    },
+    warnings,
+  };
+}
+
 /* Pure issued document registry record builder (Patch 2G-J).
  *
  * For FUTURE document issue endpoints ONLY, to be called AFTER:
@@ -70382,7 +70797,8 @@ async function buildIssuedDocumentRegistryRecord(input = {}) {
   if (!sourceBookingId) throw new Error("missing_source_booking_id");
 
   // Type-specific reference rule: exactly one applies. credit_note = accounting
-  // number; refund_proof = non-accounting proof reference.
+  // number; refund_proof = non-accounting proof reference; invoice (2G-W) =
+  // accounting number (same shape as credit_note), proof_reference stays null.
   let documentNumber = null;
   let proofReference = null;
   if (documentType === DOCUMENT_TYPE_CREDIT_NOTE) {
@@ -70391,9 +70807,27 @@ async function buildIssuedDocumentRegistryRecord(input = {}) {
   } else if (documentType === DOCUMENT_TYPE_REFUND_PROOF) {
     proofReference = safeStr(input?.proof_reference ?? input?.proofReference);
     if (!proofReference) throw new Error("missing_proof_reference");
+  } else if (documentType === DOCUMENT_TYPE_INVOICE) {
+    // 2G-W: an invoice carries an OFFICIAL accounting number, never a proof
+    // reference. proof_reference MUST stay null/unused for invoices.
+    documentNumber = safeStr(input?.document_number ?? input?.documentNumber);
+    if (!documentNumber) throw new Error("missing_document_number");
   } else {
     throw new Error("unsupported_document_type");
   }
+
+  // 2G-W: forward-compatible source-invoice binding fields. Read here so a
+  // FUTURE caller can populate them, but they default to null and are added to
+  // the envelope for the invoice type ONLY (below), so the credit_note and
+  // refund_proof envelopes — and ALL content hashes — stay byte-for-byte
+  // identical to pre-2G-W output.
+  const sourceInvoiceReference =
+    safeStr(input?.source_invoice_reference ?? input?.sourceInvoiceReference) ||
+    null;
+  const sourceInvoiceDocumentId =
+    safeStr(
+      input?.source_invoice_document_id ?? input?.sourceInvoiceDocumentId,
+    ) || null;
 
   const totals = input?.totals;
   if (!totals || typeof totals !== "object") throw new Error("missing_totals");
@@ -70475,7 +70909,7 @@ async function buildIssuedDocumentRegistryRecord(input = {}) {
   const contentHash = await hashDocumentSnapshot(immutableSnapshot);
 
   // Registry envelope aligned with the Flutter DocumentCoreRegistryRecord.
-  return {
+  const record = {
     tenant_id: tenantId,
     company_id: companyId,
     document_id: documentId,
@@ -70507,6 +70941,19 @@ async function buildIssuedDocumentRegistryRecord(input = {}) {
     provider_accepted_at: providerAcceptedAt,
     provider_rejected_reason: providerRejectedReason,
   };
+
+  // 2G-W: invoice-only forward-compatible source-binding fields. Added ONLY for
+  // the invoice type so credit_note / refund_proof envelopes remain byte-for-byte
+  // identical. These are envelope-only (NOT part of immutable_snapshot), so the
+  // content_hash is unaffected for every type. Both default to null in this
+  // patch; a future patch may stamp them when binding an invoice/credit note to
+  // a source invoice. getDocumentSourceInvoiceReference() already reads these.
+  if (documentType === DOCUMENT_TYPE_INVOICE) {
+    record.source_invoice_reference = sourceInvoiceReference;
+    record.source_invoice_document_id = sourceInvoiceDocumentId;
+  }
+
+  return record;
 }
 
 /* Pure document registry write-plan builder (Patch 2G-L).
@@ -70558,7 +71005,9 @@ function buildDocumentRegistryWritePlan(record) {
   const documentNumber = safeStr(record.document_number ?? record.documentNumber);
   const proofReference = safeStr(record.proof_reference ?? record.proofReference);
   // Type-specific reference rule (mirrors buildIssuedDocumentRegistryRecord):
-  // credit_note carries an accounting number; refund_proof a proof reference.
+  // credit_note carries an accounting number; refund_proof a proof reference;
+  // invoice (2G-W) carries an accounting number and reuses the credit_note-style
+  // document_number_index (no new key family is introduced).
   let referenceForIndex = "";
   if (documentType === DOCUMENT_TYPE_CREDIT_NOTE) {
     if (!documentNumber) throw new Error("missing_document_number");
@@ -70566,6 +71015,9 @@ function buildDocumentRegistryWritePlan(record) {
   } else if (documentType === DOCUMENT_TYPE_REFUND_PROOF) {
     if (!proofReference) throw new Error("missing_proof_reference");
     referenceForIndex = proofReference;
+  } else if (documentType === DOCUMENT_TYPE_INVOICE) {
+    if (!documentNumber) throw new Error("missing_document_number");
+    referenceForIndex = documentNumber;
   } else {
     throw new Error("unsupported_document_type");
   }
