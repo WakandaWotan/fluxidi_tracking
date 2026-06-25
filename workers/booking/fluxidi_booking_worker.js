@@ -767,6 +767,158 @@ function _sanitizeBillitConnectionStatus(record) {
   };
 }
 
+/* Shared Billit status reader for an already-authenticated tenant/company
+ * scope. Returns the SAME safe projection body used by both admin and company
+ * status routes - never tokens/secrets. */
+async function readBillitConnectionStatusForScope(env, scope) {
+  const config = resolveBillitOAuthConfig(env);
+  let record = null;
+  if (env?.BOOKING_KV) {
+    const key = buildBillitOAuthConnectionKey(scope);
+    if (key) {
+      try {
+        record = await env.BOOKING_KV.get(key, { type: "json" });
+      } catch (_) {
+        record = null;
+      }
+    }
+  }
+  const projected = _sanitizeBillitConnectionStatus(record);
+  const warnings = [];
+  if (!config.configured) warnings.push("billit_oauth_not_configured");
+  if (!billitTokenEncryptionAvailable(env)) {
+    warnings.push("billit_token_encryption_key_missing");
+  }
+  return {
+    ok: true,
+    provider: BILLIT_PROVIDER,
+    configured: config.configured,
+    connected: projected.connected,
+    environment: config.environment,
+    api_base_url: config.api_base_url,
+    redirect_uri_configured: config.has_redirect_uri,
+    client_id_configured: config.has_client_id,
+    client_secret_configured: config.has_client_secret,
+    party_id: projected.party_id,
+    status: projected.status,
+    connected_at: projected.connected_at,
+    updated_at: projected.updated_at,
+    last_error_code: projected.last_error_code,
+    warnings,
+  };
+}
+
+/* Shared Billit OAuth start for an already-authenticated tenant/company scope.
+ * Generates+stores the state, marks the connection authorization_started, and
+ * returns { status, body } for the caller to serialise. No token call here, no
+ * secrets in the body. */
+async function startBillitOAuthForScope(env, scope) {
+  if (!env?.BOOKING_KV) {
+    return { status: 503, body: { ok: false, error: "missing_binding" } };
+  }
+  const config = resolveBillitOAuthConfig(env);
+  if (!config.configured) {
+    return {
+      status: 400,
+      body: {
+        ok: false,
+        error: "billit_oauth_not_configured",
+        missing_fields: config.missing_fields,
+      },
+    };
+  }
+  // Cryptographically random state, bound to scope + environment in KV with a
+  // short TTL so the callback can validate + resolve scope.
+  const state = generateBillitOAuthState();
+  const stateKey = buildBillitOAuthStateKey(state);
+  if (!stateKey) {
+    return { status: 500, body: { ok: false, error: "state_generation_failed" } };
+  }
+  const nowIso = new Date().toISOString();
+  const stateRecord = {
+    provider: BILLIT_PROVIDER,
+    tenant_id: scope.tenant_id,
+    company_id: scope.company_id,
+    environment: config.environment,
+    created_at: nowIso,
+  };
+  await env.BOOKING_KV.put(stateKey, JSON.stringify(stateRecord), {
+    expirationTtl: BILLIT_OAUTH_STATE_TTL_SECONDS,
+  });
+  // Mark the scoped connection as authorization_started (no tokens).
+  const connKey = buildBillitOAuthConnectionKey(scope);
+  if (connKey) {
+    const startedRecord = {
+      provider: BILLIT_PROVIDER,
+      tenant_id: scope.tenant_id,
+      company_id: scope.company_id,
+      environment: config.environment,
+      connected: false,
+      status: "authorization_started",
+      connected_at: null,
+      updated_at: nowIso,
+      token_type: null,
+      access_token_encrypted: null,
+      refresh_token_encrypted: null,
+      expires_at: null,
+      scope: config.scope || null,
+      party_id: null,
+      last_error_code: null,
+      last_error_message: null,
+    };
+    try {
+      await env.BOOKING_KV.put(connKey, JSON.stringify(startedRecord));
+    } catch (_) {
+      // non-fatal; the callback will (re)write the connection record
+    }
+  }
+  const authorizationUrl = buildBillitAuthorizationUrl(config, state);
+  console.log(
+    `[BILLIT_OAUTH][START] tenant=${scope.tenant_id} company=${scope.company_id} env=${config.environment}`,
+  );
+  return {
+    status: 200,
+    body: {
+      ok: true,
+      authorization_url: authorizationUrl,
+      state_expires_in_seconds: BILLIT_OAUTH_STATE_TTL_SECONDS,
+      environment: config.environment,
+      redirect_uri: config.redirect_uri,
+    },
+  };
+}
+
+/* Shared Billit disconnect for an already-authenticated tenant/company scope.
+ * Clears the scoped connection record and returns { status, body }. */
+async function disconnectBillitOAuthForScope(env, scope) {
+  if (!env?.BOOKING_KV) {
+    return { status: 503, body: { ok: false, error: "missing_binding" } };
+  }
+  const connKey = buildBillitOAuthConnectionKey(scope);
+  if (!connKey) {
+    return { status: 400, body: missingTenantScopeError() };
+  }
+  try {
+    await env.BOOKING_KV.delete(connKey);
+  } catch (_) {
+    // tolerate; treat as already-disconnected
+  }
+  console.log(
+    `[BILLIT_OAUTH][DISCONNECT] tenant=${scope.tenant_id} company=${scope.company_id}`,
+  );
+  return {
+    status: 200,
+    body: {
+      ok: true,
+      provider: BILLIT_PROVIDER,
+      tenant_id: scope.tenant_id,
+      company_id: scope.company_id,
+      connected: false,
+      status: "not_configured",
+    },
+  };
+}
+
 // Small HTML response helper for the browser-facing OAuth callback. No
 // secrets/tokens ever included.
 function _billitCallbackHtml(message, status = 200) {
@@ -22122,41 +22274,8 @@ export default {
             tenant_id: scopedRoute.scope.tenant_id,
             company_id: scopedRoute.scope.company_id,
           };
-          const config = resolveBillitOAuthConfig(env);
-          let record = null;
-          if (env?.BOOKING_KV) {
-            const key = buildBillitOAuthConnectionKey(scope);
-            if (key) {
-              try {
-                record = await env.BOOKING_KV.get(key, { type: "json" });
-              } catch (_) {
-                record = null;
-              }
-            }
-          }
-          const projected = _sanitizeBillitConnectionStatus(record);
-          const warnings = [];
-          if (!config.configured) warnings.push("billit_oauth_not_configured");
-          if (!billitTokenEncryptionAvailable(env)) {
-            warnings.push("billit_token_encryption_key_missing");
-          }
-          return json({
-            ok: true,
-            provider: BILLIT_PROVIDER,
-            configured: config.configured,
-            connected: projected.connected,
-            environment: config.environment,
-            api_base_url: config.api_base_url,
-            redirect_uri_configured: config.has_redirect_uri,
-            client_id_configured: config.has_client_id,
-            client_secret_configured: config.has_client_secret,
-            party_id: projected.party_id,
-            status: projected.status,
-            connected_at: projected.connected_at,
-            updated_at: projected.updated_at,
-            last_error_code: projected.last_error_code,
-            warnings,
-          });
+          const statusBody = await readBillitConnectionStatusForScope(env, scope);
+          return json(statusBody);
         } catch (err) {
           console.log(
             `[BILLIT_OAUTH][STATUS][ERR] ${safeStr(err?.message, 160) || "unknown"}`,
@@ -22195,76 +22314,8 @@ export default {
             tenant_id: scopedRoute.scope.tenant_id,
             company_id: scopedRoute.scope.company_id,
           };
-          if (!env?.BOOKING_KV) {
-            return json({ ok: false, error: "missing_binding" }, 503);
-          }
-          const config = resolveBillitOAuthConfig(env);
-          if (!config.configured) {
-            return json(
-              {
-                ok: false,
-                error: "billit_oauth_not_configured",
-                missing_fields: config.missing_fields,
-              },
-              400,
-            );
-          }
-          // Cryptographically random state, bound to scope + environment in KV
-          // with a short TTL so the callback can validate + resolve scope.
-          const state = generateBillitOAuthState();
-          const stateKey = buildBillitOAuthStateKey(state);
-          if (!stateKey) {
-            return json({ ok: false, error: "state_generation_failed" }, 500);
-          }
-          const nowIso = new Date().toISOString();
-          const stateRecord = {
-            provider: BILLIT_PROVIDER,
-            tenant_id: scope.tenant_id,
-            company_id: scope.company_id,
-            environment: config.environment,
-            created_at: nowIso,
-          };
-          await env.BOOKING_KV.put(stateKey, JSON.stringify(stateRecord), {
-            expirationTtl: BILLIT_OAUTH_STATE_TTL_SECONDS,
-          });
-          // Mark the scoped connection as authorization_started (no tokens).
-          const connKey = buildBillitOAuthConnectionKey(scope);
-          if (connKey) {
-            const startedRecord = {
-              provider: BILLIT_PROVIDER,
-              tenant_id: scope.tenant_id,
-              company_id: scope.company_id,
-              environment: config.environment,
-              connected: false,
-              status: "authorization_started",
-              connected_at: null,
-              updated_at: nowIso,
-              token_type: null,
-              access_token_encrypted: null,
-              refresh_token_encrypted: null,
-              expires_at: null,
-              scope: config.scope || null,
-              party_id: null,
-              last_error_code: null,
-              last_error_message: null,
-            };
-            try {
-              await env.BOOKING_KV.put(connKey, JSON.stringify(startedRecord));
-            } catch (_) {
-              // non-fatal; the callback will (re)write the connection record
-            }
-          }
-          const authorizationUrl = buildBillitAuthorizationUrl(config, state);
-          console.log(
-            `[BILLIT_OAUTH][START] tenant=${scope.tenant_id} company=${scope.company_id} env=${config.environment}`,
-          );
-          return json({
-            ok: true,
-            authorization_url: authorizationUrl,
-            state_expires_in_seconds: BILLIT_OAUTH_STATE_TTL_SECONDS,
-            environment: config.environment,
-            redirect_uri: config.redirect_uri,
-          });
+          const result = await startBillitOAuthForScope(env, scope);
+          return json(result.body, result.status);
         } catch (err) {
           console.log(
             `[BILLIT_OAUTH][START][ERR] ${safeStr(err?.message, 160) || "unknown"}`,
@@ -22505,30 +22556,107 @@ export default {
             tenant_id: scopedRoute.scope.tenant_id,
             company_id: scopedRoute.scope.company_id,
           };
-          if (!env?.BOOKING_KV) {
-            return json({ ok: false, error: "missing_binding" }, 503);
-          }
-          const connKey = buildBillitOAuthConnectionKey(scope);
-          if (!connKey) return json(missingTenantScopeError(), 400);
-          try {
-            await env.BOOKING_KV.delete(connKey);
-          } catch (_) {
-            // tolerate; treat as already-disconnected
-          }
-          console.log(
-            `[BILLIT_OAUTH][DISCONNECT] tenant=${scope.tenant_id} company=${scope.company_id}`,
-          );
-          return json({
-            ok: true,
-            provider: BILLIT_PROVIDER,
-            tenant_id: scope.tenant_id,
-            company_id: scope.company_id,
-            connected: false,
-            status: "not_configured",
-          });
+          const result = await disconnectBillitOAuthForScope(env, scope);
+          return json(result.body, result.status);
         } catch (err) {
           console.log(
             `[BILLIT_OAUTH][DISCONNECT][ERR] ${safeStr(err?.message, 160) || "unknown"}`,
+          );
+          return json({ ok: false, error: "internal_error" }, 500);
+        }
+      }
+
+      // =========================
+      // BILLIT OAUTH - COMPANY-FACING ROUTES
+      // Company session (or admin token) auth via the shared
+      // _requireAdminOrCompanySessionForExplicitScope helper - NO global
+      // X-Admin-Token requirement. Scope is the authenticated company scope;
+      // cross-company access is rejected by the helper. These reuse the exact
+      // same shared Billit helpers as the admin routes (identical behaviour,
+      // no tokens/secrets exposed). The OAuth callback stays admin-path-only
+      // and is unchanged.
+      // =========================
+
+      // GET /company/integrations/billit/status?tenant_id=...&company_id=...
+      if (
+        url.pathname === "/company/integrations/billit/status" &&
+        request.method === "GET"
+      ) {
+        const authScope = await _requireAdminOrCompanySessionForExplicitScope({
+          request,
+          url,
+          env,
+          routeLabel: "COMPANY_BILLIT_STATUS",
+        });
+        if (!authScope.ok) return authScope.response;
+        try {
+          const scope = {
+            tenant_id: authScope.explicitScope.tenant_id,
+            company_id: authScope.explicitScope.company_id,
+          };
+          const statusBody = await readBillitConnectionStatusForScope(env, scope);
+          return json(statusBody);
+        } catch (err) {
+          console.log(
+            `[BILLIT_OAUTH][COMPANY_STATUS][ERR] ${safeStr(err?.message, 160) || "unknown"}`,
+          );
+          return json({ ok: false, error: "internal_error" }, 500);
+        }
+      }
+
+      // POST /company/integrations/billit/oauth/start?tenant_id=...&company_id=...
+      if (
+        url.pathname === "/company/integrations/billit/oauth/start" &&
+        request.method === "POST"
+      ) {
+        const body = await safeJson(request);
+        const authScope = await _requireAdminOrCompanySessionForExplicitScope({
+          request,
+          url,
+          env,
+          body: body && typeof body === "object" ? body : null,
+          routeLabel: "COMPANY_BILLIT_START",
+        });
+        if (!authScope.ok) return authScope.response;
+        try {
+          const scope = {
+            tenant_id: authScope.explicitScope.tenant_id,
+            company_id: authScope.explicitScope.company_id,
+          };
+          const result = await startBillitOAuthForScope(env, scope);
+          return json(result.body, result.status);
+        } catch (err) {
+          console.log(
+            `[BILLIT_OAUTH][COMPANY_START][ERR] ${safeStr(err?.message, 160) || "unknown"}`,
+          );
+          return json({ ok: false, error: "internal_error" }, 500);
+        }
+      }
+
+      // POST /company/integrations/billit/disconnect?tenant_id=...&company_id=...
+      if (
+        url.pathname === "/company/integrations/billit/disconnect" &&
+        request.method === "POST"
+      ) {
+        const body = await safeJson(request);
+        const authScope = await _requireAdminOrCompanySessionForExplicitScope({
+          request,
+          url,
+          env,
+          body: body && typeof body === "object" ? body : null,
+          routeLabel: "COMPANY_BILLIT_DISCONNECT",
+        });
+        if (!authScope.ok) return authScope.response;
+        try {
+          const scope = {
+            tenant_id: authScope.explicitScope.tenant_id,
+            company_id: authScope.explicitScope.company_id,
+          };
+          const result = await disconnectBillitOAuthForScope(env, scope);
+          return json(result.body, result.status);
+        } catch (err) {
+          console.log(
+            `[BILLIT_OAUTH][COMPANY_DISCONNECT][ERR] ${safeStr(err?.message, 160) || "unknown"}`,
           );
           return json({ ok: false, error: "internal_error" }, 500);
         }
