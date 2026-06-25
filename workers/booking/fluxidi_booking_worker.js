@@ -22626,6 +22626,129 @@ POST /admin/mollie/connect/disconnect
         });
       }
 
+      // R4 — admin-scoped REAL refund-proof issue route.
+      //   POST /admin/documents/refund-proof/issue
+      //
+      // Second real-writing Document Core route (after the credit-note pair).
+      // Allocates an official FRP proof reference from a SEPARATE sequence
+      // (DOCUMENT_SEQUENCE_TYPE_REFUND_PROOF), persists an immutable refund-
+      // proof registry record + indexes via the 2G-L write plan, and best-
+      // effort emits the compliance audit event "document_issued". Hard
+      // restrictions mirror the credit-note admin route, with refund-proof
+      // additions:
+      //   - never mutates booking:<id> (read-only on source booking)
+      //   - never touches booking/payment/refund/credit status
+      //   - never creates / executes a refund (no Mollie call, no provider IO)
+      //   - never calls Mollie / Chiron / Peppol / Billit / UBL / OAuth
+      //   - never generates PDFs (PDF rendering stays Flutter-only)
+      //   - never reuses the FCN credit-note sequence (a separate FRP DO
+      //     sequence is used via allocateRefundProofReference)
+      //   - never modifies the existing credit-note routes or its idempotency
+      //     namespace (idempotency keys here are scoped by DOCUMENT_TYPE_
+      //     REFUND_PROOF, so they cannot collide with credit-note replays)
+      // The route writes ONLY through plan.primary_writes (registry + indexes
+      // + refund index + idempotency); all other inputs are non-mutating
+      // reads.
+      if (
+        url.pathname === "/admin/documents/refund-proof/issue" &&
+        request.method === "POST"
+      ) {
+        try {
+          _requireAdmin(request, url, env);
+        } catch (err) {
+          const message = String(err?.message || "Unauthorized");
+          return json(
+            {
+              ok: false,
+              error: message === "Unauthorized" ? "unauthorized" : "admin_unavailable",
+            },
+            message === "Unauthorized" ? 401 : 500,
+          );
+        }
+
+        try {
+          const body = await safeJson(request);
+          if (!body || typeof body !== "object" || Array.isArray(body)) {
+            return json({ ok: false, error: "invalid_body" }, 400);
+          }
+
+          // 1. Resolve explicit tenant/company scope (no legacy fallback).
+          const scopedRoute = requireExplicitBookingRouteScope({ request, url, body });
+          if (!scopedRoute.ok) return scopedRoute.response;
+          const scope = {
+            tenant_id: scopedRoute.scope.tenant_id,
+            company_id: scopedRoute.scope.company_id,
+          };
+
+          return await _issueRefundProofCore({
+            env,
+            body,
+            scope,
+            scopeForBookingMatch: scopedRoute.scope,
+            createdByRoleOverride: null,
+            routeLabel: "ADMIN_REFUND_PROOF_ISSUE",
+          });
+        } catch (err) {
+          const message = String(err?.message || "internal_error");
+          console.log(
+            `[ADMIN_REFUND_PROOF_ISSUE][ERR] ${safeStr(message, 200) || "unknown"}`,
+          );
+          return json({ ok: false, error: "internal_error" }, 500);
+        }
+      }
+
+      // R4 — company-scoped REAL refund-proof issue route.
+      //   POST /company/documents/refund-proof/issue
+      // SaaS path so an authenticated company owner/session can issue a
+      // refund-proof for ITS OWN scoped booking WITHOUT shipping ADMIN_TOKEN.
+      // Reuses the exact same internals (_issueRefundProofCore) as the admin
+      // route: identical validations, the SINGLE FRP-* allocation, and the
+      // ONE registry/index/idempotency write path. It differs ONLY in auth
+      // (_requireAdminOrCompanySessionForExplicitScope — admin token OR a
+      // matching company session) and in created_by_role normalization (never
+      // honours elevated client roles). No second numbering path, no extra
+      // writes, no PDF/Mollie/Chiron/refund/receipt/invoice/allocation side
+      // effects. Idempotency-key namespace is per-document-type so a credit-
+      // note replay can never collide with a refund-proof replay.
+      if (
+        url.pathname === "/company/documents/refund-proof/issue" &&
+        request.method === "POST"
+      ) {
+        let body = null;
+        try {
+          body = await safeJson(request);
+        } catch (_) {
+          body = null;
+        }
+        const authScope = await _requireAdminOrCompanySessionForExplicitScope({
+          request,
+          url,
+          env,
+          body,
+          routeLabel: "COMPANY_REFUND_PROOF_ISSUE",
+        });
+        if (!authScope.ok) return authScope.response;
+        if (!body || typeof body !== "object" || Array.isArray(body)) {
+          return json({ ok: false, error: "invalid_body" }, 400);
+        }
+        const explicitScope = authScope.explicitScope;
+        const scope = {
+          tenant_id: explicitScope.tenant_id,
+          company_id: explicitScope.company_id,
+        };
+        const normalizedCreatedByRole = _normalizeCompanyCreatedByRole(
+          body.created_by_role ?? body.createdByRole,
+        );
+        return await _issueRefundProofCore({
+          env,
+          body,
+          scope,
+          scopeForBookingMatch: explicitScope,
+          createdByRoleOverride: normalizedCreatedByRole,
+          routeLabel: "COMPANY_REFUND_PROOF_ISSUE",
+        });
+      }
+
       // 2G-O: read-only issued Document Core registry lookup.
       //   GET /admin/documents/:documentId
       // Returns SAFE metadata only (no PII, no buyer/seller snapshots, no raw
@@ -66853,6 +66976,53 @@ function buildCreditNoteReplaySafeFields(idemHit, registryRecord) {
   };
 }
 
+// R2 — Refund-proof analogue of buildCreditNoteReplaySafeFields. Returned to
+// the issue-route replay branch so an idempotent retry surfaces the SAME safe
+// public envelope the original issue did, without surfacing buyer/seller PII
+// or the immutable snapshot. Mirrors the credit-note shape but uses
+// proof_reference (FRP-*) instead of document_number, and additionally exposes
+// the refund-proof–specific source fields (source_refund_id, source_leg_*).
+// Absent fields on older stored records stay null rather than being guessed.
+function buildRefundProofReplaySafeFields(idemHit, registryRecord) {
+  const rec =
+    registryRecord && typeof registryRecord === "object" ? registryRecord : {};
+  const documentId =
+    safeStr(idemHit?.document_id, 200) ||
+    safeStr(rec.document_id ?? rec.documentId, 200) ||
+    null;
+  const proofReference =
+    safeStr(idemHit?.proof_reference, 80) ||
+    safeStr(rec.proof_reference ?? rec.proofReference, 80) ||
+    null;
+  const lifecycleState =
+    safeStr(rec.lifecycle_state ?? rec.lifecycleState ?? rec.document_status, 40) ||
+    null;
+  const issueTimestamp =
+    safeStr(rec.issue_timestamp ?? rec.issueTimestamp, 80) || null;
+  const currency = safeStr(rec.currency, 8).toUpperCase() || null;
+  const contentHash = safeStr(rec.content_hash ?? rec.contentHash, 128) || null;
+  const sourceBookingId =
+    safeStr(rec.source_booking_id ?? rec.sourceBookingId, 200) || null;
+  const sourceLegId =
+    safeStr(rec.source_leg_id ?? rec.sourceLegId, 200) || null;
+  const sourceLegType =
+    safeStr(rec.source_leg_type ?? rec.sourceLegType, 24) || null;
+  const sourceRefundId =
+    safeStr(rec.source_refund_id ?? rec.sourceRefundId, 200) || null;
+  return {
+    document_id: documentId,
+    proof_reference: proofReference,
+    lifecycle_state: lifecycleState,
+    issue_timestamp: issueTimestamp,
+    currency,
+    content_hash: contentHash,
+    source_booking_id: sourceBookingId,
+    source_leg_id: sourceLegId,
+    source_leg_type: sourceLegType,
+    source_refund_id: sourceRefundId,
+  };
+}
+
 // 2G-O: build the safe public metadata projection of a canonical issued
 // registry record for GET /admin/documents/:documentId. Surfaces ONLY
 // non-sensitive document/reference metadata. Never exposes buyer/seller
@@ -67872,6 +68042,497 @@ async function _issueCreditNoteCore({
   }
 }
 
+/* R3 — Shared refund-proof issue core.
+ *
+ * Used by BOTH the admin route (POST /admin/documents/refund-proof/issue)
+ * and the company route (POST /company/documents/refund-proof/issue). Auth,
+ * scope resolution, and created_by_role policy are performed by each route
+ * BEFORE calling this; the core is auth-agnostic and runs the IDENTICAL
+ * validations, the SINGLE FRP-* allocation, and the ONE registry/index/
+ * idempotency write path.
+ *
+ * Refund proof is an EVIDENCE document for an already-finalized refund. The
+ * core therefore:
+ *   - never creates / executes a refund (does NOT call Mollie),
+ *   - never mutates booking/payment/refund/credit status,
+ *   - never allocates FCN-* (separate sequence; the only allocator used here
+ *     is allocateRefundProofReference),
+ *   - never touches Chiron / Peppol / Billit / UBL / PDF / fleet allocation,
+ *   - writes ONLY through plan.primary_writes (registry + indexes + refund
+ *     index + idempotency); all other inputs are non-mutating reads.
+ *
+ * Params: same shape as _issueCreditNoteCore.
+ *   env, body              the parsed request env + JSON body.
+ *   scope                  { tenant_id, company_id } for registry + allocator.
+ *   scopeForBookingMatch   full scope object (has hasScope) passed to
+ *                          bookingMatchesRequestedTenantScope.
+ *   createdByRoleOverride  when non-null, REPLACES the body-supplied role
+ *                          (company route passes a normalized company role);
+ *                          when null, the body role is used (admin route).
+ *   routeLabel             log prefix only; no behavioural effect.
+ */
+async function _issueRefundProofCore({
+  env,
+  body,
+  scope,
+  scopeForBookingMatch,
+  createdByRoleOverride = null,
+  routeLabel = "REFUND_PROOF_ISSUE",
+}) {
+  try {
+    // 2. Required body fields.
+    const canonicalBookingId = safeStr(
+      body.canonical_booking_id ??
+        body.canonicalBookingId ??
+        body.source_booking_id ??
+        body.sourceBookingId,
+    );
+    if (!canonicalBookingId) {
+      return json({ ok: false, error: "missing_source_booking_id" }, 400);
+    }
+    const currency = safeStr(body.currency, 8).toUpperCase();
+    if (!currency) return json({ ok: false, error: "missing_currency" }, 400);
+    if (!/^[A-Z]{3}$/.test(currency)) {
+      return json({ ok: false, error: "invalid_currency" }, 400);
+    }
+    const expectedTotals = body.expected_totals ?? body.expectedTotals;
+    if (
+      !expectedTotals ||
+      typeof expectedTotals !== "object" ||
+      Array.isArray(expectedTotals)
+    ) {
+      return json({ ok: false, error: "missing_expected_totals" }, 400);
+    }
+    const idempotencyKey = safeStr(
+      body.idempotency_key ?? body.idempotencyKey,
+      200,
+    );
+    if (!idempotencyKey) {
+      return json({ ok: false, error: "missing_idempotency_key" }, 400);
+    }
+    const createdByRole =
+      createdByRoleOverride != null
+        ? createdByRoleOverride
+        : safeStr(body.created_by_role ?? body.createdByRole, 32);
+    if (!createdByRole) {
+      return json({ ok: false, error: "missing_created_by_role" }, 400);
+    }
+    const createdByDeviceId =
+      safeStr(body.created_by_device_id ?? body.createdByDeviceId, 200) ||
+      null;
+    const sourceLegId =
+      safeStr(body.source_leg_id ?? body.sourceLegId, 200) || null;
+    const sourceLegTypeRaw =
+      safeStr(body.source_leg_type ?? body.sourceLegType, 24) || null;
+    const sourceRefundIdRequested =
+      safeStr(body.source_refund_id ?? body.sourceRefundId, 200) || null;
+    const clientDraftHash =
+      safeStr(body.client_draft_hash ?? body.clientDraftHash, 200) || null;
+
+    // 3. Binding checks.
+    if (!env?.BOOKING_KV) {
+      return json({ ok: false, error: "missing_binding" }, 503);
+    }
+    if (!env?.DOCUMENT_REFERENCE_SEQUENCE) {
+      return json({ ok: false, error: "missing_binding" }, 503);
+    }
+
+    const bookingMask = _bookingIntentMask(canonicalBookingId);
+    const idemMask = idempotencyKey.slice(0, 8);
+    const warnings = [];
+
+    // 4. Early idempotency lookup (dedup BEFORE the booking read).
+    const idemHit = await findDocumentByIdempotency(
+      env,
+      scope,
+      DOCUMENT_TYPE_REFUND_PROOF,
+      idempotencyKey,
+    );
+    if (idemHit) {
+      let storedHash = null;
+      try {
+        const idemKey = buildDocumentIdempotencyKey(
+          scope,
+          DOCUMENT_TYPE_REFUND_PROOF,
+          idempotencyKey,
+        );
+        const raw = await env.BOOKING_KV.get(idemKey);
+        if (raw && raw.startsWith("{")) {
+          const parsed = JSON.parse(raw);
+          storedHash = safeStr(parsed?.client_draft_hash) || null;
+        }
+      } catch (_) {
+        // ignore — replay still safe; fall through with storedHash=null
+      }
+      if (clientDraftHash && storedHash && clientDraftHash !== storedHash) {
+        console.log(
+          `[${routeLabel}][REPLAY_HASH_MISMATCH] booking=${bookingMask} idem=${idemMask}`,
+        );
+        return json(
+          { ok: false, error: "idempotency_key_reuse_with_different_payload" },
+          409,
+        );
+      }
+      const replayWarnings = [];
+      if (!clientDraftHash || !storedHash) {
+        replayWarnings.push("replay_without_client_draft_hash");
+        console.log(
+          `[${routeLabel}][REPLAY_WARN] no_client_draft_hash_provided booking=${bookingMask} idem=${idemMask}`,
+        );
+      }
+      const replayRegistry = await loadIssuedDocumentRegistryRecordById(
+        env,
+        scope,
+        idemHit.document_id,
+      );
+      if (!replayRegistry) {
+        console.log(
+          `[${routeLabel}][REPLAY_REGISTRY_MISS] booking=${bookingMask} idem=${idemMask}`,
+        );
+      }
+      const replaySafe = buildRefundProofReplaySafeFields(idemHit, replayRegistry);
+      console.log(
+        `[${routeLabel}][REPLAY_OK] booking=${bookingMask} idem=${idemMask} lifecycle=${replaySafe.lifecycle_state || "-"} currency=${replaySafe.currency || "-"}`,
+      );
+      return json({
+        ok: true,
+        document_id: replaySafe.document_id,
+        document_type: "refund_proof",
+        proof_reference: replaySafe.proof_reference,
+        lifecycle_state: replaySafe.lifecycle_state,
+        content_hash: replaySafe.content_hash,
+        issue_timestamp: replaySafe.issue_timestamp,
+        currency: replaySafe.currency,
+        source_booking_id: replaySafe.source_booking_id,
+        source_leg_id: replaySafe.source_leg_id,
+        source_leg_type: replaySafe.source_leg_type,
+        source_refund_id: replaySafe.source_refund_id,
+        idempotent_replay: true,
+        warnings: replayWarnings,
+      });
+    }
+
+    // 5. Load source booking (read-only).
+    const rec = await env.BOOKING_KV.get(
+      `booking:${canonicalBookingId}`,
+      { type: "json" },
+    );
+    if (!rec || typeof rec !== "object" || Array.isArray(rec)) {
+      return json({ ok: false, error: "source_booking_not_found" }, 404);
+    }
+
+    // 6. Scope match between request scope and booking record.
+    if (!bookingMatchesRequestedTenantScope(rec, scopeForBookingMatch)) {
+      console.log(
+        `[${routeLabel}][SCOPE_REJECT] booking=${bookingMask} idem=${idemMask}`,
+      );
+      return json({ ok: false, error: "not_in_scope" }, 403);
+    }
+
+    // 7. Derive refund-proof context. Mirrors the credit-note core's use of
+    //    the 2G-S-B6 scoped server pricing-profile currency fallback so a
+    //    legacy record without a record-side currency can still issue.
+    let serverScopedPricingProfile = null;
+    try {
+      serverScopedPricingProfile = await _loadTenantPricingProfile(env, scope, {
+        allowTenantLegacyFallback: true,
+      });
+    } catch (_) {
+      serverScopedPricingProfile = null;
+    }
+    const refundCtx = deriveServerSideRefundProofContext(rec, {
+      source_leg_id: sourceLegId,
+      source_leg_type: sourceLegTypeRaw,
+      source_refund_id: sourceRefundIdRequested,
+      expected_currency: currency,
+      expected_totals: expectedTotals,
+      booking_id: canonicalBookingId,
+      server_pricing_profile: serverScopedPricingProfile,
+    });
+    if (!refundCtx.ok) {
+      const errCode = refundCtx.error || "internal_error";
+      const status =
+        errCode === "missing_booking_record"
+          ? 500
+          : errCode === "source_leg_not_found"
+            ? 404
+            : 409;
+      console.log(
+        `[${routeLabel}][DERIVE_REJECT] booking=${bookingMask} reason=${errCode}`,
+      );
+      return json({ ok: false, error: errCode }, status);
+    }
+    if (Array.isArray(refundCtx.warnings)) {
+      for (const w of refundCtx.warnings) warnings.push(w);
+    }
+    const ctx = refundCtx.context;
+    const refundMask = ctx.source_refund_id
+      ? _bookingIntentMask(ctx.source_refund_id)
+      : "-";
+
+    // 8. Allocate FRP reference (SEPARATE sequence from FCN). Only AFTER all
+    //    validation gates above pass.
+    let frpReference = "";
+    try {
+      const pickupIso =
+        safeStr(
+          rec?.pickup_iso ??
+            rec?.pickupIso ??
+            rec?.booking?.pickup_iso ??
+            rec?.booking?.pickupIso ??
+            rec?.payload?.pickup_iso ??
+            rec?.payload?.pickupIso,
+        ) || null;
+      frpReference = await allocateRefundProofReference(env, scope, {
+        canonical_booking_id: canonicalBookingId,
+        pickup_iso: pickupIso,
+      });
+    } catch (allocErr) {
+      console.log(
+        `[${routeLabel}][ALLOC_FAILED] booking=${bookingMask} reason=${safeStr(allocErr?.message, 160) || "unknown"}`,
+      );
+      return json({ ok: false, error: "allocation_failed" }, 500);
+    }
+
+    // 9. Server-side identity: seller_snapshot from BOOKING_KV business
+    //    profile (NEVER from body), buyer_snapshot best-effort from rec.
+    const issueTimestamp = new Date().toISOString();
+    const documentId = crypto.randomUUID();
+
+    let businessProfile = null;
+    try {
+      businessProfile = await loadBusinessProfile(env, scope, {
+        allowTenantLegacyFallback: true,
+      });
+    } catch (_) {
+      businessProfile = null;
+    }
+    const sellerSnapshot = {
+      name:
+        safeStr(
+          businessProfile?.companyName ?? businessProfile?.company_name,
+          240,
+        ) || null,
+      legal_name:
+        safeStr(
+          businessProfile?.legalName ?? businessProfile?.legal_name,
+          240,
+        ) || null,
+      vat_number:
+        safeStr(
+          businessProfile?.vatNumber ?? businessProfile?.vat_number,
+          64,
+        ) || null,
+      registration_number:
+        safeStr(
+          businessProfile?.companyRegistrationNumber ??
+            businessProfile?.company_registration_number ??
+            businessProfile?.enterpriseNumber ??
+            businessProfile?.enterprise_number ??
+            businessProfile?.kboNumber ??
+            businessProfile?.kbo_number,
+          64,
+        ) || null,
+      email:
+        safeStr(
+          businessProfile?.invoiceEmail ??
+            businessProfile?.invoice_email ??
+            businessProfile?.billingEmail ??
+            businessProfile?.billing_email ??
+            businessProfile?.companyEmail ??
+            businessProfile?.company_email ??
+            businessProfile?.email,
+          240,
+        ) || null,
+      address_line:
+        safeStr(businessProfile?.address, 240) || null,
+      postal_code:
+        safeStr(businessProfile?.postcode ?? businessProfile?.postal_code, 32) ||
+        null,
+      city: safeStr(businessProfile?.city, 120) || null,
+      country_code:
+        safeStr(businessProfile?.country, 8).toUpperCase() || null,
+    };
+
+    const buyerBooking =
+      rec?.booking && typeof rec.booking === "object" ? rec.booking : {};
+    const buyerPayload =
+      rec?.payload && typeof rec.payload === "object" ? rec.payload : {};
+    const buyerNameRaw =
+      safeStr(
+        rec?.customer_name ??
+          rec?.customerName ??
+          buyerBooking?.customer_name ??
+          buyerBooking?.customerName ??
+          buyerPayload?.customer_name ??
+          buyerPayload?.customerName,
+        240,
+      ) || null;
+    const buyerEmailRaw =
+      safeStr(
+        rec?.customer_email ??
+          rec?.customerEmail ??
+          buyerBooking?.customer_email ??
+          buyerBooking?.customerEmail ??
+          buyerPayload?.customer_email ??
+          buyerPayload?.customerEmail,
+        240,
+      ) || null;
+    const buyerSnapshot =
+      buyerNameRaw || buyerEmailRaw
+        ? {
+            name: buyerNameRaw,
+            email: buyerEmailRaw,
+            vat_number: null,
+            address_line: null,
+            postal_code: null,
+            city: null,
+            country_code: null,
+          }
+        : null;
+    if (!buyerSnapshot || !buyerNameRaw || !buyerEmailRaw) {
+      warnings.push("buyer_snapshot_incomplete");
+    }
+
+    // 10. Build registry record. document_type = refund_proof,
+    //     proof_reference carries the FRP-*, document_number stays null
+    //     (proof reference is the type-specific reference, per 2G-J/2G-L).
+    let record;
+    try {
+      record = await buildIssuedDocumentRegistryRecord({
+        scope,
+        document_id: documentId,
+        document_type: DOCUMENT_TYPE_REFUND_PROOF,
+        document_number: null,
+        proof_reference: frpReference,
+        lifecycle_state: "issued",
+        source_booking_id: canonicalBookingId,
+        source_parent_booking_id: ctx.source_parent_booking_id,
+        source_leg_id: ctx.source_leg_id,
+        source_leg_type: ctx.source_leg_type,
+        is_leg_scoped: ctx.is_leg_scoped,
+        source_refund_id: ctx.source_refund_id,
+        source_credit_decision: null,
+        currency: ctx.currency,
+        totals: ctx.totals,
+        seller_snapshot: sellerSnapshot,
+        buyer_snapshot: buyerSnapshot,
+        issue_timestamp: issueTimestamp,
+        created_by_role: createdByRole,
+        created_by_device_id: createdByDeviceId,
+        idempotency_key: idempotencyKey,
+      });
+    } catch (buildErr) {
+      console.log(
+        `[${routeLabel}][STRANDED_FRP] reference=${frpReference} booking=${bookingMask} reason=build_failed:${safeStr(buildErr?.message, 120)}`,
+      );
+      return json({ ok: false, error: "build_failed" }, 500);
+    }
+
+    // 11. Build write plan and inject client_draft_hash into the idempotency
+    //     record so future replays can compare it.
+    let plan;
+    try {
+      plan = buildDocumentRegistryWritePlan(record);
+    } catch (planErr) {
+      console.log(
+        `[${routeLabel}][STRANDED_FRP] reference=${frpReference} booking=${bookingMask} reason=plan_failed:${safeStr(planErr?.message, 120)}`,
+      );
+      return json({ ok: false, error: "plan_failed" }, 500);
+    }
+    if (clientDraftHash && Array.isArray(plan?.primary_writes)) {
+      const idemWrite = plan.primary_writes.find(
+        (w) => w?.label === "idempotency_record",
+      );
+      if (idemWrite && typeof idemWrite.value === "string") {
+        try {
+          const parsed = JSON.parse(idemWrite.value);
+          parsed.client_draft_hash = clientDraftHash;
+          idemWrite.value = JSON.stringify(parsed);
+        } catch (_) {
+          // tolerate — older shape; idempotency replay just won't compare hash
+        }
+      }
+    }
+
+    // 12. Execute primary_writes in 2G-L-guaranteed order. The refund_index
+    //     entry (when source_refund_id is present) is part of the plan and
+    //     is executed by the same loop; failure there is treated like any
+    //     other index failure (partial → 500).
+    for (const w of plan.primary_writes) {
+      try {
+        await env.BOOKING_KV.put(w.key, w.value);
+      } catch (writeErr) {
+        const reasonText = safeStr(writeErr?.message, 160) || "unknown";
+        if (w.label === "registry_record") {
+          console.log(
+            `[${routeLabel}][STRANDED_FRP] reference=${frpReference} booking=${bookingMask} reason=registry_write_failed:${reasonText}`,
+          );
+          return json({ ok: false, error: "registry_write_failed" }, 500);
+        }
+        if (w.label === "idempotency_record") {
+          console.log(
+            `[${routeLabel}][IDEMPOTENCY_PARTIAL] reference=${frpReference} booking=${bookingMask} reason=${reasonText}`,
+          );
+          warnings.push("idempotency_record_write_failed");
+          break;
+        }
+        console.log(
+          `[${routeLabel}][PARTIAL_INDEX] label=${w.label} reference=${frpReference} booking=${bookingMask} reason=${reasonText}`,
+        );
+        return json({ ok: false, error: "registry_index_partial" }, 500);
+      }
+    }
+
+    // 13. Best-effort compliance event emit (never fails the issue).
+    try {
+      const auditEvent = {
+        event_type: plan.audit_event.event_type,
+        schema_version: "compliance_event_v1",
+        tenant_id: scope.tenant_id,
+        company_id: scope.company_id,
+        booking_id: canonicalBookingId,
+        payload: plan.audit_event.payload,
+      };
+      const emit = await emitComplianceEventBestEffort(env, auditEvent, {
+        logLabel: "document_issued",
+        timeoutMs: 1500,
+      });
+      if (!emit?.ok) warnings.push("compliance_event_emit_failed");
+    } catch (_) {
+      warnings.push("compliance_event_emit_failed");
+    }
+
+    console.log(
+      `[${routeLabel}][OK] reference=${frpReference} booking=${bookingMask} refund=${refundMask} idem=${idemMask} warnings=${warnings.length}`,
+    );
+
+    // 14. Success response.
+    return json({
+      ok: true,
+      document_id: documentId,
+      document_type: "refund_proof",
+      proof_reference: frpReference,
+      lifecycle_state: "issued",
+      content_hash: record.content_hash,
+      issue_timestamp: issueTimestamp,
+      currency: ctx.currency,
+      source_booking_id: canonicalBookingId,
+      source_leg_id: ctx.source_leg_id,
+      source_leg_type: ctx.source_leg_type,
+      source_refund_id: ctx.source_refund_id,
+      idempotent_replay: false,
+      warnings,
+    });
+  } catch (err) {
+    const message = String(err?.message || "internal_error");
+    console.log(
+      `[${routeLabel}][ERR] ${safeStr(message, 200) || "unknown"}`,
+    );
+    return json({ ok: false, error: "internal_error" }, 500);
+  }
+}
+
 /* Pure server-side credit-note context derivation (Patch 2G-N-B).
  *
  * For FUTURE POST /admin/documents/credit-note/issue ONLY. Given an already-
@@ -68372,6 +69033,328 @@ function deriveServerSideCreditContext(rec, options = {}) {
         refunded_amount_incl_vat: null,
       },
       refund_required: refundRequired === true,
+    },
+    warnings,
+  };
+}
+
+/* R2 — Pure server-side refund-proof context derivation.
+ *
+ * Mirrors the contract and PURE/inert guarantees of
+ * `deriveServerSideCreditContext`, but for the refund-proof flow. Given an
+ * already-loaded BOOKING_KV booking record (and the SAME leg walker the
+ * credit-note derivation uses), this helper figures out:
+ *
+ *   - which refund context applies (leg-first or booking-level),
+ *   - whether the refund is FINALIZED in a way that justifies issuing a
+ *     refund proof (refunded_amount_cents > 0 AND a Mollie/refund_status
+ *     terminal-refunded marker is set),
+ *   - the canonical refunded amount (incl VAT) + currency,
+ *   - the optional source_refund_id (Mollie or generic),
+ *
+ * and returns either `{ ok: true, context, warnings: [] }` or
+ * `{ ok: false, error: "<code>" }` using stable error codes documented inline.
+ *
+ * Refund proof is an EVIDENCE document, not an e-invoice / UBL, so this
+ * derivation deliberately does NOT require a VAT breakdown. It mirrors the
+ * Flutter `validateRefundProofDraft` rules: identity present, finalized
+ * refund, positive refunded amount, leg-first integrity. Optional fields
+ * (refund_id, refunded_at, refund_provider, refund_status) become safe
+ * warnings rather than blocking errors.
+ *
+ * Purity / inertness contract:
+ *   - no KV reads or writes (caller loaded the record),
+ *   - no allocation, no DOCUMENT_REFERENCE_SEQUENCE, no DO calls,
+ *   - no findDocumentByIdempotency / allocateRefundProofReference / etc.,
+ *   - no compliance emit, no routes touched by THIS function.
+ *
+ * Currency follows the SAME canonical reader + 2G-S-B6 scoped server
+ * pricing-profile fallback as the credit-note derivation, so the two flows
+ * agree on which booking paths constitute "the currency". Strict ISO-3 only
+ * via `normalizeExplicitIsoCurrency`. Never synthesizes EUR.
+ */
+function deriveServerSideRefundProofContext(rec, options = {}) {
+  if (!rec || typeof rec !== "object" || Array.isArray(rec)) {
+    return { ok: false, error: "missing_booking_record" };
+  }
+
+  const requestedLegId = safeStr(options?.source_leg_id ?? options?.sourceLegId);
+  const requestedLegTypeRaw = safeStr(
+    options?.source_leg_type ?? options?.sourceLegType,
+    24,
+  );
+  const requestedRefundIdRaw = safeStr(
+    options?.source_refund_id ?? options?.sourceRefundId,
+    200,
+  );
+  const expectedCurrencyRaw = safeStr(
+    options?.expected_currency ?? options?.expectedCurrency,
+    8,
+  ).toUpperCase();
+  const expectedTotals =
+    options?.expected_totals && typeof options.expected_totals === "object"
+      ? options.expected_totals
+      : options?.expectedTotals && typeof options.expectedTotals === "object"
+        ? options.expectedTotals
+        : null;
+
+  const warnings = [];
+
+  // ---- 0. Walk every operational_legs container (mirrors credit-note derive).
+  const legContainers = [];
+  if (Array.isArray(rec?.operational_legs)) legContainers.push(rec.operational_legs);
+  if (Array.isArray(rec?.operationalLegs)) legContainers.push(rec.operationalLegs);
+  if (rec?.booking && typeof rec.booking === "object") {
+    if (Array.isArray(rec.booking.operational_legs)) {
+      legContainers.push(rec.booking.operational_legs);
+    }
+    if (Array.isArray(rec.booking.operationalLegs)) {
+      legContainers.push(rec.booking.operationalLegs);
+    }
+  }
+  if (rec?.payload && typeof rec.payload === "object") {
+    if (Array.isArray(rec.payload.operational_legs)) {
+      legContainers.push(rec.payload.operational_legs);
+    }
+    if (Array.isArray(rec.payload.operationalLegs)) {
+      legContainers.push(rec.payload.operationalLegs);
+    }
+  }
+  const allLegs = [];
+  const seenSignatures = new Set();
+  for (const list of legContainers) {
+    if (!Array.isArray(list) || list.length === 0) continue;
+    const firstId =
+      safeStr(list[0]?.leg_id ?? list[0]?.legId) || `len:${list.length}`;
+    const signature = `${list.length}:${firstId}`;
+    if (seenSignatures.has(signature)) continue;
+    seenSignatures.add(signature);
+    for (const leg of list) {
+      if (leg && typeof leg === "object" && !Array.isArray(leg)) allLegs.push(leg);
+    }
+  }
+  const hasMultipleLegs = allLegs.length > 1;
+
+  // ---- 1. Select refund context (leg-first vs booking-level) ---------------
+  let sourceKind = "booking";
+  let legEntry = null;
+  let resolvedLegId = "";
+  let resolvedLegType = "";
+
+  if (requestedLegId) {
+    legEntry = allLegs.find(
+      (leg) => safeStr(leg?.leg_id ?? leg?.legId) === requestedLegId,
+    ) || null;
+    if (!legEntry) return { ok: false, error: "source_leg_not_found" };
+    sourceKind = "leg";
+    resolvedLegId = requestedLegId;
+    resolvedLegType =
+      safeStr(legEntry?.leg_type ?? legEntry?.legType, 24) ||
+      requestedLegTypeRaw ||
+      "";
+  } else if (hasMultipleLegs) {
+    // Mirrors credit-note behaviour: refuse to refund-proof a multi-leg
+    // parent without explicit leg selection. Parent totals would over-state
+    // one leg's refund. Flutter's `canShowRefundProofPdfAction` already
+    // suppresses the parent-row action when `isRoundtripParent`, so this is
+    // a server-side belt-and-braces guard for direct callers.
+    return { ok: false, error: "leg_required_for_roundtrip" };
+  }
+
+  // ---- 2. Refund amount (cents, leg-first) --------------------------------
+  const refundedCandidates =
+    sourceKind === "leg"
+      ? [
+          legEntry?.refunded_amount_cents,
+          legEntry?.refundedAmountCents,
+        ]
+      : [
+          rec?.refunded_amount_cents,
+          rec?.refundedAmountCents,
+          rec?.booking?.refunded_amount_cents,
+          rec?.booking?.refundedAmountCents,
+          rec?.payload?.refunded_amount_cents,
+          rec?.payload?.refundedAmountCents,
+        ];
+  let refundedAmountCents = null;
+  for (const candidate of refundedCandidates) {
+    if (candidate === null || candidate === undefined || candidate === "") continue;
+    const n = Number(candidate);
+    if (!Number.isFinite(n)) continue;
+    refundedAmountCents = Math.round(n);
+    break;
+  }
+  if (!Number.isFinite(refundedAmountCents) || refundedAmountCents <= 0) {
+    return { ok: false, error: "missing_refunded_amount" };
+  }
+  const refundedAmountInclVat = refundedAmountCents / 100;
+
+  // ---- 3. Refund-finalized gate -------------------------------------------
+  // Re-uses the SAME terminal-refunded vocabulary as the live Mollie refresh
+  // pipeline (_mollieRefundApiStatusIsTerminalRefunded) so the refund-proof
+  // server contract stays aligned with the audit/persistence pipeline. Either
+  // an internal `refund_status` reaching a terminal-refunded token OR the
+  // upstream Mollie status reaching one is sufficient.
+  function _readRefundStatusLegFirst(field) {
+    if (sourceKind === "leg") return safeStr(legEntry?.[field], 40);
+    return (
+      safeStr(rec?.[field], 40) ||
+      safeStr(rec?.booking?.[field], 40) ||
+      safeStr(rec?.payload?.[field], 40)
+    );
+  }
+  function _readCamelLegFirst(snake, camel) {
+    if (sourceKind === "leg") {
+      return safeStr(legEntry?.[snake] ?? legEntry?.[camel], 200);
+    }
+    return (
+      safeStr(rec?.[snake] ?? rec?.[camel], 200) ||
+      safeStr(rec?.booking?.[snake] ?? rec?.booking?.[camel], 200) ||
+      safeStr(rec?.payload?.[snake] ?? rec?.payload?.[camel], 200)
+    );
+  }
+  const refundStatusRaw = _readRefundStatusLegFirst("refund_status");
+  const mollieRefundStatusRaw =
+    _readRefundStatusLegFirst("mollie_refund_status") ||
+    _readRefundStatusLegFirst("mollieRefundStatus");
+  const isFinalRefunded =
+    refundStatusRaw.toLowerCase() === "refunded" ||
+    refundStatusRaw.toLowerCase() === "complete" ||
+    refundStatusRaw.toLowerCase() === "completed" ||
+    _mollieRefundApiStatusIsTerminalRefunded(refundStatusRaw) ||
+    _mollieRefundApiStatusIsTerminalRefunded(mollieRefundStatusRaw);
+  if (!isFinalRefunded) {
+    return { ok: false, error: "refund_not_finalized" };
+  }
+
+  // ---- 4. Optional fields (warnings only) ---------------------------------
+  const sourceRefundId =
+    _readCamelLegFirst("mollie_refund_id", "mollieRefundId") ||
+    _readCamelLegFirst("refund_id", "refundId");
+  const refundedAtRaw = _readCamelLegFirst("refunded_at", "refundedAt");
+  const refundProviderRaw =
+    _readCamelLegFirst("refund_provider", "refundProvider");
+
+  // If the caller supplied a source_refund_id, only honour it when it matches
+  // the server-derived one — never accept an arbitrary refund id from the
+  // client as authoritative. (Same posture as currency / totals mismatch
+  // protection.)
+  if (
+    requestedRefundIdRaw &&
+    sourceRefundId &&
+    requestedRefundIdRaw !== sourceRefundId
+  ) {
+    return { ok: false, error: "refund_id_mismatch" };
+  }
+
+  if (!sourceRefundId) warnings.push("refund_id_missing");
+  if (!refundedAtRaw) warnings.push("refunded_at_missing");
+  if (!refundProviderRaw) warnings.push("refund_provider_missing");
+
+  // ---- 5. Currency (leg-first + canonical reader + 2G-S-B6 fallback) ------
+  const pricingProfile =
+    (rec?.pricing_profile && typeof rec.pricing_profile === "object"
+      ? rec.pricing_profile
+      : null) ||
+    (rec?.pricingProfile && typeof rec.pricingProfile === "object"
+      ? rec.pricingProfile
+      : null) ||
+    (rec?.payload?.pricing_profile &&
+    typeof rec.payload.pricing_profile === "object"
+      ? rec.payload.pricing_profile
+      : null) ||
+    (rec?.payload?.pricingProfile &&
+    typeof rec.payload.pricingProfile === "object"
+      ? rec.payload.pricingProfile
+      : null) ||
+    null;
+  let currency =
+    (sourceKind === "leg" ? safeStr(legEntry?.currency, 8).toUpperCase() : "") ||
+    resolveExplicitBookingCurrencyFromRecordOrPayload({
+      payload: rec?.payload,
+      quote: rec?.quote,
+      pricingProfile,
+      booking: rec?.booking,
+    });
+  let currencySource = currency ? "record" : "";
+  if (!currency) {
+    const serverFallbackCurrency = normalizeExplicitIsoCurrency(
+      options?.server_pricing_profile?.currency ??
+        options?.serverPricingProfile?.currency,
+    );
+    if (serverFallbackCurrency) {
+      currency = serverFallbackCurrency;
+      currencySource = "server_pricing_profile";
+      warnings.push("legacy_server_scope_currency_applied");
+    }
+  }
+  if (!currency) return { ok: false, error: "currency_missing" };
+  if (expectedCurrencyRaw && expectedCurrencyRaw !== currency) {
+    return { ok: false, error: "currency_mismatch" };
+  }
+
+  // ---- 6. Expected_totals mismatch protection (cents-safe) ----------------
+  if (expectedTotals) {
+    const expRefundedInclVat =
+      expectedTotals.refunded_amount_incl_vat ??
+      expectedTotals.refundedAmountInclVat;
+    if (expRefundedInclVat !== null && expRefundedInclVat !== undefined && expRefundedInclVat !== "") {
+      const expNum = Number(expRefundedInclVat);
+      if (
+        Number.isFinite(expNum) &&
+        Math.round(expNum * 100) !== Math.round(refundedAmountInclVat * 100)
+      ) {
+        return { ok: false, error: "totals_mismatch" };
+      }
+    }
+    const expTotalInclVat =
+      expectedTotals.total_incl_vat ?? expectedTotals.totalInclVat;
+    if (expTotalInclVat !== null && expTotalInclVat !== undefined && expTotalInclVat !== "") {
+      const expNum = Number(expTotalInclVat);
+      if (
+        Number.isFinite(expNum) &&
+        Math.round(expNum * 100) !== Math.round(refundedAmountInclVat * 100)
+      ) {
+        return { ok: false, error: "totals_mismatch" };
+      }
+    }
+  }
+
+  const parentBookingId =
+    safeStr(
+      rec?.parent_booking_id ??
+        rec?.parentBookingId ??
+        rec?.booking?.parent_booking_id ??
+        rec?.booking?.parentBookingId ??
+        rec?.payload?.parent_booking_id ??
+        rec?.payload?.parentBookingId,
+    ) || null;
+
+  return {
+    ok: true,
+    context: {
+      is_leg_scoped: sourceKind === "leg",
+      source_kind: sourceKind,
+      source_leg_id: resolvedLegId || null,
+      source_leg_type: resolvedLegType || null,
+      source_parent_booking_id: parentBookingId,
+      source_refund_id: sourceRefundId || null,
+      refunded_amount_cents: refundedAmountCents,
+      refunded_amount_incl_vat: refundedAmountInclVat,
+      refund_status: refundStatusRaw || null,
+      mollie_refund_status: mollieRefundStatusRaw || null,
+      refund_provider: refundProviderRaw || null,
+      refunded_at: refundedAtRaw || null,
+      currency,
+      currency_source: currencySource || "record",
+      totals: {
+        total_incl_vat: refundedAmountInclVat,
+        refunded_amount_incl_vat: refundedAmountInclVat,
+        credited_amount_incl_vat: null,
+        subtotal_ex_vat: null,
+        vat_amount: null,
+        vat_rate_percent: null,
+      },
     },
     warnings,
   };
