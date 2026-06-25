@@ -4903,6 +4903,52 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
     );
   }
 
+  /// Set-if-blank hydration of the top Klantgegevens fields right before the
+  /// required-fields validator runs. Sources in order: billing section email
+  /// (when enabled), then the active customer session phone, then the customer
+  /// profile (name/phone/email). Manual user edits are never overwritten and
+  /// the company/legal name from billing is NEVER used as the passenger name.
+  Future<void> _hydrateMissingRideContactBeforeValidation() async {
+    void setIfBlank(TextEditingController controller, String value) {
+      if (controller.text.trim().isNotEmpty) return;
+      final incoming = value.trim();
+      if (incoming.isEmpty) return;
+      controller.text = incoming;
+    }
+
+    if (_billingDetailsEnabled) {
+      final billingEmail = _billingContactEmailCtrl.text.trim();
+      if (billingEmail.isNotEmpty && _isValidEmail(billingEmail)) {
+        setIfBlank(_emailCtrl, billingEmail);
+      }
+    }
+    try {
+      if (_allowsCustomerSessionLink) {
+        final session = await CustomerSessionStore.instance.loadValidSession();
+        final sessionPhone = (session?.phoneE164 ?? '').trim();
+        setIfBlank(_phoneCtrl, sessionPhone);
+      }
+    } catch (_) {
+      // Keep booking flow resilient if session load fails.
+    }
+    try {
+      final profile = await CustomerProfileStore.instance.load();
+      if (profile != null) {
+        setIfBlank(_nameCtrl, profile.name);
+        setIfBlank(_phoneCtrl, profile.phone);
+        setIfBlank(_emailCtrl, profile.email);
+      }
+    } catch (_) {
+      // Keep booking flow resilient if local profile load fails.
+    }
+    debugPrint(
+      '[CALCULATOR][RIDE_CONTACT_PREVALIDATE] billingEnabled=$_billingDetailsEnabled '
+      'nameSet=${_nameCtrl.text.trim().isNotEmpty} '
+      'phoneSet=${_phoneCtrl.text.trim().isNotEmpty} '
+      'emailSet=${_emailCtrl.text.trim().isNotEmpty}',
+    );
+  }
+
   Future<void> _onConfirmBooking() async {
     FocusScope.of(context).unfocus();
     if (_quoteAvailabilityBlocksBooking()) {
@@ -4921,6 +4967,8 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
     if (_blockGooglePayBookSubmitWithMessage()) {
       return;
     }
+    await _hydrateMissingRideContactBeforeValidation();
+    if (!mounted) return;
     final name = _nameCtrl.text.trim();
     final phone = _phoneCtrl.text.trim();
     final email = _emailCtrl.text.trim();
