@@ -43985,9 +43985,6 @@ async function handleBooking(payload, env, request, options = {}) {
     
 
     const biz = normalizeBusiness(payload);
-    const business_detected = !!biz.vat_number;
-    const customerContact = normalizeCustomerContact(payload);
-    const customerEmailLanguage = normalizeCustomerEmailLanguage(payload);
     // 2G-* OPTIONAL billing customer identity (future Peppol / Billit readiness).
     // Pure normalization only - if the payload carries no billing_customer /
     // buyer / buyer_identity object, normalized.legal_name/vat_number/etc are
@@ -44020,6 +44017,37 @@ async function handleBooking(payload, env, request, options = {}) {
       _hasExplicitBillingCustomerInput && _billingCustomerHasAnyMeaningfulField
         ? billingCustomerNormalized
         : null;
+    // 2G-* Bridge: a meaningful BUSINESS billing customer reaches parity with
+    // the legacy top-level VAT path for invoice INTENT only. This never
+    // generates or sends an invoice at /book - it only stamps business intent
+    // so the existing paid-confirmation lifecycle
+    // (_maybeGenerateBusinessInvoiceForPaidBooking) treats it like a legacy
+    // business booking. A billing customer is "business invoice meaningful"
+    // when it is explicitly business-typed, carries a VAT or company
+    // registration number, or has a legal/display name together with a billing
+    // address. Peppol-only or address-only data does NOT by itself imply one.
+    const _billingAddrForIntent = billingCustomerSnapshotForBooking
+      ? billingCustomerSnapshotForBooking.billing_address || {}
+      : {};
+    const _billingHasAnyAddressForIntent = !!(
+      _billingAddrForIntent.street ||
+      _billingAddrForIntent.postal_code ||
+      _billingAddrForIntent.city ||
+      _billingAddrForIntent.country
+    );
+    const _billingCustomerImpliesBusinessInvoice = !!(
+      billingCustomerSnapshotForBooking &&
+      (billingCustomerSnapshotForBooking.customer_type === "business" ||
+        billingCustomerSnapshotForBooking.vat_number ||
+        billingCustomerSnapshotForBooking.company_registration_number ||
+        ((billingCustomerSnapshotForBooking.legal_name ||
+          billingCustomerSnapshotForBooking.display_name) &&
+          _billingHasAnyAddressForIntent))
+    );
+    const business_detected =
+      !!biz.vat_number || _billingCustomerImpliesBusinessInvoice;
+    const customerContact = normalizeCustomerContact(payload);
+    const customerEmailLanguage = normalizeCustomerEmailLanguage(payload);
     const payloadLinkModeRaw = safeStr(
       payload?.customer_link_mode ?? payload?.customerLinkMode,
       40,
@@ -76206,6 +76234,76 @@ async function generateAndSendInvoice({
       `[INVOICE_GEN] bookingId=${safeStr(bookingInput.bookingPublicId || bookingInput.bookingId)} missingTotal=${missingTotal} missingCustomerEmail=${missingCustomerEmail} missingBookingData=${missingBookingData} missingBusinessProfile=${profileMissing} pdfProviderConfigured=${pdfProviderConfigured}`,
     );
 
+    // 2G-* Prefer the booking's billing_customer_snapshot for buyer/legal
+    // identity on the generated invoice; legacy bookingInput fields remain the
+    // fallback. This is invoice CONTENT only - it never changes payment timing,
+    // never sends at /book, and never alters the email DELIVERY target (emailTo
+    // still resolves from the legacy customerEmail). When no snapshot exists the
+    // resolved values are byte-identical to the previous behavior.
+    const _invoiceBillingSnapshot = (() => {
+      const r = bookingRecordInfo?.rec;
+      if (!r || typeof r !== "object" || Array.isArray(r)) return null;
+      const direct = r.billing_customer_snapshot ?? r.billingCustomerSnapshot;
+      if (direct && typeof direct === "object" && !Array.isArray(direct)) {
+        return direct;
+      }
+      const nested =
+        r.booking && typeof r.booking === "object"
+          ? r.booking.billing_customer_snapshot ??
+            r.booking.billingCustomerSnapshot
+          : null;
+      if (nested && typeof nested === "object" && !Array.isArray(nested)) {
+        return nested;
+      }
+      return null;
+    })();
+    const _billingBuyerAddr =
+      _invoiceBillingSnapshot &&
+      typeof _invoiceBillingSnapshot.billing_address === "object" &&
+      _invoiceBillingSnapshot.billing_address &&
+      !Array.isArray(_invoiceBillingSnapshot.billing_address)
+        ? _invoiceBillingSnapshot.billing_address
+        : {};
+    const _billingComposedAddress = [
+      safeStr(_billingBuyerAddr.street, 240),
+      [
+        safeStr(_billingBuyerAddr.postal_code, 32),
+        safeStr(_billingBuyerAddr.city, 120),
+      ]
+        .filter(Boolean)
+        .join(" "),
+      safeStr(_billingBuyerAddr.country, 8),
+    ]
+      .filter(Boolean)
+      .join(", ");
+    const _buyerLegalName = _invoiceBillingSnapshot
+      ? safeStr(_invoiceBillingSnapshot.legal_name, 240) ||
+        safeStr(_invoiceBillingSnapshot.display_name, 240)
+      : "";
+    const _buyerVatNumber = _invoiceBillingSnapshot
+      ? safeStr(_invoiceBillingSnapshot.vat_number, 64) ||
+        safeStr(_invoiceBillingSnapshot.company_registration_number, 80)
+      : "";
+    const _buyerContactEmail = _invoiceBillingSnapshot
+      ? safeStr(_invoiceBillingSnapshot.contact_email, 240)
+      : "";
+    const _buyerContactPhone = _invoiceBillingSnapshot
+      ? safeStr(_invoiceBillingSnapshot.contact_phone, 64)
+      : "";
+    const resolvedCustomerCompany =
+      _buyerLegalName || safeStr(bookingInput.customerCompany) || "";
+    const resolvedCustomerVat =
+      _buyerVatNumber || safeStr(bookingInput.customerVat) || "";
+    const resolvedInvoiceAddress =
+      _billingComposedAddress || safeStr(bookingInput.invoiceAddress) || "";
+    const resolvedCustomerPhoneDisplay =
+      _buyerContactPhone || safeStr(bookingInput.customerPhone) || "";
+    const resolvedCustomerEmailDisplay =
+      _buyerContactEmail || customerEmail || "";
+    console.log(
+      `[INVOICE_GEN][BUYER_SOURCE] bookingId=${safeStr(bookingInput.bookingPublicId || bookingInput.bookingId)} billingSnapshotUsed=${!!_invoiceBillingSnapshot} legalNameFromSnapshot=${!!_buyerLegalName} vatFromSnapshot=${!!_buyerVatNumber} addressFromSnapshot=${!!_billingComposedAddress}`,
+    );
+
     const data = {
       // numbering
       invoiceNumber,
@@ -76236,13 +76334,15 @@ async function generateAndSendInvoice({
       paymentMethod: bookingInput.paymentMethod || "",
       paymentSource: bookingInput.paymentSource || "",
 
-      // customer
+      // customer (buyer/legal identity prefers billing_customer_snapshot, then
+      // legacy fields; passenger customerName is left as-is and never used as a
+      // legal company name)
       customerName: bookingInput.customerName || "",
-      customerEmail: customerEmail || "",
-      customerPhone: bookingInput.customerPhone || "",
-      customerVat: bookingInput.customerVat || "",
-      customerCompany: bookingInput.customerCompany || "",
-      invoiceAddress: bookingInput.invoiceAddress || "",
+      customerEmail: resolvedCustomerEmailDisplay,
+      customerPhone: resolvedCustomerPhoneDisplay,
+      customerVat: resolvedCustomerVat,
+      customerCompany: resolvedCustomerCompany,
+      invoiceAddress: resolvedInvoiceAddress,
 
       // totals
       vat_rate: vatRateNormalized,
