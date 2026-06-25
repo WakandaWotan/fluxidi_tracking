@@ -22763,6 +22763,76 @@ POST /admin/mollie/connect/disconnect
         });
       }
 
+      // 2G-Y-A — admin-scoped REAL invoice issue route.
+      //   POST /admin/documents/invoice/issue?tenant_id=...&company_id=...
+      //
+      // Third real-writing Document Core type (after credit-note + refund-proof).
+      // ADMIN-ONLY in this patch (no company route yet). Allocates an OFFICIAL
+      // INV-* number from a SEPARATE sequence (DOCUMENT_SEQUENCE_TYPE_INVOICE),
+      // persists an immutable invoice registry record + indexes via the 2G-L
+      // write plan, and best-effort emits the "document_issued" compliance
+      // event. Hard restrictions mirror the credit-note / refund-proof admin
+      // routes:
+      //   - never mutates booking:<id> (read-only on the source booking)
+      //   - never touches booking/payment/refund/credit status
+      //   - never calls Mollie / Chiron / Peppol / Billit / UBL / OAuth / fetch
+      //   - never generates PDFs and never touches the legacy FLX invoice
+      //     pipeline (INVOICE_KV / renderInvoiceHtml / nextInvoiceNumber /
+      //     allocateScopedInvoiceSequence / handleBookingInvoicePdfGet)
+      //   - never reuses the FCN/FRP sequences and never uses a technical
+      //     booking id as an invoice number (allocateInvoiceReference only)
+      //   - idempotency is namespaced by DOCUMENT_TYPE_INVOICE so an invoice
+      //     replay can never collide with a credit-note / refund-proof replay
+      // The route writes ONLY through plan.primary_writes (registry + indexes
+      // + idempotency); all other inputs are non-mutating reads.
+      if (
+        url.pathname === "/admin/documents/invoice/issue" &&
+        request.method === "POST"
+      ) {
+        try {
+          _requireAdmin(request, url, env);
+        } catch (err) {
+          const message = String(err?.message || "Unauthorized");
+          return json(
+            {
+              ok: false,
+              error: message === "Unauthorized" ? "unauthorized" : "admin_unavailable",
+            },
+            message === "Unauthorized" ? 401 : 500,
+          );
+        }
+
+        try {
+          const body = await safeJson(request);
+          if (!body || typeof body !== "object" || Array.isArray(body)) {
+            return json({ ok: false, error: "invalid_body" }, 400);
+          }
+
+          // 1. Resolve explicit tenant/company scope (no legacy fallback).
+          const scopedRoute = requireExplicitBookingRouteScope({ request, url, body });
+          if (!scopedRoute.ok) return scopedRoute.response;
+          const scope = {
+            tenant_id: scopedRoute.scope.tenant_id,
+            company_id: scopedRoute.scope.company_id,
+          };
+
+          return await _issueInvoiceCore({
+            env,
+            body,
+            scope,
+            scopeForBookingMatch: scopedRoute.scope,
+            createdByRoleOverride: null,
+            routeLabel: "ADMIN_INVOICE_ISSUE",
+          });
+        } catch (err) {
+          const message = String(err?.message || "internal_error");
+          console.log(
+            `[ADMIN_INVOICE_ISSUE][ERR] ${safeStr(message, 200) || "unknown"}`,
+          );
+          return json({ ok: false, error: "internal_error" }, 500);
+        }
+      }
+
       // 2G-O: read-only issued Document Core registry lookup.
       //   GET /admin/documents/:documentId
       // Returns SAFE metadata only (no PII, no buyer/seller snapshots, no raw
@@ -67332,6 +67402,50 @@ function buildRefundProofReplaySafeFields(idemHit, registryRecord) {
   };
 }
 
+// 2G-Y-A — Invoice analogue of buildCreditNoteReplaySafeFields. Returned to the
+// invoice issue-route replay branch so an idempotent retry surfaces the SAME
+// safe public envelope the original issue did, without surfacing buyer/seller
+// PII or the immutable snapshot. Uses document_number (INV-*) like credit_note,
+// and additionally exposes the source binding (source_booking_id / source_leg_*)
+// the invoice success response returns. Absent fields on older stored records
+// stay null rather than being guessed.
+function buildInvoiceReplaySafeFields(idemHit, registryRecord) {
+  const rec =
+    registryRecord && typeof registryRecord === "object" ? registryRecord : {};
+  const documentId =
+    safeStr(idemHit?.document_id, 200) ||
+    safeStr(rec.document_id ?? rec.documentId, 200) ||
+    null;
+  const documentNumber =
+    safeStr(idemHit?.document_number, 80) ||
+    safeStr(rec.document_number ?? rec.documentNumber, 80) ||
+    null;
+  const lifecycleState =
+    safeStr(rec.lifecycle_state ?? rec.lifecycleState ?? rec.document_status, 40) ||
+    null;
+  const issueTimestamp =
+    safeStr(rec.issue_timestamp ?? rec.issueTimestamp, 80) || null;
+  const currency = safeStr(rec.currency, 8).toUpperCase() || null;
+  const contentHash = safeStr(rec.content_hash ?? rec.contentHash, 128) || null;
+  const sourceBookingId =
+    safeStr(rec.source_booking_id ?? rec.sourceBookingId, 200) || null;
+  const sourceLegId =
+    safeStr(rec.source_leg_id ?? rec.sourceLegId, 200) || null;
+  const sourceLegType =
+    safeStr(rec.source_leg_type ?? rec.sourceLegType, 24) || null;
+  return {
+    document_id: documentId,
+    document_number: documentNumber,
+    lifecycle_state: lifecycleState,
+    issue_timestamp: issueTimestamp,
+    currency,
+    content_hash: contentHash,
+    source_booking_id: sourceBookingId,
+    source_leg_id: sourceLegId,
+    source_leg_type: sourceLegType,
+  };
+}
+
 // 2G-O: build the safe public metadata projection of a canonical issued
 // registry record for GET /admin/documents/:documentId. Surfaces ONLY
 // non-sensitive document/reference metadata. Never exposes buyer/seller
@@ -69544,6 +69658,636 @@ async function _issueRefundProofCore({
     console.log(
       `[${routeLabel}][ERR] ${safeStr(message, 200) || "unknown"}`,
     );
+    return json({ ok: false, error: "internal_error" }, 500);
+  }
+}
+
+/* 2G-Y-A — Shared INVOICE issue core (admin-only caller in this patch).
+ *
+ * Third real-writing Document Core type (after credit-note + refund-proof). It
+ * deliberately mirrors _issueCreditNoteCore step-for-step so the registry /
+ * idempotency / write-plan / compliance behaviour is IDENTICAL, differing only
+ * where an invoice legitimately differs:
+ *
+ *   - it derives context via deriveServerSideInvoiceContext (no credit decision
+ *     required — an invoice is the original sale, not a correction),
+ *   - it allocates an OFFICIAL INV-* number via allocateInvoiceReference, from a
+ *     SEPARATE sequence (DOCUMENT_SEQUENCE_TYPE_INVOICE) that never shares a
+ *     counter with FCN/FRP and is NEVER the legacy FLX-YYYY-MM-#### sequence,
+ *   - idempotency is namespaced by DOCUMENT_TYPE_INVOICE, so an invoice replay
+ *     can never collide with a credit-note / refund-proof replay.
+ *
+ * Totals policy (2G-Y-A §6): the server-derived totals are authoritative when
+ * reliable. When the booking legitimately lacks server-derivable amounts
+ * (deriveServerSideInvoiceContext → invoice_amount_unreliable) or currency
+ * (currency_missing), the core falls back to the caller's expected_totals ONLY
+ * if every required total is a valid finite number, and emits the warning
+ * "server_invoice_amount_unreliable_used_client_expected_totals". Totals are
+ * NEVER invented. Hard business/scope errors (leg_required_for_roundtrip,
+ * currency_mismatch, totals_mismatch, source_leg_not_found) are NEVER softened.
+ *
+ * Leg-first (2G-Y-A §7, conservative): a multi-leg roundtrip parent without an
+ * explicit source_leg_id is REJECTED with missing_source_leg_binding rather
+ * than invoicing the whole roundtrip parent. (Package/waiting-time parent
+ * allowance is intentionally out of scope here.)
+ *
+ * Hard restrictions (same as the credit-note / refund-proof cores):
+ *   - never mutates booking:<id> (read-only on the source booking)
+ *   - never touches booking/payment/refund/credit status
+ *   - never calls Mollie / Chiron / Peppol / Billit / UBL / OAuth / external IO
+ *   - never generates PDFs and never touches the legacy FLX invoice pipeline
+ *     (INVOICE_KV / renderInvoiceHtml / nextInvoiceNumber /
+ *     allocateScopedInvoiceSequence / handleBookingInvoicePdfGet)
+ *   - writes ONLY through plan.primary_writes (registry + indexes + idempotency)
+ *
+ * Params: same shape as _issueCreditNoteCore.
+ */
+async function _issueInvoiceCore({
+  env,
+  body,
+  scope,
+  scopeForBookingMatch,
+  createdByRoleOverride = null,
+  routeLabel = "ADMIN_INVOICE_ISSUE",
+}) {
+  try {
+    // 2. Required body fields.
+    const canonicalBookingId = safeStr(
+      body.canonical_booking_id ??
+        body.canonicalBookingId ??
+        body.source_booking_id ??
+        body.sourceBookingId,
+    );
+    if (!canonicalBookingId) {
+      return json({ ok: false, error: "missing_source_booking_id" }, 400);
+    }
+    const currency = safeStr(body.currency, 8).toUpperCase();
+    if (!currency) return json({ ok: false, error: "missing_currency" }, 400);
+    if (!/^[A-Z]{3}$/.test(currency)) {
+      return json({ ok: false, error: "invalid_currency" }, 400);
+    }
+    const expectedTotals = body.expected_totals ?? body.expectedTotals;
+    if (
+      !expectedTotals ||
+      typeof expectedTotals !== "object" ||
+      Array.isArray(expectedTotals)
+    ) {
+      return json({ ok: false, error: "missing_expected_totals" }, 400);
+    }
+    const idempotencyKey = safeStr(
+      body.idempotency_key ?? body.idempotencyKey,
+      200,
+    );
+    if (!idempotencyKey) {
+      return json({ ok: false, error: "missing_idempotency_key" }, 400);
+    }
+    const createdByRole =
+      createdByRoleOverride != null
+        ? createdByRoleOverride
+        : safeStr(body.created_by_role ?? body.createdByRole, 32);
+    if (!createdByRole) {
+      return json({ ok: false, error: "missing_created_by_role" }, 400);
+    }
+    const createdByDeviceId =
+      safeStr(body.created_by_device_id ?? body.createdByDeviceId, 200) ||
+      null;
+    const sourceLegId =
+      safeStr(body.source_leg_id ?? body.sourceLegId, 200) || null;
+    const sourceLegTypeRaw =
+      safeStr(body.source_leg_type ?? body.sourceLegType, 24) || null;
+    const clientDraftHash =
+      safeStr(body.client_draft_hash ?? body.clientDraftHash, 200) || null;
+
+    // 3. Binding checks.
+    if (!env?.BOOKING_KV) {
+      return json({ ok: false, error: "missing_binding" }, 503);
+    }
+    if (!env?.DOCUMENT_REFERENCE_SEQUENCE) {
+      return json({ ok: false, error: "missing_binding" }, 503);
+    }
+
+    const bookingMask = _bookingIntentMask(canonicalBookingId);
+    const idemMask = idempotencyKey.slice(0, 8);
+    const warnings = [];
+
+    // 4. Early idempotency lookup (dedup BEFORE the booking read). Namespaced
+    //    by DOCUMENT_TYPE_INVOICE so it cannot collide with credit_note /
+    //    refund_proof replays.
+    const idemHit = await findDocumentByIdempotency(
+      env,
+      scope,
+      DOCUMENT_TYPE_INVOICE,
+      idempotencyKey,
+    );
+    if (idemHit) {
+      let storedHash = null;
+      try {
+        const idemKey = buildDocumentIdempotencyKey(
+          scope,
+          DOCUMENT_TYPE_INVOICE,
+          idempotencyKey,
+        );
+        const raw = await env.BOOKING_KV.get(idemKey);
+        if (raw && raw.startsWith("{")) {
+          const parsed = JSON.parse(raw);
+          storedHash = safeStr(parsed?.client_draft_hash) || null;
+        }
+      } catch (_) {
+        // ignore — replay still safe; fall through with storedHash=null
+      }
+      if (clientDraftHash && storedHash && clientDraftHash !== storedHash) {
+        console.log(
+          `[${routeLabel}][REPLAY_HASH_MISMATCH] booking=${bookingMask} idem=${idemMask}`,
+        );
+        return json(
+          { ok: false, error: "idempotency_key_reuse_with_different_payload" },
+          409,
+        );
+      }
+      const replayWarnings = [];
+      if (!clientDraftHash || !storedHash) {
+        replayWarnings.push("replay_without_client_draft_hash");
+        console.log(
+          `[${routeLabel}][REPLAY_WARN] no_client_draft_hash_provided booking=${bookingMask} idem=${idemMask}`,
+        );
+      }
+      const replayRegistry = await loadIssuedDocumentRegistryRecordById(
+        env,
+        scope,
+        idemHit.document_id,
+      );
+      if (!replayRegistry) {
+        console.log(
+          `[${routeLabel}][REPLAY_REGISTRY_MISS] booking=${bookingMask} idem=${idemMask}`,
+        );
+      }
+      const replaySafe = buildInvoiceReplaySafeFields(idemHit, replayRegistry);
+      console.log(
+        `[${routeLabel}][REPLAY_OK] booking=${bookingMask} idem=${idemMask} lifecycle=${replaySafe.lifecycle_state || "-"} currency=${replaySafe.currency || "-"}`,
+      );
+      return json({
+        ok: true,
+        document_id: replaySafe.document_id,
+        document_type: "invoice",
+        document_number: replaySafe.document_number,
+        lifecycle_state: replaySafe.lifecycle_state,
+        content_hash: replaySafe.content_hash,
+        issue_timestamp: replaySafe.issue_timestamp,
+        currency: replaySafe.currency,
+        source_booking_id: replaySafe.source_booking_id,
+        source_leg_id: replaySafe.source_leg_id,
+        source_leg_type: replaySafe.source_leg_type,
+        idempotent_replay: true,
+        warnings: replayWarnings,
+      });
+    }
+
+    // 5. Load source booking (read-only).
+    const rec = await env.BOOKING_KV.get(`booking:${canonicalBookingId}`, {
+      type: "json",
+    });
+    if (!rec || typeof rec !== "object" || Array.isArray(rec)) {
+      return json({ ok: false, error: "source_booking_not_found" }, 404);
+    }
+
+    // 6. Scope match between request scope and booking record.
+    if (!bookingMatchesRequestedTenantScope(rec, scopeForBookingMatch)) {
+      console.log(
+        `[${routeLabel}][SCOPE_REJECT] booking=${bookingMask} idem=${idemMask}`,
+      );
+      return json({ ok: false, error: "not_in_scope" }, 403);
+    }
+
+    // 7. Derive invoice context (leg-first, totals + currency). Same scoped
+    //    server pricing-profile currency fallback as the other cores.
+    let serverScopedPricingProfile = null;
+    try {
+      serverScopedPricingProfile = await _loadTenantPricingProfile(env, scope, {
+        allowTenantLegacyFallback: true,
+      });
+    } catch (_) {
+      serverScopedPricingProfile = null;
+    }
+    const invoiceDerivation = deriveServerSideInvoiceContext(rec, {
+      source_leg_id: sourceLegId,
+      source_leg_type: sourceLegTypeRaw,
+      expected_currency: currency,
+      expected_totals: expectedTotals,
+      booking_id: canonicalBookingId,
+      server_pricing_profile: serverScopedPricingProfile,
+    });
+
+    let ctx = null;
+    if (invoiceDerivation.ok) {
+      ctx = invoiceDerivation.context;
+      if (Array.isArray(invoiceDerivation.warnings)) {
+        for (const w of invoiceDerivation.warnings) warnings.push(w);
+      }
+    } else {
+      const errCode = invoiceDerivation.error || "internal_error";
+      // ---- Hard failures: NEVER softened. -----------------------------------
+      if (errCode === "missing_booking_record") {
+        console.log(
+          `[${routeLabel}][DERIVE_REJECT] booking=${bookingMask} reason=${errCode}`,
+        );
+        return json({ ok: false, error: errCode }, 500);
+      }
+      if (errCode === "source_leg_not_found") {
+        console.log(
+          `[${routeLabel}][DERIVE_REJECT] booking=${bookingMask} reason=${errCode}`,
+        );
+        return json({ ok: false, error: errCode }, 404);
+      }
+      if (errCode === "leg_required_for_roundtrip") {
+        // Conservative leg-first: do not invoice a whole roundtrip parent.
+        console.log(
+          `[${routeLabel}][DERIVE_REJECT] booking=${bookingMask} reason=missing_source_leg_binding`,
+        );
+        return json({ ok: false, error: "missing_source_leg_binding" }, 409);
+      }
+      if (errCode === "currency_mismatch" || errCode === "totals_mismatch") {
+        console.log(
+          `[${routeLabel}][DERIVE_REJECT] booking=${bookingMask} reason=${errCode}`,
+        );
+        return json({ ok: false, error: errCode }, 409);
+      }
+      // ---- Soft failures: server lacks amounts/currency → validated client
+      //      expected_totals fallback (§6). Never invents amounts. ------------
+      if (
+        errCode === "invoice_amount_unreliable" ||
+        errCode === "currency_missing"
+      ) {
+        // Validate every required client total is a finite number.
+        const _num = (v) => {
+          if (v === null || v === undefined || v === "") return null;
+          const n = Number(v);
+          return Number.isFinite(n) ? n : null;
+        };
+        const fbTotalInclVat = _num(
+          expectedTotals.total_incl_vat ?? expectedTotals.totalInclVat,
+        );
+        const fbSubtotalExVat = _num(
+          expectedTotals.subtotal_ex_vat ?? expectedTotals.subtotalExVat,
+        );
+        const fbVatAmount = _num(
+          expectedTotals.vat_amount ?? expectedTotals.vatAmount,
+        );
+        let fbVatRatePercent = _num(
+          expectedTotals.vat_rate_percent ?? expectedTotals.vatRatePercent,
+        );
+        if (
+          fbTotalInclVat === null ||
+          !(fbTotalInclVat > 0) ||
+          fbSubtotalExVat === null ||
+          fbSubtotalExVat < 0 ||
+          fbVatAmount === null ||
+          fbVatAmount < 0 ||
+          fbVatRatePercent === null ||
+          fbVatRatePercent < 0
+        ) {
+          console.log(
+            `[${routeLabel}][DERIVE_REJECT] booking=${bookingMask} reason=invoice_amount_unreliable`,
+          );
+          return json({ ok: false, error: "invoice_amount_unreliable" }, 409);
+        }
+        if (fbVatRatePercent > 0 && fbVatRatePercent < 1) {
+          fbVatRatePercent = fbVatRatePercent * 100;
+        }
+
+        // Resolve server-side currency conservatively (record + scoped pricing
+        // profile). Client currency is only used when the server truly has none.
+        const pricingProfile =
+          (rec?.pricing_profile && typeof rec.pricing_profile === "object"
+            ? rec.pricing_profile
+            : null) ||
+          (rec?.pricingProfile && typeof rec.pricingProfile === "object"
+            ? rec.pricingProfile
+            : null) ||
+          (rec?.payload?.pricing_profile &&
+          typeof rec.payload.pricing_profile === "object"
+            ? rec.payload.pricing_profile
+            : null) ||
+          (rec?.payload?.pricingProfile &&
+          typeof rec.payload.pricingProfile === "object"
+            ? rec.payload.pricingProfile
+            : null) ||
+          null;
+        const serverCurrency =
+          resolveExplicitBookingCurrencyFromRecordOrPayload({
+            payload: rec?.payload,
+            quote: rec?.quote,
+            pricingProfile,
+            booking: rec?.booking,
+          }) ||
+          normalizeExplicitIsoCurrency(
+            serverScopedPricingProfile?.currency,
+          ) ||
+          "";
+        if (serverCurrency && serverCurrency !== currency) {
+          console.log(
+            `[${routeLabel}][DERIVE_REJECT] booking=${bookingMask} reason=currency_mismatch`,
+          );
+          return json({ ok: false, error: "currency_mismatch" }, 409);
+        }
+        const fallbackCurrency = serverCurrency || currency;
+        if (!serverCurrency) {
+          warnings.push("server_invoice_currency_unavailable_used_client_currency");
+        }
+        warnings.push(
+          "server_invoice_amount_unreliable_used_client_expected_totals",
+        );
+
+        const fallbackParentBookingId =
+          safeStr(
+            rec?.parent_booking_id ??
+              rec?.parentBookingId ??
+              rec?.booking?.parent_booking_id ??
+              rec?.booking?.parentBookingId ??
+              rec?.payload?.parent_booking_id ??
+              rec?.payload?.parentBookingId,
+          ) || null;
+
+        ctx = {
+          is_leg_scoped: !!sourceLegId,
+          source_kind: sourceLegId ? "leg" : "booking",
+          source_leg_id: sourceLegId,
+          source_leg_type: sourceLegTypeRaw,
+          source_parent_booking_id: fallbackParentBookingId,
+          source_invoice_reference: null,
+          source_invoice_document_id: null,
+          currency: fallbackCurrency,
+          currency_source: serverCurrency ? "record" : "client_expected",
+          totals: {
+            total_incl_vat: fbTotalInclVat,
+            subtotal_ex_vat: fbSubtotalExVat,
+            vat_amount: fbVatAmount,
+            vat_rate_percent: fbVatRatePercent,
+            credited_amount_incl_vat: null,
+            refunded_amount_incl_vat: null,
+          },
+        };
+      } else {
+        // Unknown derivation error → conservative reject (no fallback).
+        console.log(
+          `[${routeLabel}][DERIVE_REJECT] booking=${bookingMask} reason=${errCode}`,
+        );
+        return json({ ok: false, error: errCode }, 409);
+      }
+    }
+
+    // 8. Allocate official INV reference (SEPARATE sequence from FCN/FRP and
+    //    from the legacy FLX sequence). Only AFTER all validation gates pass.
+    let invReference = "";
+    try {
+      const pickupIso =
+        safeStr(
+          rec?.pickup_iso ??
+            rec?.pickupIso ??
+            rec?.booking?.pickup_iso ??
+            rec?.booking?.pickupIso ??
+            rec?.payload?.pickup_iso ??
+            rec?.payload?.pickupIso,
+        ) || null;
+      invReference = await allocateInvoiceReference(env, scope, {
+        canonical_booking_id: canonicalBookingId,
+        pickup_iso: pickupIso,
+      });
+    } catch (allocErr) {
+      console.log(
+        `[${routeLabel}][ALLOC_FAILED] booking=${bookingMask} reason=${safeStr(allocErr?.message, 160) || "unknown"}`,
+      );
+      return json({ ok: false, error: "allocation_failed" }, 500);
+    }
+
+    // 9. Server-side identity: seller_snapshot from BOOKING_KV business profile
+    //    (NEVER from body), buyer_snapshot best-effort from rec.
+    const issueTimestamp = new Date().toISOString();
+    const documentId = crypto.randomUUID();
+
+    let businessProfile = null;
+    try {
+      businessProfile = await loadBusinessProfile(env, scope, {
+        allowTenantLegacyFallback: true,
+      });
+    } catch (_) {
+      businessProfile = null;
+    }
+    const sellerSnapshot = {
+      name:
+        safeStr(
+          businessProfile?.companyName ?? businessProfile?.company_name,
+          240,
+        ) || null,
+      legal_name:
+        safeStr(
+          businessProfile?.legalName ?? businessProfile?.legal_name,
+          240,
+        ) || null,
+      vat_number:
+        safeStr(
+          businessProfile?.vatNumber ?? businessProfile?.vat_number,
+          64,
+        ) || null,
+      registration_number:
+        safeStr(
+          businessProfile?.companyRegistrationNumber ??
+            businessProfile?.company_registration_number ??
+            businessProfile?.enterpriseNumber ??
+            businessProfile?.enterprise_number ??
+            businessProfile?.kboNumber ??
+            businessProfile?.kbo_number,
+          64,
+        ) || null,
+      email:
+        safeStr(
+          businessProfile?.invoiceEmail ??
+            businessProfile?.invoice_email ??
+            businessProfile?.billingEmail ??
+            businessProfile?.billing_email ??
+            businessProfile?.companyEmail ??
+            businessProfile?.company_email ??
+            businessProfile?.email,
+          240,
+        ) || null,
+      address_line: safeStr(businessProfile?.address, 240) || null,
+      postal_code:
+        safeStr(businessProfile?.postcode ?? businessProfile?.postal_code, 32) ||
+        null,
+      city: safeStr(businessProfile?.city, 120) || null,
+      country_code: safeStr(businessProfile?.country, 8).toUpperCase() || null,
+    };
+
+    const buyerBooking =
+      rec?.booking && typeof rec.booking === "object" ? rec.booking : {};
+    const buyerPayload =
+      rec?.payload && typeof rec.payload === "object" ? rec.payload : {};
+    const buyerNameRaw =
+      safeStr(
+        rec?.customer_name ??
+          rec?.customerName ??
+          buyerBooking?.customer_name ??
+          buyerBooking?.customerName ??
+          buyerPayload?.customer_name ??
+          buyerPayload?.customerName,
+        240,
+      ) || null;
+    const buyerEmailRaw =
+      safeStr(
+        rec?.customer_email ??
+          rec?.customerEmail ??
+          buyerBooking?.customer_email ??
+          buyerBooking?.customerEmail ??
+          buyerPayload?.customer_email ??
+          buyerPayload?.customerEmail,
+        240,
+      ) || null;
+    const buyerSnapshot =
+      buyerNameRaw || buyerEmailRaw
+        ? {
+            name: buyerNameRaw,
+            email: buyerEmailRaw,
+            vat_number: null,
+            address_line: null,
+            postal_code: null,
+            city: null,
+            country_code: null,
+          }
+        : null;
+    if (!buyerSnapshot || !buyerNameRaw || !buyerEmailRaw) {
+      warnings.push("buyer_snapshot_incomplete");
+    }
+
+    // 10. Build registry record. document_type = invoice, document_number =
+    //     INV-*, proof_reference stays null. source_invoice_* default to null
+    //     (the builder attaches them for invoices); 2G-Y-A does not stamp them.
+    let record;
+    try {
+      record = await buildIssuedDocumentRegistryRecord({
+        scope,
+        document_id: documentId,
+        document_type: DOCUMENT_TYPE_INVOICE,
+        document_number: invReference,
+        proof_reference: null,
+        lifecycle_state: "issued",
+        source_booking_id: canonicalBookingId,
+        source_parent_booking_id: ctx.source_parent_booking_id,
+        source_leg_id: ctx.source_leg_id,
+        source_leg_type: ctx.source_leg_type,
+        is_leg_scoped: ctx.is_leg_scoped,
+        source_refund_id: null,
+        source_credit_decision: null,
+        currency: ctx.currency,
+        totals: ctx.totals,
+        seller_snapshot: sellerSnapshot,
+        buyer_snapshot: buyerSnapshot,
+        issue_timestamp: issueTimestamp,
+        created_by_role: createdByRole,
+        created_by_device_id: createdByDeviceId,
+        idempotency_key: idempotencyKey,
+      });
+    } catch (buildErr) {
+      console.log(
+        `[${routeLabel}][STRANDED_INV] reference=${invReference} booking=${bookingMask} reason=build_failed:${safeStr(buildErr?.message, 120)}`,
+      );
+      return json({ ok: false, error: "build_failed" }, 500);
+    }
+
+    // 11. Build write plan and inject client_draft_hash into the idempotency
+    //     record so future replays can compare it.
+    let plan;
+    try {
+      plan = buildDocumentRegistryWritePlan(record);
+    } catch (planErr) {
+      console.log(
+        `[${routeLabel}][STRANDED_INV] reference=${invReference} booking=${bookingMask} reason=plan_failed:${safeStr(planErr?.message, 120)}`,
+      );
+      return json({ ok: false, error: "plan_failed" }, 500);
+    }
+    if (clientDraftHash && Array.isArray(plan?.primary_writes)) {
+      const idemWrite = plan.primary_writes.find(
+        (w) => w?.label === "idempotency_record",
+      );
+      if (idemWrite && typeof idemWrite.value === "string") {
+        try {
+          const parsed = JSON.parse(idemWrite.value);
+          parsed.client_draft_hash = clientDraftHash;
+          idemWrite.value = JSON.stringify(parsed);
+        } catch (_) {
+          // tolerate — older shape; idempotency replay just won't compare hash
+        }
+      }
+    }
+
+    // 12. Execute primary_writes in 2G-L-guaranteed order. registry_record is
+    //     canonical; later index failures are partial; idempotency_record is
+    //     LAST and its failure is a non-fatal warning.
+    for (const w of plan.primary_writes) {
+      try {
+        await env.BOOKING_KV.put(w.key, w.value);
+      } catch (writeErr) {
+        const reasonText = safeStr(writeErr?.message, 160) || "unknown";
+        if (w.label === "registry_record") {
+          console.log(
+            `[${routeLabel}][STRANDED_INV] reference=${invReference} booking=${bookingMask} reason=registry_write_failed:${reasonText}`,
+          );
+          return json({ ok: false, error: "registry_write_failed" }, 500);
+        }
+        if (w.label === "idempotency_record") {
+          console.log(
+            `[${routeLabel}][IDEMPOTENCY_PARTIAL] reference=${invReference} booking=${bookingMask} reason=${reasonText}`,
+          );
+          warnings.push("idempotency_record_write_failed");
+          break;
+        }
+        console.log(
+          `[${routeLabel}][PARTIAL_INDEX] label=${w.label} reference=${invReference} booking=${bookingMask} reason=${reasonText}`,
+        );
+        return json({ ok: false, error: "registry_index_partial" }, 500);
+      }
+    }
+
+    // 13. Best-effort compliance event emit (never fails the issue).
+    try {
+      const auditEvent = {
+        event_type: plan.audit_event.event_type,
+        schema_version: "compliance_event_v1",
+        tenant_id: scope.tenant_id,
+        company_id: scope.company_id,
+        booking_id: canonicalBookingId,
+        payload: plan.audit_event.payload,
+      };
+      const emit = await emitComplianceEventBestEffort(env, auditEvent, {
+        logLabel: "document_issued",
+        timeoutMs: 1500,
+      });
+      if (!emit?.ok) warnings.push("compliance_event_emit_failed");
+    } catch (_) {
+      warnings.push("compliance_event_emit_failed");
+    }
+
+    console.log(
+      `[${routeLabel}][OK] reference=${invReference} booking=${bookingMask} idem=${idemMask} warnings=${warnings.length}`,
+    );
+
+    // 14. Success response (safe summary; no buyer/seller snapshots).
+    return json({
+      ok: true,
+      document_id: documentId,
+      document_type: "invoice",
+      document_number: invReference,
+      lifecycle_state: "issued",
+      content_hash: record.content_hash,
+      issue_timestamp: issueTimestamp,
+      currency: ctx.currency,
+      source_booking_id: canonicalBookingId,
+      source_leg_id: ctx.source_leg_id,
+      source_leg_type: ctx.source_leg_type,
+      idempotent_replay: false,
+      warnings,
+    });
+  } catch (err) {
+    const message = String(err?.message || "internal_error");
+    console.log(`[${routeLabel}][ERR] ${safeStr(message, 200) || "unknown"}`);
     return json({ ok: false, error: "internal_error" }, 500);
   }
 }
