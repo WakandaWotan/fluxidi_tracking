@@ -67539,6 +67539,78 @@ async function listIssuedDocumentRecordsForBooking(
   return { ok: true, records, warnings };
 }
 
+/* 2G-V — pure source-invoice-reference reader for Document Core.
+ *
+ * Read-only / inert. Conservatively probes the EXISTING canonical registry
+ * record for a safe parent-invoice / original-invoice reference. Used by
+ * BOTH `classifyDocumentExportReadiness` (Peppol gate for credit-note) AND
+ * `buildDocumentExportPreview` (provider-neutral preview's
+ * `source_binding.source_invoice_reference`) so the two flows agree.
+ *
+ * Purity / inertness contract:
+ *   - no KV read/write, no DO call, no allocation, no compliance event,
+ *     no Billit/Peppol/Mollie/Chiron network call,
+ *   - never mutates the input record,
+ *   - never invents data: only fields already present on the record are
+ *     considered; absent → empty string,
+ *   - never gates an existing issue/replay/list/preview/readiness/lookup/
+ *     dry-run route.
+ *
+ * Candidate field order (first non-empty wins). All paths are top-level on
+ * the registry envelope OR on a single nested `source_invoice` / `sourceInvoice`
+ * object — no deep walks, no payload/booking/quote probing.
+ */
+function getDocumentSourceInvoiceReference(record) {
+  const rec = record && typeof record === "object" && !Array.isArray(record)
+    ? record
+    : {};
+  const candidates = [
+    rec.source_invoice_reference,
+    rec.sourceInvoiceReference,
+    rec.source_invoice_number,
+    rec.sourceInvoiceNumber,
+    rec.source_invoice_document_number,
+    rec.sourceInvoiceDocumentNumber,
+    rec.original_invoice_reference,
+    rec.originalInvoiceReference,
+    rec.credited_invoice_reference,
+    rec.creditedInvoiceReference,
+  ];
+  // Nested `source_invoice` / `sourceInvoice` object — only the well-known
+  // `number` / `reference` / `id` fields, never an arbitrary object spread.
+  const nestedSnake =
+    rec.source_invoice && typeof rec.source_invoice === "object" && !Array.isArray(rec.source_invoice)
+      ? rec.source_invoice
+      : null;
+  const nestedCamel =
+    rec.sourceInvoice && typeof rec.sourceInvoice === "object" && !Array.isArray(rec.sourceInvoice)
+      ? rec.sourceInvoice
+      : null;
+  if (nestedSnake) {
+    candidates.push(
+      nestedSnake.number,
+      nestedSnake.reference,
+      nestedSnake.document_number,
+      nestedSnake.documentNumber,
+      nestedSnake.id,
+    );
+  }
+  if (nestedCamel) {
+    candidates.push(
+      nestedCamel.number,
+      nestedCamel.reference,
+      nestedCamel.document_number,
+      nestedCamel.documentNumber,
+      nestedCamel.id,
+    );
+  }
+  for (const candidate of candidates) {
+    const value = safeStr(candidate, 80);
+    if (value) return value;
+  }
+  return "";
+}
+
 /* 2G-T — pure document export-readiness classifier.
  *
  * Read-only / inert. Given an already-loaded canonical registry record and an
@@ -67662,7 +67734,16 @@ function classifyDocumentExportReadiness(record, businessProfile) {
     exportRole = "credit_note";
     exportTargetSuggestion = "einvoice_credit_note";
     exportableToAccounting = true;
-    if (!documentNumber) findings.push("missing_source_invoice_reference");
+    // 2G-V tighten: a Peppol credit-note must reference the original
+    // invoice it credits. Only safe registry fields count; the helper is
+    // PURE and never invents data. When the field is absent we surface the
+    // stable enum `missing_source_invoice_reference` (deduped via uniq()
+    // against the same code the generic findings may have raised earlier),
+    // which forces exportable_to_peppol = false while keeping
+    // exportable_to_accounting = true and export_target_suggestion =
+    // "einvoice_credit_note" per the runtime-proven preview contract.
+    const sourceInvoiceRef = getDocumentSourceInvoiceReference(rec);
+    if (!sourceInvoiceRef) findings.push("missing_source_invoice_reference");
     for (const f of uniq(findings)) blockingReasons.push(f);
     exportableToPeppol = blockingReasons.length === 0;
   } else if (documentType === "refund_proof") {
@@ -67896,13 +67977,14 @@ function buildDocumentExportPreview(record, classification) {
 
   const sourceRefundId =
     safeStr(rec.source_refund_id ?? rec.sourceRefundId, 200) || null;
-  // Reserved for the future POST /admin/documents/invoice/issue route. When
-  // it lands, credit-note registry records will carry the parent invoice
-  // number on `source_invoice_reference` / `sourceInvoiceReference`. Today
-  // those fields are absent so we project `null` rather than fabricating.
+  // 2G-V: source-invoice-reference is read through the SHARED helper so the
+  // preview's `source_binding.source_invoice_reference` agrees with the
+  // readiness classifier's Peppol gate for credit_note. The helper is PURE
+  // (no KV/DO/fetch/allocator) and never invents data; when no safe
+  // registry field carries a parent-invoice number it returns "" and we
+  // project `null` here.
   const sourceInvoiceReference =
-    safeStr(rec.source_invoice_reference ?? rec.sourceInvoiceReference, 80) ||
-    null;
+    getDocumentSourceInvoiceReference(rec) || null;
 
   // Per-type export preview kind/target/exclusion.
   let exportKind = "unknown";
