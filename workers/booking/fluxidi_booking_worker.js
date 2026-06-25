@@ -66239,6 +66239,14 @@ function _invoiceRoundtripLegsForReceiptPdf(rec, booking = {}) {
   }
   const outbound = byType.get("outbound") || null;
   const ret = byType.get("return") || null;
+  // A zero price_incl_vat_return is NOT evidence that a return exists - the
+  // legacy default for one-way bookings is 0, not null. Require a strictly
+  // positive amount before letting price alone enable the return path.
+  const _returnPriceHint = amount(
+    bookingObj?.price_incl_vat_return ?? rec?.price_incl_vat_return,
+  );
+  const _returnPriceHintMeaningful =
+    _returnPriceHint != null && _returnPriceHint > 0;
   const returnEnabled =
     !!bookingObj?.return_enabled ||
     !!bookingObj?.returnEnabled ||
@@ -66246,7 +66254,7 @@ function _invoiceRoundtripLegsForReceiptPdf(rec, booking = {}) {
     !!rec?.returnEnabled ||
     !!_bookingReturnEnabledFromRecord(rec) ||
     _bookingHasReturnDisplayData(rec) ||
-    amount(bookingObj?.price_incl_vat_return ?? rec?.price_incl_vat_return) != null;
+    _returnPriceHintMeaningful;
   if (!outbound && !ret && !returnEnabled) return [];
 
   const buildLeg = (type, leg, fallback = {}) => {
@@ -66343,7 +66351,15 @@ function _invoiceRoundtripLegsForReceiptPdf(rec, booking = {}) {
   if (!outboundLeg.from && !outboundLeg.to && !returnLeg.from && !returnLeg.to) {
     return [];
   }
-  return [outboundLeg, returnLeg];
+  // Suppress the synthetic empty return leg when no real return exists. The
+  // return row is only included if there is an operational return leg, the
+  // return leg has a from/to address, or it carries a strictly positive price.
+  const returnLegHasMeaningfulData =
+    !!ret ||
+    !!returnLeg.from ||
+    !!returnLeg.to ||
+    (returnLeg.price_incl_vat != null && returnLeg.price_incl_vat > 0);
+  return returnLegHasMeaningfulData ? [outboundLeg, returnLeg] : [outboundLeg];
 }
 
 async function updateBookingStatusAuthoritative(
@@ -75610,6 +75626,36 @@ function renderInvoiceHtml(env, data, commProfile = null) {
     ? `<div><strong>${escapeHtml(d.customerCompany)}</strong></div>`
     : "";
 
+  // Buyer block body. For business buyers we render legal identity only
+  // (company name, VAT, billing address, optional snapshot contact email).
+  // Passenger name/email/phone are deliberately omitted so the PDF buyer block
+  // matches the billing customer, not the rider. For non-business receipts the
+  // legacy passenger lines are preserved as the fallback.
+  const buyerVatLine = `<span class="mono">${
+    safeStr(d.customerVat) ? "BTW: " + escapeHtml(d.customerVat) : "BTW: —"
+  }</span>`;
+  const buyerAddressLine = invoiceAddressBlock
+    ? `<div style="margin-top:10px">${invoiceAddressBlock}</div>`
+    : "";
+  const buyerBillingContactEmail = safeStr(d.buyerBillingContactEmail);
+  const buyerBusinessEmailLine = buyerBillingContactEmail
+    ? `${escapeHtml(buyerBillingContactEmail)}<br>`
+    : "";
+  const buyerCompanyNameForBusiness = customerCompanyBlock
+    ? customerCompanyBlock
+    : `<div><strong>${escapeHtml(safeStr(d.customerCompany) || "—")}</strong></div>`;
+  const buyerBlockInner = d.businessBuyerActive
+    ? `${buyerCompanyNameForBusiness}
+      ${buyerBusinessEmailLine}
+      ${buyerVatLine}
+      ${buyerAddressLine}`
+    : `${customerCompanyBlock}
+      ${escapeHtml(safeStr(d.customerName) || "—")}<br>
+      ${escapeHtml(safeStr(d.customerEmail) || "—")}<br>
+      ${escapeHtml(safeStr(d.customerPhone) || "—")}<br>
+      ${buyerVatLine}
+      ${buyerAddressLine}`;
+
   const returnLine = d.returnTrip ? `<span class="muted">Retourrit inbegrepen.</span><br>` : "";
 
   const splitLines = (safeStr(d.priceReturnIncl) && money2(d.priceReturnIncl) !== "0.00")
@@ -75659,14 +75705,28 @@ function renderInvoiceHtml(env, data, commProfile = null) {
           };
         })
     : [];
+  // Tightened: a structured roundtrip table requires BOTH an outbound leg with
+  // route data AND a return leg that itself carries route data (from/to) or a
+  // strictly positive price. This prevents one-way bookings from rendering a
+  // fake "Terugrit EUR 0.00" row when downstream code synthesised an empty
+  // return leg from a zero price hint.
+  const _returnLegMeaningful = (leg) =>
+    leg.legType === "return" &&
+    (!!leg.from ||
+      !!leg.to ||
+      (leg.priceInclVat != null && leg.priceInclVat > 0));
+  const _outboundLegMeaningful = (leg) =>
+    leg.legType === "outbound" && (!!leg.from || !!leg.to);
   const hasStructuredRoundtripLegs =
-    (d.returnTrip || structuredLegs.some((leg) => leg.legType === "return")) &&
-    structuredLegs.some((leg) => leg.legType === "outbound") &&
-    structuredLegs.some((leg) => leg.legType === "return") &&
-    structuredLegs.some((leg) => leg.from || leg.to);
+    (d.returnTrip || structuredLegs.some(_returnLegMeaningful)) &&
+    structuredLegs.some(_outboundLegMeaningful) &&
+    structuredLegs.some(_returnLegMeaningful);
   const legRows = hasStructuredRoundtripLegs
     ? structuredLegs
-        .filter((leg) => leg.legType === "outbound" || leg.legType === "return")
+        .filter(
+          (leg) =>
+            _outboundLegMeaningful(leg) || _returnLegMeaningful(leg),
+        )
         .sort((a, b) => (a.legType === b.legType ? 0 : (a.legType === "outbound" ? -1 : 1)))
         .map((leg) => {
           const distanceLine = leg.distanceKm != null ? `<span class="muted">Afstand: ${escapeHtml(String(Math.round(leg.distanceKm * 10) / 10))} km</span>` : "";
@@ -75821,12 +75881,7 @@ function renderInvoiceHtml(env, data, commProfile = null) {
   <div class="meta">
     <div class="box">
       <strong>Gefactureerd aan</strong>
-      ${customerCompanyBlock}
-      ${escapeHtml(safeStr(d.customerName) || "—")}<br>
-      ${escapeHtml(safeStr(d.customerEmail) || "—")}<br>
-      ${escapeHtml(safeStr(d.customerPhone) || "—")}<br>
-      <span class="mono">${safeStr(d.customerVat) ? "BTW: " + escapeHtml(d.customerVat) : "BTW: —"}</span>
-      ${invoiceAddressBlock ? `<div style="margin-top:10px">${invoiceAddressBlock}</div>` : ""}
+      ${buyerBlockInner}
     </div>
 
     <div class="box" style="text-align:right;">
@@ -76300,8 +76355,15 @@ async function generateAndSendInvoice({
       _buyerContactPhone || safeStr(bookingInput.customerPhone) || "";
     const resolvedCustomerEmailDisplay =
       _buyerContactEmail || customerEmail || "";
+    // A "business buyer" is active when the snapshot supplies any legal-identity
+    // signal: legal/display name, VAT/company-registration, or any billing
+    // address field. Used by renderInvoiceHtml to render the "Gefactureerd aan"
+    // block as buyer identity only (no passenger name/phone/email mixed in).
+    const _businessBuyerActive = !!(
+      _buyerLegalName || _buyerVatNumber || _billingComposedAddress
+    );
     console.log(
-      `[INVOICE_GEN][BUYER_SOURCE] bookingId=${safeStr(bookingInput.bookingPublicId || bookingInput.bookingId)} billingSnapshotUsed=${!!_invoiceBillingSnapshot} legalNameFromSnapshot=${!!_buyerLegalName} vatFromSnapshot=${!!_buyerVatNumber} addressFromSnapshot=${!!_billingComposedAddress}`,
+      `[INVOICE_GEN][BUYER_SOURCE] bookingId=${safeStr(bookingInput.bookingPublicId || bookingInput.bookingId)} billingSnapshotUsed=${!!_invoiceBillingSnapshot} legalNameFromSnapshot=${!!_buyerLegalName} vatFromSnapshot=${!!_buyerVatNumber} addressFromSnapshot=${!!_billingComposedAddress} businessBuyerActive=${_businessBuyerActive}`,
     );
 
     const data = {
@@ -76343,6 +76405,12 @@ async function generateAndSendInvoice({
       customerVat: resolvedCustomerVat,
       customerCompany: resolvedCustomerCompany,
       invoiceAddress: resolvedInvoiceAddress,
+      // Business-buyer hints for the invoice PDF "Gefactureerd aan" block.
+      // When true, the renderer must show buyer identity only (no passenger
+      // name/email/phone). buyerBillingContactEmail is the snapshot's
+      // contact_email (never the passenger email); empty when not provided.
+      businessBuyerActive: _businessBuyerActive,
+      buyerBillingContactEmail: _buyerContactEmail || "",
 
       // totals
       vat_rate: vatRateNormalized,
