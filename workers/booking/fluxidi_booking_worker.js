@@ -69055,6 +69055,125 @@ function buildDocumentExportPreview(record, classification, displayOverlay = nul
     ];
   }
 
+  // Project provider-neutral line items already stored on the registry record,
+  // if any. PURE / read-only: only well-known numeric/string fields are
+  // surfaced, unknown keys are dropped, and the record is never mutated.
+  // Returns [] when the record carries no usable line items.
+  function _projectStoredLineItemsSafe(rawLineItems, cur) {
+    if (!Array.isArray(rawLineItems) || rawLineItems.length === 0) return [];
+    const out = [];
+    for (const li of rawLineItems) {
+      if (!li || typeof li !== "object" || Array.isArray(li)) continue;
+      const description =
+        safeStr(li.description ?? li.desc ?? li.name, 240) || null;
+      const quantity = _firstFiniteNumberOrNull(li.quantity, li.qty);
+      const unitPriceExVat = _firstFiniteNumberOrNull(
+        li.unit_price_ex_vat,
+        li.unitPriceExVat,
+      );
+      const lineTotalExVat = _firstFiniteNumberOrNull(
+        li.line_total_ex_vat,
+        li.lineTotalExVat,
+      );
+      const vatAmount = _firstFiniteNumberOrNull(li.vat_amount, li.vatAmount);
+      const vatRatePercent = _normalizeVatRatePercentOrNull(
+        li.vat_rate_percent ?? li.vatRatePercent,
+      );
+      const lineTotalInclVat = _firstFiniteNumberOrNull(
+        li.line_total_incl_vat,
+        li.lineTotalInclVat,
+      );
+      const liCurrency = safeStr(li.currency, 8).toUpperCase() || null;
+      const hasAny =
+        description ||
+        quantity !== null ||
+        unitPriceExVat !== null ||
+        lineTotalExVat !== null ||
+        vatAmount !== null ||
+        vatRatePercent !== null ||
+        lineTotalInclVat !== null;
+      if (!hasAny) continue;
+      out.push({
+        description,
+        quantity,
+        unit_price_ex_vat: unitPriceExVat,
+        line_total_ex_vat: lineTotalExVat,
+        vat_amount: vatAmount,
+        vat_rate_percent: vatRatePercent,
+        line_total_incl_vat: lineTotalInclVat,
+        currency: liCurrency || cur || null,
+        source: "registry",
+      });
+    }
+    return out;
+  }
+
+  // Synthesize a minimal but correct provider-neutral line item from the
+  // already-projected totals + source-leg binding when the registry record
+  // carries no stored line items. Display-only (export-preview); NEVER
+  // persisted to KV. Leg-first: one line item for the bound operational leg.
+  // Returns [] when totals lack any monetary anchor.
+  function _synthesizeProviderNeutralLineItems(docTypeArg, totalsArg, legType, cur) {
+    if (!totalsArg) return [];
+    const legSuffix =
+      legType === "return"
+        ? "terugrit"
+        : legType === "outbound"
+          ? "heenrit"
+          : null;
+    const subtotal = _firstFiniteNumberOrNull(totalsArg.subtotal_ex_vat);
+    const vatAmount = _firstFiniteNumberOrNull(totalsArg.vat_amount);
+    const totalIncl = _firstFiniteNumberOrNull(totalsArg.total_incl_vat);
+    const vatRate = _normalizeVatRatePercentOrNull(totalsArg.vat_rate_percent);
+
+    if (docTypeArg === "invoice") {
+      if (subtotal === null && totalIncl === null) return [];
+      const description = legSuffix ? `Taxirit - ${legSuffix}` : "Taxirit";
+      return [
+        {
+          description,
+          quantity: 1,
+          unit_price_ex_vat: subtotal,
+          line_total_ex_vat: subtotal,
+          vat_amount: vatAmount,
+          vat_rate_percent: vatRate,
+          line_total_incl_vat: totalIncl,
+          currency: cur || null,
+          source: "synthesized_from_totals",
+        },
+      ];
+    }
+
+    if (docTypeArg === "credit_note") {
+      // Prefer the credited amount when present; otherwise the document total.
+      // Positive amounts are preserved (project convention surfaces credit
+      // notes with positive totals - we do not flip signs here).
+      const creditedIncl = _firstFiniteNumberOrNull(
+        totalsArg.credited_amount_incl_vat,
+      );
+      const lineTotalIncl = creditedIncl !== null ? creditedIncl : totalIncl;
+      if (lineTotalIncl === null && subtotal === null) return [];
+      const description = legSuffix
+        ? `Creditnota taxirit - ${legSuffix}`
+        : "Creditnota taxirit";
+      return [
+        {
+          description,
+          quantity: 1,
+          unit_price_ex_vat: subtotal,
+          line_total_ex_vat: subtotal,
+          vat_amount: vatAmount,
+          vat_rate_percent: vatRate,
+          line_total_incl_vat: lineTotalIncl,
+          currency: cur || null,
+          source: "synthesized_from_totals",
+        },
+      ];
+    }
+
+    return [];
+  }
+
   // Identity / binding / classification fields (from the already-computed
   // classification — never re-derived here).
   const docId = cls.document_id || null;
@@ -69156,13 +69275,42 @@ function buildDocumentExportPreview(record, classification, displayOverlay = nul
     ? _buildSingleTaxBreakdownEntry(totals, currency)
     : [];
 
+  // Provider-neutral line items for invoice / credit_note. Prefer line items
+  // already stored on the registry record; only synthesize a minimal,
+  // display-only fallback from totals + leg binding when none are stored. This
+  // never mutates the record and never persists - it only enriches the preview
+  // so later Billit/Peppol mapping has a real provider-neutral source.
+  // refund_proof / receipt / ritbon / unknown never get invoice line items.
+  let lineItems = [];
+  if (docType === "invoice" || docType === "credit_note") {
+    lineItems = _projectStoredLineItemsSafe(
+      rec.line_items ??
+        rec.lineItems ??
+        rec.provider_neutral_line_items ??
+        rec.providerNeutralLineItems,
+      currency,
+    );
+    if (lineItems.length === 0) {
+      lineItems = _synthesizeProviderNeutralLineItems(
+        docType,
+        totals,
+        sourceLegType,
+        currency,
+      );
+    }
+  }
+
   // Notes — small, stable, PII-free diagnostics about what an external
   // exporter would still need to compose a real e-invoice. Always
   // deterministic from registry presence; never includes counts, ids, error
   // text, or any free-form description.
   const notes = [];
   if (docType === "invoice" || docType === "credit_note") {
-    notes.push("line_items_not_yet_available_in_registry");
+    // Only flag missing line items when we could neither read nor synthesize
+    // any. attachments remain unavailable in the registry for now.
+    if (lineItems.length === 0) {
+      notes.push("line_items_not_yet_available_in_registry");
+    }
     notes.push("attachments_not_yet_available_in_registry");
   }
   if (docType === "credit_note" && !sourceInvoiceReference) {
@@ -69192,7 +69340,7 @@ function buildDocumentExportPreview(record, classification, displayOverlay = nul
     buyer_snapshot: buyerSnapshot,
     totals,
     tax_breakdown: taxBreakdown,
-    line_items: [],
+    line_items: lineItems,
     attachments: [],
     notes,
     not_exported_reason: notExportedReason,
