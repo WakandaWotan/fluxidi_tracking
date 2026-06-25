@@ -23710,6 +23710,208 @@ POST /admin/mollie/connect/disconnect
       }
 
       // 2G-O: read-only issued Document Core registry lookup.
+      // Billit payload preview (DRY-RUN / read-only) for a single document.
+      //   GET /admin/documents/:documentId/billit-payload-preview
+      // Reuses the SAME Document Core lookup + readiness classifier +
+      // provider-neutral export-preview helpers, then projects the result via
+      // the pure buildBillitPayloadPreviewFromProviderNeutralDocument mapper.
+      // Strictly read-only and inert:
+      //   - admin auth + explicit tenant/company scope (same contract as the
+      //     single-document lookup / export-preview routes), fail-closed
+      //   - no KV write, no allocator, no DO, no compliance emit,
+      //   - NO fetch / Billit API call, NO Billit token / OAuth credential,
+      //   - never sends anything (dry_run:true, send_enabled:false).
+      if (
+        request.method === "GET" &&
+        url.pathname.startsWith("/admin/documents/") &&
+        url.pathname.endsWith("/billit-payload-preview")
+      ) {
+        const billitDocSegments = url.pathname.split("/").filter(Boolean);
+        // Only the shape:
+        //   ["admin","documents","<documentId>","billit-payload-preview"].
+        if (
+          billitDocSegments.length === 4 &&
+          billitDocSegments[0] === "admin" &&
+          billitDocSegments[1] === "documents" &&
+          billitDocSegments[3] === "billit-payload-preview"
+        ) {
+          try {
+            _requireAdmin(request, url, env);
+          } catch (err) {
+            const message = String(err?.message || "Unauthorized");
+            return json(
+              {
+                ok: false,
+                error:
+                  message === "Unauthorized" ? "unauthorized" : "admin_unavailable",
+              },
+              message === "Unauthorized" ? 401 : 500,
+            );
+          }
+
+          try {
+            const scopedRoute = requireExplicitBookingRouteScope({ request, url });
+            if (!scopedRoute.ok) return scopedRoute.response;
+            const scope = {
+              tenant_id: scopedRoute.scope.tenant_id,
+              company_id: scopedRoute.scope.company_id,
+            };
+
+            const documentId =
+              safeStr(decodeURIComponent(billitDocSegments[2]), 200) || "";
+            if (!documentId) {
+              return json({ ok: false, error: "missing_document_id" }, 400);
+            }
+            if (!env?.BOOKING_KV) {
+              return json({ ok: false, error: "missing_binding" }, 503);
+            }
+
+            const record = await loadIssuedDocumentRegistryRecordById(
+              env,
+              scope,
+              documentId,
+            );
+            const docMask = documentId.slice(0, 8);
+            const recordTenant = safeStr(record?.tenant_id ?? record?.tenantId, 80);
+            const recordCompany = safeStr(
+              record?.company_id ?? record?.companyId,
+              80,
+            );
+            if (
+              !record ||
+              (recordTenant && recordTenant !== scope.tenant_id) ||
+              (recordCompany && recordCompany !== scope.company_id)
+            ) {
+              console.log(`[BILLIT_PAYLOAD_PREVIEW][NOT_FOUND] doc=${docMask}`);
+              return json({ ok: false, error: "document_not_found" }, 404);
+            }
+
+            // Read-only business profile for the readiness classifier (same as
+            // the export-preview route). Tolerates absence.
+            let businessProfile = null;
+            try {
+              businessProfile = await loadBusinessProfile(env, scope, {
+                allowTenantLegacyFallback: true,
+              });
+            } catch (_) {
+              businessProfile = null;
+            }
+
+            const classification = classifyDocumentExportReadiness(
+              record,
+              businessProfile,
+            );
+
+            // Best-effort source-invoice-reference overlay for credit notes
+            // (display-only; identical to the export-preview route). Read-only
+            // sibling-invoice lookup via the scoped booking index; never mutates
+            // the record and never bypasses the strict Peppol gate.
+            let overlay = null;
+            const docType = safeStr(
+              record?.document_type ?? record?.documentType,
+              40,
+            ).toLowerCase();
+            if (
+              docType === "credit_note" &&
+              !getDocumentSourceInvoiceReference(record)
+            ) {
+              const bookingId =
+                safeStr(
+                  record?.source_booking_id ?? record?.sourceBookingId,
+                  200,
+                ) || "";
+              if (bookingId) {
+                const rLegId =
+                  safeStr(record?.source_leg_id ?? record?.sourceLegId, 200) ||
+                  "";
+                const rLegType =
+                  safeStr(
+                    record?.source_leg_type ?? record?.sourceLegType,
+                    24,
+                  ) || "";
+                try {
+                  const lookup = await listIssuedDocumentRecordsForBooking(
+                    env,
+                    scope,
+                    bookingId,
+                  );
+                  if (lookup.ok && Array.isArray(lookup.records)) {
+                    const matches = lookup.records.filter((r) => {
+                      const t = safeStr(
+                        r?.document_type ?? r?.documentType,
+                        40,
+                      ).toLowerCase();
+                      if (t !== "invoice") return false;
+                      const lId =
+                        safeStr(r?.source_leg_id ?? r?.sourceLegId, 200) || "";
+                      const lType =
+                        safeStr(r?.source_leg_type ?? r?.sourceLegType, 24) ||
+                        "";
+                      return lId === rLegId && lType === rLegType;
+                    });
+                    if (matches.length === 1) {
+                      const invNumber =
+                        safeStr(
+                          matches[0]?.document_number ??
+                            matches[0]?.documentNumber,
+                          80,
+                        ) || null;
+                      if (invNumber) {
+                        overlay = { source_invoice_reference: invNumber };
+                      }
+                    }
+                  }
+                } catch (_) {
+                  overlay = null;
+                }
+              }
+            }
+
+            const docPreview = buildDocumentExportPreview(
+              record,
+              classification,
+              overlay,
+            );
+
+            // Plain environment mode hint only (no OAuth credential read).
+            const billitEnvironmentRaw = safeStr(
+              env?.BILLIT_ENVIRONMENT ?? env?.BILLIT_MODE,
+              24,
+            ).toLowerCase();
+            const billitEnvironment =
+              billitEnvironmentRaw === "production" ? "production" : "sandbox";
+
+            const billitPayloadPreview =
+              buildBillitPayloadPreviewFromProviderNeutralDocument(docPreview, {
+                ...scope,
+                billit_environment: billitEnvironment,
+              });
+
+            console.log(
+              `[BILLIT_PAYLOAD_PREVIEW][OK] doc=${docMask} kind=${billitPayloadPreview.billit_document_kind || "-"} peppol_ready=${billitPayloadPreview.peppol.ready} warnings=${billitPayloadPreview.warnings.length}`,
+            );
+
+            return json({
+              ok: true,
+              provider: "billit",
+              dry_run: true,
+              send_enabled: false,
+              document_id: billitPayloadPreview.document_id,
+              document_number: billitPayloadPreview.document_number,
+              document_type: billitPayloadPreview.document_type,
+              billit_payload_preview: billitPayloadPreview,
+              warnings: billitPayloadPreview.warnings,
+            });
+          } catch (err) {
+            const message = String(err?.message || "internal_error");
+            console.log(
+              `[BILLIT_PAYLOAD_PREVIEW][ERR] ${safeStr(message, 200) || "unknown"}`,
+            );
+            return json({ ok: false, error: "internal_error" }, 500);
+          }
+        }
+      }
+
       //   GET /admin/documents/:documentId
       // Returns SAFE metadata only (no PII, no buyer/seller snapshots, no raw
       // registry object). Strictly read-only:
@@ -24226,6 +24428,174 @@ POST /admin/mollie/connect/disconnect
             const message = String(err?.message || "internal_error");
             console.log(
               `[DOCUMENT_EXPORT_PREVIEW][ERR] ${safeStr(message, 200) || "unknown"}`,
+            );
+            return json({ ok: false, error: "internal_error" }, 500);
+          }
+        }
+      }
+
+      // Billit payload preview (DRY-RUN / read-only) for all issued documents
+      // of one booking.
+      //   GET /admin/bookings/:bookingId/documents/billit-payload-preview
+      // Reuses the SAME booking export-preview pipeline (list + classify +
+      // overlay + buildDocumentExportPreview) and maps each document through the
+      // pure Billit mapper. Strictly read-only/inert: no KV write, no allocator,
+      // no fetch, no Billit token/OAuth credential, never sends.
+      if (
+        request.method === "GET" &&
+        url.pathname.startsWith("/admin/bookings/") &&
+        url.pathname.endsWith("/documents/billit-payload-preview")
+      ) {
+        const billitBookingSegments = url.pathname.split("/").filter(Boolean);
+        // Only the shape:
+        //   ["admin","bookings","<bookingId>","documents","billit-payload-preview"].
+        if (
+          billitBookingSegments.length === 5 &&
+          billitBookingSegments[0] === "admin" &&
+          billitBookingSegments[1] === "bookings" &&
+          billitBookingSegments[3] === "documents" &&
+          billitBookingSegments[4] === "billit-payload-preview"
+        ) {
+          try {
+            _requireAdmin(request, url, env);
+          } catch (err) {
+            const message = String(err?.message || "Unauthorized");
+            return json(
+              {
+                ok: false,
+                error:
+                  message === "Unauthorized" ? "unauthorized" : "admin_unavailable",
+              },
+              message === "Unauthorized" ? 401 : 500,
+            );
+          }
+
+          try {
+            const scopedRoute = requireExplicitBookingRouteScope({ request, url });
+            if (!scopedRoute.ok) return scopedRoute.response;
+            const scope = {
+              tenant_id: scopedRoute.scope.tenant_id,
+              company_id: scopedRoute.scope.company_id,
+            };
+
+            const sourceBookingId =
+              safeStr(decodeURIComponent(billitBookingSegments[2]), 200) || "";
+            if (!sourceBookingId) {
+              return json({ ok: false, error: "missing_source_booking_id" }, 400);
+            }
+            if (!env?.BOOKING_KV) {
+              return json({ ok: false, error: "missing_binding" }, 503);
+            }
+
+            let businessProfile = null;
+            try {
+              businessProfile = await loadBusinessProfile(env, scope, {
+                allowTenantLegacyFallback: true,
+              });
+            } catch (_) {
+              businessProfile = null;
+            }
+
+            const listed = await listIssuedDocumentRecordsForBooking(
+              env,
+              scope,
+              sourceBookingId,
+            );
+            if (!listed.ok) {
+              const status = listed.error === "missing_binding" ? 503 : 400;
+              return json({ ok: false, error: listed.error }, status);
+            }
+            const records = Array.isArray(listed.records) ? listed.records : [];
+
+            const billitEnvironmentRaw = safeStr(
+              env?.BILLIT_ENVIRONMENT ?? env?.BILLIT_MODE,
+              24,
+            ).toLowerCase();
+            const billitEnvironment =
+              billitEnvironmentRaw === "production" ? "production" : "sandbox";
+
+            // Index issued invoices by (leg_id|leg_type) for credit-note source
+            // invoice overlay (display-only; same as the export-preview route).
+            const invoiceIndex = new Map();
+            for (const r of records) {
+              const t = safeStr(
+                r?.document_type ?? r?.documentType,
+                40,
+              ).toLowerCase();
+              if (t !== "invoice") continue;
+              const rLegId =
+                safeStr(r?.source_leg_id ?? r?.sourceLegId, 200) || "";
+              const rLegType =
+                safeStr(r?.source_leg_type ?? r?.sourceLegType, 24) || "";
+              const key = `${rLegId}|${rLegType}`;
+              if (!invoiceIndex.has(key)) invoiceIndex.set(key, []);
+              invoiceIndex.get(key).push(r);
+            }
+
+            const documents = records.map((rec) => {
+              const classification = classifyDocumentExportReadiness(
+                rec,
+                businessProfile,
+              );
+              let overlay = null;
+              const docType = safeStr(
+                rec?.document_type ?? rec?.documentType,
+                40,
+              ).toLowerCase();
+              if (
+                docType === "credit_note" &&
+                !getDocumentSourceInvoiceReference(rec)
+              ) {
+                const rLegId =
+                  safeStr(rec?.source_leg_id ?? rec?.sourceLegId, 200) || "";
+                const rLegType =
+                  safeStr(rec?.source_leg_type ?? rec?.sourceLegType, 24) || "";
+                const matches = invoiceIndex.get(`${rLegId}|${rLegType}`) || [];
+                if (matches.length === 1) {
+                  const invNumber =
+                    safeStr(
+                      matches[0]?.document_number ?? matches[0]?.documentNumber,
+                      80,
+                    ) || null;
+                  if (invNumber) overlay = { source_invoice_reference: invNumber };
+                }
+              }
+              const docPreview = buildDocumentExportPreview(
+                rec,
+                classification,
+                overlay,
+              );
+              const preview =
+                buildBillitPayloadPreviewFromProviderNeutralDocument(docPreview, {
+                  ...scope,
+                  billit_environment: billitEnvironment,
+                });
+              return {
+                document_id: preview.document_id,
+                document_number: preview.document_number,
+                document_type: preview.document_type,
+                billit_document_kind: preview.billit_document_kind,
+                send_enabled: false,
+                billit_payload_preview: preview,
+                warnings: preview.warnings,
+              };
+            });
+
+            console.log(
+              `[BILLIT_PAYLOAD_PREVIEW][BOOKING_OK] booking=${_bookingIntentMask(sourceBookingId)} count=${documents.length}`,
+            );
+
+            return json({
+              ok: true,
+              provider: "billit",
+              dry_run: true,
+              count: documents.length,
+              documents,
+            });
+          } catch (err) {
+            const message = String(err?.message || "internal_error");
+            console.log(
+              `[BILLIT_PAYLOAD_PREVIEW][BOOKING_ERR] ${safeStr(message, 200) || "unknown"}`,
             );
             return json({ ok: false, error: "internal_error" }, 500);
           }
@@ -69367,6 +69737,224 @@ function buildDocumentExportPreview(record, classification, displayOverlay = nul
       : [],
     warnings: Array.isArray(cls.warnings) ? cls.warnings.slice() : [],
     provider_neutral_preview: providerNeutralPreview,
+  };
+}
+
+/* Pure Billit payload mapper (DRY-RUN / preview only).
+ *
+ * Consumes the provider-neutral export-preview object produced by
+ * buildDocumentExportPreview and projects it into a CANDIDATE Billit-ready
+ * payload shape. This is explicitly a candidate/preview ("billit_payload_
+ * preview"), NOT the final official Billit API contract - no Billit field
+ * names are asserted as authoritative here.
+ *
+ * Purity / safety contract:
+ *   - no KV read/write, no DO call, no allocation, no compliance emit,
+ *   - no fetch / Billit / Peppol / Mollie / Chiron network call,
+ *   - no Billit access/refresh token, Client ID/Secret, API key, or OAuth
+ *     credential is read or required,
+ *   - never mutates the input docPreview / scope,
+ *   - never invents buyer identity or amounts: absent stays absent + warning,
+ *   - never sends anything: send_enabled is always false (dry-run).
+ *
+ * refund_proof / receipt / ritbon / unknown are NOT turned into invoices;
+ * they return a non-sendable preview with an explicit warning.
+ */
+function buildBillitPayloadPreviewFromProviderNeutralDocument(docPreview, scope) {
+  const dp = docPreview && typeof docPreview === "object" ? docPreview : {};
+  const pnp =
+    dp.provider_neutral_preview && typeof dp.provider_neutral_preview === "object"
+      ? dp.provider_neutral_preview
+      : {};
+  const identity =
+    pnp.document_identity && typeof pnp.document_identity === "object"
+      ? pnp.document_identity
+      : {};
+  const sourceBinding =
+    pnp.source_binding && typeof pnp.source_binding === "object"
+      ? pnp.source_binding
+      : {};
+  const totalsRaw =
+    pnp.totals && typeof pnp.totals === "object" ? pnp.totals : null;
+  const buyer =
+    pnp.buyer_snapshot && typeof pnp.buyer_snapshot === "object"
+      ? pnp.buyer_snapshot
+      : null;
+  const lineItemsRaw = Array.isArray(pnp.line_items) ? pnp.line_items : [];
+
+  function _numOrNull(value) {
+    if (value === null || value === undefined || value === "") return null;
+    const n = Number(value);
+    return Number.isFinite(n) ? n : null;
+  }
+
+  const docType =
+    safeStr(dp.document_type ?? identity.document_type, 40).toLowerCase() || null;
+  const documentId = dp.document_id ?? identity.document_id ?? null;
+  const documentNumber = dp.document_number ?? identity.document_number ?? null;
+  const currency = dp.currency ?? identity.currency ?? null;
+  const environmentHint = safeStr(scope?.billit_environment, 24) || null;
+
+  const warnings = [];
+  const notes = [
+    "candidate_payload_not_official_billit_contract",
+    "dry_run_no_send_performed",
+  ];
+  // Provider-neutral fields we knowingly do NOT map into a Billit payload yet.
+  const unsupportedFields = [
+    "attachments",
+    "buyer_peppol_endpoint_id",
+    "payment_terms",
+    "due_date",
+  ];
+  // Dry-run mapper never sends; send_enabled stays false by design.
+  const sendEnabled = false;
+
+  // ---- Document kind mapping ----
+  let billitDocumentKind = null;
+  if (docType === "invoice") billitDocumentKind = "invoice";
+  else if (docType === "credit_note") billitDocumentKind = "credit_note";
+  else billitDocumentKind = null;
+
+  const isInvoiceLike = docType === "invoice" || docType === "credit_note";
+  if (docType === "refund_proof") {
+    warnings.push("refund_proof_not_supported_for_billit_invoice_send");
+  } else if (!isInvoiceLike) {
+    warnings.push("document_type_not_supported_for_billit_invoice_send");
+  }
+
+  // ---- Lines mapping (invoice / credit_note only) ----
+  const lines = [];
+  if (isInvoiceLike) {
+    for (const li of lineItemsRaw) {
+      if (!li || typeof li !== "object" || Array.isArray(li)) continue;
+      lines.push({
+        description: safeStr(li.description, 240) || null,
+        quantity: _numOrNull(li.quantity),
+        unit_price_ex_vat: _numOrNull(li.unit_price_ex_vat),
+        line_total_ex_vat: _numOrNull(li.line_total_ex_vat),
+        vat_amount: _numOrNull(li.vat_amount),
+        vat_rate_percent: _numOrNull(li.vat_rate_percent),
+        line_total_incl_vat: _numOrNull(li.line_total_incl_vat),
+        currency: safeStr(li.currency, 8).toUpperCase() || currency || null,
+        source: safeStr(li.source, 40) || null,
+      });
+    }
+    if (lines.length === 0) {
+      warnings.push("missing_line_items");
+    }
+  }
+
+  // ---- Totals mapping ----
+  let totals = null;
+  if (totalsRaw) {
+    const refundedInclVat = _numOrNull(totalsRaw.refunded_amount_incl_vat);
+    totals = {
+      total_incl_vat: _numOrNull(totalsRaw.total_incl_vat),
+      subtotal_ex_vat: _numOrNull(totalsRaw.subtotal_ex_vat),
+      vat_amount: _numOrNull(totalsRaw.vat_amount),
+      vat_rate_percent: _numOrNull(totalsRaw.vat_rate_percent),
+      credited_amount_incl_vat:
+        docType === "credit_note"
+          ? _numOrNull(totalsRaw.credited_amount_incl_vat)
+          : null,
+      refunded_amount_incl_vat: refundedInclVat,
+      currency: currency || null,
+    };
+  }
+  if (isInvoiceLike) {
+    if (!currency) warnings.push("missing_currency");
+    if (!totals || totals.total_incl_vat === null) warnings.push("missing_total");
+    if (!totals || totals.vat_rate_percent === null) warnings.push("missing_vat_rate");
+    if (!totals || totals.vat_amount === null) warnings.push("missing_vat_amount");
+    if (!totals || totals.subtotal_ex_vat === null) warnings.push("missing_subtotal");
+  }
+
+  // ---- Source / reference mapping ----
+  const references = {
+    source_booking_id: safeStr(sourceBinding.source_booking_id, 200) || null,
+    source_leg_id: safeStr(sourceBinding.source_leg_id, 200) || null,
+    source_leg_type: safeStr(sourceBinding.source_leg_type, 24) || null,
+    source_invoice_reference:
+      safeStr(sourceBinding.source_invoice_reference, 80) || null,
+    source_refund_id: safeStr(sourceBinding.source_refund_id, 200) || null,
+  };
+  if (docType === "credit_note" && !references.source_invoice_reference) {
+    warnings.push("missing_source_invoice_reference");
+  }
+
+  // ---- Customer / buyer identity ----
+  // Minimal legal-identity heuristic: a usable Peppol/accounting customer needs
+  // at least a name plus either a VAT number or a postal address+country. We do
+  // NOT invent any buyer field; absence -> { ready:false } + warning.
+  const buyerName = buyer ? safeStr(buyer.name, 240) : "";
+  const buyerVat = buyer ? safeStr(buyer.vat_number, 64) : "";
+  const buyerAddress = buyer ? safeStr(buyer.address_line, 240) : "";
+  const buyerCountry = buyer ? safeStr(buyer.country_code, 8) : "";
+  const customerReady = !!(
+    buyerName &&
+    (buyerVat || (buyerAddress && buyerCountry))
+  );
+  let customer;
+  if (customerReady) {
+    customer = {
+      ready: true,
+      name: buyerName || null,
+      vat_number: buyerVat || null,
+      email: buyer ? safeStr(buyer.email, 240) || null : null,
+      address_line: buyerAddress || null,
+      postal_code: buyer ? safeStr(buyer.postal_code, 32) || null : null,
+      city: buyer ? safeStr(buyer.city, 120) || null : null,
+      country_code: buyerCountry ? buyerCountry.toUpperCase() : null,
+    };
+  } else {
+    customer = { ready: false };
+    warnings.push("customer_identity_missing");
+  }
+
+  // ---- Peppol readiness (candidate) ----
+  const peppolReasons = [];
+  if (!isInvoiceLike) peppolReasons.push("unsupported_document_type");
+  if (!documentNumber) peppolReasons.push("missing_document_number");
+  if (!currency) peppolReasons.push("missing_currency");
+  if (!totals) peppolReasons.push("missing_totals");
+  if (isInvoiceLike && lines.length === 0) peppolReasons.push("missing_line_items");
+  if (!totals || totals.vat_rate_percent === null) {
+    peppolReasons.push("missing_vat_rate");
+  }
+  if (!customerReady) peppolReasons.push("customer_identity_missing");
+  if (docType === "credit_note" && !references.source_invoice_reference) {
+    peppolReasons.push("missing_source_invoice_reference");
+  }
+  const peppol = {
+    candidate: isInvoiceLike,
+    ready: isInvoiceLike && peppolReasons.length === 0,
+    reasons: peppolReasons,
+  };
+
+  return {
+    provider: "billit",
+    dry_run: true,
+    send_enabled: sendEnabled,
+    document_id: documentId,
+    document_number: documentNumber,
+    document_type: docType,
+    billit_document_kind: billitDocumentKind,
+    environment_hint: environmentHint,
+    source_binding: {
+      source_booking_id: references.source_booking_id,
+      source_leg_id: references.source_leg_id,
+      source_leg_type: references.source_leg_type,
+    },
+    currency: currency || null,
+    customer,
+    lines,
+    totals,
+    references,
+    peppol,
+    warnings,
+    unsupported_fields: unsupportedFields,
+    notes,
   };
 }
 
