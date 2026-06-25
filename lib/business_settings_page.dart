@@ -156,6 +156,7 @@ const Set<String> _kStepFocusableSectionIds = <String>{
   'pricing_engine',
   'payment_ownership',
   'mollie_terminal_payments',
+  'billit_peppol',
   'branding_support',
   'google_calendar',
   'airport_fixed_fares',
@@ -328,6 +329,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
   final ScrollController _settingsScrollController = ScrollController();
   final Map<String, GlobalKey> _sectionAnchorKeys = <String, GlobalKey>{
     'official_company_details': GlobalKey(),
+    'billit_peppol': GlobalKey(),
   };
   String? _highlightedSectionId;
   static const List<String> _airportFixedFareDirections = <String>[
@@ -3949,6 +3951,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     final busy = _billitStartLoading || _billitDisconnectLoading;
     return _collapsibleSettingsCard(
       id: 'billit_peppol',
+      anchorKey: _sectionAnchorKeys['billit_peppol'],
       icon: Icons.receipt_long_outlined,
       title: _t(
         nl: 'Billit & Peppol',
