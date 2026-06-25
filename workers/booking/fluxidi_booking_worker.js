@@ -69228,6 +69228,243 @@ function classifyDocumentExportReadiness(record, businessProfile) {
   };
 }
 
+/* 2G-* — pure provider-neutral buyer/customer legal-identity readiness
+ * projector (DRY / read-only).
+ *
+ * Projects ONLY the buyer/customer identity that already EXISTS on an
+ * already-loaded issued registry record (and an optional already-loaded source
+ * booking) into a structured, provider-neutral readiness object for export /
+ * Billit / Peppol previews. Pure: no KV/DO/fetch, no token/secret, never
+ * mutates inputs.
+ *
+ * Hard rules (mirrors the Document Core export-preview safety contract):
+ *   - never invents legal buyer data: an absent field stays null,
+ *   - a passenger/contact display name alone is NOT a legal company identity,
+ *   - passenger pickup/dropoff addresses are NEVER treated as a legal billing
+ *     invoice address; only buyer_snapshot billing fields captured at issue
+ *     time are used,
+ *   - Peppol target is ready ONLY when an explicit Peppol endpoint id + scheme
+ *     exist on the record (no VAT->Peppol target is synthesized here, because
+ *     no such convention currently exists in the registry),
+ *   - readiness never blocks a preview route; it only informs send_enabled /
+ *     warnings downstream.
+ */
+function buildProviderNeutralBuyerIdentityPreview(
+  record,
+  sourceBooking,
+  providerNeutralPreview,
+) {
+  const rec =
+    record && typeof record === "object" && !Array.isArray(record) ? record : {};
+  const sb =
+    sourceBooking && typeof sourceBooking === "object" && !Array.isArray(sourceBooking)
+      ? sourceBooking
+      : {};
+  const snapRaw = rec.buyer_snapshot ?? rec.buyerSnapshot;
+  const snap =
+    snapRaw && typeof snapRaw === "object" && !Array.isArray(snapRaw) ? snapRaw : {};
+  // The export-preview path passes the already-projected buyer_snapshot via
+  // providerNeutralPreview so this stays a single source of truth.
+  const pnp =
+    providerNeutralPreview && typeof providerNeutralPreview === "object"
+      ? providerNeutralPreview
+      : {};
+  const pnpBuyerRaw = pnp.buyer_snapshot;
+  const pnpBuyer =
+    pnpBuyerRaw && typeof pnpBuyerRaw === "object" && !Array.isArray(pnpBuyerRaw)
+      ? pnpBuyerRaw
+      : {};
+
+  function pick(maxLen, ...vals) {
+    for (const v of vals) {
+      const s = safeStr(v, maxLen);
+      if (s) return s;
+    }
+    return null;
+  }
+
+  // ---- Contact identity (display only; NOT a legal identity) ----
+  const displayName = pick(
+    240,
+    snap.name,
+    snap.customer_name,
+    snap.customerName,
+    pnpBuyer.name,
+    sb.custName,
+    sb.customer_name,
+    sb.customerName,
+  );
+  const contactEmail = pick(
+    240,
+    snap.email,
+    snap.customer_email,
+    snap.customerEmail,
+    pnpBuyer.email,
+    sb.custEmail,
+    sb.customer_email,
+    sb.customerEmail,
+  );
+  const contactPhone = pick(
+    64,
+    snap.phone,
+    snap.customer_phone,
+    snap.customerPhone,
+    pnpBuyer.phone,
+    sb.custPhone,
+    sb.customer_phone,
+    sb.customerPhone,
+    sb.phone,
+  );
+
+  // ---- Legal identity (explicit legal fields only; passenger name excluded) ----
+  const legalName = pick(
+    240,
+    snap.legal_name,
+    snap.legalName,
+    snap.company_name,
+    snap.companyName,
+    pnpBuyer.legal_name,
+    pnpBuyer.legalName,
+  );
+  const vatNumber = pick(
+    64,
+    snap.vat_number,
+    snap.vatNumber,
+    pnpBuyer.vat_number,
+    pnpBuyer.vatNumber,
+  );
+  const companyRegistrationNumber = pick(
+    80,
+    snap.registration_number,
+    snap.registrationNumber,
+    snap.company_registration_number,
+    snap.companyRegistrationNumber,
+    snap.kbo_number,
+    snap.kboNumber,
+    snap.enterprise_number,
+    snap.enterpriseNumber,
+    pnpBuyer.registration_number,
+    pnpBuyer.registrationNumber,
+  );
+
+  // ---- Billing address (buyer_snapshot billing fields ONLY) ----
+  const billingStreet = pick(
+    240,
+    snap.address_line,
+    snap.addressLine,
+    snap.street,
+    pnpBuyer.address_line,
+    pnpBuyer.addressLine,
+  );
+  const billingPostal = pick(
+    32,
+    snap.postal_code,
+    snap.postalCode,
+    snap.zip,
+    pnpBuyer.postal_code,
+    pnpBuyer.postalCode,
+  );
+  const billingCity = pick(120, snap.city, pnpBuyer.city);
+  const billingCountryRaw = pick(
+    8,
+    snap.country_code,
+    snap.countryCode,
+    snap.country,
+    pnpBuyer.country_code,
+    pnpBuyer.countryCode,
+  );
+  const billingCountry = billingCountryRaw ? billingCountryRaw.toUpperCase() : null;
+
+  // ---- Peppol target (explicit endpoint + scheme ONLY) ----
+  const peppolEndpointId = pick(
+    80,
+    snap.peppol_endpoint_id,
+    snap.peppolEndpointId,
+    snap.peppol_participant_id,
+    snap.peppolParticipantId,
+    pnpBuyer.peppol_endpoint_id,
+    pnpBuyer.peppolEndpointId,
+  );
+  const peppolScheme = pick(
+    40,
+    snap.peppol_scheme,
+    snap.peppolScheme,
+    pnpBuyer.peppol_scheme,
+    pnpBuyer.peppolScheme,
+  );
+
+  const buyerReference = pick(
+    120,
+    snap.buyer_reference,
+    snap.buyerReference,
+    pnpBuyer.buyer_reference,
+    pnpBuyer.buyerReference,
+  );
+
+  const hasFullBillingAddress = !!(
+    billingStreet &&
+    billingPostal &&
+    billingCity &&
+    billingCountry
+  );
+
+  // Legal identity: an explicit legal name PLUS a B2B id (VAT / registration)
+  // OR a complete billing address. A passenger display name alone never
+  // qualifies as a legal company identity.
+  const legalIdentityReady = !!(
+    legalName &&
+    (vatNumber || companyRegistrationNumber || hasFullBillingAddress)
+  );
+
+  // Peppol target requires an explicit endpoint id + scheme. No synthesis.
+  const peppolTargetReady = !!(peppolEndpointId && peppolScheme);
+
+  const missingFields = [];
+  if (!legalName) missingFields.push("customer_legal_name_missing");
+  if (!hasFullBillingAddress) missingFields.push("customer_billing_address_missing");
+  if (!billingCountry) missingFields.push("customer_country_missing");
+  if (!vatNumber && !companyRegistrationNumber) {
+    missingFields.push("customer_vat_or_registration_missing");
+  }
+  if (!peppolTargetReady) missingFields.push("customer_peppol_target_missing");
+
+  const warnings = missingFields.slice();
+  // Keep the broad compatibility warning when legal identity is not ready.
+  if (!legalIdentityReady) warnings.push("customer_identity_missing");
+
+  return {
+    ready: legalIdentityReady,
+    legal_identity_ready: legalIdentityReady,
+    peppol_target_ready: peppolTargetReady,
+    display_name: displayName,
+    contact_email: contactEmail,
+    contact_phone: contactPhone,
+    legal_name: legalName,
+    vat_number: vatNumber,
+    company_registration_number: companyRegistrationNumber,
+    buyer_reference: buyerReference,
+    billing_address: {
+      street: billingStreet,
+      postal_code: billingPostal,
+      city: billingCity,
+      country: billingCountry,
+    },
+    peppol: {
+      endpoint_id: peppolEndpointId,
+      scheme: peppolScheme,
+      ready: peppolTargetReady,
+    },
+    source: {
+      display_name: displayName ? "buyer_snapshot_or_booking" : null,
+      contact_email: contactEmail ? "buyer_snapshot_or_booking" : null,
+      legal_identity: legalIdentityReady ? "buyer_snapshot" : null,
+      peppol_target: peppolTargetReady ? "explicit_endpoint" : null,
+    },
+    missing_fields: missingFields,
+    warnings,
+  };
+}
+
 /* 2G-U — pure provider-neutral Document Export Preview builder.
  *
  * Read-only / inert. Given an already-loaded canonical registry record AND
@@ -69687,6 +69924,20 @@ function buildDocumentExportPreview(record, classification, displayOverlay = nul
     notes.push("source_invoice_reference_not_yet_available");
   }
 
+  // 2G-* buyer/customer legal-identity readiness (invoice / credit_note only).
+  // Refund proofs / receipts / ritbon / unknown never get invoice buyer
+  // readiness - they are not Peppol invoice documents. This pure builder does
+  // not load the source booking, so identity is projected from the registry
+  // buyer_snapshot captured at issue time.
+  let customerIdentityPreview = null;
+  if (docType === "invoice" || docType === "credit_note") {
+    customerIdentityPreview = buildProviderNeutralBuyerIdentityPreview(
+      rec,
+      null,
+      { buyer_snapshot: buyerSnapshot },
+    );
+  }
+
   const providerNeutralPreview = {
     preview_version: "document_export_preview_v1",
     export_kind: exportKind,
@@ -69708,6 +69959,7 @@ function buildDocumentExportPreview(record, classification, displayOverlay = nul
     },
     seller_snapshot: sellerSnapshot,
     buyer_snapshot: buyerSnapshot,
+    customer: customerIdentityPreview,
     totals,
     tax_breakdown: taxBreakdown,
     line_items: lineItems,
@@ -69779,6 +70031,12 @@ function buildBillitPayloadPreviewFromProviderNeutralDocument(docPreview, scope)
   const buyer =
     pnp.buyer_snapshot && typeof pnp.buyer_snapshot === "object"
       ? pnp.buyer_snapshot
+      : null;
+  // Structured provider-neutral buyer/customer readiness projection (preferred
+  // source when the export-preview supplied it).
+  const buyerIdentity =
+    pnp.customer && typeof pnp.customer === "object" && !Array.isArray(pnp.customer)
+      ? pnp.customer
       : null;
   const lineItemsRaw = Array.isArray(pnp.line_items) ? pnp.line_items : [];
 
@@ -69884,21 +70142,69 @@ function buildBillitPayloadPreviewFromProviderNeutralDocument(docPreview, scope)
   }
 
   // ---- Customer / buyer identity ----
-  // Minimal legal-identity heuristic: a usable Peppol/accounting customer needs
-  // at least a name plus either a VAT number or a postal address+country. We do
-  // NOT invent any buyer field; absence -> { ready:false } + warning.
-  const buyerName = buyer ? safeStr(buyer.name, 240) : "";
-  const buyerVat = buyer ? safeStr(buyer.vat_number, 64) : "";
-  const buyerAddress = buyer ? safeStr(buyer.address_line, 240) : "";
-  const buyerCountry = buyer ? safeStr(buyer.country_code, 8) : "";
-  const customerReady = !!(
-    buyerName &&
-    (buyerVat || (buyerAddress && buyerCountry))
-  );
+  // Prefer the structured provider-neutral buyer readiness projection from the
+  // export-preview (buildProviderNeutralBuyerIdentityPreview). Fall back to the
+  // minimal buyer_snapshot heuristic when an older preview is supplied. We NEVER
+  // invent any buyer field; absence -> not ready + granular warnings.
   let customer;
-  if (customerReady) {
+  let customerLegalReady = false;
+  let customerPeppolTargetReady = false;
+  let customerMissingFields = [];
+  if (buyerIdentity) {
+    customerLegalReady = buyerIdentity.legal_identity_ready === true;
+    customerPeppolTargetReady = buyerIdentity.peppol_target_ready === true;
+    customerMissingFields = Array.isArray(buyerIdentity.missing_fields)
+      ? buyerIdentity.missing_fields.slice()
+      : [];
+    const ba =
+      buyerIdentity.billing_address &&
+      typeof buyerIdentity.billing_address === "object"
+        ? buyerIdentity.billing_address
+        : {};
+    const pp =
+      buyerIdentity.peppol && typeof buyerIdentity.peppol === "object"
+        ? buyerIdentity.peppol
+        : {};
     customer = {
-      ready: true,
+      ready: customerLegalReady,
+      legal_identity_ready: customerLegalReady,
+      peppol_target_ready: customerPeppolTargetReady,
+      display_name: buyerIdentity.display_name ?? null,
+      contact_email: buyerIdentity.contact_email ?? null,
+      contact_phone: buyerIdentity.contact_phone ?? null,
+      legal_name: buyerIdentity.legal_name ?? null,
+      vat_number: buyerIdentity.vat_number ?? null,
+      company_registration_number:
+        buyerIdentity.company_registration_number ?? null,
+      buyer_reference: buyerIdentity.buyer_reference ?? null,
+      billing_address: {
+        street: ba.street ?? null,
+        postal_code: ba.postal_code ?? null,
+        city: ba.city ?? null,
+        country: ba.country ?? null,
+      },
+      peppol: {
+        endpoint_id: pp.endpoint_id ?? null,
+        scheme: pp.scheme ?? null,
+        ready: pp.ready === true,
+      },
+      missing_fields: customerMissingFields,
+    };
+  } else {
+    // Legacy fallback: minimal buyer_snapshot heuristic (name + VAT or
+    // address+country). No structured legal/peppol projection available.
+    const buyerName = buyer ? safeStr(buyer.name, 240) : "";
+    const buyerVat = buyer ? safeStr(buyer.vat_number, 64) : "";
+    const buyerAddress = buyer ? safeStr(buyer.address_line, 240) : "";
+    const buyerCountry = buyer ? safeStr(buyer.country_code, 8) : "";
+    customerLegalReady = !!(
+      buyerName &&
+      (buyerVat || (buyerAddress && buyerCountry))
+    );
+    customerPeppolTargetReady = false;
+    customer = {
+      ready: customerLegalReady,
+      legal_identity_ready: customerLegalReady,
       name: buyerName || null,
       vat_number: buyerVat || null,
       email: buyer ? safeStr(buyer.email, 240) || null : null,
@@ -69907,9 +70213,17 @@ function buildBillitPayloadPreviewFromProviderNeutralDocument(docPreview, scope)
       city: buyer ? safeStr(buyer.city, 120) || null : null,
       country_code: buyerCountry ? buyerCountry.toUpperCase() : null,
     };
-  } else {
-    customer = { ready: false };
+  }
+  // Broad compatibility warning (kept for all document types, matching prior
+  // behavior) + granular buyer warnings for invoice-like documents.
+  if (!customerLegalReady && !warnings.includes("customer_identity_missing")) {
     warnings.push("customer_identity_missing");
+  }
+  if (isInvoiceLike) {
+    for (const code of customerMissingFields) {
+      if (code === "customer_identity_missing") continue;
+      if (!warnings.includes(code)) warnings.push(code);
+    }
   }
 
   // ---- Peppol readiness (candidate) ----
@@ -69922,7 +70236,25 @@ function buildBillitPayloadPreviewFromProviderNeutralDocument(docPreview, scope)
   if (!totals || totals.vat_rate_percent === null) {
     peppolReasons.push("missing_vat_rate");
   }
-  if (!customerReady) peppolReasons.push("customer_identity_missing");
+  if (!customerLegalReady) {
+    if (!peppolReasons.includes("customer_identity_missing")) {
+      peppolReasons.push("customer_identity_missing");
+    }
+    for (const code of customerMissingFields) {
+      if (code === "customer_identity_missing") continue;
+      if (!peppolReasons.includes(code)) peppolReasons.push(code);
+    }
+  }
+  // Peppol target gap is explicit even when the legacy fallback supplied no
+  // granular missing_fields. Peppol is only ready with a real legal identity
+  // AND an explicit Peppol target.
+  if (
+    isInvoiceLike &&
+    !customerPeppolTargetReady &&
+    !peppolReasons.includes("customer_peppol_target_missing")
+  ) {
+    peppolReasons.push("customer_peppol_target_missing");
+  }
   if (docType === "credit_note" && !references.source_invoice_reference) {
     peppolReasons.push("missing_source_invoice_reference");
   }
