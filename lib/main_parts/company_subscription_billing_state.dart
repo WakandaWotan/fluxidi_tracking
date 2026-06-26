@@ -608,15 +608,6 @@ class _CompanySubscriptionBillingPageState
     }
   }
 
-  String _addonActionLabel() {
-    return _t(
-      nl: 'Via beheer activeren',
-      en: 'Activate via management',
-      fr: 'Activer via gestion',
-      es: 'Activar desde gestion',
-    );
-  }
-
   String _addonAvailableLabel() {
     return _t(
       nl: 'Beschikbaar als add-on',
@@ -879,21 +870,6 @@ class _CompanySubscriptionBillingPageState
     );
   }
 
-  void _showAddonInfo() {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          _t(
-            nl: 'Na je proefperiode ontvang je automatisch een melding om je abonnement te activeren en verder gebruik te maken van Fluxidi.',
-            en: 'After your trial, you\'ll automatically receive a prompt to activate your subscription and keep using Fluxidi.',
-            fr: 'Après votre période d\'essai, vous recevrez automatiquement une invitation à activer votre abonnement et à continuer à utiliser Fluxidi.',
-            es: 'Después de tu prueba, recibirás automáticamente un aviso para activar tu suscripción y seguir usando Fluxidi.',
-          ),
-        ),
-      ),
-    );
-  }
-
   Widget _addonCard({
     required String title,
     required String price,
@@ -938,25 +914,19 @@ class _CompanySubscriptionBillingPageState
             ),
           ),
           const SizedBox(height: 7),
+          // Patch 2.2C: add-ons are not purchasable yet (no backend add-on
+          // checkout / entitlement). Show a passive, non-actionable
+          // "coming soon" chip instead of a button that goes nowhere.
           Align(
             alignment: Alignment.centerLeft,
-            child: OutlinedButton(
-              onPressed: _showAddonInfo,
-              style: OutlinedButton.styleFrom(
-                foregroundColor: _gold.withOpacity(0.98),
-                side: BorderSide(color: _gold.withOpacity(0.40)),
-                backgroundColor: _panel,
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 11,
-                  vertical: 8,
-                ),
-                minimumSize: Size.zero,
-                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(999),
-                ),
+            child: _chip(
+              text: _comingSoonLabel(),
+              bg: _businessThemePalette.surfaceAlt.withOpacity(
+                _businessThemePalette.isDark ? 0.66 : 0.92,
               ),
-              child: Text(_addonActionLabel()),
+              border: _businessThemePalette.border.withOpacity(0.7),
+              textColor: _businessThemePalette.textMuted,
+              icon: Icons.schedule_outlined,
             ),
           ),
         ],
@@ -964,14 +934,26 @@ class _CompanySubscriptionBillingPageState
     );
   }
 
+  String _comingSoonLabel() => _t(
+    nl: 'Binnenkort beschikbaar',
+    en: 'Coming soon',
+    fr: 'Bientôt disponible',
+    es: 'Próximamente',
+  );
+
   Widget _usageCard({
     required String title,
     required int used,
     required int max,
     required String actionLabel,
+    bool enforced = true,
   }) {
     final atOrOverLimit = max > 0 && used >= max;
-    final accent = atOrOverLimit ? _warn : _green;
+    // Patch 2.2C: vehicle/driver limits are not hard-enforced yet, so an
+    // over-limit state should not look alarming. Only show the warning accent
+    // and action chip when the limit is actually enforced.
+    final showWarning = atOrOverLimit && enforced;
+    final accent = showWarning ? _warn : _green;
     final progress = max <= 0 ? 0.0 : (used / max).clamp(0.0, 1.0);
     return Container(
       padding: const EdgeInsets.fromLTRB(10, 9, 10, 10),
@@ -1015,7 +997,7 @@ class _CompanySubscriptionBillingPageState
               valueColor: AlwaysStoppedAnimation<Color>(accent),
             ),
           ),
-          if (atOrOverLimit) ...[
+          if (showWarning) ...[
             const SizedBox(height: 7),
             _chip(
               text: actionLabel,
@@ -1119,6 +1101,13 @@ class _CompanySubscriptionBillingPageState
             // a generic automation pitch instead — no Chiron/Billit/Peppol
             // claims.
             final bool isBelgiumMarket = catalog.market == 'BE';
+            // Patch 2.2C: gate the paid add-ons section on the real (profile)
+            // market, not the display catalog (which falls back to BE for
+            // unsupported countries). Unsupported markets must not see paid
+            // add-ons that have no purchase path yet.
+            final bool isSupportedMarket = _isSupportedMarket(
+              _effectiveMarket(profile),
+            );
             return ValueListenableBuilder<List<VehicleProfile>>(
               valueListenable: vehiclesNotifier,
               builder: (context, vehicles, _) {
@@ -1480,6 +1469,7 @@ class _CompanySubscriptionBillingPageState
                                 ),
                                 used: usedVehicles,
                                 max: profile.maxVehicles,
+                                enforced: false,
                                 actionLabel: _t(
                                   nl: 'Extra voertuig activeren',
                                   en: 'Activate extra vehicle',
@@ -1497,11 +1487,30 @@ class _CompanySubscriptionBillingPageState
                                 ),
                                 used: usedDrivers,
                                 max: profile.maxDrivers,
+                                enforced: false,
                                 actionLabel: _t(
                                   nl: 'Extra chauffeur activeren',
                                   en: 'Activate extra driver',
                                   fr: 'Activer un chauffeur supplementaire',
                                   es: 'Activar conductor extra',
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              Align(
+                                alignment: Alignment.centerLeft,
+                                child: Text(
+                                  _t(
+                                    nl: 'Limieten worden binnenkort gekoppeld aan uitbreidingen.',
+                                    en: 'Limits will be linked to add-ons soon.',
+                                    fr: 'Les limites seront bientôt liées aux extensions.',
+                                    es: 'Los límites se vincularán pronto a las ampliaciones.',
+                                  ),
+                                  style: TextStyle(
+                                    color: _businessThemePalette.textMuted
+                                        .withOpacity(0.86),
+                                    fontSize: 11.6,
+                                    height: 1.3,
+                                  ),
                                 ),
                               ),
                               const SizedBox(height: 8),
@@ -1553,10 +1562,10 @@ class _CompanySubscriptionBillingPageState
                                     const SizedBox(height: 2),
                                     Text(
                                       _t(
-                                        nl: 'Verbruik nog niet gekoppeld',
-                                        en: 'Usage is not linked yet',
-                                        fr: 'La consommation n est pas encore reliee',
-                                        es: 'El consumo aun no esta vinculado',
+                                        nl: 'PDF-verbruik wordt binnenkort gekoppeld.',
+                                        en: 'PDF usage tracking will be linked soon.',
+                                        fr: 'Le suivi de l\'utilisation des PDF sera bientôt connecté.',
+                                        es: 'El seguimiento del uso de PDF se conectará pronto.',
                                       ),
                                       style: TextStyle(
                                         color: _businessThemePalette.textMuted
@@ -1642,69 +1651,88 @@ class _CompanySubscriptionBillingPageState
                             ],
                           ),
                         ),
-                        _sectionCard(
-                          title: _t(
-                            nl: 'Betaalde uitbreidingen',
-                            en: 'Paid add-ons',
-                            fr: 'Extensions payantes',
-                            es: 'Ampliaciones de pago',
-                          ),
-                          child: Column(
-                            children: [
-                              _addonCard(
-                                title: _t(
-                                  nl: 'Extra voertuig',
-                                  en: 'Extra vehicle',
-                                  fr: 'Véhicule supplémentaire',
-                                  es: 'Vehículo extra',
+                        if (isSupportedMarket)
+                          _sectionCard(
+                            title: _t(
+                              nl: 'Betaalde uitbreidingen',
+                              en: 'Paid add-ons',
+                              fr: 'Extensions payantes',
+                              es: 'Ampliaciones de pago',
+                            ),
+                            child: Column(
+                              children: [
+                                Align(
+                                  alignment: Alignment.centerLeft,
+                                  child: Text(
+                                    _t(
+                                      nl: 'Extra voertuigen, chauffeurs en PDF-pakketten worden later als uitbreidingen toegevoegd. Je huidige abonnement blijft actief.',
+                                      en: 'Extra vehicles, drivers and PDF packs will be added later as add-ons. Your current subscription stays active.',
+                                      fr: 'Les véhicules, chauffeurs et packs PDF supplémentaires seront ajoutés plus tard comme extensions. Votre abonnement actuel reste actif.',
+                                      es: 'Los vehículos, conductores y paquetes PDF adicionales se añadirán más adelante como ampliaciones. Tu suscripción actual sigue activa.',
+                                    ),
+                                    style: TextStyle(
+                                      color: _businessThemePalette.textMuted,
+                                      fontSize: 11.8,
+                                      height: 1.3,
+                                    ),
+                                  ),
                                 ),
-                                price: _t(
-                                  nl: '+ ${_priceFromCents(catalog.extraVehiclePriceCents)} / maand',
-                                  en: '+ ${_priceFromCents(catalog.extraVehiclePriceCents)} / month',
-                                  fr: '+ ${_priceFromCents(catalog.extraVehiclePriceCents)} / mois',
-                                  es: '+ ${_priceFromCents(catalog.extraVehiclePriceCents)} / mes',
+                                const SizedBox(height: 9),
+                                _addonCard(
+                                  title: _t(
+                                    nl: 'Extra voertuig',
+                                    en: 'Extra vehicle',
+                                    fr: 'Véhicule supplémentaire',
+                                    es: 'Vehículo extra',
+                                  ),
+                                  price: _t(
+                                    nl: '+ ${_priceFromCents(catalog.extraVehiclePriceCents)} / maand',
+                                    en: '+ ${_priceFromCents(catalog.extraVehiclePriceCents)} / month',
+                                    fr: '+ ${_priceFromCents(catalog.extraVehiclePriceCents)} / mois',
+                                    es: '+ ${_priceFromCents(catalog.extraVehiclePriceCents)} / mes',
+                                  ),
+                                  subtitle: _t(
+                                    nl: 'Inclusief ${catalog.includedDriversPerVehicle} extra chauffeurs en ${catalog.includedPdfCreationsPerVehicleMonth} extra PDF-creaties per maand.',
+                                    en: 'Includes ${catalog.includedDriversPerVehicle} extra drivers and ${catalog.includedPdfCreationsPerVehicleMonth} extra PDF creations per month.',
+                                    fr: 'Inclut ${catalog.includedDriversPerVehicle} chauffeurs supplémentaires et ${catalog.includedPdfCreationsPerVehicleMonth} créations PDF supplémentaires par mois.',
+                                    es: 'Incluye ${catalog.includedDriversPerVehicle} conductores extra y ${catalog.includedPdfCreationsPerVehicleMonth} creaciones PDF extra al mes.',
+                                  ),
+                                  emphasized:
+                                      usedVehicles >= profile.maxVehicles,
                                 ),
-                                subtitle: _t(
-                                  nl: 'Inclusief ${catalog.includedDriversPerVehicle} extra chauffeurs en ${catalog.includedPdfCreationsPerVehicleMonth} extra PDF-creaties per maand.',
-                                  en: 'Includes ${catalog.includedDriversPerVehicle} extra drivers and ${catalog.includedPdfCreationsPerVehicleMonth} extra PDF creations per month.',
-                                  fr: 'Inclut ${catalog.includedDriversPerVehicle} chauffeurs supplémentaires et ${catalog.includedPdfCreationsPerVehicleMonth} créations PDF supplémentaires par mois.',
-                                  es: 'Incluye ${catalog.includedDriversPerVehicle} conductores extra y ${catalog.includedPdfCreationsPerVehicleMonth} creaciones PDF extra al mes.',
-                                ),
-                                emphasized: usedVehicles >= profile.maxVehicles,
-                              ),
-                              const SizedBox(height: 7),
-                              _addonCard(
-                                title: _t(
-                                  nl: 'Extra chauffeur',
-                                  en: 'Extra driver',
-                                  fr: 'Chauffeur supplémentaire',
-                                  es: 'Conductor extra',
-                                ),
-                                price: _t(
-                                  nl: '+ ${_priceFromCents(catalog.extraDriverPriceCents)} / maand',
-                                  en: '+ ${_priceFromCents(catalog.extraDriverPriceCents)} / month',
-                                  fr: '+ ${_priceFromCents(catalog.extraDriverPriceCents)} / mois',
-                                  es: '+ ${_priceFromCents(catalog.extraDriverPriceCents)} / mes',
-                                ),
-                                subtitle: _addonAvailableLabel(),
-                                emphasized: usedDrivers >= profile.maxDrivers,
-                              ),
-                              for (final bundle in catalog.pdfBundles) ...[
                                 const SizedBox(height: 7),
                                 _addonCard(
                                   title: _t(
-                                    nl: 'Extra ${bundle.pdfs} PDF\u2019s',
-                                    en: 'Extra ${bundle.pdfs} PDFs',
-                                    fr: '${bundle.pdfs} PDF supplémentaires',
-                                    es: '${bundle.pdfs} PDF extra',
+                                    nl: 'Extra chauffeur',
+                                    en: 'Extra driver',
+                                    fr: 'Chauffeur supplémentaire',
+                                    es: 'Conductor extra',
                                   ),
-                                  price: _priceFromCents(bundle.priceCents),
+                                  price: _t(
+                                    nl: '+ ${_priceFromCents(catalog.extraDriverPriceCents)} / maand',
+                                    en: '+ ${_priceFromCents(catalog.extraDriverPriceCents)} / month',
+                                    fr: '+ ${_priceFromCents(catalog.extraDriverPriceCents)} / mois',
+                                    es: '+ ${_priceFromCents(catalog.extraDriverPriceCents)} / mes',
+                                  ),
                                   subtitle: _addonAvailableLabel(),
+                                  emphasized: usedDrivers >= profile.maxDrivers,
                                 ),
+                                for (final bundle in catalog.pdfBundles) ...[
+                                  const SizedBox(height: 7),
+                                  _addonCard(
+                                    title: _t(
+                                      nl: 'Extra ${bundle.pdfs} PDF\u2019s',
+                                      en: 'Extra ${bundle.pdfs} PDFs',
+                                      fr: '${bundle.pdfs} PDF supplémentaires',
+                                      es: '${bundle.pdfs} PDF extra',
+                                    ),
+                                    price: _priceFromCents(bundle.priceCents),
+                                    subtitle: _addonAvailableLabel(),
+                                  ),
+                                ],
                               ],
-                            ],
+                            ),
                           ),
-                        ),
                         _sectionCard(
                           title: _t(
                             nl: 'Inbegrepen platformmogelijkheden',
