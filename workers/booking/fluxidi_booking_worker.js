@@ -3242,32 +3242,56 @@ export class DocumentReferenceSequenceDO {
 // later patch.
 //
 // Storage scheme (SQLite-backed DO storage):
-//   total_assigned                                 → number
-//   next_slot                                      → number (next slot to hand out)
-//   by_activation:{activation_id}                  → { slot_number, tenant_id, company_id, assigned_at }
-//   by_company:{tenant_id}:{company_id}            → { slot_number, activation_id, assigned_at }
+//   total_assigned                       → number (COMMITTED slots only)
+//   reserved_active                      → number (currently-active reservations)
+//   next_slot                            → number (next slot to hand out)
+//   by_activation:{activation_id}        → {
+//       slot_number, tenant_id, company_id, state:"reserved"|"committed",
+//       reserved_at?, committed_at?, assigned_at?, expires_at? }
+//   by_company:{tenant_id}:{company_id}  → {
+//       slot_number, activation_id, state:"reserved"|"committed",
+//       reserved_at?, committed_at?, assigned_at?, expires_at? }
 //
-// Idempotency / re-activation policy:
-//   - Same activation_id → returns the existing slot with idempotent:true.
-//     This is the webhook-replay guard for a single payment / activation.
-//   - Same company with a DIFFERENT activation_id (e.g. the company
-//     previously activated as a founder, then cancelled, and is now
-//     re-activating) → does NOT automatically re-grant founder pricing.
-//     Returns granted:false with reason "company_previously_assigned" and
-//     the existing_slot_number for diagnostics. No counters are changed
-//     and no new by_activation:{activation_id} record is written. A future
-//     policy patch may add an explicit re-grant flag; this patch keeps it
-//     conservative so a cancelled company cannot reclaim founder pricing
-//     by reactivating.
+// Reservation model (Patch 2.2A-0):
+//   A founder slot is RESERVED at checkout-start (before charging) and
+//   COMMITTED on the verified paid webhook. Reservations expire lazily.
+//   A slot counts against `limit` as soon as it is reserved, so the price
+//   charged at checkout always matches the eventual entitlement and we can
+//   never grant more than `limit` founder rates even under concurrency.
+//
+// Actions:
+//   reserve  → reserve a slot (or return existing reservation/commit).
+//   commit   → flip a live reservation to committed.
+//   release  → drop a live reservation (never a committed slot).
+//   assign   → BACK-COMPAT (Patch 2.1): reserve+commit atomically, i.e. a
+//              direct committed allocation. Idempotent on activation_id.
+//   status   → counters snapshot.
+//
+// Legacy records:
+//   Records written by the Patch 2.1 `assign` path have no `state` field.
+//   They are treated as COMMITTED (see _recordState) so existing committed
+//   founders keep their slots and counters stay consistent.
+//
+// Idempotency / re-activation policy (unchanged in spirit):
+//   - Same activation_id → returns the existing slot (idempotent:true).
+//   - Same company, DIFFERENT activation_id, with a live (reserved or
+//     committed) slot → NOT auto re-granted. Returns granted:false,
+//     reason:"company_previously_assigned".
 //
 // Eligibility:
-//   - Markets without a founder price (e.g. ES/PT) call with
-//     founder_price_cents = null/0 → returns granted:false,
-//     reason:"not_eligible_market". No counter change.
+//   - Markets without a founder price call with founder_price_cents
+//     null/0/non-finite → granted:false, reason:"not_eligible_market".
 //
 // Exhaustion:
-//   - When total_assigned >= limit, returns granted:false,
-//     reason:"slots_exhausted". No counter change.
+//   - When total_assigned + reserved_active >= limit → granted:false,
+//     reason:"slots_exhausted".
+//
+// Lazy expiry: no cron / no scheduled handler. Expired reservations are
+// swept inside reserve/commit/release/status transactions. Committed slots
+// are never swept. Counters are clamped to non-negative integers.
+const FLUXIDI_FOUNDER_RESERVATION_DEFAULT_TTL_SECONDS = 60 * 60 * 24; // 24h
+const FLUXIDI_FOUNDER_RESERVATION_MAX_TTL_SECONDS = 60 * 60 * 24 * 30; // 30d cap
+
 export class FluxidiSubscriptionFounderSlotsDO {
   constructor(stateOrCtx, env) {
     this.state = stateOrCtx;
@@ -3282,15 +3306,100 @@ export class FluxidiSubscriptionFounderSlotsDO {
       body = {};
     }
     const action = String(body?.action || "").trim().toLowerCase();
+    if (action === "reserve") return this._reserve(body);
+    if (action === "commit") return this._commit(body);
+    if (action === "release") return this._release(body);
     if (action === "assign") return this._assign(body);
     if (action === "status") return this._status(body);
     return this._json({ ok: false, error: "Unknown action" }, 400);
   }
 
-  async _assign(body) {
+  // Interpret a stored record's lifecycle state. Records without an explicit
+  // state (legacy Patch 2.1 `assign` writes) are treated as committed.
+  _recordState(rec) {
+    if (!rec || typeof rec !== "object" || Array.isArray(rec)) return null;
+    if (!Number.isFinite(Number(rec.slot_number))) return null;
+    const s = String(rec.state || "").trim().toLowerCase();
+    if (s === "reserved" || s === "committed") return s;
+    return "committed";
+  }
+
+  // Only reserved records can expire. Committed records carry no expires_at.
+  _isExpiredReserved(rec, nowMs) {
+    const exp = Date.parse(rec?.expires_at || "");
+    if (!Number.isFinite(exp)) return false;
+    return nowMs >= exp;
+  }
+
+  async _counters(txn) {
+    return {
+      totalAssigned: clampInt(await txn.get("total_assigned"), 0, 999999999),
+      reservedActive: clampInt(await txn.get("reserved_active"), 0, 999999999),
+      nextSlot: Math.max(1, clampInt(await txn.get("next_slot"), 1, 999999999)),
+    };
+  }
+
+  // Sweep expired reservations. Decrements reserved_active per swept record
+  // and clamps it to >= 0. `exceptKey` lets a caller protect one activation
+  // record so it can be handled (and reported) explicitly. Returns the new
+  // reserved_active value.
+  async _sweepExpired(txn, nowMs, exceptKey = "") {
+    let reservedActive = clampInt(await txn.get("reserved_active"), 0, 999999999);
+    let entries;
+    try {
+      entries = await txn.list({ prefix: "by_activation:" });
+    } catch (_) {
+      return reservedActive;
+    }
+    let swept = 0;
+    for (const [key, rec] of entries) {
+      if (key === exceptKey) continue;
+      if (this._recordState(rec) !== "reserved") continue;
+      if (!this._isExpiredReserved(rec, nowMs)) continue;
+      await txn.delete(key);
+      const tenantId = safeStr(rec?.tenant_id, 120);
+      const companyId = safeStr(rec?.company_id, 120);
+      if (tenantId && companyId) {
+        const companyKey = `by_company:${tenantId}:${companyId}`;
+        const companyRec = await txn.get(companyKey);
+        const activationId = key.slice("by_activation:".length);
+        if (
+          this._recordState(companyRec) === "reserved" &&
+          safeStr(companyRec?.activation_id, 160) === activationId
+        ) {
+          await txn.delete(companyKey);
+        }
+      }
+      swept += 1;
+    }
+    if (swept > 0) {
+      reservedActive = Math.max(0, reservedActive - swept);
+      await txn.put("reserved_active", reservedActive);
+    }
+    return reservedActive;
+  }
+
+  _readScopeAndActivation(body) {
     const tenantId = safeStr(body?.tenant_id || body?.tenantId, 120);
     const companyId = safeStr(body?.company_id || body?.companyId, 120);
     const activationId = safeStr(body?.activation_id || body?.activationId, 160);
+    return { tenantId, companyId, activationId };
+  }
+
+  _eligibleFounderPrice(body) {
+    const raw = body?.founder_price_cents ?? body?.founderPriceCents;
+    const n = Number(raw);
+    return (
+      raw !== null &&
+      raw !== undefined &&
+      raw !== "" &&
+      Number.isFinite(n) &&
+      n > 0
+    );
+  }
+
+  async _reserve(body) {
+    const { tenantId, companyId, activationId } = this._readScopeAndActivation(body);
     if (!tenantId || !companyId) {
       return this._json({ ok: false, error: "missing_tenant_scope" }, 400);
     }
@@ -3301,94 +3410,490 @@ export class FluxidiSubscriptionFounderSlotsDO {
     if (limit <= 0) {
       return this._json({ ok: false, error: "invalid_limit" }, 400);
     }
-    const founderPriceCentsRaw = body?.founder_price_cents ?? body?.founderPriceCents;
-    const founderPriceCents = Number(founderPriceCentsRaw);
-    const eligibleByMarket =
-      founderPriceCentsRaw !== null &&
-      founderPriceCentsRaw !== undefined &&
-      founderPriceCentsRaw !== "" &&
-      Number.isFinite(founderPriceCents) &&
-      founderPriceCents > 0;
+    let ttlSeconds = clampInt(
+      body?.reservation_ttl_seconds ?? body?.reservationTtlSeconds,
+      0,
+      FLUXIDI_FOUNDER_RESERVATION_MAX_TTL_SECONDS,
+    );
+    if (ttlSeconds <= 0) ttlSeconds = FLUXIDI_FOUNDER_RESERVATION_DEFAULT_TTL_SECONDS;
+    const eligibleByMarket = this._eligibleFounderPrice(body);
 
     const result = await this.state.storage.transaction(async (txn) => {
+      const nowMs = Date.now();
       const activationKey = `by_activation:${activationId}`;
       const companyKey = `by_company:${tenantId}:${companyId}`;
+      await this._sweepExpired(txn, nowMs, activationKey);
 
-      const existingByActivation = await txn.get(activationKey);
-      if (existingByActivation && Number.isFinite(Number(existingByActivation.slot_number))) {
-        const totalAssigned = clampInt(await txn.get("total_assigned"), 0, 999999999);
+      // Existing record for THIS activation_id.
+      const existing = await txn.get(activationKey);
+      const existingState = this._recordState(existing);
+      if (existingState === "committed") {
+        const c = await this._counters(txn);
         return {
           ok: true,
           granted: true,
-          slot_number: Number(existingByActivation.slot_number),
-          total_assigned: totalAssigned,
+          committed: true,
           idempotent: true,
+          slot_number: Number(existing.slot_number),
+          total_assigned: c.totalAssigned,
+          reserved_active: c.reservedActive,
         };
       }
+      if (existingState === "reserved") {
+        if (!this._isExpiredReserved(existing, nowMs)) {
+          const c = await this._counters(txn);
+          return {
+            ok: true,
+            granted: true,
+            reserved: true,
+            idempotent: true,
+            slot_number: Number(existing.slot_number),
+            expires_at: safeStr(existing.expires_at, 48),
+            total_assigned: c.totalAssigned,
+            reserved_active: c.reservedActive,
+          };
+        }
+        // Expired (sweep skipped it via exceptKey): release then re-allocate.
+        await txn.delete(activationKey);
+        const companyRec = await txn.get(companyKey);
+        if (
+          this._recordState(companyRec) === "reserved" &&
+          safeStr(companyRec?.activation_id, 160) === activationId
+        ) {
+          await txn.delete(companyKey);
+        }
+        const ra = clampInt(await txn.get("reserved_active"), 0, 999999999);
+        await txn.put("reserved_active", Math.max(0, ra - 1));
+      }
 
-      // Company already holds a founder slot from a PRIOR activation
-      // (different activation_id, e.g. previously activated then cancelled
-      // and is now re-activating). Product rule: founder pricing remains
-      // locked only while the subscription stays active. Re-activation
-      // does NOT automatically reclaim founder pricing. No counters are
-      // changed and no new by_activation record is written, so a later
-      // webhook replay of the same new activation_id will be evaluated
-      // afresh against the same rule.
-      const existingByCompany = await txn.get(companyKey);
-      if (existingByCompany && Number.isFinite(Number(existingByCompany.slot_number))) {
-        const totalAssigned = clampInt(await txn.get("total_assigned"), 0, 999999999);
-        return {
-          ok: true,
-          granted: false,
-          reason: "company_previously_assigned",
-          existing_slot_number: Number(existingByCompany.slot_number),
-          total_assigned: totalAssigned,
-        };
+      // Company already holds a live slot under a DIFFERENT activation_id.
+      const companyRec = await txn.get(companyKey);
+      const companyState = this._recordState(companyRec);
+      if (companyState === "committed" || companyState === "reserved") {
+        const companyActivation = safeStr(companyRec?.activation_id, 160);
+        if (companyActivation && companyActivation !== activationId) {
+          const c = await this._counters(txn);
+          return {
+            ok: true,
+            granted: false,
+            reason: "company_previously_assigned",
+            existing_slot_number: Number(companyRec.slot_number),
+            total_assigned: c.totalAssigned,
+            reserved_active: c.reservedActive,
+          };
+        }
+        // Same activation_id but the by_activation record was missing/expired
+        // (inconsistent): drop the stale company pointer and continue.
+        if (companyActivation === activationId) {
+          await txn.delete(companyKey);
+          if (companyState === "reserved") {
+            const ra = clampInt(await txn.get("reserved_active"), 0, 999999999);
+            await txn.put("reserved_active", Math.max(0, ra - 1));
+          }
+        }
       }
 
       if (!eligibleByMarket) {
-        const totalAssigned = clampInt(await txn.get("total_assigned"), 0, 999999999);
+        const c = await this._counters(txn);
         return {
           ok: true,
           granted: false,
           reason: "not_eligible_market",
-          total_assigned: totalAssigned,
+          total_assigned: c.totalAssigned,
+          reserved_active: c.reservedActive,
         };
       }
 
-      const totalAssigned = clampInt(await txn.get("total_assigned"), 0, 999999999);
-      if (totalAssigned >= limit) {
+      const c = await this._counters(txn);
+      if (c.totalAssigned + c.reservedActive >= limit) {
         return {
           ok: true,
           granted: false,
           reason: "slots_exhausted",
-          total_assigned: totalAssigned,
+          total_assigned: c.totalAssigned,
+          reserved_active: c.reservedActive,
         };
       }
 
-      const nextSlot = Math.max(1, clampInt(await txn.get("next_slot"), 1, 999999999));
-      const assignedAt = new Date().toISOString();
-      const record = {
-        slot_number: nextSlot,
+      const slotNumber = c.nextSlot;
+      const reservedAt = new Date(nowMs).toISOString();
+      const expiresAt = new Date(nowMs + ttlSeconds * 1000).toISOString();
+      await txn.put(activationKey, {
+        slot_number: slotNumber,
         tenant_id: tenantId,
         company_id: companyId,
-        assigned_at: assignedAt,
-      };
-      await txn.put(activationKey, record);
-      await txn.put(companyKey, {
-        slot_number: nextSlot,
-        activation_id: activationId,
-        assigned_at: assignedAt,
+        state: "reserved",
+        reserved_at: reservedAt,
+        expires_at: expiresAt,
       });
-      await txn.put("next_slot", nextSlot + 1);
-      const newTotal = totalAssigned + 1;
-      await txn.put("total_assigned", newTotal);
+      await txn.put(companyKey, {
+        slot_number: slotNumber,
+        activation_id: activationId,
+        state: "reserved",
+        reserved_at: reservedAt,
+        expires_at: expiresAt,
+      });
+      await txn.put("next_slot", slotNumber + 1);
+      const newReserved = c.reservedActive + 1;
+      await txn.put("reserved_active", newReserved);
       return {
         ok: true,
         granted: true,
-        slot_number: nextSlot,
-        total_assigned: newTotal,
+        reserved: true,
         idempotent: false,
+        slot_number: slotNumber,
+        expires_at: expiresAt,
+        total_assigned: c.totalAssigned,
+        reserved_active: newReserved,
+      };
+    });
+
+    return this._json(result);
+  }
+
+  async _commit(body) {
+    const { tenantId, companyId, activationId } = this._readScopeAndActivation(body);
+    if (!tenantId || !companyId) {
+      return this._json({ ok: false, error: "missing_tenant_scope" }, 400);
+    }
+    if (!activationId) {
+      return this._json({ ok: false, error: "missing_activation_id" }, 400);
+    }
+
+    const result = await this.state.storage.transaction(async (txn) => {
+      const nowMs = Date.now();
+      const activationKey = `by_activation:${activationId}`;
+      const companyKey = `by_company:${tenantId}:${companyId}`;
+      // Protect this activation from the sweep so we can report expiry.
+      await this._sweepExpired(txn, nowMs, activationKey);
+
+      const existing = await txn.get(activationKey);
+      const state = this._recordState(existing);
+      if (!state) {
+        const c = await this._counters(txn);
+        return {
+          ok: true,
+          granted: false,
+          reason: "reservation_missing",
+          total_assigned: c.totalAssigned,
+          reserved_active: c.reservedActive,
+        };
+      }
+      if (state === "committed") {
+        const c = await this._counters(txn);
+        return {
+          ok: true,
+          granted: true,
+          committed: true,
+          idempotent: true,
+          slot_number: Number(existing.slot_number),
+          total_assigned: c.totalAssigned,
+          reserved_active: c.reservedActive,
+        };
+      }
+      // state === "reserved"
+      if (this._isExpiredReserved(existing, nowMs)) {
+        await txn.delete(activationKey);
+        const companyRec = await txn.get(companyKey);
+        if (
+          this._recordState(companyRec) === "reserved" &&
+          safeStr(companyRec?.activation_id, 160) === activationId
+        ) {
+          await txn.delete(companyKey);
+        }
+        const ra = clampInt(await txn.get("reserved_active"), 0, 999999999);
+        await txn.put("reserved_active", Math.max(0, ra - 1));
+        const c = await this._counters(txn);
+        return {
+          ok: true,
+          granted: false,
+          reason: "reservation_expired",
+          total_assigned: c.totalAssigned,
+          reserved_active: c.reservedActive,
+        };
+      }
+
+      const slotNumber = Number(existing.slot_number);
+      const committedAt = new Date(nowMs).toISOString();
+      await txn.put(activationKey, {
+        slot_number: slotNumber,
+        tenant_id: tenantId,
+        company_id: companyId,
+        state: "committed",
+        reserved_at: safeStr(existing.reserved_at, 48),
+        committed_at: committedAt,
+      });
+      const companyRec = await txn.get(companyKey);
+      if (
+        this._recordState(companyRec) === "reserved" &&
+        safeStr(companyRec?.activation_id, 160) === activationId
+      ) {
+        await txn.put(companyKey, {
+          slot_number: slotNumber,
+          activation_id: activationId,
+          state: "committed",
+          reserved_at: safeStr(companyRec.reserved_at, 48),
+          committed_at: committedAt,
+        });
+      } else if (!companyRec) {
+        // Defensive backfill if the company pointer was lost.
+        await txn.put(companyKey, {
+          slot_number: slotNumber,
+          activation_id: activationId,
+          state: "committed",
+          committed_at: committedAt,
+        });
+      }
+      const ra = clampInt(await txn.get("reserved_active"), 0, 999999999);
+      await txn.put("reserved_active", Math.max(0, ra - 1));
+      const ta = clampInt(await txn.get("total_assigned"), 0, 999999999) + 1;
+      await txn.put("total_assigned", ta);
+      const nextSlot = Math.max(1, clampInt(await txn.get("next_slot"), 1, 999999999));
+      return {
+        ok: true,
+        granted: true,
+        committed: true,
+        idempotent: false,
+        slot_number: slotNumber,
+        total_assigned: ta,
+        reserved_active: Math.max(0, ra - 1),
+        next_slot: nextSlot,
+      };
+    });
+
+    return this._json(result);
+  }
+
+  async _release(body) {
+    const { tenantId, companyId, activationId } = this._readScopeAndActivation(body);
+    if (!tenantId || !companyId) {
+      return this._json({ ok: false, error: "missing_tenant_scope" }, 400);
+    }
+    if (!activationId) {
+      return this._json({ ok: false, error: "missing_activation_id" }, 400);
+    }
+
+    const result = await this.state.storage.transaction(async (txn) => {
+      const nowMs = Date.now();
+      const activationKey = `by_activation:${activationId}`;
+      const companyKey = `by_company:${tenantId}:${companyId}`;
+      await this._sweepExpired(txn, nowMs, activationKey);
+
+      const existing = await txn.get(activationKey);
+      const state = this._recordState(existing);
+      if (!state) {
+        const c = await this._counters(txn);
+        return {
+          ok: true,
+          released: false,
+          reason: "reservation_missing",
+          total_assigned: c.totalAssigned,
+          reserved_active: c.reservedActive,
+        };
+      }
+      if (state === "committed") {
+        const c = await this._counters(txn);
+        return {
+          ok: true,
+          released: false,
+          reason: "already_committed",
+          slot_number: Number(existing.slot_number),
+          total_assigned: c.totalAssigned,
+          reserved_active: c.reservedActive,
+        };
+      }
+      // state === "reserved" (expired or not): release it.
+      const slotNumber = Number(existing.slot_number);
+      await txn.delete(activationKey);
+      const companyRec = await txn.get(companyKey);
+      if (
+        this._recordState(companyRec) === "reserved" &&
+        safeStr(companyRec?.activation_id, 160) === activationId
+      ) {
+        await txn.delete(companyKey);
+      }
+      const ra = clampInt(await txn.get("reserved_active"), 0, 999999999);
+      const newReserved = Math.max(0, ra - 1);
+      await txn.put("reserved_active", newReserved);
+      const ta = clampInt(await txn.get("total_assigned"), 0, 999999999);
+      return {
+        ok: true,
+        released: true,
+        slot_number: slotNumber,
+        total_assigned: ta,
+        reserved_active: newReserved,
+      };
+    });
+
+    return this._json(result);
+  }
+
+  // BACK-COMPAT: Patch 2.1 webhook/activation path. A direct committed
+  // allocation (reserve+commit atomically), idempotent on activation_id and
+  // never auto re-granting founder pricing to a company under a different
+  // activation_id.
+  async _assign(body) {
+    const { tenantId, companyId, activationId } = this._readScopeAndActivation(body);
+    if (!tenantId || !companyId) {
+      return this._json({ ok: false, error: "missing_tenant_scope" }, 400);
+    }
+    if (!activationId) {
+      return this._json({ ok: false, error: "missing_activation_id" }, 400);
+    }
+    const limit = clampInt(body?.limit, 0, 1000000);
+    if (limit <= 0) {
+      return this._json({ ok: false, error: "invalid_limit" }, 400);
+    }
+    const eligibleByMarket = this._eligibleFounderPrice(body);
+
+    const result = await this.state.storage.transaction(async (txn) => {
+      const nowMs = Date.now();
+      const activationKey = `by_activation:${activationId}`;
+      const companyKey = `by_company:${tenantId}:${companyId}`;
+      await this._sweepExpired(txn, nowMs, activationKey);
+
+      const existing = await txn.get(activationKey);
+      const existingState = this._recordState(existing);
+      if (existingState === "committed") {
+        const c = await this._counters(txn);
+        return {
+          ok: true,
+          granted: true,
+          committed: true,
+          idempotent: true,
+          slot_number: Number(existing.slot_number),
+          total_assigned: c.totalAssigned,
+          reserved_active: c.reservedActive,
+        };
+      }
+      if (existingState === "reserved" && !this._isExpiredReserved(existing, nowMs)) {
+        // Commit the existing live reservation for this activation_id.
+        const slotNumber = Number(existing.slot_number);
+        const committedAt = new Date(nowMs).toISOString();
+        await txn.put(activationKey, {
+          slot_number: slotNumber,
+          tenant_id: tenantId,
+          company_id: companyId,
+          state: "committed",
+          reserved_at: safeStr(existing.reserved_at, 48),
+          committed_at: committedAt,
+        });
+        const companyRec0 = await txn.get(companyKey);
+        if (
+          this._recordState(companyRec0) === "reserved" &&
+          safeStr(companyRec0?.activation_id, 160) === activationId
+        ) {
+          await txn.put(companyKey, {
+            slot_number: slotNumber,
+            activation_id: activationId,
+            state: "committed",
+            reserved_at: safeStr(companyRec0.reserved_at, 48),
+            committed_at: committedAt,
+          });
+        }
+        const ra = clampInt(await txn.get("reserved_active"), 0, 999999999);
+        await txn.put("reserved_active", Math.max(0, ra - 1));
+        const ta = clampInt(await txn.get("total_assigned"), 0, 999999999) + 1;
+        await txn.put("total_assigned", ta);
+        return {
+          ok: true,
+          granted: true,
+          committed: true,
+          idempotent: false,
+          slot_number: slotNumber,
+          total_assigned: ta,
+          reserved_active: Math.max(0, ra - 1),
+        };
+      }
+      if (existingState === "reserved") {
+        // Expired reservation for this activation: release then re-allocate.
+        await txn.delete(activationKey);
+        const companyRecExp = await txn.get(companyKey);
+        if (
+          this._recordState(companyRecExp) === "reserved" &&
+          safeStr(companyRecExp?.activation_id, 160) === activationId
+        ) {
+          await txn.delete(companyKey);
+        }
+        const ra = clampInt(await txn.get("reserved_active"), 0, 999999999);
+        await txn.put("reserved_active", Math.max(0, ra - 1));
+      }
+
+      // Company already holds a live slot under a DIFFERENT activation_id.
+      const companyRec = await txn.get(companyKey);
+      const companyState = this._recordState(companyRec);
+      if (companyState === "committed" || companyState === "reserved") {
+        const companyActivation = safeStr(companyRec?.activation_id, 160);
+        if (companyActivation && companyActivation !== activationId) {
+          const c = await this._counters(txn);
+          return {
+            ok: true,
+            granted: false,
+            reason: "company_previously_assigned",
+            existing_slot_number: Number(companyRec.slot_number),
+            total_assigned: c.totalAssigned,
+            reserved_active: c.reservedActive,
+          };
+        }
+        if (companyActivation === activationId) {
+          await txn.delete(companyKey);
+          if (companyState === "reserved") {
+            const ra = clampInt(await txn.get("reserved_active"), 0, 999999999);
+            await txn.put("reserved_active", Math.max(0, ra - 1));
+          }
+        }
+      }
+
+      if (!eligibleByMarket) {
+        const c = await this._counters(txn);
+        return {
+          ok: true,
+          granted: false,
+          reason: "not_eligible_market",
+          total_assigned: c.totalAssigned,
+          reserved_active: c.reservedActive,
+        };
+      }
+
+      const c = await this._counters(txn);
+      if (c.totalAssigned + c.reservedActive >= limit) {
+        return {
+          ok: true,
+          granted: false,
+          reason: "slots_exhausted",
+          total_assigned: c.totalAssigned,
+          reserved_active: c.reservedActive,
+        };
+      }
+
+      const slotNumber = c.nextSlot;
+      const committedAt = new Date(nowMs).toISOString();
+      await txn.put(activationKey, {
+        slot_number: slotNumber,
+        tenant_id: tenantId,
+        company_id: companyId,
+        state: "committed",
+        assigned_at: committedAt,
+        committed_at: committedAt,
+      });
+      await txn.put(companyKey, {
+        slot_number: slotNumber,
+        activation_id: activationId,
+        state: "committed",
+        assigned_at: committedAt,
+        committed_at: committedAt,
+      });
+      await txn.put("next_slot", slotNumber + 1);
+      const ta = c.totalAssigned + 1;
+      await txn.put("total_assigned", ta);
+      return {
+        ok: true,
+        granted: true,
+        committed: true,
+        idempotent: false,
+        slot_number: slotNumber,
+        total_assigned: ta,
+        reserved_active: c.reservedActive,
       };
     });
 
@@ -3396,13 +3901,17 @@ export class FluxidiSubscriptionFounderSlotsDO {
   }
 
   async _status(_body) {
-    const totalAssigned = clampInt(await this.state.storage.get("total_assigned"), 0, 999999999);
-    const nextSlot = Math.max(1, clampInt(await this.state.storage.get("next_slot"), 1, 999999999));
-    return this._json({
-      ok: true,
-      total_assigned: totalAssigned,
-      next_slot: nextSlot,
+    const result = await this.state.storage.transaction(async (txn) => {
+      await this._sweepExpired(txn, Date.now());
+      const c = await this._counters(txn);
+      return {
+        ok: true,
+        total_assigned: c.totalAssigned,
+        reserved_active: c.reservedActive,
+        next_slot: c.nextSlot,
+      };
     });
+    return this._json(result);
   }
 
   _json(obj, status = 200) {
