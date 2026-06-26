@@ -11789,6 +11789,7 @@ const List<List<String>> _kBusinessCountryCodes = <List<String>>[
   <String>['FR', 'Frankrijk', 'France', 'France', 'Francia'],
   <String>['DE', 'Duitsland', 'Germany', 'Allemagne', 'Alemania'],
   <String>['ES', 'Spanje', 'Spain', 'Espagne', 'España'],
+  <String>['PT', 'Portugal', 'Portugal', 'Portugal', 'Portugal'],
   <String>[
     'GB',
     'Verenigd Koninkrijk',
@@ -11811,7 +11812,7 @@ String _stripBusinessCountryDiacritics(String input) {
 }
 
 /// Normalizes a free-text or ISO country value to one of the codes supported
-/// by the business country dropdown: BE, NL, LU, FR, DE, ES, GB.
+/// by the business country dropdown: BE, NL, LU, FR, DE, ES, PT, GB.
 ///
 /// Returns an empty string when the input does not map to a supported code,
 /// so callers can preserve unknown legacy values without overwriting them.

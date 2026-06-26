@@ -13,6 +13,23 @@ class _CompanySubscriptionBillingPageState
   late Future<BackendSubscriptionProfile> _future;
   static const Color _warn = Color(0xFFFFB457);
 
+  /// Format an integer-cents price as "€XX" (no decimals when round, "€X.YY"
+  /// otherwise). Currency is always shown as € for now; the catalog currency
+  /// field would be consulted here if non-EUR markets are ever added.
+  String _priceFromCents(int cents) {
+    if (cents % 100 == 0) return '€${cents ~/ 100}';
+    final whole = cents ~/ 100;
+    final fraction = (cents % 100).toString().padLeft(2, '0');
+    return '€$whole.$fraction';
+  }
+
+  String _planDisplayName(BackendSubscriptionProfile profile) {
+    final code = profile.planCode.trim().toLowerCase();
+    if (code == 'fluxidi_pro' || code.isEmpty) return 'Fluxidi Pro';
+    // Legacy plan values keep their old display.
+    return _planLabel(profile.plan);
+  }
+
   BusinessThemePalette get _businessThemePalette =>
       paletteForBusinessTheme(businessThemeNotifier.value);
   Color get _bg => _businessThemePalette.background;
@@ -370,17 +387,44 @@ class _CompanySubscriptionBillingPageState
     String? subtitle,
     String? priceLabel,
     String? inactiveLabel,
+    bool comingSoon = false,
   }) {
-    final statusText = active
-        ? _t(nl: 'Actief', en: 'Active', fr: 'Actif', es: 'Activo')
-        : (inactiveLabel ?? _addonAvailableLabel());
-    final statusBg = active
-        ? _green.withOpacity(0.14)
-        : _gold.withOpacity(0.13);
-    final statusBorder = active
-        ? _green.withOpacity(0.52)
-        : _gold.withOpacity(0.42);
-    final statusColor = active ? _green : _gold;
+    // Coming-soon modules use a neutral grey accent so users do not confuse
+    // them with "Actief" (green) or paid add-ons (gold). When comingSoon is
+    // true the `active` flag is forced to false and the inactiveLabel is the
+    // visible badge text.
+    final neutralColor = _businessThemePalette.textMuted;
+    final neutralBg = _businessThemePalette.surfaceAlt.withOpacity(
+      _businessThemePalette.isDark ? 0.66 : 0.92,
+    );
+    final neutralBorder = _businessThemePalette.border.withOpacity(
+      _businessThemePalette.isDark ? 0.52 : 0.78,
+    );
+    final effectiveActive = comingSoon ? false : active;
+    final statusText = comingSoon
+        ? (inactiveLabel ??
+              _t(
+                nl: 'Binnenkort',
+                en: 'Coming soon',
+                fr: 'Bientôt',
+                es: 'Próximamente',
+              ))
+        : (effectiveActive
+              ? _t(nl: 'Actief', en: 'Active', fr: 'Actif', es: 'Activo')
+              : (inactiveLabel ?? _addonAvailableLabel()));
+    final statusBg = comingSoon
+        ? neutralBg
+        : (effectiveActive
+              ? _green.withOpacity(0.14)
+              : _gold.withOpacity(0.13));
+    final statusBorder = comingSoon
+        ? neutralBorder
+        : (effectiveActive
+              ? _green.withOpacity(0.52)
+              : _gold.withOpacity(0.42));
+    final statusColor = comingSoon
+        ? neutralColor
+        : (effectiveActive ? _green : _gold);
     return Container(
       margin: const EdgeInsets.only(bottom: 7),
       padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
@@ -388,7 +432,11 @@ class _CompanySubscriptionBillingPageState
         color: _panelSoft,
         borderRadius: BorderRadius.circular(10),
         border: Border.all(
-          color: active ? _green.withOpacity(0.42) : _gold.withOpacity(0.28),
+          color: comingSoon
+              ? neutralBorder
+              : (effectiveActive
+                    ? _green.withOpacity(0.42)
+                    : _gold.withOpacity(0.28)),
         ),
       ),
       // Keep status/price chips below the title to avoid narrow-phone clipping.
@@ -404,19 +452,29 @@ class _CompanySubscriptionBillingPageState
                 height: 22,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  color: active
-                      ? _green.withOpacity(0.15)
-                      : _gold.withOpacity(0.15),
+                  color: comingSoon
+                      ? neutralColor.withOpacity(0.15)
+                      : (effectiveActive
+                            ? _green.withOpacity(0.15)
+                            : _gold.withOpacity(0.15)),
                   border: Border.all(
-                    color: active
-                        ? _green.withOpacity(0.50)
-                        : _gold.withOpacity(0.45),
+                    color: comingSoon
+                        ? neutralColor.withOpacity(0.45)
+                        : (effectiveActive
+                              ? _green.withOpacity(0.50)
+                              : _gold.withOpacity(0.45)),
                   ),
                 ),
                 child: Icon(
-                  active ? Icons.check : Icons.add_circle_outline,
+                  comingSoon
+                      ? Icons.schedule_outlined
+                      : (effectiveActive
+                            ? Icons.check
+                            : Icons.add_circle_outline),
                   size: 13,
-                  color: active ? _green : _gold,
+                  color: comingSoon
+                      ? neutralColor
+                      : (effectiveActive ? _green : _gold),
                 ),
               ),
               const SizedBox(width: 8),
@@ -479,10 +537,10 @@ class _CompanySubscriptionBillingPageState
       SnackBar(
         content: Text(
           _t(
-            nl: 'Activeren en facturatie verlopen via beheer.',
-            en: 'Activation and billing are handled through management.',
-            fr: 'L activation et la facturation passent par la gestion.',
-            es: 'La activacion y la facturacion se gestionan desde administracion.',
+            nl: 'Na je proefperiode ontvang je automatisch een melding om je abonnement te activeren en verder gebruik te maken van Fluxidi.',
+            en: 'After your trial, you\'ll automatically receive a prompt to activate your subscription and keep using Fluxidi.',
+            fr: 'Après votre période d\'essai, vous recevrez automatiquement une invitation à activer votre abonnement et à continuer à utiliser Fluxidi.',
+            es: 'Después de tu prueba, recibirás automáticamente un aviso para activar tu suscripción y seguir usando Fluxidi.',
           ),
         ),
       ),
@@ -682,6 +740,21 @@ class _CompanySubscriptionBillingPageState
             final statusColors = _statusColors(profile.status);
             final trialRange =
                 '${profile.trialStartedAt.trim().isEmpty ? "—" : profile.trialStartedAt.trim()} / ${profile.trialEndsAt.trim().isEmpty ? "—" : profile.trialEndsAt.trim()}';
+            // Country-aware catalog drives all visible pricing copy. If the
+            // backend profile didn't ship catalog fields the resolver fills
+            // in BE/NL/FR/ES/PT defaults from the active company's market.
+            final catalog = resolveSubscriptionCatalogEntryForMarket(
+              profile.market.trim().isNotEmpty
+                  ? profile.market
+                  : resolveActiveCompanyPricingMarket(),
+            );
+            final normalPriceText = _priceFromCents(catalog.normalPriceCents);
+            final founderPriceText = catalog.founderPriceCents != null
+                ? _priceFromCents(catalog.founderPriceCents!)
+                : '';
+            final hasFounderOffer =
+                catalog.founderPriceCents != null &&
+                catalog.founderSlotsLimit != null;
             return ValueListenableBuilder<List<VehicleProfile>>(
               valueListenable: vehiclesNotifier,
               builder: (context, vehicles, _) {
@@ -740,7 +813,7 @@ class _CompanySubscriptionBillingPageState
                                         ),
                                         const SizedBox(height: 2),
                                         Text(
-                                          _planLabel(profile.plan),
+                                          _planDisplayName(profile),
                                           style: TextStyle(
                                             color: _businessThemePalette
                                                 .textPrimary,
@@ -763,15 +836,65 @@ class _CompanySubscriptionBillingPageState
                               const SizedBox(height: 8),
                               _chip(
                                 text: _t(
-                                  nl: '€49 / maand · planweergave',
-                                  en: '€49 / month · plan display copy',
-                                  fr: '€49 / mois · affichage du plan',
-                                  es: '€49 / mes · copia visual del plan',
+                                  nl: '$normalPriceText / maand excl. btw',
+                                  en: '$normalPriceText / month excl. VAT',
+                                  fr: '$normalPriceText / mois HT',
+                                  es: '$normalPriceText / mes sin IVA',
                                 ),
                                 bg: _gold.withOpacity(0.12),
                                 border: _gold.withOpacity(0.40),
                                 textColor: _gold,
                                 icon: Icons.sell_outlined,
+                              ),
+                              if (hasFounderOffer) ...[
+                                const SizedBox(height: 6),
+                                Container(
+                                  width: double.infinity,
+                                  padding: const EdgeInsets.fromLTRB(
+                                    10,
+                                    8,
+                                    10,
+                                    8,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: _gold.withOpacity(0.10),
+                                    borderRadius: BorderRadius.circular(10),
+                                    border: Border.all(
+                                      color: _gold.withOpacity(0.45),
+                                    ),
+                                  ),
+                                  child: Text(
+                                    _t(
+                                      nl: 'Eerste ${catalog.founderSlotsLimit} bedrijven: $founderPriceText/maand excl. btw zolang het abonnement actief blijft. Daarna normale prijs: $normalPriceText/maand.',
+                                      en: 'First ${catalog.founderSlotsLimit} companies: $founderPriceText/month excl. VAT for as long as the subscription stays active. Normal price afterwards: $normalPriceText/month.',
+                                      fr: 'Premières ${catalog.founderSlotsLimit} entreprises : $founderPriceText/mois HT tant que l\'abonnement reste actif. Prix normal ensuite : $normalPriceText/mois.',
+                                      es: 'Primeras ${catalog.founderSlotsLimit} empresas: $founderPriceText/mes sin IVA mientras la suscripción siga activa. Precio normal después: $normalPriceText/mes.',
+                                    ),
+                                    style: TextStyle(
+                                      color: _gold,
+                                      fontSize: 11.8,
+                                      fontWeight: FontWeight.w700,
+                                      height: 1.3,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                              const SizedBox(height: 6),
+                              // Visible trial copy is intentionally expressed in
+                              // weeks ("2 weken / 2 weeks") even though the
+                              // catalog keeps trialDays = 14 internally. Do not
+                              // surface the day count in the UI.
+                              _chip(
+                                text: _t(
+                                  nl: '2 weken gratis proefperiode',
+                                  en: '2 weeks free trial',
+                                  fr: '2 semaines d\'essai gratuit',
+                                  es: '2 semanas de prueba gratis',
+                                ),
+                                bg: _green.withOpacity(0.14),
+                                border: _green.withOpacity(0.48),
+                                textColor: _green,
+                                icon: Icons.schedule_outlined,
                               ),
                               const SizedBox(height: 8),
                               _infoLine(
@@ -801,7 +924,7 @@ class _CompanySubscriptionBillingPageState
                                 children: [
                                   _chip(
                                     text:
-                                        '${profile.includedVehicles} ${_t(nl: "voertuig inbegrepen", en: "vehicle included", fr: "vehicule inclus", es: "vehiculo incluido")}',
+                                        '${catalog.includedVehicleCount} ${_t(nl: "voertuig inbegrepen", en: "vehicle included", fr: "vehicule inclus", es: "vehiculo incluido")}',
                                     bg: _green.withOpacity(0.14),
                                     border: _green.withOpacity(0.45),
                                     textColor: _green,
@@ -809,10 +932,10 @@ class _CompanySubscriptionBillingPageState
                                   ),
                                   _chip(
                                     text: _t(
-                                      nl: '1 chauffeur inbegrepen',
-                                      en: '1 driver included',
-                                      fr: '1 chauffeur inclus',
-                                      es: '1 conductor incluido',
+                                      nl: '${catalog.includedDriversPerVehicle} chauffeurs per voertuig inbegrepen',
+                                      en: '${catalog.includedDriversPerVehicle} drivers per vehicle included',
+                                      fr: '${catalog.includedDriversPerVehicle} chauffeurs par véhicule inclus',
+                                      es: '${catalog.includedDriversPerVehicle} conductores por vehículo incluidos',
                                     ),
                                     bg: _green.withOpacity(0.14),
                                     border: _green.withOpacity(0.45),
@@ -821,10 +944,10 @@ class _CompanySubscriptionBillingPageState
                                   ),
                                   _chip(
                                     text: _t(
-                                      nl: '200 PDF-creaties per voertuig / maand',
-                                      en: '200 PDF creations per vehicle / month',
-                                      fr: '200 creations PDF par vehicule / mois',
-                                      es: '200 creaciones PDF por vehiculo / mes',
+                                      nl: '${catalog.includedPdfCreationsPerVehicleMonth} PDF-creaties per voertuig / maand',
+                                      en: '${catalog.includedPdfCreationsPerVehicleMonth} PDF creations per vehicle / month',
+                                      fr: '${catalog.includedPdfCreationsPerVehicleMonth} créations PDF par véhicule / mois',
+                                      es: '${catalog.includedPdfCreationsPerVehicleMonth} creaciones PDF por vehículo / mes',
                                     ),
                                     bg: _gold.withOpacity(0.13),
                                     border: _gold.withOpacity(0.40),
@@ -832,10 +955,10 @@ class _CompanySubscriptionBillingPageState
                                   ),
                                   _chip(
                                     text: _t(
-                                      nl: 'Chiron-ready',
-                                      en: 'Chiron-ready',
-                                      fr: 'Chiron-ready',
-                                      es: 'Chiron-ready',
+                                      nl: 'Chiron-ready inbegrepen',
+                                      en: 'Chiron-ready included',
+                                      fr: 'Chiron-ready inclus',
+                                      es: 'Chiron-ready incluido',
                                     ),
                                     bg: _green.withOpacity(0.14),
                                     border: _green.withOpacity(0.45),
@@ -843,27 +966,43 @@ class _CompanySubscriptionBillingPageState
                                   ),
                                   _chip(
                                     text: _t(
-                                      nl: 'Peppol-ready structuur inbegrepen',
-                                      en: 'Peppol-ready structure included',
-                                      fr: 'Structure Peppol-ready incluse',
-                                      es: 'Estructura Peppol-ready incluida',
+                                      nl: 'Billit/Peppol-ready inbegrepen',
+                                      en: 'Billit/Peppol-ready included',
+                                      fr: 'Billit/Peppol-ready inclus',
+                                      es: 'Billit/Peppol-ready incluido',
                                     ),
-                                    bg: _gold.withOpacity(0.13),
-                                    border: _gold.withOpacity(0.40),
-                                    textColor: _gold,
+                                    bg: _green.withOpacity(0.14),
+                                    border: _green.withOpacity(0.45),
+                                    textColor: _green,
                                   ),
                                   _chip(
                                     text: _t(
-                                      nl: 'Peppol-verzending via betaalde add-on',
-                                      en: 'Peppol sending via paid add-on',
-                                      fr: 'Envoi Peppol via option payante',
-                                      es: 'Envio Peppol via complemento de pago',
+                                      nl: 'Geen commissie op ritten',
+                                      en: 'No commission on rides',
+                                      fr: 'Aucune commission sur les courses',
+                                      es: 'Sin comisión sobre los viajes',
                                     ),
-                                    bg: _warn.withOpacity(0.14),
-                                    border: _warn.withOpacity(0.44),
-                                    textColor: _warn,
+                                    bg: _green.withOpacity(0.14),
+                                    border: _green.withOpacity(0.45),
+                                    textColor: _green,
+                                    icon: Icons.do_not_disturb_on_outlined,
                                   ),
                                 ],
+                              ),
+                              const SizedBox(height: 6),
+                              Text(
+                                _t(
+                                  nl: 'Externe Billit/providerkosten en Mollie-transactiekosten zijn voor rekening van het bedrijf en lopen via je eigen account.',
+                                  en: 'External Billit/provider costs and Mollie transaction fees are paid by the company via its own account.',
+                                  fr: 'Les frais Billit/fournisseur externes et les frais de transaction Mollie sont à la charge de l\'entreprise via son propre compte.',
+                                  es: 'Los costes externos de Billit/proveedor y las comisiones de transacción de Mollie corren a cargo de la empresa a través de su propia cuenta.',
+                                ),
+                                style: TextStyle(
+                                  color: _businessThemePalette.textMuted
+                                      .withOpacity(0.88),
+                                  fontSize: 11.6,
+                                  height: 1.3,
+                                ),
                               ),
                             ],
                           ),
@@ -946,10 +1085,10 @@ class _CompanySubscriptionBillingPageState
                                     const SizedBox(height: 5),
                                     Text(
                                       _t(
-                                        nl: 'Limiet: 200 per voertuig / maand',
-                                        en: 'Limit: 200 per vehicle / month',
-                                        fr: 'Limite : 200 par vehicule / mois',
-                                        es: 'Limite: 200 por vehiculo / mes',
+                                        nl: 'Limiet: ${catalog.includedPdfCreationsPerVehicleMonth} per voertuig / maand',
+                                        en: 'Limit: ${catalog.includedPdfCreationsPerVehicleMonth} per vehicle / month',
+                                        fr: 'Limite : ${catalog.includedPdfCreationsPerVehicleMonth} par véhicule / mois',
+                                        es: 'Límite: ${catalog.includedPdfCreationsPerVehicleMonth} por vehículo / mes',
                                       ),
                                       style: TextStyle(
                                         color: _businessThemePalette.textMuted,
@@ -1013,38 +1152,30 @@ class _CompanySubscriptionBillingPageState
                                       children: [
                                         _chip(
                                           text: _t(
-                                            nl: 'Niet actief',
-                                            en: 'Not active',
-                                            fr: 'Inactif',
-                                            es: 'No activo',
+                                            nl: 'Billit/Peppol-ready inbegrepen',
+                                            en: 'Billit/Peppol-ready included',
+                                            fr: 'Billit/Peppol-ready inclus',
+                                            es: 'Billit/Peppol-ready incluido',
                                           ),
-                                          bg: _businessThemePalette.surfaceAlt
-                                              .withOpacity(
-                                                _businessThemePalette.isDark
-                                                    ? 0.66
-                                                    : 0.92,
-                                              ),
-                                          border: _businessThemePalette.border
-                                              .withOpacity(
-                                                _businessThemePalette.isDark
-                                                    ? 0.52
-                                                    : 0.78,
-                                              ),
-                                          textColor:
-                                              _businessThemePalette.textMuted,
-                                        ),
-                                        _chip(
-                                          text: _t(
-                                            nl: 'Beschikbaar als betaalde add-on',
-                                            en: 'Available as paid add-on',
-                                            fr: 'Disponible comme option payante',
-                                            es: 'Disponible como complemento de pago',
-                                          ),
-                                          bg: _gold.withOpacity(0.13),
-                                          border: _gold.withOpacity(0.40),
-                                          textColor: _gold,
+                                          bg: _green.withOpacity(0.14),
+                                          border: _green.withOpacity(0.45),
+                                          textColor: _green,
                                         ),
                                       ],
+                                    ),
+                                    const SizedBox(height: 5),
+                                    Text(
+                                      _t(
+                                        nl: 'Externe Billit/providerkosten zijn voor rekening van het bedrijf en lopen via je eigen Billit-account.',
+                                        en: 'External Billit/provider costs are paid by the company via its own Billit account.',
+                                        fr: 'Les frais Billit/fournisseur externes sont à la charge de l\'entreprise via son propre compte Billit.',
+                                        es: 'Los costes externos de Billit/proveedor corren a cargo de la empresa a través de su propia cuenta Billit.',
+                                      ),
+                                      style: TextStyle(
+                                        color: _businessThemePalette.textMuted,
+                                        fontSize: 11.6,
+                                        height: 1.3,
+                                      ),
                                     ),
                                   ],
                                 ),
@@ -1065,11 +1196,21 @@ class _CompanySubscriptionBillingPageState
                                 title: _t(
                                   nl: 'Extra voertuig',
                                   en: 'Extra vehicle',
-                                  fr: 'Vehicule supplementaire',
-                                  es: 'Vehiculo extra',
+                                  fr: 'Véhicule supplémentaire',
+                                  es: 'Vehículo extra',
                                 ),
-                                price: '+ €19 / maand',
-                                subtitle: _addonAvailableLabel(),
+                                price: _t(
+                                  nl: '+ ${_priceFromCents(catalog.extraVehiclePriceCents)} / maand',
+                                  en: '+ ${_priceFromCents(catalog.extraVehiclePriceCents)} / month',
+                                  fr: '+ ${_priceFromCents(catalog.extraVehiclePriceCents)} / mois',
+                                  es: '+ ${_priceFromCents(catalog.extraVehiclePriceCents)} / mes',
+                                ),
+                                subtitle: _t(
+                                  nl: 'Inclusief ${catalog.includedDriversPerVehicle} extra chauffeurs en ${catalog.includedPdfCreationsPerVehicleMonth} extra PDF-creaties per maand.',
+                                  en: 'Includes ${catalog.includedDriversPerVehicle} extra drivers and ${catalog.includedPdfCreationsPerVehicleMonth} extra PDF creations per month.',
+                                  fr: 'Inclut ${catalog.includedDriversPerVehicle} chauffeurs supplémentaires et ${catalog.includedPdfCreationsPerVehicleMonth} créations PDF supplémentaires par mois.',
+                                  es: 'Incluye ${catalog.includedDriversPerVehicle} conductores extra y ${catalog.includedPdfCreationsPerVehicleMonth} creaciones PDF extra al mes.',
+                                ),
                                 emphasized: usedVehicles >= profile.maxVehicles,
                               ),
                               const SizedBox(height: 7),
@@ -1077,67 +1218,31 @@ class _CompanySubscriptionBillingPageState
                                 title: _t(
                                   nl: 'Extra chauffeur',
                                   en: 'Extra driver',
-                                  fr: 'Chauffeur supplementaire',
+                                  fr: 'Chauffeur supplémentaire',
                                   es: 'Conductor extra',
                                 ),
-                                price: '+ €9 / maand',
+                                price: _t(
+                                  nl: '+ ${_priceFromCents(catalog.extraDriverPriceCents)} / maand',
+                                  en: '+ ${_priceFromCents(catalog.extraDriverPriceCents)} / month',
+                                  fr: '+ ${_priceFromCents(catalog.extraDriverPriceCents)} / mois',
+                                  es: '+ ${_priceFromCents(catalog.extraDriverPriceCents)} / mes',
+                                ),
                                 subtitle: _addonAvailableLabel(),
                                 emphasized: usedDrivers >= profile.maxDrivers,
                               ),
-                              const SizedBox(height: 7),
-                              _addonCard(
-                                title: _t(
-                                  nl: 'Peppol verzending',
-                                  en: 'Peppol sending',
-                                  fr: 'Envoi Peppol',
-                                  es: 'Envio Peppol',
+                              for (final bundle in catalog.pdfBundles) ...[
+                                const SizedBox(height: 7),
+                                _addonCard(
+                                  title: _t(
+                                    nl: 'Extra ${bundle.pdfs} PDF\u2019s',
+                                    en: 'Extra ${bundle.pdfs} PDFs',
+                                    fr: '${bundle.pdfs} PDF supplémentaires',
+                                    es: '${bundle.pdfs} PDF extra',
+                                  ),
+                                  price: _priceFromCents(bundle.priceCents),
+                                  subtitle: _addonAvailableLabel(),
                                 ),
-                                price: _t(
-                                  nl: 'betaalde add-on',
-                                  en: 'paid add-on',
-                                  fr: 'option payante',
-                                  es: 'complemento de pago',
-                                ),
-                                subtitle: _t(
-                                  nl: 'Per document of via bundel',
-                                  en: 'Per document or via bundle',
-                                  fr: 'Par document ou via lot',
-                                  es: 'Por documento o por paquete',
-                                ),
-                              ),
-                              const SizedBox(height: 7),
-                              _addonCard(
-                                title: _t(
-                                  nl: 'Extra 500 PDF’s',
-                                  en: 'Extra 500 PDFs',
-                                  fr: '500 PDF supplementaires',
-                                  es: '500 PDF extra',
-                                ),
-                                price: '€5',
-                                subtitle: _addonAvailableLabel(),
-                              ),
-                              const SizedBox(height: 7),
-                              _addonCard(
-                                title: _t(
-                                  nl: 'Extra 1.000 PDF’s',
-                                  en: 'Extra 1,000 PDFs',
-                                  fr: '1 000 PDF supplementaires',
-                                  es: '1.000 PDF extra',
-                                ),
-                                price: '€9',
-                                subtitle: _addonAvailableLabel(),
-                              ),
-                              const SizedBox(height: 7),
-                              _addonCard(
-                                title: _t(
-                                  nl: 'Extra 5.000 PDF’s',
-                                  en: 'Extra 5,000 PDFs',
-                                  fr: '5 000 PDF supplementaires',
-                                  es: '5.000 PDF extra',
-                                ),
-                                price: '€29',
-                                subtitle: _addonAvailableLabel(),
-                              ),
+                              ],
                             ],
                           ),
                         ),
@@ -1247,17 +1352,17 @@ class _CompanySubscriptionBillingPageState
                               ),
                               _moduleRow(
                                 label: _t(
-                                  nl: 'Peppol-ready structuur',
-                                  en: 'Peppol-ready structure',
-                                  fr: 'Structure Peppol-ready',
-                                  es: 'Estructura Peppol-ready',
+                                  nl: 'Billit/Peppol-ready structuur',
+                                  en: 'Billit/Peppol-ready structure',
+                                  fr: 'Structure Billit/Peppol-ready',
+                                  es: 'Estructura Billit/Peppol-ready',
                                 ),
                                 active: true,
                                 subtitle: _t(
-                                  nl: 'Inbegrepen als platformcapaciteit',
-                                  en: 'Included as platform capability',
-                                  fr: 'Inclus comme capacité plateforme',
-                                  es: 'Incluido como capacidad de plataforma',
+                                  nl: 'Inbegrepen. Externe Billit/providerkosten zijn voor rekening van het bedrijf.',
+                                  en: 'Included. External Billit/provider costs are paid by the company.',
+                                  fr: 'Inclus. Les frais Billit/fournisseur externes sont à la charge de l\'entreprise.',
+                                  es: 'Incluido. Los costes externos de Billit/proveedor corren a cargo de la empresa.',
                                 ),
                               ),
                             ],
@@ -1308,19 +1413,22 @@ class _CompanySubscriptionBillingPageState
                               ),
                               _moduleRow(
                                 label: _featureLabel('live_dispatch'),
-                                active:
-                                    profile.features['live_dispatch'] == true,
+                                // Live dispatch is not production-ready yet,
+                                // so always display it as coming-soon (neutral
+                                // styling) regardless of any feature flag.
+                                active: false,
+                                comingSoon: true,
                                 inactiveLabel: _t(
-                                  nl: 'Platformmodule',
-                                  en: 'Platform module',
-                                  fr: 'Module de plateforme',
-                                  es: 'Módulo de plataforma',
+                                  nl: 'Binnenkort',
+                                  en: 'Coming soon',
+                                  fr: 'Bientôt',
+                                  es: 'Próximamente',
                                 ),
                                 subtitle: _t(
-                                  nl: 'Inbegrepen',
-                                  en: 'Included',
-                                  fr: 'Inclus',
-                                  es: 'Incluido',
+                                  nl: 'Binnenkort beschikbaar',
+                                  en: 'Coming soon',
+                                  fr: 'Bientôt disponible',
+                                  es: 'Próximamente',
                                 ),
                               ),
                               _moduleRow(
@@ -1352,10 +1460,10 @@ class _CompanySubscriptionBillingPageState
                           ),
                           child: Text(
                             _t(
-                              nl: 'In deze fase worden limieten en uitbreidingen weergegeven. Activeren en facturatie volgen via beheer.',
-                              en: 'At this stage, limits and add-ons are shown for transparency. Activation and billing are handled through management.',
-                              fr: 'À ce stade, les limites et options sont affichées à titre informatif. L’activation et la facturation passent par la gestion.',
-                              es: 'En esta fase, los limites y complementos se muestran de forma informativa. La activacion y la facturacion se gestionan desde administracion.',
+                              nl: 'Na je proefperiode ontvang je automatisch een melding om je abonnement te activeren en verder gebruik te maken van Fluxidi.',
+                              en: 'After your trial, you\'ll automatically receive a prompt to activate your subscription and keep using Fluxidi.',
+                              fr: 'Après votre période d\'essai, vous recevrez automatiquement une invitation à activer votre abonnement et à continuer à utiliser Fluxidi.',
+                              es: 'Después de tu prueba, recibirás automáticamente un aviso para activar tu suscripción y seguir usando Fluxidi.',
                             ),
                             style: TextStyle(
                               color: _businessThemePalette.textMuted

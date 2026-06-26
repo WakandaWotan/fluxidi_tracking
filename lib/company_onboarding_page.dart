@@ -166,7 +166,9 @@ class _CompanyOnboardingPageState extends State<CompanyOnboardingPage> {
         'companyEmail': _emailCtrl.text.trim(),
         'phone': _phoneCtrl.text.trim(),
         'owner_phone': _phoneCtrl.text.trim(),
-        'country': _country.trim().isEmpty ? 'BE' : _country.trim().toUpperCase(),
+        'country': _country.trim().isEmpty
+            ? 'BE'
+            : _country.trim().toUpperCase(),
         'city': _cityCtrl.text.trim(),
         'postcode': '',
         'address': '',
@@ -179,15 +181,18 @@ class _CompanyOnboardingPageState extends State<CompanyOnboardingPage> {
       final companyId = (result['company_id'] ?? result['companyId'] ?? '')
           .toString()
           .trim();
-      final companyCode = (result['public_company_code'] ??
-              result['publicCompanyCode'] ??
-              result['company_code'] ??
-              result['companyCode'] ??
-              '')
-          .toString()
-          .trim();
+      final companyCode =
+          (result['public_company_code'] ??
+                  result['publicCompanyCode'] ??
+                  result['company_code'] ??
+                  result['companyCode'] ??
+                  '')
+              .toString()
+              .trim();
       final companySessionToken =
-          (result['company_session_token'] ?? result['companySessionToken'] ?? '')
+          (result['company_session_token'] ??
+                  result['companySessionToken'] ??
+                  '')
               .toString()
               .trim();
       if (tenantId.isEmpty ||
@@ -211,41 +216,48 @@ class _CompanyOnboardingPageState extends State<CompanyOnboardingPage> {
         'publicDisplayCode',
       ]) {
         final value = (result[key] ?? '').toString().trim();
-        if (value.isNotEmpty && (businessProfileMap[key] ?? '').toString().trim().isEmpty) {
+        if (value.isNotEmpty &&
+            (businessProfileMap[key] ?? '').toString().trim().isEmpty) {
           businessProfileMap[key] = value;
         }
       }
       if (businessProfileMap.isNotEmpty) {
-        final backendBusinessProfile =
-            BackendBusinessProfile.fromJson(businessProfileMap);
+        final backendBusinessProfile = BackendBusinessProfile.fromJson(
+          businessProfileMap,
+        );
         await updateLocalBackendBusinessProfileCache(backendBusinessProfile);
       }
-      final companyName = (businessProfileMap['companyName'] ??
-              businessProfileMap['company_name'] ??
-              _companyCtrl.text)
+      final companyName =
+          (businessProfileMap['companyName'] ??
+                  businessProfileMap['company_name'] ??
+                  _companyCtrl.text)
+              .toString()
+              .trim();
+      final countryCode = (businessProfileMap['country'] ?? _country)
           .toString()
-          .trim();
-      final countryCode =
-          (businessProfileMap['country'] ?? _country).toString().trim().toUpperCase();
+          .trim()
+          .toUpperCase();
       final ownerName = _ownerCtrl.text.trim();
-      final email = (businessProfileMap['email'] ??
-              businessProfileMap['companyEmail'] ??
-              _emailCtrl.text)
-          .toString()
-          .trim();
+      final email =
+          (businessProfileMap['email'] ??
+                  businessProfileMap['companyEmail'] ??
+                  _emailCtrl.text)
+              .toString()
+              .trim();
       final phone = (businessProfileMap['phone'] ?? _phoneCtrl.text)
           .toString()
           .trim();
-      final vatNumber = (businessProfileMap['vatNumber'] ??
-              businessProfileMap['vat_number'] ??
-              _vatCtrl.text)
+      final vatNumber =
+          (businessProfileMap['vatNumber'] ??
+                  businessProfileMap['vat_number'] ??
+                  _vatCtrl.text)
+              .toString()
+              .trim();
+      final city = (businessProfileMap['city'] ?? _cityCtrl.text)
           .toString()
           .trim();
-      final city = (businessProfileMap['city'] ?? _cityCtrl.text).toString().trim();
-      final postcode =
-          (businessProfileMap['postcode'] ?? '').toString().trim();
-      final address =
-          (businessProfileMap['address'] ?? '').toString().trim();
+      final postcode = (businessProfileMap['postcode'] ?? '').toString().trim();
+      final address = (businessProfileMap['address'] ?? '').toString().trim();
       final issuedAtRaw = (result['issued_at'] ?? '').toString().trim();
       final expiresAtRaw = (result['expires_at'] ?? '').toString().trim();
       final expiresInSeconds = int.tryParse(
@@ -553,6 +565,8 @@ class _CompanyOnboardingPageState extends State<CompanyOnboardingPage> {
                           DropdownMenuItem(value: 'NL', child: Text('NL')),
                           DropdownMenuItem(value: 'FR', child: Text('FR')),
                           DropdownMenuItem(value: 'DE', child: Text('DE')),
+                          DropdownMenuItem(value: 'ES', child: Text('ES')),
+                          DropdownMenuItem(value: 'PT', child: Text('PT')),
                         ],
                         onChanged: _saving
                             ? null
@@ -869,6 +883,8 @@ class _CompanyProfileEditPageState extends State<CompanyProfileEditPage> {
                     DropdownMenuItem(value: 'NL', child: Text('NL')),
                     DropdownMenuItem(value: 'FR', child: Text('FR')),
                     DropdownMenuItem(value: 'DE', child: Text('DE')),
+                    DropdownMenuItem(value: 'ES', child: Text('ES')),
+                    DropdownMenuItem(value: 'PT', child: Text('PT')),
                   ],
                   onChanged: (v) {
                     if (v == null) return;

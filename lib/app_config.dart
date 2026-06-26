@@ -1099,6 +1099,180 @@ class BackendCancellationPolicyProfile {
   };
 }
 
+// ---------------------------------------------------------------------------
+// Fluxidi subscription catalog (presentation/display foundation only).
+//
+// Country-aware plan catalog used by the "Abonnement & facturatie" page and
+// shared helpers. All prices are stored as integer cents in `currency` to
+// avoid float drift. This catalog is purely display/data; no payment, no
+// recurring billing, no entitlement enforcement is wired here.
+// ---------------------------------------------------------------------------
+class PdfBundleOffer {
+  final int pdfs;
+  final int priceCents;
+  const PdfBundleOffer({required this.pdfs, required this.priceCents});
+}
+
+class SubscriptionPlanCatalogEntry {
+  final String planCode;
+  final String market;
+  final String currency;
+  final int normalPriceCents;
+  // Founder/launch slot price (nullable). For Fluxidi Pro BE/NL/FR the first
+  // 100 companies keep this price for the lifetime of the subscription.
+  final int? founderPriceCents;
+  final int? founderSlotsLimit;
+  final int trialDays;
+  final int includedVehicleCount;
+  final int includedDriversPerVehicle;
+  final int includedPdfCreationsPerVehicleMonth;
+  final int extraVehiclePriceCents;
+  final int extraDriverPriceCents;
+  final List<PdfBundleOffer> pdfBundles;
+
+  const SubscriptionPlanCatalogEntry({
+    required this.planCode,
+    required this.market,
+    required this.currency,
+    required this.normalPriceCents,
+    this.founderPriceCents,
+    this.founderSlotsLimit,
+    required this.trialDays,
+    required this.includedVehicleCount,
+    required this.includedDriversPerVehicle,
+    required this.includedPdfCreationsPerVehicleMonth,
+    required this.extraVehiclePriceCents,
+    required this.extraDriverPriceCents,
+    required this.pdfBundles,
+  });
+}
+
+const List<PdfBundleOffer> kFluxidiPdfBundles = <PdfBundleOffer>[
+  PdfBundleOffer(pdfs: 500, priceCents: 500),
+  PdfBundleOffer(pdfs: 1000, priceCents: 900),
+  PdfBundleOffer(pdfs: 5000, priceCents: 2900),
+];
+
+/// Normalize a free-text/ISO country value into one of the supported pricing
+/// markets: BE, NL, FR, ES, PT. Unknown ISO codes (DE, LU, GB, …) are mapped
+/// to BE so the BE catalog is used as a safe fallback for display. The empty
+/// string is returned for unparseable input so callers can fall back further.
+String normalizeFluxidiPricingMarket(String? raw) {
+  if (raw == null) return '';
+  final v = raw.trim().toUpperCase();
+  if (v.isEmpty) return '';
+  switch (v) {
+    case 'BE':
+    case 'BELGIUM':
+    case 'BELGIQUE':
+    case 'BELGIE':
+    case 'BELGIË':
+    case 'BELGICA':
+    case 'BÉLGICA':
+      return 'BE';
+    case 'NL':
+    case 'NETHERLANDS':
+    case 'NEDERLAND':
+    case 'PAYS-BAS':
+    case 'PAISES BAJOS':
+    case 'PAÍSES BAJOS':
+    case 'HOLANDA':
+      return 'NL';
+    case 'FR':
+    case 'FRANCE':
+    case 'FRANKRIJK':
+    case 'FRANCIA':
+      return 'FR';
+    case 'ES':
+    case 'SPAIN':
+    case 'SPANJE':
+    case 'ESPANA':
+    case 'ESPAÑA':
+    case 'ESPAGNE':
+      return 'ES';
+    case 'PT':
+    case 'PORTUGAL':
+      return 'PT';
+  }
+  // Other ISO-style codes (DE/LU/GB/…) keep working but fall back to BE
+  // pricing via [resolveSubscriptionCatalogEntryForMarket]; we return the
+  // raw 2-letter code so callers can still display the original market.
+  return v.length == 2 ? v : '';
+}
+
+/// Resolve the active company's pricing market from existing sources.
+/// Order: persisted BackendBusinessProfile.country -> active company session
+/// countryCode -> safe fallback 'BE'.
+String resolveActiveCompanyPricingMarket() {
+  final fromBackend = normalizeFluxidiPricingMarket(
+    localBackendBusinessProfileNotifier.value?.country,
+  );
+  if (_isFluxidiPricingMarket(fromBackend)) return fromBackend;
+  final fromSession = normalizeFluxidiPricingMarket(
+    companyProfileNotifier.value?.countryCode,
+  );
+  if (_isFluxidiPricingMarket(fromSession)) return fromSession;
+  return 'BE';
+}
+
+bool _isFluxidiPricingMarket(String code) {
+  return code == 'BE' ||
+      code == 'NL' ||
+      code == 'FR' ||
+      code == 'ES' ||
+      code == 'PT';
+}
+
+/// Return the Fluxidi Pro catalog entry for a given market. Unknown markets
+/// safely fall back to the BE catalog so display never breaks; the returned
+/// `market` field always reflects the chosen catalog (BE/NL/FR/ES/PT).
+SubscriptionPlanCatalogEntry resolveSubscriptionCatalogEntryForMarket(
+  String market,
+) {
+  final m = normalizeFluxidiPricingMarket(market);
+  if (m == 'ES' || m == 'PT') {
+    return SubscriptionPlanCatalogEntry(
+      planCode: 'fluxidi_pro',
+      market: m,
+      currency: 'EUR',
+      normalPriceCents: 4900,
+      founderPriceCents: null,
+      founderSlotsLimit: null,
+      trialDays: 14,
+      includedVehicleCount: 1,
+      includedDriversPerVehicle: 3,
+      includedPdfCreationsPerVehicleMonth: 200,
+      extraVehiclePriceCents: 1500,
+      extraDriverPriceCents: 700,
+      pdfBundles: kFluxidiPdfBundles,
+    );
+  }
+  // BE/NL/FR target market + safe fallback for any other input.
+  final resolved = (m == 'NL' || m == 'FR') ? m : 'BE';
+  return SubscriptionPlanCatalogEntry(
+    planCode: 'fluxidi_pro',
+    market: resolved,
+    currency: 'EUR',
+    normalPriceCents: 6900,
+    founderPriceCents: 5900,
+    founderSlotsLimit: 100,
+    trialDays: 14,
+    includedVehicleCount: 1,
+    includedDriversPerVehicle: 3,
+    includedPdfCreationsPerVehicleMonth: 200,
+    extraVehiclePriceCents: 1900,
+    extraDriverPriceCents: 900,
+    pdfBundles: kFluxidiPdfBundles,
+  );
+}
+
+/// Convenience: resolve catalog for the active company's market.
+SubscriptionPlanCatalogEntry resolveActiveSubscriptionCatalogEntry() {
+  return resolveSubscriptionCatalogEntryForMarket(
+    resolveActiveCompanyPricingMarket(),
+  );
+}
+
 class BackendSubscriptionProfile {
   final String tenantId;
   final String companyId;
@@ -1113,6 +1287,21 @@ class BackendSubscriptionProfile {
   final Map<String, bool> features;
   final String createdAt;
   final String updatedAt;
+  // Additive catalog fields. Defaults resolve from the BE catalog so existing
+  // call sites (which only constructed the legacy fields) keep working.
+  final String planCode;
+  final String market;
+  final String currency;
+  final int normalPriceCents;
+  final int? founderPriceCents;
+  final int? founderSlotsLimit;
+  final int trialDays;
+  final int includedVehicleCount;
+  final int includedDriversPerVehicle;
+  final int includedPdfCreationsPerVehicleMonth;
+  final int extraVehiclePriceCents;
+  final int extraDriverPriceCents;
+  final List<PdfBundleOffer> pdfBundles;
 
   const BackendSubscriptionProfile({
     required this.tenantId,
@@ -1128,34 +1317,67 @@ class BackendSubscriptionProfile {
     required this.features,
     required this.createdAt,
     required this.updatedAt,
+    this.planCode = 'fluxidi_pro',
+    this.market = 'BE',
+    this.currency = 'EUR',
+    this.normalPriceCents = 6900,
+    this.founderPriceCents = 5900,
+    this.founderSlotsLimit = 100,
+    this.trialDays = 14,
+    this.includedVehicleCount = 1,
+    this.includedDriversPerVehicle = 3,
+    this.includedPdfCreationsPerVehicleMonth = 200,
+    this.extraVehiclePriceCents = 1900,
+    this.extraDriverPriceCents = 900,
+    this.pdfBundles = kFluxidiPdfBundles,
   });
 
-  factory BackendSubscriptionProfile.defaults() =>
-      const BackendSubscriptionProfile(
-        tenantId: '',
-        companyId: '',
-        plan: 'starter',
-        status: 'trialing',
-        trialStartedAt: '',
-        trialEndsAt: '',
-        billingEmail: '',
-        includedVehicles: 1,
-        maxVehicles: 1,
-        maxDrivers: 3,
-        features: <String, bool>{
-          'ai_assistant': false,
-          'airport_module': false,
-          'live_dispatch': false,
-          'ev_dispatch': false,
-          'compliance_dashboard': true,
-          'white_label_branding': false,
-          'public_booking': false,
-          'receipt_pdf': true,
-          'whatsapp_email_receipts': true,
-        },
-        createdAt: '',
-        updatedAt: '',
-      );
+  /// Defaults resolve to the Fluxidi Pro catalog for the active company
+  /// market (BE/NL/FR/ES/PT), with safe fallback to BE. Existing call sites
+  /// stay valid because all new fields have sensible defaults.
+  factory BackendSubscriptionProfile.defaults() {
+    final catalog = resolveActiveSubscriptionCatalogEntry();
+    return BackendSubscriptionProfile(
+      tenantId: '',
+      companyId: '',
+      plan: 'fluxidi_pro',
+      status: 'trialing',
+      trialStartedAt: '',
+      trialEndsAt: '',
+      billingEmail: '',
+      includedVehicles: catalog.includedVehicleCount,
+      maxVehicles: catalog.includedVehicleCount,
+      maxDrivers:
+          catalog.includedVehicleCount * catalog.includedDriversPerVehicle,
+      features: const <String, bool>{
+        'ai_assistant': false,
+        'airport_module': false,
+        'live_dispatch': false,
+        'ev_dispatch': false,
+        'compliance_dashboard': true,
+        'white_label_branding': false,
+        'public_booking': true,
+        'receipt_pdf': true,
+        'whatsapp_email_receipts': true,
+      },
+      createdAt: '',
+      updatedAt: '',
+      planCode: catalog.planCode,
+      market: catalog.market,
+      currency: catalog.currency,
+      normalPriceCents: catalog.normalPriceCents,
+      founderPriceCents: catalog.founderPriceCents,
+      founderSlotsLimit: catalog.founderSlotsLimit,
+      trialDays: catalog.trialDays,
+      includedVehicleCount: catalog.includedVehicleCount,
+      includedDriversPerVehicle: catalog.includedDriversPerVehicle,
+      includedPdfCreationsPerVehicleMonth:
+          catalog.includedPdfCreationsPerVehicleMonth,
+      extraVehiclePriceCents: catalog.extraVehiclePriceCents,
+      extraDriverPriceCents: catalog.extraDriverPriceCents,
+      pdfBundles: catalog.pdfBundles,
+    );
+  }
 
   factory BackendSubscriptionProfile.fromJson(Map<String, dynamic> json) {
     final fallback = BackendSubscriptionProfile.defaults();
@@ -1177,6 +1399,36 @@ class BackendSubscriptionProfile {
 
     String text(String snake, String camel, String fallbackValue) =>
         (json[snake] ?? json[camel] ?? fallbackValue).toString();
+
+    int? nullableIntVal(String snake, String camel, int? fallbackValue) {
+      final raw = json[snake] ?? json[camel];
+      if (raw == null) return fallbackValue;
+      if (raw is num) return raw.toInt();
+      final parsed = int.tryParse(raw.toString());
+      return parsed ?? fallbackValue;
+    }
+
+    List<PdfBundleOffer> readPdfBundles(List<PdfBundleOffer> fallbackValue) {
+      final raw = json['pdf_bundles'] ?? json['pdfBundles'];
+      if (raw is! List) return fallbackValue;
+      final out = <PdfBundleOffer>[];
+      for (final item in raw) {
+        if (item is! Map) continue;
+        final map = Map<String, dynamic>.from(item);
+        final pdfs = map['pdfs'] ?? map['count'];
+        final price = map['price_cents'] ?? map['priceCents'];
+        final pdfsInt = pdfs is num
+            ? pdfs.toInt()
+            : int.tryParse(pdfs?.toString() ?? '');
+        final priceInt = price is num
+            ? price.toInt()
+            : int.tryParse(price?.toString() ?? '');
+        if (pdfsInt == null || priceInt == null) continue;
+        if (pdfsInt <= 0 || priceInt < 0) continue;
+        out.add(PdfBundleOffer(pdfs: pdfsInt, priceCents: priceInt));
+      }
+      return out.isEmpty ? fallbackValue : out;
+    }
 
     return BackendSubscriptionProfile(
       tenantId: text('tenant_id', 'tenantId', fallback.tenantId),
@@ -1201,6 +1453,59 @@ class BackendSubscriptionProfile {
       ),
       maxVehicles: intVal('max_vehicles', 'maxVehicles', fallback.maxVehicles),
       maxDrivers: intVal('max_drivers', 'maxDrivers', fallback.maxDrivers),
+      planCode: text(
+        'plan_code',
+        'planCode',
+        fallback.planCode,
+      ).trim().toLowerCase(),
+      market: text('market', 'market', fallback.market).trim().toUpperCase(),
+      currency: text(
+        'currency',
+        'currency',
+        fallback.currency,
+      ).trim().toUpperCase(),
+      normalPriceCents: intVal(
+        'normal_price_cents',
+        'normalPriceCents',
+        fallback.normalPriceCents,
+      ),
+      founderPriceCents: nullableIntVal(
+        'founder_price_cents',
+        'founderPriceCents',
+        fallback.founderPriceCents,
+      ),
+      founderSlotsLimit: nullableIntVal(
+        'founder_slots_limit',
+        'founderSlotsLimit',
+        fallback.founderSlotsLimit,
+      ),
+      trialDays: intVal('trial_days', 'trialDays', fallback.trialDays),
+      includedVehicleCount: intVal(
+        'included_vehicle_count',
+        'includedVehicleCount',
+        fallback.includedVehicleCount,
+      ),
+      includedDriversPerVehicle: intVal(
+        'included_drivers_per_vehicle',
+        'includedDriversPerVehicle',
+        fallback.includedDriversPerVehicle,
+      ),
+      includedPdfCreationsPerVehicleMonth: intVal(
+        'included_pdf_creations_per_vehicle_month',
+        'includedPdfCreationsPerVehicleMonth',
+        fallback.includedPdfCreationsPerVehicleMonth,
+      ),
+      extraVehiclePriceCents: intVal(
+        'extra_vehicle_price_cents',
+        'extraVehiclePriceCents',
+        fallback.extraVehiclePriceCents,
+      ),
+      extraDriverPriceCents: intVal(
+        'extra_driver_price_cents',
+        'extraDriverPriceCents',
+        fallback.extraDriverPriceCents,
+      ),
+      pdfBundles: readPdfBundles(fallback.pdfBundles),
       features: <String, bool>{
         'ai_assistant': feature(
           'ai_assistant',
@@ -1258,6 +1563,24 @@ class BackendSubscriptionProfile {
     'features': features,
     'created_at': createdAt,
     'updated_at': updatedAt,
+    'plan_code': planCode,
+    'market': market,
+    'currency': currency,
+    'normal_price_cents': normalPriceCents,
+    'founder_price_cents': founderPriceCents,
+    'founder_slots_limit': founderSlotsLimit,
+    'trial_days': trialDays,
+    'included_vehicle_count': includedVehicleCount,
+    'included_drivers_per_vehicle': includedDriversPerVehicle,
+    'included_pdf_creations_per_vehicle_month':
+        includedPdfCreationsPerVehicleMonth,
+    'extra_vehicle_price_cents': extraVehiclePriceCents,
+    'extra_driver_price_cents': extraDriverPriceCents,
+    'pdf_bundles': pdfBundles
+        .map(
+          (b) => <String, dynamic>{'pdfs': b.pdfs, 'price_cents': b.priceCents},
+        )
+        .toList(growable: false),
   };
 }
 
@@ -2444,10 +2767,16 @@ void _applySanitizedDriversToNotifier({
   }
 }
 
+// Default per-vehicle upsell price aligned with the Fluxidi Pro BE catalog
+// (€19/month). The vehicle management dialog should eventually consult
+// [resolveActiveSubscriptionCatalogEntry] so ES/PT companies see €15/month
+// here too. Wiring market-aware upsell into the dialog itself is deferred to
+// a follow-up patch to keep this catalog foundation small.
+// TODO: wire vehicle upsell dialog to resolveActiveSubscriptionCatalogEntry().
 const FleetSubscriptionPolicy fleetSubscriptionPolicy = FleetSubscriptionPolicy(
   includedVehicles: 1,
   upsellMode: FleetUpsellMode.perVehicleMonthly,
-  additionalVehicleMonthlyPrice: 49.0,
+  additionalVehicleMonthlyPrice: 19.0,
 );
 
 int get includedVehicleLimit => fleetSubscriptionPolicy.includedVehicles;
