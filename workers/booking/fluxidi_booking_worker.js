@@ -4102,6 +4102,38 @@ const FLUXIDI_SUPPORTED_LAUNCH_MARKETS = new Set([
   "DE",
 ]);
 
+// Server-side add-on price catalog (Patch 2.3A).
+//
+// Source of truth for add-on pricing. The Flutter catalog
+// (lib/app_config.dart) is allowed to mirror these numbers for display only;
+// the backend NEVER trusts client-supplied prices and NEVER falls back to
+// the Flutter catalog at checkout time. Currency is EUR across all launch
+// markets — checkout-start refuses any other currency.
+//
+// Only `extra_vehicle` is actionable in Patch 2.3A. `extra_driver` numbers
+// are kept here so the table stays in sync with the Flutter catalog and so
+// the future driver add-on does not need a second catalog migration.
+const SUBSCRIPTION_ADDON_CATALOG = {
+  BE: { currency: "EUR", extra_vehicle_price_cents: 1900, extra_driver_price_cents: 900 },
+  NL: { currency: "EUR", extra_vehicle_price_cents: 1500, extra_driver_price_cents: 700 },
+  FR: { currency: "EUR", extra_vehicle_price_cents: 1500, extra_driver_price_cents: 700 },
+  ES: { currency: "EUR", extra_vehicle_price_cents: 1500, extra_driver_price_cents: 700 },
+  LU: { currency: "EUR", extra_vehicle_price_cents: 1500, extra_driver_price_cents: 700 },
+  DE: { currency: "EUR", extra_vehicle_price_cents: 1500, extra_driver_price_cents: 700 },
+};
+
+// Add-on codes accepted by /company/subscription/add-ons/checkout/start.
+// Patch 2.3A: extra_vehicle only.
+const FLUXIDI_SUPPORTED_ADDON_CODES = new Set(["extra_vehicle"]);
+
+// Entitlement deltas per quantity-1 add-on activation. Patch 2.3A only
+// supports `extra_vehicle`; `extra_driver` and PDF packs are intentionally
+// absent so any future code path that tries to look them up here trips a
+// clean "invalid_addon_code" instead of silently no-op'ing.
+const FLUXIDI_ADDON_ENTITLEMENT_DELTAS = {
+  extra_vehicle: { max_vehicles_delta: 1, max_drivers_delta: 3 },
+};
+
 function normalizeSubscriptionMarket(raw) {
   const v = sanitizeTenantString(raw, 16)
     .toUpperCase()
@@ -4150,6 +4182,17 @@ function resolveSubscriptionMarketCatalog(rawMarket) {
   // `isFluxidiSupportedLaunchMarket` gate runs first and 422s unsupported
   // markets before any Mollie or Founder DO call.
   return { market: market || "BE", ...SUBSCRIPTION_MARKET_CATALOG.BE };
+}
+
+// Resolve add-on pricing for a normalized market. Returns null for any
+// market not in SUBSCRIPTION_ADDON_CATALOG so the caller can 422 with
+// `unsupported_market` instead of silently defaulting to BE prices.
+function resolveSubscriptionAddonCatalog(rawMarket) {
+  const market = normalizeSubscriptionMarket(rawMarket);
+  if (!market) return null;
+  const known = SUBSCRIPTION_ADDON_CATALOG[market];
+  if (!known) return null;
+  return { market, ...known };
 }
 
 const DEFAULT_COMMUNICATION_TEMPLATES = {
@@ -5970,6 +6013,16 @@ async function activateFluxidiSubscriptionFromVerifiedPayment(env, { activationI
     return { ok: true, ignored: true, reason: "pending_activation_missing" };
   }
 
+  // Defense in depth (Patch 2.3A): the base subscription activator must
+  // never accidentally process an add-on activation. Add-ons live under a
+  // separate KV namespace (`subscription:addon:pending_activation:…`) and
+  // carry `kind === "addon_activation"`; if either marker is present here
+  // it means the caller misrouted and we refuse to touch the profile.
+  const pendingKind = _fluxidiSubscriptionSafeStr(pending?.kind).toLowerCase();
+  if (pendingKind === "addon_activation") {
+    return { ok: true, ignored: true, reason: "addon_activation_misrouted_to_base" };
+  }
+
   const tenantId = sanitizeTenantString(pending.tenant_id, 80);
   const companyId = sanitizeTenantString(pending.company_id, 80);
   if (!tenantId || !companyId) {
@@ -6258,6 +6311,587 @@ async function activateFluxidiSubscriptionFromVerifiedPayment(env, { activationI
     founder_granted: isFounder,
     slot_number: slotNumber,
     locked_price_cents: lockedCents,
+    subscription_profile: savedProfile,
+  };
+}
+
+// =========================
+// Fluxidi-owned subscription ADD-ONS (Patch 2.3A).
+//
+// Scope of this patch:
+//   - extra_vehicle only
+//   - quantity always exactly 1
+//   - currency always EUR
+//   - one-time first payment via Fluxidi-owned Mollie account
+//     (billing_model = "addon_activation_v1"; recurring add-on billing
+//      can be layered later without re-keying the data model)
+//
+// SEPARATION from the base subscription flow:
+//   - distinct KV namespace prefix:  subscription:addon:*
+//   - distinct metadata.kind:        "addon"
+//   - distinct activation_id prefix: "addon_<uuid>"
+//   - distinct activator:            activateFluxidiAddonFromVerifiedPayment
+//   - the base activator carries a guard that refuses any pending record
+//     with kind === "addon_activation" (defense in depth)
+//
+// SEPARATION from ride payments / company Mollie Connect:
+//   - this code never touches MOLLIE_CONNECT_*, /webhook/mollie, /pay/create,
+//     resolveRideMollieCredentials*, or per-company Mollie Connect KV.
+// =========================
+
+// Reuse the same TTL the base subscription uses so observability/runbook
+// stay consistent. Add-ons have no founder reservation step, so the TTL is
+// purely a webhook-slack window.
+const FLUXIDI_SUBSCRIPTION_ADDON_PENDING_TTL_SECONDS =
+  FLUXIDI_SUBSCRIPTION_PENDING_ACTIVATION_TTL_SECONDS;
+
+// Applied-marker TTL: long-lived so a late webhook redelivery (Mollie can
+// retry for days) is still recognized as already-applied. Bounded so KV
+// does not accumulate forever.
+const FLUXIDI_SUBSCRIPTION_ADDON_APPLIED_MARKER_TTL_SECONDS = 60 * 60 * 24 * 365; // 1 year
+const FLUXIDI_SUBSCRIPTION_ADDON_HISTORY_MAX_ENTRIES = 50;
+const FLUXIDI_SUBSCRIPTION_ADDON_HISTORY_TTL_SECONDS = 60 * 60 * 24 * 365 * 2; // 2 years
+
+function buildFluxidiAddonPendingActivationKey(activationId) {
+  const clean = _fluxidiSubscriptionNormalizeActivationId(activationId);
+  if (!clean) return "";
+  return `subscription:addon:pending_activation:${clean}:v1`;
+}
+
+function buildFluxidiAddonAppliedMarkerKey(tenantId, companyId, activationId) {
+  const t = sanitizeTenantString(tenantId, 80);
+  const c = sanitizeTenantString(companyId, 80);
+  const a = _fluxidiSubscriptionNormalizeActivationId(activationId);
+  if (!t || !c || !a) return "";
+  return `subscription:addon:applied:${t}:${c}:${a}:v1`;
+}
+
+function buildFluxidiAddonHistoryKey(tenantId, companyId) {
+  const t = sanitizeTenantString(tenantId, 80);
+  const c = sanitizeTenantString(companyId, 80);
+  if (!t || !c) return "";
+  return `subscription:addon:history:${t}:${c}:v1`;
+}
+
+async function loadFluxidiAddonPendingActivation(env, activationId) {
+  if (!env?.BOOKING_KV) return null;
+  const key = buildFluxidiAddonPendingActivationKey(activationId);
+  if (!key) return null;
+  const raw = await env.BOOKING_KV.get(key, { type: "json" });
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  // Defense in depth: this loader only returns records that self-identify
+  // as add-on activations. A misplaced base pending record under this key
+  // would never satisfy this check.
+  const kind = _fluxidiSubscriptionSafeStr(raw?.kind).toLowerCase();
+  if (kind !== "addon_activation") return null;
+  return raw;
+}
+
+async function saveFluxidiAddonPendingActivation(env, record, { ttlSeconds } = {}) {
+  if (!env?.BOOKING_KV) throw new Error("booking_kv_missing");
+  if (!record || typeof record !== "object" || Array.isArray(record)) {
+    throw new Error("invalid_addon_pending_activation_record");
+  }
+  const activationId = _fluxidiSubscriptionNormalizeActivationId(record.activation_id);
+  if (!activationId) throw new Error("invalid_activation_id");
+  const tenantId = sanitizeTenantString(record.tenant_id, 80);
+  const companyId = sanitizeTenantString(record.company_id, 80);
+  if (!tenantId || !companyId) throw new Error("missing_tenant_scope");
+  const addonCode = _fluxidiSubscriptionSafeStr(record.addon_code, 64).toLowerCase();
+  if (!addonCode || !FLUXIDI_SUPPORTED_ADDON_CODES.has(addonCode)) {
+    throw new Error("invalid_addon_code");
+  }
+  const quantity = Number.isFinite(Number(record.quantity)) ? Math.trunc(Number(record.quantity)) : 0;
+  if (quantity !== 1) throw new Error("invalid_quantity");
+  const key = buildFluxidiAddonPendingActivationKey(activationId);
+  const nowMs = Date.now();
+  const nowIso = new Date(nowMs).toISOString();
+  const ttl = Number.isFinite(Number(ttlSeconds)) && Number(ttlSeconds) > 0
+    ? Math.trunc(Number(ttlSeconds))
+    : FLUXIDI_SUBSCRIPTION_ADDON_PENDING_TTL_SECONDS;
+  const expiresIso = new Date(nowMs + ttl * 1000).toISOString();
+  const persisted = {
+    version: 1,
+    kind: "addon_activation",
+    activation_id: activationId,
+    tenant_id: tenantId,
+    company_id: companyId,
+    addon_code: addonCode,
+    quantity,
+    market: _fluxidiSubscriptionSafeStr(record.market, 16).toUpperCase().slice(0, 2),
+    currency: (_fluxidiSubscriptionSafeStr(record.currency, 8).toUpperCase() || "EUR").slice(0, 8),
+    unit_price_cents: _fluxidiSubscriptionNullableCents(record.unit_price_cents),
+    expected_amount_cents: _fluxidiSubscriptionNullableCents(record.expected_amount_cents),
+    billing_model: _fluxidiSubscriptionSafeStr(record.billing_model, 48) || "addon_activation_v1",
+    provider: FLUXIDI_SUBSCRIPTION_PROVIDER_NAME,
+    provider_payment_id: _fluxidiSubscriptionSafeStr(record.provider_payment_id, 128),
+    provider_customer_id: _fluxidiSubscriptionSafeStr(record.provider_customer_id, 128),
+    status: _fluxidiSubscriptionSafeStr(record.status, 24).toLowerCase() || "pending",
+    created_at: _fluxidiSubscriptionSafeStr(record.created_at, 48) || nowIso,
+    expires_at: _fluxidiSubscriptionSafeStr(record.expires_at, 48) || expiresIso,
+    applied_at: "",
+    rejected_at: "",
+    rejection_reason: "",
+  };
+  await env.BOOKING_KV.put(key, JSON.stringify(persisted), { expirationTtl: ttl });
+  return persisted;
+}
+
+async function markFluxidiAddonPendingActivationApplied(
+  env,
+  activationId,
+  { providerPaymentId = "" } = {},
+) {
+  if (!env?.BOOKING_KV) return null;
+  const key = buildFluxidiAddonPendingActivationKey(activationId);
+  if (!key) return null;
+  const existing = await env.BOOKING_KV.get(key, { type: "json" });
+  if (!existing || typeof existing !== "object" || Array.isArray(existing)) return null;
+  if (_fluxidiSubscriptionSafeStr(existing?.kind).toLowerCase() !== "addon_activation") return null;
+  const nowIso = new Date().toISOString();
+  const updated = {
+    ...existing,
+    status: "applied",
+    applied_at: nowIso,
+    provider_payment_id:
+      _fluxidiSubscriptionSafeStr(providerPaymentId, 128) ||
+      _fluxidiSubscriptionSafeStr(existing.provider_payment_id, 128),
+  };
+  await env.BOOKING_KV.put(key, JSON.stringify(updated), {
+    expirationTtl: FLUXIDI_SUBSCRIPTION_ADDON_PENDING_TTL_SECONDS,
+  });
+  return updated;
+}
+
+async function markFluxidiAddonPendingActivationRejected(
+  env,
+  activationId,
+  { rejectionReason = "", providerPaymentId = "" } = {},
+) {
+  if (!env?.BOOKING_KV) return null;
+  const key = buildFluxidiAddonPendingActivationKey(activationId);
+  if (!key) return null;
+  const existing = await env.BOOKING_KV.get(key, { type: "json" });
+  if (!existing || typeof existing !== "object" || Array.isArray(existing)) return null;
+  if (_fluxidiSubscriptionSafeStr(existing?.kind).toLowerCase() !== "addon_activation") return null;
+  const nowIso = new Date().toISOString();
+  const updated = {
+    ...existing,
+    status: "rejected",
+    rejected_at: nowIso,
+    rejection_reason: _fluxidiSubscriptionSafeStr(rejectionReason, 64) || "unspecified",
+    provider_payment_id:
+      _fluxidiSubscriptionSafeStr(providerPaymentId, 128) ||
+      _fluxidiSubscriptionSafeStr(existing.provider_payment_id, 128),
+  };
+  await env.BOOKING_KV.put(key, JSON.stringify(updated), {
+    expirationTtl: FLUXIDI_SUBSCRIPTION_ADDON_PENDING_TTL_SECONDS,
+  });
+  return updated;
+}
+
+async function loadFluxidiAddonAppliedMarker(env, tenantId, companyId, activationId) {
+  if (!env?.BOOKING_KV) return null;
+  const key = buildFluxidiAddonAppliedMarkerKey(tenantId, companyId, activationId);
+  if (!key) return null;
+  const raw = await env.BOOKING_KV.get(key, { type: "json" });
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  return raw;
+}
+
+async function writeFluxidiAddonAppliedMarker(env, marker = {}) {
+  if (!env?.BOOKING_KV) throw new Error("booking_kv_missing");
+  const tenantId = sanitizeTenantString(marker.tenant_id, 80);
+  const companyId = sanitizeTenantString(marker.company_id, 80);
+  const activationId = _fluxidiSubscriptionNormalizeActivationId(marker.activation_id);
+  if (!tenantId || !companyId || !activationId) {
+    throw new Error("invalid_addon_applied_marker");
+  }
+  const addonCode = _fluxidiSubscriptionSafeStr(marker.addon_code, 64).toLowerCase();
+  if (!addonCode || !FLUXIDI_SUPPORTED_ADDON_CODES.has(addonCode)) {
+    throw new Error("invalid_addon_code");
+  }
+  const quantity = Number.isFinite(Number(marker.quantity)) ? Math.trunc(Number(marker.quantity)) : 0;
+  if (quantity !== 1) throw new Error("invalid_quantity");
+  const key = buildFluxidiAddonAppliedMarkerKey(tenantId, companyId, activationId);
+  const nowIso = new Date().toISOString();
+  const persisted = {
+    version: 1,
+    activation_id: activationId,
+    tenant_id: tenantId,
+    company_id: companyId,
+    addon_code: addonCode,
+    quantity,
+    provider_payment_id: _fluxidiSubscriptionSafeStr(marker.provider_payment_id, 128),
+    applied_at: _fluxidiSubscriptionSafeStr(marker.applied_at, 48) || nowIso,
+    max_vehicles_delta: Number.isFinite(Number(marker.max_vehicles_delta))
+      ? Math.trunc(Number(marker.max_vehicles_delta))
+      : 0,
+    max_drivers_delta: Number.isFinite(Number(marker.max_drivers_delta))
+      ? Math.trunc(Number(marker.max_drivers_delta))
+      : 0,
+  };
+  await env.BOOKING_KV.put(key, JSON.stringify(persisted), {
+    expirationTtl: FLUXIDI_SUBSCRIPTION_ADDON_APPLIED_MARKER_TTL_SECONDS,
+  });
+  return persisted;
+}
+
+async function appendFluxidiAddonHistory(env, tenantId, companyId, entry = {}) {
+  if (!env?.BOOKING_KV) return null;
+  const key = buildFluxidiAddonHistoryKey(tenantId, companyId);
+  if (!key) return null;
+  let existing = null;
+  try {
+    existing = await env.BOOKING_KV.get(key, { type: "json" });
+  } catch (_) {
+    existing = null;
+  }
+  const prev = existing && typeof existing === "object" && Array.isArray(existing?.entries)
+    ? existing.entries
+    : [];
+  const nowIso = new Date().toISOString();
+  const compact = {
+    activation_id: _fluxidiSubscriptionNormalizeActivationId(entry.activation_id) || "",
+    addon_code: _fluxidiSubscriptionSafeStr(entry.addon_code, 64).toLowerCase(),
+    quantity: Number.isFinite(Number(entry.quantity)) ? Math.trunc(Number(entry.quantity)) : 0,
+    amount_cents: _fluxidiSubscriptionNullableCents(entry.amount_cents),
+    currency: (_fluxidiSubscriptionSafeStr(entry.currency, 8).toUpperCase() || "EUR").slice(0, 8),
+    billing_model: _fluxidiSubscriptionSafeStr(entry.billing_model, 48) || "addon_activation_v1",
+    provider_payment_id: _fluxidiSubscriptionSafeStr(entry.provider_payment_id, 128),
+    applied_at: _fluxidiSubscriptionSafeStr(entry.applied_at, 48) || nowIso,
+    max_vehicles_delta: Number.isFinite(Number(entry.max_vehicles_delta))
+      ? Math.trunc(Number(entry.max_vehicles_delta))
+      : 0,
+    max_drivers_delta: Number.isFinite(Number(entry.max_drivers_delta))
+      ? Math.trunc(Number(entry.max_drivers_delta))
+      : 0,
+  };
+  // Same-activation_id replay: replace the existing entry in place rather
+  // than producing duplicates. The applied marker is the authoritative
+  // idempotency key — this is only cosmetic history hygiene.
+  const filtered = compact.activation_id
+    ? prev.filter((e) => e?.activation_id !== compact.activation_id)
+    : prev.slice();
+  filtered.push(compact);
+  while (filtered.length > FLUXIDI_SUBSCRIPTION_ADDON_HISTORY_MAX_ENTRIES) {
+    filtered.shift();
+  }
+  const persisted = { version: 1, entries: filtered, updated_at: nowIso };
+  try {
+    await env.BOOKING_KV.put(key, JSON.stringify(persisted), {
+      expirationTtl: FLUXIDI_SUBSCRIPTION_ADDON_HISTORY_TTL_SECONDS,
+    });
+  } catch (_) {
+    return null;
+  }
+  return persisted;
+}
+
+// Create the first Mollie payment for an add-on activation. Uses ONLY the
+// Fluxidi-owned subscription API key — never a company Mollie Connect token,
+// never the ride payment Mollie credentials. The activation_id is the
+// canonical idempotency anchor; Mollie's payment id is captured into the
+// pending KV record so the webhook can cross-check both.
+async function createFluxidiAddonFirstPayment(env, {
+  customerId,
+  amountValue,
+  currency,
+  description,
+  redirectUrl,
+  webhookUrl,
+  metadata,
+} = {}) {
+  // The base subscription's first-payment helper already encodes the safe
+  // Mollie payload shape (sequenceType:"first", no expiresAt, correct
+  // currency casing) and uses the same Fluxidi-owned API key. Reuse it so
+  // payload changes only need to happen in one place. The metadata field
+  // distinguishes the two flows; this helper is a tiny named wrapper.
+  return await createFluxidiSubscriptionFirstPayment(env, {
+    customerId,
+    amountValue,
+    currency,
+    description: _fluxidiSubscriptionSafeStr(description, 200) ||
+      "Fluxidi add-on activation",
+    redirectUrl,
+    webhookUrl,
+    metadata,
+  });
+}
+
+// Single activation path for add-on payments. Verified-by-Mollie payment
+// already fetched by the webhook caller.
+async function activateFluxidiAddonFromVerifiedPayment(env, { activationId, payment } = {}) {
+  const cleanActivationId = _fluxidiSubscriptionNormalizeActivationId(activationId);
+  if (!cleanActivationId) {
+    return { ok: false, error: "invalid_activation_id" };
+  }
+  if (!env?.BOOKING_KV) {
+    return { ok: false, error: "booking_kv_missing" };
+  }
+
+  const pending = await loadFluxidiAddonPendingActivation(env, cleanActivationId);
+  if (!pending) {
+    // Either the pending record never existed (webhook before checkout-start
+    // persisted it, or the record was already evicted) or it carried a
+    // non-addon kind (loader returns null in that case). Either way we do
+    // not touch the profile.
+    return { ok: true, ignored: true, reason: "pending_activation_missing" };
+  }
+
+  const tenantId = sanitizeTenantString(pending.tenant_id, 80);
+  const companyId = sanitizeTenantString(pending.company_id, 80);
+  if (!tenantId || !companyId) {
+    return { ok: false, error: "pending_activation_missing_scope" };
+  }
+  const scope = { tenant_id: tenantId, company_id: companyId };
+  const tenantMask = _maskPublicDriverLoginValue(tenantId);
+  const companyMask = _maskPublicDriverLoginValue(companyId);
+  const paymentId = _fluxidiSubscriptionSafeStr(payment?.id, 128);
+  const addonCode = _fluxidiSubscriptionSafeStr(pending.addon_code, 64).toLowerCase();
+  const quantity = Number.isFinite(Number(pending.quantity)) ? Math.trunc(Number(pending.quantity)) : 0;
+
+  const finishIdempotent = async (reason) => {
+    try {
+      await markFluxidiAddonPendingActivationApplied(env, cleanActivationId, {
+        providerPaymentId: paymentId,
+      });
+    } catch (_) {}
+    console.log(
+      `[SUBSCRIPTION_ADDON_ACTIVATE][OK] tenant=${tenantMask} company=${companyMask} addon=${addonCode} activation_id=${cleanActivationId} idempotent=true reason=${reason}`,
+    );
+    return { ok: true, ignored: true, idempotent: true, reason };
+  };
+
+  const rejectAndIgnore = async (reason) => {
+    try {
+      await markFluxidiAddonPendingActivationRejected(env, cleanActivationId, {
+        rejectionReason: reason,
+        providerPaymentId: paymentId,
+      });
+    } catch (_) {}
+    console.log(
+      `[SUBSCRIPTION_ADDON_ACTIVATE][WARN] tenant=${tenantMask} company=${companyMask} addon=${addonCode} activation_id=${cleanActivationId} ignored reason=${reason}`,
+    );
+    return { ok: true, ignored: true, reason };
+  };
+
+  // Pending-status replay guard.
+  const pendingStatus = _fluxidiSubscriptionSafeStr(pending.status).toLowerCase();
+  if (pendingStatus === "applied") {
+    const prevPaymentId = _fluxidiSubscriptionSafeStr(pending.provider_payment_id, 128);
+    if (paymentId && prevPaymentId && prevPaymentId === paymentId) {
+      console.log(
+        `[SUBSCRIPTION_ADDON_ACTIVATE][OK] tenant=${tenantMask} company=${companyMask} addon=${addonCode} activation_id=${cleanActivationId} idempotent=true reason=pending_already_applied`,
+      );
+      return { ok: true, ignored: true, idempotent: true, reason: "pending_activation_already_applied" };
+    }
+    return {
+      ok: true,
+      ignored: true,
+      reason: "pending_activation_already_applied_different_payment",
+    };
+  }
+  if (pendingStatus === "rejected") {
+    return { ok: true, ignored: true, reason: "pending_activation_already_rejected" };
+  }
+
+  // Committed-marker replay guard. Authoritative idempotency anchor: if
+  // present, this activation_id has already incremented entitlements.
+  const existingMarker = await loadFluxidiAddonAppliedMarker(env, tenantId, companyId, cleanActivationId);
+  if (existingMarker) {
+    return await finishIdempotent("applied_marker_present");
+  }
+
+  // Payment status gate. canceled/failed/expired/open → ignore but keep
+  // pending pending so a later successful retry can still apply.
+  const paymentStatus = _fluxidiSubscriptionSafeStr(payment?.status).toLowerCase();
+  if (paymentStatus !== "paid") {
+    console.log(
+      `[SUBSCRIPTION_ADDON_ACTIVATE][SKIP] tenant=${tenantMask} company=${companyMask} addon=${addonCode} activation_id=${cleanActivationId} payment_status=${paymentStatus || "-"}`,
+    );
+    return { ok: true, ignored: true, reason: "payment_not_paid", payment_status: paymentStatus };
+  }
+
+  // Cross-check payment.id against the one captured at checkout-start.
+  const pendingProviderPaymentId = _fluxidiSubscriptionSafeStr(pending.provider_payment_id, 128);
+  if (pendingProviderPaymentId && paymentId && pendingProviderPaymentId !== paymentId) {
+    return await rejectAndIgnore("payment_id_mismatch");
+  }
+
+  // Metadata sanity. Webhook router already enforced purpose+kind=addon;
+  // re-verify here because the activator may be invoked directly in future.
+  const meta = payment?.metadata && typeof payment.metadata === "object" && !Array.isArray(payment.metadata)
+    ? payment.metadata
+    : {};
+  const metaPurpose = _fluxidiSubscriptionSafeStr(meta?.purpose).toLowerCase();
+  if (metaPurpose && metaPurpose !== FLUXIDI_SUBSCRIPTION_METADATA_PURPOSE) {
+    return await rejectAndIgnore("metadata_purpose_mismatch");
+  }
+  const metaKind = _fluxidiSubscriptionSafeStr(meta?.kind).toLowerCase();
+  if (metaKind && metaKind !== "addon") {
+    return await rejectAndIgnore("metadata_kind_mismatch");
+  }
+  const metaActivationId = _fluxidiSubscriptionNormalizeActivationId(
+    meta?.activation_id ?? meta?.activationId,
+  );
+  if (metaActivationId && metaActivationId !== cleanActivationId) {
+    return await rejectAndIgnore("metadata_activation_id_mismatch");
+  }
+  const metaTenant = sanitizeTenantString(meta?.tenant_id ?? meta?.tenantId, 80);
+  const metaCompany = sanitizeTenantString(meta?.company_id ?? meta?.companyId, 80);
+  if ((metaTenant && metaTenant !== tenantId) || (metaCompany && metaCompany !== companyId)) {
+    return await rejectAndIgnore("metadata_scope_mismatch");
+  }
+  const metaAddonCode = _fluxidiSubscriptionSafeStr(meta?.addon_code ?? meta?.addonCode, 64).toLowerCase();
+  if (metaAddonCode && metaAddonCode !== addonCode) {
+    return await rejectAndIgnore("metadata_addon_code_mismatch");
+  }
+  if (addonCode !== "extra_vehicle") {
+    return await rejectAndIgnore("invalid_addon_code");
+  }
+  if (quantity !== 1) {
+    return await rejectAndIgnore("invalid_quantity");
+  }
+
+  // Currency + amount checks.
+  const paymentCurrency = _fluxidiSubscriptionSafeStr(payment?.amount?.currency).toUpperCase();
+  const pendingCurrency = _fluxidiSubscriptionSafeStr(pending.currency).toUpperCase();
+  if (pendingCurrency && paymentCurrency && pendingCurrency !== paymentCurrency) {
+    return await rejectAndIgnore("currency_mismatch");
+  }
+  const paymentAmountStr = _fluxidiSubscriptionSafeStr(payment?.amount?.value);
+  let paymentAmountCents = null;
+  if (paymentAmountStr) {
+    const n = Number(paymentAmountStr);
+    if (Number.isFinite(n)) paymentAmountCents = Math.round(n * 100);
+  }
+  const expectedCents = _fluxidiSubscriptionNullableCents(pending.expected_amount_cents);
+  if (expectedCents !== null && paymentAmountCents !== null && paymentAmountCents !== expectedCents) {
+    return await rejectAndIgnore("amount_mismatch");
+  }
+
+  // Profile must be active before granting add-on entitlement. Trial /
+  // cancelled / inactive bases are refunded out-of-band by ops; we never
+  // silently grant add-ons against a non-paying base.
+  const currentProfile = await loadSubscriptionProfile(env, scope, {
+    allowTenantLegacyFallback: false,
+  });
+  const currentStatus = _fluxidiSubscriptionSafeStr(
+    currentProfile?.subscription_status || currentProfile?.status,
+  ).toLowerCase();
+  if (currentStatus !== "active") {
+    return await rejectAndIgnore("subscription_not_active");
+  }
+
+  // Last-second race guard: re-read the applied marker just before the
+  // profile mutation. KV is eventually consistent, but this read narrows
+  // the duplicate-increment window for parallel webhook deliveries.
+  const raceMarker = await loadFluxidiAddonAppliedMarker(env, tenantId, companyId, cleanActivationId);
+  if (raceMarker) {
+    return await finishIdempotent("applied_marker_present_race");
+  }
+
+  // Entitlement deltas.
+  const deltas = FLUXIDI_ADDON_ENTITLEMENT_DELTAS[addonCode];
+  if (!deltas) {
+    return await rejectAndIgnore("invalid_addon_code");
+  }
+  const vehiclesDelta = Math.max(0, Math.trunc(Number(deltas.max_vehicles_delta) || 0));
+  const driversDelta = Math.max(0, Math.trunc(Number(deltas.max_drivers_delta) || 0));
+  const currentMaxVehicles = Math.max(
+    0,
+    Number.isFinite(Number(currentProfile.max_vehicles)) ? Math.trunc(Number(currentProfile.max_vehicles)) : 0,
+  );
+  const currentMaxDrivers = Math.max(
+    0,
+    Number.isFinite(Number(currentProfile.max_drivers)) ? Math.trunc(Number(currentProfile.max_drivers)) : 0,
+  );
+  const newMaxVehicles = currentMaxVehicles + vehiclesDelta;
+  const newMaxDrivers = currentMaxDrivers + driversDelta;
+
+  const nowIso = new Date().toISOString();
+  const updatedProfile = {
+    ...currentProfile,
+    max_vehicles: newMaxVehicles,
+    max_drivers: newMaxDrivers,
+    updated_at: nowIso,
+  };
+
+  let savedProfile;
+  try {
+    savedProfile = await saveSubscriptionProfile(env, updatedProfile, scope, {
+      allowTenantLegacyWrite: false,
+    });
+  } catch (e) {
+    console.log(
+      `[SUBSCRIPTION_ADDON_ACTIVATE][ERROR] tenant=${tenantMask} company=${companyMask} stage=save msg=${_fluxidiSubscriptionSafeStr(e?.message, 160)}`,
+    );
+    return { ok: false, error: "addon_profile_save_failed" };
+  }
+
+  // Write the applied marker BEFORE marking pending applied / appending
+  // history so a partial failure still leaves the authoritative
+  // idempotency anchor in place.
+  try {
+    await writeFluxidiAddonAppliedMarker(env, {
+      activation_id: cleanActivationId,
+      tenant_id: tenantId,
+      company_id: companyId,
+      addon_code: addonCode,
+      quantity,
+      provider_payment_id: paymentId,
+      applied_at: nowIso,
+      max_vehicles_delta: vehiclesDelta,
+      max_drivers_delta: driversDelta,
+    });
+  } catch (e) {
+    console.log(
+      `[SUBSCRIPTION_ADDON_ACTIVATE][WARN] tenant=${tenantMask} company=${companyMask} stage=applied_marker msg=${_fluxidiSubscriptionSafeStr(e?.message, 160)}`,
+    );
+    // Profile is already saved; continue. Future replays will fall through
+    // pending.status==="applied" idempotency after the next step succeeds.
+  }
+
+  try {
+    await markFluxidiAddonPendingActivationApplied(env, cleanActivationId, {
+      providerPaymentId: paymentId,
+    });
+  } catch (_) {
+    // Non-fatal; applied marker (above) is the real idempotency anchor.
+  }
+
+  try {
+    await appendFluxidiAddonHistory(env, tenantId, companyId, {
+      activation_id: cleanActivationId,
+      addon_code: addonCode,
+      quantity,
+      amount_cents: expectedCents,
+      currency: pendingCurrency || "EUR",
+      billing_model: _fluxidiSubscriptionSafeStr(pending.billing_model, 48) || "addon_activation_v1",
+      provider_payment_id: paymentId,
+      applied_at: nowIso,
+      max_vehicles_delta: vehiclesDelta,
+      max_drivers_delta: driversDelta,
+    });
+  } catch (_) {
+    // History is best-effort.
+  }
+
+  console.log(
+    `[SUBSCRIPTION_ADDON_ACTIVATE][OK] tenant=${tenantMask} company=${companyMask} addon=${addonCode} activation_id=${cleanActivationId} payment_id=${paymentId ? "set" : "-"} vehicles_delta=${vehiclesDelta} drivers_delta=${driversDelta} new_max_vehicles=${newMaxVehicles} new_max_drivers=${newMaxDrivers}`,
+  );
+
+  return {
+    ok: true,
+    activated: true,
+    idempotent: false,
+    addon_code: addonCode,
+    quantity,
+    max_vehicles_delta: vehiclesDelta,
+    max_drivers_delta: driversDelta,
+    new_max_vehicles: newMaxVehicles,
+    new_max_drivers: newMaxDrivers,
     subscription_profile: savedProfile,
   };
 }
@@ -24832,6 +25466,339 @@ export default {
       }
 
       // =========================
+      // Company-facing subscription ADD-ON checkout-start (Patch 2.3A).
+      //
+      // POST /company/subscription/add-ons/checkout/start
+      //
+      // Backend-only. Same auth model as base /company/subscription/
+      // checkout/start. Patch 2.3A only supports addon_code="extra_vehicle"
+      // and quantity=1; everything else 422s.
+      //
+      // Hard gates (in order; all fail closed before any Mollie call):
+      //   - addon_code in FLUXIDI_SUPPORTED_ADDON_CODES
+      //   - quantity === 1
+      //   - profile.market in FLUXIDI_SUPPORTED_LAUNCH_MARKETS
+      //   - profile.status / subscription_status === "active"
+      //   - currency === "EUR" (catalog) and matches profile currency if set
+      //   - billing_email resolvable from profile or business profile
+      //
+      // Idempotency key: server-minted `addon_<uuid>` activation_id stored
+      // in pending KV under `subscription:addon:pending_activation:*`,
+      // mirrored into the Mollie metadata, and cross-checked by the
+      // activator on every webhook.
+      //
+      // Touches none of: ride payment Mollie Connect, FounderSlots DO,
+      // Chiron, Billit/Peppol, PDF generation, base subscription save path.
+      // =========================
+      if (
+        url.pathname === "/company/subscription/add-ons/checkout/start" &&
+        request.method === "POST"
+      ) {
+        let body = {};
+        try {
+          body = await safeJson(request);
+        } catch (_) {
+          body = {};
+        }
+        if (!body || typeof body !== "object" || Array.isArray(body)) body = {};
+
+        const authScope = await _requireAdminOrCompanySessionForExplicitScope({
+          request,
+          url,
+          env,
+          body,
+          routeLabel: "COMPANY_SUBSCRIPTION_ADDON_CHECKOUT_START",
+        });
+        if (!authScope.ok) return authScope.response;
+
+        try {
+          const scope = {
+            tenant_id: authScope.explicitScope.tenant_id,
+            company_id: authScope.explicitScope.company_id,
+          };
+          const tenantMask = _maskPublicDriverLoginValue(scope.tenant_id);
+          const companyMask = _maskPublicDriverLoginValue(scope.company_id);
+
+          // Fluxidi subscription Mollie config must exist before anything.
+          const config = loadFluxidiSubscriptionMollieConfig(env);
+          if (!config.ok) {
+            console.log(
+              `[SUBSCRIPTION_ADDON_CHECKOUT_START][ERR] stage=config reason=${config.error}`,
+            );
+            return json(
+              { ok: false, error: "subscription_billing_unavailable" },
+              503,
+            );
+          }
+
+          // Validate request body shape (Patch 2.3A scope: extra_vehicle / qty 1).
+          const addonCode = _fluxidiSubscriptionSafeStr(
+            body?.addon_code ?? body?.addonCode,
+            64,
+          ).toLowerCase();
+          if (!addonCode || !FLUXIDI_SUPPORTED_ADDON_CODES.has(addonCode)) {
+            return json({ ok: false, error: "invalid_addon_code" }, 422);
+          }
+          const rawQuantity = body?.quantity;
+          const quantity = Number.isFinite(Number(rawQuantity))
+            ? Math.trunc(Number(rawQuantity))
+            : NaN;
+          if (quantity !== 1) {
+            return json({ ok: false, error: "invalid_quantity" }, 422);
+          }
+
+          // Load company-scoped profile WITHOUT trial creation and WITHOUT
+          // tenant legacy fallback. Add-ons require an existing active sub.
+          const profile = await loadSubscriptionProfile(env, scope, {
+            allowTenantLegacyFallback: false,
+          });
+          const currentStatus = _fluxidiSubscriptionSafeStr(
+            profile?.subscription_status || profile?.status,
+          ).toLowerCase();
+          if (currentStatus !== "active") {
+            return json({ ok: false, error: "subscription_not_active" }, 422);
+          }
+
+          // Market gate must run before any Mollie call.
+          const market = normalizeSubscriptionMarket(profile?.market);
+          if (!isFluxidiSupportedLaunchMarket(market)) {
+            console.log(
+              `[SUBSCRIPTION_ADDON_CHECKOUT_START][ERR] stage=market reason=unsupported_market market=${market || "-"} tenant=${tenantMask} company=${companyMask}`,
+            );
+            return json(
+              { ok: false, error: "unsupported_market", market: market || "" },
+              422,
+            );
+          }
+
+          // Server-side add-on pricing (authoritative).
+          const addonCatalog = resolveSubscriptionAddonCatalog(market);
+          if (!addonCatalog) {
+            return json({ ok: false, error: "unsupported_market" }, 422);
+          }
+          const unitPriceCents = addonCode === "extra_vehicle"
+            ? addonCatalog.extra_vehicle_price_cents
+            : null;
+          if (
+            !Number.isFinite(Number(unitPriceCents)) ||
+            Number(unitPriceCents) <= 0
+          ) {
+            return json({ ok: false, error: "invalid_addon_price" }, 422);
+          }
+          const expectedAmountCents = Number(unitPriceCents) * quantity;
+          const amountValue = (expectedAmountCents / 100).toFixed(2);
+
+          // Currency reconciliation: catalog is EUR-only; if profile currency
+          // is set and disagrees, refuse.
+          const catalogCurrency = (
+            _fluxidiSubscriptionSafeStr(addonCatalog.currency, 8).toUpperCase() ||
+            "EUR"
+          ).slice(0, 8);
+          const profileCurrency = _fluxidiSubscriptionSafeStr(
+            profile?.currency,
+            8,
+          ).toUpperCase();
+          if (profileCurrency && profileCurrency !== catalogCurrency) {
+            return json({ ok: false, error: "currency_mismatch" }, 422);
+          }
+          const currency = catalogCurrency;
+
+          // Resolve billing email: profile first, then business profile.
+          let billingEmail = _fluxidiSubscriptionSafeStr(profile?.billing_email, 160);
+          let companyName = "";
+          let providerCustomerIdFromProfile = _fluxidiSubscriptionSafeStr(
+            profile?.provider_customer_id,
+            128,
+          );
+          try {
+            const biz = await loadBusinessProfile(env, scope, {
+              allowTenantLegacyFallback: false,
+            });
+            if (!billingEmail) {
+              billingEmail =
+                _fluxidiSubscriptionSafeStr(biz?.billingEmail, 160) ||
+                _fluxidiSubscriptionSafeStr(biz?.invoiceEmail, 160) ||
+                _fluxidiSubscriptionSafeStr(biz?.notificationEmail, 160);
+            }
+            companyName = _fluxidiSubscriptionSafeStr(biz?.companyName, 160);
+          } catch (_) {}
+          if (!billingEmail) {
+            return json({ ok: false, error: "missing_billing_email" }, 422);
+          }
+
+          // Mint a fresh add-on activation id. Prefix `addon_` so logs/runbook
+          // can eyeball-distinguish base vs add-on without loading KV.
+          const activationId = _fluxidiSubscriptionNormalizeActivationId(
+            `addon_${crypto.randomUUID()}`,
+          );
+          if (!activationId) {
+            return json({ ok: false, error: "activation_id_generation_failed" }, 500);
+          }
+
+          // Reuse the base subscription's Mollie customer for this company
+          // if one is already on the profile; otherwise create a fresh one.
+          // Either way Mollie billing stays under the Fluxidi-owned account.
+          let customerId = providerCustomerIdFromProfile;
+          if (!customerId) {
+            let customerResult;
+            try {
+              customerResult = await createFluxidiSubscriptionMollieCustomer(env, {
+                email: billingEmail,
+                name: companyName,
+                metadata: {
+                  purpose: FLUXIDI_SUBSCRIPTION_METADATA_PURPOSE,
+                  tenant_id: scope.tenant_id,
+                  company_id: scope.company_id,
+                },
+              });
+            } catch (e) {
+              console.log(
+                `[SUBSCRIPTION_ADDON_CHECKOUT_START][ERR] stage=customer exception msg=${_fluxidiSubscriptionSafeStr(e?.message, 160)}`,
+              );
+              return json({ ok: false, error: "mollie_customer_failed" }, 502);
+            }
+            if (!customerResult?.ok) {
+              if (customerResult?.error === "missing_billing_email") {
+                return json({ ok: false, error: "missing_billing_email" }, 422);
+              }
+              console.log(
+                `[SUBSCRIPTION_ADDON_CHECKOUT_START][ERR] stage=customer upstream_status=${Number(customerResult?.status) || 0}`,
+              );
+              return json({ ok: false, error: "mollie_customer_failed" }, 502);
+            }
+            customerId = _fluxidiSubscriptionSafeStr(customerResult.data?.id, 128);
+            if (!customerId) {
+              console.log(
+                "[SUBSCRIPTION_ADDON_CHECKOUT_START][ERR] stage=customer reason=missing_customer_id",
+              );
+              return json({ ok: false, error: "mollie_customer_failed" }, 502);
+            }
+          }
+
+          // Create the Mollie first payment for the add-on.
+          const base = getBaseUrl(request);
+          const webhookUrl = `${base}/webhooks/subscription/mollie/${config.webhookSecret}`;
+          const returnUrlRaw = _fluxidiSubscriptionSafeStr(
+            body?.return_url ?? body?.returnUrl,
+            1000,
+          );
+          const redirectUrl = _fluxidiSubscriptionIsSafeReturnUrl(returnUrlRaw)
+            ? returnUrlRaw
+            : `${base}/`;
+
+          let paymentResult;
+          try {
+            paymentResult = await createFluxidiAddonFirstPayment(env, {
+              customerId,
+              amountValue,
+              currency,
+              description: "Fluxidi extra vehicle add-on",
+              redirectUrl,
+              webhookUrl,
+              metadata: {
+                purpose: FLUXIDI_SUBSCRIPTION_METADATA_PURPOSE,
+                kind: "addon",
+                activation_id: activationId,
+                tenant_id: scope.tenant_id,
+                company_id: scope.company_id,
+                addon_code: addonCode,
+                // Mollie metadata values are strings; keep that contract
+                // explicit (the activator parses Number(quantity) safely).
+                quantity: String(quantity),
+                market,
+                billing_model: "addon_activation_v1",
+              },
+            });
+          } catch (e) {
+            console.log(
+              `[SUBSCRIPTION_ADDON_CHECKOUT_START][ERR] stage=payment exception msg=${_fluxidiSubscriptionSafeStr(e?.message, 160)}`,
+            );
+            return json({ ok: false, error: "mollie_payment_failed" }, 502);
+          }
+          if (!paymentResult?.ok) {
+            console.log(
+              `[SUBSCRIPTION_ADDON_CHECKOUT_START][ERR] stage=payment upstream_status=${Number(paymentResult?.status) || 0}`,
+            );
+            return json({ ok: false, error: "mollie_payment_failed" }, 502);
+          }
+          const payment = paymentResult.data || {};
+          const providerPaymentId = _fluxidiSubscriptionSafeStr(payment?.id, 128);
+          const checkoutUrl = _fluxidiSubscriptionSafeStr(
+            payment?._links?.checkout?.href,
+            1000,
+          );
+          if (!providerPaymentId || !checkoutUrl) {
+            console.log(
+              "[SUBSCRIPTION_ADDON_CHECKOUT_START][ERR] stage=payment reason=missing_id_or_checkout",
+            );
+            return json({ ok: false, error: "mollie_payment_failed" }, 502);
+          }
+
+          // Persist the pending add-on activation (webhook idempotency anchor).
+          try {
+            await saveFluxidiAddonPendingActivation(
+              env,
+              {
+                version: 1,
+                kind: "addon_activation",
+                activation_id: activationId,
+                tenant_id: scope.tenant_id,
+                company_id: scope.company_id,
+                addon_code: addonCode,
+                quantity,
+                market,
+                currency,
+                unit_price_cents: Number(unitPriceCents),
+                expected_amount_cents: expectedAmountCents,
+                billing_model: "addon_activation_v1",
+                provider: FLUXIDI_SUBSCRIPTION_PROVIDER_NAME,
+                provider_payment_id: providerPaymentId,
+                provider_customer_id: customerId,
+                status: "pending",
+              },
+              { ttlSeconds: FLUXIDI_SUBSCRIPTION_ADDON_PENDING_TTL_SECONDS },
+            );
+          } catch (e) {
+            // Mollie payment was created but we could not persist the
+            // pending record. Without it the webhook would ignore the
+            // payment; surface a clear error so the caller mints a new
+            // activation on retry. There is no founder reservation to
+            // release for add-ons, so no cleanup is needed here.
+            console.log(
+              `[SUBSCRIPTION_ADDON_CHECKOUT_START][ERR] stage=pending_save msg=${_fluxidiSubscriptionSafeStr(e?.message, 160)}`,
+            );
+            return json(
+              { ok: false, error: "pending_activation_save_failed" },
+              500,
+            );
+          }
+
+          console.log(
+            `[SUBSCRIPTION_ADDON_CHECKOUT_START][OK] tenant=${tenantMask} company=${companyMask} addon=${addonCode} qty=${quantity} amount_cents=${expectedAmountCents} currency=${currency} mode=${config.mode}`,
+          );
+          return json(
+            {
+              ok: true,
+              activation_id: activationId,
+              addon_code: addonCode,
+              quantity,
+              expected_amount_cents: expectedAmountCents,
+              currency,
+              billing_model: "addon_activation_v1",
+              checkout_url: checkoutUrl,
+              provider_payment_id: providerPaymentId,
+            },
+            200,
+          );
+        } catch (err) {
+          console.log(
+            `[SUBSCRIPTION_ADDON_CHECKOUT_START][ERR] ${_fluxidiSubscriptionSafeStr(err?.message, 160) || "unknown"}`,
+          );
+          return json({ ok: false, error: "internal_error" }, 500);
+        }
+      }
+
+      // =========================
       // Fluxidi-owned subscription billing webhook (Patch 2.1 foundation).
       //
       // POST /webhooks/subscription/mollie/{secret}
@@ -24935,20 +25902,56 @@ export default {
           );
         }
 
+        // Branch on metadata.kind (Patch 2.3A): add-on payments route to
+        // the add-on activator, everything else stays on the base
+        // subscription activator. The two activators are isolated by KV
+        // prefix (`subscription:addon:*` vs `subscription:pending_*`) and
+        // each carries a defense-in-depth guard that refuses to operate on
+        // the wrong pending shape.
+        const metaKind = _fluxidiSubscriptionSafeStr(meta?.kind).toLowerCase();
+        const isAddonPayment = metaKind === "addon";
+
         let activateResult;
         try {
-          activateResult = await activateFluxidiSubscriptionFromVerifiedPayment(env, {
-            activationId: metaActivationId,
-            payment,
-          });
+          if (isAddonPayment) {
+            activateResult = await activateFluxidiAddonFromVerifiedPayment(env, {
+              activationId: metaActivationId,
+              payment,
+            });
+          } else {
+            activateResult = await activateFluxidiSubscriptionFromVerifiedPayment(env, {
+              activationId: metaActivationId,
+              payment,
+            });
+          }
         } catch (e) {
           console.log(
-            `[SUBSCRIPTION_ACTIVATE][ERROR] stage=webhook msg=${_fluxidiSubscriptionSafeStr(e?.message, 160)}`,
+            `[${isAddonPayment ? "SUBSCRIPTION_ADDON_ACTIVATE" : "SUBSCRIPTION_ACTIVATE"}][ERROR] stage=webhook msg=${_fluxidiSubscriptionSafeStr(e?.message, 160)}`,
           );
           return new Response("Internal Error", { status: 500 });
         }
 
         if (activateResult?.ok && activateResult.activated) {
+          if (isAddonPayment) {
+            return json(
+              {
+                ok: true,
+                activated: true,
+                idempotent: !!activateResult.idempotent,
+                addon_code: _fluxidiSubscriptionSafeStr(activateResult.addon_code, 64),
+                quantity: Number.isFinite(Number(activateResult.quantity))
+                  ? Math.trunc(Number(activateResult.quantity))
+                  : 0,
+                max_vehicles_delta: Number.isFinite(Number(activateResult.max_vehicles_delta))
+                  ? Math.trunc(Number(activateResult.max_vehicles_delta))
+                  : 0,
+                max_drivers_delta: Number.isFinite(Number(activateResult.max_drivers_delta))
+                  ? Math.trunc(Number(activateResult.max_drivers_delta))
+                  : 0,
+              },
+              200,
+            );
+          }
           return json(
             {
               ok: true,
@@ -24961,7 +25964,7 @@ export default {
         }
         if (activateResult?.ok) {
           console.log(
-            `[SUBSCRIPTION_WEBHOOK][IGNORED] reason=${_fluxidiSubscriptionSafeStr(activateResult.reason, 80) || "unknown_ignore"}`,
+            `[SUBSCRIPTION_WEBHOOK][IGNORED] kind=${isAddonPayment ? "addon" : "base"} reason=${_fluxidiSubscriptionSafeStr(activateResult.reason, 80) || "unknown_ignore"}`,
           );
           return json(
             { ok: true, ignored: true, reason: activateResult.reason || "unknown_ignore" },
@@ -24969,7 +25972,7 @@ export default {
           );
         }
         console.log(
-          `[SUBSCRIPTION_ACTIVATE][ERROR] stage=webhook err=${_fluxidiSubscriptionSafeStr(activateResult?.error, 80) || "unknown"}`,
+          `[${isAddonPayment ? "SUBSCRIPTION_ADDON_ACTIVATE" : "SUBSCRIPTION_ACTIVATE"}][ERROR] stage=webhook err=${_fluxidiSubscriptionSafeStr(activateResult?.error, 80) || "unknown"}`,
         );
         return new Response("Internal Error", { status: 500 });
       }
