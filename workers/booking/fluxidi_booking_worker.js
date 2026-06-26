@@ -5443,18 +5443,27 @@ async function saveSubscriptionProfile(
 const FLUXIDI_SUBSCRIPTION_PROVIDER_NAME = "mollie";
 const FLUXIDI_SUBSCRIPTION_METADATA_PURPOSE = "fluxidi_subscription";
 const FLUXIDI_SUBSCRIPTION_FOUNDER_SLOT_LIMIT = 100;
-// TTL stacking (Patch 2.2A small fix):
-//   Mollie payment expiry  ≈ 23h  (reservation − safety)
-//   Founder reservation    = 24h
-//   Pending activation KV  = 25h  (reservation + safety, for webhook slack)
-// The relationship payment_expiry < reservation_expiry < pending_TTL must
-// hold so a payment that lands at the reservation deadline still finds its
-// pending record and a live (or just-expired) reservation to commit.
-const FLUXIDI_SUBSCRIPTION_RESERVATION_TTL_SECONDS = 60 * 60 * 24; // 24h
-const FLUXIDI_SUBSCRIPTION_PAYMENT_EXPIRY_SAFETY_SECONDS = 60 * 60; // 1h
+// TTL model (Patch 2.2A-1: provider-managed payment expiry).
+//   The Mollie Payments API does NOT accept an `expiresAt` body parameter
+//   (it returned 422 "Non-existent body parameter expiresAt"), so we cannot
+//   bound the first-payment lifetime from our side. Mollie itself controls
+//   how long the hosted first-payment checkout stays payable (method
+//   dependent — minutes for some methods, up to ~weeks for others).
+//
+//   Strategy: keep the founder reservation alive long enough to comfortably
+//   cover normal provider-managed checkout lifetimes, and keep the pending
+//   activation record a little longer than the reservation for webhook /
+//   retry slack. Exact ordering is no longer enforced via the payment
+//   payload; instead the activator is the hard backstop — if a founder
+//   reservation is missing/expired at commit time it returns
+//   founder_reservation_lost (needs_manual_reconciliation) and never
+//   silently downgrades a founder-priced payment to normal pricing.
+//
+//   Founder reservation    = 15 days
+//   Pending activation KV   = 16 days (reservation + 1 day webhook slack)
+const FLUXIDI_SUBSCRIPTION_RESERVATION_TTL_SECONDS = 60 * 60 * 24 * 15; // 15 days
 const FLUXIDI_SUBSCRIPTION_PENDING_ACTIVATION_TTL_SECONDS =
-  FLUXIDI_SUBSCRIPTION_RESERVATION_TTL_SECONDS +
-  FLUXIDI_SUBSCRIPTION_PAYMENT_EXPIRY_SAFETY_SECONDS; // 25h
+  FLUXIDI_SUBSCRIPTION_RESERVATION_TTL_SECONDS + 60 * 60 * 24; // 16 days
 // Default monthly period used when activating without a concrete Mollie
 // subscription record yet. Patch 2.2/2.x will overwrite this with the real
 // Mollie nextPaymentDate once the subscription object exists.
@@ -5854,7 +5863,6 @@ async function createFluxidiSubscriptionFirstPayment(env, {
   redirectUrl,
   webhookUrl,
   metadata,
-  expiresAt,
 } = {}) {
   const config = loadFluxidiSubscriptionMollieConfig(env);
   if (!config.ok) return { ok: false, status: 0, error: config.error };
@@ -5863,6 +5871,8 @@ async function createFluxidiSubscriptionFirstPayment(env, {
   const cleanValue = _fluxidiSubscriptionSafeStr(amountValue, 32);
   if (!cleanValue) return { ok: false, status: 0, error: "missing_amount" };
   const cleanCurrency = (_fluxidiSubscriptionSafeStr(currency, 8).toUpperCase() || "EUR").slice(0, 8);
+  // Mollie Payments API payload. Note: the Payments API does NOT support an
+  // `expiresAt` body parameter, so first-payment expiry is provider-managed.
   const payload = {
     amount: { currency: cleanCurrency, value: cleanValue },
     customerId: cleanCustomerId,
@@ -5873,13 +5883,6 @@ async function createFluxidiSubscriptionFirstPayment(env, {
   if (cleanRedirect) payload.redirectUrl = cleanRedirect;
   const cleanWebhook = _fluxidiSubscriptionSafeStr(webhookUrl, 1000);
   if (cleanWebhook) payload.webhookUrl = cleanWebhook;
-  // Optional explicit Mollie payment expiry. Bounded by the founder
-  // reservation TTL upstream so a payment cannot be paid after its
-  // reservation is gone. Only forwarded when it parses as a real ISO date.
-  const cleanExpiresAt = _fluxidiSubscriptionSafeStr(expiresAt, 48);
-  if (cleanExpiresAt && Number.isFinite(Date.parse(cleanExpiresAt))) {
-    payload.expiresAt = cleanExpiresAt;
-  }
   if (metadata && typeof metadata === "object" && !Array.isArray(metadata)) {
     payload.metadata = metadata;
   }
@@ -24648,17 +24651,11 @@ export default {
           const redirectUrl = _fluxidiSubscriptionIsSafeReturnUrl(returnUrlRaw)
             ? returnUrlRaw
             : `${base}/`;
-          // Bound Mollie payment lifetime so it cannot be paid after the
-          // founder reservation expires. Pending KV TTL is the reservation
-          // TTL plus the same safety margin (set in the named constants
-          // above), so the webhook still finds its pending record when a
-          // payment lands close to the deadline.
-          const paymentExpiresAt = new Date(
-            Date.now() +
-              (FLUXIDI_SUBSCRIPTION_RESERVATION_TTL_SECONDS -
-                FLUXIDI_SUBSCRIPTION_PAYMENT_EXPIRY_SAFETY_SECONDS) *
-                1000,
-          ).toISOString();
+          // First-payment expiry is provider-managed: the Mollie Payments API
+          // does not accept an `expiresAt` body parameter. The founder
+          // reservation TTL is sized to comfortably cover normal checkout
+          // lifetimes, and the activator refuses to silently downgrade a
+          // founder-priced payment if the reservation is gone at commit time.
 
           let paymentResult;
           try {
@@ -24669,7 +24666,6 @@ export default {
               description: "Fluxidi Pro abonnement",
               redirectUrl,
               webhookUrl,
-              expiresAt: paymentExpiresAt,
               metadata: {
                 purpose: FLUXIDI_SUBSCRIPTION_METADATA_PURPOSE,
                 activation_id: activationId,
