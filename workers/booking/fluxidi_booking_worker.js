@@ -5443,7 +5443,18 @@ async function saveSubscriptionProfile(
 const FLUXIDI_SUBSCRIPTION_PROVIDER_NAME = "mollie";
 const FLUXIDI_SUBSCRIPTION_METADATA_PURPOSE = "fluxidi_subscription";
 const FLUXIDI_SUBSCRIPTION_FOUNDER_SLOT_LIMIT = 100;
-const FLUXIDI_SUBSCRIPTION_PENDING_ACTIVATION_TTL_SECONDS = 60 * 60 * 24; // 24h
+// TTL stacking (Patch 2.2A small fix):
+//   Mollie payment expiry  ≈ 23h  (reservation − safety)
+//   Founder reservation    = 24h
+//   Pending activation KV  = 25h  (reservation + safety, for webhook slack)
+// The relationship payment_expiry < reservation_expiry < pending_TTL must
+// hold so a payment that lands at the reservation deadline still finds its
+// pending record and a live (or just-expired) reservation to commit.
+const FLUXIDI_SUBSCRIPTION_RESERVATION_TTL_SECONDS = 60 * 60 * 24; // 24h
+const FLUXIDI_SUBSCRIPTION_PAYMENT_EXPIRY_SAFETY_SECONDS = 60 * 60; // 1h
+const FLUXIDI_SUBSCRIPTION_PENDING_ACTIVATION_TTL_SECONDS =
+  FLUXIDI_SUBSCRIPTION_RESERVATION_TTL_SECONDS +
+  FLUXIDI_SUBSCRIPTION_PAYMENT_EXPIRY_SAFETY_SECONDS; // 25h
 // Default monthly period used when activating without a concrete Mollie
 // subscription record yet. Patch 2.2/2.x will overwrite this with the real
 // Mollie nextPaymentDate once the subscription object exists.
@@ -5582,6 +5593,14 @@ async function saveFluxidiSubscriptionPendingActivation(env, record, { ttlSecond
     provider_customer_id: _fluxidiSubscriptionSafeStr(record.provider_customer_id, 128),
     provider_subscription_id: _fluxidiSubscriptionSafeStr(record.provider_subscription_id, 128),
     status: _fluxidiSubscriptionSafeStr(record.status, 24).toLowerCase() || "pending",
+    // Founder reservation diagnostics (Patch 2.2A). Optional/additive: the
+    // activator does not depend on these; they record what checkout-start
+    // reserved so the eventual commit can be reconciled if needed.
+    founder_reserved: record.founder_reserved === true,
+    founder_reservation_reason: _fluxidiSubscriptionSafeStr(record.founder_reservation_reason, 64),
+    founder_slot_number: Number.isFinite(Number(record.founder_slot_number))
+      ? Math.trunc(Number(record.founder_slot_number))
+      : null,
     created_at: _fluxidiSubscriptionSafeStr(record.created_at, 48) || nowIso,
     expires_at: _fluxidiSubscriptionSafeStr(record.expires_at, 48) || expiresIso,
   };
@@ -5674,6 +5693,213 @@ async function _fluxidiSubscriptionAllocateFounderSlot(
     throw new Error(`founder_slot_http_${res.status}`);
   }
   return data;
+}
+
+// Commit a previously-reserved founder slot. Used by the activator when
+// `pending.founder_reserved === true`. Distinct from the `assign` wrapper:
+// `commit` MUST NOT auto-allocate a fresh slot if the reservation is missing
+// or expired — that case is reported back so the activator can refuse to
+// silently downgrade the customer.
+async function _fluxidiSubscriptionCommitFounderSlot(
+  env,
+  { tenantId, companyId, activationId },
+) {
+  if (!env?.FLUXIDI_SUBSCRIPTION_FOUNDER_SLOTS) {
+    throw new Error("founder_slots_binding_missing");
+  }
+  const id = env.FLUXIDI_SUBSCRIPTION_FOUNDER_SLOTS.idFromName("global");
+  const stub = env.FLUXIDI_SUBSCRIPTION_FOUNDER_SLOTS.get(id);
+  const res = await stub.fetch("https://founder-slots/commit", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      action: "commit",
+      tenant_id: tenantId,
+      company_id: companyId,
+      activation_id: activationId,
+    }),
+  });
+  let data = {};
+  try { data = await res.json(); } catch (_) { data = {}; }
+  if (!res.ok) {
+    throw new Error(`founder_slot_http_${res.status}`);
+  }
+  return data;
+}
+
+// Reserve a founder slot at checkout-start (Patch 2.2A). Returns the raw DO
+// `reserve` response. This is distinct from _fluxidiSubscriptionAllocateFounderSlot
+// (the `assign` = reserve+commit action used by the webhook activator for
+// non-founder-reserved pendings). The reservation is committed later by the
+// activator's commit call, or released here if Mollie customer/payment
+// creation fails.
+async function _fluxidiSubscriptionReserveFounderSlot(
+  env,
+  { tenantId, companyId, activationId, founderPriceCents, limit, reservationTtlSeconds },
+) {
+  if (!env?.FLUXIDI_SUBSCRIPTION_FOUNDER_SLOTS) {
+    throw new Error("founder_slots_binding_missing");
+  }
+  const id = env.FLUXIDI_SUBSCRIPTION_FOUNDER_SLOTS.idFromName("global");
+  const stub = env.FLUXIDI_SUBSCRIPTION_FOUNDER_SLOTS.get(id);
+  const res = await stub.fetch("https://founder-slots/reserve", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      action: "reserve",
+      tenant_id: tenantId,
+      company_id: companyId,
+      activation_id: activationId,
+      limit: Number.isFinite(Number(limit)) ? Number(limit) : FLUXIDI_SUBSCRIPTION_FOUNDER_SLOT_LIMIT,
+      founder_price_cents: founderPriceCents,
+      reservation_ttl_seconds:
+        Number.isFinite(Number(reservationTtlSeconds)) && Number(reservationTtlSeconds) > 0
+          ? Number(reservationTtlSeconds)
+          : FLUXIDI_SUBSCRIPTION_PENDING_ACTIVATION_TTL_SECONDS,
+    }),
+  });
+  let data = {};
+  try { data = await res.json(); } catch (_) { data = {}; }
+  if (!res.ok) {
+    throw new Error(`founder_slot_http_${res.status}`);
+  }
+  return data;
+}
+
+// Best-effort release of a founder reservation when checkout fails AFTER a
+// successful reserve. Never throws; the DO's lazy expiry is the backstop if
+// the release itself fails.
+async function _fluxidiSubscriptionReleaseFounderSlot(
+  env,
+  { tenantId, companyId, activationId },
+) {
+  try {
+    if (!env?.FLUXIDI_SUBSCRIPTION_FOUNDER_SLOTS) {
+      return { ok: false, error: "founder_slots_binding_missing" };
+    }
+    const id = env.FLUXIDI_SUBSCRIPTION_FOUNDER_SLOTS.idFromName("global");
+    const stub = env.FLUXIDI_SUBSCRIPTION_FOUNDER_SLOTS.get(id);
+    const res = await stub.fetch("https://founder-slots/release", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        action: "release",
+        tenant_id: tenantId,
+        company_id: companyId,
+        activation_id: activationId,
+      }),
+    });
+    let data = {};
+    try { data = await res.json(); } catch (_) { data = {}; }
+    return data;
+  } catch (e) {
+    return {
+      ok: false,
+      error: "release_exception",
+      message: _fluxidiSubscriptionSafeStr(e?.message, 160),
+    };
+  }
+}
+
+// Validate a caller-supplied return_url. Mollie's redirectUrl must be an
+// absolute http(s) URL; reject anything else (incl. app deep links) and fall
+// back to a default at the call site.
+function _fluxidiSubscriptionIsSafeReturnUrl(raw) {
+  const s = _fluxidiSubscriptionSafeStr(raw, 1000);
+  if (!s) return false;
+  let u;
+  try { u = new URL(s); } catch (_) { return false; }
+  return u.protocol === "https:" || u.protocol === "http:";
+}
+
+// Create a Mollie customer under Fluxidi's OWN Mollie account. Uses ONLY the
+// Fluxidi subscription API key; never company Mollie Connect tokens.
+async function createFluxidiSubscriptionMollieCustomer(env, { email, name, metadata } = {}) {
+  const config = loadFluxidiSubscriptionMollieConfig(env);
+  if (!config.ok) return { ok: false, status: 0, error: config.error };
+  const cleanEmail = _fluxidiSubscriptionSafeStr(email, 160);
+  if (!cleanEmail) return { ok: false, status: 0, error: "missing_billing_email" };
+  const payload = { email: cleanEmail };
+  const cleanName = _fluxidiSubscriptionSafeStr(name, 160);
+  if (cleanName) payload.name = cleanName;
+  if (metadata && typeof metadata === "object" && !Array.isArray(metadata)) {
+    payload.metadata = metadata;
+  }
+  let res;
+  try {
+    res = await fetch("https://api.mollie.com/v2/customers", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${config.apiKey}`,
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
+  } catch (e) {
+    return { ok: false, status: 0, error: "network_error", message: _fluxidiSubscriptionSafeStr(e?.message, 200) };
+  }
+  let data = {};
+  try { data = await res.json(); } catch (_) { data = {}; }
+  return { ok: res.ok, status: res.status, data };
+}
+
+// Create the first (sequenceType:"first") Mollie payment for a Fluxidi
+// subscription. Uses ONLY the Fluxidi subscription API key.
+async function createFluxidiSubscriptionFirstPayment(env, {
+  customerId,
+  amountValue,
+  currency,
+  description,
+  redirectUrl,
+  webhookUrl,
+  metadata,
+  expiresAt,
+} = {}) {
+  const config = loadFluxidiSubscriptionMollieConfig(env);
+  if (!config.ok) return { ok: false, status: 0, error: config.error };
+  const cleanCustomerId = _fluxidiSubscriptionSafeStr(customerId, 128);
+  if (!cleanCustomerId) return { ok: false, status: 0, error: "missing_customer_id" };
+  const cleanValue = _fluxidiSubscriptionSafeStr(amountValue, 32);
+  if (!cleanValue) return { ok: false, status: 0, error: "missing_amount" };
+  const cleanCurrency = (_fluxidiSubscriptionSafeStr(currency, 8).toUpperCase() || "EUR").slice(0, 8);
+  const payload = {
+    amount: { currency: cleanCurrency, value: cleanValue },
+    customerId: cleanCustomerId,
+    sequenceType: "first",
+    description: _fluxidiSubscriptionSafeStr(description, 200) || "Fluxidi Pro abonnement",
+  };
+  const cleanRedirect = _fluxidiSubscriptionSafeStr(redirectUrl, 1000);
+  if (cleanRedirect) payload.redirectUrl = cleanRedirect;
+  const cleanWebhook = _fluxidiSubscriptionSafeStr(webhookUrl, 1000);
+  if (cleanWebhook) payload.webhookUrl = cleanWebhook;
+  // Optional explicit Mollie payment expiry. Bounded by the founder
+  // reservation TTL upstream so a payment cannot be paid after its
+  // reservation is gone. Only forwarded when it parses as a real ISO date.
+  const cleanExpiresAt = _fluxidiSubscriptionSafeStr(expiresAt, 48);
+  if (cleanExpiresAt && Number.isFinite(Date.parse(cleanExpiresAt))) {
+    payload.expiresAt = cleanExpiresAt;
+  }
+  if (metadata && typeof metadata === "object" && !Array.isArray(metadata)) {
+    payload.metadata = metadata;
+  }
+  let res;
+  try {
+    res = await fetch("https://api.mollie.com/v2/payments", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${config.apiKey}`,
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
+  } catch (e) {
+    return { ok: false, status: 0, error: "network_error", message: _fluxidiSubscriptionSafeStr(e?.message, 200) };
+  }
+  let data = {};
+  try { data = await res.json(); } catch (_) { data = {}; }
+  return { ok: res.ok, status: res.status, data };
 }
 
 // Single activation path. Used by the webhook in this patch and by the
@@ -5815,15 +6041,38 @@ async function activateFluxidiSubscriptionFromVerifiedPayment(env, { activationI
 
   const founderPriceCents = _fluxidiSubscriptionNullableCents(pending.founder_price_cents);
   const normalPriceCents = _fluxidiSubscriptionNullableCents(pending.normal_price_cents);
+  // Reservation-aware founder allocation (Patch 2.2A small fix).
+  //
+  // If checkout-start reserved a founder slot (pending.founder_reserved===true)
+  // we MUST commit that exact reservation. If the reservation is missing or
+  // expired, we refuse to silently downgrade to non-founder pricing because
+  // the customer was already charged the founder price. The webhook is told
+  // it's safely ignored and the pending record is burned so retries don't
+  // loop; operations can reconcile (re-grant via admin tool / refund).
+  //
+  // If pending.founder_reserved!==true (markets without a founder price, or
+  // slots were already exhausted at checkout-start) the customer was charged
+  // the normal price, so the existing reserve+commit `assign` path is safe:
+  // it will return not_eligible_market/slots_exhausted and we record that as
+  // a non-founder activation matching the charged amount.
+  const founderReservedAtCheckout = pending.founder_reserved === true;
   let founderResult = { granted: false, reason: "not_attempted" };
   try {
-    founderResult = await _fluxidiSubscriptionAllocateFounderSlot(env, {
-      tenantId,
-      companyId,
-      activationId: cleanActivationId,
-      founderPriceCents,
-      limit: FLUXIDI_SUBSCRIPTION_FOUNDER_SLOT_LIMIT,
-    });
+    if (founderReservedAtCheckout) {
+      founderResult = await _fluxidiSubscriptionCommitFounderSlot(env, {
+        tenantId,
+        companyId,
+        activationId: cleanActivationId,
+      });
+    } else {
+      founderResult = await _fluxidiSubscriptionAllocateFounderSlot(env, {
+        tenantId,
+        companyId,
+        activationId: cleanActivationId,
+        founderPriceCents,
+        limit: FLUXIDI_SUBSCRIPTION_FOUNDER_SLOT_LIMIT,
+      });
+    }
   } catch (e) {
     console.log(
       `[SUBSCRIPTION_ACTIVATE][ERROR] tenant=${tenantMask} company=${companyMask} stage=founder_do msg=${_fluxidiSubscriptionSafeStr(e?.message, 160)}`,
@@ -5832,6 +6081,28 @@ async function activateFluxidiSubscriptionFromVerifiedPayment(env, { activationI
   }
 
   const isFounder = founderResult?.granted === true;
+
+  // Reservation-lost safety branch: founder-priced payment but the DO could
+  // not commit a founder slot. Do NOT mark the profile active and do NOT
+  // downgrade to normal price; burn the pending record so the webhook stops
+  // retrying, and surface a clear warning for manual reconciliation.
+  if (founderReservedAtCheckout && !isFounder) {
+    try {
+      await markFluxidiSubscriptionPendingActivationApplied(env, cleanActivationId, {
+        providerPaymentId: paymentId,
+      });
+    } catch (_) {}
+    console.log(
+      `[SUBSCRIPTION_ACTIVATE][WARN] founder_reservation_lost tenant=${tenantMask} company=${companyMask} activation_id=${cleanActivationId} commit_reason=${_fluxidiSubscriptionSafeStr(founderResult?.reason, 64) || "unknown"}`,
+    );
+    return {
+      ok: true,
+      ignored: true,
+      reason: "founder_reservation_lost",
+      needs_manual_reconciliation: true,
+    };
+  }
+
   const slotNumber = isFounder && Number.isFinite(Number(founderResult.slot_number))
     ? Number(founderResult.slot_number)
     : null;
@@ -24141,6 +24412,361 @@ export default {
         } catch (err) {
           console.log(
             `[COMPANY_SUBSCRIPTION_GET][ERR] ${safeStr(err?.message, 160) || "unknown"}`,
+          );
+          return json({ ok: false, error: "internal_error" }, 500);
+        }
+      }
+
+      // =========================
+      // Company-facing subscription checkout-start (Patch 2.2A foundation).
+      //
+      // POST /company/subscription/checkout/start
+      //
+      // Backend-only. Reserves a founder slot BEFORE creating any Mollie
+      // payment so the price charged always matches the eventual founder
+      // entitlement (no overcharge / refund risk under concurrency). Uses the
+      // Fluxidi-owned subscription Mollie account only — never company Mollie
+      // Connect tokens, never ride-payment helpers. No feature gating, no
+      // trial mutation, no Flutter.
+      // =========================
+      if (
+        url.pathname === "/company/subscription/checkout/start" &&
+        request.method === "POST"
+      ) {
+        let body = {};
+        try {
+          body = await safeJson(request);
+        } catch (_) {
+          body = {};
+        }
+        if (!body || typeof body !== "object" || Array.isArray(body)) body = {};
+
+        const authScope = await _requireAdminOrCompanySessionForExplicitScope({
+          request,
+          url,
+          env,
+          body,
+          routeLabel: "COMPANY_SUBSCRIPTION_CHECKOUT_START",
+        });
+        if (!authScope.ok) return authScope.response;
+
+        try {
+          const scope = {
+            tenant_id: authScope.explicitScope.tenant_id,
+            company_id: authScope.explicitScope.company_id,
+          };
+          const tenantMask = _maskPublicDriverLoginValue(scope.tenant_id);
+          const companyMask = _maskPublicDriverLoginValue(scope.company_id);
+
+          // Fluxidi subscription Mollie config must exist before reserving.
+          const config = loadFluxidiSubscriptionMollieConfig(env);
+          if (!config.ok) {
+            console.log(
+              `[SUBSCRIPTION_CHECKOUT_START][ERR] stage=config reason=${config.error}`,
+            );
+            return json(
+              { ok: false, error: "subscription_billing_unavailable" },
+              503,
+            );
+          }
+
+          // Load company-scoped profile WITHOUT trial creation and WITHOUT
+          // tenant legacy fallback. Never mutate the trial here.
+          const profile = await loadSubscriptionProfile(env, scope, {
+            allowTenantLegacyFallback: false,
+          });
+
+          const currentStatus = _fluxidiSubscriptionSafeStr(
+            profile?.subscription_status || profile?.status,
+          ).toLowerCase();
+          if (currentStatus === "active") {
+            return json(
+              {
+                ok: true,
+                already_active: true,
+                subscription_status: "active",
+                trial_ends_at: _fluxidiSubscriptionSafeStr(profile?.trial_ends_at, 48),
+              },
+              200,
+            );
+          }
+
+          // Authoritative pricing from profile, backstopped by the server
+          // market catalog.
+          const market = normalizeSubscriptionMarket(profile?.market);
+          const catalog = resolveSubscriptionMarketCatalog(market);
+          const planCode =
+            _fluxidiSubscriptionSafeStr(profile?.plan_code, 32) || "fluxidi_pro";
+          const currency = (
+            _fluxidiSubscriptionSafeStr(profile?.currency, 8).toUpperCase() ||
+            catalog.currency ||
+            "EUR"
+          ).slice(0, 8);
+          const normalPriceCents =
+            _fluxidiSubscriptionNullableCents(profile?.normal_price_cents) ??
+            catalog.normal_price_cents;
+          const founderPriceCents =
+            _fluxidiSubscriptionNullableCents(profile?.founder_price_cents) ??
+            catalog.founder_price_cents;
+
+          if (
+            !Number.isFinite(Number(normalPriceCents)) ||
+            Number(normalPriceCents) <= 0
+          ) {
+            console.log(
+              `[SUBSCRIPTION_CHECKOUT_START][ERR] stage=price reason=invalid_price market=${market}`,
+            );
+            return json({ ok: false, error: "invalid_subscription_price" }, 422);
+          }
+
+          // Resolve billing email: profile first, then business profile.
+          let billingEmail = _fluxidiSubscriptionSafeStr(profile?.billing_email, 160);
+          let companyName = "";
+          try {
+            const biz = await loadBusinessProfile(env, scope, {
+              allowTenantLegacyFallback: false,
+            });
+            if (!billingEmail) {
+              billingEmail =
+                _fluxidiSubscriptionSafeStr(biz?.billingEmail, 160) ||
+                _fluxidiSubscriptionSafeStr(biz?.invoiceEmail, 160) ||
+                _fluxidiSubscriptionSafeStr(biz?.notificationEmail, 160);
+            }
+            companyName = _fluxidiSubscriptionSafeStr(biz?.companyName, 160);
+          } catch (_) {}
+          if (!billingEmail) {
+            return json({ ok: false, error: "missing_billing_email" }, 422);
+          }
+
+          // Mint a fresh activation id (canonical idempotency key).
+          const activationId = _fluxidiSubscriptionNormalizeActivationId(
+            `act_${crypto.randomUUID()}`,
+          );
+          if (!activationId) {
+            return json({ ok: false, error: "activation_id_generation_failed" }, 500);
+          }
+
+          // STEP 1: reserve a founder slot BEFORE creating any Mollie payment.
+          let reserveResult = { granted: false, reason: "not_attempted" };
+          try {
+            reserveResult = await _fluxidiSubscriptionReserveFounderSlot(env, {
+              tenantId: scope.tenant_id,
+              companyId: scope.company_id,
+              activationId,
+              founderPriceCents,
+              limit: FLUXIDI_SUBSCRIPTION_FOUNDER_SLOT_LIMIT,
+              reservationTtlSeconds: FLUXIDI_SUBSCRIPTION_RESERVATION_TTL_SECONDS,
+            });
+          } catch (e) {
+            console.log(
+              `[SUBSCRIPTION_CHECKOUT_START][ERR] stage=reserve tenant=${tenantMask} company=${companyMask} msg=${_fluxidiSubscriptionSafeStr(e?.message, 160)}`,
+            );
+            return json({ ok: false, error: "founder_reservation_failed" }, 500);
+          }
+
+          const founderReserved = reserveResult?.granted === true;
+          const founderSlotNumber =
+            founderReserved && Number.isFinite(Number(reserveResult.slot_number))
+              ? Number(reserveResult.slot_number)
+              : null;
+          const founderReservationReason = _fluxidiSubscriptionSafeStr(
+            reserveResult?.reason,
+            64,
+          );
+
+          // STEP 2: pick the charge amount from the reservation outcome. The
+          // reserved entitlement and the charged amount are now bound together.
+          const expectedAmountCents =
+            founderReserved &&
+            Number.isFinite(Number(founderPriceCents)) &&
+            Number(founderPriceCents) > 0
+              ? Number(founderPriceCents)
+              : Number(normalPriceCents);
+          const amountValue = (expectedAmountCents / 100).toFixed(2);
+
+          // Any failure from here MUST release the reservation (if any) so an
+          // abandoned checkout does not hold a founder slot until expiry.
+          const releaseReservation = async () => {
+            if (!founderReserved) return;
+            const r = await _fluxidiSubscriptionReleaseFounderSlot(env, {
+              tenantId: scope.tenant_id,
+              companyId: scope.company_id,
+              activationId,
+            });
+            if (!r || r.released !== true) {
+              console.log(
+                `[SUBSCRIPTION_CHECKOUT_START][WARN] stage=release reserved_release_unconfirmed reason=${_fluxidiSubscriptionSafeStr(r?.reason, 48) || "-"} slot=${founderSlotNumber ?? "-"}`,
+              );
+            }
+          };
+
+          // STEP 3: create the Mollie customer (Fluxidi-owned account).
+          let customerResult;
+          try {
+            customerResult = await createFluxidiSubscriptionMollieCustomer(env, {
+              email: billingEmail,
+              name: companyName,
+              metadata: {
+                purpose: FLUXIDI_SUBSCRIPTION_METADATA_PURPOSE,
+                tenant_id: scope.tenant_id,
+                company_id: scope.company_id,
+              },
+            });
+          } catch (e) {
+            await releaseReservation();
+            console.log(
+              `[SUBSCRIPTION_CHECKOUT_START][ERR] stage=customer exception msg=${_fluxidiSubscriptionSafeStr(e?.message, 160)}`,
+            );
+            return json({ ok: false, error: "mollie_customer_failed" }, 502);
+          }
+          if (!customerResult?.ok) {
+            await releaseReservation();
+            if (customerResult?.error === "missing_billing_email") {
+              return json({ ok: false, error: "missing_billing_email" }, 422);
+            }
+            console.log(
+              `[SUBSCRIPTION_CHECKOUT_START][ERR] stage=customer upstream_status=${Number(customerResult?.status) || 0}`,
+            );
+            return json({ ok: false, error: "mollie_customer_failed" }, 502);
+          }
+          const customerId = _fluxidiSubscriptionSafeStr(customerResult.data?.id, 128);
+          if (!customerId) {
+            await releaseReservation();
+            console.log(
+              "[SUBSCRIPTION_CHECKOUT_START][ERR] stage=customer reason=missing_customer_id",
+            );
+            return json({ ok: false, error: "mollie_customer_failed" }, 502);
+          }
+
+          // STEP 4: create the first payment.
+          const base = getBaseUrl(request);
+          const webhookUrl = `${base}/webhooks/subscription/mollie/${config.webhookSecret}`;
+          const returnUrlRaw = _fluxidiSubscriptionSafeStr(
+            body?.return_url ?? body?.returnUrl,
+            1000,
+          );
+          const redirectUrl = _fluxidiSubscriptionIsSafeReturnUrl(returnUrlRaw)
+            ? returnUrlRaw
+            : `${base}/`;
+          // Bound Mollie payment lifetime so it cannot be paid after the
+          // founder reservation expires. Pending KV TTL is the reservation
+          // TTL plus the same safety margin (set in the named constants
+          // above), so the webhook still finds its pending record when a
+          // payment lands close to the deadline.
+          const paymentExpiresAt = new Date(
+            Date.now() +
+              (FLUXIDI_SUBSCRIPTION_RESERVATION_TTL_SECONDS -
+                FLUXIDI_SUBSCRIPTION_PAYMENT_EXPIRY_SAFETY_SECONDS) *
+                1000,
+          ).toISOString();
+
+          let paymentResult;
+          try {
+            paymentResult = await createFluxidiSubscriptionFirstPayment(env, {
+              customerId,
+              amountValue,
+              currency,
+              description: "Fluxidi Pro abonnement",
+              redirectUrl,
+              webhookUrl,
+              expiresAt: paymentExpiresAt,
+              metadata: {
+                purpose: FLUXIDI_SUBSCRIPTION_METADATA_PURPOSE,
+                activation_id: activationId,
+                tenant_id: scope.tenant_id,
+                company_id: scope.company_id,
+                plan_code: planCode,
+                market,
+              },
+            });
+          } catch (e) {
+            await releaseReservation();
+            console.log(
+              `[SUBSCRIPTION_CHECKOUT_START][ERR] stage=payment exception msg=${_fluxidiSubscriptionSafeStr(e?.message, 160)}`,
+            );
+            return json({ ok: false, error: "mollie_payment_failed" }, 502);
+          }
+          if (!paymentResult?.ok) {
+            await releaseReservation();
+            console.log(
+              `[SUBSCRIPTION_CHECKOUT_START][ERR] stage=payment upstream_status=${Number(paymentResult?.status) || 0}`,
+            );
+            return json({ ok: false, error: "mollie_payment_failed" }, 502);
+          }
+          const payment = paymentResult.data || {};
+          const providerPaymentId = _fluxidiSubscriptionSafeStr(payment?.id, 128);
+          const checkoutUrl = _fluxidiSubscriptionSafeStr(
+            payment?._links?.checkout?.href,
+            1000,
+          );
+          if (!providerPaymentId || !checkoutUrl) {
+            await releaseReservation();
+            console.log(
+              "[SUBSCRIPTION_CHECKOUT_START][ERR] stage=payment reason=missing_id_or_checkout",
+            );
+            return json({ ok: false, error: "mollie_payment_failed" }, 502);
+          }
+
+          // STEP 5: persist the pending activation (webhook idempotency anchor).
+          // expected_amount_cents here is exactly the Mollie amount above.
+          // provider_subscription_id stays empty (reserved for the real
+          // Mollie subscription id, created in a later patch).
+          try {
+            await saveFluxidiSubscriptionPendingActivation(
+              env,
+              {
+                version: 1,
+                activation_id: activationId,
+                tenant_id: scope.tenant_id,
+                company_id: scope.company_id,
+                plan_code: planCode,
+                market,
+                currency,
+                normal_price_cents: normalPriceCents,
+                founder_price_cents: founderPriceCents,
+                expected_amount_cents: expectedAmountCents,
+                provider: FLUXIDI_SUBSCRIPTION_PROVIDER_NAME,
+                provider_payment_id: providerPaymentId,
+                provider_customer_id: customerId,
+                provider_subscription_id: "",
+                status: "pending",
+                founder_reserved: founderReserved,
+                founder_reservation_reason: founderReservationReason,
+                founder_slot_number: founderSlotNumber,
+              },
+              { ttlSeconds: FLUXIDI_SUBSCRIPTION_PENDING_ACTIVATION_TTL_SECONDS },
+            );
+          } catch (e) {
+            // Mollie payment exists but the pending record could not be saved.
+            // Without it, the webhook would ignore the payment. Release the
+            // reservation and surface an error; a retry mints a new activation.
+            await releaseReservation();
+            console.log(
+              `[SUBSCRIPTION_CHECKOUT_START][ERR] stage=pending_save msg=${_fluxidiSubscriptionSafeStr(e?.message, 160)}`,
+            );
+            return json({ ok: false, error: "pending_activation_save_failed" }, 500);
+          }
+
+          console.log(
+            `[SUBSCRIPTION_CHECKOUT_START][OK] tenant=${tenantMask} company=${companyMask} founder_reserved=${founderReserved} slot=${founderSlotNumber ?? "-"} amount_cents=${expectedAmountCents} currency=${currency} mode=${config.mode}`,
+          );
+          return json(
+            {
+              ok: true,
+              activation_id: activationId,
+              checkout_url: checkoutUrl,
+              provider_payment_id: providerPaymentId,
+              expected_amount_cents: expectedAmountCents,
+              currency,
+              founder_reserved: founderReserved,
+              founder_slot_number: founderSlotNumber,
+              trial_ends_at: _fluxidiSubscriptionSafeStr(profile?.trial_ends_at, 48),
+            },
+            200,
+          );
+        } catch (err) {
+          console.log(
+            `[SUBSCRIPTION_CHECKOUT_START][ERR] ${_fluxidiSubscriptionSafeStr(err?.message, 160) || "unknown"}`,
           );
           return json({ ok: false, error: "internal_error" }, 500);
         }
