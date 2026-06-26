@@ -75727,11 +75727,11 @@ function renderInvoiceHtml(env, data, commProfile = null) {
           };
         })
     : [];
-  // Tightened: a structured roundtrip table requires BOTH an outbound leg with
-  // route data AND a return leg that itself carries route data (from/to) or a
-  // strictly positive price. This prevents one-way bookings from rendering a
-  // fake "Terugrit EUR 0.00" row when downstream code synthesised an empty
-  // return leg from a zero price hint.
+  // A return leg may only be rendered when it carries real return evidence
+  // (route addresses or a strictly positive price). This prevents one-way
+  // bookings from rendering a fake "Terugrit EUR 0.00" row when downstream code
+  // synthesised an empty return leg. An outbound leg is meaningful (and worth a
+  // structured row) whenever it carries route data (from/to).
   const _returnLegMeaningful = (leg) =>
     leg.legType === "return" &&
     (!!leg.from ||
@@ -75739,21 +75739,31 @@ function renderInvoiceHtml(env, data, commProfile = null) {
       (leg.priceInclVat != null && leg.priceInclVat > 0));
   const _outboundLegMeaningful = (leg) =>
     leg.legType === "outbound" && (!!leg.from || !!leg.to);
-  const hasStructuredRoundtripLegs =
-    (d.returnTrip || structuredLegs.some(_returnLegMeaningful)) &&
-    structuredLegs.some(_outboundLegMeaningful) &&
-    structuredLegs.some(_returnLegMeaningful);
-  const legRows = hasStructuredRoundtripLegs
-    ? structuredLegs
-        .filter(
-          (leg) =>
-            _outboundLegMeaningful(leg) || _returnLegMeaningful(leg),
-        )
-        .sort((a, b) => (a.legType === b.legType ? 0 : (a.legType === "outbound" ? -1 : 1)))
+  // Legs we will actually render. Includes the meaningful outbound leg even when
+  // there is no return, so one-way bookings get a proper "Heenrit" row with
+  // pickup/dropoff instead of falling back to the generic "Taxidienst - -> -"
+  // block. Return rows still require real return evidence.
+  const displayStructuredLegs = structuredLegs
+    .filter((leg) => _outboundLegMeaningful(leg) || _returnLegMeaningful(leg))
+    .sort((a, b) =>
+      a.legType === b.legType ? 0 : a.legType === "outbound" ? -1 : 1,
+    );
+  const hasDisplayStructuredLegs = displayStructuredLegs.length > 0;
+  const hasDisplayReturnLeg = displayStructuredLegs.some(
+    (leg) => leg.legType === "return",
+  );
+  // Single-leg (one-way) display shows the full fare on that single row;
+  // multi-leg roundtrip keeps each leg's own price.
+  const isSingleLegDisplay = displayStructuredLegs.length === 1;
+  const legRows = hasDisplayStructuredLegs
+    ? displayStructuredLegs
         .map((leg) => {
           const distanceLine = leg.distanceKm != null ? `<span class="muted">Afstand: ${escapeHtml(String(Math.round(leg.distanceKm * 10) / 10))} km</span>` : "";
           const durationLine = leg.durationMin != null ? `<span class="muted">${distanceLine ? " • " : ""}Duur: ${escapeHtml(String(Math.round(leg.durationMin)))} min</span>` : "";
           const pickupLine = leg.pickupText ? `<span class="muted">Ophaaltijd: ${escapeHtml(leg.pickupText)}</span><br>` : "";
+          const rowPrice = isSingleLegDisplay
+            ? (Number.isFinite(Number(d.total)) ? Number(d.total) : leg.priceInclVat)
+            : leg.priceInclVat;
           return `<tr>
         <td>
           <strong>${escapeHtml(leg.label)}</strong><br>
@@ -75762,12 +75772,14 @@ function renderInvoiceHtml(env, data, commProfile = null) {
           ${distanceLine}${durationLine}${distanceLine || durationLine ? "<br>" : ""}
           <span class="muted">Status: ${escapeHtml(statusNl(leg.status))}</span>
         </td>
-        <td class="right">${leg.priceInclVat != null ? eur(leg.priceInclVat) : "—"}</td>
+        <td class="right">${rowPrice != null ? eur(rowPrice) : "—"}</td>
       </tr>`;
         })
         .join("")
     : "";
-  const waitingPackageRow = hasStructuredRoundtripLegs && toInt(d.waitMinutes, 0) > 0
+  // The "Heen-terug met geboekte wachttijd" note is roundtrip-specific copy;
+  // only show it when a real return leg is being rendered.
+  const waitingPackageRow = hasDisplayReturnLeg && toInt(d.waitMinutes, 0) > 0
     ? `<tr><td class="muted">Heen-terug met geboekte wachttijd (${escapeHtml(String(toInt(d.waitMinutes, 0)))} min)</td><td class="right">Inbegrepen</td></tr>`
     : "";
   const documentTitle = safeStr(d.customerCompany) || safeStr(d.customerVat)
@@ -75934,7 +75946,7 @@ function renderInvoiceHtml(env, data, commProfile = null) {
       </tr>
     </thead>
     <tbody>
-      ${hasStructuredRoundtripLegs ? `${legRows}${waitingPackageRow}` : `
+      ${hasDisplayStructuredLegs ? `${legRows}${waitingPackageRow}` : `
       <tr>
         <td>
           <strong>Taxidienst</strong> <span class="muted">(${escapeHtml(safeStr(d.tier) || "—")})</span><br>
