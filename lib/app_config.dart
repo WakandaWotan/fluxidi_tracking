@@ -5394,6 +5394,37 @@ Future<BackendSubscriptionProfile> fetchBackendSubscriptionProfile({
   );
 }
 
+/// GET /company/subscription/profile (company-session auth, NOT admin headers).
+///
+/// Company-facing counterpart of [fetchBackendSubscriptionProfile]. Uses
+/// [resolveCompanyOwnerAuthHeaders] (admin token when available, otherwise the
+/// company session bearer) so the business UI no longer needs the global admin
+/// token. The backend lazily creates a 14-day trial profile on first call.
+Future<BackendSubscriptionProfile> fetchCompanySubscriptionProfile({
+  String? tenantId,
+  String? companyId,
+}) async {
+  final endpoint = _withAdminTenantCompanyScope(
+    Uri.parse('${appConfig.bookingBaseUrl}/company/subscription/profile'),
+    tenantId: tenantId,
+    companyId: companyId,
+  );
+  final auth = await resolveCompanyOwnerAuthHeaders();
+  final res = await http
+      .get(endpoint, headers: auth.headers)
+      .timeout(const Duration(seconds: 12));
+  if (res.statusCode < 200 || res.statusCode >= 300) {
+    throw Exception('HTTP ${res.statusCode}: ${res.body}');
+  }
+  final decoded = jsonDecode(utf8.decode(res.bodyBytes));
+  if (decoded is! Map) throw Exception('Invalid response');
+  final profile = decoded['subscription_profile'];
+  if (profile is! Map) throw Exception('Missing subscription_profile');
+  return BackendSubscriptionProfile.fromJson(
+    Map<String, dynamic>.from(profile),
+  );
+}
+
 Future<BackendSubscriptionProfile> saveBackendSubscriptionProfile(
   BackendSubscriptionProfile profile, {
   String? tenantId,

@@ -3347,9 +3347,64 @@ const DEFAULT_SUBSCRIPTION_PROFILE = {
     receipt_pdf: true,
     whatsapp_email_receipts: true,
   },
+  // Additive subscription-foundation fields (Patch 1). All optional; when a
+  // legacy record lacks them they default safely and existing behaviour for
+  // plan/status is preserved via the canonical aliases below. No founder slot
+  // allocation, payment, or gating is performed here.
+  plan_code: "starter",
+  market: "",
+  currency: "EUR",
+  subscription_status: "trialing",
+  activated_at: "",
+  cancelled_at: "",
+  current_period_start: "",
+  current_period_end: "",
+  locked_price_cents: null,
+  normal_price_cents: null,
+  founder_price_cents: null,
+  is_founder_customer: false,
+  founder_slot_number: null,
+  founder_assigned_at: "",
+  payment_provider: "",
+  provider_customer_id: "",
+  provider_subscription_id: "",
+  warnings: [],
   created_at: "",
   updated_at: "",
 };
+
+// Server-side mirror of the Flutter country-aware subscription catalog
+// (lib/app_config.dart). Display/catalog data only; no payment logic. Markets
+// other than ES/PT fall back to the BE/NL/FR catalog. Unknown input -> BE.
+const SUBSCRIPTION_MARKET_CATALOG = {
+  BE: { currency: "EUR", normal_price_cents: 6900, founder_price_cents: 5900 },
+  NL: { currency: "EUR", normal_price_cents: 6900, founder_price_cents: 5900 },
+  FR: { currency: "EUR", normal_price_cents: 6900, founder_price_cents: 5900 },
+  ES: { currency: "EUR", normal_price_cents: 4900, founder_price_cents: null },
+  PT: { currency: "EUR", normal_price_cents: 4900, founder_price_cents: null },
+};
+
+function normalizeSubscriptionMarket(raw) {
+  const v = sanitizeTenantString(raw, 16)
+    .toUpperCase()
+    .replace(/[^A-Z]/g, "");
+  if (v === "BE" || v === "BELGIUM" || v === "BELGIE") return "BE";
+  if (v === "NL" || v === "NETHERLANDS" || v === "NEDERLAND") return "NL";
+  if (v === "FR" || v === "FRANCE" || v === "FRANKRIJK") return "FR";
+  if (v === "ES" || v === "SPAIN" || v === "SPANJE" || v === "ESPANA") {
+    return "ES";
+  }
+  if (v === "PT" || v === "PORTUGAL") return "PT";
+  return v.slice(0, 2);
+}
+
+function resolveSubscriptionMarketCatalog(rawMarket) {
+  const market = normalizeSubscriptionMarket(rawMarket);
+  const known = SUBSCRIPTION_MARKET_CATALOG[market];
+  if (known) return { market, ...known };
+  // Safe fallback to BE catalog while still reporting the requested market.
+  return { market: market || "BE", ...SUBSCRIPTION_MARKET_CATALOG.BE };
+}
 
 const DEFAULT_COMMUNICATION_TEMPLATES = {
   version: 1,
@@ -3821,21 +3876,96 @@ function normalizeSubscriptionProfile(input = {}, scope = null) {
   if (!tenantId && companyId) tenantId = companyId;
   if (!companyId && tenantId) companyId = tenantId;
 
-  const allowedPlans = new Set(["starter", "pro", "business", "enterprise"]);
-  const allowedStatuses = new Set(["trialing", "active", "past_due", "canceled", "suspended"]);
-  const rawPlan = sanitizeTenantString(source.plan ?? DEFAULT_SUBSCRIPTION_PROFILE.plan, 32).toLowerCase();
-  const rawStatus = sanitizeTenantString(source.status ?? DEFAULT_SUBSCRIPTION_PROFILE.status, 32).toLowerCase();
+  const allowedPlans = new Set(["starter", "pro", "business", "enterprise", "fluxidi_pro"]);
+  const allowedStatuses = new Set([
+    "trialing",
+    "payment_required",
+    "active",
+    "past_due",
+    "grace_period",
+    "suspended",
+    "cancelled",
+  ]);
+  // plan_code is the canonical field; `plan` is kept as a readable alias.
+  const rawPlan = sanitizeTenantString(
+    source.plan_code ?? source.planCode ?? source.plan ?? DEFAULT_SUBSCRIPTION_PROFILE.plan,
+    32,
+  ).toLowerCase();
+  const plan = allowedPlans.has(rawPlan) ? rawPlan : DEFAULT_SUBSCRIPTION_PROFILE.plan;
+  // subscription_status is canonical; legacy `status` and the "canceled"
+  // spelling remain readable and are canonicalized to "cancelled".
+  let rawStatus = sanitizeTenantString(
+    source.subscription_status ??
+      source.subscriptionStatus ??
+      source.status ??
+      DEFAULT_SUBSCRIPTION_PROFILE.subscription_status,
+    32,
+  ).toLowerCase();
+  if (rawStatus === "canceled") rawStatus = "cancelled";
+  const subscriptionStatus = allowedStatuses.has(rawStatus)
+    ? rawStatus
+    : DEFAULT_SUBSCRIPTION_PROFILE.subscription_status;
   const inFeatures = source.features && typeof source.features === "object" ? source.features : {};
   const defaultFeatures = DEFAULT_SUBSCRIPTION_PROFILE.features;
+
+  // Nullable integer-cents parser: empty/invalid -> null (never fabricated).
+  const nullableCents = (...candidates) => {
+    for (const c of candidates) {
+      if (c === null || c === undefined || c === "") continue;
+      const n = Number(c);
+      if (Number.isFinite(n)) return Math.trunc(n);
+    }
+    return null;
+  };
+  const nullableSlot = (...candidates) => {
+    for (const c of candidates) {
+      if (c === null || c === undefined || c === "") continue;
+      const n = Number(c);
+      if (Number.isFinite(n) && n >= 0) return Math.trunc(n);
+    }
+    return null;
+  };
+
+  const rawMarket = sanitizeTenantString(source.market ?? DEFAULT_SUBSCRIPTION_PROFILE.market, 16)
+    .toUpperCase()
+    .replace(/[^A-Z]/g, "")
+    .slice(0, 2);
+  const currency = (
+    sanitizeTenantString(source.currency ?? DEFAULT_SUBSCRIPTION_PROFILE.currency, 8).toUpperCase() ||
+    "EUR"
+  ).slice(0, 8);
+  const warnings = Array.isArray(source.warnings)
+    ? source.warnings
+        .filter((w) => typeof w === "string")
+        .map((w) => sanitizeTenantString(w, 200))
+        .filter(Boolean)
+    : [];
 
   return {
     version: 1,
     tenant_id: tenantId,
     company_id: companyId,
-    plan: allowedPlans.has(rawPlan) ? rawPlan : DEFAULT_SUBSCRIPTION_PROFILE.plan,
-    status: allowedStatuses.has(rawStatus) ? rawStatus : DEFAULT_SUBSCRIPTION_PROFILE.status,
+    plan,
+    plan_code: plan,
+    status: subscriptionStatus,
+    subscription_status: subscriptionStatus,
+    market: rawMarket,
+    currency,
     trial_started_at: sanitizeTenantString(source.trial_started_at ?? source.trialStartedAt ?? DEFAULT_SUBSCRIPTION_PROFILE.trial_started_at, 48),
     trial_ends_at: sanitizeTenantString(source.trial_ends_at ?? source.trialEndsAt ?? DEFAULT_SUBSCRIPTION_PROFILE.trial_ends_at, 48),
+    activated_at: sanitizeTenantString(source.activated_at ?? source.activatedAt ?? DEFAULT_SUBSCRIPTION_PROFILE.activated_at, 48),
+    cancelled_at: sanitizeTenantString(source.cancelled_at ?? source.cancelledAt ?? source.canceled_at ?? source.canceledAt ?? DEFAULT_SUBSCRIPTION_PROFILE.cancelled_at, 48),
+    current_period_start: sanitizeTenantString(source.current_period_start ?? source.currentPeriodStart ?? DEFAULT_SUBSCRIPTION_PROFILE.current_period_start, 48),
+    current_period_end: sanitizeTenantString(source.current_period_end ?? source.currentPeriodEnd ?? DEFAULT_SUBSCRIPTION_PROFILE.current_period_end, 48),
+    locked_price_cents: nullableCents(source.locked_price_cents, source.lockedPriceCents),
+    normal_price_cents: nullableCents(source.normal_price_cents, source.normalPriceCents),
+    founder_price_cents: nullableCents(source.founder_price_cents, source.founderPriceCents),
+    is_founder_customer: source.is_founder_customer === true || source.isFounderCustomer === true,
+    founder_slot_number: nullableSlot(source.founder_slot_number, source.founderSlotNumber),
+    founder_assigned_at: sanitizeTenantString(source.founder_assigned_at ?? source.founderAssignedAt ?? DEFAULT_SUBSCRIPTION_PROFILE.founder_assigned_at, 48),
+    payment_provider: sanitizeTenantString(source.payment_provider ?? source.paymentProvider ?? DEFAULT_SUBSCRIPTION_PROFILE.payment_provider, 48),
+    provider_customer_id: sanitizeTenantString(source.provider_customer_id ?? source.providerCustomerId ?? DEFAULT_SUBSCRIPTION_PROFILE.provider_customer_id, 128),
+    provider_subscription_id: sanitizeTenantString(source.provider_subscription_id ?? source.providerSubscriptionId ?? DEFAULT_SUBSCRIPTION_PROFILE.provider_subscription_id, 128),
     billing_email: sanitizeTenantString(source.billing_email ?? source.billingEmail ?? DEFAULT_SUBSCRIPTION_PROFILE.billing_email, 160),
     included_vehicles: Math.max(0, clampInt(source.included_vehicles ?? source.includedVehicles, DEFAULT_SUBSCRIPTION_PROFILE.included_vehicles)),
     max_vehicles: Math.max(0, clampInt(source.max_vehicles ?? source.maxVehicles, DEFAULT_SUBSCRIPTION_PROFILE.max_vehicles)),
@@ -3851,6 +3981,7 @@ function normalizeSubscriptionProfile(input = {}, scope = null) {
       receipt_pdf: typeof inFeatures.receipt_pdf === "boolean" ? inFeatures.receipt_pdf : defaultFeatures.receipt_pdf,
       whatsapp_email_receipts: typeof inFeatures.whatsapp_email_receipts === "boolean" ? inFeatures.whatsapp_email_receipts : defaultFeatures.whatsapp_email_receipts,
     },
+    warnings,
     created_at: sanitizeTenantString(source.created_at ?? source.createdAt ?? DEFAULT_SUBSCRIPTION_PROFILE.created_at, 48),
     updated_at: sanitizeTenantString(source.updated_at ?? source.updatedAt ?? DEFAULT_SUBSCRIPTION_PROFILE.updated_at, 48),
   };
@@ -4492,6 +4623,50 @@ async function saveTaxProfile(
     tax_profile: normalized,
   }));
   return normalized;
+}
+
+// Build a fresh 14-day trial subscription profile (Patch 1 foundation).
+// No founder slot is allocated and no payment/provider data is set here.
+function buildDefaultTrialSubscriptionProfile({
+  tenantId = "",
+  companyId = "",
+  market = "",
+  billingEmail = "",
+} = {}) {
+  const nowMs = Date.now();
+  const nowIso = new Date(nowMs).toISOString();
+  const trialEndsIso = new Date(nowMs + 14 * 24 * 60 * 60 * 1000).toISOString();
+  const catalog = resolveSubscriptionMarketCatalog(market);
+  return normalizeSubscriptionProfile(
+    {
+      tenant_id: tenantId,
+      company_id: companyId,
+      plan_code: "fluxidi_pro",
+      market: catalog.market,
+      currency: catalog.currency,
+      subscription_status: "trialing",
+      trial_started_at: nowIso,
+      trial_ends_at: trialEndsIso,
+      activated_at: "",
+      cancelled_at: "",
+      current_period_start: "",
+      current_period_end: "",
+      locked_price_cents: null,
+      normal_price_cents: catalog.normal_price_cents,
+      founder_price_cents: catalog.founder_price_cents,
+      is_founder_customer: false,
+      founder_slot_number: null,
+      founder_assigned_at: "",
+      payment_provider: "",
+      provider_customer_id: "",
+      provider_subscription_id: "",
+      billing_email: billingEmail || "",
+      warnings: [],
+      created_at: nowIso,
+      updated_at: nowIso,
+    },
+    { tenant_id: tenantId, company_id: companyId },
+  );
 }
 
 async function loadSubscriptionProfile(
@@ -22657,6 +22832,92 @@ export default {
         } catch (err) {
           console.log(
             `[BILLIT_OAUTH][COMPANY_DISCONNECT][ERR] ${safeStr(err?.message, 160) || "unknown"}`,
+          );
+          return json({ ok: false, error: "internal_error" }, 500);
+        }
+      }
+
+      // =========================
+      // Company-facing subscription profile (Patch 1 foundation).
+      // Read-only for the caller; the only side effect is a one-time lazy
+      // trial-profile creation when no company-scoped profile exists yet.
+      // No founder slot allocation, no payment/provider logic, no gating.
+      // The admin /admin/subscription/profile routes are unchanged.
+      // =========================
+
+      // GET /company/subscription/profile?tenant_id=...&company_id=...
+      if (
+        url.pathname === "/company/subscription/profile" &&
+        request.method === "GET"
+      ) {
+        const authScope = await _requireAdminOrCompanySessionForExplicitScope({
+          request,
+          url,
+          env,
+          routeLabel: "COMPANY_SUBSCRIPTION_GET",
+        });
+        if (!authScope.ok) return authScope.response;
+        try {
+          const scope = {
+            tenant_id: authScope.explicitScope.tenant_id,
+            company_id: authScope.explicitScope.company_id,
+          };
+          const scopedKeys = buildScopedSettingsKeys(scope);
+          let raw = null;
+          if (env?.BOOKING_KV && scopedKeys?.subscriptionProfileKey) {
+            raw = await env.BOOKING_KV.get(scopedKeys.subscriptionProfileKey, {
+              type: "json",
+            });
+          }
+          const hasExisting =
+            raw && typeof raw === "object" && !Array.isArray(raw);
+          let profile;
+          let created = false;
+          if (hasExisting) {
+            // Company-scoped profile already exists: never reset the trial.
+            profile = await loadSubscriptionProfile(env, scope, {
+              allowTenantLegacyFallback: false,
+            });
+          } else {
+            // Lazy trial creation only when no company-scoped profile exists.
+            let market = "";
+            let billingEmail = "";
+            try {
+              const businessProfile = await loadBusinessProfile(env, scope, {
+                allowTenantLegacyFallback: false,
+              });
+              market = safeStr(businessProfile?.country, 16);
+              billingEmail = safeStr(
+                businessProfile?.invoice_email ?? businessProfile?.email,
+                160,
+              );
+            } catch (_) {}
+            const trial = buildDefaultTrialSubscriptionProfile({
+              tenantId: scope.tenant_id,
+              companyId: scope.company_id,
+              market,
+              billingEmail,
+            });
+            profile = await saveSubscriptionProfile(env, trial, scope, {
+              allowTenantLegacyWrite: false,
+            });
+            created = true;
+            console.log("[COMPANY_SUBSCRIPTION_GET][TRIAL_CREATED] created=true");
+          }
+          return json(
+            {
+              ok: true,
+              key:
+                scopedKeys?.subscriptionProfileKey ||
+                TENANT_SUBSCRIPTION_PROFILE_KEY,
+              created,
+              subscription_profile: profile,
+            },
+            200,
+          );
+        } catch (err) {
+          console.log(
+            `[COMPANY_SUBSCRIPTION_GET][ERR] ${safeStr(err?.message, 160) || "unknown"}`,
           );
           return json({ ok: false, error: "internal_error" }, 500);
         }

@@ -68,7 +68,7 @@ class _CompanySubscriptionBillingPageState
       );
       return BackendSubscriptionProfile.defaults();
     }
-    return fetchBackendSubscriptionProfile(
+    return fetchCompanySubscriptionProfile(
       tenantId: scopeId,
       companyId: scopeId,
     );
