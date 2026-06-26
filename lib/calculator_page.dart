@@ -3233,6 +3233,10 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
   // off no billing_customer is sent and the booking payload is unchanged.
   bool _billingDetailsEnabled = false;
   bool _billingPeppolExpanded = false;
+  // When true the full ride-contact form (name/phone/email) is shown. When
+  // false and billing is enabled with complete contact, a compact summary is
+  // shown instead to avoid duplicate data entry for business invoice bookings.
+  bool _customerDetailsExpanded = true;
   final TextEditingController _billingLegalNameCtrl = TextEditingController();
   final TextEditingController _billingVatCtrl = TextEditingController();
   final TextEditingController _billingStreetCtrl = TextEditingController();
@@ -3364,6 +3368,14 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
           });
         }
       }
+      // Start the customer details card compact when billing is enabled and the
+      // ride contact is already complete after prefill; otherwise stay expanded.
+      if (mounted) {
+        final startCompact = _billingDetailsEnabled && _rideContactComplete();
+        if (startCompact && _customerDetailsExpanded) {
+          setState(() => _customerDetailsExpanded = false);
+        }
+      }
       debugPrint(
         '[CALCULATOR][BUSINESS_PREFILL] skipProfileBusiness=false explicitPrivateIntent=$explicitPrivateIntent companyPrefilled=${_companyNameCtrl.text.trim().isNotEmpty} vatPrefilled=${_vatNumberCtrl.text.trim().isNotEmpty} addressPrefilled=${_billingStreetCtrl.text.trim().isNotEmpty} invoiceEmailPrefilled=${_billingContactEmailCtrl.text.trim().isNotEmpty} peppolPrefilled=$profileHasPeppol billingEnabled=$_billingDetailsEnabled',
       );
@@ -3491,6 +3503,144 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
 
   bool _isValidEmail(String value) {
     return RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]+$').hasMatch(value);
+  }
+
+  /// Ride contact is "complete" when name + phone are present and email is a
+  /// valid address. Used only to decide compact vs full customer details card.
+  bool _rideContactComplete() {
+    return _nameCtrl.text.trim().isNotEmpty &&
+        _phoneCtrl.text.trim().isNotEmpty &&
+        _isValidEmail(_emailCtrl.text.trim());
+  }
+
+  /// Presentation-only: show the compact ride-contact summary when billing is
+  /// enabled, contact is complete, and the user has not asked to edit.
+  bool _shouldShowCompactRideContact() {
+    return _billingDetailsEnabled &&
+        !_customerDetailsExpanded &&
+        _rideContactComplete();
+  }
+
+  Widget _customerDetailsCard() {
+    final compact = _shouldShowCompactRideContact();
+    final fullTitle = _allowsCustomerSessionLink
+        ? widget.strings.bookingCustomerSectionTitle.of(widget.language)
+        : _localizedText(
+            nl: 'Passagiersgegevens',
+            en: 'Passenger details',
+            fr: 'Détails du passager',
+            es: 'Datos del pasajero',
+          );
+    if (!compact) {
+      return _sectionCard(
+        title: fullTitle,
+        child: Column(
+          children: [
+            _input(
+              _nameCtrl,
+              widget.strings.bookingFullNameLabel.of(widget.language),
+              icon: Icons.person_outline,
+            ),
+            const SizedBox(height: 8),
+            _input(
+              _phoneCtrl,
+              widget.strings.bookingPhoneLabel.of(widget.language),
+              keyboardType: TextInputType.phone,
+              icon: Icons.phone_outlined,
+            ),
+            const SizedBox(height: 8),
+            _input(
+              _emailCtrl,
+              widget.strings.bookingEmailLabel.of(widget.language),
+              keyboardType: TextInputType.emailAddress,
+              icon: Icons.alternate_email,
+            ),
+            const SizedBox(height: 8),
+            _input(
+              _messageCtrl,
+              widget.strings.bookingMessageOptionalLabel.of(widget.language),
+              maxLines: 3,
+              icon: Icons.message_outlined,
+            ),
+          ],
+        ),
+      );
+    }
+    Widget summaryRow(IconData icon, String value) {
+      return Padding(
+        padding: const EdgeInsets.only(top: 6),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(icon, size: 16, color: _textMuted.withOpacity(0.85)),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                value,
+                style: TextStyle(
+                  color: _textPrimary,
+                  fontSize: 13.5,
+                  height: 1.25,
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return _sectionCard(
+      title: _localizedText(
+        nl: 'Ritcontact',
+        en: 'Ride contact',
+        fr: 'Contact du trajet',
+        es: 'Contacto del viaje',
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    summaryRow(Icons.person_outline, _nameCtrl.text.trim()),
+                    summaryRow(Icons.phone_outlined, _phoneCtrl.text.trim()),
+                    summaryRow(Icons.alternate_email, _emailCtrl.text.trim()),
+                  ],
+                ),
+              ),
+              TextButton.icon(
+                onPressed: () =>
+                    setState(() => _customerDetailsExpanded = true),
+                icon: Icon(Icons.edit_outlined, size: 16, color: _gold),
+                label: Text(
+                  _localizedText(
+                    nl: 'Bewerken',
+                    en: 'Edit',
+                    fr: 'Modifier',
+                    es: 'Editar',
+                  ),
+                  style: TextStyle(
+                    color: _gold,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          _input(
+            _messageCtrl,
+            widget.strings.bookingMessageOptionalLabel.of(widget.language),
+            maxLines: 3,
+            icon: Icons.message_outlined,
+          ),
+        ],
+      ),
+    );
   }
 
   String _fmtMoney(dynamic v) {
@@ -5843,48 +5993,7 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
             ),
           ),
           const SizedBox(height: 9),
-          _sectionCard(
-            title: _allowsCustomerSessionLink
-                ? widget.strings.bookingCustomerSectionTitle.of(widget.language)
-                : _localizedText(
-                    nl: 'Passagiersgegevens',
-                    en: 'Passenger details',
-                    fr: 'Détails du passager',
-                    es: 'Datos del pasajero',
-                  ),
-            child: Column(
-              children: [
-                _input(
-                  _nameCtrl,
-                  widget.strings.bookingFullNameLabel.of(widget.language),
-                  icon: Icons.person_outline,
-                ),
-                const SizedBox(height: 8),
-                _input(
-                  _phoneCtrl,
-                  widget.strings.bookingPhoneLabel.of(widget.language),
-                  keyboardType: TextInputType.phone,
-                  icon: Icons.phone_outlined,
-                ),
-                const SizedBox(height: 8),
-                _input(
-                  _emailCtrl,
-                  widget.strings.bookingEmailLabel.of(widget.language),
-                  keyboardType: TextInputType.emailAddress,
-                  icon: Icons.alternate_email,
-                ),
-                const SizedBox(height: 8),
-                _input(
-                  _messageCtrl,
-                  widget.strings.bookingMessageOptionalLabel.of(
-                    widget.language,
-                  ),
-                  maxLines: 3,
-                  icon: Icons.message_outlined,
-                ),
-              ],
-            ),
-          ),
+          _customerDetailsCard(),
           const SizedBox(height: 9),
           _billingDetailsSectionCard(),
           const SizedBox(height: 16),
