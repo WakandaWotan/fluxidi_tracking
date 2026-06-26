@@ -16,6 +16,14 @@ COMPLIANCE_API_URL = "https://fluxidi-compliance-api.fluxidi.workers.dev"
 # MOLLIE_CONNECT_STATE_SECRET    — HMAC secret for signed OAuth state
 # MOLLIE_CONNECT_ENCRYPTION_KEY  — AES-GCM encryption key for stored tokens
 # MOLLIE_CONNECT_ENCRYPTION_KID — optional key id label (default v1)
+#
+# Fluxidi-owned subscription billing (Patch 2.1) — set via Cloudflare secrets,
+# never commit values. INTENTIONALLY SEPARATE from MOLLIE_CONNECT_*. The
+# subscription path must never read MOLLIE_CONNECT_* and ride payments must
+# never read FLUXIDI_SUBSCRIPTION_*:
+# FLUXIDI_SUBSCRIPTION_MOLLIE_API_KEY   — Fluxidi-owned Mollie API key (test_… or live_…)
+# FLUXIDI_SUBSCRIPTION_WEBHOOK_SECRET   — path-secret used in /webhooks/subscription/mollie/{secret}
+# FLUXIDI_SUBSCRIPTION_MOLLIE_MODE      — optional, "test" or "live", for logging only
 
 [[services]]
 binding = "COMPLIANCE_WORKER"

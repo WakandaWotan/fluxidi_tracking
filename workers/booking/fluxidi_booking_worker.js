@@ -3554,6 +3554,10 @@ const DEFAULT_SUBSCRIPTION_PROFILE = {
   payment_provider: "",
   provider_customer_id: "",
   provider_subscription_id: "",
+  // Stable correlation id for a checkout/activation attempt. Set by the
+  // subscription activator (Patch 2.1) and used as the canonical key for
+  // activation-replay idempotency, independent of any provider id.
+  activation_id: "",
   warnings: [],
   created_at: "",
   updated_at: "",
@@ -4152,6 +4156,7 @@ function normalizeSubscriptionProfile(input = {}, scope = null) {
     payment_provider: sanitizeTenantString(source.payment_provider ?? source.paymentProvider ?? DEFAULT_SUBSCRIPTION_PROFILE.payment_provider, 48),
     provider_customer_id: sanitizeTenantString(source.provider_customer_id ?? source.providerCustomerId ?? DEFAULT_SUBSCRIPTION_PROFILE.provider_customer_id, 128),
     provider_subscription_id: sanitizeTenantString(source.provider_subscription_id ?? source.providerSubscriptionId ?? DEFAULT_SUBSCRIPTION_PROFILE.provider_subscription_id, 128),
+    activation_id: sanitizeTenantString(source.activation_id ?? source.activationId ?? DEFAULT_SUBSCRIPTION_PROFILE.activation_id, 160),
     billing_email: sanitizeTenantString(source.billing_email ?? source.billingEmail ?? DEFAULT_SUBSCRIPTION_PROFILE.billing_email, 160),
     included_vehicles: Math.max(0, clampInt(source.included_vehicles ?? source.includedVehicles, DEFAULT_SUBSCRIPTION_PROFILE.included_vehicles)),
     max_vehicles: Math.max(0, clampInt(source.max_vehicles ?? source.maxVehicles, DEFAULT_SUBSCRIPTION_PROFILE.max_vehicles)),
@@ -4901,6 +4906,529 @@ async function saveSubscriptionProfile(
     ...normalized,
     created_at: normalized.created_at || nowIso,
     updated_at: nowIso,
+  };
+}
+
+// =========================
+// Fluxidi-owned subscription billing (Patch 2.1 foundation).
+//
+// IMPORTANT SEPARATION
+//   This is the *Fluxidi → company abonnement* billing path. It is
+//   intentionally and completely separate from the existing
+//   *company → passenger ride payments* path that lives under
+//     - resolveRideMollieCredentials*
+//     - loadScopedMollieConnectAuthRecord
+//     - MOLLIE_CONNECT_* secrets
+//     - POST /webhook/mollie (ride webhook)
+//     - POST /pay/create  (ride checkout)
+//   NONE of those helpers, secrets, or routes are reused here. A
+//   subscription payment never traverses a tenant Mollie Connect token,
+//   and a ride payment never reaches the subscription webhook below.
+//
+// Patch 2.1 only ships helpers + the webhook + activation allocator.
+// There is no checkout-start route in this patch and no Flutter UI; the
+// pending-activation save helper is exported for Patch 2.2 to use when
+// checkout-start is introduced.
+// =========================
+
+const FLUXIDI_SUBSCRIPTION_PROVIDER_NAME = "mollie";
+const FLUXIDI_SUBSCRIPTION_METADATA_PURPOSE = "fluxidi_subscription";
+const FLUXIDI_SUBSCRIPTION_FOUNDER_SLOT_LIMIT = 100;
+const FLUXIDI_SUBSCRIPTION_PENDING_ACTIVATION_TTL_SECONDS = 60 * 60 * 24; // 24h
+// Default monthly period used when activating without a concrete Mollie
+// subscription record yet. Patch 2.2/2.x will overwrite this with the real
+// Mollie nextPaymentDate once the subscription object exists.
+const FLUXIDI_SUBSCRIPTION_DEFAULT_PERIOD_DAYS = 30;
+
+function _fluxidiSubscriptionSafeStr(value, maxLen = 0) {
+  if (value === null || value === undefined) return "";
+  const s = String(value).trim();
+  if (maxLen > 0 && s.length > maxLen) return s.slice(0, maxLen);
+  return s;
+}
+
+function _fluxidiSubscriptionMaskSecret(value) {
+  const s = _fluxidiSubscriptionSafeStr(value);
+  if (!s) return "-";
+  if (s.length <= 6) return "***";
+  return `${s.slice(0, 3)}…${s.slice(-2)} (len=${s.length})`;
+}
+
+function _fluxidiSubscriptionNullableCents(raw) {
+  if (raw === null || raw === undefined || raw === "") return null;
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return null;
+  return Math.trunc(n);
+}
+
+function _fluxidiSubscriptionNormalizeActivationId(raw) {
+  const s = _fluxidiSubscriptionSafeStr(raw, 160);
+  // Activation ids should be opaque URL-safe tokens (server-minted UUIDs in
+  // Patch 2.2). Reject obvious garbage so KV keys stay sane.
+  if (!s) return "";
+  if (!/^[A-Za-z0-9._\-:]{1,160}$/.test(s)) return "";
+  return s;
+}
+
+function _fluxidiSubscriptionConstantTimeEqual(a, b) {
+  const sa = _fluxidiSubscriptionSafeStr(a);
+  const sb = _fluxidiSubscriptionSafeStr(b);
+  if (sa.length === 0 || sb.length === 0) return false;
+  if (sa.length !== sb.length) return false;
+  let diff = 0;
+  for (let i = 0; i < sa.length; i++) {
+    diff |= sa.charCodeAt(i) ^ sb.charCodeAt(i);
+  }
+  return diff === 0;
+}
+
+// Read Fluxidi-owned subscription billing secrets.
+// HARD RULE: this function NEVER falls back to MOLLIE_CONNECT_* secrets and
+// NEVER reads any per-company Mollie Connect KV record.
+function loadFluxidiSubscriptionMollieConfig(env) {
+  const apiKey = _fluxidiSubscriptionSafeStr(env?.FLUXIDI_SUBSCRIPTION_MOLLIE_API_KEY);
+  if (!apiKey) {
+    return { ok: false, error: "missing_fluxidi_subscription_mollie_api_key" };
+  }
+  const webhookSecret = _fluxidiSubscriptionSafeStr(env?.FLUXIDI_SUBSCRIPTION_WEBHOOK_SECRET);
+  if (!webhookSecret) {
+    return { ok: false, error: "missing_fluxidi_subscription_webhook_secret" };
+  }
+  // Defensive: refuse to operate if these env vars were ever wired to the
+  // company-Connect secrets. apiKey here must NEVER equal an oauth client id.
+  const oauthClientId = _fluxidiSubscriptionSafeStr(env?.MOLLIE_CONNECT_CLIENT_ID);
+  const oauthClientSecret = _fluxidiSubscriptionSafeStr(env?.MOLLIE_CONNECT_CLIENT_SECRET);
+  if (oauthClientId && apiKey === oauthClientId) {
+    return { ok: false, error: "fluxidi_subscription_api_key_collides_with_mollie_connect_client_id" };
+  }
+  if (oauthClientSecret && apiKey === oauthClientSecret) {
+    return { ok: false, error: "fluxidi_subscription_api_key_collides_with_mollie_connect_client_secret" };
+  }
+  // Mollie test keys start with "test_", live keys with "live_". The mode
+  // env var is optional informational metadata only; it never enables/
+  // disables anything.
+  const modeRaw = _fluxidiSubscriptionSafeStr(env?.FLUXIDI_SUBSCRIPTION_MOLLIE_MODE).toLowerCase();
+  let mode = "";
+  if (modeRaw === "test" || modeRaw === "live") {
+    mode = modeRaw;
+  } else if (apiKey.startsWith("test_")) {
+    mode = "test";
+  } else if (apiKey.startsWith("live_")) {
+    mode = "live";
+  } else {
+    mode = "unknown";
+  }
+  return { ok: true, apiKey, webhookSecret, mode };
+}
+
+// Pending-activation KV key. The record is created by Patch 2.2's
+// checkout-start route and consumed (mark-as-applied) by the activator.
+function buildFluxidiSubscriptionPendingActivationKey(activationId) {
+  const clean = _fluxidiSubscriptionNormalizeActivationId(activationId);
+  if (!clean) return "";
+  return `subscription:pending_activation:${clean}:v1`;
+}
+
+async function loadFluxidiSubscriptionPendingActivation(env, activationId) {
+  if (!env?.BOOKING_KV) return null;
+  const key = buildFluxidiSubscriptionPendingActivationKey(activationId);
+  if (!key) return null;
+  const raw = await env.BOOKING_KV.get(key, { type: "json" });
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  return raw;
+}
+
+// Save a pending activation record. Not called by Patch 2.1's runtime code;
+// included so Patch 2.2's checkout-start route has a single point of truth.
+async function saveFluxidiSubscriptionPendingActivation(env, record, { ttlSeconds } = {}) {
+  if (!env?.BOOKING_KV) throw new Error("booking_kv_missing");
+  if (!record || typeof record !== "object" || Array.isArray(record)) {
+    throw new Error("invalid_pending_activation_record");
+  }
+  const activationId = _fluxidiSubscriptionNormalizeActivationId(record.activation_id);
+  if (!activationId) throw new Error("invalid_activation_id");
+  const tenantId = sanitizeTenantString(record.tenant_id, 80);
+  const companyId = sanitizeTenantString(record.company_id, 80);
+  if (!tenantId || !companyId) throw new Error("missing_tenant_scope");
+  const key = buildFluxidiSubscriptionPendingActivationKey(activationId);
+  const nowMs = Date.now();
+  const nowIso = new Date(nowMs).toISOString();
+  const ttl = Number.isFinite(Number(ttlSeconds)) && Number(ttlSeconds) > 0
+    ? Math.trunc(Number(ttlSeconds))
+    : FLUXIDI_SUBSCRIPTION_PENDING_ACTIVATION_TTL_SECONDS;
+  const expiresIso = new Date(nowMs + ttl * 1000).toISOString();
+  const persisted = {
+    version: 1,
+    activation_id: activationId,
+    tenant_id: tenantId,
+    company_id: companyId,
+    plan_code: _fluxidiSubscriptionSafeStr(record.plan_code, 32) || "fluxidi_pro",
+    market: _fluxidiSubscriptionSafeStr(record.market, 16).toUpperCase().slice(0, 2),
+    currency: (_fluxidiSubscriptionSafeStr(record.currency, 8).toUpperCase() || "EUR").slice(0, 8),
+    normal_price_cents: _fluxidiSubscriptionNullableCents(record.normal_price_cents),
+    founder_price_cents: _fluxidiSubscriptionNullableCents(record.founder_price_cents),
+    expected_amount_cents: _fluxidiSubscriptionNullableCents(record.expected_amount_cents),
+    provider: FLUXIDI_SUBSCRIPTION_PROVIDER_NAME,
+    provider_payment_id: _fluxidiSubscriptionSafeStr(record.provider_payment_id, 128),
+    provider_customer_id: _fluxidiSubscriptionSafeStr(record.provider_customer_id, 128),
+    provider_subscription_id: _fluxidiSubscriptionSafeStr(record.provider_subscription_id, 128),
+    status: _fluxidiSubscriptionSafeStr(record.status, 24).toLowerCase() || "pending",
+    created_at: _fluxidiSubscriptionSafeStr(record.created_at, 48) || nowIso,
+    expires_at: _fluxidiSubscriptionSafeStr(record.expires_at, 48) || expiresIso,
+  };
+  await env.BOOKING_KV.put(key, JSON.stringify(persisted), { expirationTtl: ttl });
+  return persisted;
+}
+
+// Mark a pending activation as applied. Preserves the rest of the record so
+// the activator can short-circuit replays via the `applied`+`provider_payment_id`
+// pair. Re-uses the existing TTL to avoid resurrecting old records.
+async function markFluxidiSubscriptionPendingActivationApplied(
+  env,
+  activationId,
+  { providerPaymentId = "" } = {},
+) {
+  if (!env?.BOOKING_KV) return null;
+  const key = buildFluxidiSubscriptionPendingActivationKey(activationId);
+  if (!key) return null;
+  const existing = await env.BOOKING_KV.get(key, { type: "json" });
+  if (!existing || typeof existing !== "object" || Array.isArray(existing)) return null;
+  const nowIso = new Date().toISOString();
+  const updated = {
+    ...existing,
+    status: "applied",
+    applied_at: nowIso,
+    provider_payment_id:
+      _fluxidiSubscriptionSafeStr(providerPaymentId, 128) ||
+      _fluxidiSubscriptionSafeStr(existing.provider_payment_id, 128),
+  };
+  // Keep the same expiry window; we never extend it on mark-applied.
+  await env.BOOKING_KV.put(key, JSON.stringify(updated), {
+    expirationTtl: FLUXIDI_SUBSCRIPTION_PENDING_ACTIVATION_TTL_SECONDS,
+  });
+  return updated;
+}
+
+// Fetch a Mollie payment by id using ONLY the Fluxidi subscription API key.
+// Isolated from ride/company Connect helpers by construction.
+async function fetchFluxidiSubscriptionMolliePayment(env, paymentId) {
+  const cleanId = _fluxidiSubscriptionSafeStr(paymentId, 128);
+  if (!cleanId) return { ok: false, status: 0, error: "missing_payment_id" };
+  const config = loadFluxidiSubscriptionMollieConfig(env);
+  if (!config.ok) return { ok: false, status: 0, error: config.error };
+  const apiUrl = `https://api.mollie.com/v2/payments/${encodeURIComponent(cleanId)}`;
+  let res;
+  try {
+    res = await fetch(apiUrl, {
+      method: "GET",
+      headers: {
+        "Authorization": `Bearer ${config.apiKey}`,
+        "Accept": "application/json",
+      },
+    });
+  } catch (e) {
+    return { ok: false, status: 0, error: "network_error", message: _fluxidiSubscriptionSafeStr(e?.message, 200) };
+  }
+  let data = {};
+  try {
+    data = await res.json();
+  } catch (_) {
+    data = {};
+  }
+  return { ok: res.ok, status: res.status, data };
+}
+
+async function _fluxidiSubscriptionAllocateFounderSlot(
+  env,
+  { tenantId, companyId, activationId, founderPriceCents, limit },
+) {
+  if (!env?.FLUXIDI_SUBSCRIPTION_FOUNDER_SLOTS) {
+    throw new Error("founder_slots_binding_missing");
+  }
+  const id = env.FLUXIDI_SUBSCRIPTION_FOUNDER_SLOTS.idFromName("global");
+  const stub = env.FLUXIDI_SUBSCRIPTION_FOUNDER_SLOTS.get(id);
+  const res = await stub.fetch("https://founder-slots/assign", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      action: "assign",
+      tenant_id: tenantId,
+      company_id: companyId,
+      activation_id: activationId,
+      limit: Number.isFinite(Number(limit)) ? Number(limit) : FLUXIDI_SUBSCRIPTION_FOUNDER_SLOT_LIMIT,
+      founder_price_cents: founderPriceCents,
+    }),
+  });
+  let data = {};
+  try { data = await res.json(); } catch (_) { data = {}; }
+  if (!res.ok) {
+    throw new Error(`founder_slot_http_${res.status}`);
+  }
+  return data;
+}
+
+// Single activation path. Used by the webhook in this patch and by the
+// future confirm-fallback route in Patch 2.2. The caller is responsible for
+// having verified the payment id via Mollie API; the activator additionally
+// re-checks payment status, metadata, currency, and amount.
+async function activateFluxidiSubscriptionFromVerifiedPayment(env, { activationId, payment } = {}) {
+  const cleanActivationId = _fluxidiSubscriptionNormalizeActivationId(activationId);
+  if (!cleanActivationId) {
+    return { ok: false, error: "invalid_activation_id" };
+  }
+  if (!env?.BOOKING_KV) {
+    return { ok: false, error: "booking_kv_missing" };
+  }
+
+  const pending = await loadFluxidiSubscriptionPendingActivation(env, cleanActivationId);
+  if (!pending) {
+    return { ok: true, ignored: true, reason: "pending_activation_missing" };
+  }
+
+  const tenantId = sanitizeTenantString(pending.tenant_id, 80);
+  const companyId = sanitizeTenantString(pending.company_id, 80);
+  if (!tenantId || !companyId) {
+    return { ok: false, error: "pending_activation_missing_scope" };
+  }
+  const scope = { tenant_id: tenantId, company_id: companyId };
+  const tenantMask = _maskPublicDriverLoginValue(tenantId);
+  const companyMask = _maskPublicDriverLoginValue(companyId);
+  const paymentId = _fluxidiSubscriptionSafeStr(payment?.id, 128);
+
+  // Replay idempotency on pending.status==="applied".
+  const pendingStatus = _fluxidiSubscriptionSafeStr(pending.status).toLowerCase();
+  if (pendingStatus === "applied") {
+    const prevPaymentId = _fluxidiSubscriptionSafeStr(pending.provider_payment_id, 128);
+    if (paymentId && prevPaymentId && prevPaymentId === paymentId) {
+      console.log(
+        `[SUBSCRIPTION_ACTIVATE][OK] tenant=${tenantMask} company=${companyMask} idempotent=true reason=pending_already_applied`,
+      );
+      return { ok: true, ignored: true, idempotent: true, reason: "pending_activation_already_applied" };
+    }
+    return {
+      ok: true,
+      ignored: true,
+      reason: "pending_activation_already_applied_different_payment",
+    };
+  }
+
+  const paymentStatus = _fluxidiSubscriptionSafeStr(payment?.status).toLowerCase();
+  if (paymentStatus !== "paid") {
+    return { ok: true, ignored: true, reason: "payment_not_paid", payment_status: paymentStatus };
+  }
+
+  const meta = payment?.metadata && typeof payment.metadata === "object" && !Array.isArray(payment.metadata)
+    ? payment.metadata
+    : {};
+  const metaPurpose = _fluxidiSubscriptionSafeStr(meta?.purpose).toLowerCase();
+  if (metaPurpose && metaPurpose !== FLUXIDI_SUBSCRIPTION_METADATA_PURPOSE) {
+    return { ok: true, ignored: true, reason: "metadata_purpose_mismatch" };
+  }
+  const metaActivationId = _fluxidiSubscriptionNormalizeActivationId(
+    meta?.activation_id ?? meta?.activationId,
+  );
+  if (metaActivationId && metaActivationId !== cleanActivationId) {
+    return { ok: true, ignored: true, reason: "metadata_activation_id_mismatch" };
+  }
+
+  const paymentCurrency = _fluxidiSubscriptionSafeStr(payment?.amount?.currency).toUpperCase();
+  const pendingCurrency = _fluxidiSubscriptionSafeStr(pending.currency).toUpperCase();
+  if (pendingCurrency && paymentCurrency && pendingCurrency !== paymentCurrency) {
+    return {
+      ok: true,
+      ignored: true,
+      reason: "currency_mismatch",
+      pending_currency: pendingCurrency,
+      payment_currency: paymentCurrency,
+    };
+  }
+  const paymentAmountStr = _fluxidiSubscriptionSafeStr(payment?.amount?.value);
+  let paymentAmountCents = null;
+  if (paymentAmountStr) {
+    const n = Number(paymentAmountStr);
+    if (Number.isFinite(n)) paymentAmountCents = Math.round(n * 100);
+  }
+  const expectedCents = _fluxidiSubscriptionNullableCents(pending.expected_amount_cents);
+  if (expectedCents !== null && paymentAmountCents !== null && paymentAmountCents !== expectedCents) {
+    return {
+      ok: true,
+      ignored: true,
+      reason: "amount_mismatch",
+      expected_amount_cents: expectedCents,
+      payment_amount_cents: paymentAmountCents,
+    };
+  }
+
+  const currentProfile = await loadSubscriptionProfile(env, scope, {
+    allowTenantLegacyFallback: false,
+  });
+
+  // If the profile is already active for this same activation_id we treat
+  // the call as idempotent. Mark pending as applied so future replays are
+  // short-circuited by the pendingStatus check above, then return.
+  //
+  // The canonical idempotency key is the dedicated `activation_id` field on
+  // the profile (set by this activator). provider_subscription_id is
+  // reserved for the real Mollie subscription id and is NOT used here.
+  //
+  // Legacy compatibility: a profile saved by an earlier draft of this
+  // activator may carry the activation id in provider_subscription_id and
+  // an empty activation_id. We accept that exact shape as a one-time
+  // fallback so an in-flight replay across the field-rename does not
+  // accidentally re-run the save path. New writes always use activation_id.
+  const currentStatus = _fluxidiSubscriptionSafeStr(
+    currentProfile?.subscription_status || currentProfile?.status,
+  ).toLowerCase();
+  const currentActivationId = _fluxidiSubscriptionSafeStr(currentProfile?.activation_id);
+  const currentProviderSubId = _fluxidiSubscriptionSafeStr(currentProfile?.provider_subscription_id);
+  const matchesActivationId =
+    currentActivationId !== "" && currentActivationId === cleanActivationId;
+  const matchesLegacyProviderSubId =
+    currentActivationId === "" &&
+    currentProviderSubId !== "" &&
+    currentProviderSubId === cleanActivationId;
+  if (currentStatus === "active" && (matchesActivationId || matchesLegacyProviderSubId)) {
+    try {
+      await markFluxidiSubscriptionPendingActivationApplied(env, cleanActivationId, {
+        providerPaymentId: paymentId,
+      });
+    } catch (_) {}
+    console.log(
+      `[SUBSCRIPTION_ACTIVATE][OK] tenant=${tenantMask} company=${companyMask} idempotent=true reason=profile_already_active`,
+    );
+    return {
+      ok: true,
+      activated: true,
+      idempotent: true,
+      subscription_profile: currentProfile,
+    };
+  }
+
+  const founderPriceCents = _fluxidiSubscriptionNullableCents(pending.founder_price_cents);
+  const normalPriceCents = _fluxidiSubscriptionNullableCents(pending.normal_price_cents);
+  let founderResult = { granted: false, reason: "not_attempted" };
+  try {
+    founderResult = await _fluxidiSubscriptionAllocateFounderSlot(env, {
+      tenantId,
+      companyId,
+      activationId: cleanActivationId,
+      founderPriceCents,
+      limit: FLUXIDI_SUBSCRIPTION_FOUNDER_SLOT_LIMIT,
+    });
+  } catch (e) {
+    console.log(
+      `[SUBSCRIPTION_ACTIVATE][ERROR] tenant=${tenantMask} company=${companyMask} stage=founder_do msg=${_fluxidiSubscriptionSafeStr(e?.message, 160)}`,
+    );
+    return { ok: false, error: "founder_slot_do_error" };
+  }
+
+  const isFounder = founderResult?.granted === true;
+  const slotNumber = isFounder && Number.isFinite(Number(founderResult.slot_number))
+    ? Number(founderResult.slot_number)
+    : null;
+  const lockedCents = isFounder
+    ? (founderPriceCents !== null ? founderPriceCents : null)
+    : (normalPriceCents !== null ? normalPriceCents : null);
+  const warnings = [];
+  if (!isFounder && _fluxidiSubscriptionSafeStr(founderResult?.reason)) {
+    warnings.push(`founder_${_fluxidiSubscriptionSafeStr(founderResult.reason).toLowerCase()}`);
+  }
+  if (lockedCents === null) {
+    warnings.push("active_without_locked_price");
+  }
+
+  const nowMs = Date.now();
+  const nowIso = new Date(nowMs).toISOString();
+  const periodStart = nowIso;
+  const periodEnd = new Date(
+    nowMs + FLUXIDI_SUBSCRIPTION_DEFAULT_PERIOD_DAYS * 24 * 60 * 60 * 1000,
+  ).toISOString();
+  const providerCustomerId =
+    _fluxidiSubscriptionSafeStr(payment?.customerId, 128) ||
+    _fluxidiSubscriptionSafeStr(pending.provider_customer_id, 128) ||
+    "";
+  // provider_subscription_id is reserved for the REAL Mollie subscription
+  // id (e.g. "sub_…"). In Patch 2.1 Mollie subscriptions are not created
+  // yet, so this is normally empty on first-payment activations and gets
+  // populated later when Mollie sends recurring payments that carry
+  // payment.subscriptionId, or when Patch 2.2's checkout-start pre-creates
+  // a subscription and pre-seeds pending.provider_subscription_id.
+  // It MUST NOT fall back to cleanActivationId — the dedicated
+  // `activation_id` profile field carries the activation-replay
+  // correlation id instead.
+  const providerSubscriptionId =
+    _fluxidiSubscriptionSafeStr(payment?.subscriptionId, 128) ||
+    _fluxidiSubscriptionSafeStr(pending.provider_subscription_id, 128) ||
+    "";
+  const billingEmailFromPayment =
+    _fluxidiSubscriptionSafeStr(payment?.billingAddress?.email, 160) ||
+    _fluxidiSubscriptionSafeStr(payment?.email, 160);
+
+  const updatedProfile = {
+    ...currentProfile,
+    plan_code: _fluxidiSubscriptionSafeStr(pending.plan_code, 32) ||
+      currentProfile.plan_code || "fluxidi_pro",
+    market: _fluxidiSubscriptionSafeStr(pending.market, 16).toUpperCase().slice(0, 2) ||
+      currentProfile.market || "",
+    currency: pendingCurrency || currentProfile.currency || "EUR",
+    subscription_status: "active",
+    status: "active",
+    activated_at: currentProfile.activated_at || nowIso,
+    current_period_start: periodStart,
+    current_period_end: periodEnd,
+    locked_price_cents: lockedCents,
+    normal_price_cents:
+      normalPriceCents !== null ? normalPriceCents : (currentProfile.normal_price_cents ?? null),
+    founder_price_cents:
+      founderPriceCents !== null ? founderPriceCents : (currentProfile.founder_price_cents ?? null),
+    is_founder_customer: isFounder,
+    founder_slot_number: slotNumber,
+    founder_assigned_at: isFounder ? nowIso : "",
+    payment_provider: FLUXIDI_SUBSCRIPTION_PROVIDER_NAME,
+    provider_customer_id: providerCustomerId,
+    provider_subscription_id: providerSubscriptionId,
+    activation_id: cleanActivationId,
+    billing_email: billingEmailFromPayment || currentProfile.billing_email || "",
+    // Explicitly preserve trial dates. (They are also in the spread above
+    // but we keep them named to make the invariant obvious to readers.)
+    trial_started_at: currentProfile.trial_started_at,
+    trial_ends_at: currentProfile.trial_ends_at,
+    warnings,
+    updated_at: nowIso,
+  };
+
+  let savedProfile;
+  try {
+    savedProfile = await saveSubscriptionProfile(env, updatedProfile, scope, {
+      allowTenantLegacyWrite: false,
+    });
+  } catch (e) {
+    console.log(
+      `[SUBSCRIPTION_ACTIVATE][ERROR] tenant=${tenantMask} company=${companyMask} stage=save msg=${_fluxidiSubscriptionSafeStr(e?.message, 160)}`,
+    );
+    return { ok: false, error: "subscription_save_failed" };
+  }
+
+  try {
+    await markFluxidiSubscriptionPendingActivationApplied(env, cleanActivationId, {
+      providerPaymentId: paymentId,
+    });
+  } catch (_) {
+    // Profile is already saved; the next replay will hit the
+    // "profile_already_active" idempotency branch above.
+  }
+
+  console.log(
+    `[SUBSCRIPTION_ACTIVATE][OK] tenant=${tenantMask} company=${companyMask} founder=${isFounder} slot=${slotNumber ?? "-"} locked_cents=${lockedCents ?? "-"} payment_id=${paymentId ? "set" : "-"}`,
+  );
+  return {
+    ok: true,
+    activated: true,
+    idempotent: false,
+    founder_granted: isFounder,
+    slot_number: slotNumber,
+    locked_price_cents: lockedCents,
+    subscription_profile: savedProfile,
   };
 }
 
@@ -23107,6 +23635,149 @@ export default {
           );
           return json({ ok: false, error: "internal_error" }, 500);
         }
+      }
+
+      // =========================
+      // Fluxidi-owned subscription billing webhook (Patch 2.1 foundation).
+      //
+      // POST /webhooks/subscription/mollie/{secret}
+      //
+      // Gated by FLUXIDI_SUBSCRIPTION_WEBHOOK_SECRET in the URL path. No
+      // admin/company auth. Re-fetches the payment via the Fluxidi-owned
+      // Mollie API key, NEVER via company Mollie Connect tokens. Routes
+      // through activateFluxidiSubscriptionFromVerifiedPayment, which is
+      // the single allocator for trialing → active.
+      //
+      // This route is intentionally distinct from /webhook/mollie (ride
+      // payments). The two paths share no helpers and no secrets.
+      // =========================
+      if (
+        url.pathname.startsWith("/webhooks/subscription/mollie/") &&
+        request.method === "POST"
+      ) {
+        const config = loadFluxidiSubscriptionMollieConfig(env);
+        if (!config.ok) {
+          console.log(
+            `[SUBSCRIPTION_WEBHOOK][IGNORED] reason=${config.error} secret_mask=${_fluxidiSubscriptionMaskSecret(env?.FLUXIDI_SUBSCRIPTION_WEBHOOK_SECRET)}`,
+          );
+          // Never leak whether the route exists when config is missing.
+          return new Response("Not Found", { status: 404 });
+        }
+        const pathTail = url.pathname.slice(
+          "/webhooks/subscription/mollie/".length,
+        );
+        const providedSecret = pathTail.split("/")[0] || "";
+        if (!_fluxidiSubscriptionConstantTimeEqual(providedSecret, config.webhookSecret)) {
+          console.log("[SUBSCRIPTION_WEBHOOK][IGNORED] reason=invalid_path_secret");
+          return new Response("Not Found", { status: 404 });
+        }
+
+        let paymentId = "";
+        try {
+          const ct = (request.headers.get("content-type") || "").toLowerCase();
+          if (ct.includes("application/json")) {
+            const body = await safeJson(request);
+            paymentId = _fluxidiSubscriptionSafeStr(body?.id, 128);
+          } else {
+            const raw = await request.text();
+            const params = new URLSearchParams(raw);
+            paymentId = _fluxidiSubscriptionSafeStr(params.get("id"), 128);
+          }
+        } catch (_) {
+          paymentId = "";
+        }
+        console.log(
+          `[SUBSCRIPTION_WEBHOOK][RECEIVED] has_payment_id=${!!paymentId} mode=${config.mode}`,
+        );
+        if (!paymentId) {
+          // Return 200 so Mollie does not retry-storm an unparseable body.
+          return json({ ok: true, ignored: true, reason: "missing_payment_id" }, 200);
+        }
+
+        let fetchResult;
+        try {
+          fetchResult = await fetchFluxidiSubscriptionMolliePayment(env, paymentId);
+        } catch (e) {
+          console.log(
+            `[SUBSCRIPTION_WEBHOOK][IGNORED] reason=fetch_exception msg=${_fluxidiSubscriptionSafeStr(e?.message, 160)}`,
+          );
+          // Soft 5xx so Mollie retries — transient network issue.
+          return new Response("Internal Error", { status: 500 });
+        }
+        if (!fetchResult?.ok) {
+          const upstream = Number(fetchResult?.status) || 0;
+          console.log(
+            `[SUBSCRIPTION_WEBHOOK][IGNORED] reason=payment_fetch_failed upstream_status=${upstream}`,
+          );
+          // 5xx upstream → retry; 4xx (e.g. payment id unknown) → ignore.
+          if (upstream >= 500) return new Response("Upstream Error", { status: 502 });
+          return json({ ok: true, ignored: true, reason: "payment_fetch_failed" }, 200);
+        }
+
+        const payment = fetchResult.data;
+        const meta = payment?.metadata && typeof payment.metadata === "object" && !Array.isArray(payment.metadata)
+          ? payment.metadata
+          : {};
+        const metaActivationId = _fluxidiSubscriptionNormalizeActivationId(
+          meta?.activation_id ?? meta?.activationId,
+        );
+        if (!metaActivationId) {
+          console.log(
+            "[SUBSCRIPTION_WEBHOOK][IGNORED] reason=missing_activation_id_metadata",
+          );
+          return json(
+            { ok: true, ignored: true, reason: "missing_activation_id_metadata" },
+            200,
+          );
+        }
+        const metaPurpose = _fluxidiSubscriptionSafeStr(meta?.purpose).toLowerCase();
+        if (metaPurpose && metaPurpose !== FLUXIDI_SUBSCRIPTION_METADATA_PURPOSE) {
+          console.log(
+            `[SUBSCRIPTION_WEBHOOK][IGNORED] reason=metadata_purpose_mismatch purpose=${metaPurpose}`,
+          );
+          return json(
+            { ok: true, ignored: true, reason: "metadata_purpose_mismatch" },
+            200,
+          );
+        }
+
+        let activateResult;
+        try {
+          activateResult = await activateFluxidiSubscriptionFromVerifiedPayment(env, {
+            activationId: metaActivationId,
+            payment,
+          });
+        } catch (e) {
+          console.log(
+            `[SUBSCRIPTION_ACTIVATE][ERROR] stage=webhook msg=${_fluxidiSubscriptionSafeStr(e?.message, 160)}`,
+          );
+          return new Response("Internal Error", { status: 500 });
+        }
+
+        if (activateResult?.ok && activateResult.activated) {
+          return json(
+            {
+              ok: true,
+              activated: true,
+              idempotent: !!activateResult.idempotent,
+              founder_granted: !!activateResult.founder_granted,
+            },
+            200,
+          );
+        }
+        if (activateResult?.ok) {
+          console.log(
+            `[SUBSCRIPTION_WEBHOOK][IGNORED] reason=${_fluxidiSubscriptionSafeStr(activateResult.reason, 80) || "unknown_ignore"}`,
+          );
+          return json(
+            { ok: true, ignored: true, reason: activateResult.reason || "unknown_ignore" },
+            200,
+          );
+        }
+        console.log(
+          `[SUBSCRIPTION_ACTIVATE][ERROR] stage=webhook err=${_fluxidiSubscriptionSafeStr(activateResult?.error, 80) || "unknown"}`,
+        );
+        return new Response("Internal Error", { status: 500 });
       }
 
       // Home
