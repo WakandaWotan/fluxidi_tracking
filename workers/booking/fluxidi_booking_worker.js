@@ -3227,6 +3227,192 @@ export class DocumentReferenceSequenceDO {
   }
 }
 
+// =========================
+// FluxidiSubscriptionFounderSlotsDO (Patch 2.0 foundation)
+// =========================
+// Single-instance Durable Object that will atomically allocate at most
+// `limit` founder slots across the whole Fluxidi platform when subscription
+// activations land (Patch 2.1+).
+//
+// This patch ONLY installs the class + storage scheme. No public/admin/
+// company route invokes it yet, no payment / Mollie / activation / gating
+// logic is added, and nothing in the existing subscription profile flow
+// calls into it. The single global instance is intended to be addressed
+// via env.FLUXIDI_SUBSCRIPTION_FOUNDER_SLOTS.idFromName("global") in a
+// later patch.
+//
+// Storage scheme (SQLite-backed DO storage):
+//   total_assigned                                 → number
+//   next_slot                                      → number (next slot to hand out)
+//   by_activation:{activation_id}                  → { slot_number, tenant_id, company_id, assigned_at }
+//   by_company:{tenant_id}:{company_id}            → { slot_number, activation_id, assigned_at }
+//
+// Idempotency / re-activation policy:
+//   - Same activation_id → returns the existing slot with idempotent:true.
+//     This is the webhook-replay guard for a single payment / activation.
+//   - Same company with a DIFFERENT activation_id (e.g. the company
+//     previously activated as a founder, then cancelled, and is now
+//     re-activating) → does NOT automatically re-grant founder pricing.
+//     Returns granted:false with reason "company_previously_assigned" and
+//     the existing_slot_number for diagnostics. No counters are changed
+//     and no new by_activation:{activation_id} record is written. A future
+//     policy patch may add an explicit re-grant flag; this patch keeps it
+//     conservative so a cancelled company cannot reclaim founder pricing
+//     by reactivating.
+//
+// Eligibility:
+//   - Markets without a founder price (e.g. ES/PT) call with
+//     founder_price_cents = null/0 → returns granted:false,
+//     reason:"not_eligible_market". No counter change.
+//
+// Exhaustion:
+//   - When total_assigned >= limit, returns granted:false,
+//     reason:"slots_exhausted". No counter change.
+export class FluxidiSubscriptionFounderSlotsDO {
+  constructor(stateOrCtx, env) {
+    this.state = stateOrCtx;
+    this.env = env;
+  }
+
+  async fetch(request) {
+    let body = {};
+    try {
+      body = await request.json();
+    } catch (_) {
+      body = {};
+    }
+    const action = String(body?.action || "").trim().toLowerCase();
+    if (action === "assign") return this._assign(body);
+    if (action === "status") return this._status(body);
+    return this._json({ ok: false, error: "Unknown action" }, 400);
+  }
+
+  async _assign(body) {
+    const tenantId = safeStr(body?.tenant_id || body?.tenantId, 120);
+    const companyId = safeStr(body?.company_id || body?.companyId, 120);
+    const activationId = safeStr(body?.activation_id || body?.activationId, 160);
+    if (!tenantId || !companyId) {
+      return this._json({ ok: false, error: "missing_tenant_scope" }, 400);
+    }
+    if (!activationId) {
+      return this._json({ ok: false, error: "missing_activation_id" }, 400);
+    }
+    const limit = clampInt(body?.limit, 0, 1000000);
+    if (limit <= 0) {
+      return this._json({ ok: false, error: "invalid_limit" }, 400);
+    }
+    const founderPriceCentsRaw = body?.founder_price_cents ?? body?.founderPriceCents;
+    const founderPriceCents = Number(founderPriceCentsRaw);
+    const eligibleByMarket =
+      founderPriceCentsRaw !== null &&
+      founderPriceCentsRaw !== undefined &&
+      founderPriceCentsRaw !== "" &&
+      Number.isFinite(founderPriceCents) &&
+      founderPriceCents > 0;
+
+    const result = await this.state.storage.transaction(async (txn) => {
+      const activationKey = `by_activation:${activationId}`;
+      const companyKey = `by_company:${tenantId}:${companyId}`;
+
+      const existingByActivation = await txn.get(activationKey);
+      if (existingByActivation && Number.isFinite(Number(existingByActivation.slot_number))) {
+        const totalAssigned = clampInt(await txn.get("total_assigned"), 0, 999999999);
+        return {
+          ok: true,
+          granted: true,
+          slot_number: Number(existingByActivation.slot_number),
+          total_assigned: totalAssigned,
+          idempotent: true,
+        };
+      }
+
+      // Company already holds a founder slot from a PRIOR activation
+      // (different activation_id, e.g. previously activated then cancelled
+      // and is now re-activating). Product rule: founder pricing remains
+      // locked only while the subscription stays active. Re-activation
+      // does NOT automatically reclaim founder pricing. No counters are
+      // changed and no new by_activation record is written, so a later
+      // webhook replay of the same new activation_id will be evaluated
+      // afresh against the same rule.
+      const existingByCompany = await txn.get(companyKey);
+      if (existingByCompany && Number.isFinite(Number(existingByCompany.slot_number))) {
+        const totalAssigned = clampInt(await txn.get("total_assigned"), 0, 999999999);
+        return {
+          ok: true,
+          granted: false,
+          reason: "company_previously_assigned",
+          existing_slot_number: Number(existingByCompany.slot_number),
+          total_assigned: totalAssigned,
+        };
+      }
+
+      if (!eligibleByMarket) {
+        const totalAssigned = clampInt(await txn.get("total_assigned"), 0, 999999999);
+        return {
+          ok: true,
+          granted: false,
+          reason: "not_eligible_market",
+          total_assigned: totalAssigned,
+        };
+      }
+
+      const totalAssigned = clampInt(await txn.get("total_assigned"), 0, 999999999);
+      if (totalAssigned >= limit) {
+        return {
+          ok: true,
+          granted: false,
+          reason: "slots_exhausted",
+          total_assigned: totalAssigned,
+        };
+      }
+
+      const nextSlot = Math.max(1, clampInt(await txn.get("next_slot"), 1, 999999999));
+      const assignedAt = new Date().toISOString();
+      const record = {
+        slot_number: nextSlot,
+        tenant_id: tenantId,
+        company_id: companyId,
+        assigned_at: assignedAt,
+      };
+      await txn.put(activationKey, record);
+      await txn.put(companyKey, {
+        slot_number: nextSlot,
+        activation_id: activationId,
+        assigned_at: assignedAt,
+      });
+      await txn.put("next_slot", nextSlot + 1);
+      const newTotal = totalAssigned + 1;
+      await txn.put("total_assigned", newTotal);
+      return {
+        ok: true,
+        granted: true,
+        slot_number: nextSlot,
+        total_assigned: newTotal,
+        idempotent: false,
+      };
+    });
+
+    return this._json(result);
+  }
+
+  async _status(_body) {
+    const totalAssigned = clampInt(await this.state.storage.get("total_assigned"), 0, 999999999);
+    const nextSlot = Math.max(1, clampInt(await this.state.storage.get("next_slot"), 1, 999999999));
+    return this._json({
+      ok: true,
+      total_assigned: totalAssigned,
+      next_slot: nextSlot,
+    });
+  }
+
+  _json(obj, status = 200) {
+    return new Response(JSON.stringify(obj), {
+      status,
+      headers: { "content-type": "application/json" },
+    });
+  }
+}
+
 function _requireAdmin(request, url, env) {
   const expected = (env.ADMIN_TOKEN || "").trim();
   if (!expected) throw new Error("ADMIN_TOKEN is not configured");

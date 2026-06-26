@@ -36,6 +36,10 @@ class_name = "BookingReferenceSequenceDO"
 name = "DOCUMENT_REFERENCE_SEQUENCE"
 class_name = "DocumentReferenceSequenceDO"
 
+[[durable_objects.bindings]]
+name = "FLUXIDI_SUBSCRIPTION_FOUNDER_SLOTS"
+class_name = "FluxidiSubscriptionFounderSlotsDO"
+
 # REQUIRED KV bindings used by this worker code.
 [[kv_namespaces]]
 binding = "BOOKING_KV"
@@ -64,3 +68,7 @@ new_sqlite_classes = ["BookingReferenceSequenceDO"]
 [[migrations]]
 tag = "document-reference-sequence-v1"
 new_sqlite_classes = ["DocumentReferenceSequenceDO"]
+
+[[migrations]]
+tag = "fluxidi-subscription-founder-slots-v1"
+new_sqlite_classes = ["FluxidiSubscriptionFounderSlotsDO"]
