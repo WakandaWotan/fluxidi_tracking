@@ -9,9 +9,16 @@ class CompanySubscriptionBillingPage extends StatefulWidget {
 }
 
 class _CompanySubscriptionBillingPageState
-    extends State<CompanySubscriptionBillingPage> {
+    extends State<CompanySubscriptionBillingPage>
+    with WidgetsBindingObserver {
   late Future<BackendSubscriptionProfile> _future;
   static const Color _warn = Color(0xFFFFB457);
+
+  // Patch 2.2B activation wiring state.
+  bool _activating = false;
+  // Set true while a Mollie checkout window is open so the next app resume
+  // triggers exactly one profile refresh (no infinite resume loops).
+  bool _awaitingCheckoutReturn = false;
 
   /// Format an integer-cents price as "€XX" (no decimals when round, "€X.YY"
   /// otherwise). Currency is always shown as € for now; the catalog currency
@@ -56,7 +63,34 @@ class _CompanySubscriptionBillingPageState
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _future = _fetch();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Refresh once when the app returns to the foreground after we opened the
+    // Mollie checkout window, so a completed payment is reflected without the
+    // user manually refreshing. Guarded by [_awaitingCheckoutReturn] to avoid
+    // refreshing on every unrelated resume.
+    if (state == AppLifecycleState.resumed && _awaitingCheckoutReturn) {
+      _awaitingCheckoutReturn = false;
+      _refresh();
+    }
+  }
+
+  /// Re-fetch the subscription profile and rebuild. Safe if unmounted.
+  void _refresh() {
+    if (!mounted) return;
+    setState(() {
+      _future = _fetch();
+    });
   }
 
   String _t({
@@ -86,6 +120,304 @@ class _CompanySubscriptionBillingPageState
     return fetchCompanySubscriptionProfile(
       tenantId: scopeId,
       companyId: scopeId,
+    );
+  }
+
+  /// True when the resolved market is one of the six Fluxidi launch markets.
+  /// Mirrors the backend `isFluxidiSupportedLaunchMarket` gate so the activate
+  /// button is never shown for markets the backend will refuse.
+  bool _isSupportedMarket(String market) => isFluxidiLaunchMarket(market);
+
+  void _showSnack(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  /// Resolve the effective market for a profile, falling back to the active
+  /// company's market when the backend profile has not shipped one yet.
+  String _effectiveMarket(BackendSubscriptionProfile profile) {
+    final fromProfile = profile.market.trim();
+    if (fromProfile.isNotEmpty) return fromProfile.toUpperCase();
+    return resolveActiveCompanyPricingMarket();
+  }
+
+  /// Start the Fluxidi-owned subscription checkout and open the Mollie payment
+  /// window externally. Never embeds Mollie in a WebView. Refreshes the profile
+  /// when the backend reports the subscription is already active.
+  Future<void> _startCheckout(BackendSubscriptionProfile profile) async {
+    if (_activating) return;
+    final scopeId = _activeCompanyId();
+    if (scopeId == null || scopeId.trim().isEmpty) {
+      _showSnack(
+        _t(
+          nl: 'Geen actief bedrijf gevonden. Probeer opnieuw.',
+          en: 'No active company found. Please try again.',
+          fr: 'Aucune entreprise active trouvée. Veuillez réessayer.',
+          es: 'No se encontró ninguna empresa activa. Inténtalo de nuevo.',
+        ),
+      );
+      return;
+    }
+
+    final market = _effectiveMarket(profile);
+    if (!_isSupportedMarket(market)) {
+      _showSnack(_unsupportedMarketMessage());
+      return;
+    }
+
+    setState(() => _activating = true);
+    try {
+      final result = await startCompanySubscriptionCheckout(
+        tenantId: scopeId,
+        companyId: scopeId,
+      );
+
+      if (!mounted) return;
+
+      if (result.alreadyActive) {
+        _showSnack(
+          _t(
+            nl: 'Je abonnement is al actief.',
+            en: 'Your subscription is already active.',
+            fr: 'Votre abonnement est déjà actif.',
+            es: 'Tu suscripción ya está activa.',
+          ),
+        );
+        _refresh();
+        return;
+      }
+
+      if (!result.ok) {
+        if (result.isUnsupportedMarket) {
+          _showSnack(_unsupportedMarketMessage());
+        } else {
+          _showSnack(
+            _t(
+              nl: 'Activeren is niet gelukt. Controleer je verbinding en probeer opnieuw.',
+              en: 'Activation failed. Check your connection and try again.',
+              fr: 'Échec de l’activation. Vérifiez votre connexion et réessayez.',
+              es: 'Error en la activación. Comprueba tu conexión e inténtalo de nuevo.',
+            ),
+          );
+        }
+        return;
+      }
+
+      if (!result.hasCheckoutUrl) {
+        _showSnack(
+          _t(
+            nl: 'Geen betaallink ontvangen. Probeer het later opnieuw.',
+            en: 'No payment link received. Please try again later.',
+            fr: 'Aucun lien de paiement reçu. Réessayez plus tard.',
+            es: 'No se recibió ningún enlace de pago. Inténtalo más tarde.',
+          ),
+        );
+        return;
+      }
+
+      final uri = Uri.tryParse(result.checkoutUrl);
+      if (uri == null) {
+        _showSnack(
+          _t(
+            nl: 'Ongeldige betaallink ontvangen.',
+            en: 'Received an invalid payment link.',
+            fr: 'Lien de paiement invalide reçu.',
+            es: 'Se recibió un enlace de pago no válido.',
+          ),
+        );
+        return;
+      }
+
+      final launched = await launchUrl(
+        uri,
+        mode: LaunchMode.externalApplication,
+      );
+      if (!mounted) return;
+      if (!launched) {
+        _showSnack(
+          _t(
+            nl: 'Kon het betaalvenster niet openen.',
+            en: 'Could not open the payment window.',
+            fr: 'Impossible d’ouvrir la fenêtre de paiement.',
+            es: 'No se pudo abrir la ventana de pago.',
+          ),
+        );
+        return;
+      }
+
+      // Mark that the next foreground resume should refresh the profile once.
+      _awaitingCheckoutReturn = true;
+      _showSnack(
+        _t(
+          nl: 'Betaalvenster geopend. Na betaling wordt je abonnement automatisch bijgewerkt.',
+          en: 'Payment window opened. After payment, your subscription will update automatically.',
+          fr: 'Fenêtre de paiement ouverte. Après le paiement, votre abonnement sera mis à jour automatiquement.',
+          es: 'Ventana de pago abierta. Después del pago, tu suscripción se actualizará automáticamente.',
+        ),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      _showSnack(
+        _t(
+          nl: 'Er ging iets mis. Probeer opnieuw.',
+          en: 'Something went wrong. Please try again.',
+          fr: 'Une erreur est survenue. Veuillez réessayer.',
+          es: 'Algo salió mal. Inténtalo de nuevo.',
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _activating = false);
+    }
+  }
+
+  String _unsupportedMarketMessage() => _t(
+    nl: 'Nog niet beschikbaar in dit land.',
+    en: 'Not available in this country yet.',
+    fr: 'Pas encore disponible dans ce pays.',
+    es: 'Aún no disponible en este país.',
+  );
+
+  /// Activation / active-state / unsupported-market section for the current
+  /// subscription card. Drives the only call site of [_startCheckout].
+  Widget _buildActivationSection(
+    BackendSubscriptionProfile profile,
+    SubscriptionPlanCatalogEntry catalog,
+  ) {
+    final bool isActive =
+        profile.status.trim().toLowerCase() == 'active' ||
+        profile.subscriptionStatus.trim().toLowerCase() == 'active';
+    final String rawMarket = _effectiveMarket(profile);
+    final bool isSupported = _isSupportedMarket(rawMarket);
+
+    if (isActive) {
+      final periodStart = profile.currentPeriodStart.trim();
+      final periodEnd = profile.currentPeriodEnd.trim();
+      final lockedCents =
+          profile.lockedPriceCents ??
+          profile.founderPriceCents ??
+          catalog.founderPriceCents;
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const SizedBox(height: 8),
+          _chip(
+            text: _t(
+              nl: 'Abonnement actief',
+              en: 'Subscription active',
+              fr: 'Abonnement actif',
+              es: 'Suscripción activa',
+            ),
+            bg: _green.withOpacity(0.14),
+            border: _green.withOpacity(0.52),
+            textColor: _green,
+            icon: Icons.verified_outlined,
+          ),
+          if (profile.isFounderCustomer) ...[
+            const SizedBox(height: 6),
+            Wrap(
+              spacing: 7,
+              runSpacing: 7,
+              children: [
+                if (lockedCents != null)
+                  _chip(
+                    text: _t(
+                      nl: 'Founderprijs vastgezet: ${_priceFromCents(lockedCents)}/maand',
+                      en: 'Founder price locked: ${_priceFromCents(lockedCents)}/month',
+                      fr: 'Prix fondateur verrouillé : ${_priceFromCents(lockedCents)}/mois',
+                      es: 'Precio fundador fijado: ${_priceFromCents(lockedCents)}/mes',
+                    ),
+                    bg: _gold.withOpacity(0.13),
+                    border: _gold.withOpacity(0.45),
+                    textColor: _gold,
+                    icon: Icons.lock_outline,
+                  ),
+                if (profile.founderSlotNumber != null)
+                  _chip(
+                    text: _t(
+                      nl: 'Founderslot #${profile.founderSlotNumber}',
+                      en: 'Founder slot #${profile.founderSlotNumber}',
+                      fr: 'Slot fondateur #${profile.founderSlotNumber}',
+                      es: 'Plaza fundador #${profile.founderSlotNumber}',
+                    ),
+                    bg: _gold.withOpacity(0.13),
+                    border: _gold.withOpacity(0.45),
+                    textColor: _gold,
+                    icon: Icons.workspace_premium_outlined,
+                  ),
+              ],
+            ),
+          ],
+          if (periodStart.isNotEmpty || periodEnd.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            _infoLine(
+              _t(
+                nl: 'Periode start/einde',
+                en: 'Period start/end',
+                fr: 'Début/fin de période',
+                es: 'Inicio/fin del periodo',
+              ),
+              '${periodStart.isEmpty ? "—" : periodStart} / ${periodEnd.isEmpty ? "—" : periodEnd}',
+              icon: Icons.event_available_outlined,
+            ),
+          ],
+        ],
+      );
+    }
+
+    // Not active. Unsupported market -> info only, no activate button.
+    if (!isSupported) {
+      return Padding(
+        padding: const EdgeInsets.only(top: 8),
+        child: _chip(
+          text: _unsupportedMarketMessage(),
+          bg: _businessThemePalette.surfaceAlt.withOpacity(
+            _businessThemePalette.isDark ? 0.66 : 0.92,
+          ),
+          border: _businessThemePalette.border.withOpacity(0.7),
+          textColor: _businessThemePalette.textMuted,
+          icon: Icons.public_off_outlined,
+        ),
+      );
+    }
+
+    // Supported + not active (trialing / inactive) -> activate button.
+    return Padding(
+      padding: const EdgeInsets.only(top: 10),
+      child: SizedBox(
+        width: double.infinity,
+        child: FilledButton.icon(
+          onPressed: _activating ? null : () => _startCheckout(profile),
+          style: FilledButton.styleFrom(
+            backgroundColor: _gold,
+            foregroundColor: Colors.black,
+            minimumSize: const Size.fromHeight(48),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
+          ),
+          icon: _activating
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: Colors.black54,
+                  ),
+                )
+              : const Icon(Icons.rocket_launch_outlined, size: 18),
+          label: Text(
+            _t(
+              nl: 'Abonnement activeren',
+              en: 'Activate subscription',
+              fr: 'Activer l’abonnement',
+              es: 'Activar suscripción',
+            ),
+            style: const TextStyle(fontWeight: FontWeight.w800),
+          ),
+        ),
+      ),
     );
   }
 
@@ -727,6 +1059,18 @@ class _CompanySubscriptionBillingPageState
               );
             },
           ),
+          actions: [
+            IconButton(
+              tooltip: _t(
+                nl: 'Vernieuwen',
+                en: 'Refresh',
+                fr: 'Actualiser',
+                es: 'Actualizar',
+              ),
+              icon: const Icon(Icons.refresh),
+              onPressed: _activating ? null : _refresh,
+            ),
+          ],
         ),
         body: FutureBuilder<BackendSubscriptionProfile>(
           future: _future,
@@ -919,6 +1263,7 @@ class _CompanySubscriptionBillingPageState
                                 textColor: _green,
                                 icon: Icons.schedule_outlined,
                               ),
+                              _buildActivationSection(profile, catalog),
                               const SizedBox(height: 8),
                               _infoLine(
                                 _t(

@@ -1333,6 +1333,24 @@ class BackendSubscriptionProfile {
   final int extraVehiclePriceCents;
   final int extraDriverPriceCents;
   final List<PdfBundleOffer> pdfBundles;
+  // Patch 2.2B: live activation / founder / billing state fields. All additive
+  // with safe defaults so existing call sites keep compiling. These mirror the
+  // backend subscription_profile fields surfaced by GET
+  // /company/subscription/profile.
+  final String subscriptionStatus;
+  final String activatedAt;
+  final String cancelledAt;
+  final String currentPeriodStart;
+  final String currentPeriodEnd;
+  final int? lockedPriceCents;
+  final bool isFounderCustomer;
+  final int? founderSlotNumber;
+  final String founderAssignedAt;
+  final String paymentProvider;
+  final String providerCustomerId;
+  final String providerSubscriptionId;
+  final String activationId;
+  final List<String> warnings;
 
   const BackendSubscriptionProfile({
     required this.tenantId,
@@ -1361,6 +1379,20 @@ class BackendSubscriptionProfile {
     this.extraVehiclePriceCents = 1900,
     this.extraDriverPriceCents = 900,
     this.pdfBundles = kFluxidiPdfBundles,
+    this.subscriptionStatus = 'trialing',
+    this.activatedAt = '',
+    this.cancelledAt = '',
+    this.currentPeriodStart = '',
+    this.currentPeriodEnd = '',
+    this.lockedPriceCents,
+    this.isFounderCustomer = false,
+    this.founderSlotNumber,
+    this.founderAssignedAt = '',
+    this.paymentProvider = '',
+    this.providerCustomerId = '',
+    this.providerSubscriptionId = '',
+    this.activationId = '',
+    this.warnings = const <String>[],
   });
 
   /// Defaults resolve to the Fluxidi Pro catalog for the active company
@@ -1437,6 +1469,30 @@ class BackendSubscriptionProfile {
       if (raw is num) return raw.toInt();
       final parsed = int.tryParse(raw.toString());
       return parsed ?? fallbackValue;
+    }
+
+    bool boolVal(String snake, String camel, bool fallbackValue) {
+      final raw = json[snake] ?? json[camel];
+      if (raw is bool) return raw;
+      if (raw is num) return raw != 0;
+      if (raw is String) {
+        final v = raw.trim().toLowerCase();
+        if (v == 'true' || v == '1' || v == 'yes') return true;
+        if (v == 'false' || v == '0' || v == 'no') return false;
+      }
+      return fallbackValue;
+    }
+
+    List<String> stringList(String snake, String camel) {
+      final raw = json[snake] ?? json[camel];
+      if (raw is! List) return const <String>[];
+      final out = <String>[];
+      for (final item in raw) {
+        if (item == null) continue;
+        final s = item.toString().trim();
+        if (s.isNotEmpty) out.add(s);
+      }
+      return out;
     }
 
     List<PdfBundleOffer> readPdfBundles(List<PdfBundleOffer> fallbackValue) {
@@ -1577,6 +1633,64 @@ class BackendSubscriptionProfile {
       },
       createdAt: text('created_at', 'createdAt', fallback.createdAt),
       updatedAt: text('updated_at', 'updatedAt', fallback.updatedAt),
+      subscriptionStatus: text(
+        'subscription_status',
+        'subscriptionStatus',
+        fallback.subscriptionStatus,
+      ).trim().toLowerCase(),
+      activatedAt: text('activated_at', 'activatedAt', fallback.activatedAt),
+      cancelledAt: text('cancelled_at', 'cancelledAt', fallback.cancelledAt),
+      currentPeriodStart: text(
+        'current_period_start',
+        'currentPeriodStart',
+        fallback.currentPeriodStart,
+      ),
+      currentPeriodEnd: text(
+        'current_period_end',
+        'currentPeriodEnd',
+        fallback.currentPeriodEnd,
+      ),
+      lockedPriceCents: nullableIntVal(
+        'locked_price_cents',
+        'lockedPriceCents',
+        fallback.lockedPriceCents,
+      ),
+      isFounderCustomer: boolVal(
+        'is_founder_customer',
+        'isFounderCustomer',
+        fallback.isFounderCustomer,
+      ),
+      founderSlotNumber: nullableIntVal(
+        'founder_slot_number',
+        'founderSlotNumber',
+        fallback.founderSlotNumber,
+      ),
+      founderAssignedAt: text(
+        'founder_assigned_at',
+        'founderAssignedAt',
+        fallback.founderAssignedAt,
+      ),
+      paymentProvider: text(
+        'payment_provider',
+        'paymentProvider',
+        fallback.paymentProvider,
+      ),
+      providerCustomerId: text(
+        'provider_customer_id',
+        'providerCustomerId',
+        fallback.providerCustomerId,
+      ),
+      providerSubscriptionId: text(
+        'provider_subscription_id',
+        'providerSubscriptionId',
+        fallback.providerSubscriptionId,
+      ),
+      activationId: text(
+        'activation_id',
+        'activationId',
+        fallback.activationId,
+      ),
+      warnings: stringList('warnings', 'warnings'),
     );
   }
 
@@ -1612,6 +1726,20 @@ class BackendSubscriptionProfile {
           (b) => <String, dynamic>{'pdfs': b.pdfs, 'price_cents': b.priceCents},
         )
         .toList(growable: false),
+    'subscription_status': subscriptionStatus,
+    'activated_at': activatedAt,
+    'cancelled_at': cancelledAt,
+    'current_period_start': currentPeriodStart,
+    'current_period_end': currentPeriodEnd,
+    'locked_price_cents': lockedPriceCents,
+    'is_founder_customer': isFounderCustomer,
+    'founder_slot_number': founderSlotNumber,
+    'founder_assigned_at': founderAssignedAt,
+    'payment_provider': paymentProvider,
+    'provider_customer_id': providerCustomerId,
+    'provider_subscription_id': providerSubscriptionId,
+    'activation_id': activationId,
+    'warnings': warnings,
   };
 }
 
@@ -5454,6 +5582,180 @@ Future<BackendSubscriptionProfile> fetchCompanySubscriptionProfile({
   return BackendSubscriptionProfile.fromJson(
     Map<String, dynamic>.from(profile),
   );
+}
+
+/// Typed result of POST /company/subscription/checkout/start (Patch 2.2B).
+///
+/// Mirrors the sanitized backend response. No secrets are ever stored here —
+/// the backend never returns Mollie API keys, webhook secrets, or tokens.
+/// `ok == false` carries a machine-readable [error] (e.g. `unsupported_market`,
+/// `mollie_payment_failed`) plus the HTTP [statusCode] for UI branching.
+class BackendSubscriptionCheckoutStartResult {
+  const BackendSubscriptionCheckoutStartResult({
+    required this.ok,
+    this.statusCode = 0,
+    this.alreadyActive = false,
+    this.checkoutUrl = '',
+    this.activationId = '',
+    this.providerPaymentId = '',
+    this.expectedAmountCents,
+    this.currency = '',
+    this.founderReserved = false,
+    this.founderSlotNumber,
+    this.trialEndsAt = '',
+    this.subscriptionStatus = '',
+    this.market = '',
+    this.error = '',
+  });
+
+  final bool ok;
+  final int statusCode;
+  final bool alreadyActive;
+  final String checkoutUrl;
+  final String activationId;
+  final String providerPaymentId;
+  final int? expectedAmountCents;
+  final String currency;
+  final bool founderReserved;
+  final int? founderSlotNumber;
+  final String trialEndsAt;
+  final String subscriptionStatus;
+  final String market;
+  final String error;
+
+  bool get hasCheckoutUrl => checkoutUrl.trim().isNotEmpty;
+  bool get isUnsupportedMarket => error.trim() == 'unsupported_market';
+
+  factory BackendSubscriptionCheckoutStartResult.fromJson(
+    Map<String, dynamic> json, {
+    int statusCode = 0,
+  }) {
+    bool boolField(String snake, String camel) {
+      final v = json[snake] ?? json[camel];
+      if (v is bool) return v;
+      if (v is num) return v != 0;
+      if (v is String) {
+        final s = v.trim().toLowerCase();
+        return s == 'true' || s == '1' || s == 'yes';
+      }
+      return false;
+    }
+
+    String textField(String snake, String camel) =>
+        (json[snake] ?? json[camel] ?? '').toString().trim();
+
+    int? intField(String snake, String camel) {
+      final raw = json[snake] ?? json[camel];
+      if (raw == null) return null;
+      if (raw is num) return raw.toInt();
+      return int.tryParse(raw.toString());
+    }
+
+    return BackendSubscriptionCheckoutStartResult(
+      ok: boolField('ok', 'ok'),
+      statusCode: statusCode,
+      alreadyActive: boolField('already_active', 'alreadyActive'),
+      checkoutUrl: textField('checkout_url', 'checkoutUrl'),
+      activationId: textField('activation_id', 'activationId'),
+      providerPaymentId: textField('provider_payment_id', 'providerPaymentId'),
+      expectedAmountCents: intField(
+        'expected_amount_cents',
+        'expectedAmountCents',
+      ),
+      currency: textField('currency', 'currency').toUpperCase(),
+      founderReserved: boolField('founder_reserved', 'founderReserved'),
+      founderSlotNumber: intField('founder_slot_number', 'founderSlotNumber'),
+      trialEndsAt: textField('trial_ends_at', 'trialEndsAt'),
+      subscriptionStatus: textField(
+        'subscription_status',
+        'subscriptionStatus',
+      ),
+      market: textField('market', 'market').toUpperCase(),
+      error: textField('error', 'error'),
+    );
+  }
+}
+
+/// POST /company/subscription/checkout/start (company-session auth, Patch 2.2B).
+///
+/// Starts a Fluxidi-owned subscription checkout for the active company. Uses
+/// the same auth/scope style as [fetchCompanySubscriptionProfile]: company
+/// session bearer (admin token fallback) plus tenant/company scope in both the
+/// query string and the JSON body. Never throws on a non-2xx backend response;
+/// instead it returns a typed result carrying `ok=false`, the HTTP status, and
+/// the machine-readable error so the UI can branch (e.g. `unsupported_market`).
+Future<BackendSubscriptionCheckoutStartResult>
+startCompanySubscriptionCheckout({
+  required String tenantId,
+  required String companyId,
+  String? returnUrl,
+}) async {
+  final scope = _resolveAdminTenantCompanyScope(
+    tenantId: tenantId,
+    companyId: companyId,
+  );
+  final endpoint = _withAdminTenantCompanyScope(
+    Uri.parse(
+      '${appConfig.bookingBaseUrl}/company/subscription/checkout/start',
+    ),
+    tenantId: scope['tenant_id'],
+    companyId: scope['company_id'],
+  );
+  final payload = <String, dynamic>{
+    ...scope,
+    if (returnUrl != null && returnUrl.trim().isNotEmpty)
+      'return_url': returnUrl.trim(),
+  };
+  try {
+    final auth = await resolveCompanyOwnerAuthHeaders();
+    final res = await http
+        .post(endpoint, headers: auth.headers, body: jsonEncode(payload))
+        .timeout(const Duration(seconds: 20));
+    Map<String, dynamic> decodedMap = const <String, dynamic>{};
+    try {
+      final decoded = jsonDecode(utf8.decode(res.bodyBytes));
+      if (decoded is Map) decodedMap = Map<String, dynamic>.from(decoded);
+    } catch (_) {
+      decodedMap = const <String, dynamic>{};
+    }
+    if (res.statusCode < 200 || res.statusCode >= 300) {
+      final parsed = BackendSubscriptionCheckoutStartResult.fromJson(
+        decodedMap,
+        statusCode: res.statusCode,
+      );
+      debugPrint(
+        '[SUBSCRIPTION_CHECKOUT_START][FAIL] status=${res.statusCode} '
+        'auth_mode=${auth.mode.name} error=${parsed.error}',
+      );
+      // Ensure ok is false for non-2xx even if body lacked the field.
+      return BackendSubscriptionCheckoutStartResult(
+        ok: false,
+        statusCode: res.statusCode,
+        alreadyActive: parsed.alreadyActive,
+        checkoutUrl: parsed.checkoutUrl,
+        activationId: parsed.activationId,
+        providerPaymentId: parsed.providerPaymentId,
+        expectedAmountCents: parsed.expectedAmountCents,
+        currency: parsed.currency,
+        founderReserved: parsed.founderReserved,
+        founderSlotNumber: parsed.founderSlotNumber,
+        trialEndsAt: parsed.trialEndsAt,
+        subscriptionStatus: parsed.subscriptionStatus,
+        market: parsed.market,
+        error: parsed.error.isEmpty ? 'http_${res.statusCode}' : parsed.error,
+      );
+    }
+    return BackendSubscriptionCheckoutStartResult.fromJson(
+      decodedMap,
+      statusCode: res.statusCode,
+    );
+  } catch (e) {
+    debugPrint('[SUBSCRIPTION_CHECKOUT_START][ERR] exception');
+    return const BackendSubscriptionCheckoutStartResult(
+      ok: false,
+      error: 'network_error',
+    );
+  }
 }
 
 Future<BackendSubscriptionProfile> saveBackendSubscriptionProfile(
