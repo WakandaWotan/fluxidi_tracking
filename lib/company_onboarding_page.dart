@@ -564,9 +564,9 @@ class _CompanyOnboardingPageState extends State<CompanyOnboardingPage> {
                           DropdownMenuItem(value: 'BE', child: Text('BE')),
                           DropdownMenuItem(value: 'NL', child: Text('NL')),
                           DropdownMenuItem(value: 'FR', child: Text('FR')),
-                          DropdownMenuItem(value: 'DE', child: Text('DE')),
                           DropdownMenuItem(value: 'ES', child: Text('ES')),
-                          DropdownMenuItem(value: 'PT', child: Text('PT')),
+                          DropdownMenuItem(value: 'LU', child: Text('LU')),
+                          DropdownMenuItem(value: 'DE', child: Text('DE')),
                         ],
                         onChanged: _saving
                             ? null
@@ -882,9 +882,9 @@ class _CompanyProfileEditPageState extends State<CompanyProfileEditPage> {
                     DropdownMenuItem(value: 'BE', child: Text('BE')),
                     DropdownMenuItem(value: 'NL', child: Text('NL')),
                     DropdownMenuItem(value: 'FR', child: Text('FR')),
-                    DropdownMenuItem(value: 'DE', child: Text('DE')),
                     DropdownMenuItem(value: 'ES', child: Text('ES')),
-                    DropdownMenuItem(value: 'PT', child: Text('PT')),
+                    DropdownMenuItem(value: 'LU', child: Text('LU')),
+                    DropdownMenuItem(value: 'DE', child: Text('DE')),
                   ],
                   onChanged: (v) {
                     if (v == null) return;

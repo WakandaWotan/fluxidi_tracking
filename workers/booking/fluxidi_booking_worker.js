@@ -4073,15 +4073,34 @@ const DEFAULT_SUBSCRIPTION_PROFILE = {
 };
 
 // Server-side mirror of the Flutter country-aware subscription catalog
-// (lib/app_config.dart). Display/catalog data only; no payment logic. Markets
-// other than ES/PT fall back to the BE/NL/FR catalog. Unknown input -> BE.
+// (lib/app_config.dart). Display/catalog data only; no payment logic.
+//
+// Launch markets (Fluxidi EU launch alignment):
+//   BE                   -> €69 normal / €59 founder (first 100 paying)
+//   NL, FR, ES, LU, DE   -> €49 normal / no founder pricing
+//
+// Unsupported markets (PT, GB, UK, unknown) MUST NOT silently fall back to
+// the BE catalog for checkout. Display surfaces may still fall back to BE
+// numbers for trial display only via `resolveSubscriptionMarketCatalog`;
+// the dedicated `isFluxidiSupportedLaunchMarket` gate is the only thing
+// checkout-start trusts before reserving a slot or calling Mollie.
 const SUBSCRIPTION_MARKET_CATALOG = {
   BE: { currency: "EUR", normal_price_cents: 6900, founder_price_cents: 5900 },
-  NL: { currency: "EUR", normal_price_cents: 6900, founder_price_cents: 5900 },
-  FR: { currency: "EUR", normal_price_cents: 6900, founder_price_cents: 5900 },
+  NL: { currency: "EUR", normal_price_cents: 4900, founder_price_cents: null },
+  FR: { currency: "EUR", normal_price_cents: 4900, founder_price_cents: null },
   ES: { currency: "EUR", normal_price_cents: 4900, founder_price_cents: null },
-  PT: { currency: "EUR", normal_price_cents: 4900, founder_price_cents: null },
+  LU: { currency: "EUR", normal_price_cents: 4900, founder_price_cents: null },
+  DE: { currency: "EUR", normal_price_cents: 4900, founder_price_cents: null },
 };
+
+const FLUXIDI_SUPPORTED_LAUNCH_MARKETS = new Set([
+  "BE",
+  "NL",
+  "FR",
+  "ES",
+  "LU",
+  "DE",
+]);
 
 function normalizeSubscriptionMarket(raw) {
   const v = sanitizeTenantString(raw, 16)
@@ -4093,15 +4112,43 @@ function normalizeSubscriptionMarket(raw) {
   if (v === "ES" || v === "SPAIN" || v === "SPANJE" || v === "ESPANA") {
     return "ES";
   }
+  if (v === "LU" || v === "LUXEMBOURG" || v === "LUXEMBURG") return "LU";
+  if (
+    v === "DE" ||
+    v === "GERMANY" ||
+    v === "DUITSLAND" ||
+    v === "DEUTSCHLAND" ||
+    v === "ALLEMAGNE" ||
+    v === "ALEMANIA"
+  ) {
+    return "DE";
+  }
+  // PT/GB/UK and any other ISO-style code fall through to a raw 2-letter
+  // code so checkout-start can explicitly reject them as unsupported.
   if (v === "PT" || v === "PORTUGAL") return "PT";
+  if (v === "GB" || v === "UK" || v === "GREATBRITAIN" || v === "UNITEDKINGDOM") {
+    return "GB";
+  }
   return v.slice(0, 2);
+}
+
+// Strict launch-eligibility gate. Returns true only for the six Fluxidi
+// launch markets. checkout-start, founder-slot eligibility checks, and
+// any future paid-flow guards must consult THIS helper (not the display
+// catalog) before charging a customer or reserving a founder slot.
+function isFluxidiSupportedLaunchMarket(market) {
+  const normalized = normalizeSubscriptionMarket(market);
+  return FLUXIDI_SUPPORTED_LAUNCH_MARKETS.has(normalized);
 }
 
 function resolveSubscriptionMarketCatalog(rawMarket) {
   const market = normalizeSubscriptionMarket(rawMarket);
   const known = SUBSCRIPTION_MARKET_CATALOG[market];
   if (known) return { market, ...known };
-  // Safe fallback to BE catalog while still reporting the requested market.
+  // Display-only safe fallback so legacy / unknown markets still render a
+  // sensible trial profile. NEVER used by checkout-start: the dedicated
+  // `isFluxidiSupportedLaunchMarket` gate runs first and 422s unsupported
+  // markets before any Mollie or Founder DO call.
   return { market: market || "BE", ...SUBSCRIPTION_MARKET_CATALOG.BE };
 }
 
@@ -24497,6 +24544,22 @@ export default {
           // Authoritative pricing from profile, backstopped by the server
           // market catalog.
           const market = normalizeSubscriptionMarket(profile?.market);
+
+          // Launch-market gate. Runs BEFORE any founder slot reservation,
+          // Mollie customer creation, or Mollie payment creation so an
+          // unsupported market (PT/GB/UK/unknown) never produces a Mollie
+          // checkout URL nor touches the Founder DO. If the profile market
+          // is missing/unknown we refuse rather than silently default to BE.
+          if (!isFluxidiSupportedLaunchMarket(market)) {
+            console.log(
+              `[SUBSCRIPTION_CHECKOUT_START][ERR] stage=market reason=unsupported_market market=${market || "-"} tenant=${tenantMask} company=${companyMask}`,
+            );
+            return json(
+              { ok: false, error: "unsupported_market", market: market || "" },
+              422,
+            );
+          }
+
           const catalog = resolveSubscriptionMarketCatalog(market);
           const planCode =
             _fluxidiSubscriptionSafeStr(profile?.plan_code, 32) || "fluxidi_pro";

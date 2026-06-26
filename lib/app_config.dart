@@ -1153,10 +1153,12 @@ const List<PdfBundleOffer> kFluxidiPdfBundles = <PdfBundleOffer>[
   PdfBundleOffer(pdfs: 5000, priceCents: 2900),
 ];
 
-/// Normalize a free-text/ISO country value into one of the supported pricing
-/// markets: BE, NL, FR, ES, PT. Unknown ISO codes (DE, LU, GB, …) are mapped
-/// to BE so the BE catalog is used as a safe fallback for display. The empty
-/// string is returned for unparseable input so callers can fall back further.
+/// Normalize a free-text/ISO country value into one of the supported Fluxidi
+/// launch markets: BE, NL, FR, ES, LU, DE. PT/GB/UK and any other ISO-style
+/// codes are returned as their raw 2-letter form so callers can still display
+/// the original market value, but [isFluxidiLaunchMarket] returns false for
+/// them and [resolveSubscriptionCatalogEntryForMarket] uses a display-only
+/// safe fallback (the paid checkout path is gated server-side).
 String normalizeFluxidiPricingMarket(String? raw) {
   if (raw == null) return '';
   final v = raw.trim().toUpperCase();
@@ -1190,13 +1192,24 @@ String normalizeFluxidiPricingMarket(String? raw) {
     case 'ESPAÑA':
     case 'ESPAGNE':
       return 'ES';
-    case 'PT':
-    case 'PORTUGAL':
-      return 'PT';
+    case 'LU':
+    case 'LUXEMBOURG':
+    case 'LUXEMBURG':
+    case 'LUXEMBURGO':
+      return 'LU';
+    case 'DE':
+    case 'GERMANY':
+    case 'DUITSLAND':
+    case 'DEUTSCHLAND':
+    case 'ALLEMAGNE':
+    case 'ALEMANIA':
+      return 'DE';
+    case 'UK':
+      return 'GB';
   }
-  // Other ISO-style codes (DE/LU/GB/…) keep working but fall back to BE
-  // pricing via [resolveSubscriptionCatalogEntryForMarket]; we return the
-  // raw 2-letter code so callers can still display the original market.
+  // Other ISO-style codes (PT/GB/…) keep working as raw 2-letter codes so
+  // callers can still display the original market. [isFluxidiLaunchMarket]
+  // returns false for them so they cannot drive a paid checkout.
   return v.length == 2 ? v : '';
 }
 
@@ -1220,17 +1233,34 @@ bool _isFluxidiPricingMarket(String code) {
       code == 'NL' ||
       code == 'FR' ||
       code == 'ES' ||
-      code == 'PT';
+      code == 'LU' ||
+      code == 'DE';
 }
 
-/// Return the Fluxidi Pro catalog entry for a given market. Unknown markets
-/// safely fall back to the BE catalog so display never breaks; the returned
-/// `market` field always reflects the chosen catalog (BE/NL/FR/ES/PT).
+/// Public launch-eligibility gate (mirror of the backend
+/// `isFluxidiSupportedLaunchMarket`). Returns true only for the six Fluxidi
+/// launch markets. UI surfaces that gate the paid subscription CTA must
+/// consult this helper; the display catalog still falls back to BE numbers
+/// for unknown markets so the trial card never renders empty.
+bool isFluxidiLaunchMarket(String market) {
+  final normalized = normalizeFluxidiPricingMarket(market);
+  return _isFluxidiPricingMarket(normalized);
+}
+
+/// Return the Fluxidi Pro catalog entry for a given market.
+///
+/// Launch markets:
+///   BE                     -> €69 normal / €59 founder, founder slots 100
+///   NL, FR, ES, LU, DE     -> €49 normal, no founder pricing
+///
+/// Unsupported markets (PT/GB/UK/unknown) fall back to the BE catalog for
+/// display only so the trial card never renders empty; the backend
+/// checkout-start route refuses to create a Mollie payment for them.
 SubscriptionPlanCatalogEntry resolveSubscriptionCatalogEntryForMarket(
   String market,
 ) {
   final m = normalizeFluxidiPricingMarket(market);
-  if (m == 'ES' || m == 'PT') {
+  if (m == 'NL' || m == 'FR' || m == 'ES' || m == 'LU' || m == 'DE') {
     return SubscriptionPlanCatalogEntry(
       planCode: 'fluxidi_pro',
       market: m,
@@ -1247,11 +1277,12 @@ SubscriptionPlanCatalogEntry resolveSubscriptionCatalogEntryForMarket(
       pdfBundles: kFluxidiPdfBundles,
     );
   }
-  // BE/NL/FR target market + safe fallback for any other input.
-  final resolved = (m == 'NL' || m == 'FR') ? m : 'BE';
+  // BE is the only founder-priced market and the safe display fallback for
+  // any unsupported / unknown input. The actual paid flow is gated by the
+  // backend `isFluxidiSupportedLaunchMarket` check, not by this catalog.
   return SubscriptionPlanCatalogEntry(
     planCode: 'fluxidi_pro',
-    market: resolved,
+    market: 'BE',
     currency: 'EUR',
     normalPriceCents: 6900,
     founderPriceCents: 5900,

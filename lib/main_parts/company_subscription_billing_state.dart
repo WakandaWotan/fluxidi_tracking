@@ -23,9 +23,24 @@ class _CompanySubscriptionBillingPageState
     return '€$whole.$fraction';
   }
 
-  String _planDisplayName(BackendSubscriptionProfile profile) {
+  String _planDisplayName(BackendSubscriptionProfile profile, String market) {
     final code = profile.planCode.trim().toLowerCase();
-    if (code == 'fluxidi_pro' || code.isEmpty) return 'Fluxidi Pro';
+    if (code == 'fluxidi_pro' || code.isEmpty) {
+      if (market == 'BE') {
+        return _t(
+          nl: 'Fluxidi Pro België',
+          en: 'Fluxidi Pro Belgium',
+          fr: 'Fluxidi Pro Belgique',
+          es: 'Fluxidi Pro Bélgica',
+        );
+      }
+      return _t(
+        nl: 'Fluxidi Automatisatie',
+        en: 'Fluxidi Automation',
+        fr: 'Fluxidi Automatisation',
+        es: 'Fluxidi Automatización',
+      );
+    }
     // Legacy plan values keep their old display.
     return _planLabel(profile.plan);
   }
@@ -755,6 +770,11 @@ class _CompanySubscriptionBillingPageState
             final hasFounderOffer =
                 catalog.founderPriceCents != null &&
                 catalog.founderSlotsLimit != null;
+            // BE is the only market that ships Belgian-specific compliance
+            // modules (Chiron, Billit/Peppol). Non-BE supported markets see
+            // a generic automation pitch instead — no Chiron/Billit/Peppol
+            // claims.
+            final bool isBelgiumMarket = catalog.market == 'BE';
             return ValueListenableBuilder<List<VehicleProfile>>(
               valueListenable: vehiclesNotifier,
               builder: (context, vehicles, _) {
@@ -813,7 +833,10 @@ class _CompanySubscriptionBillingPageState
                                         ),
                                         const SizedBox(height: 2),
                                         Text(
-                                          _planDisplayName(profile),
+                                          _planDisplayName(
+                                            profile,
+                                            catalog.market,
+                                          ),
                                           style: TextStyle(
                                             color: _businessThemePalette
                                                 .textPrimary,
@@ -953,28 +976,108 @@ class _CompanySubscriptionBillingPageState
                                     border: _gold.withOpacity(0.40),
                                     textColor: _gold,
                                   ),
-                                  _chip(
-                                    text: _t(
-                                      nl: 'Chiron-ready inbegrepen',
-                                      en: 'Chiron-ready included',
-                                      fr: 'Chiron-ready inclus',
-                                      es: 'Chiron-ready incluido',
+                                  if (isBelgiumMarket) ...[
+                                    _chip(
+                                      text: _t(
+                                        nl: 'Chiron-ready inbegrepen',
+                                        en: 'Chiron-ready included',
+                                        fr: 'Chiron-ready inclus',
+                                        es: 'Chiron-ready incluido',
+                                      ),
+                                      bg: _green.withOpacity(0.14),
+                                      border: _green.withOpacity(0.45),
+                                      textColor: _green,
                                     ),
-                                    bg: _green.withOpacity(0.14),
-                                    border: _green.withOpacity(0.45),
-                                    textColor: _green,
-                                  ),
-                                  _chip(
-                                    text: _t(
-                                      nl: 'Billit/Peppol-ready inbegrepen',
-                                      en: 'Billit/Peppol-ready included',
-                                      fr: 'Billit/Peppol-ready inclus',
-                                      es: 'Billit/Peppol-ready incluido',
+                                    _chip(
+                                      text: _t(
+                                        nl: 'Billit/Peppol-ready inbegrepen',
+                                        en: 'Billit/Peppol-ready included',
+                                        fr: 'Billit/Peppol-ready inclus',
+                                        es: 'Billit/Peppol-ready incluido',
+                                      ),
+                                      bg: _green.withOpacity(0.14),
+                                      border: _green.withOpacity(0.45),
+                                      textColor: _green,
                                     ),
-                                    bg: _green.withOpacity(0.14),
-                                    border: _green.withOpacity(0.45),
-                                    textColor: _green,
-                                  ),
+                                  ] else ...[
+                                    _chip(
+                                      text: _t(
+                                        nl: 'Automatisatie',
+                                        en: 'Automation',
+                                        fr: 'Automatisation',
+                                        es: 'Automatización',
+                                      ),
+                                      bg: _green.withOpacity(0.14),
+                                      border: _green.withOpacity(0.45),
+                                      textColor: _green,
+                                    ),
+                                    _chip(
+                                      text: _t(
+                                        nl: 'Dispatch',
+                                        en: 'Dispatch',
+                                        fr: 'Dispatch',
+                                        es: 'Despacho',
+                                      ),
+                                      bg: _green.withOpacity(0.14),
+                                      border: _green.withOpacity(0.45),
+                                      textColor: _green,
+                                    ),
+                                    _chip(
+                                      text: _t(
+                                        nl: 'Boekingslink',
+                                        en: 'Booking link',
+                                        fr: 'Lien de réservation',
+                                        es: 'Enlace de reserva',
+                                      ),
+                                      bg: _green.withOpacity(0.14),
+                                      border: _green.withOpacity(0.45),
+                                      textColor: _green,
+                                    ),
+                                    _chip(
+                                      text: _t(
+                                        nl: 'Klantflow',
+                                        en: 'Customer flow',
+                                        fr: 'Parcours client',
+                                        es: 'Flujo del cliente',
+                                      ),
+                                      bg: _green.withOpacity(0.14),
+                                      border: _green.withOpacity(0.45),
+                                      textColor: _green,
+                                    ),
+                                    _chip(
+                                      text: _t(
+                                        nl: 'Chauffeurs',
+                                        en: 'Drivers',
+                                        fr: 'Chauffeurs',
+                                        es: 'Conductores',
+                                      ),
+                                      bg: _green.withOpacity(0.14),
+                                      border: _green.withOpacity(0.45),
+                                      textColor: _green,
+                                    ),
+                                    _chip(
+                                      text: _t(
+                                        nl: 'Voertuigen',
+                                        en: 'Vehicles',
+                                        fr: 'Véhicules',
+                                        es: 'Vehículos',
+                                      ),
+                                      bg: _green.withOpacity(0.14),
+                                      border: _green.withOpacity(0.45),
+                                      textColor: _green,
+                                    ),
+                                    _chip(
+                                      text: _t(
+                                        nl: 'Ritbeheer',
+                                        en: 'Ride admin',
+                                        fr: 'Gestion des courses',
+                                        es: 'Administración de viajes',
+                                      ),
+                                      bg: _green.withOpacity(0.14),
+                                      border: _green.withOpacity(0.45),
+                                      textColor: _green,
+                                    ),
+                                  ],
                                   _chip(
                                     text: _t(
                                       nl: 'Geen commissie op ritten',
@@ -991,12 +1094,19 @@ class _CompanySubscriptionBillingPageState
                               ),
                               const SizedBox(height: 6),
                               Text(
-                                _t(
-                                  nl: 'Externe Billit/providerkosten en Mollie-transactiekosten zijn voor rekening van het bedrijf en lopen via je eigen account.',
-                                  en: 'External Billit/provider costs and Mollie transaction fees are paid by the company via its own account.',
-                                  fr: 'Les frais Billit/fournisseur externes et les frais de transaction Mollie sont à la charge de l\'entreprise via son propre compte.',
-                                  es: 'Los costes externos de Billit/proveedor y las comisiones de transacción de Mollie corren a cargo de la empresa a través de su propia cuenta.',
-                                ),
+                                isBelgiumMarket
+                                    ? _t(
+                                        nl: 'Externe Billit/providerkosten en Mollie-transactiekosten zijn voor rekening van het bedrijf en lopen via je eigen account.',
+                                        en: 'External Billit/provider costs and Mollie transaction fees are paid by the company via its own account.',
+                                        fr: 'Les frais Billit/fournisseur externes et les frais de transaction Mollie sont à la charge de l\'entreprise via son propre compte.',
+                                        es: 'Los costes externos de Billit/proveedor y las comisiones de transacción de Mollie corren a cargo de la empresa a través de su propia cuenta.',
+                                      )
+                                    : _t(
+                                        nl: 'Mollie-transactiekosten zijn voor rekening van het bedrijf en lopen via je eigen account.',
+                                        en: 'Mollie transaction fees are paid by the company via its own account.',
+                                        fr: 'Les frais de transaction Mollie sont à la charge de l\'entreprise via son propre compte.',
+                                        es: 'Las comisiones de transacción de Mollie corren a cargo de la empresa a través de su propia cuenta.',
+                                      ),
                                 style: TextStyle(
                                   color: _businessThemePalette.textMuted
                                       .withOpacity(0.88),
@@ -1112,74 +1222,78 @@ class _CompanySubscriptionBillingPageState
                                   ],
                                 ),
                               ),
-                              const SizedBox(height: 8),
-                              Container(
-                                width: double.infinity,
-                                padding: const EdgeInsets.fromLTRB(
-                                  10,
-                                  9,
-                                  10,
-                                  10,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: _panelSoft,
-                                  borderRadius: BorderRadius.circular(10),
-                                  border: Border.all(
-                                    color: _gold.withOpacity(0.30),
+                              if (isBelgiumMarket) ...[
+                                const SizedBox(height: 8),
+                                Container(
+                                  width: double.infinity,
+                                  padding: const EdgeInsets.fromLTRB(
+                                    10,
+                                    9,
+                                    10,
+                                    10,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: _panelSoft,
+                                    borderRadius: BorderRadius.circular(10),
+                                    border: Border.all(
+                                      color: _gold.withOpacity(0.30),
+                                    ),
+                                  ),
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        _t(
+                                          nl: 'Peppol',
+                                          en: 'Peppol',
+                                          fr: 'Peppol',
+                                          es: 'Peppol',
+                                        ),
+                                        style: TextStyle(
+                                          color:
+                                              _businessThemePalette.textPrimary,
+                                          fontWeight: FontWeight.w800,
+                                          fontSize: 12.8,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 5),
+                                      Wrap(
+                                        spacing: 6,
+                                        runSpacing: 6,
+                                        children: [
+                                          _chip(
+                                            text: _t(
+                                              nl: 'Billit/Peppol-ready inbegrepen',
+                                              en: 'Billit/Peppol-ready included',
+                                              fr: 'Billit/Peppol-ready inclus',
+                                              es: 'Billit/Peppol-ready incluido',
+                                            ),
+                                            bg: _green.withOpacity(0.14),
+                                            border: _green.withOpacity(0.45),
+                                            textColor: _green,
+                                          ),
+                                        ],
+                                      ),
+                                      const SizedBox(height: 5),
+                                      Text(
+                                        _t(
+                                          nl: 'Externe Billit/providerkosten zijn voor rekening van het bedrijf en lopen via je eigen Billit-account.',
+                                          en: 'External Billit/provider costs are paid by the company via its own Billit account.',
+                                          fr: 'Les frais Billit/fournisseur externes sont à la charge de l\'entreprise via son propre compte Billit.',
+                                          es: 'Los costes externos de Billit/proveedor corren a cargo de la empresa a través de su propia cuenta Billit.',
+                                        ),
+                                        style: TextStyle(
+                                          color:
+                                              _businessThemePalette.textMuted,
+                                          fontSize: 11.6,
+                                          height: 1.3,
+                                        ),
+                                      ),
+                                    ],
                                   ),
                                 ),
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      _t(
-                                        nl: 'Peppol',
-                                        en: 'Peppol',
-                                        fr: 'Peppol',
-                                        es: 'Peppol',
-                                      ),
-                                      style: TextStyle(
-                                        color:
-                                            _businessThemePalette.textPrimary,
-                                        fontWeight: FontWeight.w800,
-                                        fontSize: 12.8,
-                                      ),
-                                    ),
-                                    const SizedBox(height: 5),
-                                    Wrap(
-                                      spacing: 6,
-                                      runSpacing: 6,
-                                      children: [
-                                        _chip(
-                                          text: _t(
-                                            nl: 'Billit/Peppol-ready inbegrepen',
-                                            en: 'Billit/Peppol-ready included',
-                                            fr: 'Billit/Peppol-ready inclus',
-                                            es: 'Billit/Peppol-ready incluido',
-                                          ),
-                                          bg: _green.withOpacity(0.14),
-                                          border: _green.withOpacity(0.45),
-                                          textColor: _green,
-                                        ),
-                                      ],
-                                    ),
-                                    const SizedBox(height: 5),
-                                    Text(
-                                      _t(
-                                        nl: 'Externe Billit/providerkosten zijn voor rekening van het bedrijf en lopen via je eigen Billit-account.',
-                                        en: 'External Billit/provider costs are paid by the company via its own Billit account.',
-                                        fr: 'Les frais Billit/fournisseur externes sont à la charge de l\'entreprise via son propre compte Billit.',
-                                        es: 'Los costes externos de Billit/proveedor corren a cargo de la empresa a través de su propia cuenta Billit.',
-                                      ),
-                                      style: TextStyle(
-                                        color: _businessThemePalette.textMuted,
-                                        fontSize: 11.6,
-                                        height: 1.3,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
+                              ],
                             ],
                           ),
                         ),
@@ -1333,38 +1447,41 @@ class _CompanySubscriptionBillingPageState
                                   es: 'Capacidad de plataforma',
                                 ),
                               ),
-                              _moduleRow(
-                                label: _t(
-                                  nl: 'Complianceoverzicht / Chiron-ready',
-                                  en: 'Compliance dashboard / Chiron-ready',
-                                  fr: 'Tableau conformité / Chiron-ready',
-                                  es: 'Panel de cumplimiento / Chiron-ready',
+                              if (isBelgiumMarket) ...[
+                                _moduleRow(
+                                  label: _t(
+                                    nl: 'Complianceoverzicht / Chiron-ready',
+                                    en: 'Compliance dashboard / Chiron-ready',
+                                    fr: 'Tableau conformité / Chiron-ready',
+                                    es: 'Panel de cumplimiento / Chiron-ready',
+                                  ),
+                                  active:
+                                      profile
+                                          .features['compliance_dashboard'] ==
+                                      true,
+                                  inactiveLabel: _t(
+                                    nl: 'Platformmogelijkheid',
+                                    en: 'Platform capability',
+                                    fr: 'Capacité plateforme',
+                                    es: 'Capacidad de plataforma',
+                                  ),
                                 ),
-                                active:
-                                    profile.features['compliance_dashboard'] ==
-                                    true,
-                                inactiveLabel: _t(
-                                  nl: 'Platformmogelijkheid',
-                                  en: 'Platform capability',
-                                  fr: 'Capacité plateforme',
-                                  es: 'Capacidad de plataforma',
+                                _moduleRow(
+                                  label: _t(
+                                    nl: 'Billit/Peppol-ready structuur',
+                                    en: 'Billit/Peppol-ready structure',
+                                    fr: 'Structure Billit/Peppol-ready',
+                                    es: 'Estructura Billit/Peppol-ready',
+                                  ),
+                                  active: true,
+                                  subtitle: _t(
+                                    nl: 'Inbegrepen. Externe Billit/providerkosten zijn voor rekening van het bedrijf.',
+                                    en: 'Included. External Billit/provider costs are paid by the company.',
+                                    fr: 'Inclus. Les frais Billit/fournisseur externes sont à la charge de l\'entreprise.',
+                                    es: 'Incluido. Los costes externos de Billit/proveedor corren a cargo de la empresa.',
+                                  ),
                                 ),
-                              ),
-                              _moduleRow(
-                                label: _t(
-                                  nl: 'Billit/Peppol-ready structuur',
-                                  en: 'Billit/Peppol-ready structure',
-                                  fr: 'Structure Billit/Peppol-ready',
-                                  es: 'Estructura Billit/Peppol-ready',
-                                ),
-                                active: true,
-                                subtitle: _t(
-                                  nl: 'Inbegrepen. Externe Billit/providerkosten zijn voor rekening van het bedrijf.',
-                                  en: 'Included. External Billit/provider costs are paid by the company.',
-                                  fr: 'Inclus. Les frais Billit/fournisseur externes sont à la charge de l\'entreprise.',
-                                  es: 'Incluido. Los costes externos de Billit/proveedor corren a cargo de la empresa.',
-                                ),
-                              ),
+                              ],
                             ],
                           ),
                         ),
