@@ -16,7 +16,15 @@ class _CustomerProfileEditPageState extends State<CustomerProfileEditPage> {
   final _emailCtrl = TextEditingController();
   final _companyNameCtrl = TextEditingController();
   final _vatNumberCtrl = TextEditingController();
+  final _invoiceEmailCtrl = TextEditingController();
+  final _billingStreetCtrl = TextEditingController();
+  final _billingPostalCodeCtrl = TextEditingController();
+  final _billingCityCtrl = TextEditingController();
+  final _billingCountryCtrl = TextEditingController();
+  final _peppolEndpointIdCtrl = TextEditingController();
+  final _peppolSchemeCtrl = TextEditingController();
   bool _saving = false;
+  bool _peppolExpanded = false;
 
   String _t({
     required String nl,
@@ -33,6 +41,9 @@ class _CustomerProfileEditPageState extends State<CustomerProfileEditPage> {
   );
 
   int _completedProfileFields() {
+    // Personal/contact + legacy company/VAT only. New optional billing address /
+    // Peppol fields are intentionally excluded so existing profiles never look
+    // "incomplete" just because the new optional fields are blank.
     return <TextEditingController>[
       _nameCtrl,
       _postcodeCtrl,
@@ -41,6 +52,12 @@ class _CustomerProfileEditPageState extends State<CustomerProfileEditPage> {
       _companyNameCtrl,
       _vatNumberCtrl,
     ].where((ctrl) => ctrl.text.trim().isNotEmpty).length;
+  }
+
+  bool _hasAnyBillingAddressInput() {
+    return _billingStreetCtrl.text.trim().isNotEmpty ||
+        _billingPostalCodeCtrl.text.trim().isNotEmpty ||
+        _billingCityCtrl.text.trim().isNotEmpty;
   }
 
   Widget _profileHeader(CustomerThemePalette palette) {
@@ -262,6 +279,13 @@ class _CustomerProfileEditPageState extends State<CustomerProfileEditPage> {
     _emailCtrl.dispose();
     _companyNameCtrl.dispose();
     _vatNumberCtrl.dispose();
+    _invoiceEmailCtrl.dispose();
+    _billingStreetCtrl.dispose();
+    _billingPostalCodeCtrl.dispose();
+    _billingCityCtrl.dispose();
+    _billingCountryCtrl.dispose();
+    _peppolEndpointIdCtrl.dispose();
+    _peppolSchemeCtrl.dispose();
     super.dispose();
   }
 
@@ -283,8 +307,19 @@ class _CustomerProfileEditPageState extends State<CustomerProfileEditPage> {
       _emailCtrl.text = profile.email;
       _companyNameCtrl.text = profile.companyName;
       _vatNumberCtrl.text = profile.vatNumber;
+      _invoiceEmailCtrl.text = profile.invoiceEmail;
+      _billingStreetCtrl.text = profile.billingStreet;
+      _billingPostalCodeCtrl.text = profile.billingPostalCode;
+      _billingCityCtrl.text = profile.billingCity;
+      _billingCountryCtrl.text = profile.billingCountry;
+      _peppolEndpointIdCtrl.text = profile.peppolEndpointId;
+      _peppolSchemeCtrl.text = profile.peppolScheme;
+      _peppolExpanded =
+          profile.peppolEndpointId.trim().isNotEmpty ||
+          profile.peppolScheme.trim().isNotEmpty;
     }
     _phoneCtrl.text = phoneForForm;
+    if (mounted) setState(() {});
   }
 
   Future<void> _save() async {
@@ -292,6 +327,9 @@ class _CustomerProfileEditPageState extends State<CustomerProfileEditPage> {
     if (!_formKey.currentState!.validate()) return;
     setState(() => _saving = true);
     final session = await CustomerSessionStore.instance.loadValidSession();
+    final billingCountryToSave = _billingCountryCtrl.text.trim().isNotEmpty
+        ? _billingCountryCtrl.text.trim()
+        : (_hasAnyBillingAddressInput() ? 'BE' : '');
     final saved = await CustomerProfileStore.instance.save(
       name: _nameCtrl.text,
       preferredPostcode: _postcodeCtrl.text,
@@ -299,6 +337,13 @@ class _CustomerProfileEditPageState extends State<CustomerProfileEditPage> {
       email: _emailCtrl.text,
       companyName: _companyNameCtrl.text,
       vatNumber: _vatNumberCtrl.text,
+      invoiceEmail: _invoiceEmailCtrl.text,
+      billingStreet: _billingStreetCtrl.text,
+      billingPostalCode: _billingPostalCodeCtrl.text,
+      billingCity: _billingCityCtrl.text,
+      billingCountry: billingCountryToSave,
+      peppolEndpointId: _peppolEndpointIdCtrl.text,
+      peppolScheme: _peppolSchemeCtrl.text,
       sessionCustomerId: session?.customerId,
     );
     _setCachedCustomerProfile(saved);
@@ -628,6 +673,127 @@ class _CustomerProfileEditPageState extends State<CustomerProfileEditPage> {
                                   ),
                                   controller: _vatNumberCtrl,
                                 ),
+                                const SizedBox(height: 10),
+                                _field(
+                                  palette: palette,
+                                  label: _t(
+                                    nl: 'Factuur e-mail (optioneel)',
+                                    en: 'Invoice email (optional)',
+                                    fr: 'E-mail de facturation (facultatif)',
+                                    es: 'Correo de factura (opcional)',
+                                  ),
+                                  controller: _invoiceEmailCtrl,
+                                  keyboardType: TextInputType.emailAddress,
+                                ),
+                                const SizedBox(height: 10),
+                                _field(
+                                  palette: palette,
+                                  label: _t(
+                                    nl: 'Straat en nummer (optioneel)',
+                                    en: 'Street and number (optional)',
+                                    fr: 'Rue et numéro (facultatif)',
+                                    es: 'Calle y número (opcional)',
+                                  ),
+                                  controller: _billingStreetCtrl,
+                                ),
+                                const SizedBox(height: 10),
+                                Row(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Expanded(
+                                      child: _field(
+                                        palette: palette,
+                                        label: _t(
+                                          nl: 'Postcode (optioneel)',
+                                          en: 'Postal code (optional)',
+                                          fr: 'Code postal (facultatif)',
+                                          es: 'Código postal (opcional)',
+                                        ),
+                                        controller: _billingPostalCodeCtrl,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 10),
+                                    Expanded(
+                                      flex: 2,
+                                      child: _field(
+                                        palette: palette,
+                                        label: _t(
+                                          nl: 'Gemeente (optioneel)',
+                                          en: 'City (optional)',
+                                          fr: 'Ville (facultatif)',
+                                          es: 'Ciudad (opcional)',
+                                        ),
+                                        controller: _billingCityCtrl,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 10),
+                                _field(
+                                  palette: palette,
+                                  label: _t(
+                                    nl: 'Land (optioneel, bv. BE)',
+                                    en: 'Country (optional, e.g. BE)',
+                                    fr: 'Pays (facultatif, ex. BE)',
+                                    es: 'País (opcional, p. ej. BE)',
+                                  ),
+                                  controller: _billingCountryCtrl,
+                                ),
+                                const SizedBox(height: 10),
+                                InkWell(
+                                  onTap: () => setState(
+                                    () => _peppolExpanded = !_peppolExpanded,
+                                  ),
+                                  child: Row(
+                                    children: [
+                                      Icon(
+                                        _peppolExpanded
+                                            ? Icons.expand_less
+                                            : Icons.expand_more,
+                                        size: 18,
+                                        color: palette.gold,
+                                      ),
+                                      const SizedBox(width: 4),
+                                      Text(
+                                        _t(
+                                          nl: 'Geavanceerd (Peppol) - optioneel',
+                                          en: 'Advanced (Peppol) - optional',
+                                          fr: 'Avancé (Peppol) - facultatif',
+                                          es: 'Avanzado (Peppol) - opcional',
+                                        ),
+                                        style: TextStyle(
+                                          color: palette.textMuted,
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.w700,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                if (_peppolExpanded) ...[
+                                  const SizedBox(height: 10),
+                                  _field(
+                                    palette: palette,
+                                    label: _t(
+                                      nl: 'Peppol endpoint-ID (optioneel)',
+                                      en: 'Peppol endpoint ID (optional)',
+                                      fr: 'ID de point d’accès Peppol (facultatif)',
+                                      es: 'ID de endpoint Peppol (opcional)',
+                                    ),
+                                    controller: _peppolEndpointIdCtrl,
+                                  ),
+                                  const SizedBox(height: 10),
+                                  _field(
+                                    palette: palette,
+                                    label: _t(
+                                      nl: 'Peppol scheme (optioneel)',
+                                      en: 'Peppol scheme (optional)',
+                                      fr: 'Schéma Peppol (facultatif)',
+                                      es: 'Esquema Peppol (opcional)',
+                                    ),
+                                    controller: _peppolSchemeCtrl,
+                                  ),
+                                ],
                               ],
                             ),
                             const SizedBox(height: 14),

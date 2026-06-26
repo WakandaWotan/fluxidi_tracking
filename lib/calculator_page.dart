@@ -3325,18 +3325,47 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
       setIfBlank(_vatNumberCtrl, profile.vatNumber);
       setIfBlank(_billingLegalNameCtrl, profile.companyName);
       setIfBlank(_billingVatCtrl, profile.vatNumber);
+      // Billing address + invoice email + Peppol from the saved profile.
+      setIfBlank(_billingStreetCtrl, profile.billingStreet);
+      setIfBlank(_billingPostalCtrl, profile.billingPostalCode);
+      setIfBlank(_billingCityCtrl, profile.billingCity);
+      setIfBlank(_billingCountryCtrl, profile.billingCountry);
+      setIfBlank(
+        _billingContactEmailCtrl,
+        profile.invoiceEmail.trim().isNotEmpty
+            ? profile.invoiceEmail
+            : profile.email,
+      );
+      setIfBlank(_billingPeppolEndpointCtrl, profile.peppolEndpointId);
+      setIfBlank(_billingPeppolSchemeCtrl, profile.peppolScheme);
+      final profileHasPeppol =
+          profile.peppolEndpointId.trim().isNotEmpty ||
+          profile.peppolScheme.trim().isNotEmpty;
       final profileHasBusinessIdentity =
           profile.companyName.trim().isNotEmpty ||
-          profile.vatNumber.trim().isNotEmpty;
+          profile.vatNumber.trim().isNotEmpty ||
+          profile.billingStreet.trim().isNotEmpty ||
+          profile.billingCity.trim().isNotEmpty ||
+          profile.billingPostalCode.trim().isNotEmpty ||
+          profile.billingCountry.trim().isNotEmpty ||
+          profile.invoiceEmail.trim().isNotEmpty ||
+          profileHasPeppol;
       if (profileHasBusinessIdentity) {
+        // Default the invoice contact email and country only when a business
+        // identity exists; both are still set-if-blank so manual edits stay.
         setIfBlank(_billingContactEmailCtrl, profile.email);
         setIfBlank(_billingCountryCtrl, 'BE');
-        if (!_billingDetailsEnabled && mounted) {
-          setState(() => _billingDetailsEnabled = true);
+        if ((!_billingDetailsEnabled ||
+                (profileHasPeppol && !_billingPeppolExpanded)) &&
+            mounted) {
+          setState(() {
+            _billingDetailsEnabled = true;
+            if (profileHasPeppol) _billingPeppolExpanded = true;
+          });
         }
       }
       debugPrint(
-        '[CALCULATOR][BUSINESS_PREFILL] skipProfileBusiness=false explicitPrivateIntent=$explicitPrivateIntent companyPrefilled=${_companyNameCtrl.text.trim().isNotEmpty} vatPrefilled=${_vatNumberCtrl.text.trim().isNotEmpty} billingEnabled=$_billingDetailsEnabled',
+        '[CALCULATOR][BUSINESS_PREFILL] skipProfileBusiness=false explicitPrivateIntent=$explicitPrivateIntent companyPrefilled=${_companyNameCtrl.text.trim().isNotEmpty} vatPrefilled=${_vatNumberCtrl.text.trim().isNotEmpty} addressPrefilled=${_billingStreetCtrl.text.trim().isNotEmpty} invoiceEmailPrefilled=${_billingContactEmailCtrl.text.trim().isNotEmpty} peppolPrefilled=$profileHasPeppol billingEnabled=$_billingDetailsEnabled',
       );
     } catch (_) {
       // Keep booking flow resilient if local profile load fails.

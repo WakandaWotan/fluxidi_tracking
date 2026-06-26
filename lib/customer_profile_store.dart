@@ -15,6 +15,13 @@ class CustomerProfile {
     required this.preferredPostcode,
     required this.companyName,
     required this.vatNumber,
+    this.invoiceEmail = '',
+    this.billingStreet = '',
+    this.billingPostalCode = '',
+    this.billingCity = '',
+    this.billingCountry = '',
+    this.peppolEndpointId = '',
+    this.peppolScheme = '',
     this.favoritePartnerIds = const <String>[],
     required this.createdAt,
     required this.updatedAt,
@@ -27,6 +34,15 @@ class CustomerProfile {
   final String preferredPostcode;
   final String companyName;
   final String vatNumber;
+  // Optional business billing identity (provider-neutral). All default to ''
+  // and never affect existing behavior when blank.
+  final String invoiceEmail;
+  final String billingStreet;
+  final String billingPostalCode;
+  final String billingCity;
+  final String billingCountry;
+  final String peppolEndpointId;
+  final String peppolScheme;
   final List<String> favoritePartnerIds;
   final String createdAt;
   final String updatedAt;
@@ -65,6 +81,16 @@ class CustomerProfile {
       return const <String>[];
     }
 
+    final billingAddress = json['billing_address'] is Map
+        ? Map<String, dynamic>.from(json['billing_address'] as Map)
+        : const <String, dynamic>{};
+    String readNestedBilling(String key) {
+      final value = billingAddress[key];
+      if (value == null) return '';
+      final text = value.toString().trim();
+      return text.toLowerCase() == 'null' ? '' : text;
+    }
+
     return CustomerProfile(
       customerId: read('customerId'),
       name: read('name'),
@@ -85,6 +111,30 @@ class CustomerProfile {
       ]),
       companyName: read('companyName'),
       vatNumber: read('vatNumber'),
+      invoiceEmail: readAny(const [
+        'invoiceEmail',
+        'invoice_email',
+      ]).toLowerCase(),
+      billingStreet:
+          readAny(const ['billingStreet', 'billing_street']).isNotEmpty
+          ? readAny(const ['billingStreet', 'billing_street'])
+          : readNestedBilling('street'),
+      billingPostalCode:
+          readAny(const ['billingPostalCode', 'billing_postal_code']).isNotEmpty
+          ? readAny(const ['billingPostalCode', 'billing_postal_code'])
+          : readNestedBilling('postal_code'),
+      billingCity: readAny(const ['billingCity', 'billing_city']).isNotEmpty
+          ? readAny(const ['billingCity', 'billing_city'])
+          : readNestedBilling('city'),
+      billingCountry:
+          readAny(const ['billingCountry', 'billing_country']).isNotEmpty
+          ? readAny(const ['billingCountry', 'billing_country'])
+          : readNestedBilling('country'),
+      peppolEndpointId: readAny(const [
+        'peppolEndpointId',
+        'peppol_endpoint_id',
+      ]),
+      peppolScheme: readAny(const ['peppolScheme', 'peppol_scheme']),
       favoritePartnerIds: readStringListAny(const [
         'favorite_partner_ids',
         'favoritePartnerIds',
@@ -106,6 +156,26 @@ class CustomerProfile {
       'preferred_postcode': preferredPostcode,
       'companyName': companyName,
       'vatNumber': vatNumber,
+      'invoiceEmail': invoiceEmail,
+      'invoice_email': invoiceEmail,
+      'billingStreet': billingStreet,
+      'billing_street': billingStreet,
+      'billingPostalCode': billingPostalCode,
+      'billing_postal_code': billingPostalCode,
+      'billingCity': billingCity,
+      'billing_city': billingCity,
+      'billingCountry': billingCountry,
+      'billing_country': billingCountry,
+      'peppolEndpointId': peppolEndpointId,
+      'peppol_endpoint_id': peppolEndpointId,
+      'peppolScheme': peppolScheme,
+      'peppol_scheme': peppolScheme,
+      'billing_address': <String, dynamic>{
+        'street': billingStreet,
+        'postal_code': billingPostalCode,
+        'city': billingCity,
+        'country': billingCountry,
+      },
       'favorite_partner_ids': favoritePartnerIds,
       'favoritePartnerIds': favoritePartnerIds,
       'createdAt': createdAt,
@@ -429,6 +499,13 @@ class CustomerProfileStore {
     String preferredPostcode = '',
     String companyName = '',
     String vatNumber = '',
+    String? invoiceEmail,
+    String? billingStreet,
+    String? billingPostalCode,
+    String? billingCity,
+    String? billingCountry,
+    String? peppolEndpointId,
+    String? peppolScheme,
     String? sessionCustomerId,
     Set<String>? favoritePartnerIds,
   }) async {
@@ -451,6 +528,10 @@ class CustomerProfileStore {
         : (activeLocalId.isNotEmpty
               ? activeLocalId
               : await _ensureActiveLocalCustomerId());
+    // When a new optional billing field is not provided by the caller, keep the
+    // existing stored value instead of blanking it.
+    String resolveOptional(String? incoming, String existingValue) =>
+        incoming == null ? existingValue : incoming.trim();
     final profile = CustomerProfile(
       customerId: resolvedCustomerId,
       name: name.trim(),
@@ -459,6 +540,28 @@ class CustomerProfileStore {
       preferredPostcode: preferredPostcode.trim().toUpperCase(),
       companyName: companyName.trim(),
       vatNumber: vatNumber.trim(),
+      invoiceEmail: resolveOptional(
+        invoiceEmail,
+        existing?.invoiceEmail ?? '',
+      ).toLowerCase(),
+      billingStreet: resolveOptional(
+        billingStreet,
+        existing?.billingStreet ?? '',
+      ),
+      billingPostalCode: resolveOptional(
+        billingPostalCode,
+        existing?.billingPostalCode ?? '',
+      ),
+      billingCity: resolveOptional(billingCity, existing?.billingCity ?? ''),
+      billingCountry: resolveOptional(
+        billingCountry,
+        existing?.billingCountry ?? '',
+      ).toUpperCase(),
+      peppolEndpointId: resolveOptional(
+        peppolEndpointId,
+        existing?.peppolEndpointId ?? '',
+      ),
+      peppolScheme: resolveOptional(peppolScheme, existing?.peppolScheme ?? ''),
       favoritePartnerIds: resolvedFavoritePartnerIds.toList(growable: false),
       createdAt: (existing?.createdAt.trim().isNotEmpty ?? false)
           ? existing!.createdAt
@@ -533,6 +636,44 @@ class CustomerProfileStore {
     ]).toUpperCase();
     final backendCompanyName = readAny(const ['company_name', 'companyName']);
     final backendVatNumber = readAny(const ['vat_number', 'vatNumber']);
+    final backendBillingAddress = profile['billing_address'] is Map
+        ? Map<String, dynamic>.from(profile['billing_address'] as Map)
+        : const <String, dynamic>{};
+    String readNestedBackendBilling(String key) {
+      final value = backendBillingAddress[key];
+      if (value == null) return '';
+      final text = value.toString().trim();
+      return text.toLowerCase() == 'null' ? '' : text;
+    }
+
+    final backendInvoiceEmail = readAny(const [
+      'invoice_email',
+      'invoiceEmail',
+    ]).toLowerCase();
+    final backendBillingStreet =
+        readAny(const ['billing_street', 'billingStreet']).isNotEmpty
+        ? readAny(const ['billing_street', 'billingStreet'])
+        : readNestedBackendBilling('street');
+    final backendBillingPostalCode =
+        readAny(const ['billing_postal_code', 'billingPostalCode']).isNotEmpty
+        ? readAny(const ['billing_postal_code', 'billingPostalCode'])
+        : readNestedBackendBilling('postal_code');
+    final backendBillingCity =
+        readAny(const ['billing_city', 'billingCity']).isNotEmpty
+        ? readAny(const ['billing_city', 'billingCity'])
+        : readNestedBackendBilling('city');
+    final backendBillingCountry =
+        readAny(const ['billing_country', 'billingCountry']).isNotEmpty
+        ? readAny(const ['billing_country', 'billingCountry'])
+        : readNestedBackendBilling('country');
+    final backendPeppolEndpointId = readAny(const [
+      'peppol_endpoint_id',
+      'peppolEndpointId',
+    ]);
+    final backendPeppolScheme = readAny(const [
+      'peppol_scheme',
+      'peppolScheme',
+    ]);
     List<String> readStringListAny(List<String> keys) {
       for (final key in keys) {
         final value = profile[key];
@@ -604,6 +745,34 @@ class CustomerProfileStore {
         existing?.companyName ?? '',
       ),
       vatNumber: pickPreferBackend(backendVatNumber, existing?.vatNumber ?? ''),
+      invoiceEmail: pickPreferBackend(
+        backendInvoiceEmail,
+        existing?.invoiceEmail ?? '',
+      ).toLowerCase(),
+      billingStreet: pickPreferBackend(
+        backendBillingStreet,
+        existing?.billingStreet ?? '',
+      ),
+      billingPostalCode: pickPreferBackend(
+        backendBillingPostalCode,
+        existing?.billingPostalCode ?? '',
+      ),
+      billingCity: pickPreferBackend(
+        backendBillingCity,
+        existing?.billingCity ?? '',
+      ),
+      billingCountry: pickPreferBackend(
+        backendBillingCountry,
+        existing?.billingCountry ?? '',
+      ).toUpperCase(),
+      peppolEndpointId: pickPreferBackend(
+        backendPeppolEndpointId,
+        existing?.peppolEndpointId ?? '',
+      ),
+      peppolScheme: pickPreferBackend(
+        backendPeppolScheme,
+        existing?.peppolScheme ?? '',
+      ),
       favoritePartnerIds: resolvedFavoritePartnerIds,
       createdAt: (existing?.createdAt.trim().isNotEmpty ?? false)
           ? existing!.createdAt
@@ -638,6 +807,13 @@ extension _CustomerProfileCopy on CustomerProfile {
       preferredPostcode: preferredPostcode,
       companyName: companyName,
       vatNumber: vatNumber,
+      invoiceEmail: invoiceEmail,
+      billingStreet: billingStreet,
+      billingPostalCode: billingPostalCode,
+      billingCity: billingCity,
+      billingCountry: billingCountry,
+      peppolEndpointId: peppolEndpointId,
+      peppolScheme: peppolScheme,
       favoritePartnerIds: favoritePartnerIds,
       createdAt: createdAt,
       updatedAt: updatedAt,
