@@ -26565,6 +26565,25 @@ POST /admin/mollie/connect/disconnect
         return payStatus(request, env, statusScope);
       }
 
+      // Patch 2.4G: friendly public return page for add-on checkout.
+      // Mollie redirects the customer here after an add-on payment so the
+      // browser no longer lands on the plain API root. Static HTML only:
+      // no auth, no KV, no Mollie calls, no secrets, no query echoing. Add-on
+      // entitlement is applied by the webhook; this page is purely cosmetic.
+      if (
+        url.pathname === "/company/subscription/add-ons/checkout/return" &&
+        request.method === "GET"
+      ) {
+        return html(`
+          <div style="font-family: ui-sans-serif, system-ui; max-width: 640px; margin: 48px auto; padding: 0 20px; line-height: 1.55;">
+            <h1 style="font-size: 24px; margin-bottom: 12px;">Betaling ontvangen</h1>
+            <p>Je betaling is verwerkt of wordt afgerond. Je mag terug naar Fluxidi.</p>
+            <p>Open de Fluxidi-app en vernieuw je abonnement als de limieten nog niet meteen zichtbaar zijn.</p>
+            <p style="margin-top: 18px; color: #6b7280; font-size: 14px;">Je kunt dit venster sluiten.</p>
+          </div>
+        `);
+      }
+
       // Simple return page (fallback redirectUrl)
       if (url.pathname === "/pay/return" && request.method === "GET") {
         const id = (url.searchParams.get("id") || "").trim();

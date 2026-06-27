@@ -388,6 +388,8 @@ class _CompanySubscriptionBillingPageState
         companyId: scopeId,
         addonCode: 'extra_vehicle',
         quantity: 1,
+        returnUrl:
+            '${appConfig.bookingBaseUrl}/company/subscription/add-ons/checkout/return',
       );
 
       if (!mounted) return;
