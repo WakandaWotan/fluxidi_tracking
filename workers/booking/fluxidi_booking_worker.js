@@ -25952,56 +25952,98 @@ export default {
               }
             }
 
-            // Only resumable while the payment is still open. paid / canceled /
-            // expired / failed are not resumable (and won't expose a checkout
-            // link); fall back to 409 and let the webhook/TTL settle it.
             const resumeStatus = _fluxidiSubscriptionSafeStr(resumePayment?.status).toLowerCase();
-            if (resumeStatus && resumeStatus !== "open" && resumeStatus !== "pending") {
+
+            // Patch 2.4D: paid → never mint a second payment; activation/webhook
+            // owns that path. Terminal non-paid (expired/canceled/failed) → stale
+            // pending cleanup then fall through to fresh create in this request.
+            // open/pending → Patch 2.4C resume. Anything else → 409 fallback.
+            if (resumeStatus === "paid") {
               console.log(
-                `[SUBSCRIPTION_ADDON_CHECKOUT_START][RESUME_SKIP] reason=payment_status_not_open status=${resumeStatus}`,
+                `[SUBSCRIPTION_ADDON_CHECKOUT_START][RESUME_SKIP] reason=payment_already_paid status=${resumeStatus}`,
               );
               return respondAlreadyPending();
             }
-
-            // Extract + validate the checkout link (non-empty, parseable, https).
-            const resumeCheckoutUrl = _fluxidiSubscriptionSafeStr(
-              resumePayment?._links?.checkout?.href,
-              1000,
-            );
-            let resumeUrlValid = false;
-            if (resumeCheckoutUrl) {
+            if (
+              resumeStatus === "expired" ||
+              resumeStatus === "canceled" ||
+              resumeStatus === "failed"
+            ) {
               try {
-                resumeUrlValid = new URL(resumeCheckoutUrl).protocol === "https:";
-              } catch (_) {
-                resumeUrlValid = false;
+                const rejected = await markFluxidiAddonPendingActivationRejected(
+                  env,
+                  existingActivationId,
+                  {
+                    rejectionReason: `payment_${resumeStatus}`,
+                    providerPaymentId: existingPaymentId,
+                  },
+                );
+                if (!rejected) {
+                  throw new Error("pending_reject_failed");
+                }
+                await clearFluxidiAddonPendingByCompanyIndexIfMatches(env, {
+                  tenantId: scope.tenant_id,
+                  companyId: scope.company_id,
+                  addonCode,
+                  activationId: existingActivationId,
+                });
+                console.log(
+                  `[SUBSCRIPTION_ADDON_CHECKOUT_START][STALE_CLEARED] tenant=${tenantMask} company=${companyMask} addon=${addonCode} status=${resumeStatus} activation_id=${existingActivationId}`,
+                );
+                // Fall through: do not return. Exit if(existingPending) and
+                // continue to the normal create path in this same request.
+              } catch (e) {
+                console.log(
+                  `[SUBSCRIPTION_ADDON_CHECKOUT_START][STALE_CLEAR_FAILED] tenant=${tenantMask} company=${companyMask} addon=${addonCode} activation_id=${existingActivationId} msg=${_fluxidiSubscriptionSafeStr(e?.message, 160)}`,
+                );
+                return respondAlreadyPending();
               }
-            }
-            if (!resumeUrlValid) {
+            } else if (resumeStatus === "open" || resumeStatus === "pending") {
+              // Patch 2.4C resume: extract + validate checkout link, return 200.
+              const resumeCheckoutUrl = _fluxidiSubscriptionSafeStr(
+                resumePayment?._links?.checkout?.href,
+                1000,
+              );
+              let resumeUrlValid = false;
+              if (resumeCheckoutUrl) {
+                try {
+                  resumeUrlValid = new URL(resumeCheckoutUrl).protocol === "https:";
+                } catch (_) {
+                  resumeUrlValid = false;
+                }
+              }
+              if (!resumeUrlValid) {
+                console.log(
+                  "[SUBSCRIPTION_ADDON_CHECKOUT_START][RESUME_SKIP] reason=missing_or_invalid_checkout_url",
+                );
+                return respondAlreadyPending();
+              }
+
               console.log(
-                "[SUBSCRIPTION_ADDON_CHECKOUT_START][RESUME_SKIP] reason=missing_or_invalid_checkout_url",
+                `[SUBSCRIPTION_ADDON_CHECKOUT_START][RESUME] tenant=${tenantMask} company=${companyMask} addon=${addonCode} qty=${quantity} activation_id=${existingActivationId} payment_id=set mode=${config.mode}`,
+              );
+              return json(
+                {
+                  ok: true,
+                  resumed: true,
+                  pending: true,
+                  activation_id: existingActivationId,
+                  addon_code: addonCode,
+                  quantity,
+                  expected_amount_cents: pendingExpectedCents,
+                  currency: pendingCurrency,
+                  billing_model: pendingBillingModel,
+                  checkout_url: resumeCheckoutUrl,
+                  provider_payment_id: existingPaymentId,
+                },
+                200,
+              );
+            } else {
+              console.log(
+                `[SUBSCRIPTION_ADDON_CHECKOUT_START][RESUME_SKIP] reason=payment_status_not_open status=${resumeStatus || "-"}`,
               );
               return respondAlreadyPending();
             }
-
-            console.log(
-              `[SUBSCRIPTION_ADDON_CHECKOUT_START][RESUME] tenant=${tenantMask} company=${companyMask} addon=${addonCode} qty=${quantity} activation_id=${existingActivationId} payment_id=set mode=${config.mode}`,
-            );
-            return json(
-              {
-                ok: true,
-                resumed: true,
-                pending: true,
-                activation_id: existingActivationId,
-                addon_code: addonCode,
-                quantity,
-                expected_amount_cents: pendingExpectedCents,
-                currency: pendingCurrency,
-                billing_model: pendingBillingModel,
-                checkout_url: resumeCheckoutUrl,
-                provider_payment_id: existingPaymentId,
-              },
-              200,
-            );
           }
 
           // Mint a fresh add-on activation id. Prefix `addon_` so logs/runbook
