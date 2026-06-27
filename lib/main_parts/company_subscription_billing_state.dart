@@ -1692,10 +1692,10 @@ class _CompanySubscriptionBillingPageState
                                     es: '+ ${_priceFromCents(catalog.extraVehiclePriceCents)} / mes',
                                   ),
                                   subtitle: _t(
-                                    nl: 'Inclusief ${catalog.includedDriversPerVehicle} extra chauffeurs en ${catalog.includedPdfCreationsPerVehicleMonth} extra PDF-creaties per maand.',
-                                    en: 'Includes ${catalog.includedDriversPerVehicle} extra drivers and ${catalog.includedPdfCreationsPerVehicleMonth} extra PDF creations per month.',
-                                    fr: 'Inclut ${catalog.includedDriversPerVehicle} chauffeurs supplémentaires et ${catalog.includedPdfCreationsPerVehicleMonth} créations PDF supplémentaires par mois.',
-                                    es: 'Incluye ${catalog.includedDriversPerVehicle} conductores extra y ${catalog.includedPdfCreationsPerVehicleMonth} creaciones PDF extra al mes.',
+                                    nl: 'Voegt 1 voertuigplek toe, inclusief ${catalog.includedDriversPerVehicle} extra chauffeurs. PDF-limieten worden later apart als uitbreiding gekoppeld.',
+                                    en: 'Adds 1 vehicle slot, including ${catalog.includedDriversPerVehicle} extra drivers. PDF limits will be linked later as a separate add-on.',
+                                    fr: 'Ajoute 1 emplacement de véhicule, dont ${catalog.includedDriversPerVehicle} chauffeurs supplémentaires. Les limites PDF seront ajoutées plus tard comme extension distincte.',
+                                    es: 'Añade 1 plaza de vehículo, incluidos ${catalog.includedDriversPerVehicle} conductores extra. Los límites de PDF se vincularán más adelante como ampliación independiente.',
                                   ),
                                   emphasized:
                                       usedVehicles >= profile.maxVehicles,
