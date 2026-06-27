@@ -5758,6 +5758,100 @@ startCompanySubscriptionCheckout({
   }
 }
 
+/// POST /company/subscription/add-ons/checkout/start (company-session auth,
+/// Patch 2.4B).
+///
+/// Starts a Fluxidi-owned ADD-ON checkout for the active company. Reuses the
+/// exact auth/scope style as [startCompanySubscriptionCheckout]: company
+/// session bearer (admin token fallback) plus tenant/company scope in both the
+/// query string and the JSON body. Pricing is NEVER sent from Flutter — the
+/// backend is the sole source of truth and ignores any client price. The patch
+/// scope supports only `addon_code == "extra_vehicle"` and `quantity == 1`.
+///
+/// Never throws on a non-2xx backend response; instead it returns a typed
+/// result carrying `ok=false`, the HTTP status, and the machine-readable error
+/// so the UI can branch (e.g. `addon_checkout_already_pending` [409],
+/// `subscription_not_active` / `unsupported_market` [422]). The success body
+/// reuses [BackendSubscriptionCheckoutStartResult] (shared fields:
+/// `checkout_url`, `activation_id`, `provider_payment_id`,
+/// `expected_amount_cents`, `currency`).
+Future<BackendSubscriptionCheckoutStartResult>
+startCompanySubscriptionAddonCheckout({
+  required String tenantId,
+  required String companyId,
+  required String addonCode,
+  int quantity = 1,
+  String? returnUrl,
+}) async {
+  final scope = _resolveAdminTenantCompanyScope(
+    tenantId: tenantId,
+    companyId: companyId,
+  );
+  final endpoint = _withAdminTenantCompanyScope(
+    Uri.parse(
+      '${appConfig.bookingBaseUrl}/company/subscription/add-ons/checkout/start',
+    ),
+    tenantId: scope['tenant_id'],
+    companyId: scope['company_id'],
+  );
+  final payload = <String, dynamic>{
+    ...scope,
+    'addon_code': addonCode,
+    'quantity': quantity,
+    if (returnUrl != null && returnUrl.trim().isNotEmpty)
+      'return_url': returnUrl.trim(),
+  };
+  try {
+    final auth = await resolveCompanyOwnerAuthHeaders();
+    final res = await http
+        .post(endpoint, headers: auth.headers, body: jsonEncode(payload))
+        .timeout(const Duration(seconds: 20));
+    Map<String, dynamic> decodedMap = const <String, dynamic>{};
+    try {
+      final decoded = jsonDecode(utf8.decode(res.bodyBytes));
+      if (decoded is Map) decodedMap = Map<String, dynamic>.from(decoded);
+    } catch (_) {
+      decodedMap = const <String, dynamic>{};
+    }
+    if (res.statusCode < 200 || res.statusCode >= 300) {
+      final parsed = BackendSubscriptionCheckoutStartResult.fromJson(
+        decodedMap,
+        statusCode: res.statusCode,
+      );
+      debugPrint(
+        '[SUBSCRIPTION_ADDON_CHECKOUT_START][FAIL] status=${res.statusCode} '
+        'auth_mode=${auth.mode.name} error=${parsed.error}',
+      );
+      return BackendSubscriptionCheckoutStartResult(
+        ok: false,
+        statusCode: res.statusCode,
+        alreadyActive: parsed.alreadyActive,
+        checkoutUrl: parsed.checkoutUrl,
+        activationId: parsed.activationId,
+        providerPaymentId: parsed.providerPaymentId,
+        expectedAmountCents: parsed.expectedAmountCents,
+        currency: parsed.currency,
+        founderReserved: parsed.founderReserved,
+        founderSlotNumber: parsed.founderSlotNumber,
+        trialEndsAt: parsed.trialEndsAt,
+        subscriptionStatus: parsed.subscriptionStatus,
+        market: parsed.market,
+        error: parsed.error.isEmpty ? 'http_${res.statusCode}' : parsed.error,
+      );
+    }
+    return BackendSubscriptionCheckoutStartResult.fromJson(
+      decodedMap,
+      statusCode: res.statusCode,
+    );
+  } catch (e) {
+    debugPrint('[SUBSCRIPTION_ADDON_CHECKOUT_START][ERR] exception');
+    return const BackendSubscriptionCheckoutStartResult(
+      ok: false,
+      error: 'network_error',
+    );
+  }
+}
+
 Future<BackendSubscriptionProfile> saveBackendSubscriptionProfile(
   BackendSubscriptionProfile profile, {
   String? tenantId,

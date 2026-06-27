@@ -16,8 +16,12 @@ class _CompanySubscriptionBillingPageState
 
   // Patch 2.2B activation wiring state.
   bool _activating = false;
+  // Patch 2.4B: dedicated loading flag for the Extra vehicle add-on checkout so
+  // it cannot be double-tapped and is independent of the base-activation flag.
+  bool _startingAddonCheckout = false;
   // Set true while a Mollie checkout window is open so the next app resume
-  // triggers exactly one profile refresh (no infinite resume loops).
+  // triggers exactly one profile refresh (no infinite resume loops). Shared by
+  // both the base subscription checkout and the add-on checkout.
   bool _awaitingCheckoutReturn = false;
 
   /// Format an integer-cents price as "€XX" (no decimals when round, "€X.YY"
@@ -278,6 +282,227 @@ class _CompanySubscriptionBillingPageState
     fr: 'Pas encore disponible dans ce pays.',
     es: 'Aún no disponible en este país.',
   );
+
+  // ---------------------------------------------------------------------------
+  // Patch 2.4B: Extra vehicle add-on checkout wiring.
+  //
+  // Mirrors [_startCheckout] (base subscription) but targets the live add-on
+  // route and only ever requests addon_code="extra_vehicle", quantity=1. The
+  // backend is the sole source of truth for pricing — Flutter never sends a
+  // price. Extra driver / PDF bundle cards are intentionally NOT wired here.
+  // ---------------------------------------------------------------------------
+
+  String _activateExtraVehicleLabel() => _t(
+    nl: 'Extra voertuig activeren',
+    en: 'Activate extra vehicle',
+    fr: 'Activer véhicule supplémentaire',
+    es: 'Activar vehículo extra',
+  );
+
+  bool _profileIsActive(BackendSubscriptionProfile profile) =>
+      profile.status.trim().toLowerCase() == 'active' ||
+      profile.subscriptionStatus.trim().toLowerCase() == 'active';
+
+  String _addonRequiresActiveMessage() => _t(
+    nl: 'Add-ons kunnen pas geactiveerd worden zodra je Fluxidi-abonnement actief is.',
+    en: 'Add-ons can only be activated once your Fluxidi subscription is active.',
+    fr: 'Les options ne peuvent être activées qu’une fois votre abonnement Fluxidi actif.',
+    es: 'Los complementos solo se pueden activar cuando tu suscripción Fluxidi esté activa.',
+  );
+
+  String _genericAddonError() => _t(
+    nl: 'Activeren is niet gelukt. Controleer je verbinding en probeer opnieuw.',
+    en: 'Activation failed. Check your connection and try again.',
+    fr: 'Échec de l’activation. Vérifiez votre connexion et réessayez.',
+    es: 'Error en la activación. Comprueba tu conexión e inténtalo de nuevo.',
+  );
+
+  /// Map a non-ok add-on checkout result to a localized, user-safe message.
+  String _addonCheckoutErrorMessage(
+    BackendSubscriptionCheckoutStartResult result,
+  ) {
+    final error = result.error.trim();
+    if (result.statusCode == 401 || error == 'unauthorized') {
+      return _t(
+        nl: 'Je sessie is verlopen. Meld opnieuw aan.',
+        en: 'Your session has expired. Please sign in again.',
+        fr: 'Votre session a expiré. Veuillez vous reconnecter.',
+        es: 'Tu sesión ha caducado. Vuelve a iniciar sesión.',
+      );
+    }
+    if (error == 'addon_checkout_already_pending') {
+      return _t(
+        nl: 'Er staat al een add-on betaling klaar. Rond die eerst af of probeer later opnieuw.',
+        en: 'An add-on payment is already pending. Complete it first or try again later.',
+        fr: 'Un paiement d’option est déjà en attente. Terminez-le d’abord ou réessayez plus tard.',
+        es: 'Ya hay un pago de complemento pendiente. Complétalo primero o inténtalo más tarde.',
+      );
+    }
+    if (error == 'subscription_not_active') {
+      return _addonRequiresActiveMessage();
+    }
+    if (result.isUnsupportedMarket) {
+      return _t(
+        nl: 'Deze add-on is nog niet beschikbaar in je land.',
+        en: 'This add-on is not available in your country yet.',
+        fr: 'Cette option n’est pas encore disponible dans votre pays.',
+        es: 'Este complemento aún no está disponible en tu país.',
+      );
+    }
+    return _genericAddonError();
+  }
+
+  /// Start the Extra vehicle add-on checkout and open the Mollie payment window
+  /// externally (same pattern as [_startCheckout]). Guarded against
+  /// double-taps by [_startingAddonCheckout].
+  Future<void> _startExtraVehicleAddonCheckout(
+    BackendSubscriptionProfile profile,
+  ) async {
+    if (_startingAddonCheckout) return;
+    final scopeId = _activeCompanyId();
+    if (scopeId == null || scopeId.trim().isEmpty) {
+      _showSnack(
+        _t(
+          nl: 'Geen actief bedrijf gevonden. Probeer opnieuw.',
+          en: 'No active company found. Please try again.',
+          fr: 'Aucune entreprise active trouvée. Veuillez réessayer.',
+          es: 'No se encontró ninguna empresa activa. Inténtalo de nuevo.',
+        ),
+      );
+      return;
+    }
+    final market = _effectiveMarket(profile);
+    if (!_isSupportedMarket(market)) {
+      _showSnack(_unsupportedMarketMessage());
+      return;
+    }
+    if (!_profileIsActive(profile)) {
+      _showSnack(_addonRequiresActiveMessage());
+      return;
+    }
+
+    setState(() => _startingAddonCheckout = true);
+    try {
+      final result = await startCompanySubscriptionAddonCheckout(
+        tenantId: scopeId,
+        companyId: scopeId,
+        addonCode: 'extra_vehicle',
+        quantity: 1,
+      );
+
+      if (!mounted) return;
+
+      if (!result.ok) {
+        _showSnack(_addonCheckoutErrorMessage(result));
+        return;
+      }
+
+      final url = result.checkoutUrl.trim();
+      final uri = Uri.tryParse(url);
+      if (url.isEmpty || uri == null || !uri.isScheme('https')) {
+        _showSnack(_genericAddonError());
+        return;
+      }
+
+      final launched = await launchUrl(
+        uri,
+        mode: LaunchMode.externalApplication,
+      );
+      if (!mounted) return;
+      if (!launched) {
+        _showSnack(
+          _t(
+            nl: 'Kon het betaalvenster niet openen.',
+            en: 'Could not open the payment window.',
+            fr: 'Impossible d’ouvrir la fenêtre de paiement.',
+            es: 'No se pudo abrir la ventana de pago.',
+          ),
+        );
+        return;
+      }
+
+      // Reuse the shared resume-refresh flag so max_vehicles/max_drivers update
+      // automatically once the user returns from a completed payment.
+      _awaitingCheckoutReturn = true;
+      _showSnack(
+        _t(
+          nl: 'Betaalvenster geopend. Na betaling wordt je add-on automatisch bijgewerkt.',
+          en: 'Payment window opened. After payment, your add-on will update automatically.',
+          fr: 'Fenêtre de paiement ouverte. Après le paiement, votre option sera mise à jour automatiquement.',
+          es: 'Ventana de pago abierta. Después del pago, tu complemento se actualizará automáticamente.',
+        ),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      _showSnack(
+        _t(
+          nl: 'Er ging iets mis. Probeer opnieuw.',
+          en: 'Something went wrong. Please try again.',
+          fr: 'Une erreur est survenue. Veuillez réessayer.',
+          es: 'Algo salió mal. Inténtalo de nuevo.',
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _startingAddonCheckout = false);
+    }
+  }
+
+  /// Footer for the Extra vehicle add-on card only. When the base subscription
+  /// is active it renders the real activation button; otherwise it renders a
+  /// disabled button plus copy explaining add-ons need an active subscription.
+  Widget _extraVehicleAddonFooter(BackendSubscriptionProfile profile) {
+    final bool isActive = _profileIsActive(profile);
+    final button = SizedBox(
+      width: double.infinity,
+      child: FilledButton.icon(
+        onPressed: (!isActive || _startingAddonCheckout)
+            ? null
+            : () => _startExtraVehicleAddonCheckout(profile),
+        style: FilledButton.styleFrom(
+          backgroundColor: _gold,
+          foregroundColor: Colors.black,
+          disabledBackgroundColor: _businessThemePalette.surfaceAlt.withOpacity(
+            _businessThemePalette.isDark ? 0.66 : 0.92,
+          ),
+          disabledForegroundColor: _businessThemePalette.textMuted,
+          minimumSize: const Size.fromHeight(44),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+        ),
+        icon: _startingAddonCheckout
+            ? const SizedBox(
+                width: 16,
+                height: 16,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: Colors.black54,
+                ),
+              )
+            : const Icon(Icons.directions_car_filled_outlined, size: 18),
+        label: Text(
+          _activateExtraVehicleLabel(),
+          style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 13),
+        ),
+      ),
+    );
+    if (isActive) return button;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        button,
+        const SizedBox(height: 6),
+        Text(
+          _addonRequiresActiveMessage(),
+          style: TextStyle(
+            color: _businessThemePalette.textMuted,
+            fontSize: 11.4,
+            height: 1.3,
+          ),
+        ),
+      ],
+    );
+  }
 
   /// Activation / active-state / unsupported-market section for the current
   /// subscription card. Drives the only call site of [_startCheckout].
@@ -875,6 +1100,7 @@ class _CompanySubscriptionBillingPageState
     required String price,
     required String subtitle,
     bool emphasized = false,
+    Widget? footer,
   }) {
     return Container(
       padding: const EdgeInsets.fromLTRB(10, 9, 10, 10),
@@ -914,21 +1140,22 @@ class _CompanySubscriptionBillingPageState
             ),
           ),
           const SizedBox(height: 7),
-          // Patch 2.2C: add-ons are not purchasable yet (no backend add-on
-          // checkout / entitlement). Show a passive, non-actionable
-          // "coming soon" chip instead of a button that goes nowhere.
-          Align(
-            alignment: Alignment.centerLeft,
-            child: _chip(
-              text: _comingSoonLabel(),
-              bg: _businessThemePalette.surfaceAlt.withOpacity(
-                _businessThemePalette.isDark ? 0.66 : 0.92,
+          // Patch 2.4B: cards that pass a [footer] (currently only Extra
+          // vehicle) render a real action button. All other cards keep the
+          // passive, non-actionable "coming soon" chip from Patch 2.2C.
+          footer ??
+              Align(
+                alignment: Alignment.centerLeft,
+                child: _chip(
+                  text: _comingSoonLabel(),
+                  bg: _businessThemePalette.surfaceAlt.withOpacity(
+                    _businessThemePalette.isDark ? 0.66 : 0.92,
+                  ),
+                  border: _businessThemePalette.border.withOpacity(0.7),
+                  textColor: _businessThemePalette.textMuted,
+                  icon: Icons.schedule_outlined,
+                ),
               ),
-              border: _businessThemePalette.border.withOpacity(0.7),
-              textColor: _businessThemePalette.textMuted,
-              icon: Icons.schedule_outlined,
-            ),
-          ),
         ],
       ),
     );
@@ -1699,6 +1926,9 @@ class _CompanySubscriptionBillingPageState
                                   ),
                                   emphasized:
                                       usedVehicles >= profile.maxVehicles,
+                                  // Patch 2.4B: only the Extra vehicle card is
+                                  // wired to the live add-on checkout route.
+                                  footer: _extraVehicleAddonFooter(profile),
                                 ),
                                 const SizedBox(height: 7),
                                 _addonCard(
