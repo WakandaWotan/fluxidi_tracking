@@ -19,6 +19,8 @@ class _CompanySubscriptionBillingPageState
   // Patch 2.4B: dedicated loading flag for the Extra vehicle add-on checkout so
   // it cannot be double-tapped and is independent of the base-activation flag.
   bool _startingAddonCheckout = false;
+  // Patch 2.5: guard against double-tapping the cancel-subscription button.
+  bool _cancelling = false;
   // Set true while a Mollie checkout window is open so the next app resume
   // triggers exactly one profile refresh (no infinite resume loops). Shared by
   // both the base subscription checkout and the add-on checkout.
@@ -503,6 +505,220 @@ class _CompanySubscriptionBillingPageState
           ),
         ),
       ],
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Patch 2.5: minimal subscription cancellation (cancel-at-period-end).
+  //
+  // The subscription stays active/trialing until the effective date; this only
+  // schedules the cancellation via POST /company/subscription/cancel. No
+  // payment, no checkout, no Mollie call is triggered from here.
+  // ---------------------------------------------------------------------------
+
+  bool _profileIsActiveOrTrialing(BackendSubscriptionProfile profile) {
+    final status = profile.subscriptionStatus.trim().toLowerCase();
+    final legacy = profile.status.trim().toLowerCase();
+    return status == 'active' ||
+        status == 'trialing' ||
+        legacy == 'active' ||
+        legacy == 'trialing';
+  }
+
+  /// Best-effort human date from a backend ISO timestamp. Falls back to the
+  /// trimmed raw string (or em dash) when it cannot be parsed.
+  String _humanDate(String iso) {
+    final raw = iso.trim();
+    if (raw.isEmpty) return '—';
+    final parsed = DateTime.tryParse(raw);
+    if (parsed == null) return raw;
+    final local = parsed.toLocal();
+    final d = local.day.toString().padLeft(2, '0');
+    final m = local.month.toString().padLeft(2, '0');
+    return '$d-$m-${local.year}';
+  }
+
+  String _effectiveCancelDate(BackendSubscriptionProfile profile) {
+    final effective = profile.cancellationEffectiveAt.trim();
+    if (effective.isNotEmpty) return _humanDate(effective);
+    final periodEnd = profile.currentPeriodEnd.trim();
+    if (periodEnd.isNotEmpty) return _humanDate(periodEnd);
+    final trialEnds = profile.trialEndsAt.trim();
+    if (trialEnds.isNotEmpty) return _humanDate(trialEnds);
+    return '—';
+  }
+
+  Future<void> _confirmAndCancelSubscription(
+    BackendSubscriptionProfile profile,
+  ) async {
+    if (_cancelling) return;
+    final scopeId = _activeCompanyId();
+    if (scopeId == null || scopeId.trim().isEmpty) {
+      _showSnack(
+        _t(
+          nl: 'Geen actief bedrijf gevonden. Probeer opnieuw.',
+          en: 'No active company found. Please try again.',
+          fr: 'Aucune entreprise active trouvée. Veuillez réessayer.',
+          es: 'No se encontró ninguna empresa activa. Inténtalo de nuevo.',
+        ),
+      );
+      return;
+    }
+
+    final effective = _effectiveCancelDate(profile);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: _panel,
+        title: Text(
+          _t(
+            nl: 'Abonnement opzeggen?',
+            en: 'Cancel subscription?',
+            fr: 'Résilier l\'abonnement ?',
+            es: '¿Cancelar la suscripción?',
+          ),
+          style: TextStyle(color: _businessThemePalette.textPrimary),
+        ),
+        content: Text(
+          _t(
+            nl: 'Je abonnement blijft actief tot $effective. Daarna wordt het niet meer verlengd.',
+            en: 'Your subscription stays active until $effective. It will not renew after that.',
+            fr: 'Votre abonnement reste actif jusqu\'au $effective. Il ne sera plus renouvelé ensuite.',
+            es: 'Tu suscripción permanece activa hasta el $effective. No se renovará después.',
+          ),
+          style: TextStyle(color: _businessThemePalette.textMuted),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: Text(
+              _t(nl: 'Behouden', en: 'Keep', fr: 'Conserver', es: 'Mantener'),
+            ),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: _warn,
+              foregroundColor: Colors.black,
+            ),
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: Text(
+              _t(
+                nl: 'Opzeggen',
+                en: 'Cancel',
+                fr: 'Résilier',
+                es: 'Cancelar',
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
+    setState(() => _cancelling = true);
+    try {
+      final updated = await cancelCompanySubscription(
+        tenantId: scopeId,
+        companyId: scopeId,
+      );
+      if (!mounted) return;
+      _showSnack(
+        _t(
+          nl: 'Je abonnement blijft actief tot ${_effectiveCancelDate(updated)}.',
+          en: 'Your subscription stays active until ${_effectiveCancelDate(updated)}.',
+          fr: 'Votre abonnement reste actif jusqu\'au ${_effectiveCancelDate(updated)}.',
+          es: 'Tu suscripción permanece activa hasta el ${_effectiveCancelDate(updated)}.',
+        ),
+      );
+      _refresh();
+    } catch (_) {
+      if (!mounted) return;
+      _showSnack(
+        _t(
+          nl: 'Opzeggen is niet gelukt. Controleer je verbinding en probeer opnieuw.',
+          en: 'Cancellation failed. Check your connection and try again.',
+          fr: 'Échec de la résiliation. Vérifiez votre connexion et réessayez.',
+          es: 'Error al cancelar. Comprueba tu conexión e inténtalo de nuevo.',
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _cancelling = false);
+    }
+  }
+
+  /// Cancel button (active/trialing, not yet scheduled) or a passive status
+  /// card (already scheduled). Renders nothing for any other state.
+  Widget _buildCancellationSection(BackendSubscriptionProfile profile) {
+    if (profile.cancelAtPeriodEnd) {
+      return Padding(
+        padding: const EdgeInsets.only(top: 10),
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.fromLTRB(11, 10, 11, 11),
+          decoration: BoxDecoration(
+            color: _warn.withOpacity(0.12),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: _warn.withOpacity(0.5)),
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(Icons.info_outline, size: 18, color: _warn),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  _t(
+                    nl: 'Je abonnement is opgezegd en blijft actief tot ${_effectiveCancelDate(profile)}. Daarna wordt het niet meer verlengd.',
+                    en: 'Your subscription is cancelled and stays active until ${_effectiveCancelDate(profile)}. It will not renew after that.',
+                    fr: 'Votre abonnement est résilié et reste actif jusqu\'au ${_effectiveCancelDate(profile)}. Il ne sera plus renouvelé ensuite.',
+                    es: 'Tu suscripción está cancelada y permanece activa hasta el ${_effectiveCancelDate(profile)}. No se renovará después.',
+                  ),
+                  style: TextStyle(
+                    color: _businessThemePalette.textPrimary,
+                    fontSize: 12,
+                    height: 1.35,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    if (!_profileIsActiveOrTrialing(profile)) return const SizedBox.shrink();
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 10),
+      child: Align(
+        alignment: Alignment.centerLeft,
+        child: TextButton.icon(
+          onPressed: _cancelling
+              ? null
+              : () => _confirmAndCancelSubscription(profile),
+          style: TextButton.styleFrom(
+            foregroundColor: _businessThemePalette.textMuted,
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+          ),
+          icon: _cancelling
+              ? const SizedBox(
+                  width: 15,
+                  height: 15,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Icon(Icons.cancel_schedule_send_outlined, size: 17),
+          label: Text(
+            _t(
+              nl: 'Abonnement opzeggen',
+              en: 'Cancel subscription',
+              fr: 'Résilier l\'abonnement',
+              es: 'Cancelar suscripción',
+            ),
+            style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12.5),
+          ),
+        ),
+      ),
     );
   }
 
@@ -1482,6 +1698,7 @@ class _CompanySubscriptionBillingPageState
                                 icon: Icons.schedule_outlined,
                               ),
                               _buildActivationSection(profile, catalog),
+                              _buildCancellationSection(profile),
                               const SizedBox(height: 8),
                               _infoLine(
                                 _t(

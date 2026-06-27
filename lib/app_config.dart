@@ -1340,6 +1340,11 @@ class BackendSubscriptionProfile {
   final String subscriptionStatus;
   final String activatedAt;
   final String cancelledAt;
+  // Patch 2.5: cancel-at-period-end lifecycle (local backend state only).
+  final bool cancelAtPeriodEnd;
+  final bool autoRenew;
+  final String cancelRequestedAt;
+  final String cancellationEffectiveAt;
   final String currentPeriodStart;
   final String currentPeriodEnd;
   final int? lockedPriceCents;
@@ -1382,6 +1387,10 @@ class BackendSubscriptionProfile {
     this.subscriptionStatus = 'trialing',
     this.activatedAt = '',
     this.cancelledAt = '',
+    this.cancelAtPeriodEnd = false,
+    this.autoRenew = true,
+    this.cancelRequestedAt = '',
+    this.cancellationEffectiveAt = '',
     this.currentPeriodStart = '',
     this.currentPeriodEnd = '',
     this.lockedPriceCents,
@@ -1640,6 +1649,22 @@ class BackendSubscriptionProfile {
       ).trim().toLowerCase(),
       activatedAt: text('activated_at', 'activatedAt', fallback.activatedAt),
       cancelledAt: text('cancelled_at', 'cancelledAt', fallback.cancelledAt),
+      cancelAtPeriodEnd: boolVal(
+        'cancel_at_period_end',
+        'cancelAtPeriodEnd',
+        fallback.cancelAtPeriodEnd,
+      ),
+      autoRenew: boolVal('auto_renew', 'autoRenew', fallback.autoRenew),
+      cancelRequestedAt: text(
+        'cancel_requested_at',
+        'cancelRequestedAt',
+        fallback.cancelRequestedAt,
+      ),
+      cancellationEffectiveAt: text(
+        'cancellation_effective_at',
+        'cancellationEffectiveAt',
+        fallback.cancellationEffectiveAt,
+      ),
       currentPeriodStart: text(
         'current_period_start',
         'currentPeriodStart',
@@ -1729,6 +1754,10 @@ class BackendSubscriptionProfile {
     'subscription_status': subscriptionStatus,
     'activated_at': activatedAt,
     'cancelled_at': cancelledAt,
+    'cancel_at_period_end': cancelAtPeriodEnd,
+    'auto_renew': autoRenew,
+    'cancel_requested_at': cancelRequestedAt,
+    'cancellation_effective_at': cancellationEffectiveAt,
     'current_period_start': currentPeriodStart,
     'current_period_end': currentPeriodEnd,
     'locked_price_cents': lockedPriceCents,
@@ -5573,6 +5602,49 @@ Future<BackendSubscriptionProfile> fetchCompanySubscriptionProfile({
       .get(endpoint, headers: auth.headers)
       .timeout(const Duration(seconds: 12));
   if (res.statusCode < 200 || res.statusCode >= 300) {
+    throw Exception('HTTP ${res.statusCode}: ${res.body}');
+  }
+  final decoded = jsonDecode(utf8.decode(res.bodyBytes));
+  if (decoded is! Map) throw Exception('Invalid response');
+  final profile = decoded['subscription_profile'];
+  if (profile is! Map) throw Exception('Missing subscription_profile');
+  return BackendSubscriptionProfile.fromJson(
+    Map<String, dynamic>.from(profile),
+  );
+}
+
+/// POST /company/subscription/cancel (Patch 2.5, minimal cancel-at-period-end).
+///
+/// Company-session auth (admin token when available, otherwise the company
+/// bearer). Schedules a cancel-at-period-end on the backend: the subscription
+/// stays active/trialing until [BackendSubscriptionProfile.cancellationEffectiveAt].
+/// This NEVER creates a payment/checkout and NEVER calls Mollie — it only
+/// mutates local backend state. Returns the refreshed profile (which carries
+/// `cancelAtPeriodEnd == true` on success). Throws on a non-2xx response so the
+/// caller can surface a generic error; the cancel button is only shown for an
+/// active/trialing, not-yet-cancelled subscription so rejections are rare.
+Future<BackendSubscriptionProfile> cancelCompanySubscription({
+  String? tenantId,
+  String? companyId,
+}) async {
+  final scope = _resolveAdminTenantCompanyScope(
+    tenantId: tenantId,
+    companyId: companyId,
+  );
+  final endpoint = _withAdminTenantCompanyScope(
+    Uri.parse('${appConfig.bookingBaseUrl}/company/subscription/cancel'),
+    tenantId: scope['tenant_id'],
+    companyId: scope['company_id'],
+  );
+  final auth = await resolveCompanyOwnerAuthHeaders();
+  final res = await http
+      .post(endpoint, headers: auth.headers, body: jsonEncode(scope))
+      .timeout(const Duration(seconds: 15));
+  if (res.statusCode < 200 || res.statusCode >= 300) {
+    debugPrint(
+      '[SUBSCRIPTION_CANCEL][FAIL] status=${res.statusCode} '
+      'auth_mode=${auth.mode.name}',
+    );
     throw Exception('HTTP ${res.statusCode}: ${res.body}');
   }
   final decoded = jsonDecode(utf8.decode(res.bodyBytes));

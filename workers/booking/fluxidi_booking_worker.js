@@ -4052,6 +4052,13 @@ const DEFAULT_SUBSCRIPTION_PROFILE = {
   subscription_status: "trialing",
   activated_at: "",
   cancelled_at: "",
+  // Patch 2.5: minimal cancel-at-period-end lifecycle. Local state only; no
+  // live Mollie cancellation call is made here. `auto_renew` defaults true so
+  // existing/legacy profiles keep renewing until the company opts out.
+  cancel_at_period_end: false,
+  auto_renew: true,
+  cancel_requested_at: "",
+  cancellation_effective_at: "",
   current_period_start: "",
   current_period_end: "",
   locked_price_cents: null,
@@ -4744,6 +4751,15 @@ function normalizeSubscriptionProfile(input = {}, scope = null) {
     trial_ends_at: sanitizeTenantString(source.trial_ends_at ?? source.trialEndsAt ?? DEFAULT_SUBSCRIPTION_PROFILE.trial_ends_at, 48),
     activated_at: sanitizeTenantString(source.activated_at ?? source.activatedAt ?? DEFAULT_SUBSCRIPTION_PROFILE.activated_at, 48),
     cancelled_at: sanitizeTenantString(source.cancelled_at ?? source.cancelledAt ?? source.canceled_at ?? source.canceledAt ?? DEFAULT_SUBSCRIPTION_PROFILE.cancelled_at, 48),
+    // Patch 2.5: cancel-at-period-end lifecycle. Booleans coerce strictly so a
+    // missing field never accidentally cancels or disables renewal. auto_renew
+    // falls back to the safe default (true) when the source omits it.
+    cancel_at_period_end: source.cancel_at_period_end === true || source.cancelAtPeriodEnd === true,
+    auto_renew: typeof (source.auto_renew ?? source.autoRenew) === "boolean"
+      ? (source.auto_renew ?? source.autoRenew)
+      : DEFAULT_SUBSCRIPTION_PROFILE.auto_renew,
+    cancel_requested_at: sanitizeTenantString(source.cancel_requested_at ?? source.cancelRequestedAt ?? DEFAULT_SUBSCRIPTION_PROFILE.cancel_requested_at, 48),
+    cancellation_effective_at: sanitizeTenantString(source.cancellation_effective_at ?? source.cancellationEffectiveAt ?? DEFAULT_SUBSCRIPTION_PROFILE.cancellation_effective_at, 48),
     current_period_start: sanitizeTenantString(source.current_period_start ?? source.currentPeriodStart ?? DEFAULT_SUBSCRIPTION_PROFILE.current_period_start, 48),
     current_period_end: sanitizeTenantString(source.current_period_end ?? source.currentPeriodEnd ?? DEFAULT_SUBSCRIPTION_PROFILE.current_period_end, 48),
     locked_price_cents: nullableCents(source.locked_price_cents, source.lockedPriceCents),
@@ -26247,6 +26263,182 @@ export default {
         } catch (err) {
           console.log(
             `[SUBSCRIPTION_ADDON_CHECKOUT_START][ERR] ${_fluxidiSubscriptionSafeStr(err?.message, 160) || "unknown"}`,
+          );
+          return json({ ok: false, error: "internal_error" }, 500);
+        }
+      }
+
+      // =========================
+      // Company-facing subscription cancellation (Patch 2.5, minimal).
+      //
+      // POST /company/subscription/cancel
+      //
+      // Schedules a cancel-at-period-end on the company-scoped subscription
+      // profile. Local state only: this NEVER calls Mollie, NEVER creates a
+      // payment/checkout, and NEVER touches the founder slot DO. The
+      // subscription keeps its current status (active/trialing) until the
+      // effective date so the company retains access for the paid period.
+      // A future patch wires the real Mollie recurring-subscription cancel.
+      // =========================
+      if (
+        url.pathname === "/company/subscription/cancel" &&
+        request.method === "POST"
+      ) {
+        let body = {};
+        try {
+          body = await safeJson(request);
+        } catch (_) {
+          body = {};
+        }
+        if (!body || typeof body !== "object" || Array.isArray(body)) body = {};
+
+        const authScope = await _requireAdminOrCompanySessionForExplicitScope({
+          request,
+          url,
+          env,
+          body,
+          routeLabel: "COMPANY_SUBSCRIPTION_CANCEL",
+        });
+        if (!authScope.ok) return authScope.response;
+
+        try {
+          const scope = {
+            tenant_id: authScope.explicitScope.tenant_id,
+            company_id: authScope.explicitScope.company_id,
+          };
+          const tenantMask = _maskPublicDriverLoginValue(scope.tenant_id);
+          const companyMask = _maskPublicDriverLoginValue(scope.company_id);
+
+          // Load company-scoped profile WITHOUT trial creation and WITHOUT
+          // tenant legacy fallback. Cancellation never falls back to a shared
+          // tenant record.
+          const profile = await loadSubscriptionProfile(env, scope, {
+            allowTenantLegacyFallback: false,
+          });
+
+          const currentStatus = _fluxidiSubscriptionSafeStr(
+            profile?.subscription_status || profile?.status,
+          ).toLowerCase();
+          if (currentStatus !== "active" && currentStatus !== "trialing") {
+            console.log(
+              `[SUBSCRIPTION_CANCEL][REJECT] reason=not_cancelable status=${currentStatus || "-"} tenant=${tenantMask} company=${companyMask}`,
+            );
+            return json(
+              {
+                ok: false,
+                error: "subscription_not_cancelable",
+                subscription_status: currentStatus || "",
+              },
+              422,
+            );
+          }
+
+          // Idempotent: a profile already scheduled for cancellation just
+          // echoes its current cancellation summary without re-writing KV.
+          if (profile?.cancel_at_period_end === true) {
+            console.log(
+              `[SUBSCRIPTION_CANCEL][IDEMPOTENT] tenant=${tenantMask} company=${companyMask} effective=${_fluxidiSubscriptionSafeStr(profile?.cancellation_effective_at, 48) || "-"}`,
+            );
+            return json(
+              {
+                ok: true,
+                already_scheduled: true,
+                subscription_status: currentStatus,
+                cancel_at_period_end: true,
+                auto_renew: false,
+                cancel_requested_at: _fluxidiSubscriptionSafeStr(
+                  profile?.cancel_requested_at,
+                  48,
+                ),
+                cancellation_effective_at: _fluxidiSubscriptionSafeStr(
+                  profile?.cancellation_effective_at,
+                  48,
+                ),
+                current_period_end: _fluxidiSubscriptionSafeStr(
+                  profile?.current_period_end,
+                  48,
+                ),
+                subscription_profile: profile,
+              },
+              200,
+            );
+          }
+
+          const nowIso = new Date().toISOString();
+          // Effective date precedence: current_period_end -> trial_ends_at ->
+          // a 30-day fallback so the field is always populated for the UI.
+          const periodEnd = _fluxidiSubscriptionSafeStr(
+            profile?.current_period_end,
+            48,
+          );
+          const trialEnds = _fluxidiSubscriptionSafeStr(
+            profile?.trial_ends_at,
+            48,
+          );
+          let effectiveAt = "";
+          if (periodEnd && !Number.isNaN(Date.parse(periodEnd))) {
+            effectiveAt = periodEnd;
+          } else if (trialEnds && !Number.isNaN(Date.parse(trialEnds))) {
+            effectiveAt = trialEnds;
+          } else {
+            effectiveAt = new Date(
+              Date.now() + 30 * 24 * 60 * 60 * 1000,
+            ).toISOString();
+          }
+
+          // Keep status unchanged (active/trialing) until the effective date.
+          // Only the cancel-at-period-end lifecycle fields are mutated.
+          const updated = {
+            ...profile,
+            cancel_at_period_end: true,
+            auto_renew: false,
+            cancel_requested_at: nowIso,
+            cancellation_effective_at: effectiveAt,
+          };
+
+          let saved;
+          try {
+            saved = await saveSubscriptionProfile(env, updated, scope, {
+              allowTenantLegacyWrite: false,
+            });
+          } catch (e) {
+            console.log(
+              `[SUBSCRIPTION_CANCEL][ERR] stage=save msg=${_fluxidiSubscriptionSafeStr(e?.message, 160)}`,
+            );
+            return json({ ok: false, error: "cancel_persist_failed" }, 500);
+          }
+
+          console.log(
+            `[SUBSCRIPTION_CANCEL][OK] tenant=${tenantMask} company=${companyMask} status=${currentStatus} effective=${effectiveAt}`,
+          );
+          return json(
+            {
+              ok: true,
+              already_scheduled: false,
+              subscription_status: _fluxidiSubscriptionSafeStr(
+                saved?.subscription_status || saved?.status,
+              ).toLowerCase(),
+              cancel_at_period_end: saved?.cancel_at_period_end === true,
+              auto_renew: saved?.auto_renew === true,
+              cancel_requested_at: _fluxidiSubscriptionSafeStr(
+                saved?.cancel_requested_at,
+                48,
+              ),
+              cancellation_effective_at: _fluxidiSubscriptionSafeStr(
+                saved?.cancellation_effective_at,
+                48,
+              ),
+              current_period_end: _fluxidiSubscriptionSafeStr(
+                saved?.current_period_end,
+                48,
+              ),
+              subscription_profile: saved,
+            },
+            200,
+          );
+        } catch (err) {
+          console.log(
+            `[SUBSCRIPTION_CANCEL][ERR] ${_fluxidiSubscriptionSafeStr(err?.message, 160) || "unknown"}`,
           );
           return json({ ok: false, error: "internal_error" }, 500);
         }
