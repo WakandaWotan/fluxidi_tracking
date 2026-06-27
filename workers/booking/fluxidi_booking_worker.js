@@ -4069,6 +4069,16 @@ const DEFAULT_SUBSCRIPTION_PROFILE = {
   extra_vehicle_cancel_requested_at: "",
   extra_vehicle_cancellation_effective_at: "",
   extra_vehicle_auto_renew: true,
+  // Patch 2.8: per-add-on (extra_driver) cancel-at-period-end lifecycle. Local
+  // state only; no Mollie call. `extra_driver_active_quantity` is incremented
+  // immediately on verified activation and decremented only when a scheduled
+  // cancellation materializes. Legacy profiles without the field are backfilled
+  // once from max_drivers on first 2.8-aware read (same pattern as 2.6).
+  extra_driver_active_quantity: 0,
+  extra_driver_cancel_at_period_end_quantity: 0,
+  extra_driver_cancel_requested_at: "",
+  extra_driver_cancellation_effective_at: "",
+  extra_driver_auto_renew: true,
   current_period_start: "",
   current_period_end: "",
   locked_price_cents: null,
@@ -4140,15 +4150,15 @@ const SUBSCRIPTION_ADDON_CATALOG = {
 };
 
 // Add-on codes accepted by /company/subscription/add-ons/checkout/start.
-// Patch 2.3A: extra_vehicle only.
-const FLUXIDI_SUPPORTED_ADDON_CODES = new Set(["extra_vehicle"]);
+// Patch 2.3A: extra_vehicle. Patch 2.8: extra_driver. PDF packs remain absent.
+const FLUXIDI_SUPPORTED_ADDON_CODES = new Set(["extra_vehicle", "extra_driver"]);
 
-// Entitlement deltas per quantity-1 add-on activation. Patch 2.3A only
-// supports `extra_vehicle`; `extra_driver` and PDF packs are intentionally
-// absent so any future code path that tries to look them up here trips a
-// clean "invalid_addon_code" instead of silently no-op'ing.
+// Entitlement deltas per quantity-1 add-on activation. PDF packs are
+// intentionally absent so any future code path that tries to look them up here
+// trips a clean "invalid_addon_code" instead of silently no-op'ing.
 const FLUXIDI_ADDON_ENTITLEMENT_DELTAS = {
   extra_vehicle: { max_vehicles_delta: 1, max_drivers_delta: 3 },
+  extra_driver: { max_vehicles_delta: 0, max_drivers_delta: 1 },
 };
 
 function normalizeSubscriptionMarket(raw) {
@@ -4210,6 +4220,19 @@ function resolveSubscriptionAddonCatalog(rawMarket) {
   const known = SUBSCRIPTION_ADDON_CATALOG[market];
   if (!known) return null;
   return { market, ...known };
+}
+
+// Authoritative unit price for a supported add-on code in a market catalog.
+function resolveAddonUnitPriceCents(addonCatalog, addonCode) {
+  if (!addonCatalog || !addonCode) return null;
+  const code = _fluxidiSubscriptionSafeStr(addonCode, 64).toLowerCase();
+  if (code === "extra_vehicle") {
+    return addonCatalog.extra_vehicle_price_cents;
+  }
+  if (code === "extra_driver") {
+    return addonCatalog.extra_driver_price_cents;
+  }
+  return null;
 }
 
 const DEFAULT_COMMUNICATION_TEMPLATES = {
@@ -4783,6 +4806,16 @@ function normalizeSubscriptionProfile(input = {}, scope = null) {
     extra_vehicle_auto_renew: typeof (source.extra_vehicle_auto_renew ?? source.extraVehicleAutoRenew) === "boolean"
       ? (source.extra_vehicle_auto_renew ?? source.extraVehicleAutoRenew)
       : DEFAULT_SUBSCRIPTION_PROFILE.extra_vehicle_auto_renew,
+    // Patch 2.8: extra_driver per-add-on cancel-at-period-end lifecycle. The lazy
+    // backfill of extra_driver_active_quantity happens at the route layer (needs
+    // KV write-back), NOT here — this normalizer stays pure.
+    extra_driver_active_quantity: Math.max(0, clampInt(source.extra_driver_active_quantity ?? source.extraDriverActiveQuantity, DEFAULT_SUBSCRIPTION_PROFILE.extra_driver_active_quantity, 100000)),
+    extra_driver_cancel_at_period_end_quantity: Math.max(0, clampInt(source.extra_driver_cancel_at_period_end_quantity ?? source.extraDriverCancelAtPeriodEndQuantity, DEFAULT_SUBSCRIPTION_PROFILE.extra_driver_cancel_at_period_end_quantity, 100000)),
+    extra_driver_cancel_requested_at: sanitizeTenantString(source.extra_driver_cancel_requested_at ?? source.extraDriverCancelRequestedAt ?? DEFAULT_SUBSCRIPTION_PROFILE.extra_driver_cancel_requested_at, 48),
+    extra_driver_cancellation_effective_at: sanitizeTenantString(source.extra_driver_cancellation_effective_at ?? source.extraDriverCancellationEffectiveAt ?? DEFAULT_SUBSCRIPTION_PROFILE.extra_driver_cancellation_effective_at, 48),
+    extra_driver_auto_renew: typeof (source.extra_driver_auto_renew ?? source.extraDriverAutoRenew) === "boolean"
+      ? (source.extra_driver_auto_renew ?? source.extraDriverAutoRenew)
+      : DEFAULT_SUBSCRIPTION_PROFILE.extra_driver_auto_renew,
     current_period_start: sanitizeTenantString(source.current_period_start ?? source.currentPeriodStart ?? DEFAULT_SUBSCRIPTION_PROFILE.current_period_start, 48),
     current_period_end: sanitizeTenantString(source.current_period_end ?? source.currentPeriodEnd ?? DEFAULT_SUBSCRIPTION_PROFILE.current_period_end, 48),
     locked_price_cents: nullableCents(source.locked_price_cents, source.lockedPriceCents),
@@ -5650,6 +5683,109 @@ async function materializeDueExtraVehicleCancellation(env, scope, profile) {
   });
   console.log(
     `[SUBSCRIPTION_ADDON_DOWNGRADE][APPLIED] tenant=${_maskPublicDriverLoginValue(scope?.tenant_id)} company=${_maskPublicDriverLoginValue(scope?.company_id)} applied=${applied} new_max_vehicles=${newMaxVehicles} new_max_drivers=${newMaxDrivers}`,
+  );
+  return { profile: saved, changed: true, applied };
+}
+
+// =========================
+// Patch 2.8: extra-driver add-on cancel/downgrade-at-period-end helpers.
+//
+// Entitlement (max_drivers) is what the driver add gate reads. These helpers
+// track an explicit `extra_driver_active_quantity` that is incremented on
+// verified activation and decremented only when a scheduled cancellation
+// materializes. They NEVER touch max_vehicles, Mollie, payments, checkouts,
+// refunds, or driver records.
+// =========================
+
+// Pure derivation of how many paid extra-driver slots are active. Prefers the
+// explicit stored count once set; falls back to (max_drivers - base - vehicle
+// addon drivers) ONLY for legacy profiles that never received the field.
+function deriveExtraDriverActiveQuantity(profile) {
+  if (!profile || typeof profile !== "object") return 0;
+  const stored = Math.max(
+    0,
+    Math.trunc(Number(profile.extra_driver_active_quantity) || 0),
+  );
+  if (stored > 0) return stored;
+  const included = Math.max(0, Math.trunc(Number(profile.included_vehicles) || 0));
+  const maxD = Math.max(0, Math.trunc(Number(profile.max_drivers) || 0));
+  const baseDrivers = included * 3;
+  const vehicleAddonDrivers = deriveExtraVehicleActiveQuantity(profile) * 3;
+  const legacy = maxD - baseDrivers - vehicleAddonDrivers;
+  return legacy > 0 ? legacy : 0;
+}
+
+// How many extra-driver slots are still cancelable right now (active minus
+// already-scheduled). Never negative.
+function extraDriverCancelableQuantity(profile) {
+  const active = deriveExtraDriverActiveQuantity(profile);
+  const scheduled = Math.max(
+    0,
+    Math.trunc(Number(profile?.extra_driver_cancel_at_period_end_quantity) || 0),
+  );
+  return Math.max(0, active - scheduled);
+}
+
+// Lazily materialize a due extra-driver downgrade and/or backfill the explicit
+// active-quantity field. Saves the profile only when something actually
+// changes. max_vehicles is never touched; existing drivers are never deleted.
+async function materializeDueExtraDriverCancellation(env, scope, profile) {
+  if (!profile || typeof profile !== "object") {
+    return { profile, changed: false, applied: 0 };
+  }
+  const included = Math.max(0, Math.trunc(Number(profile.included_vehicles) || 0));
+  const activeQty = deriveExtraDriverActiveQuantity(profile);
+  const storedActive = Math.max(
+    0,
+    Math.trunc(Number(profile.extra_driver_active_quantity) || 0),
+  );
+  const scheduled = Math.max(
+    0,
+    Math.trunc(Number(profile.extra_driver_cancel_at_period_end_quantity) || 0),
+  );
+  const effectiveAt = _fluxidiSubscriptionSafeStr(
+    profile.extra_driver_cancellation_effective_at,
+    48,
+  );
+  const effectiveMs = effectiveAt ? Date.parse(effectiveAt) : NaN;
+  const due =
+    scheduled > 0 && !Number.isNaN(effectiveMs) && Date.now() >= effectiveMs;
+
+  // No due downgrade: only persist a one-time backfill when the explicit
+  // stored count is stale relative to the derived legacy value.
+  if (!due) {
+    if (storedActive !== activeQty) {
+      const updated = { ...profile, extra_driver_active_quantity: activeQty };
+      const saved = await saveSubscriptionProfile(env, updated, scope, {
+        allowTenantLegacyWrite: false,
+      });
+      return { profile: saved, changed: true, applied: 0 };
+    }
+    return { profile, changed: false, applied: 0 };
+  }
+
+  const applied = Math.min(scheduled, activeQty);
+  const curMaxDrivers = Math.max(0, Math.trunc(Number(profile.max_drivers) || 0));
+  const floorDrivers = Math.max(
+    Math.trunc(Number(DEFAULT_SUBSCRIPTION_PROFILE.max_drivers) || 0),
+    included * 3 + deriveExtraVehicleActiveQuantity(profile) * 3,
+  );
+  const newMaxDrivers = Math.max(floorDrivers, curMaxDrivers - applied);
+  const newActive = Math.max(0, activeQty - applied);
+
+  const updated = {
+    ...profile,
+    max_drivers: newMaxDrivers,
+    extra_driver_active_quantity: newActive,
+    extra_driver_cancel_at_period_end_quantity: 0,
+    extra_driver_cancel_requested_at: "",
+    extra_driver_cancellation_effective_at: "",
+  };
+  const saved = await saveSubscriptionProfile(env, updated, scope, {
+    allowTenantLegacyWrite: false,
+  });
+  console.log(
+    `[SUBSCRIPTION_ADDON_DOWNGRADE][EXTRA_DRIVER_APPLIED] tenant=${_maskPublicDriverLoginValue(scope?.tenant_id)} company=${_maskPublicDriverLoginValue(scope?.company_id)} applied=${applied} new_max_drivers=${newMaxDrivers}`,
   );
   return { profile: saved, changed: true, applied };
 }
@@ -7062,7 +7198,7 @@ async function activateFluxidiAddonFromVerifiedPayment(env, { activationId, paym
   if (metaAddonCode && metaAddonCode !== addonCode) {
     return await rejectAndIgnore("metadata_addon_code_mismatch");
   }
-  if (addonCode !== "extra_vehicle") {
+  if (!FLUXIDI_SUPPORTED_ADDON_CODES.has(addonCode)) {
     return await rejectAndIgnore("invalid_addon_code");
   }
   if (quantity !== 1) {
@@ -7141,6 +7277,13 @@ async function activateFluxidiAddonFromVerifiedPayment(env, { activationId, paym
     max_drivers: newMaxDrivers,
     updated_at: nowIso,
   };
+  // Patch 2.8: extra_driver uses an explicit active-quantity counter that is
+  // incremented here and decremented only when a scheduled cancellation
+  // materializes. extra_vehicle behaviour is unchanged (no field write here).
+  if (addonCode === "extra_driver") {
+    const priorActive = deriveExtraDriverActiveQuantity(currentProfile);
+    updatedProfile.extra_driver_active_quantity = priorActive + quantity;
+  }
 
   let savedProfile;
   try {
@@ -25435,6 +25578,21 @@ export default {
               `[COMPANY_SUBSCRIPTION_GET][DOWNGRADE_SKIP] reason=${safeStr(e?.message, 80) || "error"}`,
             );
           }
+          // Patch 2.8: lazily apply any due extra-driver downgrade and/or
+          // backfill the explicit active-quantity. Runs after extra_vehicle so
+          // vehicle-derived driver floors stay correct.
+          try {
+            const driverMaterialized = await materializeDueExtraDriverCancellation(
+              env,
+              scope,
+              profile,
+            );
+            if (driverMaterialized?.profile) profile = driverMaterialized.profile;
+          } catch (e) {
+            console.log(
+              `[COMPANY_SUBSCRIPTION_GET][EXTRA_DRIVER_DOWNGRADE_SKIP] reason=${safeStr(e?.message, 80) || "error"}`,
+            );
+          }
           return json(
             {
               ok: true,
@@ -25929,9 +26087,7 @@ export default {
           if (!addonCatalog) {
             return json({ ok: false, error: "unsupported_market" }, 422);
           }
-          const unitPriceCents = addonCode === "extra_vehicle"
-            ? addonCatalog.extra_vehicle_price_cents
-            : null;
+          const unitPriceCents = resolveAddonUnitPriceCents(addonCatalog, addonCode);
           if (
             !Number.isFinite(Number(unitPriceCents)) ||
             Number(unitPriceCents) <= 0
@@ -26283,7 +26439,10 @@ export default {
               customerId,
               amountValue,
               currency,
-              description: "Fluxidi extra vehicle add-on",
+              description:
+                addonCode === "extra_driver"
+                  ? "Fluxidi extra driver add-on"
+                  : "Fluxidi extra vehicle add-on",
               redirectUrl,
               webhookUrl,
               metadata: {
@@ -26782,6 +26941,193 @@ export default {
         } catch (err) {
           console.log(
             `[SUBSCRIPTION_ADDON_CANCEL_ONE][ERR] ${_fluxidiSubscriptionSafeStr(err?.message, 160) || "unknown"}`,
+          );
+          return json({ ok: false, error: "internal_error" }, 500);
+        }
+      }
+
+      // =========================
+      // Patch 2.8: cancel ONE extra-driver add-on at period end.
+      //
+      // POST /company/subscription/add-ons/extra-driver/cancel-one
+      //
+      // Schedules a downgrade of exactly one paid extra-driver slot. The paid
+      // slot stays usable (max_drivers unchanged) until the effective date;
+      // the actual entitlement reduction is applied lazily on the next
+      // GET /company/subscription/profile after that date. Local state only:
+      // NEVER calls Mollie, NEVER creates payment/checkout, NEVER touches
+      // max_vehicles, and NEVER deletes driver records.
+      // =========================
+      if (
+        url.pathname === "/company/subscription/add-ons/extra-driver/cancel-one" &&
+        request.method === "POST"
+      ) {
+        let body = {};
+        try {
+          body = await safeJson(request);
+        } catch (_) {
+          body = {};
+        }
+        if (!body || typeof body !== "object" || Array.isArray(body)) body = {};
+
+        const authScope = await _requireAdminOrCompanySessionForExplicitScope({
+          request,
+          url,
+          env,
+          body,
+          routeLabel: "COMPANY_SUBSCRIPTION_ADDON_EXTRA_DRIVER_CANCEL_ONE",
+        });
+        if (!authScope.ok) return authScope.response;
+
+        try {
+          const scope = {
+            tenant_id: authScope.explicitScope.tenant_id,
+            company_id: authScope.explicitScope.company_id,
+          };
+          const tenantMask = _maskPublicDriverLoginValue(scope.tenant_id);
+          const companyMask = _maskPublicDriverLoginValue(scope.company_id);
+
+          const profile = await loadSubscriptionProfile(env, scope, {
+            allowTenantLegacyFallback: false,
+          });
+
+          const currentStatus = _fluxidiSubscriptionSafeStr(
+            profile?.subscription_status || profile?.status,
+          ).toLowerCase();
+          if (currentStatus !== "active" && currentStatus !== "trialing") {
+            console.log(
+              `[SUBSCRIPTION_ADDON_EXTRA_DRIVER_CANCEL_ONE][REJECT] reason=not_cancelable status=${currentStatus || "-"} tenant=${tenantMask} company=${companyMask}`,
+            );
+            return json(
+              {
+                ok: false,
+                error: "subscription_not_cancelable",
+                subscription_status: currentStatus || "",
+              },
+              422,
+            );
+          }
+
+          const activeQty = deriveExtraDriverActiveQuantity(profile);
+          const scheduledQty = Math.max(
+            0,
+            Math.trunc(Number(profile?.extra_driver_cancel_at_period_end_quantity) || 0),
+          );
+
+          const summary = (p) => ({
+            subscription_status: _fluxidiSubscriptionSafeStr(
+              p?.subscription_status || p?.status,
+            ).toLowerCase(),
+            extra_driver_active_quantity: deriveExtraDriverActiveQuantity(p),
+            extra_driver_cancel_at_period_end_quantity: Math.max(
+              0,
+              Math.trunc(Number(p?.extra_driver_cancel_at_period_end_quantity) || 0),
+            ),
+            extra_driver_cancel_requested_at: _fluxidiSubscriptionSafeStr(
+              p?.extra_driver_cancel_requested_at,
+              48,
+            ),
+            extra_driver_cancellation_effective_at: _fluxidiSubscriptionSafeStr(
+              p?.extra_driver_cancellation_effective_at,
+              48,
+            ),
+            extra_driver_auto_renew: p?.extra_driver_auto_renew === true,
+            current_period_end: _fluxidiSubscriptionSafeStr(p?.current_period_end, 48),
+          });
+
+          if (scheduledQty >= activeQty && scheduledQty > 0) {
+            let echoProfile = profile;
+            const storedActive = Math.max(
+              0,
+              Math.trunc(Number(profile?.extra_driver_active_quantity) || 0),
+            );
+            if (storedActive !== activeQty) {
+              echoProfile = await saveSubscriptionProfile(
+                env,
+                { ...profile, extra_driver_active_quantity: activeQty },
+                scope,
+                { allowTenantLegacyWrite: false },
+              );
+            }
+            console.log(
+              `[SUBSCRIPTION_ADDON_EXTRA_DRIVER_CANCEL_ONE][IDEMPOTENT] tenant=${tenantMask} company=${companyMask} active=${activeQty} scheduled=${scheduledQty}`,
+            );
+            return json(
+              {
+                ok: true,
+                already_scheduled: true,
+                ...summary(echoProfile),
+                subscription_profile: echoProfile,
+              },
+              200,
+            );
+          }
+
+          if (activeQty - scheduledQty < 1) {
+            console.log(
+              `[SUBSCRIPTION_ADDON_EXTRA_DRIVER_CANCEL_ONE][REJECT] reason=no_extra_driver_to_cancel active=${activeQty} scheduled=${scheduledQty} tenant=${tenantMask} company=${companyMask}`,
+            );
+            return json(
+              {
+                ok: false,
+                error: "no_extra_driver_to_cancel",
+                extra_driver_active_quantity: activeQty,
+                extra_driver_cancel_at_period_end_quantity: scheduledQty,
+              },
+              422,
+            );
+          }
+
+          const nowIso = new Date().toISOString();
+          const periodEnd = _fluxidiSubscriptionSafeStr(profile?.current_period_end, 48);
+          const trialEnds = _fluxidiSubscriptionSafeStr(profile?.trial_ends_at, 48);
+          let effectiveAt = "";
+          if (periodEnd && !Number.isNaN(Date.parse(periodEnd))) {
+            effectiveAt = periodEnd;
+          } else if (trialEnds && !Number.isNaN(Date.parse(trialEnds))) {
+            effectiveAt = trialEnds;
+          } else {
+            effectiveAt = new Date(
+              Date.now() + 30 * 24 * 60 * 60 * 1000,
+            ).toISOString();
+          }
+
+          const updated = {
+            ...profile,
+            extra_driver_active_quantity: activeQty,
+            extra_driver_cancel_at_period_end_quantity: scheduledQty + 1,
+            extra_driver_cancel_requested_at: nowIso,
+            extra_driver_cancellation_effective_at: effectiveAt,
+            extra_driver_auto_renew: false,
+          };
+
+          let saved;
+          try {
+            saved = await saveSubscriptionProfile(env, updated, scope, {
+              allowTenantLegacyWrite: false,
+            });
+          } catch (e) {
+            console.log(
+              `[SUBSCRIPTION_ADDON_EXTRA_DRIVER_CANCEL_ONE][ERR] stage=save msg=${_fluxidiSubscriptionSafeStr(e?.message, 160)}`,
+            );
+            return json({ ok: false, error: "cancel_persist_failed" }, 500);
+          }
+
+          console.log(
+            `[SUBSCRIPTION_ADDON_EXTRA_DRIVER_CANCEL_ONE][OK] tenant=${tenantMask} company=${companyMask} active=${activeQty} scheduled=${scheduledQty + 1} effective=${effectiveAt}`,
+          );
+          return json(
+            {
+              ok: true,
+              already_scheduled: false,
+              ...summary(saved),
+              subscription_profile: saved,
+            },
+            200,
+          );
+        } catch (err) {
+          console.log(
+            `[SUBSCRIPTION_ADDON_EXTRA_DRIVER_CANCEL_ONE][ERR] ${_fluxidiSubscriptionSafeStr(err?.message, 160) || "unknown"}`,
           );
           return json({ ok: false, error: "internal_error" }, 500);
         }

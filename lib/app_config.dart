@@ -1351,6 +1351,12 @@ class BackendSubscriptionProfile {
   final String extraVehicleCancelRequestedAt;
   final String extraVehicleCancellationEffectiveAt;
   final bool extraVehicleAutoRenew;
+  // Patch 2.8: extra-driver add-on cancel/downgrade-at-period-end lifecycle.
+  final int extraDriverActiveQuantity;
+  final int extraDriverCancelAtPeriodEndQuantity;
+  final String extraDriverCancelRequestedAt;
+  final String extraDriverCancellationEffectiveAt;
+  final bool extraDriverAutoRenew;
   final String currentPeriodStart;
   final String currentPeriodEnd;
   final int? lockedPriceCents;
@@ -1402,6 +1408,11 @@ class BackendSubscriptionProfile {
     this.extraVehicleCancelRequestedAt = '',
     this.extraVehicleCancellationEffectiveAt = '',
     this.extraVehicleAutoRenew = true,
+    this.extraDriverActiveQuantity = 0,
+    this.extraDriverCancelAtPeriodEndQuantity = 0,
+    this.extraDriverCancelRequestedAt = '',
+    this.extraDriverCancellationEffectiveAt = '',
+    this.extraDriverAutoRenew = true,
     this.currentPeriodStart = '',
     this.currentPeriodEnd = '',
     this.lockedPriceCents,
@@ -1701,6 +1712,31 @@ class BackendSubscriptionProfile {
         'extraVehicleAutoRenew',
         fallback.extraVehicleAutoRenew,
       ),
+      extraDriverActiveQuantity: intVal(
+        'extra_driver_active_quantity',
+        'extraDriverActiveQuantity',
+        fallback.extraDriverActiveQuantity,
+      ),
+      extraDriverCancelAtPeriodEndQuantity: intVal(
+        'extra_driver_cancel_at_period_end_quantity',
+        'extraDriverCancelAtPeriodEndQuantity',
+        fallback.extraDriverCancelAtPeriodEndQuantity,
+      ),
+      extraDriverCancelRequestedAt: text(
+        'extra_driver_cancel_requested_at',
+        'extraDriverCancelRequestedAt',
+        fallback.extraDriverCancelRequestedAt,
+      ),
+      extraDriverCancellationEffectiveAt: text(
+        'extra_driver_cancellation_effective_at',
+        'extraDriverCancellationEffectiveAt',
+        fallback.extraDriverCancellationEffectiveAt,
+      ),
+      extraDriverAutoRenew: boolVal(
+        'extra_driver_auto_renew',
+        'extraDriverAutoRenew',
+        fallback.extraDriverAutoRenew,
+      ),
       currentPeriodStart: text(
         'current_period_start',
         'currentPeriodStart',
@@ -1801,6 +1837,13 @@ class BackendSubscriptionProfile {
     'extra_vehicle_cancellation_effective_at':
         extraVehicleCancellationEffectiveAt,
     'extra_vehicle_auto_renew': extraVehicleAutoRenew,
+    'extra_driver_active_quantity': extraDriverActiveQuantity,
+    'extra_driver_cancel_at_period_end_quantity':
+        extraDriverCancelAtPeriodEndQuantity,
+    'extra_driver_cancel_requested_at': extraDriverCancelRequestedAt,
+    'extra_driver_cancellation_effective_at':
+        extraDriverCancellationEffectiveAt,
+    'extra_driver_auto_renew': extraDriverAutoRenew,
     'current_period_start': currentPeriodStart,
     'current_period_end': currentPeriodEnd,
     'locked_price_cents': lockedPriceCents,
@@ -5745,6 +5788,49 @@ Future<BackendSubscriptionProfile> cancelOneExtraVehicleAddon({
   );
 }
 
+/// POST /company/subscription/add-ons/extra-driver/cancel-one (Patch 2.8).
+///
+/// Schedules the cancellation of exactly one paid extra-driver slot at the
+/// end of the current billing period. The slot stays usable until
+/// [BackendSubscriptionProfile.extraDriverCancellationEffectiveAt]; the
+/// entitlement reduction is applied lazily by the backend on the next profile
+/// read after that date. This NEVER creates a payment/checkout, NEVER calls
+/// Mollie, and NEVER deletes drivers. Returns the refreshed profile.
+Future<BackendSubscriptionProfile> cancelOneExtraDriverAddon({
+  String? tenantId,
+  String? companyId,
+}) async {
+  final scope = _resolveAdminTenantCompanyScope(
+    tenantId: tenantId,
+    companyId: companyId,
+  );
+  final endpoint = _withAdminTenantCompanyScope(
+    Uri.parse(
+      '${appConfig.bookingBaseUrl}/company/subscription/add-ons/extra-driver/cancel-one',
+    ),
+    tenantId: scope['tenant_id'],
+    companyId: scope['company_id'],
+  );
+  final auth = await resolveCompanyOwnerAuthHeaders();
+  final res = await http
+      .post(endpoint, headers: auth.headers, body: jsonEncode(scope))
+      .timeout(const Duration(seconds: 15));
+  if (res.statusCode < 200 || res.statusCode >= 300) {
+    debugPrint(
+      '[SUBSCRIPTION_ADDON_EXTRA_DRIVER_CANCEL_ONE][FAIL] status=${res.statusCode} '
+      'auth_mode=${auth.mode.name}',
+    );
+    throw Exception('HTTP ${res.statusCode}: ${res.body}');
+  }
+  final decoded = jsonDecode(utf8.decode(res.bodyBytes));
+  if (decoded is! Map) throw Exception('Invalid response');
+  final profile = decoded['subscription_profile'];
+  if (profile is! Map) throw Exception('Missing subscription_profile');
+  return BackendSubscriptionProfile.fromJson(
+    Map<String, dynamic>.from(profile),
+  );
+}
+
 /// Typed result of POST /company/subscription/checkout/start (Patch 2.2B).
 ///
 /// Mirrors the sanitized backend response. No secrets are ever stored here —
@@ -5926,8 +6012,8 @@ startCompanySubscriptionCheckout({
 /// exact auth/scope style as [startCompanySubscriptionCheckout]: company
 /// session bearer (admin token fallback) plus tenant/company scope in both the
 /// query string and the JSON body. Pricing is NEVER sent from Flutter — the
-/// backend is the sole source of truth and ignores any client price. The patch
-/// scope supports only `addon_code == "extra_vehicle"` and `quantity == 1`.
+/// backend is the sole source of truth and ignores any client price. Supported
+/// add-on codes: `extra_vehicle`, `extra_driver` (quantity == 1 each).
 ///
 /// Never throws on a non-2xx backend response; instead it returns a typed
 /// result carrying `ok=false`, the HTTP status, and the machine-readable error

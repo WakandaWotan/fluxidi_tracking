@@ -23,6 +23,10 @@ class _CompanySubscriptionBillingPageState
   bool _cancelling = false;
   // Patch 2.6: guard against double-tapping the cancel-one-extra-vehicle button.
   bool _cancellingExtraVehicle = false;
+  // Patch 2.8: dedicated loading flag for the Extra driver add-on checkout.
+  bool _startingExtraDriverAddonCheckout = false;
+  // Patch 2.8: guard against double-tapping the cancel-one-extra-driver button.
+  bool _cancellingExtraDriver = false;
   // Set true while a Mollie checkout window is open so the next app resume
   // triggers exactly one profile refresh (no infinite resume loops). Shared by
   // both the base subscription checkout and the add-on checkout.
@@ -293,7 +297,7 @@ class _CompanySubscriptionBillingPageState
   // Mirrors [_startCheckout] (base subscription) but targets the live add-on
   // route and only ever requests addon_code="extra_vehicle", quantity=1. The
   // backend is the sole source of truth for pricing — Flutter never sends a
-  // price. Extra driver / PDF bundle cards are intentionally NOT wired here.
+  // price. Extra driver is wired in Patch 2.8; PDF bundle cards stay passive.
   // ---------------------------------------------------------------------------
 
   String _activateExtraVehicleLabel() => _t(
@@ -450,6 +454,111 @@ class _CompanySubscriptionBillingPageState
       );
     } finally {
       if (mounted) setState(() => _startingAddonCheckout = false);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Patch 2.8: Extra driver add-on checkout wiring.
+  //
+  // Mirrors [_startExtraVehicleAddonCheckout] but requests addon_code="extra_driver".
+  // ---------------------------------------------------------------------------
+
+  String _activateExtraDriverLabel() => _t(
+    nl: 'Extra chauffeur activeren',
+    en: 'Activate extra driver',
+    fr: 'Activer chauffeur supplémentaire',
+    es: 'Activar conductor extra',
+  );
+
+  Future<void> _startExtraDriverAddonCheckout(
+    BackendSubscriptionProfile profile,
+  ) async {
+    if (_startingExtraDriverAddonCheckout) return;
+    final scopeId = _activeCompanyId();
+    if (scopeId == null || scopeId.trim().isEmpty) {
+      _showSnack(
+        _t(
+          nl: 'Geen actief bedrijf gevonden. Probeer opnieuw.',
+          en: 'No active company found. Please try again.',
+          fr: 'Aucune entreprise active trouvée. Veuillez réessayer.',
+          es: 'No se encontró ninguna empresa activa. Inténtalo de nuevo.',
+        ),
+      );
+      return;
+    }
+    final market = _effectiveMarket(profile);
+    if (!_isSupportedMarket(market)) {
+      _showSnack(_unsupportedMarketMessage());
+      return;
+    }
+    if (!_profileIsActive(profile)) {
+      _showSnack(_addonRequiresActiveMessage());
+      return;
+    }
+
+    setState(() => _startingExtraDriverAddonCheckout = true);
+    try {
+      final result = await startCompanySubscriptionAddonCheckout(
+        tenantId: scopeId,
+        companyId: scopeId,
+        addonCode: 'extra_driver',
+        quantity: 1,
+        returnUrl:
+            '${appConfig.bookingBaseUrl}/company/subscription/add-ons/checkout/return',
+      );
+
+      if (!mounted) return;
+
+      if (!result.ok) {
+        _showSnack(_addonCheckoutErrorMessage(result));
+        return;
+      }
+
+      final url = result.checkoutUrl.trim();
+      final uri = Uri.tryParse(url);
+      if (url.isEmpty || uri == null || !uri.isScheme('https')) {
+        _showSnack(_genericAddonError());
+        return;
+      }
+
+      final launched = await launchUrl(
+        uri,
+        mode: LaunchMode.externalApplication,
+      );
+      if (!mounted) return;
+      if (!launched) {
+        _showSnack(
+          _t(
+            nl: 'Kon het betaalvenster niet openen.',
+            en: 'Could not open the payment window.',
+            fr: 'Impossible d’ouvrir la fenêtre de paiement.',
+            es: 'No se pudo abrir la ventana de pago.',
+          ),
+        );
+        return;
+      }
+
+      _awaitingCheckoutReturn = true;
+      _showSnack(
+        _t(
+          nl: 'Betaalvenster geopend. Na betaling wordt je add-on automatisch bijgewerkt.',
+          en: 'Payment window opened. After payment, your add-on will update automatically.',
+          fr: 'Fenêtre de paiement ouverte. Après le paiement, votre option sera mise à jour automatiquement.',
+          es: 'Ventana de pago abierta. Después del pago, tu complemento se actualizará automáticamente.',
+        ),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      _showSnack(
+        _t(
+          nl: 'Er ging iets mis. Probeer opnieuw.',
+          en: 'Something went wrong. Please try again.',
+          fr: 'Une erreur est survenue. Veuillez réessayer.',
+          es: 'Algo salió mal. Inténtalo de nuevo.',
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _startingExtraDriverAddonCheckout = false);
     }
   }
 
@@ -722,6 +831,283 @@ class _CompanySubscriptionBillingPageState
         children: [
           button,
           _extraVehicleCancellationControls(profile),
+        ],
+      );
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        button,
+        const SizedBox(height: 6),
+        Text(
+          _addonRequiresActiveMessage(),
+          style: TextStyle(
+            color: _businessThemePalette.textMuted,
+            fontSize: 11.4,
+            height: 1.3,
+          ),
+        ),
+      ],
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Patch 2.8: cancel/downgrade one extra driver add-on at period end.
+  // ---------------------------------------------------------------------------
+
+  /// Active paid extra-driver slots, preferring the explicit backend count and
+  /// falling back to a one-time legacy derivation for pre-2.8 profiles.
+  int _extraDriverActiveQuantity(BackendSubscriptionProfile profile) {
+    if (profile.extraDriverActiveQuantity > 0) {
+      return profile.extraDriverActiveQuantity;
+    }
+    final baseDrivers =
+        profile.includedVehicles * profile.includedDriversPerVehicle;
+    final vehicleAddonDrivers = _extraVehicleActiveQuantity(profile) * 3;
+    final derived = profile.maxDrivers - baseDrivers - vehicleAddonDrivers;
+    return derived > 0 ? derived : 0;
+  }
+
+  int _extraDriverCancelableQuantity(BackendSubscriptionProfile profile) {
+    final cancelable =
+        _extraDriverActiveQuantity(profile) -
+        profile.extraDriverCancelAtPeriodEndQuantity;
+    return cancelable > 0 ? cancelable : 0;
+  }
+
+  String _extraDriverEffectiveDate(BackendSubscriptionProfile profile) {
+    final effective = profile.extraDriverCancellationEffectiveAt.trim();
+    if (effective.isNotEmpty) return _humanDate(effective);
+    final periodEnd = profile.currentPeriodEnd.trim();
+    if (periodEnd.isNotEmpty) return _humanDate(periodEnd);
+    final trialEnds = profile.trialEndsAt.trim();
+    if (trialEnds.isNotEmpty) return _humanDate(trialEnds);
+    return '—';
+  }
+
+  Future<void> _confirmAndCancelOneExtraDriver(
+    BackendSubscriptionProfile profile,
+  ) async {
+    if (_cancellingExtraDriver) return;
+    final scopeId = _activeCompanyId();
+    if (scopeId == null || scopeId.trim().isEmpty) {
+      _showSnack(
+        _t(
+          nl: 'Geen actief bedrijf gevonden. Probeer opnieuw.',
+          en: 'No active company found. Please try again.',
+          fr: 'Aucune entreprise active trouvée. Veuillez réessayer.',
+          es: 'No se encontró ninguna empresa activa. Inténtalo de nuevo.',
+        ),
+      );
+      return;
+    }
+
+    final effective = _extraDriverEffectiveDate(profile);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: _panel,
+        title: Text(
+          _t(
+            nl: 'Eén extra chauffeur opzeggen?',
+            en: 'Cancel one extra driver?',
+            fr: 'Résilier un chauffeur supplémentaire ?',
+            es: '¿Cancelar un conductor extra?',
+          ),
+          style: TextStyle(color: _businessThemePalette.textPrimary),
+        ),
+        content: Text(
+          _t(
+            nl: '1 extra chauffeur blijft actief tot $effective. Daarna wordt je chauffeurslimiet met 1 verlaagd. Bestaande chauffeurs worden niet verwijderd.',
+            en: '1 extra driver stays active until $effective. Your driver limit drops by 1 after that. Existing drivers are not removed.',
+            fr: '1 chauffeur supplémentaire reste actif jusqu\'au $effective. Votre limite de chauffeurs baissera ensuite de 1. Les chauffeurs existants ne sont pas supprimés.',
+            es: '1 conductor extra permanece activo hasta el $effective. Tu límite de conductores bajará en 1 después. Los conductores existentes no se eliminan.',
+          ),
+          style: TextStyle(color: _businessThemePalette.textMuted),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: Text(
+              _t(nl: 'Behouden', en: 'Keep', fr: 'Conserver', es: 'Mantener'),
+            ),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: _warn,
+              foregroundColor: Colors.black,
+            ),
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: Text(
+              _t(
+                nl: 'Opzeggen',
+                en: 'Cancel',
+                fr: 'Résilier',
+                es: 'Cancelar',
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
+    setState(() => _cancellingExtraDriver = true);
+    try {
+      final updated = await cancelOneExtraDriverAddon(
+        tenantId: scopeId,
+        companyId: scopeId,
+      );
+      if (!mounted) return;
+      _showSnack(
+        _t(
+          nl: '1 extra chauffeur blijft actief tot ${_extraDriverEffectiveDate(updated)}.',
+          en: '1 extra driver stays active until ${_extraDriverEffectiveDate(updated)}.',
+          fr: '1 chauffeur supplémentaire reste actif jusqu\'au ${_extraDriverEffectiveDate(updated)}.',
+          es: '1 conductor extra permanece activo hasta el ${_extraDriverEffectiveDate(updated)}.',
+        ),
+      );
+      _refresh();
+    } catch (_) {
+      if (!mounted) return;
+      _showSnack(
+        _t(
+          nl: 'Opzeggen is niet gelukt. Controleer je verbinding en probeer opnieuw.',
+          en: 'Cancellation failed. Check your connection and try again.',
+          fr: 'Échec de la résiliation. Vérifiez votre connexion et réessayez.',
+          es: 'Error al cancelar. Comprueba tu conexión e inténtalo de nuevo.',
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _cancellingExtraDriver = false);
+    }
+  }
+
+  Widget _extraDriverCancellationControls(
+    BackendSubscriptionProfile profile,
+  ) {
+    final scheduled = profile.extraDriverCancelAtPeriodEndQuantity;
+    final cancelable = _extraDriverCancelableQuantity(profile);
+
+    final children = <Widget>[];
+
+    if (scheduled > 0) {
+      children.add(
+        Container(
+          width: double.infinity,
+          margin: const EdgeInsets.only(top: 8),
+          padding: const EdgeInsets.fromLTRB(11, 10, 11, 11),
+          decoration: BoxDecoration(
+            color: _warn.withOpacity(0.12),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: _warn.withOpacity(0.5)),
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(Icons.info_outline, size: 18, color: _warn),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  _t(
+                    nl: '1 extra chauffeur blijft actief tot ${_extraDriverEffectiveDate(profile)}. Daarna wordt je chauffeurslimiet met 1 verlaagd.',
+                    en: '1 extra driver stays active until ${_extraDriverEffectiveDate(profile)}. After that your driver limit drops by 1.',
+                    fr: '1 chauffeur supplémentaire reste actif jusqu\'au ${_extraDriverEffectiveDate(profile)}. Ensuite, votre limite de chauffeurs baisse de 1.',
+                    es: '1 conductor extra permanece activo hasta el ${_extraDriverEffectiveDate(profile)}. Después tu límite de conductores baja en 1.',
+                  ),
+                  style: TextStyle(
+                    color: _businessThemePalette.textPrimary,
+                    fontSize: 12,
+                    height: 1.35,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    if (cancelable > 0) {
+      children.add(
+        Align(
+          alignment: Alignment.centerLeft,
+          child: TextButton.icon(
+            onPressed: _cancellingExtraDriver
+                ? null
+                : () => _confirmAndCancelOneExtraDriver(profile),
+            style: TextButton.styleFrom(
+              foregroundColor: _businessThemePalette.textMuted,
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+            ),
+            icon: _cancellingExtraDriver
+                ? const SizedBox(
+                    width: 15,
+                    height: 15,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : Icon(Icons.person_remove_outlined, size: 16, color: _warn),
+            label: Text(
+              _t(
+                nl: 'Eén extra chauffeur opzeggen',
+                en: 'Cancel one extra driver',
+                fr: 'Résilier un chauffeur supplémentaire',
+                es: 'Cancelar un conductor extra',
+              ),
+              style: const TextStyle(fontSize: 12.2, fontWeight: FontWeight.w600),
+            ),
+          ),
+        ),
+      );
+    }
+
+    if (children.isEmpty) return const SizedBox.shrink();
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: children);
+  }
+
+  Widget _extraDriverAddonFooter(BackendSubscriptionProfile profile) {
+    final bool isActive = _profileIsActive(profile);
+    final button = SizedBox(
+      width: double.infinity,
+      child: FilledButton.icon(
+        onPressed: (!isActive || _startingExtraDriverAddonCheckout)
+            ? null
+            : () => _startExtraDriverAddonCheckout(profile),
+        style: FilledButton.styleFrom(
+          backgroundColor: _gold,
+          foregroundColor: Colors.black,
+          disabledBackgroundColor: _businessThemePalette.surfaceAlt.withOpacity(
+            _businessThemePalette.isDark ? 0.66 : 0.92,
+          ),
+          disabledForegroundColor: _businessThemePalette.textMuted,
+          minimumSize: const Size.fromHeight(44),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+        ),
+        icon: _startingExtraDriverAddonCheckout
+            ? const SizedBox(
+                width: 16,
+                height: 16,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: Colors.black54,
+                ),
+              )
+            : const Icon(Icons.person_add_alt_1_outlined, size: 18),
+        label: Text(
+          _activateExtraDriverLabel(),
+          style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 13),
+        ),
+      ),
+    );
+    if (isActive) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          button,
+          _extraDriverCancellationControls(profile),
         ],
       );
     }
@@ -1592,8 +1978,8 @@ class _CompanySubscriptionBillingPageState
             ),
           ),
           const SizedBox(height: 7),
-          // Patch 2.4B: cards that pass a [footer] (currently only Extra
-          // vehicle) render a real action button. All other cards keep the
+          // Patch 2.4B / 2.8: cards that pass a [footer] (Extra vehicle, Extra
+          // driver) render a real action button. PDF bundle cards keep the
           // passive, non-actionable "coming soon" chip from Patch 2.2C.
           footer ??
               Align(
@@ -2399,6 +2785,7 @@ class _CompanySubscriptionBillingPageState
                                   ),
                                   subtitle: _addonAvailableLabel(),
                                   emphasized: usedDrivers >= profile.maxDrivers,
+                                  footer: _extraDriverAddonFooter(profile),
                                 ),
                                 for (final bundle in catalog.pdfBundles) ...[
                                   const SizedBox(height: 7),
