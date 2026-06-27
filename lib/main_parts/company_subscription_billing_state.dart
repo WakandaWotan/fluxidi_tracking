@@ -618,10 +618,10 @@ class _CompanySubscriptionBillingPageState
               Expanded(
                 child: Text(
                   _t(
-                    nl: '1 extra voertuig blijft actief tot ${_extraVehicleEffectiveDate(profile)}. Daarna wordt je voertuigenlimiet verlaagd.',
-                    en: '1 extra vehicle stays active until ${_extraVehicleEffectiveDate(profile)}. Your vehicle limit is lowered after that.',
-                    fr: '1 véhicule supplémentaire reste actif jusqu\'au ${_extraVehicleEffectiveDate(profile)}. Votre limite de véhicules sera ensuite réduite.',
-                    es: '1 vehículo extra permanece activo hasta el ${_extraVehicleEffectiveDate(profile)}. Tu límite de vehículos se reducirá después.',
+                    nl: '1 extra voertuig blijft actief tot ${_extraVehicleEffectiveDate(profile)}. Daarna wordt je voertuigenlimiet met 1 en je chauffeurslimiet met 3 verlaagd.',
+                    en: '1 extra vehicle stays active until ${_extraVehicleEffectiveDate(profile)}. After that your vehicle limit drops by 1 and your driver limit by 3.',
+                    fr: '1 véhicule supplémentaire reste actif jusqu\'au ${_extraVehicleEffectiveDate(profile)}. Ensuite, votre limite de véhicules baisse de 1 et votre limite de chauffeurs de 3.',
+                    es: '1 vehículo extra permanece activo hasta el ${_extraVehicleEffectiveDate(profile)}. Después tu límite de vehículos baja en 1 y el de conductores en 3.',
                   ),
                   style: TextStyle(
                     color: _businessThemePalette.textPrimary,

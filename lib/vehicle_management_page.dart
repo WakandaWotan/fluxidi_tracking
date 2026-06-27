@@ -1732,7 +1732,109 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
     return false;
   }
 
-  Future<DriverProfile?> _openDriverCreator({DriverProfile? existing}) {
+  /// Gate for the "add driver" action (Patch 2.7).
+  ///
+  /// Mirrors [_confirmVehicleUpsellIfNeeded]: it uses the live driver
+  /// entitlement (`max_drivers`) from the company subscription profile to
+  /// decide whether another driver may be created. The base plan grants
+  /// 3 drivers per included vehicle, and each extra vehicle add-on adds 3 more
+  /// driver slots. Returns true when the current scoped driver count is below
+  /// the effective limit; returns false and shows a limit dialog when the
+  /// company is at/over its driver capacity. A transient profile fetch failure
+  /// falls back to the base-plan limit and never hard-blocks.
+  Future<bool> _confirmDriverAddGate() async {
+    final scopedCount = driversNotifier.value
+        .where(_driverVisibleInManagementUi)
+        .length;
+
+    int effectiveMax = (includedVehicleLimit > 0 ? includedVehicleLimit : 1) * 3;
+    String limitSource = 'fallback';
+
+    final scopeId = _activeCompanyIdForFleetUi();
+    if (scopeId != null && scopeId.trim().isNotEmpty) {
+      try {
+        final profile = await fetchCompanySubscriptionProfile(
+          tenantId: scopeId,
+          companyId: scopeId,
+        );
+        if (profile.maxDrivers > 0) {
+          effectiveMax = profile.maxDrivers;
+          limitSource = 'profile.maxDrivers';
+        } else if (profile.includedVehicles > 0 &&
+            profile.includedDriversPerVehicle > 0) {
+          effectiveMax =
+              profile.includedVehicles * profile.includedDriversPerVehicle;
+          limitSource = 'profile.includedVehicles*includedDriversPerVehicle';
+        }
+      } catch (_) {
+        // Keep the safe fallback limit; a transient profile fetch failure must
+        // not block a legitimate add within the base plan.
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                _t(
+                  nl: 'Kon de chauffeurlimiet niet vernieuwen. Standaardlimiet gebruikt.',
+                  en: 'Could not refresh the driver limit. Using the default limit.',
+                  fr: 'Impossible d’actualiser la limite de chauffeurs. Limite par défaut utilisée.',
+                  es: 'No se pudo actualizar el límite de conductores. Se usó el límite predeterminado.',
+                ),
+              ),
+            ),
+          );
+        }
+      }
+    }
+
+    debugPrint(
+      '[DRIVER_ADD_GATE] scoped_count=$scopedCount effective_max=$effectiveMax source=$limitSource',
+    );
+
+    if (scopedCount < effectiveMax) return true;
+
+    if (!mounted) return false;
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: _sheetBg,
+        title: Text(
+          _t(
+            nl: 'Chauffeurlimiet bereikt',
+            en: 'Driver limit reached',
+            fr: 'Limite de chauffeurs atteinte',
+            es: 'Límite de conductores alcanzado',
+          ),
+        ),
+        content: Text(
+          _t(
+            nl: 'Je huidige limiet is $effectiveMax chauffeurs.\nJe plan bevat 3 chauffeurs per voertuig. Voeg een extra voertuig toe via Abonnement & facturatie om 3 extra chauffeursplekken te krijgen.',
+            en: 'Your current limit is $effectiveMax drivers.\nYour plan includes 3 drivers per vehicle. Add an extra vehicle via Subscription & billing to unlock 3 additional driver slots.',
+            fr: 'Votre limite actuelle est de $effectiveMax chauffeurs.\nVotre plan inclut 3 chauffeurs par véhicule. Ajoutez un véhicule via Abonnement et facturation pour débloquer 3 places de chauffeur supplémentaires.',
+            es: 'Tu límite actual es de $effectiveMax conductores.\nTu plan incluye 3 conductores por vehículo. Agrega un vehículo en Suscripción y facturación para desbloquear 3 plazas de conductor adicionales.',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            style: TextButton.styleFrom(foregroundColor: _textSecondary),
+            child: Text(
+              _t(nl: 'Sluiten', en: 'Close', fr: 'Fermer', es: 'Cerrar'),
+            ),
+          ),
+        ],
+      ),
+    );
+    return false;
+  }
+
+  Future<DriverProfile?> _openDriverCreator({DriverProfile? existing}) async {
+    // Only gate brand-new driver creation; editing an existing driver must
+    // never be blocked by the entitlement limit.
+    if (existing == null) {
+      final allowed = await _confirmDriverAddGate();
+      if (!allowed) return null;
+    }
+    if (!mounted) return null;
     return showDriverCreatorDialog(
       context,
       existing: existing,
