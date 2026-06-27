@@ -6588,6 +6588,155 @@ async function appendFluxidiAddonHistory(env, tenantId, companyId, entry = {}) {
   return persisted;
 }
 
+// =========================
+// Patch 2.4A: duplicate-pending add-on checkout guard.
+//
+// A small secondary index lets checkout-start detect that a still-open
+// pending add-on activation already exists for the same
+// tenant/company/addon_code before it creates a second Mollie payment.
+// The authoritative record stays the per-activation_id pending KV entry
+// (`subscription:addon:pending_activation:*`); this index is purely a
+// lookup-by-company pointer and is best-effort (its absence only weakens
+// the guard, never the existing per-activation_id idempotency).
+//
+// Key shape:
+//   subscription:addon:pending_by_company:{tenant_id}:{company_id}:{addon_code}:v1
+// TTL: same window as the pending activation, so a stale checkout pointer
+// never outlives the pending record it references.
+// =========================
+function buildFluxidiAddonPendingByCompanyKey(tenantId, companyId, addonCode) {
+  const t = sanitizeTenantString(tenantId, 80);
+  const c = sanitizeTenantString(companyId, 80);
+  const a = _fluxidiSubscriptionSafeStr(addonCode, 64).toLowerCase();
+  if (!t || !c || !a) return "";
+  return `subscription:addon:pending_by_company:${t}:${c}:${a}:v1`;
+}
+
+// Return the still-open pending activation record for this
+// tenant/company/addon_code/quantity if (and only if) one exists, is
+// genuinely "pending", is not expired, and matches the requested scope and
+// shape exactly. Otherwise return null so the caller allows a fresh
+// checkout. Stale/mismatched/finalized index entries are treated as "no
+// active pending".
+async function findActiveFluxidiAddonPendingForCompany(
+  env,
+  { tenantId, companyId, addonCode, quantity } = {},
+) {
+  if (!env?.BOOKING_KV) return null;
+  const reqTenant = sanitizeTenantString(tenantId, 80);
+  const reqCompany = sanitizeTenantString(companyId, 80);
+  const reqAddon = _fluxidiSubscriptionSafeStr(addonCode, 64).toLowerCase();
+  const reqQuantity = Number.isFinite(Number(quantity))
+    ? Math.trunc(Number(quantity))
+    : NaN;
+  const indexKey = buildFluxidiAddonPendingByCompanyKey(reqTenant, reqCompany, reqAddon);
+  if (!indexKey) return null;
+  let index = null;
+  try {
+    index = await env.BOOKING_KV.get(indexKey, { type: "json" });
+  } catch (_) {
+    return null;
+  }
+  if (!index || typeof index !== "object" || Array.isArray(index)) return null;
+  const indexActivationId = _fluxidiSubscriptionNormalizeActivationId(index.activation_id);
+  if (!indexActivationId) return null;
+
+  // Load the authoritative pending record the index points at. If it is
+  // gone (expired/evicted) or no longer self-identifies as an add-on
+  // activation, the index is stale → allow a new checkout.
+  const pending = await loadFluxidiAddonPendingActivation(env, indexActivationId);
+  if (!pending) return null;
+
+  const pendTenant = sanitizeTenantString(pending.tenant_id, 80);
+  const pendCompany = sanitizeTenantString(pending.company_id, 80);
+  if (pendTenant !== reqTenant || pendCompany !== reqCompany) return null;
+  const pendAddon = _fluxidiSubscriptionSafeStr(pending.addon_code, 64).toLowerCase();
+  if (pendAddon !== reqAddon) return null;
+  const pendQuantity = Number.isFinite(Number(pending.quantity))
+    ? Math.trunc(Number(pending.quantity))
+    : NaN;
+  if (!Number.isFinite(reqQuantity) || pendQuantity !== reqQuantity) return null;
+
+  // Only a record still in "pending" state blocks a new checkout. applied /
+  // rejected / any finalized state falls through.
+  const pendStatus = _fluxidiSubscriptionSafeStr(pending.status, 24).toLowerCase();
+  if (pendStatus !== "pending") return null;
+
+  // Defensive expiry guard (KV TTL should already have evicted it).
+  const expiresAt = _fluxidiSubscriptionSafeStr(pending.expires_at, 48);
+  if (expiresAt) {
+    const expMs = Date.parse(expiresAt);
+    if (Number.isFinite(expMs) && Date.now() >= expMs) return null;
+  }
+  return pending;
+}
+
+// Publish/refresh the pending_by_company index pointing at `activation_id`.
+// Best-effort; failures are swallowed by the caller. TTL mirrors the
+// pending activation so the pointer cannot outlive its target.
+async function writeFluxidiAddonPendingByCompanyIndex(env, record, { ttlSeconds } = {}) {
+  if (!env?.BOOKING_KV) return null;
+  const tenantId = sanitizeTenantString(record?.tenant_id, 80);
+  const companyId = sanitizeTenantString(record?.company_id, 80);
+  const addonCode = _fluxidiSubscriptionSafeStr(record?.addon_code, 64).toLowerCase();
+  const activationId = _fluxidiSubscriptionNormalizeActivationId(record?.activation_id);
+  const key = buildFluxidiAddonPendingByCompanyKey(tenantId, companyId, addonCode);
+  if (!key || !activationId) return null;
+  const quantity = Number.isFinite(Number(record?.quantity))
+    ? Math.trunc(Number(record.quantity))
+    : 0;
+  const ttl = Number.isFinite(Number(ttlSeconds)) && Number(ttlSeconds) > 0
+    ? Math.trunc(Number(ttlSeconds))
+    : FLUXIDI_SUBSCRIPTION_ADDON_PENDING_TTL_SECONDS;
+  const nowMs = Date.now();
+  const nowIso = new Date(nowMs).toISOString();
+  const expiresIso = new Date(nowMs + ttl * 1000).toISOString();
+  const persisted = {
+    version: 1,
+    activation_id: activationId,
+    tenant_id: tenantId,
+    company_id: companyId,
+    addon_code: addonCode,
+    quantity,
+    provider_payment_id: _fluxidiSubscriptionSafeStr(record?.provider_payment_id, 128),
+    status: _fluxidiSubscriptionSafeStr(record?.status, 24).toLowerCase() || "pending",
+    created_at: _fluxidiSubscriptionSafeStr(record?.created_at, 48) || nowIso,
+    expires_at: _fluxidiSubscriptionSafeStr(record?.expires_at, 48) || expiresIso,
+  };
+  try {
+    await env.BOOKING_KV.put(key, JSON.stringify(persisted), { expirationTtl: ttl });
+  } catch (_) {
+    return null;
+  }
+  return persisted;
+}
+
+// Delete the pending_by_company index ONLY if it still points at this exact
+// activation_id. A newer checkout may have overwritten the pointer with a
+// different activation; in that case the newer pending must stay protected,
+// so we leave the index untouched.
+async function clearFluxidiAddonPendingByCompanyIndexIfMatches(
+  env,
+  { tenantId, companyId, addonCode, activationId } = {},
+) {
+  if (!env?.BOOKING_KV) return;
+  const key = buildFluxidiAddonPendingByCompanyKey(tenantId, companyId, addonCode);
+  const wantActivationId = _fluxidiSubscriptionNormalizeActivationId(activationId);
+  if (!key || !wantActivationId) return;
+  let index = null;
+  try {
+    index = await env.BOOKING_KV.get(key, { type: "json" });
+  } catch (_) {
+    return;
+  }
+  if (!index || typeof index !== "object" || Array.isArray(index)) return;
+  const indexActivationId = _fluxidiSubscriptionNormalizeActivationId(index.activation_id);
+  if (indexActivationId !== wantActivationId) return;
+  try {
+    await env.BOOKING_KV.delete(key);
+  } catch (_) {}
+}
+
 // Create the first Mollie payment for an add-on activation. Uses ONLY the
 // Fluxidi-owned subscription API key — never a company Mollie Connect token,
 // never the ride payment Mollie credentials. The activation_id is the
@@ -6657,6 +6806,16 @@ async function activateFluxidiAddonFromVerifiedPayment(env, { activationId, paym
         providerPaymentId: paymentId,
       });
     } catch (_) {}
+    // Patch 2.4A: this activation is final (applied). Release the
+    // duplicate-pending guard index if it still points here.
+    try {
+      await clearFluxidiAddonPendingByCompanyIndexIfMatches(env, {
+        tenantId,
+        companyId,
+        addonCode,
+        activationId: cleanActivationId,
+      });
+    } catch (_) {}
     console.log(
       `[SUBSCRIPTION_ADDON_ACTIVATE][OK] tenant=${tenantMask} company=${companyMask} addon=${addonCode} activation_id=${cleanActivationId} idempotent=true reason=${reason}`,
     );
@@ -6668,6 +6827,16 @@ async function activateFluxidiAddonFromVerifiedPayment(env, { activationId, paym
       await markFluxidiAddonPendingActivationRejected(env, cleanActivationId, {
         rejectionReason: reason,
         providerPaymentId: paymentId,
+      });
+    } catch (_) {}
+    // Patch 2.4A: this activation is final (rejected). Release the
+    // duplicate-pending guard index if it still points here.
+    try {
+      await clearFluxidiAddonPendingByCompanyIndexIfMatches(env, {
+        tenantId,
+        companyId,
+        addonCode,
+        activationId: cleanActivationId,
       });
     } catch (_) {}
     console.log(
@@ -6859,6 +7028,19 @@ async function activateFluxidiAddonFromVerifiedPayment(env, { activationId, paym
     });
   } catch (_) {
     // Non-fatal; applied marker (above) is the real idempotency anchor.
+  }
+
+  // Patch 2.4A: activation is now final (applied). Release the
+  // duplicate-pending guard index if it still points at this activation.
+  try {
+    await clearFluxidiAddonPendingByCompanyIndexIfMatches(env, {
+      tenantId,
+      companyId,
+      addonCode,
+      activationId: cleanActivationId,
+    });
+  } catch (_) {
+    // Best-effort; the index also self-expires at the pending TTL.
   }
 
   try {
@@ -25626,6 +25808,46 @@ export default {
             return json({ ok: false, error: "missing_billing_email" }, 422);
           }
 
+          // Patch 2.4A duplicate-pending guard. Runs AFTER all validation but
+          // BEFORE any Mollie call (customer or payment), so a repeated tap
+          // cannot mint a second live checkout/payment for the same
+          // tenant/company/addon/quantity. Only a genuinely "pending",
+          // unexpired, scope-matched record blocks; stale/mismatched/finalized
+          // index entries fall through and allow a fresh checkout.
+          const existingPending = await findActiveFluxidiAddonPendingForCompany(env, {
+            tenantId: scope.tenant_id,
+            companyId: scope.company_id,
+            addonCode,
+            quantity,
+          });
+          if (existingPending) {
+            const existingActivationId = _fluxidiSubscriptionNormalizeActivationId(
+              existingPending.activation_id,
+            );
+            const existingPaymentId = _fluxidiSubscriptionSafeStr(
+              existingPending.provider_payment_id,
+              128,
+            );
+            console.log(
+              `[SUBSCRIPTION_ADDON_CHECKOUT_START][BLOCKED] tenant=${tenantMask} company=${companyMask} addon=${addonCode} qty=${quantity} reason=already_pending activation_id=${existingActivationId}`,
+            );
+            // Intentionally do NOT return checkout_url: it is not stored on the
+            // pending record, and reconstructing it would require a broad
+            // Mollie payment fetch this narrow patch deliberately avoids.
+            return json(
+              {
+                ok: false,
+                error: "addon_checkout_already_pending",
+                addon_code: addonCode,
+                quantity,
+                activation_id: existingActivationId,
+                provider_payment_id: existingPaymentId,
+                message: "An add-on checkout is already pending for this company.",
+              },
+              409,
+            );
+          }
+
           // Mint a fresh add-on activation id. Prefix `addon_` so logs/runbook
           // can eyeball-distinguish base vs add-on without loading KV.
           const activationId = _fluxidiSubscriptionNormalizeActivationId(
@@ -25770,6 +25992,31 @@ export default {
             return json(
               { ok: false, error: "pending_activation_save_failed" },
               500,
+            );
+          }
+
+          // Patch 2.4A: publish the duplicate-pending guard index pointing at
+          // this activation. Best-effort — if it fails the checkout still
+          // succeeds (per-activation_id idempotency is unchanged); the only
+          // downside is the duplicate guard may miss until the pending TTL
+          // window closes.
+          try {
+            await writeFluxidiAddonPendingByCompanyIndex(
+              env,
+              {
+                activation_id: activationId,
+                tenant_id: scope.tenant_id,
+                company_id: scope.company_id,
+                addon_code: addonCode,
+                quantity,
+                provider_payment_id: providerPaymentId,
+                status: "pending",
+              },
+              { ttlSeconds: FLUXIDI_SUBSCRIPTION_ADDON_PENDING_TTL_SECONDS },
+            );
+          } catch (e) {
+            console.log(
+              `[SUBSCRIPTION_ADDON_CHECKOUT_START][WARN] stage=pending_index msg=${_fluxidiSubscriptionSafeStr(e?.message, 160)}`,
             );
           }
 
