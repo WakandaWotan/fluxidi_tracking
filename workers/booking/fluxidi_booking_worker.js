@@ -25828,23 +25828,179 @@ export default {
               existingPending.provider_payment_id,
               128,
             );
-            console.log(
-              `[SUBSCRIPTION_ADDON_CHECKOUT_START][BLOCKED] tenant=${tenantMask} company=${companyMask} addon=${addonCode} qty=${quantity} reason=already_pending activation_id=${existingActivationId}`,
+            const pendingCurrency = (
+              _fluxidiSubscriptionSafeStr(existingPending.currency, 8).toUpperCase() ||
+              "EUR"
+            ).slice(0, 8);
+            const pendingExpectedCents = _fluxidiSubscriptionNullableCents(
+              existingPending.expected_amount_cents,
             );
-            // Intentionally do NOT return checkout_url: it is not stored on the
-            // pending record, and reconstructing it would require a broad
-            // Mollie payment fetch this narrow patch deliberately avoids.
+            const pendingBillingModel =
+              _fluxidiSubscriptionSafeStr(existingPending.billing_model, 48) ||
+              "addon_activation_v1";
+
+            // Shared 409 fallback. NEVER creates a new payment; it only reports
+            // that a still-open checkout exists for this company. Used whenever
+            // the existing payment cannot be safely resumed.
+            const respondAlreadyPending = () => {
+              console.log(
+                `[SUBSCRIPTION_ADDON_CHECKOUT_START][BLOCKED] tenant=${tenantMask} company=${companyMask} addon=${addonCode} qty=${quantity} reason=already_pending activation_id=${existingActivationId}`,
+              );
+              return json(
+                {
+                  ok: false,
+                  error: "addon_checkout_already_pending",
+                  addon_code: addonCode,
+                  quantity,
+                  activation_id: existingActivationId,
+                  provider_payment_id: existingPaymentId,
+                  message: "An add-on checkout is already pending for this company.",
+                },
+                409,
+              );
+            };
+
+            // Patch 2.4C resume. Reuse the existing Mollie payment instead of
+            // creating a new one. Fetch via the Fluxidi-owned subscription key
+            // ONLY (fetchFluxidiSubscriptionMolliePayment). If the payment is
+            // still open and exposes a valid HTTPS checkout link — and every
+            // scope/metadata/amount cross-check passes — return that link so
+            // Flutter can reopen the same checkout. Any failure falls back to
+            // the existing 409 and creates NOTHING.
+            if (!existingPaymentId) {
+              return respondAlreadyPending();
+            }
+            let resumeFetch = null;
+            try {
+              resumeFetch = await fetchFluxidiSubscriptionMolliePayment(
+                env,
+                existingPaymentId,
+              );
+            } catch (e) {
+              console.log(
+                `[SUBSCRIPTION_ADDON_CHECKOUT_START][RESUME_SKIP] reason=fetch_exception msg=${_fluxidiSubscriptionSafeStr(e?.message, 160)}`,
+              );
+              return respondAlreadyPending();
+            }
+            if (!resumeFetch?.ok || !resumeFetch.data) {
+              console.log(
+                `[SUBSCRIPTION_ADDON_CHECKOUT_START][RESUME_SKIP] reason=payment_fetch_failed upstream_status=${Number(resumeFetch?.status) || 0}`,
+              );
+              return respondAlreadyPending();
+            }
+            const resumePayment = resumeFetch.data;
+
+            // Identity cross-check: fetched payment id must equal the one we
+            // captured at checkout-start.
+            const resumePaymentId = _fluxidiSubscriptionSafeStr(resumePayment?.id, 128);
+            if (!resumePaymentId || resumePaymentId !== existingPaymentId) {
+              console.log(
+                "[SUBSCRIPTION_ADDON_CHECKOUT_START][RESUME_SKIP] reason=payment_id_mismatch",
+              );
+              return respondAlreadyPending();
+            }
+
+            // Metadata cross-checks (enforce only fields actually present on
+            // the Mollie payment; mirrors the activator's defense-in-depth).
+            const resumeMeta =
+              resumePayment?.metadata &&
+              typeof resumePayment.metadata === "object" &&
+              !Array.isArray(resumePayment.metadata)
+                ? resumePayment.metadata
+                : {};
+            const resumeMetaPurpose = _fluxidiSubscriptionSafeStr(resumeMeta?.purpose).toLowerCase();
+            if (resumeMetaPurpose && resumeMetaPurpose !== FLUXIDI_SUBSCRIPTION_METADATA_PURPOSE) {
+              return respondAlreadyPending();
+            }
+            const resumeMetaKind = _fluxidiSubscriptionSafeStr(resumeMeta?.kind).toLowerCase();
+            if (resumeMetaKind && resumeMetaKind !== "addon") {
+              return respondAlreadyPending();
+            }
+            const resumeMetaActivationId = _fluxidiSubscriptionNormalizeActivationId(
+              resumeMeta?.activation_id ?? resumeMeta?.activationId,
+            );
+            if (resumeMetaActivationId && resumeMetaActivationId !== existingActivationId) {
+              return respondAlreadyPending();
+            }
+            const resumeMetaTenant = sanitizeTenantString(resumeMeta?.tenant_id ?? resumeMeta?.tenantId, 80);
+            const resumeMetaCompany = sanitizeTenantString(resumeMeta?.company_id ?? resumeMeta?.companyId, 80);
+            if (
+              (resumeMetaTenant && resumeMetaTenant !== scope.tenant_id) ||
+              (resumeMetaCompany && resumeMetaCompany !== scope.company_id)
+            ) {
+              return respondAlreadyPending();
+            }
+            const resumeMetaAddonCode = _fluxidiSubscriptionSafeStr(
+              resumeMeta?.addon_code ?? resumeMeta?.addonCode,
+              64,
+            ).toLowerCase();
+            if (resumeMetaAddonCode && resumeMetaAddonCode !== addonCode) {
+              return respondAlreadyPending();
+            }
+
+            // Currency + amount cross-checks (only when both sides available).
+            const resumeCurrency = _fluxidiSubscriptionSafeStr(resumePayment?.amount?.currency).toUpperCase();
+            if (resumeCurrency && pendingCurrency && resumeCurrency !== pendingCurrency) {
+              return respondAlreadyPending();
+            }
+            const resumeAmountStr = _fluxidiSubscriptionSafeStr(resumePayment?.amount?.value);
+            if (resumeAmountStr && pendingExpectedCents !== null) {
+              const n = Number(resumeAmountStr);
+              const resumeCents = Number.isFinite(n) ? Math.round(n * 100) : null;
+              if (resumeCents !== null && resumeCents !== pendingExpectedCents) {
+                return respondAlreadyPending();
+              }
+            }
+
+            // Only resumable while the payment is still open. paid / canceled /
+            // expired / failed are not resumable (and won't expose a checkout
+            // link); fall back to 409 and let the webhook/TTL settle it.
+            const resumeStatus = _fluxidiSubscriptionSafeStr(resumePayment?.status).toLowerCase();
+            if (resumeStatus && resumeStatus !== "open" && resumeStatus !== "pending") {
+              console.log(
+                `[SUBSCRIPTION_ADDON_CHECKOUT_START][RESUME_SKIP] reason=payment_status_not_open status=${resumeStatus}`,
+              );
+              return respondAlreadyPending();
+            }
+
+            // Extract + validate the checkout link (non-empty, parseable, https).
+            const resumeCheckoutUrl = _fluxidiSubscriptionSafeStr(
+              resumePayment?._links?.checkout?.href,
+              1000,
+            );
+            let resumeUrlValid = false;
+            if (resumeCheckoutUrl) {
+              try {
+                resumeUrlValid = new URL(resumeCheckoutUrl).protocol === "https:";
+              } catch (_) {
+                resumeUrlValid = false;
+              }
+            }
+            if (!resumeUrlValid) {
+              console.log(
+                "[SUBSCRIPTION_ADDON_CHECKOUT_START][RESUME_SKIP] reason=missing_or_invalid_checkout_url",
+              );
+              return respondAlreadyPending();
+            }
+
+            console.log(
+              `[SUBSCRIPTION_ADDON_CHECKOUT_START][RESUME] tenant=${tenantMask} company=${companyMask} addon=${addonCode} qty=${quantity} activation_id=${existingActivationId} payment_id=set mode=${config.mode}`,
+            );
             return json(
               {
-                ok: false,
-                error: "addon_checkout_already_pending",
+                ok: true,
+                resumed: true,
+                pending: true,
+                activation_id: existingActivationId,
                 addon_code: addonCode,
                 quantity,
-                activation_id: existingActivationId,
+                expected_amount_cents: pendingExpectedCents,
+                currency: pendingCurrency,
+                billing_model: pendingBillingModel,
+                checkout_url: resumeCheckoutUrl,
                 provider_payment_id: existingPaymentId,
-                message: "An add-on checkout is already pending for this company.",
               },
-              409,
+              200,
             );
           }
 
