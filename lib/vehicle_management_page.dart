@@ -1641,56 +1641,95 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
     );
   }
 
+  /// Gate for the "add vehicle" action (Patch 2.4H).
+  ///
+  /// Uses the live paid entitlement (`max_vehicles`) from the company
+  /// subscription profile instead of the hardcoded base-plan included count.
+  /// Returns true when a new vehicle may be added (current scoped count below
+  /// the effective limit); returns false and shows a limit dialog when the
+  /// company is at/over its paid vehicle capacity. A transient profile fetch
+  /// failure falls back to the base plan limit and never hard-blocks.
   Future<bool> _confirmVehicleUpsellIfNeeded() async {
-    final currentCount = vehiclesNotifier.value.length;
-    if (currentCount < includedVehicleLimit) return true;
-    final ok = await showDialog<bool>(
+    final scopedCount = vehiclesNotifier.value
+        .where(_vehicleVisibleInManagementUi)
+        .length;
+
+    int effectiveMax = includedVehicleLimit > 0 ? includedVehicleLimit : 1;
+    String limitSource = 'fallback';
+
+    final scopeId = _activeCompanyIdForFleetUi();
+    if (scopeId != null && scopeId.trim().isNotEmpty) {
+      try {
+        final profile = await fetchCompanySubscriptionProfile(
+          tenantId: scopeId,
+          companyId: scopeId,
+        );
+        if (profile.maxVehicles > 0) {
+          effectiveMax = profile.maxVehicles;
+          limitSource = 'profile.maxVehicles';
+        } else if (profile.includedVehicles > 0) {
+          effectiveMax = profile.includedVehicles;
+          limitSource = 'profile.includedVehicles';
+        }
+      } catch (_) {
+        // Keep the safe fallback limit; a transient profile fetch failure must
+        // not block a legitimate add within the base plan.
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                _t(
+                  nl: 'Kon de abonnementslimiet niet vernieuwen. Standaardlimiet gebruikt.',
+                  en: 'Could not refresh the subscription limit. Using the default limit.',
+                  fr: 'Impossible d’actualiser la limite d’abonnement. Limite par défaut utilisée.',
+                  es: 'No se pudo actualizar el límite de la suscripción. Se usó el límite predeterminado.',
+                ),
+              ),
+            ),
+          );
+        }
+      }
+    }
+
+    debugPrint(
+      '[VEHICLE_ADD_GATE] scoped_count=$scopedCount effective_max=$effectiveMax source=$limitSource',
+    );
+
+    if (scopedCount < effectiveMax) return true;
+
+    if (!mounted) return false;
+    await showDialog<void>(
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: _sheetBg,
         title: Text(
           _t(
-            nl: 'Extra voertuig',
-            en: 'Additional vehicle',
-            fr: 'Véhicule supplémentaire',
-            es: 'Vehículo adicional',
+            nl: 'Voertuiglimiet bereikt',
+            en: 'Vehicle limit reached',
+            fr: 'Limite de véhicules atteinte',
+            es: 'Límite de vehículos alcanzado',
           ),
         ),
         content: Text(
           _t(
-            nl: 'Je abonnement bevat 1 voertuig. Extra voertuigen vallen onder een upsell van €${fleetSubscriptionPolicy.additionalVehicleMonthlyPrice.toStringAsFixed(0)} per voertuig per maand.',
-            en: 'Your subscription includes 1 vehicle. Additional vehicles use an upsell of €${fleetSubscriptionPolicy.additionalVehicleMonthlyPrice.toStringAsFixed(0)} per vehicle per month.',
-            fr: 'Votre abonnement inclut 1 véhicule. Les véhicules supplémentaires utilisent un supplément de €${fleetSubscriptionPolicy.additionalVehicleMonthlyPrice.toStringAsFixed(0)} par véhicule et par mois.',
-            es: 'Tu suscripción incluye 1 vehículo. Los vehículos adicionales aplican un cargo de €${fleetSubscriptionPolicy.additionalVehicleMonthlyPrice.toStringAsFixed(0)} por vehículo al mes.',
+            nl: 'Je huidige limiet is $effectiveMax voertuigen.\nVoeg eerst een extra voertuigslot toe via Abonnement & facturatie.',
+            en: 'Your current limit is $effectiveMax vehicles.\nAdd an extra vehicle slot first via Subscription & billing.',
+            fr: 'Votre limite actuelle est de $effectiveMax véhicules.\nAjoutez d’abord un emplacement de véhicule via Abonnement et facturation.',
+            es: 'Tu límite actual es de $effectiveMax vehículos.\nAgrega primero una plaza de vehículo en Suscripción y facturación.',
           ),
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
+            onPressed: () => Navigator.pop(ctx),
             style: TextButton.styleFrom(foregroundColor: _textSecondary),
             child: Text(
-              _t(nl: 'Annuleren', en: 'Cancel', fr: 'Annuler', es: 'Cancelar'),
-            ),
-          ),
-          FilledButton(
-            style: FilledButton.styleFrom(
-              backgroundColor: _gold,
-              foregroundColor: _theme.palette.textOnAccent,
-            ),
-            onPressed: () => Navigator.pop(ctx, true),
-            child: Text(
-              _t(
-                nl: 'Doorgaan',
-                en: 'Continue',
-                fr: 'Continuer',
-                es: 'Continuar',
-              ),
+              _t(nl: 'Sluiten', en: 'Close', fr: 'Fermer', es: 'Cerrar'),
             ),
           ),
         ],
       ),
     );
-    return ok == true;
+    return false;
   }
 
   Future<DriverProfile?> _openDriverCreator({DriverProfile? existing}) {
