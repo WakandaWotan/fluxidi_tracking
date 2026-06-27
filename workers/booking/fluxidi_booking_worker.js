@@ -4757,9 +4757,9 @@ function normalizeSubscriptionProfile(input = {}, scope = null) {
     provider_subscription_id: sanitizeTenantString(source.provider_subscription_id ?? source.providerSubscriptionId ?? DEFAULT_SUBSCRIPTION_PROFILE.provider_subscription_id, 128),
     activation_id: sanitizeTenantString(source.activation_id ?? source.activationId ?? DEFAULT_SUBSCRIPTION_PROFILE.activation_id, 160),
     billing_email: sanitizeTenantString(source.billing_email ?? source.billingEmail ?? DEFAULT_SUBSCRIPTION_PROFILE.billing_email, 160),
-    included_vehicles: Math.max(0, clampInt(source.included_vehicles ?? source.includedVehicles, DEFAULT_SUBSCRIPTION_PROFILE.included_vehicles)),
-    max_vehicles: Math.max(0, clampInt(source.max_vehicles ?? source.maxVehicles, DEFAULT_SUBSCRIPTION_PROFILE.max_vehicles)),
-    max_drivers: Math.max(0, clampInt(source.max_drivers ?? source.maxDrivers, DEFAULT_SUBSCRIPTION_PROFILE.max_drivers)),
+    included_vehicles: Math.max(0, clampInt(source.included_vehicles ?? source.includedVehicles, DEFAULT_SUBSCRIPTION_PROFILE.included_vehicles, 100000)),
+    max_vehicles: Math.max(0, clampInt(source.max_vehicles ?? source.maxVehicles, DEFAULT_SUBSCRIPTION_PROFILE.max_vehicles, 100000)),
+    max_drivers: Math.max(0, clampInt(source.max_drivers ?? source.maxDrivers, DEFAULT_SUBSCRIPTION_PROFILE.max_drivers, 100000)),
     features: {
       ai_assistant: typeof inFeatures.ai_assistant === "boolean" ? inFeatures.ai_assistant : defaultFeatures.ai_assistant,
       airport_module: typeof inFeatures.airport_module === "boolean" ? inFeatures.airport_module : defaultFeatures.airport_module,
@@ -6968,13 +6968,22 @@ async function activateFluxidiAddonFromVerifiedPayment(env, { activationId, paym
   }
   const vehiclesDelta = Math.max(0, Math.trunc(Number(deltas.max_vehicles_delta) || 0));
   const driversDelta = Math.max(0, Math.trunc(Number(deltas.max_drivers_delta) || 0));
+  // Baseline = the profile's effective limit. If a legacy/corrupted record
+  // ever reads as non-finite, fall back to the plan baseline rather than 0 so
+  // a paid add-on can never silently zero out entitlements. This only replaces
+  // the missing-value fallback; a valid stored value is used as-is and never
+  // stacked on top of the baseline.
   const currentMaxVehicles = Math.max(
     0,
-    Number.isFinite(Number(currentProfile.max_vehicles)) ? Math.trunc(Number(currentProfile.max_vehicles)) : 0,
+    Number.isFinite(Number(currentProfile.max_vehicles))
+      ? Math.trunc(Number(currentProfile.max_vehicles))
+      : DEFAULT_SUBSCRIPTION_PROFILE.max_vehicles,
   );
   const currentMaxDrivers = Math.max(
     0,
-    Number.isFinite(Number(currentProfile.max_drivers)) ? Math.trunc(Number(currentProfile.max_drivers)) : 0,
+    Number.isFinite(Number(currentProfile.max_drivers))
+      ? Math.trunc(Number(currentProfile.max_drivers))
+      : DEFAULT_SUBSCRIPTION_PROFILE.max_drivers,
   );
   const newMaxVehicles = currentMaxVehicles + vehiclesDelta;
   const newMaxDrivers = currentMaxDrivers + driversDelta;
