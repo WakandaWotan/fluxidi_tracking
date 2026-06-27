@@ -1345,6 +1345,12 @@ class BackendSubscriptionProfile {
   final bool autoRenew;
   final String cancelRequestedAt;
   final String cancellationEffectiveAt;
+  // Patch 2.6: extra-vehicle add-on cancel/downgrade-at-period-end lifecycle.
+  final int extraVehicleActiveQuantity;
+  final int extraVehicleCancelAtPeriodEndQuantity;
+  final String extraVehicleCancelRequestedAt;
+  final String extraVehicleCancellationEffectiveAt;
+  final bool extraVehicleAutoRenew;
   final String currentPeriodStart;
   final String currentPeriodEnd;
   final int? lockedPriceCents;
@@ -1391,6 +1397,11 @@ class BackendSubscriptionProfile {
     this.autoRenew = true,
     this.cancelRequestedAt = '',
     this.cancellationEffectiveAt = '',
+    this.extraVehicleActiveQuantity = 0,
+    this.extraVehicleCancelAtPeriodEndQuantity = 0,
+    this.extraVehicleCancelRequestedAt = '',
+    this.extraVehicleCancellationEffectiveAt = '',
+    this.extraVehicleAutoRenew = true,
     this.currentPeriodStart = '',
     this.currentPeriodEnd = '',
     this.lockedPriceCents,
@@ -1665,6 +1676,31 @@ class BackendSubscriptionProfile {
         'cancellationEffectiveAt',
         fallback.cancellationEffectiveAt,
       ),
+      extraVehicleActiveQuantity: intVal(
+        'extra_vehicle_active_quantity',
+        'extraVehicleActiveQuantity',
+        fallback.extraVehicleActiveQuantity,
+      ),
+      extraVehicleCancelAtPeriodEndQuantity: intVal(
+        'extra_vehicle_cancel_at_period_end_quantity',
+        'extraVehicleCancelAtPeriodEndQuantity',
+        fallback.extraVehicleCancelAtPeriodEndQuantity,
+      ),
+      extraVehicleCancelRequestedAt: text(
+        'extra_vehicle_cancel_requested_at',
+        'extraVehicleCancelRequestedAt',
+        fallback.extraVehicleCancelRequestedAt,
+      ),
+      extraVehicleCancellationEffectiveAt: text(
+        'extra_vehicle_cancellation_effective_at',
+        'extraVehicleCancellationEffectiveAt',
+        fallback.extraVehicleCancellationEffectiveAt,
+      ),
+      extraVehicleAutoRenew: boolVal(
+        'extra_vehicle_auto_renew',
+        'extraVehicleAutoRenew',
+        fallback.extraVehicleAutoRenew,
+      ),
       currentPeriodStart: text(
         'current_period_start',
         'currentPeriodStart',
@@ -1758,6 +1794,13 @@ class BackendSubscriptionProfile {
     'auto_renew': autoRenew,
     'cancel_requested_at': cancelRequestedAt,
     'cancellation_effective_at': cancellationEffectiveAt,
+    'extra_vehicle_active_quantity': extraVehicleActiveQuantity,
+    'extra_vehicle_cancel_at_period_end_quantity':
+        extraVehicleCancelAtPeriodEndQuantity,
+    'extra_vehicle_cancel_requested_at': extraVehicleCancelRequestedAt,
+    'extra_vehicle_cancellation_effective_at':
+        extraVehicleCancellationEffectiveAt,
+    'extra_vehicle_auto_renew': extraVehicleAutoRenew,
     'current_period_start': currentPeriodStart,
     'current_period_end': currentPeriodEnd,
     'locked_price_cents': lockedPriceCents,
@@ -5643,6 +5686,52 @@ Future<BackendSubscriptionProfile> cancelCompanySubscription({
   if (res.statusCode < 200 || res.statusCode >= 300) {
     debugPrint(
       '[SUBSCRIPTION_CANCEL][FAIL] status=${res.statusCode} '
+      'auth_mode=${auth.mode.name}',
+    );
+    throw Exception('HTTP ${res.statusCode}: ${res.body}');
+  }
+  final decoded = jsonDecode(utf8.decode(res.bodyBytes));
+  if (decoded is! Map) throw Exception('Invalid response');
+  final profile = decoded['subscription_profile'];
+  if (profile is! Map) throw Exception('Missing subscription_profile');
+  return BackendSubscriptionProfile.fromJson(
+    Map<String, dynamic>.from(profile),
+  );
+}
+
+/// POST /company/subscription/add-ons/extra-vehicle/cancel-one (Patch 2.6).
+///
+/// Company-session auth. Schedules a downgrade of exactly ONE paid extra
+/// vehicle slot at the end of the current billing period. The slot stays
+/// usable until [BackendSubscriptionProfile.extraVehicleCancellationEffectiveAt];
+/// the entitlement reduction is applied lazily by the backend on the next
+/// profile read after that date. This NEVER creates a payment/checkout, NEVER
+/// calls Mollie, NEVER issues a refund, and NEVER deletes vehicles. Returns the
+/// refreshed profile. Throws on a non-2xx response so the caller can surface a
+/// message; the button is only shown when there is a cancelable slot so the
+/// `no_extra_vehicle_to_cancel` (422) path is rare.
+Future<BackendSubscriptionProfile> cancelOneExtraVehicleAddon({
+  String? tenantId,
+  String? companyId,
+}) async {
+  final scope = _resolveAdminTenantCompanyScope(
+    tenantId: tenantId,
+    companyId: companyId,
+  );
+  final endpoint = _withAdminTenantCompanyScope(
+    Uri.parse(
+      '${appConfig.bookingBaseUrl}/company/subscription/add-ons/extra-vehicle/cancel-one',
+    ),
+    tenantId: scope['tenant_id'],
+    companyId: scope['company_id'],
+  );
+  final auth = await resolveCompanyOwnerAuthHeaders();
+  final res = await http
+      .post(endpoint, headers: auth.headers, body: jsonEncode(scope))
+      .timeout(const Duration(seconds: 15));
+  if (res.statusCode < 200 || res.statusCode >= 300) {
+    debugPrint(
+      '[SUBSCRIPTION_ADDON_CANCEL_ONE][FAIL] status=${res.statusCode} '
       'auth_mode=${auth.mode.name}',
     );
     throw Exception('HTTP ${res.statusCode}: ${res.body}');

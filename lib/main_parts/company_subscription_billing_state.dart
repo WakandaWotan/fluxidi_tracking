@@ -21,6 +21,8 @@ class _CompanySubscriptionBillingPageState
   bool _startingAddonCheckout = false;
   // Patch 2.5: guard against double-tapping the cancel-subscription button.
   bool _cancelling = false;
+  // Patch 2.6: guard against double-tapping the cancel-one-extra-vehicle button.
+  bool _cancellingExtraVehicle = false;
   // Set true while a Mollie checkout window is open so the next app resume
   // triggers exactly one profile refresh (no infinite resume loops). Shared by
   // both the base subscription checkout and the add-on checkout.
@@ -451,6 +453,230 @@ class _CompanySubscriptionBillingPageState
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // Patch 2.6: cancel/downgrade one extra vehicle add-on at period end.
+  //
+  // Local state only; no payment, checkout, or Mollie call. The paid slot stays
+  // usable until the effective date, after which the backend lazily lowers the
+  // vehicle limit. Existing vehicles are never deleted.
+  // ---------------------------------------------------------------------------
+
+  /// Active paid extra-vehicle slots, preferring the explicit backend count and
+  /// falling back to (maxVehicles - includedVehicles) for legacy profiles.
+  int _extraVehicleActiveQuantity(BackendSubscriptionProfile profile) {
+    if (profile.extraVehicleActiveQuantity > 0) {
+      return profile.extraVehicleActiveQuantity;
+    }
+    final derived = profile.maxVehicles - profile.includedVehicles;
+    return derived > 0 ? derived : 0;
+  }
+
+  /// Slots still cancelable right now (active minus already-scheduled).
+  int _extraVehicleCancelableQuantity(BackendSubscriptionProfile profile) {
+    final cancelable =
+        _extraVehicleActiveQuantity(profile) -
+        profile.extraVehicleCancelAtPeriodEndQuantity;
+    return cancelable > 0 ? cancelable : 0;
+  }
+
+  String _extraVehicleEffectiveDate(BackendSubscriptionProfile profile) {
+    final effective = profile.extraVehicleCancellationEffectiveAt.trim();
+    if (effective.isNotEmpty) return _humanDate(effective);
+    final periodEnd = profile.currentPeriodEnd.trim();
+    if (periodEnd.isNotEmpty) return _humanDate(periodEnd);
+    final trialEnds = profile.trialEndsAt.trim();
+    if (trialEnds.isNotEmpty) return _humanDate(trialEnds);
+    return '—';
+  }
+
+  Future<void> _confirmAndCancelOneExtraVehicle(
+    BackendSubscriptionProfile profile,
+  ) async {
+    if (_cancellingExtraVehicle) return;
+    final scopeId = _activeCompanyId();
+    if (scopeId == null || scopeId.trim().isEmpty) {
+      _showSnack(
+        _t(
+          nl: 'Geen actief bedrijf gevonden. Probeer opnieuw.',
+          en: 'No active company found. Please try again.',
+          fr: 'Aucune entreprise active trouvée. Veuillez réessayer.',
+          es: 'No se encontró ninguna empresa activa. Inténtalo de nuevo.',
+        ),
+      );
+      return;
+    }
+
+    final effective = _extraVehicleEffectiveDate(profile);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: _panel,
+        title: Text(
+          _t(
+            nl: 'Eén extra voertuig opzeggen?',
+            en: 'Cancel one extra vehicle?',
+            fr: 'Résilier un véhicule supplémentaire ?',
+            es: '¿Cancelar un vehículo extra?',
+          ),
+          style: TextStyle(color: _businessThemePalette.textPrimary),
+        ),
+        content: Text(
+          _t(
+            nl: '1 extra voertuig blijft actief tot $effective. Daarna wordt je voertuigenlimiet verlaagd. Bestaande voertuigen worden niet verwijderd.',
+            en: '1 extra vehicle stays active until $effective. Your vehicle limit is lowered after that. Existing vehicles are not removed.',
+            fr: '1 véhicule supplémentaire reste actif jusqu\'au $effective. Votre limite de véhicules sera ensuite réduite. Les véhicules existants ne sont pas supprimés.',
+            es: '1 vehículo extra permanece activo hasta el $effective. Tu límite de vehículos se reducirá después. Los vehículos existentes no se eliminan.',
+          ),
+          style: TextStyle(color: _businessThemePalette.textMuted),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: Text(
+              _t(nl: 'Behouden', en: 'Keep', fr: 'Conserver', es: 'Mantener'),
+            ),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: _warn,
+              foregroundColor: Colors.black,
+            ),
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: Text(
+              _t(
+                nl: 'Opzeggen',
+                en: 'Cancel',
+                fr: 'Résilier',
+                es: 'Cancelar',
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
+    setState(() => _cancellingExtraVehicle = true);
+    try {
+      final updated = await cancelOneExtraVehicleAddon(
+        tenantId: scopeId,
+        companyId: scopeId,
+      );
+      if (!mounted) return;
+      _showSnack(
+        _t(
+          nl: '1 extra voertuig blijft actief tot ${_extraVehicleEffectiveDate(updated)}.',
+          en: '1 extra vehicle stays active until ${_extraVehicleEffectiveDate(updated)}.',
+          fr: '1 véhicule supplémentaire reste actif jusqu\'au ${_extraVehicleEffectiveDate(updated)}.',
+          es: '1 vehículo extra permanece activo hasta el ${_extraVehicleEffectiveDate(updated)}.',
+        ),
+      );
+      _refresh();
+    } catch (_) {
+      if (!mounted) return;
+      _showSnack(
+        _t(
+          nl: 'Opzeggen is niet gelukt. Controleer je verbinding en probeer opnieuw.',
+          en: 'Cancellation failed. Check your connection and try again.',
+          fr: 'Échec de la résiliation. Vérifiez votre connexion et réessayez.',
+          es: 'Error al cancelar. Comprueba tu conexión e inténtalo de nuevo.',
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _cancellingExtraVehicle = false);
+    }
+  }
+
+  /// Cancel-one action and/or passive scheduled-status card for the Extra
+  /// vehicle add-on. Returns nothing when there is no active extra vehicle and
+  /// none scheduled. Active-quantity text is intentionally omitted (the Usage &
+  /// limits card already shows Vehicles used/limit).
+  Widget _extraVehicleCancellationControls(
+    BackendSubscriptionProfile profile,
+  ) {
+    final scheduled = profile.extraVehicleCancelAtPeriodEndQuantity;
+    final cancelable = _extraVehicleCancelableQuantity(profile);
+
+    final children = <Widget>[];
+
+    if (scheduled > 0) {
+      children.add(
+        Container(
+          width: double.infinity,
+          margin: const EdgeInsets.only(top: 8),
+          padding: const EdgeInsets.fromLTRB(11, 10, 11, 11),
+          decoration: BoxDecoration(
+            color: _warn.withOpacity(0.12),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: _warn.withOpacity(0.5)),
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(Icons.info_outline, size: 18, color: _warn),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  _t(
+                    nl: '1 extra voertuig blijft actief tot ${_extraVehicleEffectiveDate(profile)}. Daarna wordt je voertuigenlimiet verlaagd.',
+                    en: '1 extra vehicle stays active until ${_extraVehicleEffectiveDate(profile)}. Your vehicle limit is lowered after that.',
+                    fr: '1 véhicule supplémentaire reste actif jusqu\'au ${_extraVehicleEffectiveDate(profile)}. Votre limite de véhicules sera ensuite réduite.',
+                    es: '1 vehículo extra permanece activo hasta el ${_extraVehicleEffectiveDate(profile)}. Tu límite de vehículos se reducirá después.',
+                  ),
+                  style: TextStyle(
+                    color: _businessThemePalette.textPrimary,
+                    fontSize: 12,
+                    height: 1.35,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    if (cancelable > 0) {
+      children.add(
+        Align(
+          alignment: Alignment.centerLeft,
+          child: TextButton.icon(
+            onPressed: _cancellingExtraVehicle
+                ? null
+                : () => _confirmAndCancelOneExtraVehicle(profile),
+            style: TextButton.styleFrom(
+              foregroundColor: _businessThemePalette.textMuted,
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+            ),
+            icon: _cancellingExtraVehicle
+                ? const SizedBox(
+                    width: 15,
+                    height: 15,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.cancel_schedule_send_outlined, size: 17),
+            label: Text(
+              _t(
+                nl: 'Eén extra voertuig opzeggen',
+                en: 'Cancel one extra vehicle',
+                fr: 'Résilier un véhicule supplémentaire',
+                es: 'Cancelar un vehículo extra',
+              ),
+              style: const TextStyle(
+                fontWeight: FontWeight.w700,
+                fontSize: 12.5,
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    if (children.isEmpty) return const SizedBox.shrink();
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: children);
+  }
+
   /// Footer for the Extra vehicle add-on card only. When the base subscription
   /// is active it renders the real activation button; otherwise it renders a
   /// disabled button plus copy explaining add-ons need an active subscription.
@@ -490,7 +716,15 @@ class _CompanySubscriptionBillingPageState
         ),
       ),
     );
-    if (isActive) return button;
+    if (isActive) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          button,
+          _extraVehicleCancellationControls(profile),
+        ],
+      );
+    }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
