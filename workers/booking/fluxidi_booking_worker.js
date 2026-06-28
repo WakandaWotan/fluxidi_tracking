@@ -5703,6 +5703,57 @@ async function saveSubscriptionProfile(
 }
 
 // =========================
+// Patch 2.13: PDF usage tracking foundation.
+//
+// Increments subscription_profile.pdf_monthly_used by `delta` for a tenant/
+// company scope. INFORMATIONAL ONLY: no gate reads this and PDF creation is
+// never blocked. Fully best-effort — any failure is swallowed and logged so a
+// usage-count write can NEVER break the document/invoice flow that triggered
+// it. Callers must only invoke this once per actually-finalized PDF creation
+// (see persistInvoicePdfArtifactForBooking, which guards on first-persist to
+// avoid double counting re-sends / re-fetches).
+//
+// Period reset is intentionally NOT performed here: current_period_start/end
+// are set once at activation and not yet advanced by a recurring engine, so a
+// safe monthly reset is not possible. The counter therefore accumulates until
+// a later patch wires period rollover. This is a known, reported gap.
+async function _incrementSubscriptionPdfMonthlyUsedForScope(
+  env,
+  scope = null,
+  { delta = 1, reason = "" } = {},
+) {
+  try {
+    if (!env?.BOOKING_KV) return { ok: false, skipped: true, reason: "no_kv" };
+    const scopedKeys = buildScopedSettingsKeys(scope);
+    if (!scopedKeys?.subscriptionProfileKey) {
+      return { ok: false, skipped: true, reason: "missing_scope" };
+    }
+    const step = Math.trunc(Number(delta) || 0);
+    if (step <= 0) return { ok: false, skipped: true, reason: "non_positive_delta" };
+    // Company-scoped profile only; never fall back to the legacy tenant key so
+    // usage is attributed to the exact company that issued the document.
+    const profile = await loadSubscriptionProfile(env, scope, {
+      allowTenantLegacyFallback: false,
+    });
+    const current = Math.max(0, Math.trunc(Number(profile?.pdf_monthly_used) || 0));
+    const next = current + step;
+    const updated = { ...profile, pdf_monthly_used: next };
+    await saveSubscriptionProfile(env, updated, scope, {
+      allowTenantLegacyWrite: false,
+    });
+    console.log(
+      `[PDF_USAGE][INCREMENT] tenant=${_maskPublicDriverLoginValue(scope?.tenant_id)} company=${_maskPublicDriverLoginValue(scope?.company_id)} reason=${safeStr(reason, 40) || "-"} delta=${step} pdf_monthly_used=${next}`,
+    );
+    return { ok: true, pdf_monthly_used: next };
+  } catch (e) {
+    console.log(
+      `[PDF_USAGE][INCREMENT_SKIP] reason=${safeStr(e?.message, 80) || "error"}`,
+    );
+    return { ok: false, skipped: true, reason: "exception" };
+  }
+}
+
+// =========================
 // Patch 2.6: extra-vehicle add-on cancel/downgrade-at-period-end helpers.
 //
 // Entitlement (max_vehicles/max_drivers) is still the single source of truth
@@ -80662,6 +80713,17 @@ async function persistInvoicePdfArtifactForBooking(env, bookingRecordInfo, {
       console.log("[INVOICE_ARTIFACT][SKIP] reason=missing_booking_id");
       return { ok: false, skipped: true, reason: "missing_booking_id" };
     }
+    // Patch 2.13: capture whether an invoice PDF already existed for this
+    // booking BEFORE we overwrite the key. Only a first-time persist counts
+    // toward PDF usage, so re-sends / regenerations of the same booking
+    // invoice never double count.
+    const priorInvoicePdfKey = safeStr(
+      latest?.invoice_pdf_key ??
+        latest?.invoicePdfKey ??
+        latest?.booking?.invoice_pdf_key ??
+        latest?.booking?.invoicePdfKey,
+      240,
+    );
     const canonicalInvoiceNumber = safeStr(invoiceNumber || findExistingInvoiceNumber(latest), 120) || "unknown";
     const safeInvoicePart = _safeArtifactPathSegment(canonicalInvoiceNumber, "invoice");
     const objectKey = [
@@ -80720,6 +80782,15 @@ async function persistInvoicePdfArtifactForBooking(env, bookingRecordInfo, {
     console.log(
       `[INVOICE_ARTIFACT][PERSISTED] booking=${_bookingIntentMask(bookingId)} tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} size=${sizeBytes} sha256_prefix=${artifactHashPrefix}`,
     );
+    // Patch 2.13: count exactly one PDF creation the first time an official
+    // invoice PDF is persisted for this booking. Best-effort and informational
+    // only (no gate, never blocks). Re-persists are skipped via priorKey.
+    if (!priorInvoicePdfKey) {
+      await _incrementSubscriptionPdfMonthlyUsedForScope(env, scope, {
+        delta: 1,
+        reason: "invoice_pdf",
+      });
+    }
     return {
       ok: true,
       key: objectKey,

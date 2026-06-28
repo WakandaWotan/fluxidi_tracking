@@ -2654,10 +2654,10 @@ class _CompanySubscriptionBillingPageState
                     es: 'Se restablece mensualmente con tu período de facturación.',
                   )
                 : _t(
-                    nl: 'PDF-verbruik wordt binnenkort gekoppeld.',
-                    en: 'Usage tracking will be linked soon.',
-                    fr: 'Le suivi de l\'utilisation sera bientôt connecté.',
-                    es: 'El seguimiento del uso se conectará pronto.',
+                    nl: 'Telt uitgegeven factuur-PDF\'s. Maandelijkse reset volgt later.',
+                    en: 'Counts issued invoice PDFs. Monthly reset coming later.',
+                    fr: 'Compte les PDF de facture émis. Réinitialisation mensuelle à venir.',
+                    es: 'Cuenta los PDF de factura emitidos. El reinicio mensual llegará después.',
                   ),
             style: TextStyle(
               color: _businessThemePalette.textMuted.withOpacity(0.86),
@@ -3178,11 +3178,13 @@ class _CompanySubscriptionBillingPageState
                                 ),
                               ),
                               const SizedBox(height: 8),
-                              // Patch 2.10: PDF creations usage bar. Total =
-                              // base (included per-vehicle x vehicle slots) +
-                              // purchased add-on allowance. Usage is a
-                              // display-only placeholder until real tracking
-                              // is wired (tracked: false).
+                              // Patch 2.10/2.13: PDF creations usage bar. Total
+                              // = base (included per-vehicle x vehicle slots) +
+                              // purchased add-on allowance. Usage now counts
+                              // backend-issued official invoice PDFs (Patch
+                              // 2.13). tracked stays false until a monthly reset
+                              // / per-period rollover is wired, so the copy does
+                              // not promise a monthly reset yet.
                               _pdfUsageCard(
                                 used: profile.pdfMonthlyUsed,
                                 baseAllowance:
