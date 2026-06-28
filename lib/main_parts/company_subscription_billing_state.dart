@@ -2787,8 +2787,14 @@ class _CompanySubscriptionBillingPageState
                         .toList(growable: false);
                     final usedVehicles = scopedVehicles.length;
                     final usedDrivers = scopedDrivers.length;
+                    final bottomSafeInset = MediaQuery.paddingOf(context).bottom;
                     return ListView(
-                      padding: const EdgeInsets.fromLTRB(12, 12, 12, 14),
+                      padding: EdgeInsets.fromLTRB(
+                        12,
+                        12,
+                        12,
+                        14 + bottomSafeInset,
+                      ),
                       children: [
                         _sectionCard(
                           title: _t(
@@ -3276,10 +3282,10 @@ class _CompanySubscriptionBillingPageState
                                   alignment: Alignment.centerLeft,
                                   child: Text(
                                     _t(
-                                      nl: 'Extra voertuigen, chauffeurs en PDF-pakketten worden later als uitbreidingen toegevoegd. Je huidige abonnement blijft actief.',
-                                      en: 'Extra vehicles, drivers and PDF packs will be added later as add-ons. Your current subscription stays active.',
-                                      fr: 'Les véhicules, chauffeurs et packs PDF supplémentaires seront ajoutés plus tard comme extensions. Votre abonnement actuel reste actif.',
-                                      es: 'Los vehículos, conductores y paquetes PDF adicionales se añadirán más adelante como ampliaciones. Tu suscripción actual sigue activa.',
+                                      nl: 'Extra voertuigen, chauffeurs en PDF-pakketten zijn beschikbaar als uitbreidingen. Je huidige abonnement blijft actief.',
+                                      en: 'Extra vehicles, drivers and PDF packs are available as add-ons. Your current subscription stays active.',
+                                      fr: 'Les véhicules, chauffeurs et packs PDF supplémentaires sont disponibles en option. Votre abonnement actuel reste actif.',
+                                      es: 'Los vehículos, conductores y paquetes PDF adicionales están disponibles como ampliaciones. Tu suscripción actual sigue activa.',
                                     ),
                                     style: TextStyle(
                                       color: _businessThemePalette.textMuted,
@@ -3368,20 +3374,12 @@ class _CompanySubscriptionBillingPageState
                                   fr: 'Branding entreprise / base marque blanche',
                                   es: 'Marca empresarial / base white-label',
                                 ),
-                                active:
-                                    profile.features['white_label_branding'] ==
-                                    true,
-                                inactiveLabel: _t(
-                                  nl: 'Platformmogelijkheid',
-                                  en: 'Platform capability',
-                                  fr: 'Capacité plateforme',
-                                  es: 'Capacidad de plataforma',
-                                ),
+                                active: true,
                                 subtitle: _t(
-                                  nl: 'Onderdeel van Fluxidi Platform',
-                                  en: 'Part of Fluxidi Platform',
-                                  fr: 'Fait partie de Fluxidi Platform',
-                                  es: 'Parte de Fluxidi Platform',
+                                  nl: 'Inbegrepen',
+                                  en: 'Included',
+                                  fr: 'Inclus',
+                                  es: 'Incluido',
                                 ),
                               ),
                               _moduleRow(
@@ -3391,19 +3389,12 @@ class _CompanySubscriptionBillingPageState
                                   fr: 'Flux de réservation en ligne',
                                   es: 'Flujo de reserva en línea',
                                 ),
-                                active:
-                                    profile.features['public_booking'] == true,
-                                inactiveLabel: _t(
-                                  nl: 'Platformmogelijkheid',
-                                  en: 'Platform capability',
-                                  fr: 'Capacité plateforme',
-                                  es: 'Capacidad de plataforma',
-                                ),
+                                active: true,
                                 subtitle: _t(
-                                  nl: 'Beschikbaar binnen het platformprofiel',
-                                  en: 'Available within the platform profile',
-                                  fr: 'Disponible dans le profil plateforme',
-                                  es: 'Disponible en el perfil de plataforma',
+                                  nl: 'Inbegrepen',
+                                  en: 'Included',
+                                  fr: 'Inclus',
+                                  es: 'Incluido',
                                 ),
                               ),
                               _moduleRow(
@@ -3414,11 +3405,11 @@ class _CompanySubscriptionBillingPageState
                                   es: 'Recibos PDF con límites',
                                 ),
                                 active: profile.features['receipt_pdf'] == true,
-                                inactiveLabel: _t(
-                                  nl: 'Platformmogelijkheid',
-                                  en: 'Platform capability',
-                                  fr: 'Capacité plateforme',
-                                  es: 'Capacidad de plataforma',
+                                subtitle: _t(
+                                  nl: 'Inbegrepen',
+                                  en: 'Included',
+                                  fr: 'Inclus',
+                                  es: 'Incluido',
                                 ),
                               ),
                               _moduleRow(
@@ -3432,11 +3423,11 @@ class _CompanySubscriptionBillingPageState
                                     profile
                                         .features['whatsapp_email_receipts'] ==
                                     true,
-                                inactiveLabel: _t(
-                                  nl: 'Platformmogelijkheid',
-                                  en: 'Platform capability',
-                                  fr: 'Capacité plateforme',
-                                  es: 'Capacidad de plataforma',
+                                subtitle: _t(
+                                  nl: 'Inbegrepen',
+                                  en: 'Included',
+                                  fr: 'Inclus',
+                                  es: 'Incluido',
                                 ),
                               ),
                               if (isBelgiumMarket) ...[
@@ -3451,11 +3442,11 @@ class _CompanySubscriptionBillingPageState
                                       profile
                                           .features['compliance_dashboard'] ==
                                       true,
-                                  inactiveLabel: _t(
-                                    nl: 'Platformmogelijkheid',
-                                    en: 'Platform capability',
-                                    fr: 'Capacité plateforme',
-                                    es: 'Capacidad de plataforma',
+                                  subtitle: _t(
+                                    nl: 'Inbegrepen',
+                                    en: 'Included',
+                                    fr: 'Inclus',
+                                    es: 'Incluido',
                                   ),
                                 ),
                                 _moduleRow(
@@ -3487,32 +3478,8 @@ class _CompanySubscriptionBillingPageState
                           child: Column(
                             children: [
                               _moduleRow(
-                                label: _featureLabel('ai_assistant'),
-                                active:
-                                    profile.features['ai_assistant'] == true,
-                                inactiveLabel: _t(
-                                  nl: 'Platformmodule',
-                                  en: 'Platform module',
-                                  fr: 'Module de plateforme',
-                                  es: 'Módulo de plataforma',
-                                ),
-                                subtitle: _t(
-                                  nl: 'Inbegrepen',
-                                  en: 'Included',
-                                  fr: 'Inclus',
-                                  es: 'Incluido',
-                                ),
-                              ),
-                              _moduleRow(
                                 label: _featureLabel('airport_module'),
-                                active:
-                                    profile.features['airport_module'] == true,
-                                inactiveLabel: _t(
-                                  nl: 'Platformmodule',
-                                  en: 'Platform module',
-                                  fr: 'Module de plateforme',
-                                  es: 'Módulo de plataforma',
-                                ),
+                                active: true,
                                 subtitle: _t(
                                   nl: 'Inbegrepen',
                                   en: 'Included',
@@ -3538,22 +3505,6 @@ class _CompanySubscriptionBillingPageState
                                   en: 'Coming soon',
                                   fr: 'Bientôt disponible',
                                   es: 'Próximamente',
-                                ),
-                              ),
-                              _moduleRow(
-                                label: _featureLabel('ev_dispatch'),
-                                active: profile.features['ev_dispatch'] == true,
-                                inactiveLabel: _t(
-                                  nl: 'Premium add-on',
-                                  en: 'Premium add-on',
-                                  fr: 'Option premium',
-                                  es: 'Complemento premium',
-                                ),
-                                subtitle: _t(
-                                  nl: 'Premium module',
-                                  en: 'Premium module',
-                                  fr: 'Module premium',
-                                  es: 'Módulo premium',
                                 ),
                               ),
                             ],
