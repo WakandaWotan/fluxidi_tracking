@@ -6102,6 +6102,102 @@ async function materializeDuePdf5000Cancellation(env, scope, profile) {
   );
 }
 
+// =========================
+// Patch 3.5: lazily materialize a past_due subscription into suspended once the
+// grace period has elapsed. Pure-on-read pattern (no cron): the transition is
+// applied during the same explicit profile/bootstrap reads that already run the
+// add-on downgrade chain. NEVER touches Mollie, payments, entitlements, periods,
+// provider ids, or add-ons. NEVER moved into loadSubscriptionProfile.
+// =========================
+
+// Pure predicate: is a profile due to transition past_due -> suspended now?
+// Returns { due, reason, thresholdMs, backfillPastDueSince }. No I/O.
+//   - due: the grace clock has elapsed and the profile should be suspended.
+//   - backfillPastDueSince: status is past_due but past_due_since is missing/
+//     unparseable, so the caller should start the clock (set it to now) without
+//     suspending on this pass.
+function _isFluxidiSubscriptionSuspensionDue(profile, nowMs) {
+  const now = Number.isFinite(Number(nowMs)) ? Number(nowMs) : Date.now();
+  if (!profile || typeof profile !== "object") {
+    return { due: false, reason: "no_profile", thresholdMs: NaN, backfillPastDueSince: false };
+  }
+  // Effective status mirrors the pattern used by the add-on cancel routes:
+  // prefer subscription_status, fall back to status.
+  const effectiveStatus = _fluxidiSubscriptionSafeStr(
+    profile.subscription_status || profile.status,
+  ).toLowerCase();
+  if (effectiveStatus !== "past_due") {
+    return { due: false, reason: "not_past_due", thresholdMs: NaN, backfillPastDueSince: false };
+  }
+  const pastDueSince = _fluxidiSubscriptionSafeStr(profile.past_due_since, 48);
+  const startMs = pastDueSince ? Date.parse(pastDueSince) : NaN;
+  if (!pastDueSince || Number.isNaN(startMs)) {
+    // No usable grace clock: signal a backfill, do not suspend this pass.
+    return {
+      due: false,
+      reason: "missing_past_due_since",
+      thresholdMs: NaN,
+      backfillPastDueSince: true,
+    };
+  }
+  // grace_period_days is already normalized to an int in [0, 3650].
+  const graceDays = Math.max(0, Math.trunc(Number(profile.grace_period_days) || 0));
+  const thresholdMs = startMs + graceDays * 86400000;
+  if (now >= thresholdMs) {
+    return { due: true, reason: "grace_elapsed", thresholdMs, backfillPastDueSince: false };
+  }
+  return { due: false, reason: "within_grace", thresholdMs, backfillPastDueSince: false };
+}
+
+// Lazily materialize a due suspension and/or backfill a missing grace clock.
+// Saves the profile only when something actually changes, so a steady-state
+// read performs no write. Returns { profile, changed, suspended }. Existing
+// data is never deleted; periods/provider/add-ons/Mollie fields are untouched.
+async function materializeDueFluxidiSubscriptionSuspension(env, scope, profile) {
+  if (!profile || typeof profile !== "object") {
+    return { profile, changed: false, suspended: false };
+  }
+  const nowMs = Date.now();
+  const verdict = _isFluxidiSubscriptionSuspensionDue(profile, nowMs);
+
+  // Backfill the grace clock when status is past_due but past_due_since is
+  // missing/unparseable. Start the clock now; do NOT suspend on this pass.
+  if (verdict.backfillPastDueSince) {
+    const nowIso = new Date(nowMs).toISOString();
+    const updated = { ...profile, past_due_since: nowIso };
+    const saved = await saveSubscriptionProfile(env, updated, scope, {
+      allowTenantLegacyWrite: false,
+    });
+    console.log(
+      `[SUBSCRIPTION_SUSPENSION][BACKFILL] tenant=${_maskPublicDriverLoginValue(scope?.tenant_id)} company=${_maskPublicDriverLoginValue(scope?.company_id)} past_due_since=set`,
+    );
+    return { profile: saved, changed: true, suspended: false };
+  }
+
+  if (!verdict.due) {
+    return { profile, changed: false, suspended: false };
+  }
+
+  // Due: transition to suspended. suspended_at is set once and preserved on
+  // subsequent reads. past_due_since is preserved (audit); periods, provider
+  // ids, add-ons, and Mollie fields are intentionally left untouched.
+  const existingSuspendedAt = _fluxidiSubscriptionSafeStr(profile.suspended_at, 48);
+  const nowIso = new Date(nowMs).toISOString();
+  const updated = {
+    ...profile,
+    subscription_status: "suspended",
+    status: "suspended",
+    suspended_at: existingSuspendedAt || nowIso,
+  };
+  const saved = await saveSubscriptionProfile(env, updated, scope, {
+    allowTenantLegacyWrite: false,
+  });
+  console.log(
+    `[SUBSCRIPTION_SUSPENSION][APPLIED] tenant=${_maskPublicDriverLoginValue(scope?.tenant_id)} company=${_maskPublicDriverLoginValue(scope?.company_id)} suspended_at=${saved?.suspended_at || "-"} past_due_since=${_fluxidiSubscriptionSafeStr(saved?.past_due_since, 48) || "-"}`,
+  );
+  return { profile: saved, changed: true, suspended: true };
+}
+
 // Shared cancel-one route handler for the PDF bundles. Schedules a downgrade of
 // exactly one paid bundle of the given code at period end. The paid allowance
 // stays available (pdf_monthly_allowance unchanged) until the effective date;
@@ -19189,9 +19285,24 @@ async function handleCompanyBootstrap(request, env) {
   const pricingProfile = await _loadTenantPricingProfile(env, scope, {
     allowTenantLegacyFallback: false,
   });
-  const subscriptionProfile = await loadSubscriptionProfile(env, scope, {
+  let subscriptionProfile = await loadSubscriptionProfile(env, scope, {
     allowTenantLegacyFallback: false,
   });
+  // Patch 3.5: lazily materialize a due past_due -> suspended transition (or
+  // backfill a missing grace clock) so bootstrap reports the same state as the
+  // dedicated profile route. Best-effort: never fails the bootstrap.
+  try {
+    const suspensionMaterialized = await materializeDueFluxidiSubscriptionSuspension(
+      env,
+      scope,
+      subscriptionProfile,
+    );
+    if (suspensionMaterialized?.profile) subscriptionProfile = suspensionMaterialized.profile;
+  } catch (e) {
+    console.log(
+      `[COMPANY_BOOTSTRAP][SUSPENSION_SKIP] reason=${_maskPublicDriverLoginValue(scope?.company_id)} msg=${safeStr(e?.message, 80) || "error"}`,
+    );
+  }
   const communicationTemplates = await loadCommunicationTemplates(env, scope, null, {
     allowTenantLegacyFallback: false,
   });
@@ -27026,6 +27137,21 @@ export default {
               `[COMPANY_SUBSCRIPTION_GET][PDF_5000_DOWNGRADE_SKIP] reason=${safeStr(e?.message, 80) || "error"}`,
             );
           }
+          // Patch 3.5: lazily materialize a due past_due -> suspended transition
+          // (or backfill a missing grace clock). Runs last so it observes the
+          // final profile state. Best-effort: never fails the read.
+          try {
+            const suspensionMaterialized = await materializeDueFluxidiSubscriptionSuspension(
+              env,
+              scope,
+              profile,
+            );
+            if (suspensionMaterialized?.profile) profile = suspensionMaterialized.profile;
+          } catch (e) {
+            console.log(
+              `[COMPANY_SUBSCRIPTION_GET][SUSPENSION_SKIP] reason=${safeStr(e?.message, 80) || "error"}`,
+            );
+          }
           return json(
             {
               ok: true,
@@ -33486,9 +33612,24 @@ POST /admin/mollie/connect/disconnect
           return json(missingTenantScopeError(), 400);
         }
         const scopedKeys = buildScopedSettingsKeys(explicitScope);
-        const profile = await loadSubscriptionProfile(env, explicitScope, {
+        let profile = await loadSubscriptionProfile(env, explicitScope, {
           allowTenantLegacyFallback: false,
         });
+        // Patch 3.5: lazily materialize a due past_due -> suspended transition
+        // (or backfill a missing grace clock) so admin reads match the company
+        // route. Best-effort: never fails the read.
+        try {
+          const suspensionMaterialized = await materializeDueFluxidiSubscriptionSuspension(
+            env,
+            explicitScope,
+            profile,
+          );
+          if (suspensionMaterialized?.profile) profile = suspensionMaterialized.profile;
+        } catch (e) {
+          console.log(
+            `[ADMIN_SUBSCRIPTION_GET][SUSPENSION_SKIP] reason=${safeStr(e?.message, 80) || "error"}`,
+          );
+        }
         return json({
           ok: true,
           key: scopedKeys?.subscriptionProfileKey || TENANT_SUBSCRIPTION_PROFILE_KEY,
