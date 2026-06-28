@@ -4086,6 +4086,11 @@ const DEFAULT_SUBSCRIPTION_PROFILE = {
   // enforced by any gate (PDF usage tracking is wired later). Each bundle
   // code tracks its own active quantity and cancellation schedule.
   pdf_monthly_allowance: 0,
+  // Patch 2.10: display-only monthly PDF usage counter. There is no central
+  // PDF-creation tracking point yet, so this stays 0 and is surfaced purely as
+  // a placeholder usage bar in Flutter. No gate reads it; nothing increments it
+  // server-side until real tracking is wired in a later patch.
+  pdf_monthly_used: 0,
   pdf500_active_quantity: 0,
   pdf500_cancel_at_period_end_quantity: 0,
   pdf500_cancel_requested_at: "",
@@ -4107,6 +4112,23 @@ const DEFAULT_SUBSCRIPTION_PROFILE = {
   payment_provider: "",
   provider_customer_id: "",
   provider_subscription_id: "",
+  // Patch 3.1: recurring-subscription + non-payment foundation fields. All
+  // additive and inert — nothing reads or writes them yet. They give Patches
+  // 3.2+ a stable place to record the Mollie mandate/subscription, the
+  // recurring price, and the dunning timeline (past_due -> grace -> suspended)
+  // without further schema churn. No transitions, no Mollie calls, no gating
+  // are introduced here.
+  mandate_id: "",
+  recurring_amount_cents: null,
+  recurring_currency: "EUR",
+  recurring_interval: "1 month",
+  past_due_since: "",
+  grace_period_days: 7,
+  suspended_at: "",
+  last_recurring_payment_id: "",
+  last_recurring_payment_status: "",
+  last_recurring_payment_at: "",
+  last_recurring_webhook_at: "",
   // Stable correlation id for a checkout/activation attempt. Set by the
   // subscription activator (Patch 2.1) and used as the canonical key for
   // activation-replay idempotency, independent of any provider id.
@@ -4856,6 +4878,8 @@ function normalizeSubscriptionProfile(input = {}, scope = null) {
     // extra_driver. The lazy backfill of pdfNNN_active_quantity happens at the
     // route layer (needs KV write-back), NOT here — this normalizer stays pure.
     pdf_monthly_allowance: Math.max(0, clampInt(source.pdf_monthly_allowance ?? source.pdfMonthlyAllowance, DEFAULT_SUBSCRIPTION_PROFILE.pdf_monthly_allowance, 100000000)),
+    // Patch 2.10: display-only usage counter (see DEFAULT_SUBSCRIPTION_PROFILE).
+    pdf_monthly_used: Math.max(0, clampInt(source.pdf_monthly_used ?? source.pdfMonthlyUsed, DEFAULT_SUBSCRIPTION_PROFILE.pdf_monthly_used, 100000000)),
     pdf500_active_quantity: Math.max(0, clampInt(source.pdf500_active_quantity ?? source.pdf500ActiveQuantity, DEFAULT_SUBSCRIPTION_PROFILE.pdf500_active_quantity, 100000)),
     pdf500_cancel_at_period_end_quantity: Math.max(0, clampInt(source.pdf500_cancel_at_period_end_quantity ?? source.pdf500CancelAtPeriodEndQuantity, DEFAULT_SUBSCRIPTION_PROFILE.pdf500_cancel_at_period_end_quantity, 100000)),
     pdf500_cancel_requested_at: sanitizeTenantString(source.pdf500_cancel_requested_at ?? source.pdf500CancelRequestedAt ?? DEFAULT_SUBSCRIPTION_PROFILE.pdf500_cancel_requested_at, 48),
@@ -4881,6 +4905,31 @@ function normalizeSubscriptionProfile(input = {}, scope = null) {
     payment_provider: sanitizeTenantString(source.payment_provider ?? source.paymentProvider ?? DEFAULT_SUBSCRIPTION_PROFILE.payment_provider, 48),
     provider_customer_id: sanitizeTenantString(source.provider_customer_id ?? source.providerCustomerId ?? DEFAULT_SUBSCRIPTION_PROFILE.provider_customer_id, 128),
     provider_subscription_id: sanitizeTenantString(source.provider_subscription_id ?? source.providerSubscriptionId ?? DEFAULT_SUBSCRIPTION_PROFILE.provider_subscription_id, 128),
+    // Patch 3.1: recurring-subscription + non-payment foundation fields. Pure
+    // pass-through normalization (sanitize/clamp/default) with snake + camel
+    // aliases. No transitions or behaviour are attached to these yet.
+    mandate_id: sanitizeTenantString(source.mandate_id ?? source.mandateId ?? DEFAULT_SUBSCRIPTION_PROFILE.mandate_id, 128),
+    recurring_amount_cents: nullableCents(source.recurring_amount_cents, source.recurringAmountCents),
+    recurring_currency: sanitizeTenantString(
+      source.recurring_currency ?? source.recurringCurrency ?? DEFAULT_SUBSCRIPTION_PROFILE.recurring_currency,
+      8,
+    ).slice(0, 8) || DEFAULT_SUBSCRIPTION_PROFILE.recurring_currency,
+    recurring_interval: sanitizeTenantString(source.recurring_interval ?? source.recurringInterval ?? DEFAULT_SUBSCRIPTION_PROFILE.recurring_interval, 32) || DEFAULT_SUBSCRIPTION_PROFILE.recurring_interval,
+    past_due_since: sanitizeTenantString(source.past_due_since ?? source.pastDueSince ?? DEFAULT_SUBSCRIPTION_PROFILE.past_due_since, 48),
+    // Floor at 0 (not the default) so a future configurable grace period can
+    // legitimately be set below the default without the normalizer clamping it
+    // back up. clampInt would otherwise treat its fallback as the minimum.
+    grace_period_days: (() => {
+      const raw = source.grace_period_days ?? source.gracePeriodDays;
+      const n = Number(raw);
+      if (!Number.isFinite(n)) return DEFAULT_SUBSCRIPTION_PROFILE.grace_period_days;
+      return Math.max(0, Math.min(3650, Math.trunc(n)));
+    })(),
+    suspended_at: sanitizeTenantString(source.suspended_at ?? source.suspendedAt ?? DEFAULT_SUBSCRIPTION_PROFILE.suspended_at, 48),
+    last_recurring_payment_id: sanitizeTenantString(source.last_recurring_payment_id ?? source.lastRecurringPaymentId ?? DEFAULT_SUBSCRIPTION_PROFILE.last_recurring_payment_id, 128),
+    last_recurring_payment_status: sanitizeTenantString(source.last_recurring_payment_status ?? source.lastRecurringPaymentStatus ?? DEFAULT_SUBSCRIPTION_PROFILE.last_recurring_payment_status, 48),
+    last_recurring_payment_at: sanitizeTenantString(source.last_recurring_payment_at ?? source.lastRecurringPaymentAt ?? DEFAULT_SUBSCRIPTION_PROFILE.last_recurring_payment_at, 48),
+    last_recurring_webhook_at: sanitizeTenantString(source.last_recurring_webhook_at ?? source.lastRecurringWebhookAt ?? DEFAULT_SUBSCRIPTION_PROFILE.last_recurring_webhook_at, 48),
     activation_id: sanitizeTenantString(source.activation_id ?? source.activationId ?? DEFAULT_SUBSCRIPTION_PROFILE.activation_id, 160),
     billing_email: sanitizeTenantString(source.billing_email ?? source.billingEmail ?? DEFAULT_SUBSCRIPTION_PROFILE.billing_email, 160),
     included_vehicles: Math.max(0, clampInt(source.included_vehicles ?? source.includedVehicles, DEFAULT_SUBSCRIPTION_PROFILE.included_vehicles, 100000)),
