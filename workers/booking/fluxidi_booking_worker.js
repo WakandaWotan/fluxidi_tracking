@@ -6795,6 +6795,267 @@ async function saveFluxidiSubscriptionProviderIndex(env, subscriptionId, payload
   return { ok: true, key, record };
 }
 
+// Patch 3.3: read the reverse index written at subscription creation. Returns
+// { ok, record } where record = { tenant_id, company_id, activation_id, ... }.
+async function loadFluxidiSubscriptionProviderIndex(env, subscriptionId) {
+  if (!env?.BOOKING_KV) return { ok: false, error: "booking_kv_missing" };
+  const key = buildFluxidiSubscriptionProviderIndexKey(subscriptionId);
+  if (!key) return { ok: false, error: "invalid_subscription_id" };
+  const raw = await env.BOOKING_KV.get(key, { type: "json" });
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return { ok: false, error: "not_found" };
+  }
+  const record = {
+    tenant_id: sanitizeTenantString(raw.tenant_id, 80),
+    company_id: sanitizeTenantString(raw.company_id, 80),
+    activation_id: _fluxidiSubscriptionNormalizeActivationId(raw.activation_id) || "",
+    created_at: _fluxidiSubscriptionSafeStr(raw.created_at, 48),
+  };
+  if (!record.tenant_id || !record.company_id) {
+    return { ok: false, error: "invalid_index_scope" };
+  }
+  return { ok: true, key, record };
+}
+
+// =========================
+// Patch 3.3: recurring paid-payment idempotency marker, keyed by payment.id.
+//
+// A recurring Mollie payment posts to the same subscription webhook with a
+// fresh payment.id each billing cycle. This marker guarantees the SAME
+// payment.id can never advance the billing period twice (Mollie retries +
+// manual resends). A genuinely new monthly charge has a different payment.id
+// and is therefore not blocked. Long TTL so a late redelivery is still seen
+// as already-applied. Failed/past_due handling is intentionally NOT here.
+// =========================
+const FLUXIDI_SUBSCRIPTION_RECURRING_APPLIED_TTL_SECONDS = 60 * 60 * 24 * 365; // 1 year
+
+function buildFluxidiRecurringAppliedMarkerKey(paymentId) {
+  const clean = _fluxidiSubscriptionSafeStr(paymentId, 128);
+  if (!clean) return "";
+  return `subscription:recurring_applied:${clean}:v1`;
+}
+
+async function isFluxidiRecurringPaymentApplied(env, paymentId) {
+  if (!env?.BOOKING_KV) return false;
+  const key = buildFluxidiRecurringAppliedMarkerKey(paymentId);
+  if (!key) return false;
+  const raw = await env.BOOKING_KV.get(key, { type: "json" });
+  return !!(raw && typeof raw === "object" && !Array.isArray(raw));
+}
+
+async function markFluxidiRecurringPaymentApplied(env, paymentId, {
+  tenantId = "",
+  companyId = "",
+  subscriptionId = "",
+} = {}) {
+  if (!env?.BOOKING_KV) return { ok: false, error: "booking_kv_missing" };
+  const key = buildFluxidiRecurringAppliedMarkerKey(paymentId);
+  if (!key) return { ok: false, error: "invalid_payment_id" };
+  const record = {
+    version: 1,
+    payment_id: _fluxidiSubscriptionSafeStr(paymentId, 128),
+    tenant_id: sanitizeTenantString(tenantId, 80),
+    company_id: sanitizeTenantString(companyId, 80),
+    subscription_id: _fluxidiSubscriptionSafeStr(subscriptionId, 128),
+    applied_at: new Date().toISOString(),
+  };
+  await env.BOOKING_KV.put(key, JSON.stringify(record), {
+    expirationTtl: FLUXIDI_SUBSCRIPTION_RECURRING_APPLIED_TTL_SECONDS,
+  });
+  return { ok: true, key, record };
+}
+
+// Advance an ISO timestamp by exactly one calendar month (UTC). Matches
+// Mollie's "1 month" subscription interval and avoids the drift a fixed
+// +30 days would introduce. Returns "" if the input is not parseable.
+function _advanceSubscriptionPeriodByOneMonthIso(fromIso) {
+  const text = _fluxidiSubscriptionSafeStr(fromIso, 48);
+  if (!text) return "";
+  const d = new Date(text);
+  if (Number.isNaN(d.getTime())) return "";
+  d.setUTCMonth(d.getUTCMonth() + 1);
+  return d.toISOString();
+}
+
+// =========================
+// Patch 3.3: apply a verified recurring paid payment.
+//
+// Called from the subscription webhook ONLY for payments that look recurring
+// (payment.subscriptionId=sub_…, metadata.kind=recurring,
+// metadata.purpose=fluxidi_subscription_recurring). Advances the billing
+// period by one calendar month and records the recurring-payment fields.
+//
+// SCOPE GUARDS (Patch 3.3): only `paid` status is handled. failed/expired/
+// canceled are ignored (no past_due, no suspension yet). Idempotent by
+// payment.id via the applied marker + a profile.last_recurring_payment_id
+// secondary guard. Never touches checkout/cancellation/add-on logic.
+// =========================
+async function applyFluxidiRecurringPaymentFromVerifiedPayment(env, { payment } = {}) {
+  if (!env?.BOOKING_KV) return { ok: false, error: "booking_kv_missing" };
+
+  const paymentId = _fluxidiSubscriptionSafeStr(payment?.id, 128);
+  const subscriptionId = _fluxidiSubscriptionSafeStr(payment?.subscriptionId, 128);
+  if (!paymentId) return { ok: true, ignored: true, reason: "missing_payment_id" };
+  if (!subscriptionId || !subscriptionId.startsWith("sub_")) {
+    return { ok: true, ignored: true, reason: "missing_subscription_id" };
+  }
+
+  const meta = payment?.metadata && typeof payment.metadata === "object" && !Array.isArray(payment.metadata)
+    ? payment.metadata
+    : {};
+
+  // Idempotency layer 1: applied marker keyed by payment.id.
+  if (await isFluxidiRecurringPaymentApplied(env, paymentId)) {
+    console.log(
+      `[SUBSCRIPTION_RECURRING_PAYMENT][OK] idempotent=true reason=marker_present payment_id=set sub=${subscriptionId}`,
+    );
+    return { ok: true, applied: true, idempotent: true, reason: "recurring_already_applied" };
+  }
+
+  // Only `paid` recurring payments advance the period in Patch 3.3.
+  const paymentStatus = _fluxidiSubscriptionSafeStr(payment?.status).toLowerCase();
+  if (paymentStatus !== "paid") {
+    return {
+      ok: true,
+      ignored: true,
+      reason: "recurring_payment_not_paid",
+      payment_status: paymentStatus,
+    };
+  }
+
+  // Resolve scope: reverse index first, metadata fallback only if index missing.
+  let tenantId = "";
+  let companyId = "";
+  let scopeSource = "";
+  const indexResult = await loadFluxidiSubscriptionProviderIndex(env, subscriptionId);
+  if (indexResult?.ok) {
+    tenantId = indexResult.record.tenant_id;
+    companyId = indexResult.record.company_id;
+    scopeSource = "index";
+    const metaTenant = sanitizeTenantString(meta?.tenant_id, 80);
+    const metaCompany = sanitizeTenantString(meta?.company_id, 80);
+    if (
+      (metaTenant && metaTenant !== tenantId) ||
+      (metaCompany && metaCompany !== companyId)
+    ) {
+      console.log(
+        `[SUBSCRIPTION_RECURRING_PAYMENT][WARN] reason=scope_mismatch_index_vs_metadata sub=${subscriptionId}`,
+      );
+    }
+  } else {
+    tenantId = sanitizeTenantString(meta?.tenant_id, 80);
+    companyId = sanitizeTenantString(meta?.company_id, 80);
+    scopeSource = "metadata_fallback";
+  }
+  if (!tenantId || !companyId) {
+    // 200-ignored at the caller; never retry-storm. Logged for ops.
+    console.log(
+      `[SUBSCRIPTION_RECURRING_PAYMENT][IGNORED] reason=recurring_scope_unresolved sub=${subscriptionId} source=${scopeSource || "-"}`,
+    );
+    return { ok: true, ignored: true, reason: "recurring_scope_unresolved" };
+  }
+  const scope = { tenant_id: tenantId, company_id: companyId };
+  const tenantMask = _maskPublicDriverLoginValue(tenantId);
+  const companyMask = _maskPublicDriverLoginValue(companyId);
+
+  // Best-effort: re-create the reverse index if it was missing but metadata
+  // resolved the scope, so future cycles use the fast path.
+  if (scopeSource === "metadata_fallback") {
+    try {
+      await saveFluxidiSubscriptionProviderIndex(env, subscriptionId, {
+        tenant_id: tenantId,
+        company_id: companyId,
+        activation_id: _fluxidiSubscriptionNormalizeActivationId(
+          meta?.activation_id ?? meta?.activationId,
+        ),
+        created_at: new Date().toISOString(),
+      });
+    } catch (_) {}
+  }
+
+  const profile = await loadSubscriptionProfile(env, scope, {
+    allowTenantLegacyFallback: false,
+  });
+
+  // Idempotency layer 2: profile-level guard (covers a marker-write failure
+  // after a previous successful save of this exact payment).
+  if (_fluxidiSubscriptionSafeStr(profile?.last_recurring_payment_id, 128) === paymentId) {
+    try {
+      await markFluxidiRecurringPaymentApplied(env, paymentId, {
+        tenantId,
+        companyId,
+        subscriptionId,
+      });
+    } catch (_) {}
+    console.log(
+      `[SUBSCRIPTION_RECURRING_PAYMENT][OK] tenant=${tenantMask} company=${companyMask} idempotent=true reason=profile_last_payment_match`,
+    );
+    return { ok: true, applied: true, idempotent: true, reason: "recurring_already_applied" };
+  }
+
+  // Advance the billing period by one calendar month. New start = old end;
+  // new end = old end + 1 month. Fallback to now-based window if the stored
+  // period end is missing/unparseable.
+  const nowIso = new Date().toISOString();
+  const priorPeriodEnd = _fluxidiSubscriptionSafeStr(profile?.current_period_end, 48);
+  let newPeriodStart = priorPeriodEnd;
+  let newPeriodEnd = _advanceSubscriptionPeriodByOneMonthIso(priorPeriodEnd);
+  if (!newPeriodStart || !newPeriodEnd) {
+    newPeriodStart = nowIso;
+    newPeriodEnd = _advanceSubscriptionPeriodByOneMonthIso(nowIso);
+    console.log(
+      `[SUBSCRIPTION_RECURRING_PAYMENT][WARN] tenant=${tenantMask} company=${companyMask} reason=invalid_prior_period_end fallback=now`,
+    );
+  }
+
+  const paidAtIso = _fluxidiSubscriptionSafeStr(payment?.paidAt, 48) || nowIso;
+  const updatedProfile = {
+    ...profile,
+    subscription_status: "active",
+    status: "active",
+    current_period_start: newPeriodStart,
+    current_period_end: newPeriodEnd,
+    last_recurring_payment_id: paymentId,
+    last_recurring_payment_status: "paid",
+    last_recurring_payment_at: paidAtIso,
+    last_recurring_webhook_at: nowIso,
+  };
+
+  try {
+    await saveSubscriptionProfile(env, updatedProfile, scope, {
+      allowTenantLegacyWrite: false,
+    });
+  } catch (e) {
+    // Do NOT mark applied — let Mollie retry so the period still advances.
+    console.log(
+      `[SUBSCRIPTION_RECURRING_PAYMENT][ERROR] tenant=${tenantMask} company=${companyMask} stage=save msg=${_fluxidiSubscriptionSafeStr(e?.message, 160)}`,
+    );
+    return { ok: false, error: "subscription_save_failed" };
+  }
+
+  try {
+    await markFluxidiRecurringPaymentApplied(env, paymentId, {
+      tenantId,
+      companyId,
+      subscriptionId,
+    });
+  } catch (_) {
+    // Profile already advanced; the layer-2 profile guard short-circuits any
+    // replay of this same payment id.
+  }
+
+  console.log(
+    `[SUBSCRIPTION_RECURRING_PAYMENT][OK] tenant=${tenantMask} company=${companyMask} sub=${subscriptionId} period_start=${newPeriodStart} period_end=${newPeriodEnd} scope_source=${scopeSource}`,
+  );
+  return {
+    ok: true,
+    applied: true,
+    idempotent: false,
+    current_period_start: newPeriodStart,
+    current_period_end: newPeriodEnd,
+  };
+}
+
 // Failure-side KV record. Lets future ops/reconciler patches retry without
 // expanding the subscription profile contract. TTL is bounded so the record
 // does not accumulate forever; a future reconciler patch can clear it on
@@ -28242,6 +28503,59 @@ export default {
         const meta = payment?.metadata && typeof payment.metadata === "object" && !Array.isArray(payment.metadata)
           ? payment.metadata
           : {};
+
+        // Patch 3.3: recurring paid-payment branch. MUST run before the
+        // first-payment metadata/purpose checks below, because recurring
+        // payments carry purpose="fluxidi_subscription_recurring" which would
+        // otherwise be rejected as a purpose mismatch. Detection is fail-safe:
+        // a recurring payment has a sub_… subscriptionId (first payments never
+        // do), kind="recurring", and the recurring purpose. Anything missing a
+        // marker falls through to the existing first-payment/add-on routing.
+        const recurringSubscriptionId = _fluxidiSubscriptionSafeStr(payment?.subscriptionId, 128);
+        const metaKindEarly = _fluxidiSubscriptionSafeStr(meta?.kind).toLowerCase();
+        const metaPurposeEarly = _fluxidiSubscriptionSafeStr(meta?.purpose).toLowerCase();
+        const looksRecurring =
+          recurringSubscriptionId.startsWith("sub_") &&
+          metaKindEarly === "recurring" &&
+          metaPurposeEarly === "fluxidi_subscription_recurring";
+        if (looksRecurring) {
+          let recurringResult;
+          try {
+            recurringResult = await applyFluxidiRecurringPaymentFromVerifiedPayment(env, {
+              payment,
+            });
+          } catch (e) {
+            console.log(
+              `[SUBSCRIPTION_RECURRING_PAYMENT][ERROR] stage=webhook msg=${_fluxidiSubscriptionSafeStr(e?.message, 160)}`,
+            );
+            // Soft 5xx so Mollie retries — transient issue.
+            return new Response("Internal Error", { status: 500 });
+          }
+          if (recurringResult?.ok && recurringResult.applied) {
+            return json(
+              {
+                ok: true,
+                recurring_applied: true,
+                idempotent: !!recurringResult.idempotent,
+              },
+              200,
+            );
+          }
+          if (recurringResult?.ok) {
+            console.log(
+              `[SUBSCRIPTION_WEBHOOK][IGNORED] kind=recurring reason=${_fluxidiSubscriptionSafeStr(recurringResult.reason, 80) || "unknown_ignore"}`,
+            );
+            return json(
+              { ok: true, ignored: true, reason: recurringResult.reason || "unknown_ignore" },
+              200,
+            );
+          }
+          console.log(
+            `[SUBSCRIPTION_RECURRING_PAYMENT][ERROR] stage=webhook err=${_fluxidiSubscriptionSafeStr(recurringResult?.error, 80) || "unknown"}`,
+          );
+          return new Response("Internal Error", { status: 500 });
+        }
+
         const metaActivationId = _fluxidiSubscriptionNormalizeActivationId(
           meta?.activation_id ?? meta?.activationId,
         );
