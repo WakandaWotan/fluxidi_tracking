@@ -1361,6 +1361,9 @@ class BackendSubscriptionProfile {
   // is the cumulative paid PDF allowance (persisted/increased only, not yet
   // gated). Each bundle tracks its own active quantity + cancel schedule.
   final int pdfMonthlyAllowance;
+  // Patch 2.10: display-only monthly PDF usage counter. No central PDF-creation
+  // tracking exists yet, so this is a placeholder (0) surfaced as a usage bar.
+  final int pdfMonthlyUsed;
   final int pdf500ActiveQuantity;
   final int pdf500CancelAtPeriodEndQuantity;
   final String pdf500CancelRequestedAt;
@@ -1428,6 +1431,7 @@ class BackendSubscriptionProfile {
     this.extraDriverCancellationEffectiveAt = '',
     this.extraDriverAutoRenew = true,
     this.pdfMonthlyAllowance = 0,
+    this.pdfMonthlyUsed = 0,
     this.pdf500ActiveQuantity = 0,
     this.pdf500CancelAtPeriodEndQuantity = 0,
     this.pdf500CancelRequestedAt = '',
@@ -1767,6 +1771,11 @@ class BackendSubscriptionProfile {
         'pdfMonthlyAllowance',
         fallback.pdfMonthlyAllowance,
       ),
+      pdfMonthlyUsed: intVal(
+        'pdf_monthly_used',
+        'pdfMonthlyUsed',
+        fallback.pdfMonthlyUsed,
+      ),
       pdf500ActiveQuantity: intVal(
         'pdf500_active_quantity',
         'pdf500ActiveQuantity',
@@ -1925,6 +1934,7 @@ class BackendSubscriptionProfile {
         extraDriverCancellationEffectiveAt,
     'extra_driver_auto_renew': extraDriverAutoRenew,
     'pdf_monthly_allowance': pdfMonthlyAllowance,
+    'pdf_monthly_used': pdfMonthlyUsed,
     'pdf500_active_quantity': pdf500ActiveQuantity,
     'pdf500_cancel_at_period_end_quantity': pdf500CancelAtPeriodEndQuantity,
     'pdf500_cancel_requested_at': pdf500CancelRequestedAt,

@@ -2514,6 +2514,123 @@ class _CompanySubscriptionBillingPageState
     );
   }
 
+  /// Patch 2.10: PDF creations usage bar. Mirrors [_usageCard] visuals (title,
+  /// used/total badge, progress bar) and adds an allowance breakdown plus a
+  /// helper line.
+  ///
+  /// Total monthly allowance = [baseAllowance] (included PDFs per vehicle/month
+  /// x vehicle slots) + [addonAllowance] (purchased PDF add-ons). The backend
+  /// `pdf_monthly_allowance` stores ONLY the add-on portion, so base and add-on
+  /// are summed here with no double counting.
+  ///
+  /// [used] is a display-only placeholder until real PDF-creation tracking is
+  /// wired; [tracked] flips the helper text once a real counter feeds it.
+  Widget _pdfUsageCard({
+    required int used,
+    required int baseAllowance,
+    required int addonAllowance,
+    required bool tracked,
+  }) {
+    final safeUsed = used > 0 ? used : 0;
+    final safeBase = baseAllowance > 0 ? baseAllowance : 0;
+    final safeAddon = addonAllowance > 0 ? addonAllowance : 0;
+    final total = safeBase + safeAddon;
+    // Usage is informational only in Patch 2.10 — never show an alarming accent.
+    final accent = _green;
+    final progress = total <= 0 ? 0.0 : (safeUsed / total).clamp(0.0, 1.0);
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(10, 9, 10, 10),
+      decoration: BoxDecoration(
+        color: _panelSoft,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: accent.withOpacity(0.42)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  _t(
+                    nl: 'PDF-creaties',
+                    en: 'PDF creations',
+                    fr: 'Créations PDF',
+                    es: 'Creaciones PDF',
+                  ),
+                  style: TextStyle(
+                    color: _businessThemePalette.textPrimary,
+                    fontWeight: FontWeight.w800,
+                    fontSize: 12.8,
+                  ),
+                ),
+              ),
+              _chip(
+                text: '$safeUsed / $total',
+                bg: accent.withOpacity(0.14),
+                border: accent.withOpacity(0.50),
+                textColor: accent,
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(999),
+            child: LinearProgressIndicator(
+              minHeight: 7,
+              value: progress,
+              backgroundColor: _businessThemePalette.border.withOpacity(
+                _businessThemePalette.isDark ? 0.30 : 0.55,
+              ),
+              valueColor: AlwaysStoppedAnimation<Color>(accent),
+            ),
+          ),
+          const SizedBox(height: 7),
+          Text(
+            safeAddon > 0
+                ? _t(
+                    nl: '$safeBase basis + $safeAddon uitbreiding / maand',
+                    en: '$safeBase base + $safeAddon add-on / month',
+                    fr: '$safeBase de base + $safeAddon extension / mois',
+                    es: '$safeBase base + $safeAddon ampliación / mes',
+                  )
+                : _t(
+                    nl: '$safeBase inbegrepen / maand',
+                    en: '$safeBase included / month',
+                    fr: '$safeBase inclus / mois',
+                    es: '$safeBase incluidas / mes',
+                  ),
+            style: TextStyle(
+              color: _businessThemePalette.textMuted,
+              fontSize: 12.1,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            tracked
+                ? _t(
+                    nl: 'Wordt maandelijks gereset met je facturatieperiode.',
+                    en: 'Resets monthly with your billing period.',
+                    fr: 'Réinitialisé chaque mois avec votre période de facturation.',
+                    es: 'Se restablece mensualmente con tu período de facturación.',
+                  )
+                : _t(
+                    nl: 'PDF-verbruik wordt binnenkort gekoppeld.',
+                    en: 'Usage tracking will be linked soon.',
+                    fr: 'Le suivi de l\'utilisation sera bientôt connecté.',
+                    es: 'El seguimiento del uso se conectará pronto.',
+                  ),
+            style: TextStyle(
+              color: _businessThemePalette.textMuted.withOpacity(0.86),
+              fontSize: 11.8,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return ValueListenableBuilder<BusinessThemeVariant>(
@@ -3017,67 +3134,20 @@ class _CompanySubscriptionBillingPageState
                                 ),
                               ),
                               const SizedBox(height: 8),
-                              Container(
-                                width: double.infinity,
-                                padding: const EdgeInsets.fromLTRB(
-                                  10,
-                                  9,
-                                  10,
-                                  10,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: _panelSoft,
-                                  borderRadius: BorderRadius.circular(10),
-                                  border: Border.all(
-                                    color: _gold.withOpacity(0.30),
-                                  ),
-                                ),
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      _t(
-                                        nl: 'PDF-creaties',
-                                        en: 'PDF creations',
-                                        fr: 'Creations PDF',
-                                        es: 'Creaciones PDF',
-                                      ),
-                                      style: TextStyle(
-                                        color:
-                                            _businessThemePalette.textPrimary,
-                                        fontWeight: FontWeight.w800,
-                                        fontSize: 12.8,
-                                      ),
-                                    ),
-                                    const SizedBox(height: 5),
-                                    Text(
-                                      _t(
-                                        nl: 'Limiet: ${catalog.includedPdfCreationsPerVehicleMonth} per voertuig / maand',
-                                        en: 'Limit: ${catalog.includedPdfCreationsPerVehicleMonth} per vehicle / month',
-                                        fr: 'Limite : ${catalog.includedPdfCreationsPerVehicleMonth} par véhicule / mois',
-                                        es: 'Límite: ${catalog.includedPdfCreationsPerVehicleMonth} por vehículo / mes',
-                                      ),
-                                      style: TextStyle(
-                                        color: _businessThemePalette.textMuted,
-                                        fontSize: 12.1,
-                                      ),
-                                    ),
-                                    const SizedBox(height: 2),
-                                    Text(
-                                      _t(
-                                        nl: 'PDF-verbruik wordt binnenkort gekoppeld.',
-                                        en: 'PDF usage tracking will be linked soon.',
-                                        fr: 'Le suivi de l\'utilisation des PDF sera bientôt connecté.',
-                                        es: 'El seguimiento del uso de PDF se conectará pronto.',
-                                      ),
-                                      style: TextStyle(
-                                        color: _businessThemePalette.textMuted
-                                            .withOpacity(0.86),
-                                        fontSize: 11.8,
-                                      ),
-                                    ),
-                                  ],
-                                ),
+                              // Patch 2.10: PDF creations usage bar. Total =
+                              // base (included per-vehicle x vehicle slots) +
+                              // purchased add-on allowance. Usage is a
+                              // display-only placeholder until real tracking
+                              // is wired (tracked: false).
+                              _pdfUsageCard(
+                                used: profile.pdfMonthlyUsed,
+                                baseAllowance:
+                                    catalog.includedPdfCreationsPerVehicleMonth *
+                                    (profile.maxVehicles > 0
+                                        ? profile.maxVehicles
+                                        : 1),
+                                addonAllowance: profile.pdfMonthlyAllowance,
+                                tracked: false,
                               ),
                               if (isBelgiumMarket) ...[
                                 const SizedBox(height: 8),
