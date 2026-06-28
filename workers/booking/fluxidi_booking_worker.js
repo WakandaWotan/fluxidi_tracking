@@ -4101,6 +4101,13 @@ const DEFAULT_SUBSCRIPTION_PROFILE = {
   pdf1000_cancel_requested_at: "",
   pdf1000_cancellation_effective_at: "",
   pdf1000_auto_renew: true,
+  // Patch 2.11: pdf_5000 = +5000/mo. Same explicit-active-quantity +
+  // cancel-at-period-end lifecycle as pdf_500 / pdf_1000.
+  pdf5000_active_quantity: 0,
+  pdf5000_cancel_at_period_end_quantity: 0,
+  pdf5000_cancel_requested_at: "",
+  pdf5000_cancellation_effective_at: "",
+  pdf5000_auto_renew: true,
   current_period_start: "",
   current_period_end: "",
   locked_price_cents: null,
@@ -4180,37 +4187,38 @@ const FLUXIDI_SUPPORTED_LAUNCH_MARKETS = new Set([
 // are kept here so the table stays in sync with the Flutter catalog and so
 // the future driver add-on does not need a second catalog migration.
 //
-// Patch 2.9: PDF bundle prices (pdf_500 / pdf_1000) are FLAT across all launch
-// markets, mirroring the single global Flutter `kFluxidiPdfBundles` list
-// (pdf_500 = €5, pdf_1000 = €9). pdf_5000 stays a passive "coming soon" tile
-// and is intentionally not priced or actionable here.
+// Patch 2.9 / 2.11: PDF bundle prices (pdf_500 / pdf_1000 / pdf_5000) are FLAT
+// across all launch markets, mirroring the single global Flutter
+// `kFluxidiPdfBundles` list (pdf_500 = €5, pdf_1000 = €9, pdf_5000 = €29).
 const SUBSCRIPTION_ADDON_CATALOG = {
-  BE: { currency: "EUR", extra_vehicle_price_cents: 1900, extra_driver_price_cents: 900, pdf_500_price_cents: 500, pdf_1000_price_cents: 900 },
-  NL: { currency: "EUR", extra_vehicle_price_cents: 1500, extra_driver_price_cents: 700, pdf_500_price_cents: 500, pdf_1000_price_cents: 900 },
-  FR: { currency: "EUR", extra_vehicle_price_cents: 1500, extra_driver_price_cents: 700, pdf_500_price_cents: 500, pdf_1000_price_cents: 900 },
-  ES: { currency: "EUR", extra_vehicle_price_cents: 1500, extra_driver_price_cents: 700, pdf_500_price_cents: 500, pdf_1000_price_cents: 900 },
-  LU: { currency: "EUR", extra_vehicle_price_cents: 1500, extra_driver_price_cents: 700, pdf_500_price_cents: 500, pdf_1000_price_cents: 900 },
-  DE: { currency: "EUR", extra_vehicle_price_cents: 1500, extra_driver_price_cents: 700, pdf_500_price_cents: 500, pdf_1000_price_cents: 900 },
+  BE: { currency: "EUR", extra_vehicle_price_cents: 1900, extra_driver_price_cents: 900, pdf_500_price_cents: 500, pdf_1000_price_cents: 900, pdf_5000_price_cents: 2900 },
+  NL: { currency: "EUR", extra_vehicle_price_cents: 1500, extra_driver_price_cents: 700, pdf_500_price_cents: 500, pdf_1000_price_cents: 900, pdf_5000_price_cents: 2900 },
+  FR: { currency: "EUR", extra_vehicle_price_cents: 1500, extra_driver_price_cents: 700, pdf_500_price_cents: 500, pdf_1000_price_cents: 900, pdf_5000_price_cents: 2900 },
+  ES: { currency: "EUR", extra_vehicle_price_cents: 1500, extra_driver_price_cents: 700, pdf_500_price_cents: 500, pdf_1000_price_cents: 900, pdf_5000_price_cents: 2900 },
+  LU: { currency: "EUR", extra_vehicle_price_cents: 1500, extra_driver_price_cents: 700, pdf_500_price_cents: 500, pdf_1000_price_cents: 900, pdf_5000_price_cents: 2900 },
+  DE: { currency: "EUR", extra_vehicle_price_cents: 1500, extra_driver_price_cents: 700, pdf_500_price_cents: 500, pdf_1000_price_cents: 900, pdf_5000_price_cents: 2900 },
 };
 
 // Add-on codes accepted by /company/subscription/add-ons/checkout/start.
 // Patch 2.3A: extra_vehicle. Patch 2.8: extra_driver. Patch 2.9: pdf_500 /
-// pdf_1000. pdf_5000 stays out (passive "coming soon" tile).
+// pdf_1000. Patch 2.11: pdf_5000.
 const FLUXIDI_SUPPORTED_ADDON_CODES = new Set([
   "extra_vehicle",
   "extra_driver",
   "pdf_500",
   "pdf_1000",
+  "pdf_5000",
 ]);
 
-// Entitlement deltas per quantity-1 add-on activation. pdf_500 / pdf_1000 add
-// monthly PDF allowance only (no vehicle/driver change); the allowance is
-// persisted/increased but not yet enforced by a gate (Patch 2.9 scope).
+// Entitlement deltas per quantity-1 add-on activation. pdf_500 / pdf_1000 /
+// pdf_5000 add monthly PDF allowance only (no vehicle/driver change); the
+// allowance is persisted/increased but not yet enforced by a gate.
 const FLUXIDI_ADDON_ENTITLEMENT_DELTAS = {
   extra_vehicle: { max_vehicles_delta: 1, max_drivers_delta: 3, pdf_allowance_delta: 0 },
   extra_driver: { max_vehicles_delta: 0, max_drivers_delta: 1, pdf_allowance_delta: 0 },
   pdf_500: { max_vehicles_delta: 0, max_drivers_delta: 0, pdf_allowance_delta: 500 },
   pdf_1000: { max_vehicles_delta: 0, max_drivers_delta: 0, pdf_allowance_delta: 1000 },
+  pdf_5000: { max_vehicles_delta: 0, max_drivers_delta: 0, pdf_allowance_delta: 5000 },
 };
 
 function normalizeSubscriptionMarket(raw) {
@@ -4289,6 +4297,9 @@ function resolveAddonUnitPriceCents(addonCatalog, addonCode) {
   }
   if (code === "pdf_1000") {
     return addonCatalog.pdf_1000_price_cents;
+  }
+  if (code === "pdf_5000") {
+    return addonCatalog.pdf_5000_price_cents;
   }
   return null;
 }
@@ -4894,6 +4905,14 @@ function normalizeSubscriptionProfile(input = {}, scope = null) {
     pdf1000_auto_renew: typeof (source.pdf1000_auto_renew ?? source.pdf1000AutoRenew) === "boolean"
       ? (source.pdf1000_auto_renew ?? source.pdf1000AutoRenew)
       : DEFAULT_SUBSCRIPTION_PROFILE.pdf1000_auto_renew,
+    // Patch 2.11: pdf_5000 bundle. Same pure pass-through as pdf_500/pdf_1000.
+    pdf5000_active_quantity: Math.max(0, clampInt(source.pdf5000_active_quantity ?? source.pdf5000ActiveQuantity, DEFAULT_SUBSCRIPTION_PROFILE.pdf5000_active_quantity, 100000)),
+    pdf5000_cancel_at_period_end_quantity: Math.max(0, clampInt(source.pdf5000_cancel_at_period_end_quantity ?? source.pdf5000CancelAtPeriodEndQuantity, DEFAULT_SUBSCRIPTION_PROFILE.pdf5000_cancel_at_period_end_quantity, 100000)),
+    pdf5000_cancel_requested_at: sanitizeTenantString(source.pdf5000_cancel_requested_at ?? source.pdf5000CancelRequestedAt ?? DEFAULT_SUBSCRIPTION_PROFILE.pdf5000_cancel_requested_at, 48),
+    pdf5000_cancellation_effective_at: sanitizeTenantString(source.pdf5000_cancellation_effective_at ?? source.pdf5000CancellationEffectiveAt ?? DEFAULT_SUBSCRIPTION_PROFILE.pdf5000_cancellation_effective_at, 48),
+    pdf5000_auto_renew: typeof (source.pdf5000_auto_renew ?? source.pdf5000AutoRenew) === "boolean"
+      ? (source.pdf5000_auto_renew ?? source.pdf5000AutoRenew)
+      : DEFAULT_SUBSCRIPTION_PROFILE.pdf5000_auto_renew,
     current_period_start: sanitizeTenantString(source.current_period_start ?? source.currentPeriodStart ?? DEFAULT_SUBSCRIPTION_PROFILE.current_period_start, 48),
     current_period_end: sanitizeTenantString(source.current_period_end ?? source.currentPeriodEnd ?? DEFAULT_SUBSCRIPTION_PROFILE.current_period_end, 48),
     locked_price_cents: nullableCents(source.locked_price_cents, source.lockedPriceCents),
@@ -5924,6 +5943,15 @@ const FLUXIDI_PDF_BUNDLE_FIELDS = {
     autoRenew: "pdf1000_auto_renew",
     logLabel: "PDF_1000",
   },
+  pdf_5000: {
+    allowanceStep: 5000,
+    active: "pdf5000_active_quantity",
+    cancelQty: "pdf5000_cancel_at_period_end_quantity",
+    requestedAt: "pdf5000_cancel_requested_at",
+    effectiveAt: "pdf5000_cancellation_effective_at",
+    autoRenew: "pdf5000_auto_renew",
+    logLabel: "PDF_5000",
+  },
 };
 
 // Pure count of active paid bundles of this code (explicit field only).
@@ -6006,6 +6034,20 @@ async function materializeDuePdf1000Cancellation(env, scope, profile) {
     scope,
     profile,
     FLUXIDI_PDF_BUNDLE_FIELDS.pdf_1000,
+  );
+}
+function derivePdf5000ActiveQuantity(profile) {
+  return derivePdfBundleActiveQuantity(profile, FLUXIDI_PDF_BUNDLE_FIELDS.pdf_5000);
+}
+function pdf5000CancelableQuantity(profile) {
+  return pdfBundleCancelableQuantity(profile, FLUXIDI_PDF_BUNDLE_FIELDS.pdf_5000);
+}
+async function materializeDuePdf5000Cancellation(env, scope, profile) {
+  return materializeDuePdfBundleCancellation(
+    env,
+    scope,
+    profile,
+    FLUXIDI_PDF_BUNDLE_FIELDS.pdf_5000,
   );
 }
 
@@ -7694,6 +7736,10 @@ async function activateFluxidiAddonFromVerifiedPayment(env, { activationId, paym
   if (addonCode === "pdf_1000") {
     const priorActive = derivePdf1000ActiveQuantity(currentProfile);
     updatedProfile.pdf1000_active_quantity = priorActive + quantity;
+  }
+  if (addonCode === "pdf_5000") {
+    const priorActive = derivePdf5000ActiveQuantity(currentProfile);
+    updatedProfile.pdf5000_active_quantity = priorActive + quantity;
   }
 
   let savedProfile;
@@ -26031,6 +26077,18 @@ export default {
               `[COMPANY_SUBSCRIPTION_GET][PDF_1000_DOWNGRADE_SKIP] reason=${safeStr(e?.message, 80) || "error"}`,
             );
           }
+          try {
+            const pdf5000Materialized = await materializeDuePdf5000Cancellation(
+              env,
+              scope,
+              profile,
+            );
+            if (pdf5000Materialized?.profile) profile = pdf5000Materialized.profile;
+          } catch (e) {
+            console.log(
+              `[COMPANY_SUBSCRIPTION_GET][PDF_5000_DOWNGRADE_SKIP] reason=${safeStr(e?.message, 80) || "error"}`,
+            );
+          }
           return json(
             {
               ok: true,
@@ -27614,6 +27672,29 @@ export default {
           FLUXIDI_PDF_BUNDLE_FIELDS.pdf_1000,
           "COMPANY_SUBSCRIPTION_ADDON_PDF_1000_CANCEL_ONE",
           "no_pdf_1000_to_cancel",
+        );
+      }
+
+      // =========================
+      // Patch 2.11: cancel ONE pdf_5000 bundle at period end.
+      //
+      // POST /company/subscription/add-ons/pdf-5000/cancel-one
+      //
+      // Same lifecycle as pdf-500/pdf-1000 cancel-one; independent counters.
+      // Local state only: never calls Mollie, never touches vehicle/driver
+      // limits.
+      // =========================
+      if (
+        url.pathname === "/company/subscription/add-ons/pdf-5000/cancel-one" &&
+        request.method === "POST"
+      ) {
+        return await _handleFluxidiPdfBundleCancelOne(
+          env,
+          request,
+          url,
+          FLUXIDI_PDF_BUNDLE_FIELDS.pdf_5000,
+          "COMPANY_SUBSCRIPTION_ADDON_PDF_5000_CANCEL_ONE",
+          "no_pdf_5000_to_cancel",
         );
       }
 

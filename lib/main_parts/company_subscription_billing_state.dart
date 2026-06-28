@@ -31,8 +31,10 @@ class _CompanySubscriptionBillingPageState
   // each PDF tile is independent and cannot be double-tapped.
   bool _startingPdf500Checkout = false;
   bool _startingPdf1000Checkout = false;
+  bool _startingPdf5000Checkout = false;
   bool _cancellingPdf500 = false;
   bool _cancellingPdf1000 = false;
+  bool _cancellingPdf5000 = false;
   // Set true while a Mollie checkout window is open so the next app resume
   // triggers exactly one profile refresh (no infinite resume loops). Shared by
   // both the base subscription checkout and the add-on checkout.
@@ -304,7 +306,7 @@ class _CompanySubscriptionBillingPageState
   // route and only ever requests addon_code="extra_vehicle", quantity=1. The
   // backend is the sole source of truth for pricing — Flutter never sends a
   // price. Extra driver is wired in Patch 2.8; pdf_500 / pdf_1000 PDF bundles
-  // in Patch 2.9 (pdf_5000 stays a passive "coming soon" tile).
+  // in Patch 2.9; pdf_5000 in Patch 2.11.
   // ---------------------------------------------------------------------------
 
   String _activateExtraVehicleLabel() => _t(
@@ -1136,28 +1138,35 @@ class _CompanySubscriptionBillingPageState
   }
 
   // ---------------------------------------------------------------------------
-  // Patch 2.9: PDF bundle add-ons (pdf_500 / pdf_1000). Same checkout + cancel-
-  // at-period-end lifecycle as the Extra driver add-on. Only the 500/1000
-  // bundles are actionable; the 5000 tile keeps its passive "coming soon" chip.
-  // The purchased allowance increases pdf_monthly_allowance on the backend; it
-  // is not enforced by a gate yet (Patch 2.9 scope).
+  // Patch 2.9 / 2.11: PDF bundle add-ons (pdf_500 / pdf_1000 / pdf_5000). Same
+  // checkout + cancel-at-period-end lifecycle as the Extra driver add-on. All
+  // three bundles are actionable (5000 wired in Patch 2.11). The purchased
+  // allowance increases pdf_monthly_allowance on the backend; it is not enforced
+  // by a gate yet.
   // ---------------------------------------------------------------------------
 
-  /// Only the pdf_500 / pdf_1000 bundles have a real lifecycle in Patch 2.9.
-  bool _pdfBundleIsActionable(int pdfs) => pdfs == 500 || pdfs == 1000;
+  /// The pdf_500 / pdf_1000 / pdf_5000 bundles all have a real lifecycle
+  /// (Patch 2.9 wired 500/1000; Patch 2.11 added 5000).
+  bool _pdfBundleIsActionable(int pdfs) =>
+      pdfs == 500 || pdfs == 1000 || pdfs == 5000;
 
-  String _pdfBundleAddonCode(int pdfs) =>
-      pdfs == 500 ? 'pdf_500' : 'pdf_1000';
+  String _pdfBundleAddonCode(int pdfs) {
+    if (pdfs == 500) return 'pdf_500';
+    if (pdfs == 1000) return 'pdf_1000';
+    return 'pdf_5000';
+  }
 
   int _pdfBundleActiveQuantity(BackendSubscriptionProfile profile, int pdfs) {
     if (pdfs == 500) return profile.pdf500ActiveQuantity;
     if (pdfs == 1000) return profile.pdf1000ActiveQuantity;
+    if (pdfs == 5000) return profile.pdf5000ActiveQuantity;
     return 0;
   }
 
   int _pdfBundleScheduledQuantity(BackendSubscriptionProfile profile, int pdfs) {
     if (pdfs == 500) return profile.pdf500CancelAtPeriodEndQuantity;
     if (pdfs == 1000) return profile.pdf1000CancelAtPeriodEndQuantity;
+    if (pdfs == 5000) return profile.pdf5000CancelAtPeriodEndQuantity;
     return 0;
   }
 
@@ -1175,10 +1184,15 @@ class _CompanySubscriptionBillingPageState
     BackendSubscriptionProfile profile,
     int pdfs,
   ) {
-    final effective = (pdfs == 500
-            ? profile.pdf500CancellationEffectiveAt
-            : profile.pdf1000CancellationEffectiveAt)
-        .trim();
+    final String effectiveRaw;
+    if (pdfs == 500) {
+      effectiveRaw = profile.pdf500CancellationEffectiveAt;
+    } else if (pdfs == 1000) {
+      effectiveRaw = profile.pdf1000CancellationEffectiveAt;
+    } else {
+      effectiveRaw = profile.pdf5000CancellationEffectiveAt;
+    }
+    final effective = effectiveRaw.trim();
     if (effective.isNotEmpty) return _humanDate(effective);
     final periodEnd = profile.currentPeriodEnd.trim();
     if (periodEnd.isNotEmpty) return _humanDate(periodEnd);
@@ -1187,25 +1201,35 @@ class _CompanySubscriptionBillingPageState
     return '—';
   }
 
-  bool _pdfBundleBusyStarting(int pdfs) =>
-      pdfs == 500 ? _startingPdf500Checkout : _startingPdf1000Checkout;
+  bool _pdfBundleBusyStarting(int pdfs) {
+    if (pdfs == 500) return _startingPdf500Checkout;
+    if (pdfs == 1000) return _startingPdf1000Checkout;
+    return _startingPdf5000Checkout;
+  }
 
-  bool _pdfBundleBusyCancelling(int pdfs) =>
-      pdfs == 500 ? _cancellingPdf500 : _cancellingPdf1000;
+  bool _pdfBundleBusyCancelling(int pdfs) {
+    if (pdfs == 500) return _cancellingPdf500;
+    if (pdfs == 1000) return _cancellingPdf1000;
+    return _cancellingPdf5000;
+  }
 
   void _setPdfBundleStarting(int pdfs, bool value) {
     if (pdfs == 500) {
       _startingPdf500Checkout = value;
-    } else {
+    } else if (pdfs == 1000) {
       _startingPdf1000Checkout = value;
+    } else {
+      _startingPdf5000Checkout = value;
     }
   }
 
   void _setPdfBundleCancelling(int pdfs, bool value) {
     if (pdfs == 500) {
       _cancellingPdf500 = value;
-    } else {
+    } else if (pdfs == 1000) {
       _cancellingPdf1000 = value;
+    } else {
+      _cancellingPdf5000 = value;
     }
   }
 
@@ -1376,9 +1400,23 @@ class _CompanySubscriptionBillingPageState
 
     setState(() => _setPdfBundleCancelling(pdfs, true));
     try {
-      final updated = pdfs == 500
-          ? await cancelOnePdf500Addon(tenantId: scopeId, companyId: scopeId)
-          : await cancelOnePdf1000Addon(tenantId: scopeId, companyId: scopeId);
+      final BackendSubscriptionProfile updated;
+      if (pdfs == 500) {
+        updated = await cancelOnePdf500Addon(
+          tenantId: scopeId,
+          companyId: scopeId,
+        );
+      } else if (pdfs == 1000) {
+        updated = await cancelOnePdf1000Addon(
+          tenantId: scopeId,
+          companyId: scopeId,
+        );
+      } else {
+        updated = await cancelOnePdf5000Addon(
+          tenantId: scopeId,
+          companyId: scopeId,
+        );
+      }
       if (!mounted) return;
       _showSnack(
         _t(
@@ -1495,8 +1533,8 @@ class _CompanySubscriptionBillingPageState
     );
   }
 
-  /// Footer for a PDF bundle add-on card. Returns null for non-actionable
-  /// bundles (e.g. 5000) so the card keeps its passive "coming soon" chip.
+  /// Footer for a PDF bundle add-on card. Returns null only for bundles with no
+  /// real lifecycle; pdf_500 / pdf_1000 / pdf_5000 all render activate + cancel.
   Widget? _pdfBundleAddonFooter(
     BackendSubscriptionProfile profile,
     int pdfs,
