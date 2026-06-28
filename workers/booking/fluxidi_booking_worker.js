@@ -6707,6 +6707,397 @@ async function createFluxidiSubscriptionMollieCustomer(env, { email, name, metad
   return { ok: res.ok, status: res.status, data };
 }
 
+// =========================
+// Patch 3.2: Mollie recurring-subscription lifecycle (create only).
+//
+// Designed as a thin lifecycle API so future patches can add update/cancel
+// without re-shaping call sites. Patch 3.2 only wires the CREATE branch:
+//
+//   _fluxidiMollieSubscriptionApiCall(env, { method, customerId, ... })
+//     low-level Mollie API: POST/PATCH/GET/DELETE to
+//     /v2/customers/{cid}/subscriptions[/{sid}]. Future patches reuse this.
+//
+//   _reconcileFluxidiRecurringSubscriptionForProfile(env, { ... })
+//     lifecycle orchestrator. Decides between create / update / no-op based
+//     on profile state. In Patch 3.2 only the "needs create" branch is
+//     wired; update/cancel return { ok: true, skipped: true, reason: "..." }.
+//
+// HARD RULES:
+//   - never touches MOLLIE_CONNECT_*; uses only the Fluxidi-owned API key.
+//   - profile contract is unchanged: provider_subscription_id is the single
+//     source of truth (empty = no recurring subscription exists; non-empty
+//     starting with "sub_" = recurring subscription exists).
+//   - failure NEVER unwinds activation. Failure state lives in a separate
+//     KV record (subscription:recurring_create_failure:<activation_id>:v1)
+//     for future reconciler / ops visibility — NOT on the profile.
+// =========================
+
+async function _fluxidiMollieSubscriptionApiCall(env, { method, customerId, subscriptionId, body } = {}) {
+  const config = loadFluxidiSubscriptionMollieConfig(env);
+  if (!config.ok) return { ok: false, status: 0, error: config.error };
+  const cleanCustomer = _fluxidiSubscriptionSafeStr(customerId, 128);
+  if (!cleanCustomer) return { ok: false, status: 0, error: "missing_customer_id" };
+  const cleanSub = _fluxidiSubscriptionSafeStr(subscriptionId, 128);
+  const httpMethod = String(method || "POST").toUpperCase();
+  let url = `https://api.mollie.com/v2/customers/${encodeURIComponent(cleanCustomer)}/subscriptions`;
+  if (cleanSub) url += `/${encodeURIComponent(cleanSub)}`;
+  const init = {
+    method: httpMethod,
+    headers: {
+      "Authorization": `Bearer ${config.apiKey}`,
+      "Accept": "application/json",
+    },
+  };
+  if (body && (httpMethod === "POST" || httpMethod === "PATCH")) {
+    init.headers["Content-Type"] = "application/json";
+    init.body = JSON.stringify(body);
+  }
+  let res;
+  try {
+    res = await fetch(url, init);
+  } catch (e) {
+    return {
+      ok: false,
+      status: 0,
+      error: "network_error",
+      message: _fluxidiSubscriptionSafeStr(e?.message, 200),
+    };
+  }
+  let data = {};
+  try { data = await res.json(); } catch (_) { data = {}; }
+  return { ok: res.ok, status: res.status, data };
+}
+
+// Reverse-index for fast lookup from Mollie's recurring payment subscriptionId
+// back to (tenant_id, company_id). Patch 3.2 only writes; Patch 3.3 will read
+// this when wiring recurring-payment webhook handling.
+function buildFluxidiSubscriptionProviderIndexKey(subscriptionId) {
+  const clean = _fluxidiSubscriptionSafeStr(subscriptionId, 128);
+  if (!clean) return "";
+  return `subscription:provider_subscription_index:${clean}:v1`;
+}
+
+async function saveFluxidiSubscriptionProviderIndex(env, subscriptionId, payload) {
+  if (!env?.BOOKING_KV) return { ok: false, error: "booking_kv_missing" };
+  const key = buildFluxidiSubscriptionProviderIndexKey(subscriptionId);
+  if (!key) return { ok: false, error: "invalid_subscription_id" };
+  const record = {
+    version: 1,
+    tenant_id: sanitizeTenantString(payload?.tenant_id, 80),
+    company_id: sanitizeTenantString(payload?.company_id, 80),
+    activation_id: _fluxidiSubscriptionNormalizeActivationId(payload?.activation_id) || "",
+    created_at: _fluxidiSubscriptionSafeStr(payload?.created_at, 48) || new Date().toISOString(),
+  };
+  if (!record.tenant_id || !record.company_id) {
+    return { ok: false, error: "missing_scope" };
+  }
+  await env.BOOKING_KV.put(key, JSON.stringify(record));
+  return { ok: true, key, record };
+}
+
+// Failure-side KV record. Lets future ops/reconciler patches retry without
+// expanding the subscription profile contract. TTL is bounded so the record
+// does not accumulate forever; a future reconciler patch can clear it on
+// successful retry.
+const FLUXIDI_SUBSCRIPTION_RECURRING_FAILURE_TTL_SECONDS = 60 * 60 * 24 * 60; // 60 days
+
+function buildFluxidiRecurringCreateFailureKey(activationId) {
+  const clean = _fluxidiSubscriptionNormalizeActivationId(activationId);
+  if (!clean) return "";
+  return `subscription:recurring_create_failure:${clean}:v1`;
+}
+
+async function saveFluxidiRecurringCreateFailure(env, activationId, record) {
+  if (!env?.BOOKING_KV) return { ok: false, error: "booking_kv_missing" };
+  const key = buildFluxidiRecurringCreateFailureKey(activationId);
+  if (!key) return { ok: false, error: "invalid_activation_id" };
+  const nowIso = new Date().toISOString();
+  const persisted = {
+    version: 1,
+    activation_id: _fluxidiSubscriptionNormalizeActivationId(activationId) || "",
+    tenant_id: sanitizeTenantString(record?.tenant_id, 80),
+    company_id: sanitizeTenantString(record?.company_id, 80),
+    plan_code: _fluxidiSubscriptionSafeStr(record?.plan_code, 32) || "",
+    market: _fluxidiSubscriptionSafeStr(record?.market, 16).toUpperCase().slice(0, 2) || "",
+    customer_id: _fluxidiSubscriptionSafeStr(record?.customer_id, 128) || "",
+    mandate_id: _fluxidiSubscriptionSafeStr(record?.mandate_id, 128) || "",
+    amount_cents: _fluxidiSubscriptionNullableCents(record?.amount_cents),
+    currency: _fluxidiSubscriptionSafeStr(record?.currency, 8).toUpperCase() || "",
+    interval: _fluxidiSubscriptionSafeStr(record?.interval, 32) || "",
+    attempted_at: _fluxidiSubscriptionSafeStr(record?.attempted_at, 48) || nowIso,
+    last_error_status: Number.isFinite(Number(record?.last_error_status))
+      ? Math.trunc(Number(record?.last_error_status))
+      : 0,
+    last_error_reason: _fluxidiSubscriptionSafeStr(record?.last_error_reason, 200) || "",
+    retryable: record?.retryable === true,
+  };
+  await env.BOOKING_KV.put(key, JSON.stringify(persisted), {
+    expirationTtl: FLUXIDI_SUBSCRIPTION_RECURRING_FAILURE_TTL_SECONDS,
+  });
+  return { ok: true, key, record: persisted };
+}
+
+// Convert an ISO timestamp to a YYYY-MM-DD string for Mollie subscription
+// `startDate` (Mollie's first recurring charge date). Returns "" if the input
+// is not a parseable ISO timestamp.
+function _fluxidiRecurringStartDateFromIso(iso) {
+  const text = _fluxidiSubscriptionSafeStr(iso, 48);
+  if (!text) return "";
+  const d = new Date(text);
+  if (Number.isNaN(d.getTime())) return "";
+  const y = d.getUTCFullYear();
+  const m = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(d.getUTCDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+// Lifecycle orchestrator. Patch 3.2 only wires "needs create"; update/cancel
+// are stub-skipped so the call site does not change in future patches.
+async function _reconcileFluxidiRecurringSubscriptionForProfile(env, {
+  scope,
+  savedProfile,
+  payment,
+  pending,
+  activationId,
+} = {}) {
+  const tenantId = sanitizeTenantString(scope?.tenant_id, 80);
+  const companyId = sanitizeTenantString(scope?.company_id, 80);
+  if (!tenantId || !companyId) {
+    return { ok: false, skipped: true, reason: "missing_scope" };
+  }
+  const cleanActivationId = _fluxidiSubscriptionNormalizeActivationId(activationId);
+  if (!cleanActivationId) {
+    return { ok: false, skipped: true, reason: "missing_activation_id" };
+  }
+  const tenantMask = _maskPublicDriverLoginValue(tenantId);
+  const companyMask = _maskPublicDriverLoginValue(companyId);
+
+  // Existing-subscription guard: the profile's provider_subscription_id is the
+  // single source of truth. A non-empty "sub_…" value means a recurring
+  // subscription already exists (created on a prior activation or replay).
+  const currentSubId = _fluxidiSubscriptionSafeStr(savedProfile?.provider_subscription_id, 128);
+  if (currentSubId && currentSubId.startsWith("sub_")) {
+    return {
+      ok: true,
+      action: "noop",
+      skipped: true,
+      reason: "already_exists",
+      subscription_id: currentSubId,
+    };
+  }
+
+  // Patch 3.2 only handles the create path. Future amount/interval updates
+  // (extra add-ons, plan changes) will land here as the "needs update" branch.
+  const action = "create";
+
+  // CREATE branch — gather inputs.
+  const customerId =
+    _fluxidiSubscriptionSafeStr(savedProfile?.provider_customer_id, 128) ||
+    _fluxidiSubscriptionSafeStr(payment?.customerId, 128) ||
+    _fluxidiSubscriptionSafeStr(pending?.provider_customer_id, 128);
+  if (!customerId || !customerId.startsWith("cst_")) {
+    console.log(
+      `[SUBSCRIPTION_RECURRING_RECONCILE][SKIP] tenant=${tenantMask} company=${companyMask} action=${action} reason=missing_customer_id`,
+    );
+    return { ok: false, skipped: true, reason: "missing_customer_id" };
+  }
+  const mandateId = _fluxidiSubscriptionSafeStr(payment?.mandateId, 128);
+  if (!mandateId || !mandateId.startsWith("mdt_")) {
+    // No mandate on the paid payment → cannot bind a recurring subscription.
+    // Permanent for this activation; not retryable. No failure record.
+    console.log(
+      `[SUBSCRIPTION_RECURRING_RECONCILE][SKIP] tenant=${tenantMask} company=${companyMask} action=${action} reason=missing_mandate_id`,
+    );
+    return { ok: false, skipped: true, reason: "missing_mandate_id" };
+  }
+  const lockedCents = _fluxidiSubscriptionNullableCents(savedProfile?.locked_price_cents);
+  if (lockedCents === null || lockedCents <= 0) {
+    console.log(
+      `[SUBSCRIPTION_RECURRING_RECONCILE][SKIP] tenant=${tenantMask} company=${companyMask} action=${action} reason=missing_locked_price`,
+    );
+    return { ok: false, skipped: true, reason: "missing_locked_price" };
+  }
+  const currency = (
+    _fluxidiSubscriptionSafeStr(savedProfile?.currency, 8).toUpperCase() ||
+    _fluxidiSubscriptionSafeStr(payment?.amount?.currency, 8).toUpperCase() ||
+    "EUR"
+  ).slice(0, 8);
+  const amountValue = (lockedCents / 100).toFixed(2);
+  const periodEndIso = _fluxidiSubscriptionSafeStr(savedProfile?.current_period_end, 48);
+  const startDate = _fluxidiRecurringStartDateFromIso(periodEndIso);
+  if (!startDate) {
+    console.log(
+      `[SUBSCRIPTION_RECURRING_RECONCILE][SKIP] tenant=${tenantMask} company=${companyMask} action=${action} reason=invalid_period_end`,
+    );
+    return { ok: false, skipped: true, reason: "invalid_period_end" };
+  }
+  const interval = "1 month";
+  // Reuse the exact webhook URL Mollie already knows for this account so the
+  // recurring webhook lands on the same route. Empty webhookUrl is acceptable
+  // (Mollie subscriptions can be created without it), but we prefer parity.
+  const webhookUrl = _fluxidiSubscriptionSafeStr(payment?.webhookUrl, 1000);
+
+  const subscriptionBody = {
+    amount: { currency, value: amountValue },
+    interval,
+    startDate,
+    description: "Fluxidi Pro abonnement",
+    mandateId,
+    metadata: {
+      purpose: "fluxidi_subscription_recurring",
+      kind: "recurring",
+      tenant_id: tenantId,
+      company_id: companyId,
+      plan_code: _fluxidiSubscriptionSafeStr(savedProfile?.plan_code, 32) || "fluxidi_pro",
+      market: _fluxidiSubscriptionSafeStr(savedProfile?.market, 16).toUpperCase().slice(0, 2) || "",
+      activation_id: cleanActivationId,
+    },
+  };
+  if (webhookUrl) subscriptionBody.webhookUrl = webhookUrl;
+
+  const apiResult = await _fluxidiMollieSubscriptionApiCall(env, {
+    method: "POST",
+    customerId,
+    body: subscriptionBody,
+  });
+  if (!apiResult?.ok) {
+    const upstream = Number(apiResult?.status) || 0;
+    const reason = _fluxidiSubscriptionSafeStr(apiResult?.error || apiResult?.data?.title, 200) ||
+      `upstream_${upstream || "error"}`;
+    // Retryable = transient (network/5xx). 4xx = bad request, not retryable
+    // without changing inputs.
+    const retryable = upstream === 0 || upstream >= 500;
+    try {
+      await saveFluxidiRecurringCreateFailure(env, cleanActivationId, {
+        tenant_id: tenantId,
+        company_id: companyId,
+        plan_code: savedProfile?.plan_code,
+        market: savedProfile?.market,
+        customer_id: customerId,
+        mandate_id: mandateId,
+        amount_cents: lockedCents,
+        currency,
+        interval,
+        attempted_at: new Date().toISOString(),
+        last_error_status: upstream,
+        last_error_reason: reason,
+        retryable,
+      });
+    } catch (e) {
+      console.log(
+        `[SUBSCRIPTION_RECURRING_FAILURE_RECORD][WARN] msg=${_fluxidiSubscriptionSafeStr(e?.message, 160)}`,
+      );
+    }
+    console.log(
+      `[SUBSCRIPTION_RECURRING_RECONCILE][ERR] tenant=${tenantMask} company=${companyMask} action=${action} upstream_status=${upstream} retryable=${retryable} reason=${reason}`,
+    );
+    return { ok: false, action, error: reason, status: upstream, retryable };
+  }
+
+  const subscription = apiResult.data || {};
+  const subscriptionId = _fluxidiSubscriptionSafeStr(subscription?.id, 128);
+  if (!subscriptionId || !subscriptionId.startsWith("sub_")) {
+    // 200 OK but no usable subscription id — treat as a (retryable) failure so
+    // ops can investigate. Do NOT touch the profile.
+    try {
+      await saveFluxidiRecurringCreateFailure(env, cleanActivationId, {
+        tenant_id: tenantId,
+        company_id: companyId,
+        plan_code: savedProfile?.plan_code,
+        market: savedProfile?.market,
+        customer_id: customerId,
+        mandate_id: mandateId,
+        amount_cents: lockedCents,
+        currency,
+        interval,
+        attempted_at: new Date().toISOString(),
+        last_error_status: Number(apiResult?.status) || 200,
+        last_error_reason: "missing_subscription_id",
+        retryable: true,
+      });
+    } catch (_) {}
+    console.log(
+      `[SUBSCRIPTION_RECURRING_RECONCILE][ERR] tenant=${tenantMask} company=${companyMask} action=${action} reason=missing_subscription_id`,
+    );
+    return { ok: false, action, error: "missing_subscription_id", retryable: true };
+  }
+
+  // Persist recurring fields onto the profile. provider_subscription_id is the
+  // single source of truth — once written, future activator runs (or replays)
+  // will hit the already_exists guard above.
+  const nowIso = new Date().toISOString();
+  const profileWithRecurring = {
+    ...savedProfile,
+    provider_subscription_id: subscriptionId,
+    mandate_id: mandateId,
+    recurring_amount_cents: lockedCents,
+    recurring_currency: currency,
+    recurring_interval: interval,
+  };
+  let updatedProfile = savedProfile;
+  try {
+    updatedProfile = await saveSubscriptionProfile(env, profileWithRecurring, scope, {
+      allowTenantLegacyWrite: false,
+    });
+  } catch (e) {
+    // Mollie subscription IS created. Persisting the id failed locally — log
+    // loudly and record for reconciliation. Do not throw: activation already
+    // succeeded and the customer is charged.
+    try {
+      await saveFluxidiRecurringCreateFailure(env, cleanActivationId, {
+        tenant_id: tenantId,
+        company_id: companyId,
+        plan_code: savedProfile?.plan_code,
+        market: savedProfile?.market,
+        customer_id: customerId,
+        mandate_id: mandateId,
+        amount_cents: lockedCents,
+        currency,
+        interval,
+        attempted_at: nowIso,
+        last_error_status: 0,
+        last_error_reason: `profile_save_failed:${_fluxidiSubscriptionSafeStr(e?.message, 80) || "unknown"}`,
+        retryable: true,
+      });
+    } catch (_) {}
+    console.log(
+      `[SUBSCRIPTION_RECURRING_RECONCILE][ERR] tenant=${tenantMask} company=${companyMask} action=${action} stage=profile_save sub_id=${subscriptionId} msg=${_fluxidiSubscriptionSafeStr(e?.message, 160)}`,
+    );
+    return {
+      ok: false,
+      action,
+      error: "profile_save_failed",
+      subscription_id: subscriptionId,
+      retryable: true,
+    };
+  }
+
+  // Reverse-index write is best-effort: a later reconciler patch can rebuild
+  // it from the profile if needed.
+  try {
+    await saveFluxidiSubscriptionProviderIndex(env, subscriptionId, {
+      tenant_id: tenantId,
+      company_id: companyId,
+      activation_id: cleanActivationId,
+      created_at: nowIso,
+    });
+  } catch (e) {
+    console.log(
+      `[SUBSCRIPTION_RECURRING_INDEX][WARN] tenant=${tenantMask} company=${companyMask} sub_id=${subscriptionId} msg=${_fluxidiSubscriptionSafeStr(e?.message, 160)}`,
+    );
+  }
+
+  console.log(
+    `[SUBSCRIPTION_RECURRING_RECONCILE][OK] tenant=${tenantMask} company=${companyMask} action=${action} sub_id=${subscriptionId} amount_cents=${lockedCents} currency=${currency} interval=${interval} start_date=${startDate}`,
+  );
+  return {
+    ok: true,
+    action,
+    subscription_id: subscriptionId,
+    updatedProfile,
+  };
+}
+
 // Create the first (sequenceType:"first") Mollie payment for a Fluxidi
 // subscription. Uses ONLY the Fluxidi subscription API key.
 async function createFluxidiSubscriptionFirstPayment(env, {
@@ -7063,6 +7454,27 @@ async function activateFluxidiSubscriptionFromVerifiedPayment(env, { activationI
   } catch (_) {
     // Profile is already saved; the next replay will hit the
     // "profile_already_active" idempotency branch above.
+  }
+
+  // Patch 3.2: after a fresh activation, attempt to create the real Mollie
+  // recurring subscription. Best-effort — any failure is captured in a
+  // dedicated KV record and NEVER unwinds activation. Replays short-circuit
+  // earlier via the "profile_already_active" branch and never reach here.
+  try {
+    const reconcileResult = await _reconcileFluxidiRecurringSubscriptionForProfile(env, {
+      scope,
+      savedProfile,
+      payment,
+      pending,
+      activationId: cleanActivationId,
+    });
+    if (reconcileResult?.ok && reconcileResult.updatedProfile) {
+      savedProfile = reconcileResult.updatedProfile;
+    }
+  } catch (e) {
+    console.log(
+      `[SUBSCRIPTION_RECURRING_RECONCILE][EXCEPTION] tenant=${tenantMask} company=${companyMask} msg=${_fluxidiSubscriptionSafeStr(e?.message, 160)}`,
+    );
   }
 
   console.log(
