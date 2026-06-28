@@ -4079,6 +4079,23 @@ const DEFAULT_SUBSCRIPTION_PROFILE = {
   extra_driver_cancel_requested_at: "",
   extra_driver_cancellation_effective_at: "",
   extra_driver_auto_renew: true,
+  // Patch 2.9: PDF bundle add-ons (pdf_500 = +500/mo, pdf_1000 = +1000/mo).
+  // Same explicit-active-quantity + cancel-at-period-end lifecycle as
+  // extra_driver. `pdf_monthly_allowance` is the cumulative paid PDF
+  // allowance; it is persisted and increased on activation but NOT yet
+  // enforced by any gate (PDF usage tracking is wired later). Each bundle
+  // code tracks its own active quantity and cancellation schedule.
+  pdf_monthly_allowance: 0,
+  pdf500_active_quantity: 0,
+  pdf500_cancel_at_period_end_quantity: 0,
+  pdf500_cancel_requested_at: "",
+  pdf500_cancellation_effective_at: "",
+  pdf500_auto_renew: true,
+  pdf1000_active_quantity: 0,
+  pdf1000_cancel_at_period_end_quantity: 0,
+  pdf1000_cancel_requested_at: "",
+  pdf1000_cancellation_effective_at: "",
+  pdf1000_auto_renew: true,
   current_period_start: "",
   current_period_end: "",
   locked_price_cents: null,
@@ -4140,25 +4157,38 @@ const FLUXIDI_SUPPORTED_LAUNCH_MARKETS = new Set([
 // Only `extra_vehicle` is actionable in Patch 2.3A. `extra_driver` numbers
 // are kept here so the table stays in sync with the Flutter catalog and so
 // the future driver add-on does not need a second catalog migration.
+//
+// Patch 2.9: PDF bundle prices (pdf_500 / pdf_1000) are FLAT across all launch
+// markets, mirroring the single global Flutter `kFluxidiPdfBundles` list
+// (pdf_500 = €5, pdf_1000 = €9). pdf_5000 stays a passive "coming soon" tile
+// and is intentionally not priced or actionable here.
 const SUBSCRIPTION_ADDON_CATALOG = {
-  BE: { currency: "EUR", extra_vehicle_price_cents: 1900, extra_driver_price_cents: 900 },
-  NL: { currency: "EUR", extra_vehicle_price_cents: 1500, extra_driver_price_cents: 700 },
-  FR: { currency: "EUR", extra_vehicle_price_cents: 1500, extra_driver_price_cents: 700 },
-  ES: { currency: "EUR", extra_vehicle_price_cents: 1500, extra_driver_price_cents: 700 },
-  LU: { currency: "EUR", extra_vehicle_price_cents: 1500, extra_driver_price_cents: 700 },
-  DE: { currency: "EUR", extra_vehicle_price_cents: 1500, extra_driver_price_cents: 700 },
+  BE: { currency: "EUR", extra_vehicle_price_cents: 1900, extra_driver_price_cents: 900, pdf_500_price_cents: 500, pdf_1000_price_cents: 900 },
+  NL: { currency: "EUR", extra_vehicle_price_cents: 1500, extra_driver_price_cents: 700, pdf_500_price_cents: 500, pdf_1000_price_cents: 900 },
+  FR: { currency: "EUR", extra_vehicle_price_cents: 1500, extra_driver_price_cents: 700, pdf_500_price_cents: 500, pdf_1000_price_cents: 900 },
+  ES: { currency: "EUR", extra_vehicle_price_cents: 1500, extra_driver_price_cents: 700, pdf_500_price_cents: 500, pdf_1000_price_cents: 900 },
+  LU: { currency: "EUR", extra_vehicle_price_cents: 1500, extra_driver_price_cents: 700, pdf_500_price_cents: 500, pdf_1000_price_cents: 900 },
+  DE: { currency: "EUR", extra_vehicle_price_cents: 1500, extra_driver_price_cents: 700, pdf_500_price_cents: 500, pdf_1000_price_cents: 900 },
 };
 
 // Add-on codes accepted by /company/subscription/add-ons/checkout/start.
-// Patch 2.3A: extra_vehicle. Patch 2.8: extra_driver. PDF packs remain absent.
-const FLUXIDI_SUPPORTED_ADDON_CODES = new Set(["extra_vehicle", "extra_driver"]);
+// Patch 2.3A: extra_vehicle. Patch 2.8: extra_driver. Patch 2.9: pdf_500 /
+// pdf_1000. pdf_5000 stays out (passive "coming soon" tile).
+const FLUXIDI_SUPPORTED_ADDON_CODES = new Set([
+  "extra_vehicle",
+  "extra_driver",
+  "pdf_500",
+  "pdf_1000",
+]);
 
-// Entitlement deltas per quantity-1 add-on activation. PDF packs are
-// intentionally absent so any future code path that tries to look them up here
-// trips a clean "invalid_addon_code" instead of silently no-op'ing.
+// Entitlement deltas per quantity-1 add-on activation. pdf_500 / pdf_1000 add
+// monthly PDF allowance only (no vehicle/driver change); the allowance is
+// persisted/increased but not yet enforced by a gate (Patch 2.9 scope).
 const FLUXIDI_ADDON_ENTITLEMENT_DELTAS = {
-  extra_vehicle: { max_vehicles_delta: 1, max_drivers_delta: 3 },
-  extra_driver: { max_vehicles_delta: 0, max_drivers_delta: 1 },
+  extra_vehicle: { max_vehicles_delta: 1, max_drivers_delta: 3, pdf_allowance_delta: 0 },
+  extra_driver: { max_vehicles_delta: 0, max_drivers_delta: 1, pdf_allowance_delta: 0 },
+  pdf_500: { max_vehicles_delta: 0, max_drivers_delta: 0, pdf_allowance_delta: 500 },
+  pdf_1000: { max_vehicles_delta: 0, max_drivers_delta: 0, pdf_allowance_delta: 1000 },
 };
 
 function normalizeSubscriptionMarket(raw) {
@@ -4231,6 +4261,12 @@ function resolveAddonUnitPriceCents(addonCatalog, addonCode) {
   }
   if (code === "extra_driver") {
     return addonCatalog.extra_driver_price_cents;
+  }
+  if (code === "pdf_500") {
+    return addonCatalog.pdf_500_price_cents;
+  }
+  if (code === "pdf_1000") {
+    return addonCatalog.pdf_1000_price_cents;
   }
   return null;
 }
@@ -4816,6 +4852,24 @@ function normalizeSubscriptionProfile(input = {}, scope = null) {
     extra_driver_auto_renew: typeof (source.extra_driver_auto_renew ?? source.extraDriverAutoRenew) === "boolean"
       ? (source.extra_driver_auto_renew ?? source.extraDriverAutoRenew)
       : DEFAULT_SUBSCRIPTION_PROFILE.extra_driver_auto_renew,
+    // Patch 2.9: PDF bundle add-ons (pdf_500 / pdf_1000). Same pattern as
+    // extra_driver. The lazy backfill of pdfNNN_active_quantity happens at the
+    // route layer (needs KV write-back), NOT here — this normalizer stays pure.
+    pdf_monthly_allowance: Math.max(0, clampInt(source.pdf_monthly_allowance ?? source.pdfMonthlyAllowance, DEFAULT_SUBSCRIPTION_PROFILE.pdf_monthly_allowance, 100000000)),
+    pdf500_active_quantity: Math.max(0, clampInt(source.pdf500_active_quantity ?? source.pdf500ActiveQuantity, DEFAULT_SUBSCRIPTION_PROFILE.pdf500_active_quantity, 100000)),
+    pdf500_cancel_at_period_end_quantity: Math.max(0, clampInt(source.pdf500_cancel_at_period_end_quantity ?? source.pdf500CancelAtPeriodEndQuantity, DEFAULT_SUBSCRIPTION_PROFILE.pdf500_cancel_at_period_end_quantity, 100000)),
+    pdf500_cancel_requested_at: sanitizeTenantString(source.pdf500_cancel_requested_at ?? source.pdf500CancelRequestedAt ?? DEFAULT_SUBSCRIPTION_PROFILE.pdf500_cancel_requested_at, 48),
+    pdf500_cancellation_effective_at: sanitizeTenantString(source.pdf500_cancellation_effective_at ?? source.pdf500CancellationEffectiveAt ?? DEFAULT_SUBSCRIPTION_PROFILE.pdf500_cancellation_effective_at, 48),
+    pdf500_auto_renew: typeof (source.pdf500_auto_renew ?? source.pdf500AutoRenew) === "boolean"
+      ? (source.pdf500_auto_renew ?? source.pdf500AutoRenew)
+      : DEFAULT_SUBSCRIPTION_PROFILE.pdf500_auto_renew,
+    pdf1000_active_quantity: Math.max(0, clampInt(source.pdf1000_active_quantity ?? source.pdf1000ActiveQuantity, DEFAULT_SUBSCRIPTION_PROFILE.pdf1000_active_quantity, 100000)),
+    pdf1000_cancel_at_period_end_quantity: Math.max(0, clampInt(source.pdf1000_cancel_at_period_end_quantity ?? source.pdf1000CancelAtPeriodEndQuantity, DEFAULT_SUBSCRIPTION_PROFILE.pdf1000_cancel_at_period_end_quantity, 100000)),
+    pdf1000_cancel_requested_at: sanitizeTenantString(source.pdf1000_cancel_requested_at ?? source.pdf1000CancelRequestedAt ?? DEFAULT_SUBSCRIPTION_PROFILE.pdf1000_cancel_requested_at, 48),
+    pdf1000_cancellation_effective_at: sanitizeTenantString(source.pdf1000_cancellation_effective_at ?? source.pdf1000CancellationEffectiveAt ?? DEFAULT_SUBSCRIPTION_PROFILE.pdf1000_cancellation_effective_at, 48),
+    pdf1000_auto_renew: typeof (source.pdf1000_auto_renew ?? source.pdf1000AutoRenew) === "boolean"
+      ? (source.pdf1000_auto_renew ?? source.pdf1000AutoRenew)
+      : DEFAULT_SUBSCRIPTION_PROFILE.pdf1000_auto_renew,
     current_period_start: sanitizeTenantString(source.current_period_start ?? source.currentPeriodStart ?? DEFAULT_SUBSCRIPTION_PROFILE.current_period_start, 48),
     current_period_end: sanitizeTenantString(source.current_period_end ?? source.currentPeriodEnd ?? DEFAULT_SUBSCRIPTION_PROFILE.current_period_end, 48),
     locked_price_cents: nullableCents(source.locked_price_cents, source.lockedPriceCents),
@@ -5788,6 +5842,292 @@ async function materializeDueExtraDriverCancellation(env, scope, profile) {
     `[SUBSCRIPTION_ADDON_DOWNGRADE][EXTRA_DRIVER_APPLIED] tenant=${_maskPublicDriverLoginValue(scope?.tenant_id)} company=${_maskPublicDriverLoginValue(scope?.company_id)} applied=${applied} new_max_drivers=${newMaxDrivers}`,
   );
   return { profile: saved, changed: true, applied };
+}
+
+// =========================
+// Patch 2.9: PDF bundle add-on (pdf_500 / pdf_1000) cancel/downgrade helpers.
+//
+// PDF bundles add monthly PDF allowance only. Unlike extra_vehicle/extra_driver
+// there is no pre-existing entitlement to derive a legacy count from, so the
+// explicit active-quantity field is the SOLE source of truth (no legacy
+// backfill). These helpers NEVER touch Mollie, payments, checkouts,
+// max_vehicles, max_drivers, or any records; they only adjust
+// pdf_monthly_allowance and the per-bundle counters.
+// =========================
+
+// Per-bundle field + allowance-step config so both bundles share one core.
+const FLUXIDI_PDF_BUNDLE_FIELDS = {
+  pdf_500: {
+    allowanceStep: 500,
+    active: "pdf500_active_quantity",
+    cancelQty: "pdf500_cancel_at_period_end_quantity",
+    requestedAt: "pdf500_cancel_requested_at",
+    effectiveAt: "pdf500_cancellation_effective_at",
+    autoRenew: "pdf500_auto_renew",
+    logLabel: "PDF_500",
+  },
+  pdf_1000: {
+    allowanceStep: 1000,
+    active: "pdf1000_active_quantity",
+    cancelQty: "pdf1000_cancel_at_period_end_quantity",
+    requestedAt: "pdf1000_cancel_requested_at",
+    effectiveAt: "pdf1000_cancellation_effective_at",
+    autoRenew: "pdf1000_auto_renew",
+    logLabel: "PDF_1000",
+  },
+};
+
+// Pure count of active paid bundles of this code (explicit field only).
+function derivePdfBundleActiveQuantity(profile, cfg) {
+  if (!profile || typeof profile !== "object") return 0;
+  return Math.max(0, Math.trunc(Number(profile[cfg.active]) || 0));
+}
+
+// How many bundles of this code are still cancelable (active minus scheduled).
+function pdfBundleCancelableQuantity(profile, cfg) {
+  const active = derivePdfBundleActiveQuantity(profile, cfg);
+  const scheduled = Math.max(0, Math.trunc(Number(profile?.[cfg.cancelQty]) || 0));
+  return Math.max(0, active - scheduled);
+}
+
+// Lazily materialize a due PDF-bundle downgrade. Saves only on a real change;
+// pdf_monthly_allowance is reduced by allowanceStep per applied unit (floored
+// at 0). max_vehicles / max_drivers are never touched.
+async function materializeDuePdfBundleCancellation(env, scope, profile, cfg) {
+  if (!profile || typeof profile !== "object") {
+    return { profile, changed: false, applied: 0 };
+  }
+  const activeQty = derivePdfBundleActiveQuantity(profile, cfg);
+  const scheduled = Math.max(0, Math.trunc(Number(profile[cfg.cancelQty]) || 0));
+  const effectiveAt = _fluxidiSubscriptionSafeStr(profile[cfg.effectiveAt], 48);
+  const effectiveMs = effectiveAt ? Date.parse(effectiveAt) : NaN;
+  const due =
+    scheduled > 0 && !Number.isNaN(effectiveMs) && Date.now() >= effectiveMs;
+  if (!due) {
+    return { profile, changed: false, applied: 0 };
+  }
+  const applied = Math.min(scheduled, activeQty);
+  const curAllowance = Math.max(
+    0,
+    Math.trunc(Number(profile.pdf_monthly_allowance) || 0),
+  );
+  const newAllowance = Math.max(0, curAllowance - applied * cfg.allowanceStep);
+  const newActive = Math.max(0, activeQty - applied);
+  const updated = {
+    ...profile,
+    pdf_monthly_allowance: newAllowance,
+    [cfg.active]: newActive,
+    [cfg.cancelQty]: 0,
+    [cfg.requestedAt]: "",
+    [cfg.effectiveAt]: "",
+  };
+  const saved = await saveSubscriptionProfile(env, updated, scope, {
+    allowTenantLegacyWrite: false,
+  });
+  console.log(
+    `[SUBSCRIPTION_ADDON_DOWNGRADE][${cfg.logLabel}_APPLIED] tenant=${_maskPublicDriverLoginValue(scope?.tenant_id)} company=${_maskPublicDriverLoginValue(scope?.company_id)} applied=${applied} new_pdf_monthly_allowance=${newAllowance}`,
+  );
+  return { profile: saved, changed: true, applied };
+}
+
+// Thin named wrappers (mirror the extra_driver helper surface).
+function derivePdf500ActiveQuantity(profile) {
+  return derivePdfBundleActiveQuantity(profile, FLUXIDI_PDF_BUNDLE_FIELDS.pdf_500);
+}
+function pdf500CancelableQuantity(profile) {
+  return pdfBundleCancelableQuantity(profile, FLUXIDI_PDF_BUNDLE_FIELDS.pdf_500);
+}
+async function materializeDuePdf500Cancellation(env, scope, profile) {
+  return materializeDuePdfBundleCancellation(
+    env,
+    scope,
+    profile,
+    FLUXIDI_PDF_BUNDLE_FIELDS.pdf_500,
+  );
+}
+function derivePdf1000ActiveQuantity(profile) {
+  return derivePdfBundleActiveQuantity(profile, FLUXIDI_PDF_BUNDLE_FIELDS.pdf_1000);
+}
+function pdf1000CancelableQuantity(profile) {
+  return pdfBundleCancelableQuantity(profile, FLUXIDI_PDF_BUNDLE_FIELDS.pdf_1000);
+}
+async function materializeDuePdf1000Cancellation(env, scope, profile) {
+  return materializeDuePdfBundleCancellation(
+    env,
+    scope,
+    profile,
+    FLUXIDI_PDF_BUNDLE_FIELDS.pdf_1000,
+  );
+}
+
+// Shared cancel-one route handler for the PDF bundles. Schedules a downgrade of
+// exactly one paid bundle of the given code at period end. The paid allowance
+// stays available (pdf_monthly_allowance unchanged) until the effective date;
+// the reduction is applied lazily on the next GET profile after that date.
+// Local state only: NEVER calls Mollie, NEVER creates payment/checkout, NEVER
+// touches max_vehicles / max_drivers. Mirrors the extra-driver cancel-one route.
+async function _handleFluxidiPdfBundleCancelOne(
+  env,
+  request,
+  url,
+  cfg,
+  routeLabel,
+  noCancelError,
+) {
+  let body = {};
+  try {
+    body = await safeJson(request);
+  } catch (_) {
+    body = {};
+  }
+  if (!body || typeof body !== "object" || Array.isArray(body)) body = {};
+
+  const authScope = await _requireAdminOrCompanySessionForExplicitScope({
+    request,
+    url,
+    env,
+    body,
+    routeLabel,
+  });
+  if (!authScope.ok) return authScope.response;
+
+  try {
+    const scope = {
+      tenant_id: authScope.explicitScope.tenant_id,
+      company_id: authScope.explicitScope.company_id,
+    };
+    const tenantMask = _maskPublicDriverLoginValue(scope.tenant_id);
+    const companyMask = _maskPublicDriverLoginValue(scope.company_id);
+
+    const profile = await loadSubscriptionProfile(env, scope, {
+      allowTenantLegacyFallback: false,
+    });
+
+    const currentStatus = _fluxidiSubscriptionSafeStr(
+      profile?.subscription_status || profile?.status,
+    ).toLowerCase();
+    if (currentStatus !== "active" && currentStatus !== "trialing") {
+      console.log(
+        `[${routeLabel}][REJECT] reason=not_cancelable status=${currentStatus || "-"} tenant=${tenantMask} company=${companyMask}`,
+      );
+      return json(
+        {
+          ok: false,
+          error: "subscription_not_cancelable",
+          subscription_status: currentStatus || "",
+        },
+        422,
+      );
+    }
+
+    const activeQty = derivePdfBundleActiveQuantity(profile, cfg);
+    const scheduledQty = Math.max(
+      0,
+      Math.trunc(Number(profile?.[cfg.cancelQty]) || 0),
+    );
+
+    const summary = (p) => ({
+      subscription_status: _fluxidiSubscriptionSafeStr(
+        p?.subscription_status || p?.status,
+      ).toLowerCase(),
+      [cfg.active]: derivePdfBundleActiveQuantity(p, cfg),
+      [cfg.cancelQty]: Math.max(
+        0,
+        Math.trunc(Number(p?.[cfg.cancelQty]) || 0),
+      ),
+      [cfg.requestedAt]: _fluxidiSubscriptionSafeStr(p?.[cfg.requestedAt], 48),
+      [cfg.effectiveAt]: _fluxidiSubscriptionSafeStr(p?.[cfg.effectiveAt], 48),
+      [cfg.autoRenew]: p?.[cfg.autoRenew] === true,
+      pdf_monthly_allowance: Math.max(
+        0,
+        Math.trunc(Number(p?.pdf_monthly_allowance) || 0),
+      ),
+      current_period_end: _fluxidiSubscriptionSafeStr(p?.current_period_end, 48),
+    });
+
+    if (scheduledQty >= activeQty && scheduledQty > 0) {
+      console.log(
+        `[${routeLabel}][IDEMPOTENT] tenant=${tenantMask} company=${companyMask} active=${activeQty} scheduled=${scheduledQty}`,
+      );
+      return json(
+        {
+          ok: true,
+          already_scheduled: true,
+          ...summary(profile),
+          subscription_profile: profile,
+        },
+        200,
+      );
+    }
+
+    if (activeQty - scheduledQty < 1) {
+      console.log(
+        `[${routeLabel}][REJECT] reason=${noCancelError} active=${activeQty} scheduled=${scheduledQty} tenant=${tenantMask} company=${companyMask}`,
+      );
+      return json(
+        {
+          ok: false,
+          error: noCancelError,
+          [cfg.active]: activeQty,
+          [cfg.cancelQty]: scheduledQty,
+        },
+        422,
+      );
+    }
+
+    const nowIso = new Date().toISOString();
+    const periodEnd = _fluxidiSubscriptionSafeStr(profile?.current_period_end, 48);
+    const trialEnds = _fluxidiSubscriptionSafeStr(profile?.trial_ends_at, 48);
+    let effectiveAt = "";
+    if (periodEnd && !Number.isNaN(Date.parse(periodEnd))) {
+      effectiveAt = periodEnd;
+    } else if (trialEnds && !Number.isNaN(Date.parse(trialEnds))) {
+      effectiveAt = trialEnds;
+    } else {
+      effectiveAt = new Date(
+        Date.now() + 30 * 24 * 60 * 60 * 1000,
+      ).toISOString();
+    }
+
+    const updated = {
+      ...profile,
+      [cfg.active]: activeQty,
+      [cfg.cancelQty]: scheduledQty + 1,
+      [cfg.requestedAt]: nowIso,
+      [cfg.effectiveAt]: effectiveAt,
+      [cfg.autoRenew]: false,
+    };
+
+    let saved;
+    try {
+      saved = await saveSubscriptionProfile(env, updated, scope, {
+        allowTenantLegacyWrite: false,
+      });
+    } catch (e) {
+      console.log(
+        `[${routeLabel}][ERR] stage=save msg=${_fluxidiSubscriptionSafeStr(e?.message, 160)}`,
+      );
+      return json({ ok: false, error: "cancel_persist_failed" }, 500);
+    }
+
+    console.log(
+      `[${routeLabel}][OK] tenant=${tenantMask} company=${companyMask} active=${activeQty} scheduled=${scheduledQty + 1} effective=${effectiveAt}`,
+    );
+    return json(
+      {
+        ok: true,
+        already_scheduled: false,
+        ...summary(saved),
+        subscription_profile: saved,
+      },
+      200,
+    );
+  } catch (err) {
+    console.log(
+      `[${routeLabel}][ERR] ${_fluxidiSubscriptionSafeStr(err?.message, 160) || "unknown"}`,
+    );
+    return json({ ok: false, error: "internal_error" }, 500);
+  }
 }
 
 // =========================
@@ -7250,6 +7590,7 @@ async function activateFluxidiAddonFromVerifiedPayment(env, { activationId, paym
   }
   const vehiclesDelta = Math.max(0, Math.trunc(Number(deltas.max_vehicles_delta) || 0));
   const driversDelta = Math.max(0, Math.trunc(Number(deltas.max_drivers_delta) || 0));
+  const pdfAllowanceDelta = Math.max(0, Math.trunc(Number(deltas.pdf_allowance_delta) || 0));
   // Baseline = the profile's effective limit. If a legacy/corrupted record
   // ever reads as non-finite, fall back to the plan baseline rather than 0 so
   // a paid add-on can never silently zero out entitlements. This only replaces
@@ -7270,11 +7611,21 @@ async function activateFluxidiAddonFromVerifiedPayment(env, { activationId, paym
   const newMaxVehicles = currentMaxVehicles + vehiclesDelta;
   const newMaxDrivers = currentMaxDrivers + driversDelta;
 
+  // Patch 2.9: PDF allowance entitlement (persisted/increased only, not gated).
+  const currentPdfAllowance = Math.max(
+    0,
+    Number.isFinite(Number(currentProfile.pdf_monthly_allowance))
+      ? Math.trunc(Number(currentProfile.pdf_monthly_allowance))
+      : DEFAULT_SUBSCRIPTION_PROFILE.pdf_monthly_allowance,
+  );
+  const newPdfAllowance = currentPdfAllowance + pdfAllowanceDelta * quantity;
+
   const nowIso = new Date().toISOString();
   const updatedProfile = {
     ...currentProfile,
     max_vehicles: newMaxVehicles,
     max_drivers: newMaxDrivers,
+    pdf_monthly_allowance: newPdfAllowance,
     updated_at: nowIso,
   };
   // Patch 2.8: extra_driver uses an explicit active-quantity counter that is
@@ -7283,6 +7634,17 @@ async function activateFluxidiAddonFromVerifiedPayment(env, { activationId, paym
   if (addonCode === "extra_driver") {
     const priorActive = deriveExtraDriverActiveQuantity(currentProfile);
     updatedProfile.extra_driver_active_quantity = priorActive + quantity;
+  }
+  // Patch 2.9: PDF bundles use the same explicit-active-quantity counter, one
+  // per bundle code. Incremented here; decremented only on materialized
+  // cancellation. extra_vehicle / extra_driver behaviour is unchanged.
+  if (addonCode === "pdf_500") {
+    const priorActive = derivePdf500ActiveQuantity(currentProfile);
+    updatedProfile.pdf500_active_quantity = priorActive + quantity;
+  }
+  if (addonCode === "pdf_1000") {
+    const priorActive = derivePdf1000ActiveQuantity(currentProfile);
+    updatedProfile.pdf1000_active_quantity = priorActive + quantity;
   }
 
   let savedProfile;
@@ -25593,6 +25955,33 @@ export default {
               `[COMPANY_SUBSCRIPTION_GET][EXTRA_DRIVER_DOWNGRADE_SKIP] reason=${safeStr(e?.message, 80) || "error"}`,
             );
           }
+          // Patch 2.9: lazily apply any due PDF-bundle downgrades (pdf_500 then
+          // pdf_1000). Each only reduces pdf_monthly_allowance; best-effort so a
+          // transient write issue never fails the read.
+          try {
+            const pdf500Materialized = await materializeDuePdf500Cancellation(
+              env,
+              scope,
+              profile,
+            );
+            if (pdf500Materialized?.profile) profile = pdf500Materialized.profile;
+          } catch (e) {
+            console.log(
+              `[COMPANY_SUBSCRIPTION_GET][PDF_500_DOWNGRADE_SKIP] reason=${safeStr(e?.message, 80) || "error"}`,
+            );
+          }
+          try {
+            const pdf1000Materialized = await materializeDuePdf1000Cancellation(
+              env,
+              scope,
+              profile,
+            );
+            if (pdf1000Materialized?.profile) profile = pdf1000Materialized.profile;
+          } catch (e) {
+            console.log(
+              `[COMPANY_SUBSCRIPTION_GET][PDF_1000_DOWNGRADE_SKIP] reason=${safeStr(e?.message, 80) || "error"}`,
+            );
+          }
           return json(
             {
               ok: true,
@@ -27131,6 +27520,52 @@ export default {
           );
           return json({ ok: false, error: "internal_error" }, 500);
         }
+      }
+
+      // =========================
+      // Patch 2.9: cancel ONE pdf_500 bundle at period end.
+      //
+      // POST /company/subscription/add-ons/pdf-500/cancel-one
+      //
+      // Schedules a downgrade of exactly one paid pdf_500 bundle. The paid
+      // allowance stays usable (pdf_monthly_allowance unchanged) until the
+      // effective date; the reduction is applied lazily on the next
+      // GET /company/subscription/profile after that date. Local state only.
+      // =========================
+      if (
+        url.pathname === "/company/subscription/add-ons/pdf-500/cancel-one" &&
+        request.method === "POST"
+      ) {
+        return await _handleFluxidiPdfBundleCancelOne(
+          env,
+          request,
+          url,
+          FLUXIDI_PDF_BUNDLE_FIELDS.pdf_500,
+          "COMPANY_SUBSCRIPTION_ADDON_PDF_500_CANCEL_ONE",
+          "no_pdf_500_to_cancel",
+        );
+      }
+
+      // =========================
+      // Patch 2.9: cancel ONE pdf_1000 bundle at period end.
+      //
+      // POST /company/subscription/add-ons/pdf-1000/cancel-one
+      //
+      // Same lifecycle as pdf-500/cancel-one; independent counters. Local
+      // state only: never calls Mollie, never touches vehicle/driver limits.
+      // =========================
+      if (
+        url.pathname === "/company/subscription/add-ons/pdf-1000/cancel-one" &&
+        request.method === "POST"
+      ) {
+        return await _handleFluxidiPdfBundleCancelOne(
+          env,
+          request,
+          url,
+          FLUXIDI_PDF_BUNDLE_FIELDS.pdf_1000,
+          "COMPANY_SUBSCRIPTION_ADDON_PDF_1000_CANCEL_ONE",
+          "no_pdf_1000_to_cancel",
+        );
       }
 
       // =========================

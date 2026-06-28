@@ -27,6 +27,12 @@ class _CompanySubscriptionBillingPageState
   bool _startingExtraDriverAddonCheckout = false;
   // Patch 2.8: guard against double-tapping the cancel-one-extra-driver button.
   bool _cancellingExtraDriver = false;
+  // Patch 2.9: per-bundle loading flags for the PDF add-on checkout/cancel so
+  // each PDF tile is independent and cannot be double-tapped.
+  bool _startingPdf500Checkout = false;
+  bool _startingPdf1000Checkout = false;
+  bool _cancellingPdf500 = false;
+  bool _cancellingPdf1000 = false;
   // Set true while a Mollie checkout window is open so the next app resume
   // triggers exactly one profile refresh (no infinite resume loops). Shared by
   // both the base subscription checkout and the add-on checkout.
@@ -297,7 +303,8 @@ class _CompanySubscriptionBillingPageState
   // Mirrors [_startCheckout] (base subscription) but targets the live add-on
   // route and only ever requests addon_code="extra_vehicle", quantity=1. The
   // backend is the sole source of truth for pricing — Flutter never sends a
-  // price. Extra driver is wired in Patch 2.8; PDF bundle cards stay passive.
+  // price. Extra driver is wired in Patch 2.8; pdf_500 / pdf_1000 PDF bundles
+  // in Patch 2.9 (pdf_5000 stays a passive "coming soon" tile).
   // ---------------------------------------------------------------------------
 
   String _activateExtraVehicleLabel() => _t(
@@ -1108,6 +1115,435 @@ class _CompanySubscriptionBillingPageState
         children: [
           button,
           _extraDriverCancellationControls(profile),
+        ],
+      );
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        button,
+        const SizedBox(height: 6),
+        Text(
+          _addonRequiresActiveMessage(),
+          style: TextStyle(
+            color: _businessThemePalette.textMuted,
+            fontSize: 11.4,
+            height: 1.3,
+          ),
+        ),
+      ],
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Patch 2.9: PDF bundle add-ons (pdf_500 / pdf_1000). Same checkout + cancel-
+  // at-period-end lifecycle as the Extra driver add-on. Only the 500/1000
+  // bundles are actionable; the 5000 tile keeps its passive "coming soon" chip.
+  // The purchased allowance increases pdf_monthly_allowance on the backend; it
+  // is not enforced by a gate yet (Patch 2.9 scope).
+  // ---------------------------------------------------------------------------
+
+  /// Only the pdf_500 / pdf_1000 bundles have a real lifecycle in Patch 2.9.
+  bool _pdfBundleIsActionable(int pdfs) => pdfs == 500 || pdfs == 1000;
+
+  String _pdfBundleAddonCode(int pdfs) =>
+      pdfs == 500 ? 'pdf_500' : 'pdf_1000';
+
+  int _pdfBundleActiveQuantity(BackendSubscriptionProfile profile, int pdfs) {
+    if (pdfs == 500) return profile.pdf500ActiveQuantity;
+    if (pdfs == 1000) return profile.pdf1000ActiveQuantity;
+    return 0;
+  }
+
+  int _pdfBundleScheduledQuantity(BackendSubscriptionProfile profile, int pdfs) {
+    if (pdfs == 500) return profile.pdf500CancelAtPeriodEndQuantity;
+    if (pdfs == 1000) return profile.pdf1000CancelAtPeriodEndQuantity;
+    return 0;
+  }
+
+  int _pdfBundleCancelableQuantity(
+    BackendSubscriptionProfile profile,
+    int pdfs,
+  ) {
+    final cancelable =
+        _pdfBundleActiveQuantity(profile, pdfs) -
+        _pdfBundleScheduledQuantity(profile, pdfs);
+    return cancelable > 0 ? cancelable : 0;
+  }
+
+  String _pdfBundleEffectiveDate(
+    BackendSubscriptionProfile profile,
+    int pdfs,
+  ) {
+    final effective = (pdfs == 500
+            ? profile.pdf500CancellationEffectiveAt
+            : profile.pdf1000CancellationEffectiveAt)
+        .trim();
+    if (effective.isNotEmpty) return _humanDate(effective);
+    final periodEnd = profile.currentPeriodEnd.trim();
+    if (periodEnd.isNotEmpty) return _humanDate(periodEnd);
+    final trialEnds = profile.trialEndsAt.trim();
+    if (trialEnds.isNotEmpty) return _humanDate(trialEnds);
+    return '—';
+  }
+
+  bool _pdfBundleBusyStarting(int pdfs) =>
+      pdfs == 500 ? _startingPdf500Checkout : _startingPdf1000Checkout;
+
+  bool _pdfBundleBusyCancelling(int pdfs) =>
+      pdfs == 500 ? _cancellingPdf500 : _cancellingPdf1000;
+
+  void _setPdfBundleStarting(int pdfs, bool value) {
+    if (pdfs == 500) {
+      _startingPdf500Checkout = value;
+    } else {
+      _startingPdf1000Checkout = value;
+    }
+  }
+
+  void _setPdfBundleCancelling(int pdfs, bool value) {
+    if (pdfs == 500) {
+      _cancellingPdf500 = value;
+    } else {
+      _cancellingPdf1000 = value;
+    }
+  }
+
+  String _activatePdfBundleLabel(int pdfs) => _t(
+    nl: 'Extra $pdfs PDF\u2019s activeren',
+    en: 'Activate $pdfs extra PDFs',
+    fr: 'Activer $pdfs PDF supplémentaires',
+    es: 'Activar $pdfs PDF extra',
+  );
+
+  Future<void> _startPdfBundleCheckout(
+    BackendSubscriptionProfile profile,
+    int pdfs,
+  ) async {
+    if (!_pdfBundleIsActionable(pdfs)) return;
+    if (_pdfBundleBusyStarting(pdfs)) return;
+    final scopeId = _activeCompanyId();
+    if (scopeId == null || scopeId.trim().isEmpty) {
+      _showSnack(
+        _t(
+          nl: 'Geen actief bedrijf gevonden. Probeer opnieuw.',
+          en: 'No active company found. Please try again.',
+          fr: 'Aucune entreprise active trouvée. Veuillez réessayer.',
+          es: 'No se encontró ninguna empresa activa. Inténtalo de nuevo.',
+        ),
+      );
+      return;
+    }
+    final market = _effectiveMarket(profile);
+    if (!_isSupportedMarket(market)) {
+      _showSnack(_unsupportedMarketMessage());
+      return;
+    }
+    if (!_profileIsActive(profile)) {
+      _showSnack(_addonRequiresActiveMessage());
+      return;
+    }
+
+    setState(() => _setPdfBundleStarting(pdfs, true));
+    try {
+      final result = await startCompanySubscriptionAddonCheckout(
+        tenantId: scopeId,
+        companyId: scopeId,
+        addonCode: _pdfBundleAddonCode(pdfs),
+        quantity: 1,
+        returnUrl:
+            '${appConfig.bookingBaseUrl}/company/subscription/add-ons/checkout/return',
+      );
+
+      if (!mounted) return;
+
+      if (!result.ok) {
+        _showSnack(_addonCheckoutErrorMessage(result));
+        return;
+      }
+
+      final url = result.checkoutUrl.trim();
+      final uri = Uri.tryParse(url);
+      if (url.isEmpty || uri == null || !uri.isScheme('https')) {
+        _showSnack(_genericAddonError());
+        return;
+      }
+
+      final launched = await launchUrl(
+        uri,
+        mode: LaunchMode.externalApplication,
+      );
+      if (!mounted) return;
+      if (!launched) {
+        _showSnack(
+          _t(
+            nl: 'Kon het betaalvenster niet openen.',
+            en: 'Could not open the payment window.',
+            fr: 'Impossible d’ouvrir la fenêtre de paiement.',
+            es: 'No se pudo abrir la ventana de pago.',
+          ),
+        );
+        return;
+      }
+
+      _awaitingCheckoutReturn = true;
+      _showSnack(
+        _t(
+          nl: 'Betaalvenster geopend. Na betaling wordt je add-on automatisch bijgewerkt.',
+          en: 'Payment window opened. After payment, your add-on will update automatically.',
+          fr: 'Fenêtre de paiement ouverte. Après le paiement, votre option sera mise à jour automatiquement.',
+          es: 'Ventana de pago abierta. Después del pago, tu complemento se actualizará automáticamente.',
+        ),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      _showSnack(
+        _t(
+          nl: 'Er ging iets mis. Probeer opnieuw.',
+          en: 'Something went wrong. Please try again.',
+          fr: 'Une erreur est survenue. Veuillez réessayer.',
+          es: 'Algo salió mal. Inténtalo de nuevo.',
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _setPdfBundleStarting(pdfs, false));
+    }
+  }
+
+  Future<void> _confirmAndCancelOnePdfBundle(
+    BackendSubscriptionProfile profile,
+    int pdfs,
+  ) async {
+    if (!_pdfBundleIsActionable(pdfs)) return;
+    if (_pdfBundleBusyCancelling(pdfs)) return;
+    final scopeId = _activeCompanyId();
+    if (scopeId == null || scopeId.trim().isEmpty) {
+      _showSnack(
+        _t(
+          nl: 'Geen actief bedrijf gevonden. Probeer opnieuw.',
+          en: 'No active company found. Please try again.',
+          fr: 'Aucune entreprise active trouvée. Veuillez réessayer.',
+          es: 'No se encontró ninguna empresa activa. Inténtalo de nuevo.',
+        ),
+      );
+      return;
+    }
+
+    final effective = _pdfBundleEffectiveDate(profile, pdfs);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: _panel,
+        title: Text(
+          _t(
+            nl: 'Eén pakket van $pdfs PDF\u2019s opzeggen?',
+            en: 'Cancel one $pdfs PDF bundle?',
+            fr: 'Résilier un pack de $pdfs PDF ?',
+            es: '¿Cancelar un paquete de $pdfs PDF?',
+          ),
+          style: TextStyle(color: _businessThemePalette.textPrimary),
+        ),
+        content: Text(
+          _t(
+            nl: 'Dit pakket blijft actief tot $effective. Daarna daalt je maandelijkse PDF-tegoed met $pdfs.',
+            en: 'This bundle stays active until $effective. Your monthly PDF allowance drops by $pdfs after that.',
+            fr: 'Ce pack reste actif jusqu\'au $effective. Votre quota PDF mensuel baissera ensuite de $pdfs.',
+            es: 'Este paquete permanece activo hasta el $effective. Tu cupo mensual de PDF bajará en $pdfs después.',
+          ),
+          style: TextStyle(color: _businessThemePalette.textMuted),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: Text(
+              _t(nl: 'Behouden', en: 'Keep', fr: 'Conserver', es: 'Mantener'),
+            ),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: _warn,
+              foregroundColor: Colors.black,
+            ),
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: Text(
+              _t(nl: 'Opzeggen', en: 'Cancel', fr: 'Résilier', es: 'Cancelar'),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
+    setState(() => _setPdfBundleCancelling(pdfs, true));
+    try {
+      final updated = pdfs == 500
+          ? await cancelOnePdf500Addon(tenantId: scopeId, companyId: scopeId)
+          : await cancelOnePdf1000Addon(tenantId: scopeId, companyId: scopeId);
+      if (!mounted) return;
+      _showSnack(
+        _t(
+          nl: 'Dit pakket blijft actief tot ${_pdfBundleEffectiveDate(updated, pdfs)}.',
+          en: 'This bundle stays active until ${_pdfBundleEffectiveDate(updated, pdfs)}.',
+          fr: 'Ce pack reste actif jusqu\'au ${_pdfBundleEffectiveDate(updated, pdfs)}.',
+          es: 'Este paquete permanece activo hasta el ${_pdfBundleEffectiveDate(updated, pdfs)}.',
+        ),
+      );
+      _refresh();
+    } catch (_) {
+      if (!mounted) return;
+      _showSnack(
+        _t(
+          nl: 'Opzeggen is niet gelukt. Controleer je verbinding en probeer opnieuw.',
+          en: 'Cancellation failed. Check your connection and try again.',
+          fr: 'Échec de la résiliation. Vérifiez votre connexion et réessayez.',
+          es: 'Error al cancelar. Comprueba tu conexión e inténtalo de nuevo.',
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _setPdfBundleCancelling(pdfs, false));
+    }
+  }
+
+  Widget _pdfBundleCancellationControls(
+    BackendSubscriptionProfile profile,
+    int pdfs,
+  ) {
+    final scheduled = _pdfBundleScheduledQuantity(profile, pdfs);
+    final cancelable = _pdfBundleCancelableQuantity(profile, pdfs);
+    final busy = _pdfBundleBusyCancelling(pdfs);
+
+    final children = <Widget>[];
+
+    if (scheduled > 0) {
+      children.add(
+        Container(
+          width: double.infinity,
+          margin: const EdgeInsets.only(top: 8),
+          padding: const EdgeInsets.fromLTRB(11, 10, 11, 11),
+          decoration: BoxDecoration(
+            color: _warn.withOpacity(0.12),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: _warn.withOpacity(0.5)),
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(Icons.info_outline, size: 18, color: _warn),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  _t(
+                    nl: 'Dit pakket blijft actief tot ${_pdfBundleEffectiveDate(profile, pdfs)}. Daarna daalt je maandelijkse PDF-tegoed met $pdfs.',
+                    en: 'This bundle stays active until ${_pdfBundleEffectiveDate(profile, pdfs)}. After that your monthly PDF allowance drops by $pdfs.',
+                    fr: 'Ce pack reste actif jusqu\'au ${_pdfBundleEffectiveDate(profile, pdfs)}. Ensuite, votre quota PDF mensuel baisse de $pdfs.',
+                    es: 'Este paquete permanece activo hasta el ${_pdfBundleEffectiveDate(profile, pdfs)}. Después tu cupo mensual de PDF baja en $pdfs.',
+                  ),
+                  style: TextStyle(
+                    color: _businessThemePalette.textPrimary,
+                    fontSize: 12,
+                    height: 1.35,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    if (cancelable > 0) {
+      children.add(
+        Align(
+          alignment: Alignment.centerLeft,
+          child: TextButton.icon(
+            onPressed: busy
+                ? null
+                : () => _confirmAndCancelOnePdfBundle(profile, pdfs),
+            style: TextButton.styleFrom(
+              foregroundColor: _businessThemePalette.textMuted,
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+            ),
+            icon: busy
+                ? const SizedBox(
+                    width: 15,
+                    height: 15,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : Icon(Icons.remove_circle_outline, size: 16, color: _warn),
+            label: Text(
+              _t(
+                nl: 'Eén pakket van $pdfs PDF\u2019s opzeggen',
+                en: 'Cancel one $pdfs PDF bundle',
+                fr: 'Résilier un pack de $pdfs PDF',
+                es: 'Cancelar un paquete de $pdfs PDF',
+              ),
+              style: const TextStyle(
+                fontSize: 12.2,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    if (children.isEmpty) return const SizedBox.shrink();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: children,
+    );
+  }
+
+  /// Footer for a PDF bundle add-on card. Returns null for non-actionable
+  /// bundles (e.g. 5000) so the card keeps its passive "coming soon" chip.
+  Widget? _pdfBundleAddonFooter(
+    BackendSubscriptionProfile profile,
+    int pdfs,
+  ) {
+    if (!_pdfBundleIsActionable(pdfs)) return null;
+    final bool isActive = _profileIsActive(profile);
+    final bool starting = _pdfBundleBusyStarting(pdfs);
+    final button = SizedBox(
+      width: double.infinity,
+      child: FilledButton.icon(
+        onPressed: (!isActive || starting)
+            ? null
+            : () => _startPdfBundleCheckout(profile, pdfs),
+        style: FilledButton.styleFrom(
+          backgroundColor: _gold,
+          foregroundColor: Colors.black,
+          disabledBackgroundColor: _businessThemePalette.surfaceAlt.withOpacity(
+            _businessThemePalette.isDark ? 0.66 : 0.92,
+          ),
+          disabledForegroundColor: _businessThemePalette.textMuted,
+          minimumSize: const Size.fromHeight(44),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+        ),
+        icon: starting
+            ? const SizedBox(
+                width: 16,
+                height: 16,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: Colors.black54,
+                ),
+              )
+            : const Icon(Icons.picture_as_pdf_outlined, size: 18),
+        label: Text(
+          _activatePdfBundleLabel(pdfs),
+          style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 13),
+        ),
+      ),
+    );
+    if (isActive) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          button,
+          _pdfBundleCancellationControls(profile, pdfs),
         ],
       );
     }
@@ -1978,9 +2414,10 @@ class _CompanySubscriptionBillingPageState
             ),
           ),
           const SizedBox(height: 7),
-          // Patch 2.4B / 2.8: cards that pass a [footer] (Extra vehicle, Extra
-          // driver) render a real action button. PDF bundle cards keep the
-          // passive, non-actionable "coming soon" chip from Patch 2.2C.
+          // Patch 2.4B / 2.8 / 2.9: cards that pass a [footer] (Extra vehicle,
+          // Extra driver, pdf_500, pdf_1000) render a real action button.
+          // Cards without a footer (e.g. pdf_5000) keep the passive "coming
+          // soon" chip from Patch 2.2C.
           footer ??
               Align(
                 alignment: Alignment.centerLeft,
@@ -2798,6 +3235,10 @@ class _CompanySubscriptionBillingPageState
                                     ),
                                     price: _priceFromCents(bundle.priceCents),
                                     subtitle: _addonAvailableLabel(),
+                                    footer: _pdfBundleAddonFooter(
+                                      profile,
+                                      bundle.pdfs,
+                                    ),
                                   ),
                                 ],
                               ],

@@ -1357,6 +1357,20 @@ class BackendSubscriptionProfile {
   final String extraDriverCancelRequestedAt;
   final String extraDriverCancellationEffectiveAt;
   final bool extraDriverAutoRenew;
+  // Patch 2.9: PDF bundle add-ons (pdf_500 / pdf_1000). `pdfMonthlyAllowance`
+  // is the cumulative paid PDF allowance (persisted/increased only, not yet
+  // gated). Each bundle tracks its own active quantity + cancel schedule.
+  final int pdfMonthlyAllowance;
+  final int pdf500ActiveQuantity;
+  final int pdf500CancelAtPeriodEndQuantity;
+  final String pdf500CancelRequestedAt;
+  final String pdf500CancellationEffectiveAt;
+  final bool pdf500AutoRenew;
+  final int pdf1000ActiveQuantity;
+  final int pdf1000CancelAtPeriodEndQuantity;
+  final String pdf1000CancelRequestedAt;
+  final String pdf1000CancellationEffectiveAt;
+  final bool pdf1000AutoRenew;
   final String currentPeriodStart;
   final String currentPeriodEnd;
   final int? lockedPriceCents;
@@ -1413,6 +1427,17 @@ class BackendSubscriptionProfile {
     this.extraDriverCancelRequestedAt = '',
     this.extraDriverCancellationEffectiveAt = '',
     this.extraDriverAutoRenew = true,
+    this.pdfMonthlyAllowance = 0,
+    this.pdf500ActiveQuantity = 0,
+    this.pdf500CancelAtPeriodEndQuantity = 0,
+    this.pdf500CancelRequestedAt = '',
+    this.pdf500CancellationEffectiveAt = '',
+    this.pdf500AutoRenew = true,
+    this.pdf1000ActiveQuantity = 0,
+    this.pdf1000CancelAtPeriodEndQuantity = 0,
+    this.pdf1000CancelRequestedAt = '',
+    this.pdf1000CancellationEffectiveAt = '',
+    this.pdf1000AutoRenew = true,
     this.currentPeriodStart = '',
     this.currentPeriodEnd = '',
     this.lockedPriceCents,
@@ -1737,6 +1762,61 @@ class BackendSubscriptionProfile {
         'extraDriverAutoRenew',
         fallback.extraDriverAutoRenew,
       ),
+      pdfMonthlyAllowance: intVal(
+        'pdf_monthly_allowance',
+        'pdfMonthlyAllowance',
+        fallback.pdfMonthlyAllowance,
+      ),
+      pdf500ActiveQuantity: intVal(
+        'pdf500_active_quantity',
+        'pdf500ActiveQuantity',
+        fallback.pdf500ActiveQuantity,
+      ),
+      pdf500CancelAtPeriodEndQuantity: intVal(
+        'pdf500_cancel_at_period_end_quantity',
+        'pdf500CancelAtPeriodEndQuantity',
+        fallback.pdf500CancelAtPeriodEndQuantity,
+      ),
+      pdf500CancelRequestedAt: text(
+        'pdf500_cancel_requested_at',
+        'pdf500CancelRequestedAt',
+        fallback.pdf500CancelRequestedAt,
+      ),
+      pdf500CancellationEffectiveAt: text(
+        'pdf500_cancellation_effective_at',
+        'pdf500CancellationEffectiveAt',
+        fallback.pdf500CancellationEffectiveAt,
+      ),
+      pdf500AutoRenew: boolVal(
+        'pdf500_auto_renew',
+        'pdf500AutoRenew',
+        fallback.pdf500AutoRenew,
+      ),
+      pdf1000ActiveQuantity: intVal(
+        'pdf1000_active_quantity',
+        'pdf1000ActiveQuantity',
+        fallback.pdf1000ActiveQuantity,
+      ),
+      pdf1000CancelAtPeriodEndQuantity: intVal(
+        'pdf1000_cancel_at_period_end_quantity',
+        'pdf1000CancelAtPeriodEndQuantity',
+        fallback.pdf1000CancelAtPeriodEndQuantity,
+      ),
+      pdf1000CancelRequestedAt: text(
+        'pdf1000_cancel_requested_at',
+        'pdf1000CancelRequestedAt',
+        fallback.pdf1000CancelRequestedAt,
+      ),
+      pdf1000CancellationEffectiveAt: text(
+        'pdf1000_cancellation_effective_at',
+        'pdf1000CancellationEffectiveAt',
+        fallback.pdf1000CancellationEffectiveAt,
+      ),
+      pdf1000AutoRenew: boolVal(
+        'pdf1000_auto_renew',
+        'pdf1000AutoRenew',
+        fallback.pdf1000AutoRenew,
+      ),
       currentPeriodStart: text(
         'current_period_start',
         'currentPeriodStart',
@@ -1844,6 +1924,17 @@ class BackendSubscriptionProfile {
     'extra_driver_cancellation_effective_at':
         extraDriverCancellationEffectiveAt,
     'extra_driver_auto_renew': extraDriverAutoRenew,
+    'pdf_monthly_allowance': pdfMonthlyAllowance,
+    'pdf500_active_quantity': pdf500ActiveQuantity,
+    'pdf500_cancel_at_period_end_quantity': pdf500CancelAtPeriodEndQuantity,
+    'pdf500_cancel_requested_at': pdf500CancelRequestedAt,
+    'pdf500_cancellation_effective_at': pdf500CancellationEffectiveAt,
+    'pdf500_auto_renew': pdf500AutoRenew,
+    'pdf1000_active_quantity': pdf1000ActiveQuantity,
+    'pdf1000_cancel_at_period_end_quantity': pdf1000CancelAtPeriodEndQuantity,
+    'pdf1000_cancel_requested_at': pdf1000CancelRequestedAt,
+    'pdf1000_cancellation_effective_at': pdf1000CancellationEffectiveAt,
+    'pdf1000_auto_renew': pdf1000AutoRenew,
     'current_period_start': currentPeriodStart,
     'current_period_end': currentPeriodEnd,
     'locked_price_cents': lockedPriceCents,
@@ -5818,6 +5909,88 @@ Future<BackendSubscriptionProfile> cancelOneExtraDriverAddon({
   if (res.statusCode < 200 || res.statusCode >= 300) {
     debugPrint(
       '[SUBSCRIPTION_ADDON_EXTRA_DRIVER_CANCEL_ONE][FAIL] status=${res.statusCode} '
+      'auth_mode=${auth.mode.name}',
+    );
+    throw Exception('HTTP ${res.statusCode}: ${res.body}');
+  }
+  final decoded = jsonDecode(utf8.decode(res.bodyBytes));
+  if (decoded is! Map) throw Exception('Invalid response');
+  final profile = decoded['subscription_profile'];
+  if (profile is! Map) throw Exception('Missing subscription_profile');
+  return BackendSubscriptionProfile.fromJson(
+    Map<String, dynamic>.from(profile),
+  );
+}
+
+/// POST /company/subscription/add-ons/pdf-500/cancel-one (Patch 2.9).
+///
+/// Schedules the cancellation of exactly one paid pdf_500 bundle at the end of
+/// the current billing period. The allowance stays usable until
+/// [BackendSubscriptionProfile.pdf500CancellationEffectiveAt]; the reduction is
+/// applied lazily by the backend on the next profile read after that date. This
+/// NEVER creates a payment/checkout and NEVER calls Mollie. Returns the
+/// refreshed profile.
+Future<BackendSubscriptionProfile> cancelOnePdf500Addon({
+  String? tenantId,
+  String? companyId,
+}) async {
+  final scope = _resolveAdminTenantCompanyScope(
+    tenantId: tenantId,
+    companyId: companyId,
+  );
+  final endpoint = _withAdminTenantCompanyScope(
+    Uri.parse(
+      '${appConfig.bookingBaseUrl}/company/subscription/add-ons/pdf-500/cancel-one',
+    ),
+    tenantId: scope['tenant_id'],
+    companyId: scope['company_id'],
+  );
+  final auth = await resolveCompanyOwnerAuthHeaders();
+  final res = await http
+      .post(endpoint, headers: auth.headers, body: jsonEncode(scope))
+      .timeout(const Duration(seconds: 15));
+  if (res.statusCode < 200 || res.statusCode >= 300) {
+    debugPrint(
+      '[SUBSCRIPTION_ADDON_PDF_500_CANCEL_ONE][FAIL] status=${res.statusCode} '
+      'auth_mode=${auth.mode.name}',
+    );
+    throw Exception('HTTP ${res.statusCode}: ${res.body}');
+  }
+  final decoded = jsonDecode(utf8.decode(res.bodyBytes));
+  if (decoded is! Map) throw Exception('Invalid response');
+  final profile = decoded['subscription_profile'];
+  if (profile is! Map) throw Exception('Missing subscription_profile');
+  return BackendSubscriptionProfile.fromJson(
+    Map<String, dynamic>.from(profile),
+  );
+}
+
+/// POST /company/subscription/add-ons/pdf-1000/cancel-one (Patch 2.9).
+///
+/// Same lifecycle as [cancelOnePdf500Addon] for the pdf_1000 bundle, with an
+/// independent counter and schedule. Returns the refreshed profile.
+Future<BackendSubscriptionProfile> cancelOnePdf1000Addon({
+  String? tenantId,
+  String? companyId,
+}) async {
+  final scope = _resolveAdminTenantCompanyScope(
+    tenantId: tenantId,
+    companyId: companyId,
+  );
+  final endpoint = _withAdminTenantCompanyScope(
+    Uri.parse(
+      '${appConfig.bookingBaseUrl}/company/subscription/add-ons/pdf-1000/cancel-one',
+    ),
+    tenantId: scope['tenant_id'],
+    companyId: scope['company_id'],
+  );
+  final auth = await resolveCompanyOwnerAuthHeaders();
+  final res = await http
+      .post(endpoint, headers: auth.headers, body: jsonEncode(scope))
+      .timeout(const Duration(seconds: 15));
+  if (res.statusCode < 200 || res.statusCode >= 300) {
+    debugPrint(
+      '[SUBSCRIPTION_ADDON_PDF_1000_CANCEL_ONE][FAIL] status=${res.statusCode} '
       'auth_mode=${auth.mode.name}',
     );
     throw Exception('HTTP ${res.statusCode}: ${res.body}');
