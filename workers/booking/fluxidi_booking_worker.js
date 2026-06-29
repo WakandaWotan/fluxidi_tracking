@@ -6983,6 +6983,22 @@ function _advanceSubscriptionPeriodByOneMonthIso(fromIso) {
   return d.toISOString();
 }
 
+// Patch 3.6: reactivation hygiene. Pure helper that returns a shallow copy of
+// the profile with the dunning/suspension timestamps cleared. Applied at the
+// active-writing payment/activation paths so a recovered subscription does not
+// carry a stale grace clock or suspension marker. Clears ONLY these two
+// lifecycle timestamps; grace_period_days (config), periods, provider ids,
+// founder pricing, add-ons, billing/customer, Mollie linkage, cancellation
+// fields, and last_recurring_* audit fields are all left untouched. No I/O.
+function _clearFluxidiSubscriptionDunningOnReactivation(profile) {
+  if (!profile || typeof profile !== "object") return profile;
+  return {
+    ...profile,
+    past_due_since: "",
+    suspended_at: "",
+  };
+}
+
 // =========================
 // Patch 3.3: apply a verified recurring paid payment.
 //
@@ -7117,7 +7133,14 @@ async function applyFluxidiRecurringPaymentFromVerifiedPayment(env, { payment } 
   }
 
   const paidAtIso = _fluxidiSubscriptionSafeStr(payment?.paidAt, 48) || nowIso;
-  const updatedProfile = {
+  // Capture the pre-activation status purely for the audit log line below.
+  const priorStatus = _fluxidiSubscriptionSafeStr(
+    profile?.subscription_status || profile?.status,
+  ).toLowerCase();
+  // Patch 3.6: clearing stale past_due_since/suspended_at is the LAST transform
+  // so it cannot be undone by the spread. Period advance and last_recurring_*
+  // audit fields are preserved.
+  const updatedProfile = _clearFluxidiSubscriptionDunningOnReactivation({
     ...profile,
     subscription_status: "active",
     status: "active",
@@ -7127,7 +7150,7 @@ async function applyFluxidiRecurringPaymentFromVerifiedPayment(env, { payment } 
     last_recurring_payment_status: "paid",
     last_recurring_payment_at: paidAtIso,
     last_recurring_webhook_at: nowIso,
-  };
+  });
 
   try {
     await saveSubscriptionProfile(env, updatedProfile, scope, {
@@ -7155,7 +7178,7 @@ async function applyFluxidiRecurringPaymentFromVerifiedPayment(env, { payment } 
   }
 
   console.log(
-    `[SUBSCRIPTION_RECURRING_PAYMENT][OK] tenant=${tenantMask} company=${companyMask} sub=${subscriptionId} period_start=${newPeriodStart} period_end=${newPeriodEnd} scope_source=${scopeSource}`,
+    `[SUBSCRIPTION_RECURRING_PAYMENT][OK] tenant=${tenantMask} company=${companyMask} sub=${subscriptionId} period_start=${newPeriodStart} period_end=${newPeriodEnd} reactivated_from=${priorStatus || "-"} scope_source=${scopeSource}`,
   );
   return {
     ok: true,
@@ -7972,7 +7995,7 @@ async function activateFluxidiSubscriptionFromVerifiedPayment(env, { activationI
     _fluxidiSubscriptionSafeStr(payment?.billingAddress?.email, 160) ||
     _fluxidiSubscriptionSafeStr(payment?.email, 160);
 
-  const updatedProfile = {
+  const updatedProfile = _clearFluxidiSubscriptionDunningOnReactivation({
     ...currentProfile,
     plan_code: _fluxidiSubscriptionSafeStr(pending.plan_code, 32) ||
       currentProfile.plan_code || "fluxidi_pro",
@@ -8003,7 +8026,7 @@ async function activateFluxidiSubscriptionFromVerifiedPayment(env, { activationI
     trial_ends_at: currentProfile.trial_ends_at,
     warnings,
     updated_at: nowIso,
-  };
+  });
 
   let savedProfile;
   try {
