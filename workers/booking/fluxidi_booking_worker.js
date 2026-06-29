@@ -7000,6 +7000,63 @@ function _clearFluxidiSubscriptionDunningOnReactivation(profile) {
 }
 
 // =========================
+// Patch 3.7a: suspended access rules for new booking creation.
+//
+// Pure predicate: a subscription is "suspended" ONLY when the effective status
+// (subscription_status, then legacy status) is exactly "suspended". past_due,
+// trialing, payment_required, grace_period, and cancelled are NOT treated as
+// suspended here. No I/O.
+// =========================
+function _isFluxidiSubscriptionSuspended(profile) {
+  if (!profile || typeof profile !== "object") return false;
+  const effective = String(
+    profile.subscription_status || profile.status || "",
+  )
+    .trim()
+    .toLowerCase();
+  return effective === "suspended";
+}
+
+// Guard used at new-booking/quote creation boundaries (never inside
+// handleBooking). Loads the company-scoped subscription profile read-only, then
+// best-effort runs the Patch 3.5 suspension materializer so a stale past_due
+// that has crossed its grace window is materialized to suspended at booking
+// time. Returns { ok: false, error: "subscription_suspended" } when suspended,
+// otherwise { ok: true }. Never throws; materializer failures fall back to the
+// loaded profile per existing best-effort conventions.
+async function _assertFluxidiCompanyCanCreateNewBooking(env, scope) {
+  let profile = await loadSubscriptionProfile(env, scope, {
+    allowTenantLegacyFallback: false,
+  });
+  try {
+    const suspensionMaterialized = await materializeDueFluxidiSubscriptionSuspension(
+      env,
+      scope,
+      profile,
+    );
+    if (suspensionMaterialized?.profile) profile = suspensionMaterialized.profile;
+  } catch (e) {
+    console.log(
+      `[BOOKING_SUSPENSION_GUARD][SUSPENSION_SKIP] reason=${safeStr(e?.message, 80) || "error"}`,
+    );
+  }
+  if (_isFluxidiSubscriptionSuspended(profile)) {
+    return { ok: false, error: "subscription_suspended" };
+  }
+  return { ok: true };
+}
+
+// Centralized blocked response so no public route accidentally leaks the
+// billing/subscription reason. Company/authenticated routes get a 402 with the
+// concrete reason; public/customer-facing routes get a generic 503.
+function _subscriptionBlockedResponse({ scope } = {}) {
+  if (scope === "public") {
+    return json({ ok: false, error: "company_unavailable" }, 503);
+  }
+  return json({ ok: false, error: "subscription_suspended" }, 402);
+}
+
+// =========================
 // Patch 3.3: apply a verified recurring paid payment.
 //
 // Called from the subscription webhook ONLY for payments that look recurring
@@ -29515,6 +29572,21 @@ POST /admin/mollie/connect/disconnect
         if (!resolvedScope.ok) {
           return json({ ok: false, error: resolvedScope.error }, resolvedScope.status || 400);
         }
+        // Patch 3.7a: do not quote a ride that cannot be booked. A suspended
+        // company is blocked here with the same generic public response so the
+        // customer never sees the billing/subscription reason.
+        {
+          const publicQuoteSuspensionGuard = await _assertFluxidiCompanyCanCreateNewBooking(
+            env,
+            {
+              tenant_id: resolvedScope.scope.tenant_id,
+              company_id: resolvedScope.scope.company_id,
+            },
+          );
+          if (!publicQuoteSuspensionGuard.ok) {
+            return _subscriptionBlockedResponse({ scope: "public" });
+          }
+        }
         const normalized = _normalizePublicQuoteBody(body, resolvedScope);
         if (!normalized.ok) {
           return json(
@@ -31201,6 +31273,25 @@ POST /admin/mollie/connect/disconnect
               }
             : {}),
         };
+        // Patch 3.7a: block new booking creation for suspended companies. Gated
+        // at the route boundary (never inside handleBooking) and only after the
+        // tenant/company scope is fully resolved. A public-partner-routed booking
+        // gets the generic public response so the customer never sees the
+        // billing reason; the authenticated company/driver path gets 402.
+        {
+          const bookingSuspensionGuard = await _assertFluxidiCompanyCanCreateNewBooking(
+            env,
+            {
+              tenant_id: requestScope.tenant_id,
+              company_id: requestScope.company_id,
+            },
+          );
+          if (!bookingSuspensionGuard.ok) {
+            return _subscriptionBlockedResponse({
+              scope: routedPublicPartner?.ok ? "public" : "company",
+            });
+          }
+        }
         const out = await handleBooking(normalizedBody, env, request, {
           trustedPublicPartnerScope: isDriverAppBooking ? null : routedPublicPartner,
           explicitAssignmentTrusted: explicitAssignmentTrust.trusted === true,
@@ -31555,6 +31646,21 @@ POST /admin/mollie/connect/disconnect
         const resolvedScope = await _resolvePublicCompanyBookingScope(env, body);
         if (!resolvedScope.ok) {
           return json({ ok: false, error: resolvedScope.error }, resolvedScope.status || 400);
+        }
+        // Patch 3.7a: block new public booking creation for suspended companies.
+        // Public response is generic (company_unavailable / 503) so the customer
+        // never sees the company's billing/subscription reason.
+        {
+          const publicBookSuspensionGuard = await _assertFluxidiCompanyCanCreateNewBooking(
+            env,
+            {
+              tenant_id: resolvedScope.scope.tenant_id,
+              company_id: resolvedScope.scope.company_id,
+            },
+          );
+          if (!publicBookSuspensionGuard.ok) {
+            return _subscriptionBlockedResponse({ scope: "public" });
+          }
         }
         const normalized = _normalizePublicBookBody(body, resolvedScope);
         if (!normalized.ok) {
