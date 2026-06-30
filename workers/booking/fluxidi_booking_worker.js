@@ -1674,11 +1674,77 @@ async function postBillitSandboxOrderCreate(config, accessToken, partyId, create
   };
 }
 
+/* Persist an envelope-only billit_export link onto an issued document registry
+ * record (Patch B6b). This is the ONLY new post-issue registry write surface.
+ *
+ * Safety contract (must hold for every issued document):
+ *   - reads the SAME canonical key (doc_registry:<tenant>:<company>:<docId>)
+ *   - spreads the existing record and ONLY adds envelope-level fields:
+ *       billit_export + the existing provider_* mirror + a top-level updated_at
+ *   - NEVER touches immutable_snapshot / content_hash / document_number /
+ *     totals / currency / buyer/seller snapshots / source bindings (they ride
+ *     along untouched via the object spread)
+ *   - writes the canonical registry key ONLY (no index rewrites in B6b)
+ *   - never mutates the passed-in record object in place
+ *   - non-fatal: returns { ok:false, error } on any failure so the caller can
+ *     surface a warning without rolling back an already-created Billit order
+ *   - never stores tokens, encrypted values, the raw OAuth record, the raw
+ *     Billit response, or an Authorization header. */
+async function persistBillitOrderExportOnDocumentRecord(env, scope, record, billitExport) {
+  if (!env?.BOOKING_KV) {
+    return { ok: false, error: "missing_binding" };
+  }
+  if (!record || typeof record !== "object" || Array.isArray(record)) {
+    return { ok: false, error: "missing_registry_record" };
+  }
+  const safeExport =
+    billitExport && typeof billitExport === "object" && !Array.isArray(billitExport)
+      ? billitExport
+      : null;
+  if (!safeExport || !safeStr(safeExport.order_id, 120)) {
+    return { ok: false, error: "missing_billit_export" };
+  }
+  let key;
+  try {
+    key = buildDocumentRegistryKey(scope, safeStr(record.document_id ?? record.documentId, 200));
+  } catch (_) {
+    return { ok: false, error: "invalid_registry_key" };
+  }
+  if (!key) return { ok: false, error: "invalid_registry_key" };
+
+  const nowIso = new Date().toISOString();
+  // Spread preserves immutable_snapshot, content_hash, document_number, totals,
+  // currency, buyer/seller snapshots, and all source bindings byte-for-byte.
+  const updatedRecord = {
+    ...record,
+    billit_export: safeExport,
+    provider_name: "billit",
+    provider_document_id: safeExport.order_id,
+    provider_export_status: safeExport.status || "created",
+    provider_accepted_at:
+      safeStr(safeExport.created_at, 40) ||
+      safeStr(record.provider_accepted_at ?? record.providerAcceptedAt, 40) ||
+      null,
+    provider_rejected_reason: null,
+    updated_at: nowIso,
+  };
+  try {
+    await env.BOOKING_KV.put(key, JSON.stringify(updatedRecord));
+    return { ok: true, record: updatedRecord, export: safeExport };
+  } catch (_) {
+    return { ok: false, error: "billit_export_persist_failed" };
+  }
+}
+
 /* Admin-only, SANDBOX-ONLY Billit order create for ONE invoice document (Patch
  * B6a). Heavily guarded: explicit confirmation + document_number match, invoice-
  * only, and the official order preview must be readiness.ready. Performs exactly
  * one POST /v1/orders. NEVER sends / Peppol-sends, NEVER supports production,
- * NEVER returns tokens, the raw OAuth record, or the raw Billit body. */
+ * NEVER returns tokens, the raw OAuth record, or the raw Billit body.
+ *
+ * Patch B6b: before POSTing, an already-linked sandbox order short-circuits
+ * (no second Billit call); after a successful POST the sanitized billit_export
+ * link is persisted envelope-only on the registry record. */
 async function handleAdminBillitSandboxOrderCreate({ request, url, env, documentId }) {
   // 1. Admin auth (same pattern as the other admin Billit routes).
   try {
@@ -1775,6 +1841,35 @@ async function handleAdminBillitSandboxOrderCreate({ request, url, env, document
   const recordDocNumber = safeStr(record?.document_number ?? record?.documentNumber, 80);
   if (!recordDocNumber || recordDocNumber !== requestedDocNumber) {
     return json({ ok: false, error: "document_number_mismatch" }, 400);
+  }
+
+  // 7b. B6b duplicate guard: if this document already has a persisted sandbox
+  // billit_export link, short-circuit and return the stored link. NEVER POST a
+  // second time to Billit (idempotency semantics are not fully verified).
+  const existingExportProjection = buildSafeBillitExportProjection(record);
+  if (
+    existingExportProjection &&
+    existingExportProjection.order_id &&
+    safeStr(record?.billit_export?.environment, 24).toLowerCase() === "sandbox"
+  ) {
+    return json({
+      ok: true,
+      dry_run: false,
+      sandbox_create: true,
+      already_created: true,
+      reused: true,
+      sent: false,
+      peppol_sent: false,
+      document_id: docId,
+      document_number: recordDocNumber,
+      billit_party_id: existingExportProjection.party_id,
+      billit_order_id: existingExportProjection.order_id,
+      billit_order_number: existingExportProjection.order_number,
+      billit_status: existingExportProjection.status || "created",
+      idempotency_key: existingExportProjection.idempotency_key,
+      billit_export: existingExportProjection,
+      warnings: ["billit_order_already_linked"],
+    });
   }
 
   // 8. Build the SAME official order preview as the read-only preview route.
@@ -1879,9 +1974,35 @@ async function handleAdminBillitSandboxOrderCreate({ request, url, env, document
     `[BILLIT_ORDER_CREATE][SANDBOX][OK] doc=${docId.slice(0, 8)} order=${summary.billit_order_id ? "yes" : "no"} refreshed=${tokenResult.refreshed}`,
   );
 
-  // 14. Sanitized result. Persistence of the external order id is DEFERRED to a
-  // later patch (no issued-document registry write in this first create path).
-  const warnings = ["billit_order_persistence_deferred"];
+  // 14. Persist the sanitized billit_export link envelope-only (B6b). Failure is
+  // non-fatal: the Billit order already exists, so we still return success with
+  // a warning rather than rolling back. Never persists tokens / raw body.
+  const warnings = [];
+  let exportProjection = null;
+  const normalizedExport = normalizeBillitExportMetadata({
+    environment: "sandbox",
+    party_id: previewPartyId,
+    order_id: summary.billit_order_id,
+    order_number: recordDocNumber,
+    idempotency_key: idempotencyKey,
+    source: "admin_sandbox_create",
+  });
+  if (normalizedExport.ok) {
+    const persistResult = await persistBillitOrderExportOnDocumentRecord(
+      env,
+      scope,
+      record,
+      normalizedExport.export,
+    );
+    if (persistResult.ok) {
+      exportProjection = buildSafeBillitExportProjection(persistResult.export);
+    } else {
+      warnings.push("billit_order_persistence_failed");
+    }
+  } else {
+    // No usable order id to link (e.g. Billit omitted it); keep B6a behavior.
+    warnings.push("billit_order_persistence_deferred");
+  }
   if (!summary.billit_status) warnings.push("billit_status_unknown");
   return json({
     ok: true,
@@ -1896,7 +2017,200 @@ async function handleAdminBillitSandboxOrderCreate({ request, url, env, document
     billit_order_number: summary.billit_order_number,
     billit_status: summary.billit_status,
     idempotency_key: idempotencyKey,
+    billit_export: exportProjection,
     warnings,
+  });
+}
+
+/* Admin-only, SANDBOX-ONLY route to LINK an already-existing Billit sandbox
+ * order to an issued invoice document WITHOUT calling Billit (Patch B6b). Used
+ * to backfill the B6a-created order that predates persistence. Heavily guarded:
+ * explicit confirmation, scope, invoice-only, document_number + party_id match,
+ * and a conflict guard if a different order id is already linked. Performs NO
+ * fetch / NO Billit API call. NEVER returns tokens / raw OAuth / raw Billit. */
+async function handleAdminBillitLinkExistingSandboxOrder({ request, url, env, documentId }) {
+  // 1. Admin auth.
+  try {
+    _requireAdmin(request, url, env);
+  } catch (err) {
+    const message = String(err?.message || "Unauthorized");
+    return json(
+      {
+        ok: false,
+        error: message === "Unauthorized" ? "unauthorized" : "admin_unavailable",
+      },
+      message === "Unauthorized" ? 401 : 500,
+    );
+  }
+
+  // 2. Resolve config + SANDBOX-ONLY guard (no network work happens here).
+  const config = resolveBillitOAuthConfig(env);
+  if (config.environment !== "sandbox") {
+    return json(
+      {
+        ok: false,
+        error: "billit_link_existing_sandbox_only",
+        environment: config.environment,
+      },
+      409,
+    );
+  }
+
+  // 3. Parse + validate the explicit confirmation body.
+  const body = await safeJson(request);
+  const bodyObj =
+    body && typeof body === "object" && !Array.isArray(body) ? body : {};
+  if (bodyObj.confirm_link_existing_sandbox_order !== true) {
+    return json(
+      { ok: false, error: "confirm_link_existing_sandbox_order_required" },
+      400,
+    );
+  }
+  const requestedDocNumber = safeStr(bodyObj.document_number, 80);
+  if (!requestedDocNumber) {
+    return json({ ok: false, error: "document_number_required" }, 400);
+  }
+  const requestedOrderId = safeStr(bodyObj.billit_order_id, 120);
+  if (!requestedOrderId) {
+    return json({ ok: false, error: "billit_order_id_required" }, 400);
+  }
+  const requestedPartyId = safeStr(bodyObj.billit_party_id, 120) || null;
+  const requestedIdempotencyKey = safeStr(bodyObj.idempotency_key, 200) || null;
+
+  // 4. Explicit tenant/company scope (no legacy fallback).
+  const scopedRoute = requireExplicitBookingRouteScope({
+    request,
+    url,
+    body: bodyObj,
+  });
+  if (!scopedRoute.ok) return scopedRoute.response;
+  const scope = {
+    tenant_id: scopedRoute.scope.tenant_id,
+    company_id: scopedRoute.scope.company_id,
+  };
+
+  const docId = safeStr(documentId, 200);
+  if (!docId) return json({ ok: false, error: "missing_document_id" }, 400);
+  if (!env?.BOOKING_KV) return json({ ok: false, error: "missing_binding" }, 503);
+
+  // 5. Load the issued document + strict scope check.
+  const record = await loadIssuedDocumentRegistryRecordById(env, scope, docId);
+  const recordTenant = safeStr(record?.tenant_id ?? record?.tenantId, 80);
+  const recordCompany = safeStr(record?.company_id ?? record?.companyId, 80);
+  if (
+    !record ||
+    (recordTenant && recordTenant !== scope.tenant_id) ||
+    (recordCompany && recordCompany !== scope.company_id)
+  ) {
+    return json({ ok: false, error: "document_not_found" }, 404);
+  }
+
+  // 6. Invoice-only for B6b link-existing.
+  const docType = safeStr(record?.document_type ?? record?.documentType, 40).toLowerCase();
+  if (docType !== "invoice") {
+    return json(
+      {
+        ok: false,
+        error: "document_type_not_supported_for_b6b",
+        document_type: docType || null,
+      },
+      400,
+    );
+  }
+
+  // 7. document_number must match the registry record.
+  const recordDocNumber = safeStr(record?.document_number ?? record?.documentNumber, 80);
+  if (!recordDocNumber || recordDocNumber !== requestedDocNumber) {
+    return json({ ok: false, error: "document_number_mismatch" }, 400);
+  }
+
+  // 8. PartyID must match the stored connection PartyID when one is available.
+  const knownPartyId = await readBillitPartyIdForScope(env, scope);
+  if (knownPartyId && requestedPartyId && requestedPartyId !== knownPartyId) {
+    return json({ ok: false, error: "billit_party_id_mismatch" }, 409);
+  }
+  const effectivePartyId = requestedPartyId || knownPartyId || null;
+
+  // 9. Conflict guard against an already-linked order.
+  const existingExport =
+    record.billit_export && typeof record.billit_export === "object"
+      ? record.billit_export
+      : null;
+  const existingOrderId = safeStr(existingExport?.order_id, 120);
+  if (existingOrderId) {
+    if (existingOrderId === requestedOrderId) {
+      const projection = buildSafeBillitExportProjection(record);
+      return json({
+        ok: true,
+        sandbox_link_existing: true,
+        already_linked: true,
+        sent: false,
+        peppol_sent: false,
+        document_id: docId,
+        document_number: recordDocNumber,
+        billit_party_id: projection?.party_id ?? effectivePartyId,
+        billit_order_id: existingOrderId,
+        billit_order_number: projection?.order_number ?? recordDocNumber,
+        billit_status: projection?.status || "created",
+        idempotency_key: projection?.idempotency_key ?? requestedIdempotencyKey,
+        billit_export: projection,
+        warnings: ["billit_order_already_linked"],
+      });
+    }
+    return json(
+      {
+        ok: false,
+        error: "billit_export_conflict",
+        document_id: docId,
+        document_number: recordDocNumber,
+      },
+      409,
+    );
+  }
+
+  // 10. Build + persist the billit_export link (NO Billit API call).
+  const normalizedExport = normalizeBillitExportMetadata({
+    environment: "sandbox",
+    party_id: effectivePartyId,
+    order_id: requestedOrderId,
+    order_number: recordDocNumber,
+    idempotency_key: requestedIdempotencyKey,
+    source: "admin_link_existing_sandbox_order",
+  });
+  if (!normalizedExport.ok) {
+    return json({ ok: false, error: normalizedExport.error }, 400);
+  }
+  const persistResult = await persistBillitOrderExportOnDocumentRecord(
+    env,
+    scope,
+    record,
+    normalizedExport.export,
+  );
+  if (!persistResult.ok) {
+    return json(
+      { ok: false, error: persistResult.error || "billit_export_persist_failed" },
+      500,
+    );
+  }
+  const projection = buildSafeBillitExportProjection(persistResult.export);
+  console.log(
+    `[BILLIT_ORDER_LINK][SANDBOX][OK] doc=${docId.slice(0, 8)} order=${requestedOrderId ? "yes" : "no"}`,
+  );
+  return json({
+    ok: true,
+    sandbox_link_existing: true,
+    already_linked: false,
+    sent: false,
+    peppol_sent: false,
+    document_id: docId,
+    document_number: recordDocNumber,
+    billit_party_id: projection?.party_id ?? effectivePartyId,
+    billit_order_id: requestedOrderId,
+    billit_order_number: projection?.order_number ?? recordDocNumber,
+    billit_status: projection?.status || "created",
+    idempotency_key: projection?.idempotency_key ?? requestedIdempotencyKey,
+    billit_export: projection,
+    warnings: [],
   });
 }
 
@@ -28038,6 +28352,47 @@ export default {
         }
       }
 
+      // POST /admin/documents/:documentId/billit-order/link-existing/sandbox
+      // Patch B6b: persist an ALREADY-EXISTING Billit sandbox order link onto
+      // the issued document registry record WITHOUT calling Billit. Admin-only,
+      // sandbox-only, invoice-only, requires explicit confirmation +
+      // document_number / billit_order_id / party_id checks. Performs NO fetch
+      // and NEVER returns tokens, the raw OAuth record, or any Billit response
+      // (see handleAdminBillitLinkExistingSandboxOrder).
+      if (
+        request.method === "POST" &&
+        url.pathname.startsWith("/admin/documents/") &&
+        url.pathname.endsWith("/billit-order/link-existing/sandbox")
+      ) {
+        const billitLinkSegments = url.pathname.split("/").filter(Boolean);
+        // Only the exact shape:
+        //   ["admin","documents","<documentId>","billit-order","link-existing","sandbox"]
+        if (
+          billitLinkSegments.length === 6 &&
+          billitLinkSegments[0] === "admin" &&
+          billitLinkSegments[1] === "documents" &&
+          billitLinkSegments[3] === "billit-order" &&
+          billitLinkSegments[4] === "link-existing" &&
+          billitLinkSegments[5] === "sandbox"
+        ) {
+          try {
+            const documentId =
+              safeStr(decodeURIComponent(billitLinkSegments[2]), 200) || "";
+            return await handleAdminBillitLinkExistingSandboxOrder({
+              request,
+              url,
+              env,
+              documentId,
+            });
+          } catch (err) {
+            console.log(
+              `[BILLIT_ORDER_LINK][SANDBOX][ERR] ${safeStr(err?.message, 160) || "unknown"}`,
+            );
+            return json({ ok: false, error: "internal_error" }, 500);
+          }
+        }
+      }
+
       // =========================
       // BILLIT OAUTH - COMPANY-FACING ROUTES
       // Company session (or admin token) auth via the shared
@@ -31532,6 +31887,7 @@ POST /admin/mollie/connect/disconnect
               billit_payload_preview: billitPayloadPreview,
               billit_order_candidate: billitOrderCandidate,
               billit_official_order_preview: billitOfficialOrderPreview,
+              billit_export: buildSafeBillitExportProjection(record),
               warnings: billitPayloadPreview.warnings,
             });
           } catch (err) {
@@ -32240,6 +32596,7 @@ POST /admin/mollie/connect/disconnect
                 billit_payload_preview: preview,
                 billit_order_candidate: billitOrderCandidate,
                 billit_official_order_preview: billitOfficialOrderPreview,
+                billit_export: buildSafeBillitExportProjection(rec),
                 warnings: preview.warnings,
               };
             });
@@ -76590,6 +76947,9 @@ function buildIssuedDocumentPublicMetadata(record) {
       safeStr(rec.source_booking_id ?? rec.sourceBookingId, 200) || null,
     source_leg_id: safeStr(rec.source_leg_id ?? rec.sourceLegId, 200) || null,
     source_leg_type: safeStr(rec.source_leg_type ?? rec.sourceLegType, 24) || null,
+    // B6b: safe Billit export link projection (envelope-only; null when absent).
+    // Never exposes tokens, the raw OAuth record, or the raw Billit response.
+    billit_export: buildSafeBillitExportProjection(rec),
   };
 }
 
@@ -79057,6 +79417,84 @@ function sanitizeBillitOrderCreateResponse(responseJson) {
     billit_order_id: orderId,
     billit_order_number: orderNumber,
     billit_status: status,
+  };
+}
+
+/* Pure builder for the envelope-only billit_export metadata stored on an issued
+ * document registry record (Patch B6b). Sandbox-only for B6b. Returns a small,
+ * fully-sanitized object containing ONLY a Billit order LINK + local lifecycle
+ * label — never an access/refresh token, never an encrypted token, never the
+ * raw OAuth record, never the raw Billit response, never an Authorization
+ * header. `status` is a LOCAL lifecycle label ("created"), not Billit's live UI
+ * status. Returns { ok:false } when required link fields are missing/invalid so
+ * the caller can fail closed without writing partial metadata. */
+function normalizeBillitExportMetadata(input = {}) {
+  const src = input && typeof input === "object" ? input : {};
+  const environment = safeStr(src.environment, 24).toLowerCase() || "sandbox";
+  // B6b is sandbox-only; refuse anything else so production links never persist.
+  if (environment !== "sandbox") {
+    return { ok: false, error: "billit_export_sandbox_only" };
+  }
+  const orderId = safeStr(src.order_id ?? src.orderId, 120);
+  if (!orderId) {
+    return { ok: false, error: "billit_order_id_required" };
+  }
+  const orderNumber = safeStr(src.order_number ?? src.orderNumber, 80) || null;
+  const partyId = safeStr(src.party_id ?? src.partyId, 120) || null;
+  const idempotencyKey = safeStr(src.idempotency_key ?? src.idempotencyKey, 200) || null;
+  const source = safeStr(src.source, 64) || "admin_sandbox_create";
+  const nowIso = new Date().toISOString();
+  const createdAt = safeStr(src.created_at ?? src.createdAt, 40) || nowIso;
+  const updatedAt = safeStr(src.updated_at ?? src.updatedAt, 40) || nowIso;
+  return {
+    ok: true,
+    export: {
+      provider: "billit",
+      environment: "sandbox",
+      party_id: partyId,
+      order_id: orderId,
+      order_number: orderNumber,
+      // LOCAL lifecycle label only. Never Billit's live UI status.
+      status: "created",
+      sent: false,
+      peppol_sent: false,
+      idempotency_key: idempotencyKey,
+      created_at: createdAt,
+      updated_at: updatedAt,
+      source,
+    },
+  };
+}
+
+/* Pure projection of a stored billit_export (or a registry record carrying one)
+ * into the SAFE public shape. Surfaces only the link + local lifecycle fields;
+ * never tokens, encrypted values, the raw OAuth record, or the raw Billit body.
+ * Returns null when no billit_export is present. */
+function buildSafeBillitExportProjection(recordOrExport) {
+  const obj =
+    recordOrExport && typeof recordOrExport === "object" && !Array.isArray(recordOrExport)
+      ? recordOrExport
+      : null;
+  if (!obj) return null;
+  const exp =
+    obj.billit_export && typeof obj.billit_export === "object" && !Array.isArray(obj.billit_export)
+      ? obj.billit_export
+      : obj;
+  const orderId = safeStr(exp.order_id ?? exp.orderId, 120) || null;
+  if (!orderId) return null;
+  return {
+    provider: safeStr(exp.provider, 24) || "billit",
+    environment: safeStr(exp.environment, 24) || null,
+    party_id: safeStr(exp.party_id ?? exp.partyId, 120) || null,
+    order_id: orderId,
+    order_number: safeStr(exp.order_number ?? exp.orderNumber, 80) || null,
+    status: safeStr(exp.status, 40) || null,
+    sent: exp.sent === true,
+    peppol_sent: exp.peppol_sent === true,
+    idempotency_key: safeStr(exp.idempotency_key ?? exp.idempotencyKey, 200) || null,
+    created_at: safeStr(exp.created_at ?? exp.createdAt, 40) || null,
+    updated_at: safeStr(exp.updated_at ?? exp.updatedAt, 40) || null,
+    source: safeStr(exp.source, 64) || null,
   };
 }
 
