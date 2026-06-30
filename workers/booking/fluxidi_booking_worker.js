@@ -491,6 +491,47 @@ async function decryptMollieConnectTokenPayload(encryptedPayload, env) {
  * ===================================================================== */
 const BILLIT_PROVIDER = "billit";
 const BILLIT_OAUTH_STATE_TTL_SECONDS = 600; // 10 minutes
+// Explicit Fluxidi platform default invoice payment term (in days) used to
+// derive a Billit official-order ExpiryDate when no document-level due_date and
+// no company-configured payment_terms_days exist yet. This is intentionally an
+// EXPLICIT, surfaced default (never silent): previews expose both
+// payment_terms_days and payment_terms_source. A future Business Settings UI
+// can override it per company.
+const DEFAULT_BILLIT_PAYMENT_TERMS_DAYS = 30;
+
+// Normalize an invoice payment term to an integer number of days in [0, 365].
+// Missing/invalid input falls back to the explicit platform default. This is a
+// surfaced default (never silent) and is unrelated to subscription billing.
+function normalizeBillitPaymentTermsDays(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return DEFAULT_BILLIT_PAYMENT_TERMS_DAYS;
+  const rounded = Math.trunc(n);
+  if (rounded < 0 || rounded > 365) return DEFAULT_BILLIT_PAYMENT_TERMS_DAYS;
+  return rounded;
+}
+
+// Add a whole number of days to a YYYY-MM-DD date-only string using UTC math to
+// avoid timezone drift. Returns a YYYY-MM-DD string, or null on invalid input.
+// days === 0 returns the same calendar date.
+function addDaysToDateOnly(dateOnly, days) {
+  if (typeof dateOnly !== "string") return null;
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateOnly.trim());
+  if (!m) return null;
+  const year = Number(m[1]);
+  const month = Number(m[2]);
+  const day = Number(m[3]);
+  if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+  const addDays = Number(days);
+  if (!Number.isFinite(addDays)) return null;
+  const base = Date.UTC(year, month - 1, day);
+  if (Number.isNaN(base)) return null;
+  const shifted = new Date(base + Math.trunc(addDays) * 86400000);
+  if (Number.isNaN(shifted.getTime())) return null;
+  const yyyy = String(shifted.getUTCFullYear()).padStart(4, "0");
+  const mm = String(shifted.getUTCMonth() + 1).padStart(2, "0");
+  const dd = String(shifted.getUTCDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}
 
 function _billitError(code) {
   const err = new Error(String(code || "billit_oauth_error"));
@@ -4506,6 +4547,10 @@ const DEFAULT_BUSINESS_PROFILE = {
   iban: "",
   paymentReferencePrefix: "FLX",
   invoiceReceiptFooterText: "",
+  // Explicit invoice payment term (days) for Billit official-order ExpiryDate
+  // derivation. Defaults to the surfaced platform default; not a subscription
+  // billing field. A future Business Settings UI can let companies change it.
+  payment_terms_days: DEFAULT_BILLIT_PAYMENT_TERMS_DAYS,
   payment_owner_mode: "fluxidi_central_demo",
   paymentOwnerMode: "fluxidi_central_demo",
   payment_demo_mode: true,
@@ -5184,6 +5229,12 @@ function normalizeBusinessProfile(input = {}) {
     iban: sanitizeTenantString(source.iban ?? source.bankAccount ?? DEFAULT_BUSINESS_PROFILE.iban, 80),
     paymentReferencePrefix: sanitizeTenantString(source.paymentReferencePrefix ?? DEFAULT_BUSINESS_PROFILE.paymentReferencePrefix, 24),
     invoiceReceiptFooterText: sanitizeTenantString(source.invoiceReceiptFooterText ?? DEFAULT_BUSINESS_PROFILE.invoiceReceiptFooterText, 1000),
+    // Explicit invoice payment term (days) for Billit ExpiryDate derivation.
+    // Accept an integer 0..365; otherwise fall back to the surfaced platform
+    // default. This is NOT a subscription billing field.
+    payment_terms_days: normalizeBillitPaymentTermsDays(
+      source.payment_terms_days ?? source.paymentTermsDays,
+    ),
     payment_owner_mode: normalizePaymentOwnerMode(
       source.payment_owner_mode ??
         source.paymentOwnerMode ??
@@ -30979,10 +31030,22 @@ POST /admin/mollie/connect/disconnect
                 environment_hint: billitEnvironment,
               },
             );
+            // Explicit, surfaced payment term. The normalized business profile
+            // always carries payment_terms_days (defaulted to the platform
+            // default); if the profile failed to load we still apply the
+            // explicit platform default so the preview is deterministic. There
+            // is no Business Settings UI yet, so we cannot distinguish a company
+            // override from the platform default and report "platform_default".
+            const billitPaymentTermsDays =
+              normalizeBillitPaymentTermsDays(
+                businessProfile?.payment_terms_days,
+              );
             const billitOfficialOrderPreview =
               buildBillitOfficialOrderRequestPreview(billitPayloadPreview, {
                 party_id: billitPartyId,
                 environment_hint: billitEnvironment,
+                payment_terms_days: billitPaymentTermsDays,
+                payment_terms_source: "platform_default",
               });
 
             console.log(
@@ -31619,6 +31682,15 @@ POST /admin/mollie/connect/disconnect
             // no KV write). Shared across every document candidate below.
             const billitPartyId = await readBillitPartyIdForScope(env, scope);
 
+            // Explicit, surfaced payment term shared across every candidate.
+            // Normalized profile always carries payment_terms_days (defaulted to
+            // the platform default); apply the explicit platform default if the
+            // profile is absent. No Business Settings UI exists yet, so we
+            // cannot distinguish a company override and report "platform_default".
+            const billitPaymentTermsDays = normalizeBillitPaymentTermsDays(
+              businessProfile?.payment_terms_days,
+            );
+
             // Index issued invoices by (leg_id|leg_type) for credit-note source
             // invoice overlay (display-only; same as the export-preview route).
             const invoiceIndex = new Map();
@@ -31688,6 +31760,8 @@ POST /admin/mollie/connect/disconnect
                 buildBillitOfficialOrderRequestPreview(preview, {
                   party_id: billitPartyId,
                   environment_hint: billitEnvironment,
+                  payment_terms_days: billitPaymentTermsDays,
+                  payment_terms_source: "platform_default",
                 });
               return {
                 document_id: preview.document_id,
@@ -78266,13 +78340,40 @@ function buildBillitOfficialOrderRequestPreview(providerNeutralPreview, options 
     safeStr(references.source_booking_id, 200) ||
     null;
 
-  // ---- Dates ----
-  // OrderDate from the issued document timestamp. ExpiryDate only when a real
-  // due date / payment term is available; we never invent payment terms.
+  // ---- Dates + payment terms ----
+  // OrderDate from the issued document timestamp. ExpiryDate is taken from an
+  // explicit document-level due date when present; otherwise derived from an
+  // explicit (surfaced) payment term so the result is never silently invented.
   const orderDate = _dateOnlyOrNull(preview.issue_timestamp);
-  const expiryDate =
+  const explicitDueDate =
     _dateOnlyOrNull(opts.due_date ?? opts.expiry_date ?? preview.due_date) ||
     null;
+
+  const normalizedPaymentTermsDays = normalizeBillitPaymentTermsDays(
+    opts.payment_terms_days,
+  );
+  // Only treat the caller's payment term as usable when it was actually a valid
+  // 0..365 integer (normalizer would otherwise silently coerce to the default).
+  const rawPaymentTerms = Number(opts.payment_terms_days);
+  const paymentTermsProvided =
+    Number.isFinite(rawPaymentTerms) &&
+    Math.trunc(rawPaymentTerms) >= 0 &&
+    Math.trunc(rawPaymentTerms) <= 365;
+
+  let expiryDate = explicitDueDate;
+  let paymentTermsDays = null;
+  let paymentTermsSource = null;
+  if (explicitDueDate) {
+    paymentTermsSource = "explicit_due_date";
+  } else if (orderDate && paymentTermsProvided) {
+    const derived = addDaysToDateOnly(orderDate, normalizedPaymentTermsDays);
+    if (derived) {
+      expiryDate = derived;
+      paymentTermsDays = normalizedPaymentTermsDays;
+      paymentTermsSource =
+        safeStr(opts.payment_terms_source, 40) || "platform_default";
+    }
+  }
 
   // ---- Customer ----
   const customer =
@@ -78374,6 +78475,8 @@ function buildBillitOfficialOrderRequestPreview(providerNeutralPreview, options 
     endpoint: "/v1/orders",
     method: "POST",
     environment_hint: environmentHint,
+    payment_terms_days: paymentTermsDays,
+    payment_terms_source: paymentTermsSource,
     headers_preview: {
       PartyID: partyId,
       Authorization: "Bearer ***",
