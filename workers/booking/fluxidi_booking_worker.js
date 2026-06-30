@@ -811,6 +811,28 @@ async function readBillitConnectionStatusForScope(env, scope) {
   };
 }
 
+/* Read-only PartyID resolver for an already-authenticated tenant/company scope.
+ * Returns ONLY the Billit PartyID string (or null) from the stored OAuth
+ * connection record. NEVER returns access/refresh tokens, encrypted values, or
+ * the raw OAuth record. No token refresh, no external Billit call, strict
+ * tenant/company scope. Used by the read-only Billit Order *candidate* preview;
+ * any KV/binding error is swallowed into a null PartyID (non-blocking). */
+async function readBillitPartyIdForScope(env, scope) {
+  if (!env?.BOOKING_KV) return null;
+  const key = buildBillitOAuthConnectionKey(scope);
+  if (!key) return null;
+  let record = null;
+  try {
+    record = await env.BOOKING_KV.get(key, { type: "json" });
+  } catch (_) {
+    record = null;
+  }
+  if (!record || typeof record !== "object" || Array.isArray(record)) {
+    return null;
+  }
+  return safeStr(record.party_id ?? record.partyId, 120) || null;
+}
+
 /* Shared Billit OAuth start for an already-authenticated tenant/company scope.
  * Generates+stores the state, marks the connection authorization_started, and
  * returns { status, body } for the caller to serialise. No token call here, no
@@ -30891,8 +30913,22 @@ POST /admin/mollie/connect/disconnect
                 billit_environment: billitEnvironment,
               });
 
+            // Read-only PartyID (no token, no fetch) + sanitized Billit Order
+            // candidate projection. Strictly additive: never sends, never
+            // mutates, and only mirrors fields already present in the preview.
+            const billitPartyId = await readBillitPartyIdForScope(env, scope);
+            const billitOrderCandidate = buildBillitOrderCandidatePreview(
+              billitPayloadPreview,
+              {
+                party_id: billitPartyId,
+                tenant_id: scope.tenant_id,
+                company_id: scope.company_id,
+                environment_hint: billitEnvironment,
+              },
+            );
+
             console.log(
-              `[BILLIT_PAYLOAD_PREVIEW][OK] doc=${docMask} kind=${billitPayloadPreview.billit_document_kind || "-"} peppol_ready=${billitPayloadPreview.peppol.ready} warnings=${billitPayloadPreview.warnings.length}`,
+              `[BILLIT_PAYLOAD_PREVIEW][OK] doc=${docMask} kind=${billitPayloadPreview.billit_document_kind || "-"} peppol_ready=${billitPayloadPreview.peppol.ready} warnings=${billitPayloadPreview.warnings.length} party=${billitPartyId ? "yes" : "no"}`,
             );
 
             return json({
@@ -30903,7 +30939,9 @@ POST /admin/mollie/connect/disconnect
               document_id: billitPayloadPreview.document_id,
               document_number: billitPayloadPreview.document_number,
               document_type: billitPayloadPreview.document_type,
+              billit_party_id: billitPartyId,
               billit_payload_preview: billitPayloadPreview,
+              billit_order_candidate: billitOrderCandidate,
               warnings: billitPayloadPreview.warnings,
             });
           } catch (err) {
@@ -31518,6 +31556,10 @@ POST /admin/mollie/connect/disconnect
             const billitEnvironment =
               billitEnvironmentRaw === "production" ? "production" : "sandbox";
 
+            // Read-only PartyID once for the whole scope (no token, no fetch,
+            // no KV write). Shared across every document candidate below.
+            const billitPartyId = await readBillitPartyIdForScope(env, scope);
+
             // Index issued invoices by (leg_id|leg_type) for credit-note source
             // invoice overlay (display-only; same as the export-preview route).
             const invoiceIndex = new Map();
@@ -31574,6 +31616,15 @@ POST /admin/mollie/connect/disconnect
                   ...scope,
                   billit_environment: billitEnvironment,
                 });
+              const billitOrderCandidate = buildBillitOrderCandidatePreview(
+                preview,
+                {
+                  party_id: billitPartyId,
+                  tenant_id: scope.tenant_id,
+                  company_id: scope.company_id,
+                  environment_hint: billitEnvironment,
+                },
+              );
               return {
                 document_id: preview.document_id,
                 document_number: preview.document_number,
@@ -31581,18 +31632,20 @@ POST /admin/mollie/connect/disconnect
                 billit_document_kind: preview.billit_document_kind,
                 send_enabled: false,
                 billit_payload_preview: preview,
+                billit_order_candidate: billitOrderCandidate,
                 warnings: preview.warnings,
               };
             });
 
             console.log(
-              `[BILLIT_PAYLOAD_PREVIEW][BOOKING_OK] booking=${_bookingIntentMask(sourceBookingId)} count=${documents.length}`,
+              `[BILLIT_PAYLOAD_PREVIEW][BOOKING_OK] booking=${_bookingIntentMask(sourceBookingId)} count=${documents.length} party=${billitPartyId ? "yes" : "no"}`,
             );
 
             return json({
               ok: true,
               provider: "billit",
               dry_run: true,
+              billit_party_id: billitPartyId,
               count: documents.length,
               documents,
             });
@@ -77893,6 +77946,184 @@ function buildBillitPayloadPreviewFromProviderNeutralDocument(docPreview, scope)
     warnings,
     unsupported_fields: unsupportedFields,
     notes,
+  };
+}
+
+/* Pure, dry-run mapper that projects the provider-neutral Billit payload
+ * preview (output of buildBillitPayloadPreviewFromProviderNeutralDocument) into
+ * a sanitized Billit Order *candidate* shape (field-name hints only).
+ *
+ * This is NOT the official Billit Order contract and is NEVER sent: it performs
+ * no KV access, no fetch, and reads no OAuth token. It only mirrors fields that
+ * are already present in the supplied preview (no new PII is introduced) plus
+ * the PartyID passed in by the caller. send_enabled is hard-false by design. */
+function buildBillitOrderCandidatePreview(providerNeutralPreview, options = {}) {
+  const preview =
+    providerNeutralPreview && typeof providerNeutralPreview === "object"
+      ? providerNeutralPreview
+      : {};
+  const opts = options && typeof options === "object" ? options : {};
+
+  const partyId = safeStr(opts.party_id ?? opts.partyId, 120) || null;
+  const docType = safeStr(preview.document_type, 40).toLowerCase() || null;
+  const isInvoiceLike = docType === "invoice" || docType === "credit_note";
+
+  // ---- OrderType / OrderDirection (conservative; sales documents only) ----
+  let orderType = null;
+  if (docType === "invoice") orderType = "Invoice";
+  else if (docType === "credit_note") orderType = "CreditNote";
+  const orderDirection = isInvoiceLike ? "Income" : null;
+
+  const currency = safeStr(preview.currency, 8).toUpperCase() || null;
+  const orderNumber = preview.document_number ?? null;
+
+  const references =
+    preview.references && typeof preview.references === "object"
+      ? preview.references
+      : {};
+  const reference =
+    safeStr(references.source_invoice_reference, 80) ||
+    safeStr(references.source_booking_id, 200) ||
+    null;
+
+  // ---- CounterParty (only fields already present in the preview) ----
+  const customer =
+    preview.customer && typeof preview.customer === "object"
+      ? preview.customer
+      : {};
+  const counterPartyName =
+    safeStr(customer.legal_name, 240) ||
+    safeStr(customer.display_name, 240) ||
+    safeStr(customer.name, 240) ||
+    null;
+  const counterPartyEmail =
+    safeStr(customer.contact_email, 240) ||
+    safeStr(customer.email, 240) ||
+    null;
+  const counterPartyVat = safeStr(customer.vat_number, 64) || null;
+
+  const addresses = [];
+  const structuredAddr =
+    customer.billing_address && typeof customer.billing_address === "object"
+      ? customer.billing_address
+      : null;
+  if (structuredAddr) {
+    const street = safeStr(structuredAddr.street, 240) || null;
+    const postalCode = safeStr(structuredAddr.postal_code, 32) || null;
+    const city = safeStr(structuredAddr.city, 120) || null;
+    const country = safeStr(structuredAddr.country, 8).toUpperCase() || null;
+    if (street || postalCode || city || country) {
+      addresses.push({
+        Street: street,
+        PostalCode: postalCode,
+        City: city,
+        CountryCode: country,
+      });
+    }
+  } else {
+    // Legacy fallback customer shape (name/address_line/postal_code/...).
+    const street = safeStr(customer.address_line, 240) || null;
+    const postalCode = safeStr(customer.postal_code, 32) || null;
+    const city = safeStr(customer.city, 120) || null;
+    const country = safeStr(customer.country_code, 8).toUpperCase() || null;
+    if (street || postalCode || city || country) {
+      addresses.push({
+        Street: street,
+        PostalCode: postalCode,
+        City: city,
+        CountryCode: country,
+      });
+    }
+  }
+
+  const counterParty = {
+    Name: counterPartyName,
+    Email: counterPartyEmail,
+    VATNumber: counterPartyVat,
+    Addresses: addresses,
+  };
+
+  // ---- OrderLines (invoice-like only; mirror already-mapped preview lines) ----
+  const sourceLines = Array.isArray(preview.lines) ? preview.lines : [];
+  const orderLines = [];
+  let lineVatIncomplete = false;
+  if (isInvoiceLike) {
+    for (const li of sourceLines) {
+      if (!li || typeof li !== "object" || Array.isArray(li)) continue;
+      const unitPriceRaw = Number(li.unit_price_ex_vat);
+      const vatPercentRaw = Number(li.vat_rate_percent);
+      const quantityRaw = Number(li.quantity);
+      const unitPrice =
+        li.unit_price_ex_vat === null || li.unit_price_ex_vat === undefined
+          ? null
+          : Number.isFinite(unitPriceRaw)
+            ? unitPriceRaw
+            : null;
+      const vatPercent =
+        li.vat_rate_percent === null || li.vat_rate_percent === undefined
+          ? null
+          : Number.isFinite(vatPercentRaw)
+            ? vatPercentRaw
+            : null;
+      if (unitPrice === null || vatPercent === null) lineVatIncomplete = true;
+      orderLines.push({
+        Description: safeStr(li.description, 240) || null,
+        Quantity:
+          li.quantity === null || li.quantity === undefined
+            ? null
+            : Number.isFinite(quantityRaw)
+              ? quantityRaw
+              : null,
+        UnitPriceExcl: unitPrice,
+        VATPercentage: vatPercent,
+      });
+    }
+    if (orderLines.length === 0) lineVatIncomplete = true;
+  }
+
+  // ---- Warnings (non-blocking) ----
+  const warnings = [];
+  if (!partyId) warnings.push("billit_party_id_missing");
+  if (!counterPartyName) warnings.push("counterparty_name_missing");
+  if (!counterPartyVat) warnings.push("counterparty_vat_missing");
+  if (addresses.length === 0) warnings.push("counterparty_address_missing");
+  if (isInvoiceLike && lineVatIncomplete) {
+    warnings.push("line_vat_mapping_incomplete");
+  }
+  warnings.push("candidate_not_official_billit_contract");
+
+  // ---- Readiness (candidate completeness; never enables sending) ----
+  const readinessReasons = [];
+  if (!orderType) readinessReasons.push("unsupported_document_type");
+  if (!partyId) readinessReasons.push("billit_party_id_missing");
+  if (!counterPartyName) readinessReasons.push("counterparty_name_missing");
+  if (!currency) readinessReasons.push("missing_currency");
+  if (isInvoiceLike && orderLines.length === 0) {
+    readinessReasons.push("missing_order_lines");
+  }
+
+  return {
+    dry_run: true,
+    send_enabled: false,
+    candidate_not_official_billit_contract: true,
+    environment_hint:
+      safeStr(opts.environment_hint, 24) ||
+      safeStr(preview.environment_hint, 24) ||
+      null,
+    PartyID: partyId,
+    OrderType: orderType,
+    OrderDirection: orderDirection,
+    OrderNumber: orderNumber,
+    Reference: reference,
+    Currency: currency,
+    CounterParty: counterParty,
+    OrderLines: orderLines,
+    readiness: {
+      candidate: isInvoiceLike,
+      ready: isInvoiceLike && readinessReasons.length === 0,
+      reasons: readinessReasons,
+    },
+    warnings,
   };
 }
 
