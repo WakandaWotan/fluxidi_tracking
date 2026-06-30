@@ -833,6 +833,41 @@ async function readBillitPartyIdForScope(env, scope) {
   return safeStr(record.party_id ?? record.partyId, 120) || null;
 }
 
+/* Persist a sanitized Billit PartyID onto the scoped OAuth connection record
+ * in KV. Used after a successful connection-test probe so read-only preview
+ * routes can resolve party_id without another Billit call. Spreads the supplied
+ * in-memory record (including any freshly refreshed encrypted tokens from the
+ * same request) and only adds party_id metadata. Never stores probe raw body or
+ * token plaintext; non-fatal on KV failure. */
+async function persistBillitPartyIdOnConnectionRecord(
+  env,
+  scope,
+  record,
+  partyId,
+  checkedAt,
+) {
+  const safePartyId = safeStr(partyId, 120);
+  if (!safePartyId) return record;
+  if (!env?.BOOKING_KV) return record;
+  if (!record || typeof record !== "object" || Array.isArray(record)) {
+    return record;
+  }
+  const connKey = buildBillitOAuthConnectionKey(scope);
+  if (!connKey) return record;
+  const updated = {
+    ...record,
+    party_id: safePartyId,
+    party_id_checked_at: safeStr(checkedAt, 40) || new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  };
+  try {
+    await env.BOOKING_KV.put(connKey, JSON.stringify(updated));
+    return updated;
+  } catch (_) {
+    return record;
+  }
+}
+
 /* Shared Billit OAuth start for an already-authenticated tenant/company scope.
  * Generates+stores the state, marks the connection authorization_started, and
  * returns { status, body } for the caller to serialise. No token call here, no
@@ -1346,7 +1381,6 @@ async function handleAdminBillitConnectionTest({ request, url, env }) {
 
   // 9. Exactly ONE read-only GET probe against the Billit sandbox.
   const probe = await callBillitSandboxConnectionProbe(config, accessToken, env);
-  const partyId = probe.party_id || safeStr(record.party_id, 120) || null;
 
   // 10. Safe response (never a token/secret/raw body).
   if (!probe.ok) {
@@ -1366,8 +1400,27 @@ async function handleAdminBillitConnectionTest({ request, url, env }) {
     });
   }
 
+  // 11. Persist sanitized party_id metadata so read-only preview routes can
+  // resolve billit_party_id without another Billit call. Uses the latest in-
+  // memory record (including any token refresh applied above).
+  const recordForResponse = record;
+  const persistedRecord = probe.party_id
+    ? await persistBillitPartyIdOnConnectionRecord(
+        env,
+        scope,
+        recordForResponse,
+        probe.party_id,
+        checkedAt,
+      )
+    : recordForResponse;
+  const partyId =
+    safeStr(probe.party_id, 120) ||
+    safeStr(persistedRecord.party_id ?? persistedRecord.partyId, 120) ||
+    safeStr(recordForResponse.party_id ?? recordForResponse.partyId, 120) ||
+    null;
+
   console.log(
-    `[BILLIT_OAUTH][CONNECTION_TEST][OK] tenant=${scope.tenant_id} company=${scope.company_id} status=${probe.status_code} refreshed=${refreshed}`,
+    `[BILLIT_OAUTH][CONNECTION_TEST][OK] tenant=${scope.tenant_id} company=${scope.company_id} status=${probe.status_code} refreshed=${refreshed} party=${partyId ? "yes" : "no"}`,
   );
   return json({
     ok: true,
