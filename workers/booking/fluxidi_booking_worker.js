@@ -919,6 +919,401 @@ async function disconnectBillitOAuthForScope(env, scope) {
   };
 }
 
+/* ===================================================================== *
+ * BILLIT SANDBOX CONNECTION TEST (Patch B1)
+ * Admin-only, READ-ONLY connection probe. Verifies that the stored Billit
+ * OAuth connection for a tenant/company can perform a single non-mutating
+ * GET against the Billit SANDBOX API. It NEVER creates/sends/exports an
+ * invoice, draft, order or document, and NEVER returns or logs any
+ * token/secret. Sandbox-only by design.
+ * ===================================================================== */
+
+// Single, isolated read-only probe endpoint (PATH only; the host comes from
+// resolveBillitOAuthConfig().api_base_url, i.e. the sandbox host). Kept as one
+// constant so the exact Billit "account/party info" resource is trivial to
+// adjust once confirmed. It MUST stay a non-mutating GET resource.
+// NOTE: the exact Billit "who am I / party" path is not 100% certain from the
+// public docs; "/v1/party/me" is the current best candidate. It can be
+// overridden per-environment via env.BILLIT_CONNECTION_PROBE_PATH WITHOUT a
+// code change. It is NEVER an invoice/create/send/draft/export endpoint.
+const BILLIT_SANDBOX_CONNECTION_PROBE_PATH = "/v1/party/me";
+
+// Resolve the probe path, honouring an optional env override. Defensive:
+// even an override can never point at a mutating invoice/send-like endpoint.
+function _resolveBillitConnectionProbePath(env) {
+  const override = safeStr(env?.BILLIT_CONNECTION_PROBE_PATH, 300);
+  const path = override || BILLIT_SANDBOX_CONNECTION_PROBE_PATH;
+  const lowered = path.toLowerCase();
+  const forbidden = [
+    "invoice",
+    "send",
+    "draft",
+    "export",
+    "create",
+    "document",
+    "order",
+    "peppol",
+  ];
+  for (const token of forbidden) {
+    if (lowered.includes(token)) return BILLIT_SANDBOX_CONNECTION_PROBE_PATH;
+  }
+  return path.startsWith("/") ? path : `/${path}`;
+}
+
+/* ISOLATED read-only Billit sandbox probe. Performs exactly ONE GET with the
+ * decrypted access token in an Authorization header. Returns ONLY safe status
+ * metadata; NEVER returns the raw body and NEVER logs the token. */
+async function callBillitSandboxConnectionProbe(config, accessToken, env) {
+  const base = String(config.api_base_url || "").replace(/\/+$/, "");
+  const probePath = _resolveBillitConnectionProbePath(env);
+  const probeUrl = `${base}${probePath}`;
+  let resp;
+  try {
+    resp = await fetch(probeUrl, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        Accept: "application/json",
+      },
+    });
+  } catch (_) {
+    return {
+      ok: false,
+      status_code: null,
+      billit_error_code: "probe_request_failed",
+      party_id: null,
+    };
+  }
+  const statusCode = resp.status;
+  let data = null;
+  try {
+    data = await resp.json();
+  } catch (_) {
+    data = null;
+  }
+  const isObj = data && typeof data === "object" && !Array.isArray(data);
+  if (!resp.ok) {
+    // Surface only a short, safe error CODE from the body (never the raw body).
+    const billitErrorCode = isObj
+      ? safeStr(
+          data.error ?? data.Error ?? data.code ?? data.Code ?? data.error_code,
+          80,
+        ) || null
+      : null;
+    return {
+      ok: false,
+      status_code: statusCode,
+      billit_error_code: billitErrorCode,
+      party_id: null,
+    };
+  }
+  // Safe party id extraction only (no other body fields are surfaced).
+  const partyId = isObj
+    ? safeStr(
+        data.PartyID ??
+          data.partyID ??
+          data.party_id ??
+          data.partyId ??
+          data.id ??
+          data.Id ??
+          data.ID,
+        120,
+      ) || null
+    : null;
+  return {
+    ok: true,
+    status_code: statusCode,
+    billit_error_code: null,
+    party_id: partyId,
+  };
+}
+
+/* Admin-only Billit SANDBOX connection test handler. Returns a json() Response.
+ * Flow: admin auth -> resolve config -> sandbox-only guard -> configured guard
+ * -> explicit tenant/company scope (no legacy fallback) -> load connection
+ * record -> server-side decrypt -> optional single-use refresh when expired ->
+ * exactly one read-only probe. NEVER returns or logs tokens/secrets. */
+async function handleAdminBillitConnectionTest({ request, url, env }) {
+  const checkedAt = new Date().toISOString();
+
+  // 1. Admin auth (same pattern as the other admin Billit routes).
+  try {
+    _requireAdmin(request, url, env);
+  } catch (err) {
+    const message = String(err?.message || "Unauthorized");
+    return json(
+      {
+        ok: false,
+        error:
+          message === "Unauthorized" ? "unauthorized" : "admin_unavailable",
+        checked_at: checkedAt,
+      },
+      message === "Unauthorized" ? 401 : 500,
+    );
+  }
+
+  // 2. Resolve config + 3. SANDBOX-ONLY guard (before any KV/network work).
+  const config = resolveBillitOAuthConfig(env);
+  if (config.environment !== "sandbox") {
+    return json(
+      {
+        ok: false,
+        error: "billit_connection_test_sandbox_only",
+        environment: config.environment,
+        checked_at: checkedAt,
+      },
+      400,
+    );
+  }
+
+  // 4. Configured guard. missing_fields are env-var NAMES only, never values.
+  if (!config.configured) {
+    return json(
+      {
+        ok: false,
+        error: "billit_oauth_not_configured",
+        environment: "sandbox",
+        missing_fields: config.missing_fields,
+        checked_at: checkedAt,
+      },
+      400,
+    );
+  }
+
+  // 5. Explicit tenant/company scope (no legacy fallback). Body is optional.
+  const body = await safeJson(request);
+  const scopedRoute = requireExplicitBookingRouteScope({
+    request,
+    url,
+    body: body && typeof body === "object" ? body : null,
+  });
+  if (!scopedRoute.ok) return scopedRoute.response;
+  const scope = {
+    tenant_id: scopedRoute.scope.tenant_id,
+    company_id: scopedRoute.scope.company_id,
+  };
+
+  if (!env?.BOOKING_KV) {
+    return json(
+      {
+        ok: false,
+        error: "missing_binding",
+        environment: "sandbox",
+        checked_at: checkedAt,
+      },
+      503,
+    );
+  }
+
+  // 6. Load the existing scoped Billit OAuth connection record.
+  const connKey = buildBillitOAuthConnectionKey(scope);
+  if (!connKey) {
+    return json(
+      {
+        ok: false,
+        error: "missing_tenant_scope",
+        environment: "sandbox",
+        checked_at: checkedAt,
+      },
+      400,
+    );
+  }
+  let record = null;
+  try {
+    record = await env.BOOKING_KV.get(connKey, { type: "json" });
+  } catch (_) {
+    record = null;
+  }
+  if (
+    !record ||
+    typeof record !== "object" ||
+    record.connected !== true ||
+    !record.access_token_encrypted
+  ) {
+    return json(
+      {
+        ok: false,
+        error: "billit_not_connected",
+        environment: "sandbox",
+        checked_at: checkedAt,
+      },
+      409,
+    );
+  }
+
+  // 7. Decrypt the access token SERVER-SIDE only (never returned/logged).
+  if (!billitTokenEncryptionAvailable(env)) {
+    return json(
+      {
+        ok: false,
+        error: "billit_token_encryption_unavailable",
+        environment: "sandbox",
+        checked_at: checkedAt,
+      },
+      400,
+    );
+  }
+  let accessToken = "";
+  try {
+    accessToken = await decryptBillitTokenValue(
+      record.access_token_encrypted,
+      env,
+    );
+  } catch (_) {
+    accessToken = "";
+  }
+  if (!accessToken) {
+    return json(
+      {
+        ok: false,
+        error: "billit_token_decrypt_failed",
+        environment: "sandbox",
+        checked_at: checkedAt,
+      },
+      500,
+    );
+  }
+
+  // 8. Optional single-use refresh when the access token is expired (or within
+  // a 60s skew) AND a refresh token is safely available. Billit refresh tokens
+  // are single-use, so a newly returned refresh_token MUST replace the stored
+  // one. Never expose token values; `refreshed` is a boolean only.
+  let refreshed = false;
+  const expiresAtMs = record.expires_at ? Date.parse(record.expires_at) : NaN;
+  const isExpired = Number.isFinite(expiresAtMs)
+    ? expiresAtMs - Date.now() <= 60_000
+    : false;
+  if (isExpired) {
+    if (!record.refresh_token_encrypted) {
+      return json(
+        {
+          ok: false,
+          error: "billit_token_expired_no_refresh",
+          environment: "sandbox",
+          checked_at: checkedAt,
+        },
+        409,
+      );
+    }
+    let refreshToken = "";
+    try {
+      refreshToken = await decryptBillitTokenValue(
+        record.refresh_token_encrypted,
+        env,
+      );
+    } catch (_) {
+      refreshToken = "";
+    }
+    if (!refreshToken) {
+      return json(
+        {
+          ok: false,
+          error: "billit_token_decrypt_failed",
+          environment: "sandbox",
+          checked_at: checkedAt,
+        },
+        500,
+      );
+    }
+    const refreshResult = await refreshBillitOAuthToken(config, refreshToken);
+    if (!refreshResult.ok) {
+      try {
+        const errRecord = {
+          ...record,
+          updated_at: new Date().toISOString(),
+          last_error_code: "token_refresh_failed",
+        };
+        await env.BOOKING_KV.put(connKey, JSON.stringify(errRecord));
+      } catch (_) {
+        // non-fatal
+      }
+      console.log(
+        `[BILLIT_OAUTH][CONNECTION_TEST][REFRESH_FAIL] tenant=${scope.tenant_id} company=${scope.company_id}`,
+      );
+      return json(
+        {
+          ok: false,
+          error: "billit_token_refresh_failed",
+          environment: "sandbox",
+          checked_at: checkedAt,
+        },
+        502,
+      );
+    }
+    try {
+      const newAccessEncrypted = await encryptBillitTokenValue(
+        refreshResult.access_token,
+        env,
+      );
+      const newRefreshEncrypted = refreshResult.refresh_token
+        ? await encryptBillitTokenValue(refreshResult.refresh_token, env)
+        : record.refresh_token_encrypted;
+      const newExpiresAt =
+        refreshResult.expires_in !== null &&
+        refreshResult.expires_in !== undefined
+          ? new Date(Date.now() + refreshResult.expires_in * 1000).toISOString()
+          : null;
+      const updatedRecord = {
+        ...record,
+        updated_at: new Date().toISOString(),
+        token_type: refreshResult.token_type || record.token_type || "Bearer",
+        access_token_encrypted: newAccessEncrypted,
+        refresh_token_encrypted: newRefreshEncrypted,
+        expires_at: newExpiresAt,
+        last_error_code: null,
+      };
+      await env.BOOKING_KV.put(connKey, JSON.stringify(updatedRecord));
+      record = updatedRecord;
+      accessToken = refreshResult.access_token;
+      refreshed = true;
+    } catch (_) {
+      return json(
+        {
+          ok: false,
+          error: "billit_token_persist_failed",
+          environment: "sandbox",
+          checked_at: checkedAt,
+        },
+        500,
+      );
+    }
+  }
+
+  // 9. Exactly ONE read-only GET probe against the Billit sandbox.
+  const probe = await callBillitSandboxConnectionProbe(config, accessToken, env);
+  const partyId = probe.party_id || safeStr(record.party_id, 120) || null;
+
+  // 10. Safe response (never a token/secret/raw body).
+  if (!probe.ok) {
+    console.log(
+      `[BILLIT_OAUTH][CONNECTION_TEST][FAIL] tenant=${scope.tenant_id} company=${scope.company_id} status=${probe.status_code ?? "-"} refreshed=${refreshed}`,
+    );
+    return json({
+      ok: false,
+      error: "billit_connection_test_failed",
+      environment: "sandbox",
+      connected: false,
+      status_code: probe.status_code,
+      billit_error_code: probe.billit_error_code,
+      refreshed,
+      checked_at: checkedAt,
+    });
+  }
+
+  console.log(
+    `[BILLIT_OAUTH][CONNECTION_TEST][OK] tenant=${scope.tenant_id} company=${scope.company_id} status=${probe.status_code} refreshed=${refreshed}`,
+  );
+  return json({
+    ok: true,
+    environment: "sandbox",
+    connected: true,
+    status_code: probe.status_code,
+    refreshed,
+    party_id: partyId,
+    checked_at: checkedAt,
+  });
+}
+
 // Small HTML response helper for the browser-facing OAuth callback. No
 // secrets/tokens ever included.
 function _billitCallbackHtml(message, status = 200) {
@@ -26979,6 +27374,27 @@ export default {
         } catch (err) {
           console.log(
             `[BILLIT_OAUTH][DISCONNECT][ERR] ${safeStr(err?.message, 160) || "unknown"}`,
+          );
+          return json({ ok: false, error: "internal_error" }, 500);
+        }
+      }
+
+      // POST /admin/integrations/billit/connection/test?tenant_id=...&company_id=...
+      // Patch B1: admin-only, READ-ONLY Billit SANDBOX connection probe. Does
+      // exactly one non-mutating GET against the Billit sandbox account/party
+      // endpoint to confirm the stored OAuth connection works. It NEVER
+      // creates/sends/exports a document, invoice or draft, and NEVER returns
+      // or logs any token/secret. Sandbox-only by design (see
+      // handleAdminBillitConnectionTest).
+      if (
+        url.pathname === "/admin/integrations/billit/connection/test" &&
+        request.method === "POST"
+      ) {
+        try {
+          return await handleAdminBillitConnectionTest({ request, url, env });
+        } catch (err) {
+          console.log(
+            `[BILLIT_OAUTH][CONNECTION_TEST][ERR] ${safeStr(err?.message, 160) || "unknown"}`,
           );
           return json({ ok: false, error: "internal_error" }, 500);
         }
