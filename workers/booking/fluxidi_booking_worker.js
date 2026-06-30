@@ -1474,6 +1474,432 @@ async function handleAdminBillitConnectionTest({ request, url, env }) {
   });
 }
 
+/* Shared, self-contained acquisition of a usable Billit SANDBOX access token for
+ * server-side API calls. Loads the scoped OAuth connection record, decrypts the
+ * access token SERVER-SIDE only, and performs a single-use refresh when the
+ * token is expired (persisting rotated tokens, like the connection test). NEVER
+ * logs token values; the access_token is returned for caller-only use. Returns
+ * { ok, status, error, access_token, refreshed, party_id }. */
+async function acquireBillitSandboxAccessToken(env, scope, config) {
+  if (!env?.BOOKING_KV) {
+    return { ok: false, status: 503, error: "missing_binding" };
+  }
+  const connKey = buildBillitOAuthConnectionKey(scope);
+  if (!connKey) {
+    return { ok: false, status: 400, error: "missing_tenant_scope" };
+  }
+  let record = null;
+  try {
+    record = await env.BOOKING_KV.get(connKey, { type: "json" });
+  } catch (_) {
+    record = null;
+  }
+  if (
+    !record ||
+    typeof record !== "object" ||
+    record.connected !== true ||
+    !record.access_token_encrypted
+  ) {
+    return { ok: false, status: 409, error: "billit_not_connected" };
+  }
+  if (!billitTokenEncryptionAvailable(env)) {
+    return { ok: false, status: 400, error: "billit_token_encryption_unavailable" };
+  }
+  let accessToken = "";
+  try {
+    accessToken = await decryptBillitTokenValue(record.access_token_encrypted, env);
+  } catch (_) {
+    accessToken = "";
+  }
+  if (!accessToken) {
+    return { ok: false, status: 500, error: "billit_token_decrypt_failed" };
+  }
+
+  // Single-use refresh when expired (or within a 60s skew) AND a refresh token
+  // is available. Mirrors the connection-test refresh path exactly.
+  let refreshed = false;
+  const expiresAtMs = record.expires_at ? Date.parse(record.expires_at) : NaN;
+  const isExpired = Number.isFinite(expiresAtMs)
+    ? expiresAtMs - Date.now() <= 60_000
+    : false;
+  if (isExpired) {
+    if (!record.refresh_token_encrypted) {
+      return { ok: false, status: 409, error: "billit_token_expired_no_refresh" };
+    }
+    let refreshToken = "";
+    try {
+      refreshToken = await decryptBillitTokenValue(record.refresh_token_encrypted, env);
+    } catch (_) {
+      refreshToken = "";
+    }
+    if (!refreshToken) {
+      return { ok: false, status: 500, error: "billit_token_decrypt_failed" };
+    }
+    const refreshResult = await refreshBillitOAuthToken(config, refreshToken);
+    if (!refreshResult.ok) {
+      try {
+        await env.BOOKING_KV.put(
+          connKey,
+          JSON.stringify({
+            ...record,
+            updated_at: new Date().toISOString(),
+            last_error_code: "token_refresh_failed",
+          }),
+        );
+      } catch (_) {
+        // non-fatal
+      }
+      return { ok: false, status: 502, error: "billit_token_refresh_failed" };
+    }
+    try {
+      const newAccessEncrypted = await encryptBillitTokenValue(refreshResult.access_token, env);
+      const newRefreshEncrypted = refreshResult.refresh_token
+        ? await encryptBillitTokenValue(refreshResult.refresh_token, env)
+        : record.refresh_token_encrypted;
+      const newExpiresAt =
+        refreshResult.expires_in !== null && refreshResult.expires_in !== undefined
+          ? new Date(Date.now() + refreshResult.expires_in * 1000).toISOString()
+          : null;
+      const updatedRecord = {
+        ...record,
+        updated_at: new Date().toISOString(),
+        token_type: refreshResult.token_type || record.token_type || "Bearer",
+        access_token_encrypted: newAccessEncrypted,
+        refresh_token_encrypted: newRefreshEncrypted,
+        expires_at: newExpiresAt,
+        last_error_code: null,
+      };
+      await env.BOOKING_KV.put(connKey, JSON.stringify(updatedRecord));
+      record = updatedRecord;
+      accessToken = refreshResult.access_token;
+      refreshed = true;
+    } catch (_) {
+      return { ok: false, status: 500, error: "billit_token_persist_failed" };
+    }
+  }
+
+  const partyId = safeStr(record.party_id ?? record.partyId, 120) || null;
+  return { ok: true, status: 200, access_token: accessToken, refreshed, party_id: partyId };
+}
+
+/* The ONLY new outbound Billit call in B6a: create exactly one order via
+ * POST {api_base_url}/v1/orders against the SANDBOX host. Returns a sanitized
+ * summary only; NEVER logs/returns the token or the raw provider body. */
+async function postBillitSandboxOrderCreate(config, accessToken, partyId, createRequest) {
+  const base = String(config.api_base_url || "").replace(/\/+$/, "");
+  const endpoint = safeStr(createRequest?.endpoint, 80) || "/v1/orders";
+  const createUrl = `${base}${endpoint}`;
+  let resp;
+  try {
+    resp = await fetch(createUrl, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        PartyID: safeStr(partyId, 120),
+        "Idempotent-Key": safeStr(createRequest?.idempotency_key, 200),
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify(createRequest?.body ?? {}),
+    });
+  } catch (_) {
+    return {
+      ok: false,
+      status_code: null,
+      billit_error_code: "order_create_request_failed",
+      billit_error_description: null,
+      summary: null,
+    };
+  }
+  const statusCode = resp.status;
+  let data = null;
+  try {
+    data = await resp.json();
+  } catch (_) {
+    data = null;
+  }
+  const isObj = data && typeof data === "object" && !Array.isArray(data);
+  const firstError =
+    isObj && Array.isArray(data.errors) && data.errors.length > 0 &&
+    data.errors[0] && typeof data.errors[0] === "object"
+      ? data.errors[0]
+      : null;
+  if (!resp.ok) {
+    const billitErrorCode = isObj
+      ? safeStr(
+          (firstError && (firstError.Code ?? firstError.code)) ??
+            data.error ??
+            data.Error ??
+            data.code ??
+            data.Code ??
+            data.error_code,
+          80,
+        ) || null
+      : null;
+    const billitErrorDescription = isObj
+      ? safeStr(
+          (firstError && (firstError.Description ?? firstError.description)) ??
+            data.error_description ??
+            data.message ??
+            data.Message,
+          200,
+        ) || null
+      : null;
+    return {
+      ok: false,
+      status_code: statusCode,
+      billit_error_code: billitErrorCode,
+      billit_error_description: billitErrorDescription,
+      summary: null,
+    };
+  }
+  // Billit POST /v1/orders commonly returns the new OrderID as a bare
+  // number/string; otherwise it is an object with order identity fields.
+  let summary;
+  if (typeof data === "number" || (typeof data === "string" && data.trim() !== "")) {
+    summary = {
+      billit_order_id: safeStr(data, 120) || null,
+      billit_order_number: null,
+      billit_status: null,
+    };
+  } else {
+    summary = sanitizeBillitOrderCreateResponse(data);
+  }
+  return {
+    ok: true,
+    status_code: statusCode,
+    billit_error_code: null,
+    billit_error_description: null,
+    summary,
+  };
+}
+
+/* Admin-only, SANDBOX-ONLY Billit order create for ONE invoice document (Patch
+ * B6a). Heavily guarded: explicit confirmation + document_number match, invoice-
+ * only, and the official order preview must be readiness.ready. Performs exactly
+ * one POST /v1/orders. NEVER sends / Peppol-sends, NEVER supports production,
+ * NEVER returns tokens, the raw OAuth record, or the raw Billit body. */
+async function handleAdminBillitSandboxOrderCreate({ request, url, env, documentId }) {
+  // 1. Admin auth (same pattern as the other admin Billit routes).
+  try {
+    _requireAdmin(request, url, env);
+  } catch (err) {
+    const message = String(err?.message || "Unauthorized");
+    return json(
+      {
+        ok: false,
+        error: message === "Unauthorized" ? "unauthorized" : "admin_unavailable",
+      },
+      message === "Unauthorized" ? 401 : 500,
+    );
+  }
+
+  // 2. Resolve config + SANDBOX-ONLY guard (before any KV/network work).
+  const config = resolveBillitOAuthConfig(env);
+  if (config.environment !== "sandbox") {
+    return json(
+      {
+        ok: false,
+        error: "billit_sandbox_create_sandbox_only",
+        environment: config.environment,
+      },
+      409,
+    );
+  }
+  if (!config.configured) {
+    return json(
+      {
+        ok: false,
+        error: "billit_oauth_not_configured",
+        environment: "sandbox",
+        missing_fields: config.missing_fields,
+      },
+      400,
+    );
+  }
+
+  // 3. Parse + validate the explicit confirmation body.
+  const body = await safeJson(request);
+  const bodyObj =
+    body && typeof body === "object" && !Array.isArray(body) ? body : {};
+  if (bodyObj.confirm_sandbox_create !== true) {
+    return json({ ok: false, error: "confirm_sandbox_create_required" }, 400);
+  }
+  const requestedDocNumber = safeStr(bodyObj.document_number, 80);
+  if (!requestedDocNumber) {
+    return json({ ok: false, error: "document_number_required" }, 400);
+  }
+
+  // 4. Explicit tenant/company scope (query or body; no legacy fallback).
+  const scopedRoute = requireExplicitBookingRouteScope({
+    request,
+    url,
+    body: bodyObj,
+  });
+  if (!scopedRoute.ok) return scopedRoute.response;
+  const scope = {
+    tenant_id: scopedRoute.scope.tenant_id,
+    company_id: scopedRoute.scope.company_id,
+  };
+
+  const docId = safeStr(documentId, 200);
+  if (!docId) return json({ ok: false, error: "missing_document_id" }, 400);
+  if (!env?.BOOKING_KV) return json({ ok: false, error: "missing_binding" }, 503);
+
+  // 5. Load the issued document + strict scope check.
+  const record = await loadIssuedDocumentRegistryRecordById(env, scope, docId);
+  const recordTenant = safeStr(record?.tenant_id ?? record?.tenantId, 80);
+  const recordCompany = safeStr(record?.company_id ?? record?.companyId, 80);
+  if (
+    !record ||
+    (recordTenant && recordTenant !== scope.tenant_id) ||
+    (recordCompany && recordCompany !== scope.company_id)
+  ) {
+    return json({ ok: false, error: "document_not_found" }, 404);
+  }
+
+  // 6. Invoice-only guard (credit notes -> B6b; refund proofs not applicable).
+  const docType = safeStr(record?.document_type ?? record?.documentType, 40).toLowerCase();
+  if (docType !== "invoice") {
+    return json(
+      {
+        ok: false,
+        error: "document_type_not_supported_for_b6a",
+        document_type: docType || null,
+      },
+      400,
+    );
+  }
+
+  // 7. document_number must match the issued document.
+  const recordDocNumber = safeStr(record?.document_number ?? record?.documentNumber, 80);
+  if (!recordDocNumber || recordDocNumber !== requestedDocNumber) {
+    return json({ ok: false, error: "document_number_mismatch" }, 400);
+  }
+
+  // 8. Build the SAME official order preview as the read-only preview route.
+  let businessProfile = null;
+  try {
+    businessProfile = await loadBusinessProfile(env, scope, {
+      allowTenantLegacyFallback: true,
+    });
+  } catch (_) {
+    businessProfile = null;
+  }
+  const classification = classifyDocumentExportReadiness(record, businessProfile);
+  const docPreview = buildDocumentExportPreview(record, classification, null);
+  const billitEnvironment = "sandbox";
+  const billitPayloadPreview = buildBillitPayloadPreviewFromProviderNeutralDocument(
+    docPreview,
+    { ...scope, billit_environment: billitEnvironment },
+  );
+
+  // 9. PartyID from KV (read-only) + official order preview.
+  const billitPartyId = await readBillitPartyIdForScope(env, scope);
+  const paymentTermsDays = normalizeBillitPaymentTermsDays(
+    businessProfile?.payment_terms_days,
+  );
+  const officialPreview = buildBillitOfficialOrderRequestPreview(billitPayloadPreview, {
+    party_id: billitPartyId,
+    environment_hint: billitEnvironment,
+    payment_terms_days: paymentTermsDays,
+    payment_terms_source: "platform_default",
+  });
+
+  // 10. Readiness gates (fail-closed before any token decrypt / outbound call).
+  if (!officialPreview || officialPreview.readiness?.ready !== true) {
+    return json(
+      {
+        ok: false,
+        error: "billit_order_not_ready",
+        reasons: Array.isArray(officialPreview?.readiness?.reasons)
+          ? officialPreview.readiness.reasons
+          : [],
+      },
+      409,
+    );
+  }
+  if (!officialPreview.body || typeof officialPreview.body !== "object") {
+    return json({ ok: false, error: "billit_order_body_missing" }, 409);
+  }
+  const previewPartyId = safeStr(officialPreview.headers_preview?.PartyID, 120);
+  if (!previewPartyId) {
+    return json({ ok: false, error: "billit_party_id_missing" }, 409);
+  }
+  if (safeStr(officialPreview.body.OrderType, 40) !== "Invoice") {
+    return json({ ok: false, error: "billit_order_type_not_invoice" }, 409);
+  }
+
+  // 11. Deterministic create request (stable Idempotent-Key, no token inside).
+  const idempotencyKey = buildBillitSandboxOrderCreateIdempotencyKey(docId);
+  const createRequest = buildBillitOfficialOrderCreateRequestFromPreview(
+    officialPreview,
+    { idempotency_key: idempotencyKey },
+  );
+
+  // 12. Acquire a usable sandbox access token (decrypt + single-use refresh).
+  const tokenResult = await acquireBillitSandboxAccessToken(env, scope, config);
+  if (!tokenResult.ok) {
+    return json(
+      { ok: false, error: tokenResult.error, environment: "sandbox" },
+      tokenResult.status || 500,
+    );
+  }
+
+  // 13. The single B6a outbound create call (POST /v1/orders, sandbox host).
+  const createResult = await postBillitSandboxOrderCreate(
+    config,
+    tokenResult.access_token,
+    previewPartyId,
+    createRequest,
+  );
+  if (!createResult.ok) {
+    console.log(
+      `[BILLIT_ORDER_CREATE][SANDBOX][FAIL] doc=${docId.slice(0, 8)} status=${createResult.status_code ?? "-"} refreshed=${tokenResult.refreshed}`,
+    );
+    return json(
+      {
+        ok: false,
+        error: "billit_order_create_failed",
+        environment: "sandbox",
+        status_code: createResult.status_code,
+        billit_error_code: createResult.billit_error_code,
+        billit_error_description: createResult.billit_error_description,
+      },
+      502,
+    );
+  }
+
+  const summary = createResult.summary || {
+    billit_order_id: null,
+    billit_order_number: null,
+    billit_status: null,
+  };
+  console.log(
+    `[BILLIT_ORDER_CREATE][SANDBOX][OK] doc=${docId.slice(0, 8)} order=${summary.billit_order_id ? "yes" : "no"} refreshed=${tokenResult.refreshed}`,
+  );
+
+  // 14. Sanitized result. Persistence of the external order id is DEFERRED to a
+  // later patch (no issued-document registry write in this first create path).
+  const warnings = ["billit_order_persistence_deferred"];
+  if (!summary.billit_status) warnings.push("billit_status_unknown");
+  return json({
+    ok: true,
+    dry_run: false,
+    sandbox_create: true,
+    sent: false,
+    peppol_sent: false,
+    document_id: docId,
+    document_number: recordDocNumber,
+    billit_party_id: previewPartyId,
+    billit_order_id: summary.billit_order_id,
+    billit_order_number: summary.billit_order_number,
+    billit_status: summary.billit_status,
+    idempotency_key: idempotencyKey,
+    warnings,
+  });
+}
+
 // Small HTML response helper for the browser-facing OAuth callback. No
 // secrets/tokens ever included.
 function _billitCallbackHtml(message, status = 200) {
@@ -27567,6 +27993,48 @@ export default {
             `[BILLIT_OAUTH][CONNECTION_TEST][ERR] ${safeStr(err?.message, 160) || "unknown"}`,
           );
           return json({ ok: false, error: "internal_error" }, 500);
+        }
+      }
+
+      // POST /admin/documents/:documentId/billit-order/create/sandbox
+      // Patch B6a: first guarded, SANDBOX-ONLY real Billit order create for ONE
+      // invoice document. Admin-only, requires explicit confirm_sandbox_create
+      // + document_number match, invoice-only, and the official order preview
+      // must be readiness.ready. Performs exactly ONE POST /v1/orders against
+      // the Billit sandbox host. It NEVER sends / Peppol-sends, NEVER supports
+      // production, and NEVER returns tokens, the raw OAuth record, or the raw
+      // Billit response (see handleAdminBillitSandboxOrderCreate).
+      if (
+        request.method === "POST" &&
+        url.pathname.startsWith("/admin/documents/") &&
+        url.pathname.endsWith("/billit-order/create/sandbox")
+      ) {
+        const billitCreateSegments = url.pathname.split("/").filter(Boolean);
+        // Only the exact shape:
+        //   ["admin","documents","<documentId>","billit-order","create","sandbox"]
+        if (
+          billitCreateSegments.length === 6 &&
+          billitCreateSegments[0] === "admin" &&
+          billitCreateSegments[1] === "documents" &&
+          billitCreateSegments[3] === "billit-order" &&
+          billitCreateSegments[4] === "create" &&
+          billitCreateSegments[5] === "sandbox"
+        ) {
+          try {
+            const documentId =
+              safeStr(decodeURIComponent(billitCreateSegments[2]), 200) || "";
+            return await handleAdminBillitSandboxOrderCreate({
+              request,
+              url,
+              env,
+              documentId,
+            });
+          } catch (err) {
+            console.log(
+              `[BILLIT_ORDER_CREATE][SANDBOX][ERR] ${safeStr(err?.message, 160) || "unknown"}`,
+            );
+            return json({ ok: false, error: "internal_error" }, 500);
+          }
         }
       }
 
@@ -78499,6 +78967,96 @@ function buildBillitOfficialOrderRequestPreview(providerNeutralPreview, options 
       reasons,
     },
     warnings,
+  };
+}
+
+// Stable, deterministic idempotency key for a Billit sandbox order-create. NEVER
+// random: a retry for the same document must reuse the same key so Billit can
+// dedupe. Scoped to "sandbox" + a version tag so production / future revisions
+// never collide with this first sandbox path.
+function buildBillitSandboxOrderCreateIdempotencyKey(documentId) {
+  const id = safeStr(documentId, 200);
+  if (!id) return null;
+  return `fluxidi-billit-order-create:${id}:sandbox:v1`;
+}
+
+/* Pure builder: project a billit_official_order_preview into the concrete
+ * Billit order-create request parts. Returns the endpoint/method/body plus the
+ * NON-secret headers (PartyID, Idempotent-Key, Content-Type). It deliberately
+ * NEVER contains an Authorization header or any token — the caller injects the
+ * Bearer token only at fetch time and never logs/returns it. */
+function buildBillitOfficialOrderCreateRequestFromPreview(preview, options = {}) {
+  const p = preview && typeof preview === "object" ? preview : {};
+  const opts = options && typeof options === "object" ? options : {};
+  const headersPreview =
+    p.headers_preview && typeof p.headers_preview === "object"
+      ? p.headers_preview
+      : {};
+  const partyId = safeStr(headersPreview.PartyID, 120) || null;
+  const idempotencyKey =
+    safeStr(opts.idempotency_key, 200) ||
+    safeStr(headersPreview["Idempotent-Key"], 200) ||
+    null;
+  return {
+    endpoint: safeStr(p.endpoint, 80) || "/v1/orders",
+    method: safeStr(p.method, 12) || "POST",
+    // Explicitly omit Authorization here; it is added only at fetch time.
+    headers_without_auth: {
+      PartyID: partyId,
+      "Idempotent-Key": idempotencyKey,
+      "Content-Type": "application/json",
+    },
+    body: p.body && typeof p.body === "object" ? p.body : null,
+    idempotency_key: idempotencyKey,
+  };
+}
+
+/* Sanitize a Billit order-create response into a tiny, safe summary. NEVER
+ * returns the raw body (which may contain large / sensitive provider data).
+ * Extracts only the well-known order identity + status fields when present. */
+function sanitizeBillitOrderCreateResponse(responseJson) {
+  const data =
+    responseJson && typeof responseJson === "object" && !Array.isArray(responseJson)
+      ? responseJson
+      : null;
+  if (!data) {
+    return {
+      billit_order_id: null,
+      billit_order_number: null,
+      billit_status: null,
+    };
+  }
+  const orderId =
+    safeStr(
+      data.OrderID ??
+        data.orderID ??
+        data.OrderId ??
+        data.orderId ??
+        data.ID ??
+        data.Id ??
+        data.id,
+      120,
+    ) || null;
+  const orderNumber =
+    safeStr(
+      data.OrderNumber ??
+        data.orderNumber ??
+        data.Number ??
+        data.number,
+      120,
+    ) || null;
+  const status =
+    safeStr(
+      data.OrderStatus ??
+        data.orderStatus ??
+        data.Status ??
+        data.status,
+      80,
+    ) || null;
+  return {
+    billit_order_id: orderId,
+    billit_order_number: orderNumber,
+    billit_status: status,
   };
 }
 
