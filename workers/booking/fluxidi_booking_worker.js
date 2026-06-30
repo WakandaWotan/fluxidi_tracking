@@ -647,10 +647,13 @@ async function decryptBillitTokenValue(encryptedObj, env) {
 
 /* ISOLATED authorization-URL builder. Keep all Billit-specific authorize
  * params + scopes here so they are trivial to adjust once Billit's exact
- * OAuth contract is confirmed. Standard OAuth2 authorization-code params. */
+ * OAuth contract is confirmed. Per Billit's OAuth docs the Logon URL takes
+ * only client_id + redirect_uri (+ optional state); a standard OAuth2
+ * `response_type=code` param is NOT part of Billit's contract and makes the
+ * sandbox reject the request as "Ongeldig OAuth2 request", so it is
+ * intentionally omitted. Scope is still only sent when explicitly configured. */
 function buildBillitAuthorizationUrl(config, state) {
   const authUrl = new URL(config.authorize_url);
-  authUrl.searchParams.set("response_type", "code");
   authUrl.searchParams.set("client_id", config.client_id);
   authUrl.searchParams.set("redirect_uri", config.redirect_uri);
   authUrl.searchParams.set("state", String(state || ""));
