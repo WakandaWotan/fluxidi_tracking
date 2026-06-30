@@ -30979,9 +30979,14 @@ POST /admin/mollie/connect/disconnect
                 environment_hint: billitEnvironment,
               },
             );
+            const billitOfficialOrderPreview =
+              buildBillitOfficialOrderRequestPreview(billitPayloadPreview, {
+                party_id: billitPartyId,
+                environment_hint: billitEnvironment,
+              });
 
             console.log(
-              `[BILLIT_PAYLOAD_PREVIEW][OK] doc=${docMask} kind=${billitPayloadPreview.billit_document_kind || "-"} peppol_ready=${billitPayloadPreview.peppol.ready} warnings=${billitPayloadPreview.warnings.length} party=${billitPartyId ? "yes" : "no"}`,
+              `[BILLIT_PAYLOAD_PREVIEW][OK] doc=${docMask} kind=${billitPayloadPreview.billit_document_kind || "-"} peppol_ready=${billitPayloadPreview.peppol.ready} warnings=${billitPayloadPreview.warnings.length} party=${billitPartyId ? "yes" : "no"} official_ready=${billitOfficialOrderPreview.readiness?.ready === true}`,
             );
 
             return json({
@@ -30995,6 +31000,7 @@ POST /admin/mollie/connect/disconnect
               billit_party_id: billitPartyId,
               billit_payload_preview: billitPayloadPreview,
               billit_order_candidate: billitOrderCandidate,
+              billit_official_order_preview: billitOfficialOrderPreview,
               warnings: billitPayloadPreview.warnings,
             });
           } catch (err) {
@@ -31678,6 +31684,11 @@ POST /admin/mollie/connect/disconnect
                   environment_hint: billitEnvironment,
                 },
               );
+              const billitOfficialOrderPreview =
+                buildBillitOfficialOrderRequestPreview(preview, {
+                  party_id: billitPartyId,
+                  environment_hint: billitEnvironment,
+                });
               return {
                 document_id: preview.document_id,
                 document_number: preview.document_number,
@@ -31686,6 +31697,7 @@ POST /admin/mollie/connect/disconnect
                 send_enabled: false,
                 billit_payload_preview: preview,
                 billit_order_candidate: billitOrderCandidate,
+                billit_official_order_preview: billitOfficialOrderPreview,
                 warnings: preview.warnings,
               };
             });
@@ -77764,6 +77776,10 @@ function buildBillitPayloadPreviewFromProviderNeutralDocument(docPreview, scope)
   const documentNumber = dp.document_number ?? identity.document_number ?? null;
   const currency = dp.currency ?? identity.currency ?? null;
   const environmentHint = safeStr(scope?.billit_environment, 24) || null;
+  // Issue timestamp (read-only passthrough) so downstream official-order
+  // mappers can derive OrderDate without re-reading the registry record.
+  const issueTimestamp =
+    safeStr(dp.issue_timestamp ?? identity.issue_timestamp, 40) || null;
 
   const warnings = [];
   const notes = [
@@ -77985,6 +78001,7 @@ function buildBillitPayloadPreviewFromProviderNeutralDocument(docPreview, scope)
     document_type: docType,
     billit_document_kind: billitDocumentKind,
     environment_hint: environmentHint,
+    issue_timestamp: issueTimestamp,
     source_binding: {
       source_booking_id: references.source_booking_id,
       source_leg_id: references.source_leg_id,
@@ -78175,6 +78192,208 @@ function buildBillitOrderCandidatePreview(providerNeutralPreview, options = {}) 
       candidate: isInvoiceLike,
       ready: isInvoiceLike && readinessReasons.length === 0,
       reasons: readinessReasons,
+    },
+    warnings,
+  };
+}
+
+/* Pure, dry-run mapper that projects the provider-neutral Billit payload
+ * preview into an OFFICIAL Billit order-create request *preview* aligned with
+ * the documented Billit Order API (POST /v1/orders).
+ *
+ * This is a PREVIEW ONLY. It is NEVER sent and performs no KV access, no fetch,
+ * and reads no OAuth token. PartyID + Authorization live in headers_preview;
+ * Authorization is masked ("Bearer ***") and never carries a real token. No
+ * raw OAuth record, encrypted token, or raw Billit response is ever included.
+ * send_enabled / create_enabled / post_enabled stay false by design. */
+function buildBillitOfficialOrderRequestPreview(providerNeutralPreview, options = {}) {
+  const preview =
+    providerNeutralPreview && typeof providerNeutralPreview === "object"
+      ? providerNeutralPreview
+      : {};
+  const opts = options && typeof options === "object" ? options : {};
+
+  function _numOrNull(value) {
+    if (value === null || value === undefined || value === "") return null;
+    const n = Number(value);
+    return Number.isFinite(n) ? n : null;
+  }
+  // Date-only projection (YYYY-MM-DD) from an ISO timestamp; null when absent.
+  function _dateOnlyOrNull(value) {
+    const s = safeStr(value, 40);
+    if (!s) return null;
+    const ms = Date.parse(s);
+    if (!Number.isFinite(ms)) return null;
+    return new Date(ms).toISOString().slice(0, 10);
+  }
+
+  const partyId = safeStr(opts.party_id ?? opts.partyId, 120) || null;
+  const environmentHint =
+    safeStr(opts.environment_hint, 24) ||
+    safeStr(preview.environment_hint, 24) ||
+    null;
+  const docType = safeStr(preview.document_type, 40).toLowerCase() || null;
+  const isInvoiceLike = docType === "invoice" || docType === "credit_note";
+
+  // refund_proof / receipt / unknown are not Billit orders.
+  if (!isInvoiceLike) {
+    return {
+      dry_run: true,
+      send_enabled: false,
+      create_enabled: false,
+      post_enabled: false,
+      official_request_preview: true,
+      not_applicable: true,
+      endpoint: "/v1/orders",
+      method: "POST",
+      environment_hint: environmentHint,
+      readiness: { ready: false, reasons: ["document_type_not_billit_order"] },
+      warnings: ["document_type_not_billit_order"],
+    };
+  }
+
+  const orderType = docType === "invoice" ? "Invoice" : "CreditNote";
+  const orderDirection = "Income";
+  const currency = safeStr(preview.currency, 8).toUpperCase() || null;
+  const orderNumber = preview.document_number ?? null;
+
+  const references =
+    preview.references && typeof preview.references === "object"
+      ? preview.references
+      : {};
+  const reference =
+    safeStr(references.source_invoice_reference, 80) ||
+    safeStr(references.source_booking_id, 200) ||
+    null;
+
+  // ---- Dates ----
+  // OrderDate from the issued document timestamp. ExpiryDate only when a real
+  // due date / payment term is available; we never invent payment terms.
+  const orderDate = _dateOnlyOrNull(preview.issue_timestamp);
+  const expiryDate =
+    _dateOnlyOrNull(opts.due_date ?? opts.expiry_date ?? preview.due_date) ||
+    null;
+
+  // ---- Customer ----
+  const customer =
+    preview.customer && typeof preview.customer === "object"
+      ? preview.customer
+      : {};
+  const customerName =
+    safeStr(customer.legal_name, 240) ||
+    safeStr(customer.display_name, 240) ||
+    safeStr(customer.name, 240) ||
+    null;
+  const customerVat = safeStr(customer.vat_number, 64) || null;
+  const customerEmail =
+    safeStr(customer.contact_email, 240) ||
+    safeStr(customer.email, 240) ||
+    null;
+  const structuredAddr =
+    customer.billing_address && typeof customer.billing_address === "object"
+      ? customer.billing_address
+      : null;
+  const street = structuredAddr
+    ? safeStr(structuredAddr.street, 240) || null
+    : safeStr(customer.address_line, 240) || null;
+  const zipcode = structuredAddr
+    ? safeStr(structuredAddr.postal_code, 32) || null
+    : safeStr(customer.postal_code, 32) || null;
+  const city = structuredAddr
+    ? safeStr(structuredAddr.city, 120) || null
+    : safeStr(customer.city, 120) || null;
+  const countryCode = structuredAddr
+    ? safeStr(structuredAddr.country, 8).toUpperCase() || null
+    : safeStr(customer.country_code, 8).toUpperCase() || null;
+
+  const customerObject = {
+    Name: customerName,
+    VATNumber: customerVat,
+    PartyType: "Customer",
+    Email: customerEmail,
+    Street: street,
+    Zipcode: zipcode,
+    City: city,
+    CountryCode: countryCode,
+  };
+
+  // ---- OrderLines ----
+  const sourceLines = Array.isArray(preview.lines) ? preview.lines : [];
+  const orderLines = [];
+  let lineFieldsIncomplete = false;
+  for (const li of sourceLines) {
+    if (!li || typeof li !== "object" || Array.isArray(li)) continue;
+    const quantity = _numOrNull(li.quantity);
+    const unitPriceExcl = _numOrNull(li.unit_price_ex_vat);
+    const vatPercentage = _numOrNull(li.vat_rate_percent);
+    if (unitPriceExcl === null || vatPercentage === null) {
+      lineFieldsIncomplete = true;
+    }
+    orderLines.push({
+      Quantity: quantity,
+      UnitPriceExcl: unitPriceExcl,
+      Description: safeStr(li.description, 240) || null,
+      VATPercentage: vatPercentage,
+    });
+  }
+  if (orderLines.length === 0) lineFieldsIncomplete = true;
+
+  // ---- Idempotency reference (stable, derived; never a token) ----
+  const idempotencyKey =
+    safeStr(opts.idempotency_key, 200) ||
+    safeStr(preview.document_id, 200) ||
+    safeStr(preview.document_number, 80) ||
+    null;
+
+  // ---- Readiness + warnings ----
+  const reasons = [];
+  const warnings = [];
+  if (!partyId) reasons.push("billit_party_id_missing");
+  if (!customerName) reasons.push("customer_name_missing");
+  if (!currency) reasons.push("missing_currency");
+  if (!orderDate) reasons.push("order_date_missing");
+  if (!expiryDate) reasons.push("expiry_date_missing");
+  if (orderLines.length === 0) reasons.push("missing_order_lines");
+  if (lineFieldsIncomplete) reasons.push("line_fields_incomplete");
+  if (docType === "credit_note" && !references.source_invoice_reference) {
+    reasons.push("missing_source_invoice_reference");
+  }
+  if (!customerVat) warnings.push("customer_vat_missing");
+  if (!customerEmail) warnings.push("customer_email_missing");
+  if (!street && !zipcode && !city && !countryCode) {
+    warnings.push("customer_address_missing");
+  }
+  warnings.push("official_request_preview_not_sent");
+
+  return {
+    dry_run: true,
+    send_enabled: false,
+    create_enabled: false,
+    post_enabled: false,
+    official_request_preview: true,
+    endpoint: "/v1/orders",
+    method: "POST",
+    environment_hint: environmentHint,
+    headers_preview: {
+      PartyID: partyId,
+      Authorization: "Bearer ***",
+      "Idempotent-Key": idempotencyKey,
+      "Content-Type": "application/json",
+    },
+    body: {
+      OrderType: orderType,
+      OrderDirection: orderDirection,
+      OrderDate: orderDate,
+      ExpiryDate: expiryDate,
+      OrderNumber: orderNumber,
+      Reference: reference,
+      Currency: currency,
+      Customer: customerObject,
+      OrderLines: orderLines,
+    },
+    readiness: {
+      ready: reasons.length === 0,
+      reasons,
     },
     warnings,
   };
