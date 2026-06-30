@@ -935,11 +935,13 @@ async function disconnectBillitOAuthForScope(env, scope) {
 // resolveBillitOAuthConfig().api_base_url, i.e. the sandbox host). Kept as one
 // constant so the exact Billit "account/party info" resource is trivial to
 // adjust once confirmed. It MUST stay a non-mutating GET resource.
-// NOTE: the exact Billit "who am I / party" path is not 100% certain from the
-// public docs; "/v1/party/me" is the current best candidate. It can be
-// overridden per-environment via env.BILLIT_CONNECTION_PROBE_PATH WITHOUT a
-// code change. It is NEVER an invoice/create/send/draft/export endpoint.
-const BILLIT_SANDBOX_CONNECTION_PROBE_PATH = "/v1/party/me";
+// Per Billit's OAuth docs this is the canonical "who am I / auth works"
+// endpoint: GET /v1/account/accountInformation needs only the auth header (no
+// PartyID), returns the user's companies, and a 200 means auth works. It is
+// NEVER an invoice/create/send/draft/export endpoint. Still overridable
+// per-environment via env.BILLIT_CONNECTION_PROBE_PATH WITHOUT a code change
+// (confirmed green at runtime via that override before this default landed).
+const BILLIT_SANDBOX_CONNECTION_PROBE_PATH = "/v1/account/accountInformation";
 
 // Resolve the probe path, honouring an optional env override. Defensive:
 // even an override can never point at a mutating invoice/send-like endpoint.
@@ -984,6 +986,7 @@ async function callBillitSandboxConnectionProbe(config, accessToken, env) {
       ok: false,
       status_code: null,
       billit_error_code: "probe_request_failed",
+      billit_error_description: null,
       party_id: null,
     };
   }
@@ -995,22 +998,53 @@ async function callBillitSandboxConnectionProbe(config, accessToken, env) {
     data = null;
   }
   const isObj = data && typeof data === "object" && !Array.isArray(data);
+  // Billit validation errors use the shape { "errors": [ { "Code", "Description" } ] }.
+  const firstError =
+    isObj && Array.isArray(data.errors) && data.errors.length > 0 &&
+    data.errors[0] && typeof data.errors[0] === "object"
+      ? data.errors[0]
+      : null;
   if (!resp.ok) {
-    // Surface only a short, safe error CODE from the body (never the raw body).
+    // Surface only short, safe error fields (never the raw body / tokens).
     const billitErrorCode = isObj
       ? safeStr(
-          data.error ?? data.Error ?? data.code ?? data.Code ?? data.error_code,
+          (firstError && (firstError.Code ?? firstError.code)) ??
+            data.error ??
+            data.Error ??
+            data.code ??
+            data.Code ??
+            data.error_code,
           80,
+        ) || null
+      : null;
+    const billitErrorDescription = isObj
+      ? safeStr(
+          (firstError && (firstError.Description ?? firstError.description)) ??
+            data.error_description ??
+            data.message ??
+            data.Message,
+          200,
         ) || null
       : null;
     return {
       ok: false,
       status_code: statusCode,
       billit_error_code: billitErrorCode,
+      billit_error_description: billitErrorDescription,
       party_id: null,
     };
   }
-  // Safe party id extraction only (no other body fields are surfaced).
+  // Safe party id extraction only (no other body fields are surfaced). Billit's
+  // accountInformation returns PartyID nested in the Companies[] array.
+  const companies = isObj && Array.isArray(data.companies)
+    ? data.companies
+    : isObj && Array.isArray(data.Companies)
+      ? data.Companies
+      : [];
+  const firstCompany =
+    companies.length > 0 && companies[0] && typeof companies[0] === "object"
+      ? companies[0]
+      : null;
   const partyId = isObj
     ? safeStr(
         data.PartyID ??
@@ -1019,7 +1053,12 @@ async function callBillitSandboxConnectionProbe(config, accessToken, env) {
           data.partyId ??
           data.id ??
           data.Id ??
-          data.ID,
+          data.ID ??
+          (firstCompany &&
+            (firstCompany.PartyID ??
+              firstCompany.partyID ??
+              firstCompany.party_id ??
+              firstCompany.partyId)),
         120,
       ) || null
     : null;
@@ -1027,6 +1066,7 @@ async function callBillitSandboxConnectionProbe(config, accessToken, env) {
     ok: true,
     status_code: statusCode,
     billit_error_code: null,
+    billit_error_description: null,
     party_id: partyId,
   };
 }
@@ -1298,6 +1338,7 @@ async function handleAdminBillitConnectionTest({ request, url, env }) {
       connected: false,
       status_code: probe.status_code,
       billit_error_code: probe.billit_error_code,
+      billit_error_description: probe.billit_error_description ?? null,
       refreshed,
       checked_at: checkedAt,
     });
