@@ -303,6 +303,9 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
   // B10e-B: per-document Billit-status refresh in-flight set, keyed by
   // document_id (never global) so one refresh never blocks the whole section.
   Set<String> _refreshingDocIds = <String>{};
+  // B11-D: per-document Peppol send in-flight set, keyed by document_id so one
+  // send never blocks unrelated rows or the status refresh button.
+  Set<String> _sendingPeppolDocIds = <String>{};
   late ValueNotifier<int> _refreshSignal;
   // Stable identity of the booking whose documents are currently held in state.
   // Used to (a) reset state when a reused State element is handed a different
@@ -349,6 +352,7 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
       _activeScopeKey = nextScopeKey;
       _documents = const <_BookingDocumentMetadata>[];
       _refreshingDocIds = <String>{};
+      _sendingPeppolDocIds = <String>{};
       _loaded = false;
       _loading = false;
       _error = false;
@@ -587,6 +591,335 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
         ),
       ),
     );
+  }
+
+  /// B11-D: Peppol send is offered ONLY for an invoice that has a linked sandbox
+  /// Billit export with order id and document number, and that has NOT already
+  /// been sent / Peppol-sent. Mirrors the backend eligibility of
+  /// `POST /company/documents/:documentId/billit-order/send/sandbox`.
+  bool _shouldShowBillitPeppolSend(_BookingDocumentMetadata doc) {
+    final export = doc.billitExport;
+    if (export == null) return false;
+    if (doc.documentType.trim().toLowerCase() != 'invoice') return false;
+    if (doc.documentId.trim().isEmpty) return false;
+    if (doc.documentNumber.trim().isEmpty) return false;
+    if (export.environment.trim().toLowerCase() != 'sandbox') return false;
+    if (export.orderId.trim().isEmpty) return false;
+    if (export.sent) return false;
+    if (export.peppolSent) return false;
+    return true;
+  }
+
+  /// B11-D: map audited backend error codes to compact customer-facing text.
+  /// Never exposes raw JSON or stack traces in the snackbar.
+  String _mapBillitPeppolSendError(String? errorCode) {
+    switch ((errorCode ?? '').trim()) {
+      case 'confirm_sandbox_send_required':
+        return _tr(
+          nl: 'Bevestiging ontbreekt voor Peppol-verzending.',
+          en: 'Confirmation is required for Peppol sending.',
+          fr: 'Confirmation requise pour l’envoi Peppol.',
+          es: 'Se requiere confirmación para el envío Peppol.',
+        );
+      case 'transport_type_not_supported':
+        return _tr(
+          nl: 'Alleen Peppol-verzending is toegestaan.',
+          en: 'Only Peppol sending is allowed.',
+          fr: 'Seul l’envoi Peppol est autorisé.',
+          es: 'Solo se permite el envío por Peppol.',
+        );
+      case 'document_type_not_supported_for_peppol_send':
+        return _tr(
+          nl: 'Alleen facturen kunnen via Peppol worden verzonden.',
+          en: 'Only invoices can be sent via Peppol.',
+          fr: 'Seules les factures peuvent être envoyées via Peppol.',
+          es: 'Solo las facturas pueden enviarse por Peppol.',
+        );
+      case 'billit_order_not_linked':
+        return _tr(
+          nl: 'Geen gekoppelde Billit-order voor deze factuur.',
+          en: 'No linked Billit order for this invoice.',
+          fr: 'Aucune commande Billit liée pour cette facture.',
+          es: 'No hay pedido Billit vinculado para esta factura.',
+        );
+      case 'billit_order_id_mismatch':
+        return _tr(
+          nl: 'Billit-order komt niet overeen.',
+          en: 'Billit order does not match.',
+          fr: 'La commande Billit ne correspond pas.',
+          es: 'El pedido Billit no coincide.',
+        );
+      case 'billit_export_not_sandbox':
+        return _tr(
+          nl: 'Alleen sandbox Billit-export kan via Peppol worden verzonden.',
+          en: 'Only sandbox Billit export can be sent via Peppol.',
+          fr: 'Seul un export Billit sandbox peut être envoyé via Peppol.',
+          es: 'Solo la exportación Billit sandbox puede enviarse por Peppol.',
+        );
+      case 'billit_order_already_sent':
+        return _tr(
+          nl: 'Deze factuur is al verzonden.',
+          en: 'This invoice has already been sent.',
+          fr: 'Cette facture a déjà été envoyée.',
+          es: 'Esta factura ya fue enviada.',
+        );
+      case 'billit_order_already_peppol_sent':
+        return _tr(
+          nl: 'Deze factuur is al via Peppol verzonden.',
+          en: 'This invoice has already been sent via Peppol.',
+          fr: 'Cette facture a déjà été envoyée via Peppol.',
+          es: 'Esta factura ya fue enviada por Peppol.',
+        );
+      case 'billit_peppol_not_ready':
+        return _tr(
+          nl: 'Factuur is nog niet Peppol-klaar.',
+          en: 'Invoice is not Peppol-ready yet.',
+          fr: 'La facture n’est pas encore prête pour Peppol.',
+          es: 'La factura aún no está lista para Peppol.',
+        );
+      case 'billit_order_not_sendable':
+        return _tr(
+          nl: 'Billit-order kan nu niet worden verzonden.',
+          en: 'Billit order cannot be sent right now.',
+          fr: 'La commande Billit ne peut pas être envoyée maintenant.',
+          es: 'El pedido Billit no puede enviarse ahora.',
+        );
+      case 'billit_order_send_failed':
+        return _tr(
+          nl: 'Peppol-verzending via Billit is mislukt.',
+          en: 'Peppol send via Billit failed.',
+          fr: 'L’envoi Peppol via Billit a échoué.',
+          es: 'El envío Peppol mediante Billit falló.',
+        );
+      case 'unauthorized':
+        return _tr(
+          nl: 'Geen toegang.',
+          en: 'Not authorized.',
+          fr: 'Non autorisé.',
+          es: 'No autorizado.',
+        );
+      case 'forbidden':
+        return _tr(
+          nl: 'Geen toegang tot dit bedrijf.',
+          en: 'No access to this company.',
+          fr: 'Pas d’accès à cette entreprise.',
+          es: 'Sin acceso a esta empresa.',
+        );
+      default:
+        return _tr(
+          nl: 'Peppol-verzending mislukt.',
+          en: 'Peppol send failed.',
+          fr: 'Échec de l’envoi Peppol.',
+          es: 'Error al enviar por Peppol.',
+        );
+    }
+  }
+
+  void _showBillitPeppolSendSnackBar(String message) {
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    if (messenger == null) return;
+    messenger.showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  /// B11-D: blocking confirmation before the sandbox Peppol send call.
+  /// Cancel does nothing; only Send/Verzenden proceeds to the backend route.
+  Future<bool> _confirmBillitPeppolSendDialog(
+    _BookingDocumentMetadata doc,
+  ) async {
+    final docNumber = doc.documentNumber.trim();
+    final result = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        title: Text(
+          _tr(
+            nl: 'Factuur via Peppol verzenden?',
+            en: 'Send invoice via Peppol?',
+            fr: 'Envoyer la facture via Peppol ?',
+            es: '¿Enviar factura por Peppol?',
+          ),
+        ),
+        content: Text(
+          _tr(
+            nl: 'Je staat op het punt factuur $docNumber via Peppol te verzenden in de Billit-sandbox. Controleer eerst klantgegevens, btw-nummer, bedrag en factuurgegevens. Na verzending kan dit niet zomaar ongedaan gemaakt worden.',
+            en: 'You are about to send invoice $docNumber via Peppol in the Billit sandbox. First check the customer details, VAT number, amount and invoice data. After sending, this cannot simply be undone.',
+            fr: 'Vous êtes sur le point d’envoyer la facture $docNumber via Peppol dans le sandbox Billit. Vérifiez d’abord les données client, le numéro de TVA, le montant et les données de facture. Après l’envoi, cela ne peut pas être annulé facilement.',
+            es: 'Está a punto de enviar la factura $docNumber por Peppol en el sandbox de Billit. Compruebe primero los datos del cliente, el número de IVA, el importe y los datos de la factura. Después del envío, esto no se puede deshacer fácilmente.',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: Text(
+              _tr(nl: 'Annuleren', en: 'Cancel', fr: 'Annuler', es: 'Cancelar'),
+            ),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: Text(
+              _tr(nl: 'Verzenden', en: 'Send', fr: 'Envoyer', es: 'Enviar'),
+            ),
+          ),
+        ],
+      ),
+    );
+    return result == true;
+  }
+
+  /// B11-D: apply the safe B11-B send success summary onto the in-memory
+  /// document's billit_export so badges/buttons react immediately.
+  void _applyBillitPeppolSendSuccess(
+    String docId,
+    Map<String, dynamic> decoded,
+  ) {
+    final index = _documents.indexWhere((d) => d.documentId == docId);
+    if (index < 0) return;
+    final current = _documents[index];
+    final export = current.billitExport;
+    if (export == null) return;
+
+    String? readString(List<String> keys) {
+      for (final key in keys) {
+        final raw = decoded[key];
+        if (raw == null) continue;
+        final text = raw.toString().trim();
+        if (text.isNotEmpty && text.toLowerCase() != 'null') return text;
+      }
+      return null;
+    }
+
+    bool? readBool(String key) {
+      final value = decoded[key];
+      return value is bool ? value : null;
+    }
+
+    final updatedExport = export.copyWith(
+      status: 'sent',
+      sent: readBool('sent') ?? true,
+      peppolSent: readBool('peppol_sent') ?? true,
+      billitStatus: readString(const ['billit_status']),
+      billitIsSent: readBool('billit_is_sent'),
+      billitPaid: readBool('billit_paid'),
+      statusCheckedAt: readString(const ['status_checked_at']),
+    );
+
+    setState(() {
+      _documents = <_BookingDocumentMetadata>[..._documents];
+      _documents[index] = current.copyWithBillitExport(updatedExport);
+    });
+  }
+
+  /// B11-D: sandbox Peppol send for ONE invoice via the company route. Requires
+  /// a prior confirmation dialog. Uses the same auth + active-scope pattern as
+  /// the B10e-B status refresh. Never calls admin routes, never auto-retries.
+  Future<void> _sendBillitPeppolSandbox(_BookingDocumentMetadata doc) async {
+    final docId = doc.documentId.trim();
+    final docNumber = doc.documentNumber.trim();
+    final export = doc.billitExport;
+    final orderId = export?.orderId.trim() ?? '';
+    if (docId.isEmpty ||
+        docNumber.isEmpty ||
+        export == null ||
+        orderId.isEmpty) {
+      return;
+    }
+    if (_sendingPeppolDocIds.contains(docId)) return;
+
+    final requestScopeKey = _documentsScopeKey;
+    setState(() {
+      _sendingPeppolDocIds = <String>{..._sendingPeppolDocIds, docId};
+    });
+
+    try {
+      final uri = _withActiveBookingScope(
+        kBookingBaseUrl,
+        '/company/documents/${Uri.encodeComponent(docId)}/billit-order/send/sandbox',
+      );
+      final auth = await resolveCompanyOwnerAuthHeaders();
+      final payload = <String, dynamic>{
+        'confirm_sandbox_send': true,
+        'document_number': docNumber,
+        'billit_order_id': orderId,
+        'transport_type': 'Peppol',
+      };
+      final res = await http
+          .post(
+            uri,
+            headers: {...auth.headers, 'Content-Type': 'application/json'},
+            body: jsonEncode(payload),
+          )
+          .timeout(const Duration(seconds: 30));
+      if (!mounted || requestScopeKey != _activeScopeKey) return;
+
+      Map<String, dynamic>? decoded;
+      try {
+        final raw = jsonDecode(res.body);
+        if (raw is Map) {
+          decoded = raw.map((k, v) => MapEntry(k.toString(), v));
+        }
+      } catch (_) {
+        decoded = null;
+      }
+
+      if (decoded != null &&
+          decoded['error'] == 'billit_order_reconcile_failed' &&
+          decoded['sandbox_send'] == true) {
+        _showBillitPeppolSendSnackBar(
+          _tr(
+            nl: 'Verzending gestart, maar de status is nog niet bevestigd. Vernieuw de Billit-status.',
+            en: 'Sending started, but the status has not been confirmed yet. Refresh the Billit status.',
+            fr: 'Envoi démarré, mais le statut n’est pas encore confirmé. Actualisez le statut Billit.',
+            es: 'Envío iniciado, pero el estado aún no está confirmado. Actualice el estado de Billit.',
+          ),
+        );
+        _loadDocuments();
+        return;
+      }
+
+      if (res.statusCode == 200 && decoded != null && decoded['ok'] == true) {
+        _applyBillitPeppolSendSuccess(docId, decoded);
+        _showBillitPeppolSendSnackBar(
+          _tr(
+            nl: 'Factuur verzonden via Peppol.',
+            en: 'Invoice sent via Peppol.',
+            fr: 'Facture envoyée via Peppol.',
+            es: 'Factura enviada por Peppol.',
+          ),
+        );
+        _loadDocuments();
+        return;
+      }
+
+      final errorCode = decoded?['error']?.toString().trim();
+      _showBillitPeppolSendSnackBar(_mapBillitPeppolSendError(errorCode));
+    } catch (_) {
+      if (!mounted || requestScopeKey != _activeScopeKey) return;
+      _showBillitPeppolSendSnackBar(
+        _tr(
+          nl: 'Peppol-verzending mislukt.',
+          en: 'Peppol send failed.',
+          fr: 'Échec de l’envoi Peppol.',
+          es: 'Error al enviar por Peppol.',
+        ),
+      );
+    } finally {
+      if (mounted && requestScopeKey == _activeScopeKey) {
+        setState(() {
+          _sendingPeppolDocIds = <String>{..._sendingPeppolDocIds}
+            ..remove(docId);
+        });
+      }
+    }
+  }
+
+  /// B11-D: show confirmation first; only Send/Verzenden calls the backend.
+  Future<void> _promptAndSendBillitPeppolSandbox(
+    _BookingDocumentMetadata doc,
+  ) async {
+    if (_sendingPeppolDocIds.contains(doc.documentId.trim())) return;
+    final confirmed = await _confirmBillitPeppolSendDialog(doc);
+    if (!confirmed || !mounted) return;
+    await _sendBillitPeppolSandbox(doc);
   }
 
   String _localizedDocumentType(String type) {
@@ -937,6 +1270,8 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
             _buildBillitStatusBlock(tokens, doc.billitExport!),
           if (_shouldShowBillitRefresh(doc))
             _buildBillitRefreshButton(tokens, doc),
+          if (_shouldShowBillitPeppolSend(doc))
+            _buildBillitPeppolSendButton(tokens, doc),
         ],
       ),
     );
@@ -979,6 +1314,52 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
             en: 'Refresh Billit status',
             fr: 'Actualiser le statut Billit',
             es: 'Actualizar estado de Billit',
+          ),
+          style: const TextStyle(fontSize: 11.0, fontWeight: FontWeight.w700),
+        ),
+      ),
+    );
+  }
+
+  /// B11-D: compact Peppol send action for eligible sandbox invoice documents
+  /// (see [_shouldShowBillitPeppolSend]). Requires a blocking confirmation
+  /// dialog before calling
+  /// `POST /company/documents/:documentId/billit-order/send/sandbox`.
+  /// Disabled while that document is sending; other rows stay interactive.
+  Widget _buildBillitPeppolSendButton(
+    _CompanyBookingsThemeTokens tokens,
+    _BookingDocumentMetadata doc,
+  ) {
+    final sending = _sendingPeppolDocIds.contains(doc.documentId.trim());
+    return Padding(
+      padding: const EdgeInsets.only(top: 6),
+      child: TextButton.icon(
+        onPressed: sending
+            ? null
+            : () => _promptAndSendBillitPeppolSandbox(doc),
+        style: TextButton.styleFrom(
+          foregroundColor: tokens.accent,
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+          minimumSize: const Size(0, 30),
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          alignment: Alignment.centerLeft,
+        ),
+        icon: sending
+            ? SizedBox(
+                width: 13,
+                height: 13,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  valueColor: AlwaysStoppedAnimation<Color>(tokens.accent),
+                ),
+              )
+            : Icon(Icons.send_outlined, size: 14, color: tokens.accent),
+        label: Text(
+          _tr(
+            nl: 'Verstuur via Peppol',
+            en: 'Send via Peppol',
+            fr: 'Envoyer via Peppol',
+            es: 'Enviar por Peppol',
           ),
           style: const TextStyle(fontSize: 11.0, fontWeight: FontWeight.w700),
         ),
