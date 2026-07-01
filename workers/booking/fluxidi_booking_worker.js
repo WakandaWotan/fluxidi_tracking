@@ -31487,6 +31487,91 @@ export default {
         }
       }
 
+      // GET /company/bookings/:bookingId/documents?tenant_id=...&company_id=...
+      // Patch B10d-A: COMPANY-authenticated (company session OR admin token)
+      // read-only mirror of the admin per-booking documents list
+      // (GET /admin/bookings/:bookingId/documents). Returns the EXACT same safe
+      // public metadata shape (buildIssuedDocumentPublicMetadata, incl. the
+      // envelope-only buildSafeBillitExportProjection) via the same shared
+      // listIssuedDocumentsForBooking reader, scoped to the AUTHENTICATED company
+      // scope (no arbitrary query escalation; cross-company reads are rejected by
+      // the auth helper). Strictly read-only: it NEVER allocates, writes KV,
+      // emits compliance events, issues invoices, creates/links/reconciles Billit
+      // orders, reads Billit live status, sends Peppol, or calls Mollie/Chiron.
+      // The admin route is unchanged.
+      if (
+        request.method === "GET" &&
+        url.pathname.startsWith("/company/bookings/") &&
+        url.pathname.endsWith("/documents")
+      ) {
+        const companyDocsSegments = url.pathname.split("/").filter(Boolean);
+        // Only the per-booking list shape:
+        //   ["company","bookings","<bookingId>","documents"].
+        if (
+          companyDocsSegments.length === 4 &&
+          companyDocsSegments[0] === "company" &&
+          companyDocsSegments[1] === "bookings" &&
+          companyDocsSegments[3] === "documents"
+        ) {
+          const authScope = await _requireAdminOrCompanySessionForExplicitScope({
+            request,
+            url,
+            env,
+            routeLabel: "COMPANY_DOCUMENT_LIST",
+          });
+          if (!authScope.ok) return authScope.response;
+
+          try {
+            const scope = {
+              tenant_id: authScope.explicitScope.tenant_id,
+              company_id: authScope.explicitScope.company_id,
+            };
+
+            const sourceBookingId =
+              safeStr(decodeURIComponent(companyDocsSegments[2]), 200) || "";
+            if (!sourceBookingId) {
+              return json({ ok: false, error: "missing_source_booking_id" }, 400);
+            }
+
+            if (!env?.BOOKING_KV) {
+              return json({ ok: false, error: "missing_binding" }, 503);
+            }
+
+            const listed = await listIssuedDocumentsForBooking(
+              env,
+              scope,
+              sourceBookingId,
+            );
+            if (!listed.ok) {
+              const status = listed.error === "missing_binding" ? 503 : 400;
+              return json({ ok: false, error: listed.error }, status);
+            }
+            const documents = Array.isArray(listed.documents)
+              ? listed.documents
+              : [];
+            const warnings = Array.isArray(listed.warnings)
+              ? listed.warnings
+              : [];
+            console.log(
+              `[COMPANY_DOCUMENT_LIST][OK] booking=${_bookingIntentMask(sourceBookingId)} count=${documents.length} warnings=${warnings.length}`,
+            );
+            return json({
+              ok: true,
+              source_booking_id: sourceBookingId,
+              documents,
+              count: documents.length,
+              warnings,
+            });
+          } catch (err) {
+            const message = String(err?.message || "internal_error");
+            console.log(
+              `[COMPANY_DOCUMENT_LIST][ERR] ${safeStr(message, 200) || "unknown"}`,
+            );
+            return json({ ok: false, error: "internal_error" }, 500);
+          }
+        }
+      }
+
       // POST /company/integrations/billit/oauth/start?tenant_id=...&company_id=...
       if (
         url.pathname === "/company/integrations/billit/oauth/start" &&
