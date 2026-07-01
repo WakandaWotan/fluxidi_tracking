@@ -4512,6 +4512,112 @@ async function handleAdminCompanyBillitAutoCreateSettingsUpdate({ request, url, 
   });
 }
 
+/* Patch B9a: COMPANY-authenticated read of the Billit auto-create setting for
+ * the logged-in company (owner/user), for the Flutter app. Uses the shared
+ * company-session-or-admin-token auth helper (NO global admin token required)
+ * and the SAME business-profile storage/normalization as B8d. Read-only: makes
+ * NO Billit call, NO invoice call, NO booking mutation, and NEVER writes KV.
+ * Scope is the AUTHENTICATED company scope; cross-company access is rejected by
+ * the helper. Admin routes (B8d) are unchanged. */
+async function handleCompanyBillitAutoCreateSettingsGet({ request, url, env }) {
+  const authScope = await _requireAdminOrCompanySessionForExplicitScope({
+    request,
+    url,
+    env,
+    routeLabel: "COMPANY_BILLIT_AUTO_CREATE_GET",
+  });
+  if (!authScope.ok) return authScope.response;
+
+  if (!env?.BOOKING_KV) return json({ ok: false, error: "missing_binding" }, 503);
+
+  const scope = {
+    tenant_id: authScope.explicitScope.tenant_id,
+    company_id: authScope.explicitScope.company_id,
+  };
+  const settings = await readBillitAutoCreateSettingsForScope(env, scope);
+  return json({
+    ok: true,
+    billit_auto_create_after_paid_business_invoice:
+      settings.billit_auto_create_after_paid_business_invoice === true,
+    billit_auto_create_environment: "sandbox",
+    warnings: [],
+  });
+}
+
+/* Patch B9a: COMPANY-authenticated update of the Billit auto-create setting for
+ * the logged-in company. Accepts a strict boolean toggle + optional sandbox-
+ * only environment, merges into the existing business profile (preserving ALL
+ * unrelated fields via saveBusinessProfile), and writes ONLY the business-
+ * profile KV record for the AUTHENTICATED scope. Makes NO Billit call, NO
+ * invoice/order creation, NO Peppol send, and NEVER triggers the lifecycle. No
+ * production support. */
+async function handleCompanyBillitAutoCreateSettingsUpdate({ request, url, env }) {
+  const body = await safeJson(request);
+  const bodyObj = body && typeof body === "object" && !Array.isArray(body) ? body : {};
+
+  const authScope = await _requireAdminOrCompanySessionForExplicitScope({
+    request,
+    url,
+    env,
+    body: bodyObj,
+    routeLabel: "COMPANY_BILLIT_AUTO_CREATE_UPDATE",
+  });
+  if (!authScope.ok) return authScope.response;
+
+  // Only a strict boolean is accepted for the toggle (no coercion).
+  if (typeof bodyObj.billit_auto_create_after_paid_business_invoice !== "boolean") {
+    return json(
+      { ok: false, error: "billit_auto_create_after_paid_business_invoice_must_be_boolean" },
+      400,
+    );
+  }
+  const enabled = bodyObj.billit_auto_create_after_paid_business_invoice === true;
+
+  // Environment is sandbox-only for now; reject any explicit non-sandbox value.
+  if (bodyObj.billit_auto_create_environment !== undefined) {
+    const envRaw = safeStr(bodyObj.billit_auto_create_environment, 24).toLowerCase();
+    if (envRaw !== "sandbox") {
+      return json(
+        { ok: false, error: "billit_auto_create_environment_sandbox_only", environment: envRaw },
+        400,
+      );
+    }
+  }
+
+  if (!env?.BOOKING_KV) return json({ ok: false, error: "missing_binding" }, 503);
+
+  const scope = {
+    tenant_id: authScope.explicitScope.tenant_id,
+    company_id: authScope.explicitScope.company_id,
+  };
+
+  // Merge into the existing profile (scoped, no legacy fallback), preserving all
+  // unrelated fields via saveBusinessProfile's server-owned-field preservation.
+  let existing = null;
+  try {
+    existing = await loadBusinessProfile(env, scope, { allowTenantLegacyFallback: false });
+  } catch (_) {
+    existing = null;
+  }
+  const merged = {
+    ...(existing || DEFAULT_BUSINESS_PROFILE),
+    billit_auto_create_after_paid_business_invoice: enabled,
+    billit_auto_create_environment: "sandbox",
+  };
+  const normalized = await saveBusinessProfile(env, merged, scope, {
+    allowTenantLegacyWrite: false,
+  });
+
+  return json({
+    ok: true,
+    updated: true,
+    billit_auto_create_after_paid_business_invoice:
+      normalized.billit_auto_create_after_paid_business_invoice === true,
+    billit_auto_create_environment: "sandbox",
+    warnings: [],
+  });
+}
+
 async function handleAdminPaidBusinessBookingFixture({ request, url, env }) {
   // 1. Admin auth.
   try {
@@ -31346,6 +31452,38 @@ export default {
             `[BILLIT_OAUTH][COMPANY_STATUS][ERR] ${safeStr(err?.message, 160) || "unknown"}`,
           );
           return json({ ok: false, error: "internal_error" }, 500);
+        }
+      }
+
+      // GET/POST /company/billit-auto-create-settings?tenant_id=...&company_id=...
+      // Patch B9a: COMPANY-authenticated (company session OR admin token) read/
+      // update of the Billit auto-create setting for the logged-in company, for
+      // the Flutter app. Reuses the same business-profile storage + B8d
+      // normalization; scope is the AUTHENTICATED company scope (no arbitrary
+      // query escalation). NEITHER route calls Billit, /v1/orders,
+      // /v1/orders/commands/send, Peppol, _issueInvoiceCore, or
+      // generateAndSendInvoice, and NEITHER is wired into mollieWebhook /
+      // /pay/status. No production auto-create. Admin routes (B8d) unchanged.
+      if (url.pathname === "/company/billit-auto-create-settings") {
+        if (request.method === "GET") {
+          try {
+            return await handleCompanyBillitAutoCreateSettingsGet({ request, url, env });
+          } catch (err) {
+            console.log(
+              `[COMPANY_BILLIT_AUTO_CREATE_GET][ERR] ${safeStr(err?.message, 160) || "unknown"}`,
+            );
+            return json({ ok: false, error: "internal_error" }, 500);
+          }
+        }
+        if (request.method === "POST") {
+          try {
+            return await handleCompanyBillitAutoCreateSettingsUpdate({ request, url, env });
+          } catch (err) {
+            console.log(
+              `[COMPANY_BILLIT_AUTO_CREATE_UPDATE][ERR] ${safeStr(err?.message, 160) || "unknown"}`,
+            );
+            return json({ ok: false, error: "internal_error" }, 500);
+          }
         }
       }
 
