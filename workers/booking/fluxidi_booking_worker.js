@@ -4267,6 +4267,128 @@ function buildPaidBusinessBookingFixtureRecord({
  * calendar, no push, no compliance emit, no demand/driver/vehicle/tracking
  * indexes. NEVER mutates an existing booking and NEVER returns tokens/secrets/
  * raw responses. */
+/* Patch B8d: admin-only, READ-ONLY accessor for the persisted Billit
+ * auto-create company settings. Requires explicit tenant/company scope. Makes
+ * NO Billit call, NO invoice call, NO booking mutation, and NEVER writes KV.
+ *
+ * IMPORTANT: This setting is intentionally NOT wired into the payment lifecycle
+ * in B8d (no mollieWebhook / /pay/status hook). */
+async function handleAdminCompanyBillitAutoCreateSettingsGet({ request, url, env }) {
+  try {
+    _requireAdmin(request, url, env);
+  } catch (err) {
+    const message = String(err?.message || "Unauthorized");
+    return json(
+      {
+        ok: false,
+        error: message === "Unauthorized" ? "unauthorized" : "admin_unavailable",
+      },
+      message === "Unauthorized" ? 401 : 500,
+    );
+  }
+
+  const scopedRoute = requireExplicitBookingRouteScope({ request, url, body: {} });
+  if (!scopedRoute.ok) return scopedRoute.response;
+  const scope = {
+    tenant_id: scopedRoute.scope.tenant_id,
+    company_id: scopedRoute.scope.company_id,
+  };
+
+  if (!env?.BOOKING_KV) return json({ ok: false, error: "missing_binding" }, 503);
+
+  const settings = await readBillitAutoCreateSettingsForScope(env, scope);
+  return json({
+    ok: true,
+    billit_auto_create_after_paid_business_invoice:
+      settings.billit_auto_create_after_paid_business_invoice === true,
+    billit_auto_create_environment: "sandbox",
+    defaulted: settings.defaulted === true,
+    warnings: [],
+  });
+}
+
+/* Patch B8d: admin-only update route for the persisted Billit auto-create
+ * company settings. Requires explicit tenant/company scope + explicit
+ * confirmation. Only accepts a boolean toggle and a sandbox-only environment,
+ * merges into the existing business profile (preserving ALL unrelated fields),
+ * and writes ONLY the business-profile KV record. Makes NO Billit call, NO
+ * invoice call, and NEVER hooks the payment lifecycle. No production support. */
+async function handleAdminCompanyBillitAutoCreateSettingsUpdate({ request, url, env }) {
+  try {
+    _requireAdmin(request, url, env);
+  } catch (err) {
+    const message = String(err?.message || "Unauthorized");
+    return json(
+      {
+        ok: false,
+        error: message === "Unauthorized" ? "unauthorized" : "admin_unavailable",
+      },
+      message === "Unauthorized" ? 401 : 500,
+    );
+  }
+
+  const body = await safeJson(request);
+  const bodyObj = body && typeof body === "object" && !Array.isArray(body) ? body : {};
+  if (bodyObj.confirm_update_billit_auto_create_settings !== true) {
+    return json({ ok: false, error: "confirm_update_billit_auto_create_settings_required" }, 400);
+  }
+
+  // Only a strict boolean is accepted for the toggle (no coercion).
+  if (typeof bodyObj.billit_auto_create_after_paid_business_invoice !== "boolean") {
+    return json(
+      { ok: false, error: "billit_auto_create_after_paid_business_invoice_must_be_boolean" },
+      400,
+    );
+  }
+  const enabled = bodyObj.billit_auto_create_after_paid_business_invoice === true;
+
+  // Environment is sandbox-only for now; reject any explicit non-sandbox value.
+  if (bodyObj.billit_auto_create_environment !== undefined) {
+    const envRaw = safeStr(bodyObj.billit_auto_create_environment, 24).toLowerCase();
+    if (envRaw !== "sandbox") {
+      return json(
+        { ok: false, error: "billit_auto_create_environment_sandbox_only", environment: envRaw },
+        400,
+      );
+    }
+  }
+
+  const scopedRoute = requireExplicitBookingRouteScope({ request, url, body: bodyObj });
+  if (!scopedRoute.ok) return scopedRoute.response;
+  const scope = {
+    tenant_id: scopedRoute.scope.tenant_id,
+    company_id: scopedRoute.scope.company_id,
+  };
+
+  if (!env?.BOOKING_KV) return json({ ok: false, error: "missing_binding" }, 503);
+
+  // Merge into the existing profile (scoped, no legacy fallback), preserving all
+  // unrelated fields via saveBusinessProfile's server-owned-field preservation.
+  let existing = null;
+  try {
+    existing = await loadBusinessProfile(env, scope, { allowTenantLegacyFallback: false });
+  } catch (_) {
+    existing = null;
+  }
+  const merged = {
+    ...(existing || DEFAULT_BUSINESS_PROFILE),
+    billit_auto_create_after_paid_business_invoice: enabled,
+    billit_auto_create_environment: "sandbox",
+  };
+  const normalized = await saveBusinessProfile(env, merged, scope, {
+    allowTenantLegacyWrite: false,
+  });
+
+  return json({
+    ok: true,
+    updated: true,
+    billit_auto_create_after_paid_business_invoice:
+      normalized.billit_auto_create_after_paid_business_invoice === true,
+    billit_auto_create_environment: "sandbox",
+    warnings: [],
+  });
+}
+
 async function handleAdminPaidBusinessBookingFixture({ request, url, env }) {
   // 1. Admin auth.
   try {
@@ -7478,6 +7600,16 @@ const DEFAULT_BUSINESS_PROFILE = {
   // derivation. Defaults to the surfaced platform default; not a subscription
   // billing field. A future Business Settings UI can let companies change it.
   payment_terms_days: DEFAULT_BILLIT_PAYMENT_TERMS_DAYS,
+  // Patch B8d: persisted opt-in that will LATER gate automatic Billit order
+  // creation after a paid business invoice. Default OFF and sandbox-only for
+  // now. This setting is intentionally NOT wired into the payment lifecycle in
+  // B8d. Future lifecycle integration must:
+  //   - use this setting (default OFF),
+  //   - stay sandbox-only first,
+  //   - never run from mollieWebhook,
+  //   - and never block payment finalization.
+  billit_auto_create_after_paid_business_invoice: false,
+  billit_auto_create_environment: "sandbox",
   payment_owner_mode: "fluxidi_central_demo",
   paymentOwnerMode: "fluxidi_central_demo",
   payment_demo_mode: true,
@@ -8162,6 +8294,22 @@ function normalizeBusinessProfile(input = {}) {
     payment_terms_days: normalizeBillitPaymentTermsDays(
       source.payment_terms_days ?? source.paymentTermsDays,
     ),
+    // Patch B8d: additive, backward-compatible. Legacy profiles missing these
+    // fields normalize to the safe default (OFF, sandbox). Only boolean true
+    // enables the flag; the environment is clamped to "sandbox" for now (no
+    // production support). This flag is NOT wired into any lifecycle in B8d.
+    billit_auto_create_after_paid_business_invoice:
+      (source.billit_auto_create_after_paid_business_invoice ??
+        source.billitAutoCreateAfterPaidBusinessInvoice) === true,
+    billit_auto_create_environment:
+      sanitizeTenantString(
+        source.billit_auto_create_environment ??
+          source.billitAutoCreateEnvironment ??
+          DEFAULT_BUSINESS_PROFILE.billit_auto_create_environment,
+        24,
+      ).toLowerCase() === "sandbox"
+        ? "sandbox"
+        : "sandbox",
     payment_owner_mode: normalizePaymentOwnerMode(
       source.payment_owner_mode ??
         source.paymentOwnerMode ??
@@ -9062,6 +9210,54 @@ async function saveBusinessProfile(
     business_profile: normalized,
   }));
   return normalized;
+}
+
+/* Patch B8d: pure, throw-free normalizer that reads the two persisted
+ * auto-create settings off a (possibly legacy / partial) business profile and
+ * returns a small SAFE object. Default OFF; environment clamped to "sandbox"
+ * (no production support yet).
+ *
+ * IMPORTANT: This setting is intentionally NOT wired into the payment lifecycle
+ * in B8d. Future lifecycle integration must use this setting, be default OFF,
+ * be sandbox-only first, never run from mollieWebhook, and never block payment
+ * finalization. */
+function normalizeBillitAutoCreateSettingsFromBusinessProfile(profile) {
+  const source = profile && typeof profile === "object" ? profile : {};
+  const enabled =
+    (source.billit_auto_create_after_paid_business_invoice ??
+      source.billitAutoCreateAfterPaidBusinessInvoice) === true;
+  const envRaw = sanitizeTenantString(
+    source.billit_auto_create_environment ??
+      source.billitAutoCreateEnvironment ??
+      "sandbox",
+    24,
+  ).toLowerCase();
+  return {
+    billit_auto_create_after_paid_business_invoice: enabled,
+    // Sandbox-only for now: any other/missing value is clamped to "sandbox".
+    billit_auto_create_environment: envRaw === "sandbox" ? "sandbox" : "sandbox",
+  };
+}
+
+/* Patch B8d: read-only accessor. Loads the scoped business profile (never
+ * mutates KV) and normalizes the two auto-create settings. Returns the safe
+ * defaults (OFF, sandbox) when the profile is missing or unreadable so callers
+ * never throw on legacy tenants. */
+async function readBillitAutoCreateSettingsForScope(env, scope) {
+  let profile = null;
+  try {
+    profile = await loadBusinessProfile(env, scope, {
+      allowTenantLegacyFallback: false,
+    });
+  } catch (_) {
+    profile = null;
+  }
+  const settings = normalizeBillitAutoCreateSettingsFromBusinessProfile(profile);
+  return {
+    ...settings,
+    // defaulted=true when there was no readable profile to source values from.
+    defaulted: !profile,
+  };
 }
 
 async function loadTaxProfile(
@@ -30791,6 +30987,38 @@ export default {
             `[TEST_FIXTURE][PAID_BUSINESS_BOOKING][ERR] ${safeStr(err?.message, 160) || "unknown"}`,
           );
           return json({ ok: false, error: "internal_error" }, 500);
+        }
+      }
+
+      // GET/POST /admin/company/billit-auto-create-settings
+      // Patch B8d: persisted company setting (default OFF, sandbox-only) that
+      // will LATER gate automatic Billit order creation after a paid business
+      // invoice. Admin-only, explicit-scope. The GET is read-only; the POST
+      // merges ONLY the two setting fields into the business profile and writes
+      // ONLY that KV record. NEITHER route calls Billit, /v1/orders,
+      // /v1/orders/commands/send, Peppol, _issueInvoiceCore, or
+      // generateAndSendInvoice, and NEITHER is wired into mollieWebhook /
+      // /pay/status. No production auto-create.
+      if (url.pathname === "/admin/company/billit-auto-create-settings") {
+        if (request.method === "GET") {
+          try {
+            return await handleAdminCompanyBillitAutoCreateSettingsGet({ request, url, env });
+          } catch (err) {
+            console.log(
+              `[BILLIT_AUTO_CREATE_SETTINGS][GET][ERR] ${safeStr(err?.message, 160) || "unknown"}`,
+            );
+            return json({ ok: false, error: "internal_error" }, 500);
+          }
+        }
+        if (request.method === "POST") {
+          try {
+            return await handleAdminCompanyBillitAutoCreateSettingsUpdate({ request, url, env });
+          } catch (err) {
+            console.log(
+              `[BILLIT_AUTO_CREATE_SETTINGS][POST][ERR] ${safeStr(err?.message, 160) || "unknown"}`,
+            );
+            return json({ ok: false, error: "internal_error" }, 500);
+          }
         }
       }
 
