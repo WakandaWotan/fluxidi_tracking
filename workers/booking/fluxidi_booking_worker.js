@@ -1806,6 +1806,133 @@ async function fetchBillitSandboxOrderById(config, accessToken, partyId, orderId
   return { ok: true, status: statusCode, order: sanitizeBillitOrderReadResponse(data) };
 }
 
+/* Pure builder (Patch B7) for the Billit sandbox order SEND command request.
+ * Fail-closed: the transport type allowlist is intentionally ["Peppol"] ONLY —
+ * SMTP/email and Letter are deliberately unsupported. Returns null on any
+ * invalid input so the caller stays fail-closed. Exactly ONE order id (never a
+ * batch). Uses the EXACT Billit casing `Transporttype` + `OrderIDs`. A numeric
+ * order id string is sent as a Number (Billit's create returns bare numbers);
+ * otherwise the string id is preserved. No token/secret is ever referenced. */
+function buildBillitSandboxOrderSendRequest({ orderId, transportType } = {}) {
+  const allowedTransports = new Set(["Peppol"]);
+  const transport = safeStr(transportType, 24);
+  if (!allowedTransports.has(transport)) return null;
+  const safeOrderId = safeStr(orderId, 120);
+  if (!safeOrderId) return null;
+  const orderIdValue = /^[0-9]+$/.test(safeOrderId) ? Number(safeOrderId) : safeOrderId;
+  return {
+    endpoint: "/v1/orders/commands/send",
+    method: "POST",
+    body: {
+      Transporttype: transport,
+      OrderIDs: [orderIdValue],
+    },
+  };
+}
+
+/* Pure sanitizer (Patch B7) for the Billit send-command response. Extracts ONLY
+ * a tiny, safe summary: send_status (string|null), transport_id (string|null),
+ * accepted (true/false/null). Tolerates an empty 2xx body, a bare scalar id, and
+ * object shapes using Success/Status/TransportID/CommandID/id casing variants.
+ * NEVER returns the raw response body, tokens, headers, or any Customer/
+ * Addresses/OrderLines/VAT/files. */
+function sanitizeBillitSendCommandResponse(data) {
+  if (data === null || data === undefined || data === "") {
+    return { send_status: null, transport_id: null, accepted: null };
+  }
+  if (typeof data === "number" || (typeof data === "string" && data.trim() !== "")) {
+    return { send_status: null, transport_id: safeStr(data, 120) || null, accepted: null };
+  }
+  const obj = data && typeof data === "object" && !Array.isArray(data) ? data : null;
+  if (!obj) return { send_status: null, transport_id: null, accepted: null };
+  const sendStatus =
+    safeStr(
+      obj.Status ?? obj.status ?? obj.SendStatus ?? obj.sendStatus ??
+        obj.TransportStatus ?? obj.transportStatus,
+      80,
+    ) || null;
+  const transportId =
+    safeStr(
+      obj.TransportID ?? obj.TransportId ?? obj.transportId ??
+        obj.CommandID ?? obj.CommandId ?? obj.commandId ??
+        obj.ID ?? obj.Id ?? obj.id,
+      120,
+    ) || null;
+  const rawAccepted =
+    obj.Success ?? obj.success ?? obj.Accepted ?? obj.accepted ?? obj.OK ?? obj.ok;
+  const accepted = typeof rawAccepted === "boolean" ? rawAccepted : null;
+  return { send_status: sendStatus, transport_id: transportId, accepted };
+}
+
+/* The ONLY new outbound Billit call in B7: send exactly ONE order via
+ * POST {api_base_url}/v1/orders/commands/send against the SANDBOX host. Includes
+ * the PartyID header (as create/read do). Exactly one fetch, no retry loop.
+ * Returns a sanitized summary or a safe error; NEVER logs/returns the token,
+ * request headers, or the raw provider body. */
+async function postBillitSandboxOrderSend(config, accessToken, partyId, sendRequest) {
+  const base = String(config.api_base_url || "").replace(/\/+$/, "");
+  const endpoint = safeStr(sendRequest?.endpoint, 80) || "/v1/orders/commands/send";
+  const sendUrl = `${base}${endpoint}`;
+  let resp;
+  try {
+    resp = await fetch(sendUrl, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        PartyID: safeStr(partyId, 120),
+      },
+      body: JSON.stringify(sendRequest?.body ?? {}),
+    });
+  } catch (_) {
+    return {
+      ok: false,
+      status: null,
+      error: "billit_order_send_failed",
+      billit_error_code: "order_send_request_failed",
+      billit_error_description: null,
+    };
+  }
+  const statusCode = resp.status;
+  let data = null;
+  try {
+    data = await resp.json();
+  } catch (_) {
+    data = null;
+  }
+  const isObj = data && typeof data === "object" && !Array.isArray(data);
+  const firstError =
+    isObj && Array.isArray(data.errors) && data.errors.length > 0 &&
+    data.errors[0] && typeof data.errors[0] === "object"
+      ? data.errors[0]
+      : null;
+  if (!resp.ok) {
+    const billitErrorCode = isObj
+      ? safeStr(
+          (firstError && (firstError.Code ?? firstError.code)) ??
+            data.error ?? data.Error ?? data.code ?? data.Code ?? data.error_code,
+          80,
+        ) || null
+      : null;
+    const billitErrorDescription = isObj
+      ? safeStr(
+          (firstError && (firstError.Description ?? firstError.description)) ??
+            data.error_description ?? data.message ?? data.Message,
+          200,
+        ) || null
+      : null;
+    return {
+      ok: false,
+      status: statusCode,
+      error: "billit_order_send_failed",
+      billit_error_code: billitErrorCode,
+      billit_error_description: billitErrorDescription,
+    };
+  }
+  return { ok: true, status: statusCode, send: sanitizeBillitSendCommandResponse(data) };
+}
+
 /* Persist an envelope-only billit_export link onto an issued document registry
  * record (Patch B6b). This is the ONLY new post-issue registry write surface.
  *
@@ -2507,6 +2634,311 @@ async function handleAdminBillitSandboxOrderStatus({ request, url, env, document
     // Local link truth (never overwritten by a live read in B6c).
     sent: exportObj.sent === true,
     peppol_sent: exportObj.peppol_sent === true,
+    warnings,
+  });
+}
+
+/* Admin-only, SANDBOX-ONLY, FAIL-CLOSED manual Peppol send of ONE linked Billit
+ * sandbox order for an issued invoice document (Patch B7). Transport allowlist
+ * is ["Peppol"] ONLY (no SMTP/email, no Letter). Requires an explicit
+ * confirmation body, invoice-only, a persisted sandbox billit_export link whose
+ * order_id + party_id match, and the read-only Billit payload preview must have
+ * peppol.ready === true. The Peppol gate is enforced BEFORE any token decrypt or
+ * outbound Billit call. Performs exactly ONE pre-send readback (GET
+ * /v1/orders/{orderId}) requiring live status "ToSend", then exactly ONE send
+ * (POST /v1/orders/commands/send). NO batch, NO automatic trigger, NO
+ * production, NO credit notes / refund proofs. NO persistence in B7 (deferred to
+ * B7b): the registry is NOT written, immutable_snapshot / content_hash are NEVER
+ * touched. NEVER returns tokens, the raw OAuth record, the Authorization header,
+ * the raw Billit response, or Customer / Addresses / OrderLines / VAT / files. */
+async function handleAdminBillitSandboxOrderSend({ request, url, env, documentId }) {
+  // 1. Admin auth (same pattern as B6a/B6b/B6c).
+  try {
+    _requireAdmin(request, url, env);
+  } catch (err) {
+    const message = String(err?.message || "Unauthorized");
+    return json(
+      {
+        ok: false,
+        error: message === "Unauthorized" ? "unauthorized" : "admin_unavailable",
+      },
+      message === "Unauthorized" ? 401 : 500,
+    );
+  }
+
+  // 2. Resolve config + SANDBOX-ONLY guard (before any KV/network work).
+  const config = resolveBillitOAuthConfig(env);
+  if (config.environment !== "sandbox") {
+    return json(
+      { ok: false, error: "billit_sandbox_send_sandbox_only", environment: config.environment },
+      409,
+    );
+  }
+  if (!config.configured) {
+    return json(
+      {
+        ok: false,
+        error: "billit_oauth_not_configured",
+        environment: "sandbox",
+        missing_fields: config.missing_fields,
+      },
+      400,
+    );
+  }
+
+  // 3. Parse + validate the explicit confirmation body.
+  const body = await safeJson(request);
+  const bodyObj =
+    body && typeof body === "object" && !Array.isArray(body) ? body : {};
+  if (bodyObj.confirm_sandbox_send !== true) {
+    return json({ ok: false, error: "confirm_sandbox_send_required" }, 400);
+  }
+  const requestedDocNumber = safeStr(bodyObj.document_number, 80);
+  if (!requestedDocNumber) {
+    return json({ ok: false, error: "document_number_required" }, 400);
+  }
+  const requestedOrderId = safeStr(bodyObj.billit_order_id, 120);
+  if (!requestedOrderId) {
+    return json({ ok: false, error: "billit_order_id_required" }, 400);
+  }
+  // Transport allowlist is intentionally ["Peppol"] ONLY in B7.
+  const requestedTransport = safeStr(bodyObj.transport_type, 24);
+  if (requestedTransport !== "Peppol") {
+    return json(
+      {
+        ok: false,
+        error: "transport_type_not_supported",
+        transport_type: requestedTransport || null,
+      },
+      400,
+    );
+  }
+
+  // 4. Explicit tenant/company scope (query or body; no legacy fallback).
+  const scopedRoute = requireExplicitBookingRouteScope({ request, url, body: bodyObj });
+  if (!scopedRoute.ok) return scopedRoute.response;
+  const scope = {
+    tenant_id: scopedRoute.scope.tenant_id,
+    company_id: scopedRoute.scope.company_id,
+  };
+
+  const docId = safeStr(documentId, 200);
+  if (!docId) return json({ ok: false, error: "missing_document_id" }, 400);
+  if (!env?.BOOKING_KV) return json({ ok: false, error: "missing_binding" }, 503);
+
+  // 5. Load the issued document + strict scope check.
+  const record = await loadIssuedDocumentRegistryRecordById(env, scope, docId);
+  const recordTenant = safeStr(record?.tenant_id ?? record?.tenantId, 80);
+  const recordCompany = safeStr(record?.company_id ?? record?.companyId, 80);
+  if (
+    !record ||
+    (recordTenant && recordTenant !== scope.tenant_id) ||
+    (recordCompany && recordCompany !== scope.company_id)
+  ) {
+    return json({ ok: false, error: "document_not_found" }, 404);
+  }
+
+  // 6. Invoice-only. No credit notes / refund proofs in B7.
+  const docType = safeStr(record?.document_type ?? record?.documentType, 40).toLowerCase();
+  if (docType !== "invoice") {
+    return json(
+      {
+        ok: false,
+        error: "document_type_not_supported_for_b7",
+        document_type: docType || null,
+      },
+      400,
+    );
+  }
+
+  // 7. document_number must match the issued document.
+  const recordDocNumber = safeStr(record?.document_number ?? record?.documentNumber, 80);
+  if (!recordDocNumber || recordDocNumber !== requestedDocNumber) {
+    return json({ ok: false, error: "document_number_mismatch" }, 400);
+  }
+
+  // 8. Require a persisted sandbox billit_export link that matches the body,
+  // and that has NOT already been sent / Peppol-sent.
+  const exportObj =
+    record.billit_export && typeof record.billit_export === "object" && !Array.isArray(record.billit_export)
+      ? record.billit_export
+      : null;
+  const exportOrderId = safeStr(exportObj?.order_id, 120);
+  if (!exportObj || !exportOrderId) {
+    return json({ ok: false, error: "billit_order_not_linked" }, 409);
+  }
+  if (exportOrderId !== requestedOrderId) {
+    return json({ ok: false, error: "billit_order_id_mismatch" }, 409);
+  }
+  if (safeStr(exportObj.environment, 24).toLowerCase() !== "sandbox") {
+    return json({ ok: false, error: "billit_export_not_sandbox" }, 409);
+  }
+  if (exportObj.sent === true) {
+    return json({ ok: false, error: "billit_order_already_sent" }, 409);
+  }
+  if (exportObj.peppol_sent === true) {
+    return json({ ok: false, error: "billit_order_already_peppol_sent" }, 409);
+  }
+
+  // 9. PartyID: linked export party_id must match the stored KV PartyID.
+  const knownPartyId = await readBillitPartyIdForScope(env, scope);
+  const exportPartyId = safeStr(exportObj.party_id, 120) || null;
+  if (knownPartyId && exportPartyId && knownPartyId !== exportPartyId) {
+    return json({ ok: false, error: "billit_party_id_mismatch" }, 409);
+  }
+  const effectivePartyId = exportPartyId || knownPartyId || null;
+  if (!effectivePartyId) {
+    return json({ ok: false, error: "billit_party_id_missing" }, 409);
+  }
+
+  // 10. Recompute the SAME read-only Billit payload preview and FAIL-CLOSED on
+  // the Peppol gate BEFORE any token decrypt / outbound Billit call.
+  let businessProfile = null;
+  try {
+    businessProfile = await loadBusinessProfile(env, scope, {
+      allowTenantLegacyFallback: true,
+    });
+  } catch (_) {
+    businessProfile = null;
+  }
+  const classification = classifyDocumentExportReadiness(record, businessProfile);
+  const docPreview = buildDocumentExportPreview(record, classification, null);
+  const billitPayloadPreview = buildBillitPayloadPreviewFromProviderNeutralDocument(
+    docPreview,
+    { ...scope, billit_environment: "sandbox" },
+  );
+  const peppolReady = billitPayloadPreview?.peppol?.ready === true;
+  if (!peppolReady) {
+    return json(
+      {
+        ok: false,
+        error: "billit_peppol_not_ready",
+        document_id: docId,
+        document_number: recordDocNumber,
+        billit_order_id: exportOrderId,
+        peppol_ready: false,
+        reasons: Array.isArray(billitPayloadPreview?.peppol?.reasons)
+          ? billitPayloadPreview.peppol.reasons
+          : [],
+        warnings: Array.isArray(billitPayloadPreview?.warnings)
+          ? billitPayloadPreview.warnings
+          : [],
+      },
+      409,
+    );
+  }
+
+  // 11. Build the send request (allowlist ["Peppol"], one order id, exact casing).
+  const sendRequest = buildBillitSandboxOrderSendRequest({
+    orderId: exportOrderId,
+    transportType: "Peppol",
+  });
+  if (!sendRequest) {
+    return json({ ok: false, error: "billit_send_request_invalid" }, 409);
+  }
+
+  // 12. Acquire a usable sandbox access token ONLY after the Peppol gate passes.
+  const tokenResult = await acquireBillitSandboxAccessToken(env, scope, config);
+  if (!tokenResult.ok) {
+    return json(
+      { ok: false, error: tokenResult.error, environment: "sandbox" },
+      tokenResult.status || 500,
+    );
+  }
+
+  // 13. Live pre-send status readback (exactly one GET). Must be sendable.
+  const readResult = await fetchBillitSandboxOrderById(
+    config,
+    tokenResult.access_token,
+    effectivePartyId,
+    exportOrderId,
+  );
+  if (!readResult.ok) {
+    return json(
+      {
+        ok: false,
+        error: "billit_order_read_failed",
+        environment: "sandbox",
+        status_code: readResult.status ?? null,
+        billit_error_code: readResult.billit_error_code ?? null,
+        billit_error_description: readResult.billit_error_description ?? null,
+      },
+      502,
+    );
+  }
+  const liveOrder = readResult.order || {};
+  const billitStatusBefore = liveOrder.order_status ?? null;
+  if (billitStatusBefore !== "ToSend") {
+    return json(
+      {
+        ok: false,
+        error: "billit_order_not_sendable",
+        document_id: docId,
+        document_number: recordDocNumber,
+        billit_order_id: exportOrderId,
+        billit_status_before: billitStatusBefore,
+      },
+      409,
+    );
+  }
+  if (liveOrder.order_type && liveOrder.order_type !== "Invoice") {
+    return json({ ok: false, error: "billit_order_type_not_invoice" }, 409);
+  }
+  if (liveOrder.order_direction && liveOrder.order_direction !== "Income") {
+    return json({ ok: false, error: "billit_order_direction_not_income" }, 409);
+  }
+  const recordCurrency = safeStr(record?.currency, 8).toUpperCase();
+  if (recordCurrency && liveOrder.currency && liveOrder.currency !== recordCurrency) {
+    return json({ ok: false, error: "billit_currency_mismatch" }, 409);
+  }
+
+  // 14. The single B7 outbound send call (POST /v1/orders/commands/send).
+  const sendResult = await postBillitSandboxOrderSend(
+    config,
+    tokenResult.access_token,
+    effectivePartyId,
+    sendRequest,
+  );
+  if (!sendResult.ok) {
+    console.log(
+      `[BILLIT_ORDER_SEND][SANDBOX][FAIL] doc=${docId.slice(0, 8)} status=${sendResult.status ?? "-"} refreshed=${tokenResult.refreshed}`,
+    );
+    return json(
+      {
+        ok: false,
+        error: "billit_order_send_failed",
+        environment: "sandbox",
+        status_code: sendResult.status ?? null,
+        billit_error_code: sendResult.billit_error_code ?? null,
+        billit_error_description: sendResult.billit_error_description ?? null,
+      },
+      502,
+    );
+  }
+
+  // 15. NO persistence in B7 (deferred to B7b). sent / peppol_sent stay the
+  // stored local link truth (both false here) until a later verified readback.
+  const send = sendResult.send || { send_status: null, transport_id: null, accepted: null };
+  const warnings = [];
+  if (!send.send_status && send.accepted === null) {
+    warnings.push("billit_send_status_unknown");
+  }
+  console.log(
+    `[BILLIT_ORDER_SEND][SANDBOX][OK] doc=${docId.slice(0, 8)} order=${exportOrderId ? "yes" : "no"} transport=Peppol refreshed=${tokenResult.refreshed}`,
+  );
+  return json({
+    ok: true,
+    sandbox_send: true,
+    document_id: docId,
+    document_number: recordDocNumber,
+    billit_order_id: exportOrderId,
+    transport_type: "Peppol",
+    local_status_before: safeStr(exportObj.status, 40) || null,
+    billit_status_before: billitStatusBefore,
+    billit_send_status: send.send_status,
+    transport_id: send.transport_id,
+    sent: false,
+    peppol_sent: false,
     warnings,
   });
 }
@@ -28726,6 +29158,51 @@ export default {
           } catch (err) {
             console.log(
               `[BILLIT_ORDER_STATUS][SANDBOX][ERR] ${safeStr(err?.message, 160) || "unknown"}`,
+            );
+            return json({ ok: false, error: "internal_error" }, 500);
+          }
+        }
+      }
+
+      // POST /admin/documents/:documentId/billit-order/send/sandbox
+      // Patch B7: guarded, SANDBOX-ONLY, FAIL-CLOSED manual Peppol send of ONE
+      // linked Billit sandbox order. Admin-only, requires explicit
+      // confirm_sandbox_send + document_number / billit_order_id match, invoice-
+      // only, transport_type allowlist ["Peppol"] ONLY, and the read-only Billit
+      // payload preview must be peppol.ready BEFORE any token/Billit call. Does a
+      // single pre-send readback (must be "ToSend") then exactly ONE POST
+      // /v1/orders/commands/send. It NEVER persists (no registry write, no
+      // immutable_snapshot / content_hash change), NEVER supports production /
+      // batch / auto send, and NEVER returns tokens, the raw OAuth record, or the
+      // raw Billit response (see handleAdminBillitSandboxOrderSend).
+      if (
+        request.method === "POST" &&
+        url.pathname.startsWith("/admin/documents/") &&
+        url.pathname.endsWith("/billit-order/send/sandbox")
+      ) {
+        const billitSendSegments = url.pathname.split("/").filter(Boolean);
+        // Only the exact shape:
+        //   ["admin","documents","<documentId>","billit-order","send","sandbox"]
+        if (
+          billitSendSegments.length === 6 &&
+          billitSendSegments[0] === "admin" &&
+          billitSendSegments[1] === "documents" &&
+          billitSendSegments[3] === "billit-order" &&
+          billitSendSegments[4] === "send" &&
+          billitSendSegments[5] === "sandbox"
+        ) {
+          try {
+            const documentId =
+              safeStr(decodeURIComponent(billitSendSegments[2]), 200) || "";
+            return await handleAdminBillitSandboxOrderSend({
+              request,
+              url,
+              env,
+              documentId,
+            });
+          } catch (err) {
+            console.log(
+              `[BILLIT_ORDER_SEND][SANDBOX][ERR] ${safeStr(err?.message, 160) || "unknown"}`,
             );
             return json({ ok: false, error: "internal_error" }, 500);
           }
