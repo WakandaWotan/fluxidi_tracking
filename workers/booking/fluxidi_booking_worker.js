@@ -3787,6 +3787,129 @@ async function ensureBillitOrderForPaidBusinessBooking(env, scope, bookingId, op
   };
 }
 
+/* Patch B8e-B: sandbox-only, setting-gated lifecycle wrapper around the proven
+ * B8c helper. It is called from payStatus AFTER a booking is finalized as paid.
+ *
+ * IMPORTANT: This is sandbox-only and setting-gated. It intentionally does NOT
+ * run from mollieWebhook and must NOT send Peppol / call
+ * /v1/orders/commands/send. It NEVER throws to its caller (payStatus must not
+ * be blocked or failed by Billit), NEVER supports production, and NEVER returns
+ * or logs tokens/secrets/raw Billit responses/customer/order lines.
+ *
+ * Default behavior is OFF: a false/missing company setting skips before any
+ * Billit work. */
+async function maybeRunBillitAutoCreateAfterPaidLifecycle(env, scope, bookingId, options = {}) {
+  const opts = options && typeof options === "object" && !Array.isArray(options) ? options : {};
+  const source = safeStr(opts.source, 60) || "pay_status_paid_lifecycle";
+  const nowIso = safeStr(opts.nowIso, 40) || new Date().toISOString();
+  const rec = opts.rec && typeof opts.rec === "object" ? opts.rec : null;
+  const effectiveScope =
+    opts.effectiveScope && typeof opts.effectiveScope === "object"
+      ? opts.effectiveScope
+      : null;
+  const maskedBooking = _bookingIntentMask(bookingId);
+
+  try {
+    // Setting gate (read-only; missing/legacy profile => OFF).
+    const settings = await readBillitAutoCreateSettingsForScope(env, scope);
+    if (settings.billit_auto_create_after_paid_business_invoice !== true) {
+      console.log(`[BILLIT_AUTO_CREATE_LIFECYCLE] skipped setting_off booking=${maskedBooking}`);
+      return { ok: true, skipped: true, reason: "setting_off" };
+    }
+    if (settings.billit_auto_create_environment !== "sandbox") {
+      console.log(
+        `[BILLIT_AUTO_CREATE_LIFECYCLE] skipped environment_not_sandbox booking=${maskedBooking}`,
+      );
+      return { ok: true, skipped: true, reason: "environment_not_sandbox" };
+    }
+
+    // Double sandbox gate: the Billit OAuth config must also be sandbox. Never
+    // run against production from the lifecycle path.
+    const config = resolveBillitOAuthConfig(env);
+    if (config.environment !== "sandbox") {
+      console.log(
+        `[BILLIT_AUTO_CREATE_LIFECYCLE] skipped config_not_sandbox booking=${maskedBooking}`,
+      );
+      return { ok: true, skipped: true, reason: "config_not_sandbox" };
+    }
+
+    // Only proceed for business-invoice intent bookings (cheap pre-check; the
+    // helper re-verifies authoritatively).
+    if (rec) {
+      const ctx = _invoiceLifecycleContextFromRecord(rec);
+      if (!ctx.businessInvoiceIntent) {
+        console.log(
+          `[BILLIT_AUTO_CREATE_LIFECYCLE] skipped not_business_invoice_intent booking=${maskedBooking}`,
+        );
+        return { ok: true, skipped: true, reason: "not_business_invoice_intent" };
+      }
+    }
+
+    console.log(`[BILLIT_AUTO_CREATE_LIFECYCLE] started booking=${maskedBooking} source=${source}`);
+
+    const scopeForBookingMatch =
+      effectiveScope || { ...(scope || {}), hasScope: true };
+    const result = await ensureBillitOrderForPaidBusinessBooking(env, scope, bookingId, {
+      source: "paid_lifecycle_sandbox",
+      environment: "sandbox",
+      config,
+      confirmSandbox: true,
+      sourceLegId: null,
+      sourceLegType: null,
+      nowIso,
+      scopeForBookingMatch,
+    });
+
+    const body = result && typeof result.body === "object" ? result.body : {};
+    if (result?.ok !== true) {
+      console.log(
+        `[BILLIT_AUTO_CREATE_LIFECYCLE] failed booking=${maskedBooking} reason=${safeStr(body?.error, 80) || "unknown"}`,
+      );
+      return {
+        ok: false,
+        skipped: false,
+        reason: safeStr(body?.error, 80) || "billit_auto_create_failed",
+        document_id: safeStr(body?.document_id, 120) || null,
+        document_number: safeStr(body?.document_number, 120) || null,
+        billit_order_id: body?.billit_order_id ?? null,
+        billit_status: safeStr(body?.billit_status, 40) || null,
+        reused_existing_invoice: body?.reused_existing_invoice === true,
+        billit_already_created: body?.billit_already_created === true,
+        sent: false,
+        peppol_sent: false,
+        warnings: Array.isArray(body?.warnings) ? body.warnings : [],
+      };
+    }
+
+    const idempotentReplay =
+      body?.reused_existing_invoice === true || body?.billit_already_created === true;
+    console.log(
+      `[BILLIT_AUTO_CREATE_LIFECYCLE] ${idempotentReplay ? "idempotent_replay" : "succeeded"} booking=${maskedBooking} order=${body?.billit_order_id ?? "-"} status=${safeStr(body?.billit_status, 40) || "-"}`,
+    );
+
+    return {
+      ok: true,
+      skipped: false,
+      reason: idempotentReplay ? "idempotent_replay" : "created",
+      document_id: safeStr(body?.document_id, 120) || null,
+      document_number: safeStr(body?.document_number, 120) || null,
+      billit_order_id: body?.billit_order_id ?? null,
+      billit_status: safeStr(body?.billit_status, 40) || null,
+      reused_existing_invoice: body?.reused_existing_invoice === true,
+      billit_already_created: body?.billit_already_created === true,
+      sent: false,
+      peppol_sent: false,
+      warnings: Array.isArray(body?.warnings) ? body.warnings : [],
+    };
+  } catch (err) {
+    // Fail-closed: never throw to payStatus. Log a masked reason only.
+    console.log(
+      `[BILLIT_AUTO_CREATE_LIFECYCLE] failed booking=${maskedBooking} reason=${safeStr(err?.message, 120) || "exception"}`,
+    );
+    return { ok: false, skipped: false, reason: "exception" };
+  }
+}
+
 async function handleAdminBookingBillitAutoCreateSandbox({ request, url, env, bookingId }) {
   // 1. Admin auth.
   try {
@@ -89937,6 +90060,38 @@ async function payStatus(request, env, requestedScopeOverride = null) {
         console.log(
           `[INVOICE_LIFECYCLE][ERROR] bookingId=${safeStr(invoiceRecordInfo?.booking_id || invoiceBookingIdFallback)} source=mollie_pay_status reason=${safeStr(invoiceLifecycleErr?.message || invoiceLifecycleErr, 160) || "unknown"}`,
         );
+      }
+
+      // Patch B8e-B: sandbox-only, setting-gated Billit auto-create hook. Runs
+      // AFTER the legacy invoice lifecycle above and reuses the same resolved,
+      // scope-verified canonical record (invoiceRecordInfo) + effectiveScope.
+      // It is intentionally NOT wired into mollieWebhook, NEVER sends Peppol /
+      // calls /v1/orders/commands/send, NEVER supports production, and is
+      // wrapped so it can NEVER throw out of payStatus or block payment
+      // finalization. Default OFF: a false/missing company setting no-ops here.
+      if (invoiceRecordInfo?.rec && invoiceRecordInfo?.booking_id) {
+        try {
+          const billitAutoScope = {
+            tenant_id: effectiveScope.tenant_id,
+            company_id: effectiveScope.company_id,
+          };
+          await maybeRunBillitAutoCreateAfterPaidLifecycle(
+            env,
+            billitAutoScope,
+            invoiceRecordInfo.booking_id,
+            {
+              source: "pay_status_paid_lifecycle",
+              rec: invoiceRecordInfo.rec,
+              effectiveScope,
+              nowIso: new Date().toISOString(),
+            },
+          );
+        } catch (billitAutoErr) {
+          // Defensive only; the helper is designed to never throw.
+          console.warn(
+            `[BILLIT_AUTO_CREATE_LIFECYCLE] failed booking=${_bookingIntentMask(invoiceRecordInfo.booking_id)} reason=${safeStr(billitAutoErr?.message || billitAutoErr, 120) || "exception"}`,
+          );
+        }
       }
     }
 
