@@ -31,7 +31,7 @@ class _BookingDocumentsRefreshBus {
 }
 
 /// B10c: read-only, envelope-only projection of the `billit_export` object that
-/// the booking documents backend (`GET /admin/bookings/:bookingId/documents`)
+/// the booking documents backend (`GET /company/bookings/:bookingId/documents`)
 /// already returns per issued document.
 ///
 /// Surfaces ONLY safe lifecycle/link fields for display. It never parses or
@@ -118,7 +118,8 @@ class _BillitExportMetadata {
 }
 
 /// 2G-Q: read-only typed model for a single issued Document Core record as
-/// returned by `GET /admin/bookings/:bookingId/documents` (2G-P backend).
+/// returned by `GET /company/bookings/:bookingId/documents` (B10d-A route,
+/// mirroring the 2G-P admin documents shape).
 ///
 /// Tolerant of snake_case and camelCase keys, mirroring the existing
 /// `DriverDocument.fromJson` convention. Contains only the safe metadata the
@@ -243,7 +244,7 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
   late String _activeScopeKey;
 
   /// Stable scope key for the booking this section currently renders. The
-  /// fetch route is `/admin/bookings/<bookingId>/documents` scoped by the
+  /// fetch route is `/company/bookings/<bookingId>/documents` scoped by the
   /// active tenant/company session, so the per-widget identity is the
   /// canonical booking id.
   String get _documentsScopeKey => widget.bookingId.trim();
@@ -326,7 +327,7 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
       );
       final uri = _withActiveBookingScope(
         kBookingBaseUrl,
-        '/admin/bookings/${Uri.encodeComponent(widget.bookingId)}/documents',
+        '/company/bookings/${Uri.encodeComponent(widget.bookingId)}/documents',
       );
       final auth = await resolveCompanyOwnerAuthHeaders();
       final res = await http
