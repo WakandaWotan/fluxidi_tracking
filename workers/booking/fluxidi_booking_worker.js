@@ -4063,6 +4063,269 @@ async function handleAdminPeppolReadyBookingFixture({ request, url, env }) {
   });
 }
 
+/* Pure builder (Patch B8b) for a MINIMAL, PAID, business booking test-fixture
+ * record with complete billing data, so the B8a auto-create route can be
+ * positively tested. Same canonical booking/totals shape that
+ * deriveServerSideInvoiceContext + _issueInvoiceCore read, but marked
+ * payment_status=paid via a synthetic "fixture" provider (NEVER Mollie). Baked
+ * totals: 200.00 EUR incl VAT @ 6% → 20000 / 18868 / 1132 cents. Carries NO
+ * document_number, NO billit_export, NO sent/peppol_sent. Pure: no I/O. */
+function buildPaidBusinessBookingFixtureRecord({
+  scope,
+  normalizedBillingCustomer,
+  fixtureLabel,
+  nowIso,
+}) {
+  const currency = "EUR";
+  const vatRatePercent = 6;
+  const priceInclVatCents = 20000;
+  // Definitional VAT split from the incl-VAT total + rate (never invented).
+  const totalExclVatCents = Math.round(priceInclVatCents / (1 + vatRatePercent / 100));
+  const vatCents = priceInclVatCents - totalExclVatCents;
+  const totalInclVatEuros = priceInclVatCents / 100;
+  const subtotalExVatEuros = totalExclVatCents / 100;
+  const vatAmountEuros = vatCents / 100;
+
+  const shortRandom =
+    (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function")
+      ? crypto.randomUUID().slice(0, 8)
+      : Math.random().toString(36).slice(2, 10);
+  const bookingId = `fixture-paid-business-${Date.now()}-${shortRandom}`;
+  const label = safeStr(fixtureLabel, 60) || "b8-positive";
+
+  const pickupIso = nowIso;
+  const pickupAddress = "Paid business sandbox pickup";
+  const dropoffAddress = "Paid business sandbox dropoff";
+  const customerEmail =
+    safeStr(normalizedBillingCustomer?.contact_email, 240) ||
+    "b8-paid-fixture@example.test";
+  const customerName =
+    safeStr(normalizedBillingCustomer?.display_name, 240) ||
+    safeStr(normalizedBillingCustomer?.legal_name, 240) ||
+    "Fluxidi B8 Paid Fixture";
+
+  const record = {
+    // Identity in the shapes the existing booking loaders read.
+    id: bookingId,
+    booking_id: bookingId,
+    bookingId: bookingId,
+    canonical_booking_id: bookingId,
+    booking_uuid: bookingId,
+    // Scope (read by resolveBookingTenantScopeFromRecord).
+    tenant_id: scope.tenant_id,
+    company_id: scope.company_id,
+    // Lifecycle for a completed + paid ride.
+    status: "confirmed",
+    completed_at: nowIso,
+    completedAt: nowIso,
+    // Paid via a SYNTHETIC fixture provider — never Mollie, never a real charge.
+    payment_status: "paid",
+    paymentStatus: "paid",
+    payment_provider: "fixture",
+    paymentProvider: "fixture",
+    payment_method: "fixture_paid",
+    paymentMethod: "fixture_paid",
+    payment_paid_at: nowIso,
+    paid_at: nowIso,
+    paidAt: nowIso,
+    created_at: nowIso,
+    createdAt: nowIso,
+    // Fixture provenance markers.
+    test_fixture: true,
+    fixture_type: "paid_business_invoice",
+    fixture_label: label,
+    created_by: "admin_test_fixture",
+    // Currency + booking-level totals (decimal euros) for
+    // deriveServerSideInvoiceContext.
+    currency,
+    total_incl_vat: totalInclVatEuros,
+    subtotal_ex_vat: subtotalExVatEuros,
+    vat_amount: vatAmountEuros,
+    vat_rate_percent: vatRatePercent,
+    // Cents mirror (diagnostic; not required by the reader).
+    price_incl_vat_cents: priceInclVatCents,
+    total_incl_vat_cents: priceInclVatCents,
+    total_excl_vat_cents: totalExclVatCents,
+    vat_cents: vatCents,
+    // Minimal trip context.
+    from: pickupAddress,
+    to: dropoffAddress,
+    pickup_iso: pickupIso,
+    pickupIso: pickupIso,
+    service: "transfer",
+    line_description: "Taxirit - paid business sandbox fixture",
+    // Customer name/email so buyer_snapshot carries name+email at issue.
+    custName: customerName,
+    customer_name: customerName,
+    custEmail: customerEmail,
+    customer_email: customerEmail,
+    // The already-normalized + readiness-validated billing customer.
+    billing_customer_snapshot: normalizedBillingCustomer,
+    billingCustomerSnapshot: normalizedBillingCustomer,
+    // Business-invoice intent markers (parity with real paid business bookings).
+    business_detected: true,
+    invoice_requested: true,
+    invoice_intent: "business_invoice",
+    invoice_state: "ready_to_send",
+  };
+  // Stamp currency across the shapes the currency resolver reads.
+  _stampExplicitBookingCurrencyOnPersistedRecord(record, currency);
+
+  return {
+    booking_id: bookingId,
+    record,
+    totals: {
+      price_incl_vat_cents: priceInclVatCents,
+      total_excl_vat_cents: totalExclVatCents,
+      vat_cents: vatCents,
+      vat_rate_percent: vatRatePercent,
+    },
+  };
+}
+
+/* Admin-only, SANDBOX-ONLY test-fixture route (Patch B8b) that writes exactly
+ * ONE PAID business booking:<id> record with a complete, Peppol-ready
+ * billing_customer_snapshot and baked totals, so the B8a auto-create route
+ * (POST /admin/bookings/:bookingId/billit-auto-create/sandbox) can be positively
+ * tested. It performs NO other side effects: no Billit/Peppol call, no
+ * _issueInvoiceCore, no legacy generateAndSendInvoice, no Mollie, no email, no
+ * calendar, no push, no compliance emit, no demand/driver/vehicle/tracking
+ * indexes. NEVER mutates an existing booking and NEVER returns tokens/secrets/
+ * raw responses. */
+async function handleAdminPaidBusinessBookingFixture({ request, url, env }) {
+  // 1. Admin auth.
+  try {
+    _requireAdmin(request, url, env);
+  } catch (err) {
+    const message = String(err?.message || "Unauthorized");
+    return json(
+      {
+        ok: false,
+        error: message === "Unauthorized" ? "unauthorized" : "admin_unavailable",
+      },
+      message === "Unauthorized" ? 401 : 500,
+    );
+  }
+
+  // 2. Resolve config + SANDBOX-ONLY guard (before any work).
+  const config = resolveBillitOAuthConfig(env);
+  if (config.environment !== "sandbox") {
+    return json(
+      { ok: false, error: "test_fixture_sandbox_only", environment: config.environment },
+      409,
+    );
+  }
+
+  // 3. Parse + validate the explicit confirmation body.
+  const body = await safeJson(request);
+  const bodyObj = body && typeof body === "object" && !Array.isArray(body) ? body : {};
+  if (bodyObj.confirm_paid_business_fixture !== true) {
+    return json({ ok: false, error: "confirm_paid_business_fixture_required" }, 400);
+  }
+  const fixtureLabel = safeStr(bodyObj.fixture_label ?? bodyObj.fixtureLabel, 60) || null;
+
+  // 4. Explicit tenant/company scope (query or body; no legacy fallback).
+  const scopedRoute = requireExplicitBookingRouteScope({ request, url, body: bodyObj });
+  if (!scopedRoute.ok) return scopedRoute.response;
+  const scope = {
+    tenant_id: scopedRoute.scope.tenant_id,
+    company_id: scopedRoute.scope.company_id,
+  };
+
+  if (!env?.BOOKING_KV) return json({ ok: false, error: "missing_binding" }, 503);
+
+  // 5. Bake the known-good sandbox business buyer + normalize/validate it
+  // through the same helpers the issue path uses (fail-closed if not ready).
+  const bakedBillingCustomerInput = {
+    billing_customer: {
+      customer_type: "business",
+      legal_name: "Fluxidi B8 Paid Fixture BV",
+      display_name: "Fluxidi B8 Paid Fixture",
+      vat_number: "BE0772931038",
+      company_registration_number: "0772931038",
+      email: "b8-paid-fixture@example.test",
+      billing_address: {
+        line1: "Teststraat 1",
+        postal_code: "1000",
+        city: "Brussel",
+        country: "BE",
+      },
+      peppol: {
+        endpoint_id: "0772931038",
+        scheme: "0208",
+      },
+    },
+  };
+  const normalizedBillingCustomer = normalizeBillingCustomerIdentityInput(
+    bakedBillingCustomerInput,
+  );
+  const readiness = buildBillingCustomerIdentityReadiness(normalizedBillingCustomer);
+  if (
+    readiness.ready !== true ||
+    readiness.legal_identity_ready !== true ||
+    readiness.peppol_target_ready !== true
+  ) {
+    return json(
+      {
+        ok: false,
+        error: "billing_customer_not_ready",
+        ready: readiness.ready === true,
+        legal_identity_ready: readiness.legal_identity_ready === true,
+        peppol_target_ready: readiness.peppol_target_ready === true,
+        missing_fields: Array.isArray(readiness.missing_fields)
+          ? readiness.missing_fields
+          : [],
+      },
+      500,
+    );
+  }
+
+  // 6. Build the minimal PAID business fixture booking record (pure).
+  const nowIso = new Date().toISOString();
+  const built = buildPaidBusinessBookingFixtureRecord({
+    scope,
+    normalizedBillingCustomer,
+    fixtureLabel,
+    nowIso,
+  });
+
+  // 7. Do-not-overwrite guard: refuse if the booking id already exists (the id
+  // is timestamp+random so a collision is effectively impossible, but we still
+  // never clobber an existing record).
+  const bookingKey = `booking:${built.booking_id}`;
+  const existing = await env.BOOKING_KV.get(bookingKey);
+  if (existing) {
+    return json({ ok: false, error: "fixture_booking_id_collision" }, 409);
+  }
+
+  // 8. The ONLY write: exactly one booking:<id> KV put. No indexes, no email,
+  // no calendar, no push, no compliance, no tracking, no invoice, no Billit.
+  try {
+    await env.BOOKING_KV.put(bookingKey, JSON.stringify(built.record));
+  } catch (_) {
+    return json({ ok: false, error: "fixture_persist_failed" }, 500);
+  }
+
+  console.log(
+    `[TEST_FIXTURE][PAID_BUSINESS_BOOKING][OK] booking=${_bookingIntentMask(built.booking_id)} currency=EUR paid=yes`,
+  );
+  return json({
+    ok: true,
+    sandbox_paid_business_fixture: true,
+    booking_id: built.booking_id,
+    tenant_id: scope.tenant_id,
+    company_id: scope.company_id,
+    payment_status: "paid",
+    invoice_requested: true,
+    invoice_intent: "business_invoice",
+    invoice_state: "ready_to_send",
+    billing_customer_ready: true,
+    total_incl_vat_cents: built.totals.price_incl_vat_cents,
+    currency: "EUR",
+    warnings: [],
+  });
+}
+
 // Small HTML response helper for the browser-facing OAuth callback. No
 // secrets/tokens ever included.
 function _billitCallbackHtml(message, status = 200) {
@@ -30429,6 +30692,28 @@ export default {
         } catch (err) {
           console.log(
             `[TEST_FIXTURE][PEPPOL_READY_BOOKING][ERR] ${safeStr(err?.message, 160) || "unknown"}`,
+          );
+          return json({ ok: false, error: "internal_error" }, 500);
+        }
+      }
+
+      // POST /admin/test-fixtures/bookings/paid-business
+      // Patch B8b: admin-only, SANDBOX-ONLY test-fixture route that writes
+      // exactly ONE PAID business booking:<id> record with a complete,
+      // Peppol-ready billing_customer_snapshot + baked totals, so the B8a
+      // auto-create route can be positively tested. It performs NO other side
+      // effects (no email/calendar/push/compliance/demand/tracking/Mollie),
+      // NEVER issues an invoice, NEVER calls Billit/Peppol, and NEVER touches
+      // existing bookings (see handleAdminPaidBusinessBookingFixture).
+      if (
+        request.method === "POST" &&
+        url.pathname === "/admin/test-fixtures/bookings/paid-business"
+      ) {
+        try {
+          return await handleAdminPaidBusinessBookingFixture({ request, url, env });
+        } catch (err) {
+          console.log(
+            `[TEST_FIXTURE][PAID_BUSINESS_BOOKING][ERR] ${safeStr(err?.message, 160) || "unknown"}`,
           );
           return json({ ok: false, error: "internal_error" }, 500);
         }
