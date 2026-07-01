@@ -3205,6 +3205,582 @@ async function handleAdminBillitSandboxOrderReconcileSent({ request, url, env, d
   });
 }
 
+/* Read-only Document-Core lookup (Patch B8a). Finds an ALREADY-ISSUED Document
+ * Core invoice for a booking (optionally a specific leg) via the existing scoped
+ * doc_by_booking index (listIssuedDocumentRecordsForBooking). This is Document
+ * Core ONLY — it NEVER reads legacy PDF/FLX invoice keys. Returns the matching
+ * registry record + identity, or null when none is present. No writes, no
+ * allocation, no network. */
+async function findExistingInvoiceDocumentForBooking(
+  env,
+  scope,
+  bookingId,
+  { sourceLegId = null, sourceLegType = null } = {},
+) {
+  const listed = await listIssuedDocumentRecordsForBooking(env, scope, bookingId);
+  if (!listed || listed.ok !== true || !Array.isArray(listed.records)) {
+    return null;
+  }
+  const wantLegId = safeStr(sourceLegId, 200) || null;
+  const invoices = listed.records.filter((rec) => {
+    const type = safeStr(rec?.document_type ?? rec?.documentType, 40).toLowerCase();
+    if (type !== "invoice") return false;
+    if (wantLegId) {
+      const recLegId = safeStr(rec?.source_leg_id ?? rec?.sourceLegId, 200) || null;
+      return recLegId === wantLegId;
+    }
+    return true;
+  });
+  if (invoices.length === 0) return null;
+  // Deterministic pick: earliest issue_timestamp (stable across replays) so a
+  // booking with more than one issued invoice always reuses the same one.
+  invoices.sort((a, b) => {
+    const at = safeStr(a?.issue_timestamp ?? a?.issueTimestamp, 40);
+    const bt = safeStr(b?.issue_timestamp ?? b?.issueTimestamp, 40);
+    return at < bt ? -1 : at > bt ? 1 : 0;
+  });
+  const record = invoices[0];
+  return {
+    ok: true,
+    document_record: record,
+    document_id: safeStr(record?.document_id ?? record?.documentId, 200) || null,
+    document_number:
+      safeStr(record?.document_number ?? record?.documentNumber, 80) || null,
+  };
+}
+
+/* Pure builder (Patch B8a) for the body expected by _issueInvoiceCore. It NEVER
+ * invents amounts: totals + currency come from deriveServerSideInvoiceContext
+ * (the same server derivation the issue route uses), and are passed back as
+ * expected_totals so the core's reconciliation is an exact match. Returns
+ * { ok:false, error } when the server cannot reliably derive totals/currency so
+ * the caller can fail closed (billit_auto_invoice_totals_unavailable). The
+ * idempotency key is deterministic per booking/leg so replays never mint a
+ * second INV-*. */
+function buildAutoInvoiceIssueBodyFromBooking({
+  scope,
+  booking,
+  bookingId,
+  sourceLegId = null,
+  sourceLegType = null,
+  serverPricingProfile = null,
+}) {
+  const rec = booking && typeof booking === "object" && !Array.isArray(booking) ? booking : null;
+  if (!rec) return { ok: false, error: "billit_auto_invoice_booking_missing" };
+
+  const derivation = deriveServerSideInvoiceContext(rec, {
+    source_leg_id: sourceLegId,
+    source_leg_type: sourceLegType,
+    booking_id: bookingId,
+    server_pricing_profile: serverPricingProfile,
+  });
+  if (!derivation || derivation.ok !== true || !derivation.context) {
+    return {
+      ok: false,
+      error: "billit_auto_invoice_totals_unavailable",
+      derive_error: safeStr(derivation?.error, 60) || null,
+    };
+  }
+  const ctx = derivation.context;
+  const totals = ctx.totals && typeof ctx.totals === "object" ? ctx.totals : {};
+  const currency = safeStr(ctx.currency, 8).toUpperCase();
+  if (!currency || !/^[A-Z]{3}$/.test(currency)) {
+    return { ok: false, error: "billit_auto_invoice_currency_unavailable" };
+  }
+  const totalInclVat = Number(totals.total_incl_vat);
+  if (!Number.isFinite(totalInclVat) || !(totalInclVat > 0)) {
+    return { ok: false, error: "billit_auto_invoice_totals_unavailable" };
+  }
+
+  const legPart = safeStr(sourceLegId, 200) || "main";
+  const idempotencyKey = `inv-auto:${scope.tenant_id}:${scope.company_id}:${bookingId}:${legPart}:v1`;
+
+  const expectedTotals = {
+    total_incl_vat: totalInclVat,
+    subtotal_ex_vat:
+      Number.isFinite(Number(totals.subtotal_ex_vat)) ? Number(totals.subtotal_ex_vat) : null,
+    vat_amount:
+      Number.isFinite(Number(totals.vat_amount)) ? Number(totals.vat_amount) : null,
+    vat_rate_percent:
+      Number.isFinite(Number(totals.vat_rate_percent)) ? Number(totals.vat_rate_percent) : null,
+  };
+
+  const body = {
+    source_booking_id: bookingId,
+    canonical_booking_id: bookingId,
+    currency,
+    expected_totals: expectedTotals,
+    idempotency_key: idempotencyKey,
+    created_by_role: "admin_billit_auto_create",
+  };
+  if (sourceLegId) {
+    body.source_leg_id = safeStr(sourceLegId, 200);
+    if (sourceLegType) body.source_leg_type = safeStr(sourceLegType, 24);
+  }
+  if (expectedTotals.vat_rate_percent !== null) {
+    body.vat_rate_percent = expectedTotals.vat_rate_percent;
+  }
+  return { ok: true, body, idempotency_key: idempotencyKey, currency, expected_totals: expectedTotals };
+}
+
+/* Orchestrator (Patch B8a): idempotently ensure a Document Core invoice exists
+ * for a paid business booking. Reuses an existing issued invoice (via the
+ * doc_by_booking index) before issuing, and otherwise issues exactly once via
+ * the existing _issueInvoiceCore with a deterministic idempotency key. Returns a
+ * structured result (not an HTTP Response) so the caller can chain Billit
+ * create. Read-only on the booking; never touches the legacy PDF pipeline. */
+async function ensureDocumentCoreInvoiceForPaidBusinessBooking(
+  env,
+  scope,
+  bookingId,
+  { sourceLegId = null, sourceLegType = null, scopeForBookingMatch = null } = {},
+) {
+  const warnings = [];
+  // The booking-scope matcher requires a resolved scope carrying hasScope (from
+  // requireExplicitBookingRouteScope). Fall back to a synthesized flag when only
+  // the minimal { tenant_id, company_id } scope is available.
+  const matchScope =
+    scopeForBookingMatch && scopeForBookingMatch.hasScope === true
+      ? scopeForBookingMatch
+      : { tenant_id: scope.tenant_id, company_id: scope.company_id, hasScope: true };
+  // 1. Load booking (read-only).
+  const rec = await env.BOOKING_KV.get(`booking:${bookingId}`, { type: "json" });
+  if (!rec || typeof rec !== "object" || Array.isArray(rec)) {
+    return { ok: false, status: 404, error: "source_booking_not_found" };
+  }
+  // 2. Strict scope match.
+  if (!bookingMatchesRequestedTenantScope(rec, matchScope)) {
+    return { ok: false, status: 403, error: "not_in_scope" };
+  }
+  // 3. Paid gate.
+  const paymentStatus = safeStr(
+    rec?.payment_status ??
+      rec?.paymentStatus ??
+      rec?.booking?.payment_status ??
+      rec?.booking?.paymentStatus,
+    40,
+  ).toLowerCase();
+  if (paymentStatus !== "paid") {
+    return { ok: false, status: 409, error: "booking_not_paid", payment_status: paymentStatus || null };
+  }
+  // 4. Business invoice intent gate.
+  const lifecycle = _invoiceLifecycleContextFromRecord(rec);
+  if (!lifecycle.businessInvoiceIntent) {
+    return { ok: false, status: 409, error: "not_business_invoice_intent" };
+  }
+  // 5. Billing customer snapshot must exist + be meaningful.
+  const billingSnapshot =
+    (rec.billing_customer_snapshot ?? rec.billingCustomerSnapshot) ||
+    (rec.booking && typeof rec.booking === "object"
+      ? (rec.booking.billing_customer_snapshot ?? rec.booking.billingCustomerSnapshot)
+      : null) ||
+    (rec.payload && typeof rec.payload === "object"
+      ? (rec.payload.billing_customer_snapshot ?? rec.payload.billingCustomerSnapshot)
+      : null) ||
+    null;
+  const meaningfulBillingCustomer =
+    billingSnapshot &&
+    typeof billingSnapshot === "object" &&
+    !Array.isArray(billingSnapshot) &&
+    (safeStr(billingSnapshot.legal_name ?? billingSnapshot.legalName, 240) ||
+      safeStr(billingSnapshot.display_name ?? billingSnapshot.displayName, 240) ||
+      safeStr(billingSnapshot.vat_number ?? billingSnapshot.vatNumber, 64));
+  if (!meaningfulBillingCustomer) {
+    return { ok: false, status: 409, error: "billit_auto_billing_customer_missing" };
+  }
+
+  // 6. Reuse an existing Document Core invoice before issuing.
+  const existing = await findExistingInvoiceDocumentForBooking(env, scope, bookingId, {
+    sourceLegId,
+    sourceLegType,
+  });
+  if (existing && existing.document_id) {
+    return {
+      ok: true,
+      reused_existing_invoice: true,
+      document_id: existing.document_id,
+      document_number: existing.document_number,
+      document_record: existing.document_record,
+      warnings,
+    };
+  }
+
+  // 7. Build the deterministic issue body from server-derived totals only.
+  let serverPricingProfile = null;
+  try {
+    serverPricingProfile = await _loadTenantPricingProfile(env, scope, {
+      allowTenantLegacyFallback: true,
+    });
+  } catch (_) {
+    serverPricingProfile = null;
+  }
+  const built = buildAutoInvoiceIssueBodyFromBooking({
+    scope,
+    booking: rec,
+    bookingId,
+    sourceLegId,
+    sourceLegType,
+    serverPricingProfile,
+  });
+  if (!built.ok) {
+    return { ok: false, status: 409, error: built.error };
+  }
+
+  // 8. Issue exactly once via the existing core (idempotent by deterministic key).
+  const issueResp = await _issueInvoiceCore({
+    env,
+    body: built.body,
+    scope,
+    scopeForBookingMatch: matchScope,
+    createdByRoleOverride: "admin_billit_auto_create",
+    routeLabel: "ADMIN_BILLIT_AUTO_INVOICE_ISSUE",
+  });
+  let issueData = null;
+  try {
+    issueData = await issueResp.json();
+  } catch (_) {
+    issueData = null;
+  }
+  if (!issueResp.ok || !issueData || issueData.ok !== true) {
+    return {
+      ok: false,
+      status: issueResp.status || 500,
+      error: safeStr(issueData?.error, 80) || "billit_auto_invoice_issue_failed",
+    };
+  }
+  if (Array.isArray(issueData.warnings)) {
+    for (const w of issueData.warnings) warnings.push(safeStr(w, 80));
+  }
+  const documentId = safeStr(issueData.document_id, 200) || null;
+  if (!documentId) {
+    return { ok: false, status: 500, error: "billit_auto_invoice_issue_no_document_id" };
+  }
+  // Load the persisted registry record for the Billit create step.
+  const record = await loadIssuedDocumentRegistryRecordById(env, scope, documentId);
+  if (!record) {
+    return { ok: false, status: 500, error: "billit_auto_invoice_registry_miss" };
+  }
+  return {
+    ok: true,
+    reused_existing_invoice: issueData.idempotent_replay === true,
+    document_id: documentId,
+    document_number: safeStr(issueData.document_number, 80) || null,
+    document_record: record,
+    warnings,
+  };
+}
+
+/* Orchestrator (Patch B8a): idempotently ensure a Billit SANDBOX order exists
+ * for an already-issued Document Core invoice. If the registry record already
+ * carries a sandbox billit_export.order_id, it short-circuits (NO second POST).
+ * Otherwise it runs the SAME safe create path as B6a (official order preview →
+ * readiness gate → token → exactly one POST /v1/orders → envelope-only persist),
+ * reusing the same factored helpers. NEVER sends / Peppol-sends, NEVER supports
+ * production, NEVER returns tokens or the raw Billit body. Returns a structured
+ * result (not an HTTP Response). */
+async function ensureBillitSandboxOrderForIssuedInvoice(
+  env,
+  scope,
+  config,
+  documentRecord,
+  { documentId, documentNumber } = {},
+) {
+  const warnings = [];
+  const docId = safeStr(documentId, 200);
+  const recordDocNumber = safeStr(documentNumber, 80);
+
+  // 0. Duplicate guard: reuse an already-linked sandbox order (no Billit call).
+  const existingProjection = buildSafeBillitExportProjection(documentRecord);
+  if (
+    existingProjection &&
+    existingProjection.order_id &&
+    safeStr(documentRecord?.billit_export?.environment, 24).toLowerCase() === "sandbox"
+  ) {
+    return {
+      ok: true,
+      already_created: true,
+      billit_order_id: existingProjection.order_id,
+      billit_order_number: existingProjection.order_number,
+      billit_status: existingProjection.status || "created",
+      billit_party_id: existingProjection.party_id,
+      billit_export: existingProjection,
+      warnings: ["billit_order_already_linked"],
+    };
+  }
+
+  // 1. Build the official order preview (same chain as B6a / the preview route).
+  let businessProfile = null;
+  try {
+    businessProfile = await loadBusinessProfile(env, scope, {
+      allowTenantLegacyFallback: true,
+    });
+  } catch (_) {
+    businessProfile = null;
+  }
+  const classification = classifyDocumentExportReadiness(documentRecord, businessProfile);
+  const docPreview = buildDocumentExportPreview(documentRecord, classification, null);
+  const billitEnvironment = "sandbox";
+  const billitPayloadPreview = buildBillitPayloadPreviewFromProviderNeutralDocument(
+    docPreview,
+    { ...scope, billit_environment: billitEnvironment },
+  );
+  const billitPartyId = await readBillitPartyIdForScope(env, scope);
+  const paymentTermsDays = normalizeBillitPaymentTermsDays(
+    businessProfile?.payment_terms_days,
+  );
+  const officialPreview = buildBillitOfficialOrderRequestPreview(billitPayloadPreview, {
+    party_id: billitPartyId,
+    environment_hint: billitEnvironment,
+    payment_terms_days: paymentTermsDays,
+    payment_terms_source: "platform_default",
+  });
+
+  // 2. Readiness gates (fail-closed before token decrypt / outbound call).
+  if (!officialPreview || officialPreview.readiness?.ready !== true) {
+    return {
+      ok: false,
+      status: 409,
+      error: "billit_order_not_ready",
+      reasons: Array.isArray(officialPreview?.readiness?.reasons)
+        ? officialPreview.readiness.reasons
+        : [],
+    };
+  }
+  if (!officialPreview.body || typeof officialPreview.body !== "object") {
+    return { ok: false, status: 409, error: "billit_order_body_missing" };
+  }
+  const previewPartyId = safeStr(officialPreview.headers_preview?.PartyID, 120);
+  if (!previewPartyId) {
+    return { ok: false, status: 409, error: "billit_party_id_missing" };
+  }
+  if (safeStr(officialPreview.body.OrderType, 40) !== "Invoice") {
+    return { ok: false, status: 409, error: "billit_order_type_not_invoice" };
+  }
+
+  // 3. Deterministic create request (stable Idempotent-Key, no token inside).
+  const idempotencyKey = buildBillitSandboxOrderCreateIdempotencyKey(docId);
+  const createRequest = buildBillitOfficialOrderCreateRequestFromPreview(officialPreview, {
+    idempotency_key: idempotencyKey,
+  });
+
+  // 4. Acquire a usable sandbox access token.
+  const tokenResult = await acquireBillitSandboxAccessToken(env, scope, config);
+  if (!tokenResult.ok) {
+    return { ok: false, status: tokenResult.status || 500, error: tokenResult.error };
+  }
+
+  // 5. The single outbound create call (POST /v1/orders, sandbox host).
+  const createResult = await postBillitSandboxOrderCreate(
+    config,
+    tokenResult.access_token,
+    previewPartyId,
+    createRequest,
+  );
+  if (!createResult.ok) {
+    console.log(
+      `[BILLIT_AUTO_CREATE][SANDBOX][FAIL] doc=${docId.slice(0, 8)} status=${createResult.status_code ?? "-"} refreshed=${tokenResult.refreshed}`,
+    );
+    return {
+      ok: false,
+      status: 502,
+      error: "billit_order_create_failed",
+      status_code: createResult.status_code,
+      billit_error_code: createResult.billit_error_code,
+      billit_error_description: createResult.billit_error_description,
+    };
+  }
+  const summary = createResult.summary || {
+    billit_order_id: null,
+    billit_order_number: null,
+    billit_status: null,
+  };
+  console.log(
+    `[BILLIT_AUTO_CREATE][SANDBOX][OK] doc=${docId.slice(0, 8)} order=${summary.billit_order_id ? "yes" : "no"} refreshed=${tokenResult.refreshed}`,
+  );
+
+  // 6. Persist the sanitized billit_export link envelope-only (B6b path). Failure
+  // is non-fatal: the Billit order already exists, so return success + warning.
+  let exportProjection = null;
+  const normalizedExport = normalizeBillitExportMetadata({
+    environment: "sandbox",
+    party_id: previewPartyId,
+    order_id: summary.billit_order_id,
+    order_number: recordDocNumber,
+    idempotency_key: idempotencyKey,
+    source: "admin_billit_auto_create",
+  });
+  if (normalizedExport.ok) {
+    const persistResult = await persistBillitOrderExportOnDocumentRecord(
+      env,
+      scope,
+      documentRecord,
+      normalizedExport.export,
+    );
+    if (persistResult.ok) {
+      exportProjection = buildSafeBillitExportProjection(persistResult.export);
+    } else {
+      warnings.push("billit_order_persistence_failed");
+    }
+  } else {
+    warnings.push("billit_order_persistence_deferred");
+  }
+  if (!summary.billit_status) warnings.push("billit_status_unknown");
+  return {
+    ok: true,
+    already_created: false,
+    billit_order_id: summary.billit_order_id,
+    billit_order_number: summary.billit_order_number,
+    billit_status: summary.billit_status,
+    billit_party_id: previewPartyId,
+    billit_export: exportProjection,
+    warnings,
+  };
+}
+
+/* Admin-only, SANDBOX-ONLY orchestration route (Patch B8a) that idempotently
+ * ensures a Document Core invoice exists for a PAID business booking and then a
+ * Billit sandbox order exists for that invoice — WITHOUT ever Peppol-sending.
+ * It is the first safe slice of the "paid business booking → Document Core
+ * invoice → Billit order" chain and is deliberately NOT wired into the payment
+ * webhook or /pay/status lifecycle. It NEVER calls /v1/orders/commands/send,
+ * NEVER supports production, NEVER changes legacy PDF invoice behavior, NEVER
+ * mutates immutable_snapshot / content_hash, and NEVER returns tokens, the raw
+ * OAuth record, or the raw Billit response. */
+async function handleAdminBookingBillitAutoCreateSandbox({ request, url, env, bookingId }) {
+  // 1. Admin auth.
+  try {
+    _requireAdmin(request, url, env);
+  } catch (err) {
+    const message = String(err?.message || "Unauthorized");
+    return json(
+      {
+        ok: false,
+        error: message === "Unauthorized" ? "unauthorized" : "admin_unavailable",
+      },
+      message === "Unauthorized" ? 401 : 500,
+    );
+  }
+
+  // 2. Resolve config + SANDBOX-ONLY guard (before any KV/network work).
+  const config = resolveBillitOAuthConfig(env);
+  if (config.environment !== "sandbox") {
+    return json(
+      { ok: false, error: "billit_auto_create_sandbox_only", environment: config.environment },
+      409,
+    );
+  }
+  if (!config.configured) {
+    return json(
+      {
+        ok: false,
+        error: "billit_oauth_not_configured",
+        environment: "sandbox",
+        missing_fields: config.missing_fields,
+      },
+      400,
+    );
+  }
+
+  // 3. Parse + validate the explicit confirmation body.
+  const body = await safeJson(request);
+  const bodyObj = body && typeof body === "object" && !Array.isArray(body) ? body : {};
+  if (bodyObj.confirm_sandbox_auto_create !== true) {
+    return json({ ok: false, error: "confirm_sandbox_auto_create_required" }, 400);
+  }
+  const sourceLegId = safeStr(bodyObj.source_leg_id ?? bodyObj.sourceLegId, 200) || null;
+  const sourceLegType = safeStr(bodyObj.source_leg_type ?? bodyObj.sourceLegType, 24) || null;
+
+  // 4. Explicit tenant/company scope (query or body; no legacy fallback).
+  const scopedRoute = requireExplicitBookingRouteScope({ request, url, body: bodyObj });
+  if (!scopedRoute.ok) return scopedRoute.response;
+  const scope = {
+    tenant_id: scopedRoute.scope.tenant_id,
+    company_id: scopedRoute.scope.company_id,
+  };
+
+  const bId = safeStr(bookingId, 200);
+  if (!bId) return json({ ok: false, error: "missing_booking_id" }, 400);
+  if (!env?.BOOKING_KV) return json({ ok: false, error: "missing_binding" }, 503);
+  if (!env?.DOCUMENT_REFERENCE_SEQUENCE) {
+    return json({ ok: false, error: "missing_binding" }, 503);
+  }
+
+  // 5. Billit connected + party_id available (read-only).
+  const partyId = await readBillitPartyIdForScope(env, scope);
+  if (!partyId) {
+    return json({ ok: false, error: "billit_party_id_missing", environment: "sandbox" }, 409);
+  }
+
+  // 6. Ensure the Document Core invoice (reuse or issue-once).
+  const invoiceResult = await ensureDocumentCoreInvoiceForPaidBusinessBooking(
+    env,
+    scope,
+    bId,
+    { sourceLegId, sourceLegType, scopeForBookingMatch: scopedRoute.scope },
+  );
+  if (!invoiceResult.ok) {
+    return json(
+      {
+        ok: false,
+        error: invoiceResult.error,
+        ...(invoiceResult.payment_status ? { payment_status: invoiceResult.payment_status } : {}),
+      },
+      invoiceResult.status || 409,
+    );
+  }
+
+  // 7. Ensure the Billit sandbox order (reuse or create-once). Never sends.
+  const billitResult = await ensureBillitSandboxOrderForIssuedInvoice(
+    env,
+    scope,
+    config,
+    invoiceResult.document_record,
+    { documentId: invoiceResult.document_id, documentNumber: invoiceResult.document_number },
+  );
+  if (!billitResult.ok) {
+    // Invoice remains issued; Billit create can be retried manually/admin.
+    return json(
+      {
+        ok: false,
+        error: billitResult.error,
+        document_id: invoiceResult.document_id,
+        document_number: invoiceResult.document_number,
+        document_type: "invoice",
+        reused_existing_invoice: invoiceResult.reused_existing_invoice === true,
+        ...(Array.isArray(billitResult.reasons) ? { reasons: billitResult.reasons } : {}),
+        ...(billitResult.status_code ? { status_code: billitResult.status_code } : {}),
+        ...(billitResult.billit_error_code ? { billit_error_code: billitResult.billit_error_code } : {}),
+        ...(billitResult.billit_error_description
+          ? { billit_error_description: billitResult.billit_error_description }
+          : {}),
+      },
+      billitResult.status || 502,
+    );
+  }
+
+  const warnings = [];
+  for (const w of invoiceResult.warnings || []) if (w) warnings.push(safeStr(w, 80));
+  for (const w of billitResult.warnings || []) if (w) warnings.push(safeStr(w, 80));
+
+  return json({
+    ok: true,
+    sandbox_billit_auto_create: true,
+    booking_id: bId,
+    document_id: invoiceResult.document_id,
+    document_number: invoiceResult.document_number,
+    document_type: "invoice",
+    reused_existing_invoice: invoiceResult.reused_existing_invoice === true,
+    billit_order_id: billitResult.billit_order_id,
+    billit_order_number: billitResult.billit_order_number,
+    billit_status: billitResult.billit_status,
+    billit_export: billitResult.billit_export,
+    billit_already_created: billitResult.already_created === true,
+    sent: false,
+    peppol_sent: false,
+    warnings,
+  });
+}
+
 /* Pure builder (Patch B7-4) for a MINIMAL Peppol-ready test-fixture booking
  * record. Produces exactly the smallest field set that the existing
  * deriveServerSideInvoiceContext + _issueInvoiceCore path already reads, so a
@@ -29619,6 +30195,47 @@ export default {
           } catch (err) {
             console.log(
               `[BILLIT_ORDER_CREATE][SANDBOX][ERR] ${safeStr(err?.message, 160) || "unknown"}`,
+            );
+            return json({ ok: false, error: "internal_error" }, 500);
+          }
+        }
+      }
+
+      // POST /admin/bookings/:bookingId/billit-auto-create/sandbox
+      // Patch B8a: admin-only, SANDBOX-ONLY orchestration that idempotently
+      // ensures a Document Core invoice exists for a PAID business booking and
+      // then a Billit sandbox order exists for that invoice. It NEVER Peppol-
+      // sends, NEVER calls /v1/orders/commands/send, NEVER supports production,
+      // NEVER hooks the payment webhook / pay-status lifecycle, and NEVER
+      // changes legacy PDF invoice behavior (see
+      // handleAdminBookingBillitAutoCreateSandbox).
+      if (
+        request.method === "POST" &&
+        url.pathname.startsWith("/admin/bookings/") &&
+        url.pathname.endsWith("/billit-auto-create/sandbox")
+      ) {
+        const billitAutoSegments = url.pathname.split("/").filter(Boolean);
+        // Only the exact shape:
+        //   ["admin","bookings","<bookingId>","billit-auto-create","sandbox"]
+        if (
+          billitAutoSegments.length === 5 &&
+          billitAutoSegments[0] === "admin" &&
+          billitAutoSegments[1] === "bookings" &&
+          billitAutoSegments[3] === "billit-auto-create" &&
+          billitAutoSegments[4] === "sandbox"
+        ) {
+          try {
+            const bookingId =
+              safeStr(decodeURIComponent(billitAutoSegments[2]), 200) || "";
+            return await handleAdminBookingBillitAutoCreateSandbox({
+              request,
+              url,
+              env,
+              bookingId,
+            });
+          } catch (err) {
+            console.log(
+              `[BILLIT_AUTO_CREATE][SANDBOX][ERR] ${safeStr(err?.message, 160) || "unknown"}`,
             );
             return json({ ok: false, error: "internal_error" }, 500);
           }
