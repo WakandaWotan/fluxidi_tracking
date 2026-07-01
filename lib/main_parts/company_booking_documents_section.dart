@@ -30,6 +30,93 @@ class _BookingDocumentsRefreshBus {
   }
 }
 
+/// B10c: read-only, envelope-only projection of the `billit_export` object that
+/// the booking documents backend (`GET /admin/bookings/:bookingId/documents`)
+/// already returns per issued document.
+///
+/// Surfaces ONLY safe lifecycle/link fields for display. It never parses or
+/// exposes the raw Billit response, customer data, addresses, order lines, VAT
+/// details, files, tokens or secrets. This model carries no actions and triggers
+/// no network calls — it is purely a display projection of already-fetched data.
+class _BillitExportMetadata {
+  final String status;
+  final String orderId;
+  final String orderNumber;
+  final bool sent;
+  final bool peppolSent;
+  final String billitStatus;
+  final bool? billitIsSent;
+  final bool? billitPaid;
+  final String transportType;
+  final String sentAt;
+  final String peppolSentAt;
+  final String statusCheckedAt;
+
+  const _BillitExportMetadata({
+    required this.status,
+    required this.orderId,
+    required this.orderNumber,
+    required this.sent,
+    required this.peppolSent,
+    required this.billitStatus,
+    required this.billitIsSent,
+    required this.billitPaid,
+    required this.transportType,
+    required this.sentAt,
+    required this.peppolSentAt,
+    required this.statusCheckedAt,
+  });
+
+  factory _BillitExportMetadata.fromJson(Map<String, dynamic> json) {
+    String readAny(List<String> keys) {
+      for (final key in keys) {
+        final text = (json[key] ?? '').toString().trim();
+        if (text.isNotEmpty && text.toLowerCase() != 'null') return text;
+      }
+      return '';
+    }
+
+    bool? readBoolOrNull(List<String> keys) {
+      for (final key in keys) {
+        final value = json[key];
+        if (value is bool) return value;
+      }
+      return null;
+    }
+
+    return _BillitExportMetadata(
+      status: readAny(const ['status']),
+      orderId: readAny(const ['order_id', 'orderId']),
+      orderNumber: readAny(const ['order_number', 'orderNumber']),
+      sent: json['sent'] == true,
+      peppolSent: json['peppol_sent'] == true || json['peppolSent'] == true,
+      billitStatus: readAny(const ['billit_status', 'billitStatus']),
+      billitIsSent: readBoolOrNull(const ['billit_is_sent', 'billitIsSent']),
+      billitPaid: readBoolOrNull(const ['billit_paid', 'billitPaid']),
+      transportType: readAny(const ['transport_type', 'transportType']),
+      sentAt: readAny(const ['sent_at', 'sentAt']),
+      peppolSentAt: readAny(const ['peppol_sent_at', 'peppolSentAt']),
+      statusCheckedAt: readAny(const ['status_checked_at', 'statusCheckedAt']),
+    );
+  }
+
+  /// True when there is at least one displayable link/status field. Documents
+  /// without a meaningful Billit export report false so they render exactly as
+  /// before this patch.
+  bool get hasDisplayableStatus =>
+      orderId.isNotEmpty ||
+      orderNumber.isNotEmpty ||
+      status.isNotEmpty ||
+      billitStatus.isNotEmpty ||
+      sent ||
+      peppolSent;
+
+  /// The invoice has been handed to Peppol. Used to pick the "Verzonden via
+  /// Peppol" primary badge and to hide the "sending is manual" hint.
+  bool get isSentViaPeppol =>
+      peppolSent || (transportType.toLowerCase() == 'peppol' && sent);
+}
+
 /// 2G-Q: read-only typed model for a single issued Document Core record as
 /// returned by `GET /admin/bookings/:bookingId/documents` (2G-P backend).
 ///
@@ -49,6 +136,9 @@ class _BookingDocumentMetadata {
   final String sourceBookingId;
   final String sourceLegId;
   final String sourceLegType;
+  // B10c: safe read-only Billit export projection (null when the document has no
+  // meaningful Billit export). Existing documents without it render unchanged.
+  final _BillitExportMetadata? billitExport;
 
   const _BookingDocumentMetadata({
     required this.documentId,
@@ -63,6 +153,7 @@ class _BookingDocumentMetadata {
     required this.sourceBookingId,
     required this.sourceLegId,
     required this.sourceLegType,
+    this.billitExport,
   });
 
   factory _BookingDocumentMetadata.fromJson(Map<String, dynamic> json) {
@@ -72,6 +163,18 @@ class _BookingDocumentMetadata {
         if (text.isNotEmpty && text.toLowerCase() != 'null') return text;
       }
       return '';
+    }
+
+    // B10c: parse the already-returned billit_export envelope if present. Only
+    // kept when it carries at least one displayable link/status field, so
+    // documents without a Billit export behave exactly as before.
+    _BillitExportMetadata? billitExport;
+    final rawExport = json['billit_export'] ?? json['billitExport'];
+    if (rawExport is Map) {
+      final parsedExport = _BillitExportMetadata.fromJson(
+        rawExport.map((k, v) => MapEntry(k.toString(), v)),
+      );
+      if (parsedExport.hasDisplayableStatus) billitExport = parsedExport;
     }
 
     return _BookingDocumentMetadata(
@@ -87,6 +190,7 @@ class _BookingDocumentMetadata {
       sourceBookingId: readAny(const ['source_booking_id', 'sourceBookingId']),
       sourceLegId: readAny(const ['source_leg_id', 'sourceLegId']),
       sourceLegType: readAny(const ['source_leg_type', 'sourceLegType']),
+      billitExport: billitExport,
     );
   }
 
@@ -113,6 +217,7 @@ class _BookingDocumentsSection extends StatefulWidget {
   final _CompanyBookingsThemeTokens tokens;
 
   const _BookingDocumentsSection({
+    super.key,
     required this.bookingId,
     required this.tokens,
   });
@@ -129,15 +234,59 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
   bool _error = false;
   List<_BookingDocumentMetadata> _documents =
       const <_BookingDocumentMetadata>[];
-  late final ValueNotifier<int> _refreshSignal;
+  late ValueNotifier<int> _refreshSignal;
+  // Stable identity of the booking whose documents are currently held in state.
+  // Used to (a) reset state when a reused State element is handed a different
+  // booking (tab/list-item reuse) and (b) discard late async responses whose
+  // scope no longer matches. Equal to the canonical booking id used by the
+  // documents fetch route (tenant/company come from the global active scope).
+  late String _activeScopeKey;
+
+  /// Stable scope key for the booking this section currently renders. The
+  /// fetch route is `/admin/bookings/<bookingId>/documents` scoped by the
+  /// active tenant/company session, so the per-widget identity is the
+  /// canonical booking id.
+  String get _documentsScopeKey => widget.bookingId.trim();
 
   @override
   void initState() {
     super.initState();
+    _activeScopeKey = _documentsScopeKey;
     _refreshSignal = _BookingDocumentsRefreshBus.instance.notifierFor(
       widget.bookingId,
     );
     _refreshSignal.addListener(_handleExternalRefresh);
+  }
+
+  @override
+  void didUpdateWidget(covariant _BookingDocumentsSection oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final nextScopeKey = _documentsScopeKey;
+    if (nextScopeKey == _activeScopeKey) return;
+
+    // The booking identity changed under a reused State element (switching
+    // tabs/filters recycles this widget position). Re-wire the per-booking
+    // refresh signal to the new booking and drop the previous booking's
+    // documents so nothing leaks across the swap. Any in-flight request keyed
+    // to the old scope is discarded on return by the scope-key guard.
+    _refreshSignal.removeListener(_handleExternalRefresh);
+    _refreshSignal = _BookingDocumentsRefreshBus.instance.notifierFor(
+      widget.bookingId,
+    );
+    _refreshSignal.addListener(_handleExternalRefresh);
+
+    final wasExpanded = _expanded;
+    setState(() {
+      _activeScopeKey = nextScopeKey;
+      _documents = const <_BookingDocumentMetadata>[];
+      _loaded = false;
+      _loading = false;
+      _error = false;
+      _expanded = wasExpanded;
+    });
+    if (wasExpanded) {
+      _loadDocuments();
+    }
   }
 
   @override
@@ -160,6 +309,10 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
 
   Future<void> _loadDocuments() async {
     if (_loading) return;
+    // Capture the scope this request belongs to. If the section is handed a
+    // different booking before the response returns, the guards below discard
+    // the stale response instead of showing another booking's documents.
+    final requestScopeKey = _documentsScopeKey;
     setState(() {
       _loading = true;
       _error = false;
@@ -179,7 +332,7 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
       final res = await http
           .get(uri, headers: auth.headers)
           .timeout(const Duration(seconds: 12));
-      if (!mounted) return;
+      if (!mounted || requestScopeKey != _activeScopeKey) return;
       if (res.statusCode != 200) {
         setState(() {
           _error = true;
@@ -210,6 +363,7 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
           }
         }
       }
+      if (!mounted || requestScopeKey != _activeScopeKey) return;
       setState(() {
         _documents = parsed;
         _loaded = true;
@@ -217,7 +371,7 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
         _error = false;
       });
     } catch (_) {
-      if (!mounted) return;
+      if (!mounted || requestScopeKey != _activeScopeKey) return;
       setState(() {
         _error = true;
         _loading = false;
@@ -236,6 +390,8 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
 
   String _localizedDocumentType(String type) {
     switch (type.toLowerCase()) {
+      case 'invoice':
+        return _tr(nl: 'Factuur', en: 'Invoice', fr: 'Facture', es: 'Factura');
       case 'credit_note':
         return _tr(
           nl: 'Creditnota',
@@ -248,7 +404,7 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
           nl: 'Terugbetalingsbewijs',
           en: 'Refund proof',
           fr: 'Preuve de remboursement',
-          es: 'Comprobante de reembolso',
+          es: 'Justificante de reembolso',
         );
       default:
         return type.isEmpty
@@ -260,6 +416,35 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
               )
             : type;
     }
+  }
+
+  /// Customer-facing leg label. Maps the technical `outbound`/`return` leg type
+  /// to human wording, falls back to a neutral "Ride" word for any other/unknown
+  /// leg, and never surfaces the raw technical leg id. Returns '' when there is
+  /// no leg information at all (leg line is then hidden).
+  String _localizedLegLabel(_BookingDocumentMetadata doc) {
+    final type = doc.sourceLegType.trim().toLowerCase();
+    if (type == 'outbound') {
+      return _tr(
+        nl: 'Rit: heenrit',
+        en: 'Ride: outbound',
+        fr: 'Trajet : aller',
+        es: 'Trayecto: ida',
+      );
+    }
+    if (type == 'return') {
+      return _tr(
+        nl: 'Rit: terugrit',
+        en: 'Ride: return',
+        fr: 'Trajet : retour',
+        es: 'Trayecto: vuelta',
+      );
+    }
+    if (doc.sourceLegType.trim().isNotEmpty ||
+        doc.sourceLegId.trim().isNotEmpty) {
+      return _tr(nl: 'Rit', en: 'Ride', fr: 'Trajet', es: 'Trayecto');
+    }
+    return '';
   }
 
   String _localizedLifecycle(_BookingDocumentMetadata doc) {
@@ -475,9 +660,7 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
       if (issueDate.isNotEmpty) issueDate,
     ];
 
-    final legText = doc.sourceLegType.isNotEmpty
-        ? doc.sourceLegType
-        : (doc.sourceLegId.isNotEmpty ? doc.sourceLegId : '');
+    final legLabel = _localizedLegLabel(doc);
 
     return Container(
       margin: const EdgeInsets.only(top: 8),
@@ -530,10 +713,10 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
             overflow: TextOverflow.ellipsis,
             style: TextStyle(color: tokens.textSecondary, fontSize: 11.0),
           ),
-          if (legText.isNotEmpty) ...[
+          if (legLabel.isNotEmpty) ...[
             const SizedBox(height: 2),
             Text(
-              '${_tr(nl: 'Rit', en: 'Leg', fr: 'Trajet', es: 'Trayecto')}: $legText',
+              legLabel,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(color: tokens.textTertiary, fontSize: 10.6),
@@ -549,7 +732,162 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
               ),
             ),
           ],
+          if (doc.billitExport != null)
+            _buildBillitStatusBlock(tokens, doc.billitExport!),
         ],
+      ),
+    );
+  }
+
+  /// B10c: read-only Billit/Peppol status block rendered beneath a document's
+  /// metadata. Pure display: no onTap, no button, no network call, no send.
+  /// Everything is derived from the already-fetched `billit_export` envelope.
+  Widget _buildBillitStatusBlock(
+    _CompanyBookingsThemeTokens tokens,
+    _BillitExportMetadata export,
+  ) {
+    final billitStatus = export.billitStatus.toLowerCase();
+    final status = export.status.toLowerCase();
+
+    String? primaryLabel;
+    String? secondaryLabel;
+
+    if (export.isSentViaPeppol) {
+      primaryLabel = _tr(
+        nl: 'Verzonden via Peppol',
+        en: 'Sent via Peppol',
+        fr: 'Envoyé via Peppol',
+        es: 'Enviado por Peppol',
+      );
+      if (billitStatus == 'topay') {
+        secondaryLabel = _tr(
+          nl: 'Te betalen',
+          en: 'To be paid',
+          fr: 'À payer',
+          es: 'Por pagar',
+        );
+      }
+    } else if (billitStatus == 'tosend' || status == 'created') {
+      primaryLabel = _tr(
+        nl: 'Klaargezet in Billit',
+        en: 'Prepared in Billit',
+        fr: 'Préparé dans Billit',
+        es: 'Preparado en Billit',
+      );
+      secondaryLabel = _tr(
+        nl: 'Nog niet via Peppol verzonden',
+        en: 'Not sent via Peppol yet',
+        fr: 'Pas encore envoyé via Peppol',
+        es: 'Aún no enviado por Peppol',
+      );
+    } else if (billitStatus == 'topay') {
+      primaryLabel = _tr(
+        nl: 'Billit-order aangemaakt',
+        en: 'Billit order created',
+        fr: 'Commande Billit créée',
+        es: 'Pedido Billit creado',
+      );
+      secondaryLabel = _tr(
+        nl: 'Te betalen',
+        en: 'To be paid',
+        fr: 'À payer',
+        es: 'Por pagar',
+      );
+    } else if (export.orderId.isNotEmpty || export.orderNumber.isNotEmpty) {
+      primaryLabel = _tr(
+        nl: 'Billit-order aangemaakt',
+        en: 'Billit order created',
+        fr: 'Commande Billit créée',
+        es: 'Pedido Billit creado',
+      );
+    }
+
+    if (primaryLabel == null) return const SizedBox.shrink();
+
+    String detailLine = '';
+    if (export.orderNumber.isNotEmpty) {
+      detailLine = 'Billit: ${export.orderNumber}';
+    } else if (export.orderId.isNotEmpty) {
+      detailLine = _tr(
+        nl: 'Billit-order aangemaakt',
+        en: 'Billit order created',
+        fr: 'Commande Billit créée',
+        es: 'Pedido Billit creado',
+      );
+    }
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 6),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Wrap(
+            spacing: 6,
+            runSpacing: 4,
+            children: [
+              _billitStatusChip(tokens, primaryLabel, primary: true),
+              if (secondaryLabel != null)
+                _billitStatusChip(tokens, secondaryLabel, primary: false),
+            ],
+          ),
+          if (detailLine.isNotEmpty) ...[
+            const SizedBox(height: 3),
+            Text(
+              detailLine,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(color: tokens.textTertiary, fontSize: 10.4),
+            ),
+          ],
+          if (!export.peppolSent) ...[
+            const SizedBox(height: 2),
+            Text(
+              _tr(
+                nl: 'Peppol-verzending blijft handmatig',
+                en: 'Peppol sending remains manual',
+                fr: 'L’envoi Peppol reste manuel',
+                es: 'El envío por Peppol sigue siendo manual',
+              ),
+              style: TextStyle(
+                color: tokens.textTertiary.withOpacity(0.8),
+                fontSize: 9.8,
+                fontStyle: FontStyle.italic,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  /// Subtle, read-only status chip. Deliberately styled unlike a button (no
+  /// elevation, no ripple, no icon) and distinct from the green lifecycle badge.
+  Widget _billitStatusChip(
+    _CompanyBookingsThemeTokens tokens,
+    String label, {
+    required bool primary,
+  }) {
+    final Color bg = primary
+        ? tokens.accent.withOpacity(0.12)
+        : tokens.textSecondary.withOpacity(0.10);
+    final Color border = primary
+        ? tokens.accent.withOpacity(0.4)
+        : tokens.textSecondary.withOpacity(0.3);
+    final Color fg = primary ? tokens.accent : tokens.textSecondary;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: border),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          color: fg,
+          fontSize: 10.2,
+          fontWeight: FontWeight.w700,
+        ),
       ),
     );
   }

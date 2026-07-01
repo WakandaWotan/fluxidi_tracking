@@ -3458,6 +3458,10 @@ class _CompanyBookingsOverviewPageState
             if (_documentsBookingId(item).isNotEmpty) ...[
               const SizedBox(height: 10),
               _BookingDocumentsSection(
+                // Key by the canonical booking identity used for the documents
+                // fetch so switching tabs/filters (which recycles list-item
+                // widgets) never reuses another booking's documents state.
+                key: ValueKey('booking-documents-${_documentsBookingId(item)}'),
                 bookingId: _documentsBookingId(item),
                 tokens: tokens,
               ),
