@@ -4646,6 +4646,151 @@ async function handleAdminPaidBusinessBookingFixture({ request, url, env }) {
   });
 }
 
+/* Patch B8e-C: admin-only, SANDBOX-ONLY test shim that directly invokes the
+ * exact B8e-B lifecycle helper (maybeRunBillitAutoCreateAfterPaidLifecycle)
+ * against a B8b paid-business fixture booking. Proves the ON-path without
+ * Mollie, webhook, /pay/status mutation, fake payment_id, or confirmed_at
+ * changes. NEVER mutates the booking, NEVER sends Peppol, NEVER supports
+ * production, and NEVER returns tokens/secrets/raw Billit data. */
+async function handleAdminBillitAutoCreateLifecycleSandboxTest({ request, url, env }) {
+  try {
+    _requireAdmin(request, url, env);
+  } catch (err) {
+    const message = String(err?.message || "Unauthorized");
+    return json(
+      {
+        ok: false,
+        error: message === "Unauthorized" ? "unauthorized" : "admin_unavailable",
+      },
+      message === "Unauthorized" ? 401 : 500,
+    );
+  }
+
+  const body = await safeJson(request);
+  const bodyObj = body && typeof body === "object" && !Array.isArray(body) ? body : {};
+  if (bodyObj.confirm_billit_auto_create_lifecycle_test !== true) {
+    return json({ ok: false, error: "confirm_billit_auto_create_lifecycle_test_required" }, 400);
+  }
+
+  const bookingId = safeStr(bodyObj.booking_id ?? bodyObj.bookingId, 200);
+  if (!bookingId) return json({ ok: false, error: "missing_booking_id" }, 400);
+  if (!bookingId.startsWith("fixture-paid-business-")) {
+    return json({ ok: false, error: "booking_id_must_be_paid_business_fixture" }, 400);
+  }
+
+  const config = resolveBillitOAuthConfig(env);
+  if (config.environment !== "sandbox") {
+    return json(
+      { ok: false, error: "billit_lifecycle_test_sandbox_only", environment: config.environment },
+      409,
+    );
+  }
+  if (!config.configured) {
+    return json(
+      {
+        ok: false,
+        error: "billit_oauth_not_configured",
+        environment: "sandbox",
+        missing_fields: config.missing_fields,
+      },
+      400,
+    );
+  }
+
+  const scopedRoute = requireExplicitBookingRouteScope({ request, url, body: bodyObj });
+  if (!scopedRoute.ok) return scopedRoute.response;
+  const scope = {
+    tenant_id: scopedRoute.scope.tenant_id,
+    company_id: scopedRoute.scope.company_id,
+  };
+  const effectiveScope = {
+    tenant_id: scopedRoute.scope.tenant_id,
+    company_id: scopedRoute.scope.company_id,
+    hasScope: true,
+  };
+
+  if (!env?.BOOKING_KV) return json({ ok: false, error: "missing_binding" }, 503);
+
+  let loaded = null;
+  try {
+    loaded = await loadBookingRecord(env, bookingId);
+  } catch (_) {
+    return json({ ok: false, error: "booking_not_found" }, 404);
+  }
+  const rec = loaded?.rec;
+  if (!rec || typeof rec !== "object") {
+    return json({ ok: false, error: "booking_not_found" }, 404);
+  }
+  if (!bookingMatchesRequestedTenantScope(rec, effectiveScope)) {
+    return json({ ok: false, error: "not_in_scope" }, 403);
+  }
+
+  const paymentStatus = safeStr(
+    rec?.payment_status ?? rec?.paymentStatus ?? rec?.booking?.payment_status,
+    40,
+  ).toLowerCase();
+  if (paymentStatus !== "paid") {
+    return json({ ok: false, error: "booking_not_paid", payment_status: paymentStatus || null }, 409);
+  }
+
+  const invoiceCtx = _invoiceLifecycleContextFromRecord(rec);
+  if (!invoiceCtx.businessInvoiceIntent) {
+    return json({ ok: false, error: "not_business_invoice_intent" }, 409);
+  }
+
+  const settings = await readBillitAutoCreateSettingsForScope(env, scope);
+  if (settings.billit_auto_create_after_paid_business_invoice !== true) {
+    return json({ ok: false, error: "billit_auto_create_setting_off" }, 409);
+  }
+  if (settings.billit_auto_create_environment !== "sandbox") {
+    return json({ ok: false, error: "billit_auto_create_environment_not_sandbox" }, 409);
+  }
+
+  const result = await maybeRunBillitAutoCreateAfterPaidLifecycle(env, scope, bookingId, {
+    source: "admin_test_paid_lifecycle",
+    rec,
+    effectiveScope,
+    nowIso: new Date().toISOString(),
+  });
+
+  const lifecycleResult = {
+    ok: result?.ok === true,
+    skipped: result?.skipped === true,
+    reason: safeStr(result?.reason, 80) || null,
+    document_id: safeStr(result?.document_id, 120) || null,
+    document_number: safeStr(result?.document_number, 120) || null,
+    billit_order_id: result?.billit_order_id ?? null,
+    billit_status: safeStr(result?.billit_status, 40) || null,
+    reused_existing_invoice: result?.reused_existing_invoice === true,
+    billit_already_created: result?.billit_already_created === true,
+    sent: false,
+    peppol_sent: false,
+    warnings: Array.isArray(result?.warnings) ? result.warnings : [],
+  };
+
+  if (result?.ok !== true && result?.skipped !== true) {
+    return json(
+      {
+        ok: false,
+        error: safeStr(result?.reason, 80) || "billit_auto_create_lifecycle_failed",
+        sandbox_billit_auto_create_lifecycle_test: true,
+        booking_id: bookingId,
+        lifecycle_result: lifecycleResult,
+        warnings: [],
+      },
+      502,
+    );
+  }
+
+  return json({
+    ok: true,
+    sandbox_billit_auto_create_lifecycle_test: true,
+    booking_id: bookingId,
+    lifecycle_result: lifecycleResult,
+    warnings: [],
+  });
+}
+
 // Small HTML response helper for the browser-facing OAuth callback. No
 // secrets/tokens ever included.
 function _billitCallbackHtml(message, status = 200) {
@@ -31108,6 +31253,27 @@ export default {
         } catch (err) {
           console.log(
             `[TEST_FIXTURE][PAID_BUSINESS_BOOKING][ERR] ${safeStr(err?.message, 160) || "unknown"}`,
+          );
+          return json({ ok: false, error: "internal_error" }, 500);
+        }
+      }
+
+      // POST /admin/test/billit-auto-create-lifecycle/sandbox
+      // Patch B8e-C: admin-only, SANDBOX-ONLY test shim that directly invokes
+      // the B8e-B lifecycle helper against a B8b paid-business fixture. Proves
+      // the ON-path without Mollie, webhook, /pay/status mutation, fake
+      // payment_id, or confirmed_at changes. NEVER mutates the booking, NEVER
+      // sends Peppol, NEVER supports production (see
+      // handleAdminBillitAutoCreateLifecycleSandboxTest).
+      if (
+        request.method === "POST" &&
+        url.pathname === "/admin/test/billit-auto-create-lifecycle/sandbox"
+      ) {
+        try {
+          return await handleAdminBillitAutoCreateLifecycleSandboxTest({ request, url, env });
+        } catch (err) {
+          console.log(
+            `[TEST_SHIM][BILLIT_AUTO_CREATE_LIFECYCLE][ERR] ${safeStr(err?.message, 160) || "unknown"}`,
           );
           return json({ ok: false, error: "internal_error" }, 500);
         }
