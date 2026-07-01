@@ -2943,6 +2943,268 @@ async function handleAdminBillitSandboxOrderSend({ request, url, env, documentId
   });
 }
 
+/* Admin-only, SANDBOX-ONLY reconciliation route (Patch B7b) that reads the LIVE
+ * Billit order status (exactly ONE GET /v1/orders/{orderId}) and, when Billit
+ * confirms the order is sent, persists envelope-only sent/peppol_sent state onto
+ * the issued invoice registry record. It NEVER sends, NEVER creates, NEVER calls
+ * /v1/orders/commands/send, NEVER supports production, and NEVER mutates
+ * immutable_snapshot / content_hash / document_number / totals / currency /
+ * buyer/seller snapshots / source bindings (they ride along untouched via the
+ * spread-and-put helper). NEVER returns tokens, the raw OAuth record, the
+ * Authorization header, or the raw Billit Order Object. */
+async function handleAdminBillitSandboxOrderReconcileSent({ request, url, env, documentId }) {
+  // 1. Admin auth.
+  try {
+    _requireAdmin(request, url, env);
+  } catch (err) {
+    const message = String(err?.message || "Unauthorized");
+    return json(
+      {
+        ok: false,
+        error: message === "Unauthorized" ? "unauthorized" : "admin_unavailable",
+      },
+      message === "Unauthorized" ? 401 : 500,
+    );
+  }
+
+  // 2. Resolve config + SANDBOX-ONLY guard (before any KV/network work).
+  const config = resolveBillitOAuthConfig(env);
+  if (config.environment !== "sandbox") {
+    return json(
+      {
+        ok: false,
+        error: "billit_reconcile_sandbox_only",
+        environment: config.environment,
+      },
+      409,
+    );
+  }
+  if (!config.configured) {
+    return json(
+      {
+        ok: false,
+        error: "billit_oauth_not_configured",
+        environment: "sandbox",
+        missing_fields: config.missing_fields,
+      },
+      400,
+    );
+  }
+
+  // 3. Parse + validate the explicit confirmation body.
+  const body = await safeJson(request);
+  const bodyObj =
+    body && typeof body === "object" && !Array.isArray(body) ? body : {};
+  if (bodyObj.confirm_sandbox_reconcile !== true) {
+    return json({ ok: false, error: "confirm_sandbox_reconcile_required" }, 400);
+  }
+  const requestedDocNumber = safeStr(bodyObj.document_number, 80);
+  if (!requestedDocNumber) {
+    return json({ ok: false, error: "document_number_required" }, 400);
+  }
+  const requestedOrderId = safeStr(bodyObj.billit_order_id, 120);
+  if (!requestedOrderId) {
+    return json({ ok: false, error: "billit_order_id_required" }, 400);
+  }
+  const requestedTransport = safeStr(bodyObj.transport_type, 24);
+  if (requestedTransport !== "Peppol") {
+    return json(
+      {
+        ok: false,
+        error: "transport_type_not_supported",
+        transport_type: requestedTransport || null,
+      },
+      400,
+    );
+  }
+
+  // 4. Explicit tenant/company scope (query or body; no legacy fallback).
+  const scopedRoute = requireExplicitBookingRouteScope({ request, url, body: bodyObj });
+  if (!scopedRoute.ok) return scopedRoute.response;
+  const scope = {
+    tenant_id: scopedRoute.scope.tenant_id,
+    company_id: scopedRoute.scope.company_id,
+  };
+
+  const docId = safeStr(documentId, 200);
+  if (!docId) return json({ ok: false, error: "missing_document_id" }, 400);
+  if (!env?.BOOKING_KV) return json({ ok: false, error: "missing_binding" }, 503);
+
+  // 5. Load the issued document + strict scope check.
+  const record = await loadIssuedDocumentRegistryRecordById(env, scope, docId);
+  const recordTenant = safeStr(record?.tenant_id ?? record?.tenantId, 80);
+  const recordCompany = safeStr(record?.company_id ?? record?.companyId, 80);
+  if (
+    !record ||
+    (recordTenant && recordTenant !== scope.tenant_id) ||
+    (recordCompany && recordCompany !== scope.company_id)
+  ) {
+    return json({ ok: false, error: "document_not_found" }, 404);
+  }
+
+  // 6. Invoice-only.
+  const docType = safeStr(record?.document_type ?? record?.documentType, 40).toLowerCase();
+  if (docType !== "invoice") {
+    return json(
+      {
+        ok: false,
+        error: "document_type_not_supported_for_b7b",
+        document_type: docType || null,
+      },
+      400,
+    );
+  }
+
+  // 7. document_number must match the issued document.
+  const recordDocNumber = safeStr(record?.document_number ?? record?.documentNumber, 80);
+  if (!recordDocNumber || recordDocNumber !== requestedDocNumber) {
+    return json({ ok: false, error: "document_number_mismatch" }, 400);
+  }
+
+  // 8. Require a persisted sandbox billit_export link that matches the body.
+  const exportObj =
+    record.billit_export && typeof record.billit_export === "object" && !Array.isArray(record.billit_export)
+      ? record.billit_export
+      : null;
+  const exportOrderId = safeStr(exportObj?.order_id, 120);
+  if (!exportObj || !exportOrderId) {
+    return json({ ok: false, error: "billit_order_not_linked" }, 409);
+  }
+  if (exportOrderId !== requestedOrderId) {
+    return json({ ok: false, error: "billit_order_id_mismatch" }, 409);
+  }
+  if (safeStr(exportObj.environment, 24).toLowerCase() !== "sandbox") {
+    return json({ ok: false, error: "billit_export_not_sandbox" }, 409);
+  }
+
+  // 9. PartyID: linked export party_id must match the stored KV PartyID.
+  const knownPartyId = await readBillitPartyIdForScope(env, scope);
+  const exportPartyId = safeStr(exportObj.party_id, 120) || null;
+  if (knownPartyId && exportPartyId && knownPartyId !== exportPartyId) {
+    return json({ ok: false, error: "billit_party_id_mismatch" }, 409);
+  }
+  const effectivePartyId = exportPartyId || knownPartyId || null;
+  if (!effectivePartyId) {
+    return json({ ok: false, error: "billit_party_id_missing" }, 409);
+  }
+
+  // 10. Acquire a usable sandbox access token (decrypt + single-use refresh).
+  const tokenResult = await acquireBillitSandboxAccessToken(env, scope, config);
+  if (!tokenResult.ok) {
+    return json(
+      { ok: false, error: tokenResult.error, environment: "sandbox" },
+      tokenResult.status || 500,
+    );
+  }
+
+  // 11. The single B7b outbound read call (GET /v1/orders/{orderId}, sandbox).
+  const readResult = await fetchBillitSandboxOrderById(
+    config,
+    tokenResult.access_token,
+    effectivePartyId,
+    exportOrderId,
+  );
+  if (!readResult.ok) {
+    return json(
+      {
+        ok: false,
+        error: "billit_order_read_failed",
+        environment: "sandbox",
+        status_code: readResult.status ?? null,
+        billit_error_code: readResult.billit_error_code ?? null,
+        billit_error_description: readResult.billit_error_description ?? null,
+      },
+      502,
+    );
+  }
+  const liveOrder = readResult.order || {};
+  const warnings = [];
+
+  // 12. Consistency checks against the live order (only when the field returned).
+  if (liveOrder.order_id && liveOrder.order_id !== exportOrderId) {
+    return json({ ok: false, error: "billit_order_id_mismatch" }, 409);
+  }
+  if (liveOrder.order_number && liveOrder.order_number !== recordDocNumber) {
+    warnings.push("billit_order_number_mismatch");
+  }
+  if (liveOrder.order_type && liveOrder.order_type !== "Invoice") {
+    return json({ ok: false, error: "billit_order_type_not_invoice" }, 409);
+  }
+  if (liveOrder.order_direction && liveOrder.order_direction !== "Income") {
+    return json({ ok: false, error: "billit_order_direction_not_income" }, 409);
+  }
+
+  // 13. Hard gate: Billit must confirm the order is sent. is_sent is
+  // authoritative; a send-confirming status is expected (ToPay proven by B7-5).
+  if (liveOrder.is_sent !== true) {
+    return json(
+      {
+        ok: false,
+        error: "billit_order_not_sent",
+        document_id: docId,
+        document_number: recordDocNumber,
+        billit_order_id: exportOrderId,
+        billit_status: liveOrder.order_status ?? null,
+        billit_is_sent: typeof liveOrder.is_sent === "boolean" ? liveOrder.is_sent : null,
+      },
+      409,
+    );
+  }
+  const SEND_CONFIRMING_STATUSES = new Set([
+    "ToPay",
+    "Paid",
+    "Sent",
+    "SentByPeppol",
+    "SendingByPeppol",
+    "Received",
+  ]);
+  if (liveOrder.order_status && !SEND_CONFIRMING_STATUSES.has(liveOrder.order_status)) {
+    warnings.push("billit_status_unexpected_but_sent");
+  }
+
+  // 14. Build the reconciled envelope-only export + persist (spread-and-put).
+  const nowIso = new Date().toISOString();
+  const reconciledExport = buildReconciledBillitExportFromLiveStatus({
+    existingExport: exportObj,
+    liveOrder,
+    transportType: "Peppol",
+    nowIso,
+  });
+  const persistResult = await persistBillitOrderExportOnDocumentRecord(
+    env,
+    scope,
+    record,
+    reconciledExport,
+  );
+  if (!persistResult.ok) {
+    return json(
+      { ok: false, error: persistResult.error || "billit_export_persist_failed" },
+      500,
+    );
+  }
+
+  console.log(
+    `[BILLIT_ORDER_RECONCILE][SANDBOX][OK] doc=${docId.slice(0, 8)} order=${exportOrderId ? "yes" : "no"} status=${liveOrder.order_status ? "yes" : "no"} refreshed=${tokenResult.refreshed}`,
+  );
+  return json({
+    ok: true,
+    sandbox_reconcile_sent: true,
+    document_id: docId,
+    document_number: recordDocNumber,
+    billit_order_id: exportOrderId,
+    transport_type: "Peppol",
+    billit_status: reconciledExport.billit_status,
+    billit_is_sent: reconciledExport.billit_is_sent,
+    billit_paid: reconciledExport.billit_paid,
+    sent: true,
+    peppol_sent: true,
+    sent_at: reconciledExport.sent_at,
+    peppol_sent_at: reconciledExport.peppol_sent_at,
+    status_checked_at: reconciledExport.status_checked_at,
+    warnings,
+  });
+}
+
 /* Pure builder (Patch B7-4) for a MINIMAL Peppol-ready test-fixture booking
  * record. Produces exactly the smallest field set that the existing
  * deriveServerSideInvoiceContext + _issueInvoiceCore path already reads, so a
@@ -29485,6 +29747,47 @@ export default {
           } catch (err) {
             console.log(
               `[BILLIT_ORDER_SEND][SANDBOX][ERR] ${safeStr(err?.message, 160) || "unknown"}`,
+            );
+            return json({ ok: false, error: "internal_error" }, 500);
+          }
+        }
+      }
+
+      // POST /admin/documents/:documentId/billit-order/reconcile-sent/sandbox
+      // Patch B7b: admin-only, SANDBOX-ONLY reconciliation that reads the LIVE
+      // Billit order status (exactly ONE GET /v1/orders/{orderId}) and persists
+      // envelope-only sent/peppol_sent state when Billit confirms is_sent. It
+      // NEVER sends/creates, NEVER calls /v1/orders/commands/send, NEVER supports
+      // production, and NEVER mutates immutable_snapshot / content_hash (see
+      // handleAdminBillitSandboxOrderReconcileSent).
+      if (
+        request.method === "POST" &&
+        url.pathname.startsWith("/admin/documents/") &&
+        url.pathname.endsWith("/billit-order/reconcile-sent/sandbox")
+      ) {
+        const billitReconcileSegments = url.pathname.split("/").filter(Boolean);
+        // Only the exact shape:
+        //   ["admin","documents","<documentId>","billit-order","reconcile-sent","sandbox"]
+        if (
+          billitReconcileSegments.length === 6 &&
+          billitReconcileSegments[0] === "admin" &&
+          billitReconcileSegments[1] === "documents" &&
+          billitReconcileSegments[3] === "billit-order" &&
+          billitReconcileSegments[4] === "reconcile-sent" &&
+          billitReconcileSegments[5] === "sandbox"
+        ) {
+          try {
+            const documentId =
+              safeStr(decodeURIComponent(billitReconcileSegments[2]), 200) || "";
+            return await handleAdminBillitSandboxOrderReconcileSent({
+              request,
+              url,
+              env,
+              documentId,
+            });
+          } catch (err) {
+            console.log(
+              `[BILLIT_ORDER_RECONCILE][SANDBOX][ERR] ${safeStr(err?.message, 160) || "unknown"}`,
             );
             return json({ ok: false, error: "internal_error" }, 500);
           }
@@ -80616,6 +80919,67 @@ function buildSafeBillitExportProjection(recordOrExport) {
     created_at: safeStr(exp.created_at ?? exp.createdAt, 40) || null,
     updated_at: safeStr(exp.updated_at ?? exp.updatedAt, 40) || null,
     source: safeStr(exp.source, 64) || null,
+    // Envelope-only reconciled sent-state fields (Patch B7b). All safe, non-secret
+    // lifecycle values; null before a reconcile has run. Never a raw Billit body.
+    billit_status: safeStr(exp.billit_status, 80) || null,
+    billit_is_sent: typeof exp.billit_is_sent === "boolean" ? exp.billit_is_sent : null,
+    billit_paid: typeof exp.billit_paid === "boolean" ? exp.billit_paid : null,
+    transport_type: safeStr(exp.transport_type ?? exp.transportType, 24) || null,
+    sent_at: safeStr(exp.sent_at ?? exp.sentAt, 40) || null,
+    peppol_sent_at: safeStr(exp.peppol_sent_at ?? exp.peppolSentAt, 40) || null,
+    status_checked_at: safeStr(exp.status_checked_at ?? exp.statusCheckedAt, 40) || null,
+  };
+}
+
+/* Pure builder (Patch B7b) that reconciles the stored envelope-only
+ * billit_export with a SANITIZED live Billit order (output of
+ * sanitizeBillitOrderReadResponse / fetchBillitSandboxOrderById) once Billit
+ * confirms the order is sent. Preserves every link-identity field byte-for-byte
+ * (provider/environment/party_id/order_id/order_number/idempotency_key/
+ * created_at/source) and only ADDS/UPDATES envelope-level lifecycle fields.
+ * NEVER includes the raw live order, Customer/Addresses/OrderLines/VAT/files, or
+ * any token/secret. Idempotent on sent_at / peppol_sent_at (first-write-wins). */
+function buildReconciledBillitExportFromLiveStatus({
+  existingExport,
+  liveOrder,
+  transportType,
+  nowIso,
+}) {
+  const src =
+    existingExport && typeof existingExport === "object" && !Array.isArray(existingExport)
+      ? existingExport
+      : {};
+  const live =
+    liveOrder && typeof liveOrder === "object" && !Array.isArray(liveOrder)
+      ? liveOrder
+      : {};
+  const now = safeStr(nowIso, 40) || new Date().toISOString();
+  const isPeppol = safeStr(transportType, 24) === "Peppol";
+  const existingSentAt = safeStr(src.sent_at ?? src.sentAt, 40) || null;
+  const existingPeppolSentAt = safeStr(src.peppol_sent_at ?? src.peppolSentAt, 40) || null;
+  return {
+    // Preserved link-identity fields (byte-for-byte from the stored export).
+    provider: safeStr(src.provider, 24) || "billit",
+    environment: safeStr(src.environment, 24) || "sandbox",
+    party_id: safeStr(src.party_id ?? src.partyId, 120) || null,
+    order_id: safeStr(src.order_id ?? src.orderId, 120) || null,
+    order_number: safeStr(src.order_number ?? src.orderNumber, 80) || null,
+    idempotency_key: safeStr(src.idempotency_key ?? src.idempotencyKey, 200) || null,
+    created_at: safeStr(src.created_at ?? src.createdAt, 40) || now,
+    source: safeStr(src.source, 64) || "admin_sandbox_create",
+    // Envelope-level reconciled lifecycle (never the raw live order).
+    status: "sent",
+    billit_status: safeStr(live.order_status, 80) || null,
+    billit_is_sent: live.is_sent === true,
+    billit_paid: live.paid === true,
+    sent: true,
+    peppol_sent: isPeppol ? true : src.peppol_sent === true,
+    sent_at: existingSentAt || now,
+    peppol_sent_at: isPeppol ? existingPeppolSentAt || now : existingPeppolSentAt,
+    transport_type: "Peppol",
+    status_checked_at: now,
+    updated_at: now,
+    last_reconciled_by: "admin_sandbox_reconcile_sent",
   };
 }
 
