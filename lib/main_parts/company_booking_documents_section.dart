@@ -30,6 +30,10 @@ class _BookingDocumentsRefreshBus {
   }
 }
 
+/// B10e-B: sentinel so `_BillitExportMetadata.copyWith` can distinguish "leave
+/// this nullable bool unchanged" from an explicit `null` override.
+const Object _unset = Object();
+
 /// B10c: read-only, envelope-only projection of the `billit_export` object that
 /// the booking documents backend (`GET /company/bookings/:bookingId/documents`)
 /// already returns per issued document.
@@ -40,6 +44,7 @@ class _BookingDocumentsRefreshBus {
 /// no network calls — it is purely a display projection of already-fetched data.
 class _BillitExportMetadata {
   final String status;
+  final String environment;
   final String orderId;
   final String orderNumber;
   final bool sent;
@@ -54,6 +59,7 @@ class _BillitExportMetadata {
 
   const _BillitExportMetadata({
     required this.status,
+    required this.environment,
     required this.orderId,
     required this.orderNumber,
     required this.sent,
@@ -86,6 +92,7 @@ class _BillitExportMetadata {
 
     return _BillitExportMetadata(
       status: readAny(const ['status']),
+      environment: readAny(const ['environment']),
       orderId: readAny(const ['order_id', 'orderId']),
       orderNumber: readAny(const ['order_number', 'orderNumber']),
       sent: json['sent'] == true,
@@ -97,6 +104,43 @@ class _BillitExportMetadata {
       sentAt: readAny(const ['sent_at', 'sentAt']),
       peppolSentAt: readAny(const ['peppol_sent_at', 'peppolSentAt']),
       statusCheckedAt: readAny(const ['status_checked_at', 'statusCheckedAt']),
+    );
+  }
+
+  /// B10e-B: produce an updated copy after a read-only company Billit status
+  /// refresh (`GET /company/documents/:documentId/billit-order/status/sandbox`).
+  /// Only the safe live-status fields are overridable; link-identity fields the
+  /// model does not carry (provider, party_id, idempotency_key, created_at,
+  /// updated_at, source) are untouched by definition, and `environment` +
+  /// `transportType` + the `*_at` link fields are preserved unless explicitly
+  /// provided. Never stores a raw Billit response.
+  _BillitExportMetadata copyWith({
+    String? status,
+    String? orderId,
+    String? orderNumber,
+    bool? sent,
+    bool? peppolSent,
+    String? billitStatus,
+    Object? billitIsSent = _unset,
+    Object? billitPaid = _unset,
+    String? statusCheckedAt,
+  }) {
+    return _BillitExportMetadata(
+      status: status ?? this.status,
+      environment: environment,
+      orderId: orderId ?? this.orderId,
+      orderNumber: orderNumber ?? this.orderNumber,
+      sent: sent ?? this.sent,
+      peppolSent: peppolSent ?? this.peppolSent,
+      billitStatus: billitStatus ?? this.billitStatus,
+      billitIsSent: billitIsSent == _unset
+          ? this.billitIsSent
+          : billitIsSent as bool?,
+      billitPaid: billitPaid == _unset ? this.billitPaid : billitPaid as bool?,
+      transportType: transportType,
+      sentAt: sentAt,
+      peppolSentAt: peppolSentAt,
+      statusCheckedAt: statusCheckedAt ?? this.statusCheckedAt,
     );
   }
 
@@ -195,6 +239,27 @@ class _BookingDocumentMetadata {
     );
   }
 
+  /// B10e-B: return a copy with a replaced (updated) Billit export. Every other
+  /// field is preserved byte-for-byte; used to apply a read-only status refresh
+  /// to the in-memory document without refetching the whole list.
+  _BookingDocumentMetadata copyWithBillitExport(_BillitExportMetadata? export) {
+    return _BookingDocumentMetadata(
+      documentId: documentId,
+      documentType: documentType,
+      documentNumber: documentNumber,
+      proofReference: proofReference,
+      lifecycleState: lifecycleState,
+      documentStatus: documentStatus,
+      issueTimestamp: issueTimestamp,
+      currency: currency,
+      contentHash: contentHash,
+      sourceBookingId: sourceBookingId,
+      sourceLegId: sourceLegId,
+      sourceLegType: sourceLegType,
+      billitExport: export,
+    );
+  }
+
   /// Best human-facing reference for the row title (credit notes carry a
   /// document number, refund proofs a proof reference).
   String get displayReference {
@@ -235,6 +300,9 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
   bool _error = false;
   List<_BookingDocumentMetadata> _documents =
       const <_BookingDocumentMetadata>[];
+  // B10e-B: per-document Billit-status refresh in-flight set, keyed by
+  // document_id (never global) so one refresh never blocks the whole section.
+  Set<String> _refreshingDocIds = <String>{};
   late ValueNotifier<int> _refreshSignal;
   // Stable identity of the booking whose documents are currently held in state.
   // Used to (a) reset state when a reused State element is handed a different
@@ -280,6 +348,7 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
     setState(() {
       _activeScopeKey = nextScopeKey;
       _documents = const <_BookingDocumentMetadata>[];
+      _refreshingDocIds = <String>{};
       _loaded = false;
       _loading = false;
       _error = false;
@@ -387,6 +456,137 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
     if (next && !_loaded && !_loading) {
       _loadDocuments();
     }
+  }
+
+  /// B10e-B: the read-only Billit-status refresh action is offered ONLY for an
+  /// invoice document that already has a persisted sandbox Billit export with an
+  /// order id. Mirrors the backend eligibility of
+  /// `GET /company/documents/:documentId/billit-order/status/sandbox`, so a
+  /// hidden button and the backend gate agree. Never shown for credit notes,
+  /// refund proofs, invoices without a Billit export, exports without an
+  /// order id, or non-sandbox exports.
+  bool _shouldShowBillitRefresh(_BookingDocumentMetadata doc) {
+    final export = doc.billitExport;
+    if (export == null) return false;
+    if (doc.documentType.trim().toLowerCase() != 'invoice') return false;
+    if (doc.documentId.trim().isEmpty) return false;
+    if (export.environment.trim().toLowerCase() != 'sandbox') return false;
+    if (export.orderId.trim().isEmpty) return false;
+    return true;
+  }
+
+  /// B10e-B: read-only refresh of the live Billit status for ONE invoice
+  /// document via the company route. Screen-level only: updates the in-memory
+  /// document's safe billit_export fields (nothing is persisted server-side).
+  /// Uses the same company auth + active-scope pattern as the documents fetch,
+  /// keys the in-flight state by document_id, and discards a late response whose
+  /// booking scope changed while the request was in flight. Never sends Peppol,
+  /// creates/links/reconciles orders, or stores a raw Billit response.
+  Future<void> _refreshBillitStatus(_BookingDocumentMetadata doc) async {
+    final docId = doc.documentId.trim();
+    if (docId.isEmpty) return;
+    if (_refreshingDocIds.contains(docId)) return;
+    final requestScopeKey = _documentsScopeKey;
+    setState(() {
+      _refreshingDocIds = <String>{..._refreshingDocIds, docId};
+    });
+    var success = false;
+    try {
+      final uri = _withActiveBookingScope(
+        kBookingBaseUrl,
+        '/company/documents/${Uri.encodeComponent(docId)}/billit-order/status/sandbox',
+      );
+      final auth = await resolveCompanyOwnerAuthHeaders();
+      final res = await http
+          .get(uri, headers: auth.headers)
+          .timeout(const Duration(seconds: 12));
+      if (!mounted || requestScopeKey != _activeScopeKey) return;
+      final decoded = jsonDecode(res.body);
+      if (res.statusCode != 200 || decoded is! Map || decoded['ok'] != true) {
+        return;
+      }
+      _applyBillitStatusUpdate(
+        docId,
+        decoded.map((k, v) => MapEntry(k.toString(), v)),
+      );
+      success = true;
+    } catch (_) {
+      // Non-blocking: keep the existing status and fall through to the toast.
+    } finally {
+      if (mounted && requestScopeKey == _activeScopeKey) {
+        setState(() {
+          _refreshingDocIds = <String>{..._refreshingDocIds}..remove(docId);
+        });
+        _showBillitRefreshResult(success);
+      }
+    }
+  }
+
+  /// B10e-B: apply the flattened B10e-A status response onto the matching
+  /// in-memory document's billit_export. Only safe live-status fields are
+  /// updated; link-identity fields are preserved by [_BillitExportMetadata.copyWith].
+  void _applyBillitStatusUpdate(String docId, Map<String, dynamic> decoded) {
+    final index = _documents.indexWhere((d) => d.documentId == docId);
+    if (index < 0) return;
+    final current = _documents[index];
+    final export = current.billitExport;
+    if (export == null) return;
+
+    String? readString(List<String> keys) {
+      for (final key in keys) {
+        final raw = decoded[key];
+        if (raw == null) continue;
+        final text = raw.toString().trim();
+        if (text.isNotEmpty && text.toLowerCase() != 'null') return text;
+      }
+      return null;
+    }
+
+    bool? readBool(String key) {
+      final value = decoded[key];
+      return value is bool ? value : null;
+    }
+
+    final updatedExport = export.copyWith(
+      status: readString(const ['local_status']),
+      orderId: readString(const ['billit_order_id']),
+      orderNumber: readString(const ['billit_order_number']),
+      sent: readBool('sent'),
+      peppolSent: readBool('peppol_sent'),
+      billitStatus: readString(const ['billit_status']),
+      billitIsSent: readBool('billit_is_sent'),
+      billitPaid: readBool('billit_paid'),
+      statusCheckedAt: readString(const ['status_checked_at']),
+    );
+
+    setState(() {
+      _documents = <_BookingDocumentMetadata>[..._documents];
+      _documents[index] = current.copyWithBillitExport(updatedExport);
+    });
+  }
+
+  void _showBillitRefreshResult(bool success) {
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    if (messenger == null) return;
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text(
+          success
+              ? _tr(
+                  nl: 'Billit-status vernieuwd',
+                  en: 'Billit status refreshed',
+                  fr: 'Statut Billit actualisé',
+                  es: 'Estado de Billit actualizado',
+                )
+              : _tr(
+                  nl: 'Billit-status kon niet vernieuwd worden',
+                  en: 'Billit status could not be refreshed',
+                  fr: 'Impossible d’actualiser le statut Billit',
+                  es: 'No se pudo actualizar el estado de Billit',
+                ),
+        ),
+      ),
+    );
   }
 
   String _localizedDocumentType(String type) {
@@ -735,7 +935,53 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
           ],
           if (doc.billitExport != null)
             _buildBillitStatusBlock(tokens, doc.billitExport!),
+          if (_shouldShowBillitRefresh(doc))
+            _buildBillitRefreshButton(tokens, doc),
         ],
+      ),
+    );
+  }
+
+  /// B10e-B: compact, read-only "Refresh Billit status" action. Shown only for
+  /// eligible invoice documents (see [_shouldShowBillitRefresh]). This is NOT a
+  /// Peppol send / order create button: it only re-reads the live sandbox status
+  /// and updates the on-screen badges. Disabled (with a spinner) while that one
+  /// document is refreshing; other rows stay interactive.
+  Widget _buildBillitRefreshButton(
+    _CompanyBookingsThemeTokens tokens,
+    _BookingDocumentMetadata doc,
+  ) {
+    final refreshing = _refreshingDocIds.contains(doc.documentId.trim());
+    return Padding(
+      padding: const EdgeInsets.only(top: 6),
+      child: TextButton.icon(
+        onPressed: refreshing ? null : () => _refreshBillitStatus(doc),
+        style: TextButton.styleFrom(
+          foregroundColor: tokens.accent,
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+          minimumSize: const Size(0, 30),
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          alignment: Alignment.centerLeft,
+        ),
+        icon: refreshing
+            ? SizedBox(
+                width: 13,
+                height: 13,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  valueColor: AlwaysStoppedAnimation<Color>(tokens.accent),
+                ),
+              )
+            : Icon(Icons.sync, size: 14, color: tokens.accent),
+        label: Text(
+          _tr(
+            nl: 'Billit-status vernieuwen',
+            en: 'Refresh Billit status',
+            fr: 'Actualiser le statut Billit',
+            es: 'Actualizar estado de Billit',
+          ),
+          style: const TextStyle(fontSize: 11.0, fontWeight: FontWeight.w700),
+        ),
       ),
     );
   }
