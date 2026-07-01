@@ -309,6 +309,11 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
   bool _billitDisconnectLoading = false;
   String? _billitStatusError;
   Map<String, dynamic>? _billitStatus;
+  // Patch B10a: company Billit auto-create setting (default OFF, sandbox-only).
+  bool _billitAutoCreateEnabled = false;
+  bool _billitAutoCreateLoading = false;
+  bool _billitAutoCreateSaving = false;
+  bool _billitAutoCreateLoaded = false;
   bool _showAdvancedLogoPath = false;
   bool _showAdvancedPublicMediaUrls = false;
   final ImagePicker _imagePicker = ImagePicker();
@@ -584,6 +589,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     _loadMollieConnectStatus();
     _loadMollieTerminalsSnapshot();
     _loadBillitIntegrationStatus();
+    _loadBillitAutoCreateSettings();
     _loadAirportFixedFareRules();
     _loadChironConnectionStatus();
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -2892,6 +2898,98 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     }
   }
 
+  // Patch B10a: read the company Billit auto-create setting (company-session
+  // auth, no admin token). Read-only; failures leave the switch at its safe
+  // default (OFF) without a scary error.
+  Future<void> _loadBillitAutoCreateSettings() async {
+    setState(() => _billitAutoCreateLoading = true);
+    try {
+      final scope = _activeSettingsScopeStrict();
+      if (scope == null) {
+        debugPrint(
+          '[BUSINESS_SETTINGS_SCOPE][SKIP] reason=missing_strict_company_scope action=load_billit_auto_create',
+        );
+        return;
+      }
+      final data = await fetchCompanyBillitAutoCreateSettings(
+        tenantId: scope.tenantId,
+        companyId: scope.companyId,
+      );
+      if (!mounted) return;
+      setState(() {
+        _billitAutoCreateEnabled =
+            data['billit_auto_create_after_paid_business_invoice'] == true;
+        _billitAutoCreateLoaded = true;
+      });
+    } catch (_) {
+      // Leave at safe default (OFF); the switch simply reflects false.
+    } finally {
+      if (mounted) {
+        setState(() => _billitAutoCreateLoading = false);
+      }
+    }
+  }
+
+  // Patch B10a: persist the toggle. Save-then-update with rollback on failure;
+  // the final state always reflects the backend response. Never calls Billit,
+  // Peppol send, or any admin route.
+  Future<void> _setBillitAutoCreate(bool next) async {
+    if (_billitAutoCreateSaving || _billitAutoCreateLoading) return;
+    final previous = _billitAutoCreateEnabled;
+    setState(() => _billitAutoCreateSaving = true);
+    try {
+      final scope = _activeSettingsScopeStrict();
+      if (scope == null) {
+        debugPrint(
+          '[BUSINESS_SETTINGS_SCOPE][SKIP] reason=missing_strict_company_scope action=update_billit_auto_create',
+        );
+        return;
+      }
+      final data = await updateCompanyBillitAutoCreateSettings(
+        enabled: next,
+        tenantId: scope.tenantId,
+        companyId: scope.companyId,
+      );
+      if (!mounted) return;
+      setState(() {
+        _billitAutoCreateEnabled =
+            data['billit_auto_create_after_paid_business_invoice'] == true;
+        _billitAutoCreateLoaded = true;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Instelling opgeslagen.',
+              en: 'Setting saved.',
+              fr: 'Paramètre enregistré.',
+              es: 'Ajuste guardado.',
+            ),
+          ),
+        ),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _billitAutoCreateEnabled = previous);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Instelling kon niet worden opgeslagen. Probeer opnieuw.',
+              en: 'Setting could not be saved. Please try again.',
+              fr: 'Le paramètre n’a pas pu être enregistré. Veuillez réessayer.',
+              es: 'No se pudo guardar el ajuste. Inténtalo de nuevo.',
+            ),
+          ),
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _billitAutoCreateSaving = false);
+      }
+    }
+  }
+
   Future<void> _startBillitConnect() async {
     final configured = _billitStatus?['configured'] == true;
     final connected = _billitStatus?['connected'] == true;
@@ -4065,6 +4163,8 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
               ),
             ),
           const SizedBox(height: 12),
+          _billitAutoCreateSwitchRow(),
+          const SizedBox(height: 12),
           Wrap(
             spacing: 8,
             runSpacing: 8,
@@ -4131,6 +4231,101 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                   ),
                 ),
             ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  // Patch B10a: compact switch to let a company enable/disable automatic Billit
+  // invoice preparation after a paid business ride. Peppol sending stays manual.
+  Widget _billitAutoCreateSwitchRow() {
+    final busy = _billitAutoCreateLoading || _billitAutoCreateSaving;
+    final showSpinner =
+        (_billitAutoCreateLoading && !_billitAutoCreateLoaded) ||
+        _billitAutoCreateSaving;
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: _subPanelBg,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: _border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Padding(
+                padding: const EdgeInsets.only(top: 2, right: 10),
+                child: Icon(
+                  Icons.receipt_long_outlined,
+                  size: 20,
+                  color: _accent,
+                ),
+              ),
+              Expanded(
+                child: Text(
+                  _t(
+                    nl: 'Billit-facturen automatisch klaarzetten',
+                    en: 'Automatically prepare Billit invoices',
+                    fr: 'Préparer automatiquement les factures Billit',
+                    es: 'Preparar automáticamente facturas en Billit',
+                  ),
+                  style: TextStyle(
+                    color: _textPrimary,
+                    fontWeight: FontWeight.w600,
+                    height: 1.35,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              if (showSpinner)
+                const Padding(
+                  padding: EdgeInsets.only(right: 6, top: 4),
+                  child: SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                ),
+              Switch(
+                value: _billitAutoCreateEnabled,
+                onChanged: busy ? null : (v) => _setBillitAutoCreate(v),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            _t(
+              nl: 'Fluxidi zet na een betaalde zakelijke rit automatisch een factuur klaar in Billit. Peppol-verzending blijft handmatig. Controleer altijd klantgegevens, btw-gegevens en bedragen vóór verzending. Op Billit zijn de voorwaarden en het privacybeleid van Billit van toepassing.',
+              en: 'After a paid business ride, Fluxidi can automatically prepare an invoice in Billit. Peppol sending remains manual. Always check customer details, VAT details and amounts before sending. Billit’s terms and privacy policy apply to the use of Billit.',
+              fr: 'Après une course professionnelle payée, Fluxidi peut préparer automatiquement une facture dans Billit. L’envoi Peppol reste manuel. Vérifiez toujours les données client, les données TVA et les montants avant l’envoi. Les conditions et la politique de confidentialité de Billit s’appliquent à l’utilisation de Billit.',
+              es: 'Después de un viaje empresarial pagado, Fluxidi puede preparar automáticamente una factura en Billit. El envío por Peppol sigue siendo manual. Compruebe siempre los datos del cliente, los datos de IVA y los importes antes de enviar. Se aplican las condiciones y la política de privacidad de Billit.',
+            ),
+            style: TextStyle(color: _textSecondary, fontSize: 12, height: 1.45),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            _billitAutoCreateEnabled
+                ? _t(
+                    nl: 'Automatisch klaarzetten staat aan. Peppol verzenden blijft handmatig.',
+                    en: 'Automatic preparation is on. Peppol sending stays manual.',
+                    fr: 'La préparation automatique est activée. L’envoi Peppol reste manuel.',
+                    es: 'La preparación automática está activada. El envío por Peppol sigue siendo manual.',
+                  )
+                : _t(
+                    nl: 'Automatisch klaarzetten staat uit.',
+                    en: 'Automatic preparation is off.',
+                    fr: 'La préparation automatique est désactivée.',
+                    es: 'La preparación automática está desactivada.',
+                  ),
+            style: TextStyle(
+              color: _textMuted,
+              fontSize: 12,
+              fontStyle: FontStyle.italic,
+            ),
           ),
         ],
       ),

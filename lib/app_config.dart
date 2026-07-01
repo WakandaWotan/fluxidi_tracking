@@ -8746,6 +8746,134 @@ Future<Map<String, dynamic>> disconnectCompanyBillitOAuth({
   return map;
 }
 
+/// Safe projection (Patch B9a/B10a) of the company Billit auto-create settings
+/// response. Only the two whitelisted setting fields are surfaced; no tokens,
+/// secrets, or other profile fields are ever copied through.
+Map<String, dynamic> _safeBillitAutoCreateSettingsMap(
+  Map<dynamic, dynamic> raw,
+) {
+  bool boolAny(List<String> keys) {
+    for (final key in keys) {
+      final value = raw[key];
+      if (value is bool) return value;
+      if (value is String) {
+        final token = value.trim().toLowerCase();
+        if (token == 'true') return true;
+        if (token == 'false') return false;
+      }
+    }
+    return false;
+  }
+
+  String textAny(List<String> keys) {
+    for (final key in keys) {
+      final value = raw[key];
+      if (value == null) continue;
+      final text = value.toString().trim();
+      if (text.isNotEmpty) return text;
+    }
+    return '';
+  }
+
+  final env = textAny(const ['billit_auto_create_environment']);
+  return <String, dynamic>{
+    'ok': boolAny(const ['ok']),
+    'billit_auto_create_after_paid_business_invoice': boolAny(const [
+      'billit_auto_create_after_paid_business_invoice',
+    ]),
+    'billit_auto_create_environment': env.isEmpty ? 'sandbox' : env,
+    'error': textAny(const ['error']),
+  };
+}
+
+/// GET /company/billit-auto-create-settings (company-session auth, no admin
+/// token). Returns the safe two-field settings map.
+Future<Map<String, dynamic>> fetchCompanyBillitAutoCreateSettings({
+  String? tenantId,
+  String? companyId,
+}) async {
+  final endpoint = _withAdminTenantCompanyScope(
+    Uri.parse(
+      '${appConfig.bookingBaseUrl}/company/billit-auto-create-settings',
+    ),
+    tenantId: tenantId,
+    companyId: companyId,
+  );
+  final auth = await resolveCompanyOwnerAuthHeaders();
+  final res = await http
+      .get(endpoint, headers: auth.headers)
+      .timeout(const Duration(seconds: 12));
+  final decoded = jsonDecode(utf8.decode(res.bodyBytes));
+  if (decoded is! Map) throw Exception('Invalid response');
+  final map = _safeBillitAutoCreateSettingsMap(decoded);
+  if (res.statusCode == 401 || res.statusCode == 403) {
+    throw BillitIntegrationApiException(
+      error: 'forbidden',
+      statusCode: res.statusCode,
+    );
+  }
+  if (res.statusCode < 200 || res.statusCode >= 300) {
+    throw BillitIntegrationApiException(
+      error: map['error']?.toString().isNotEmpty == true
+          ? map['error'].toString()
+          : 'billit_auto_create_settings_failed',
+      statusCode: res.statusCode,
+    );
+  }
+  return map;
+}
+
+/// POST /company/billit-auto-create-settings (company-session auth). Sends the
+/// strict boolean toggle + sandbox-only environment. Returns the safe settings
+/// map. Throws [BillitIntegrationApiException] on 400/401/403/5xx.
+Future<Map<String, dynamic>> updateCompanyBillitAutoCreateSettings({
+  required bool enabled,
+  String? tenantId,
+  String? companyId,
+}) async {
+  final endpoint = _withAdminTenantCompanyScope(
+    Uri.parse(
+      '${appConfig.bookingBaseUrl}/company/billit-auto-create-settings',
+    ),
+    tenantId: tenantId,
+    companyId: companyId,
+  );
+  final scope = _resolveAdminTenantCompanyScope(
+    tenantId: tenantId,
+    companyId: companyId,
+  );
+  final auth = await resolveCompanyOwnerAuthHeaders();
+  final res = await http
+      .post(
+        endpoint,
+        headers: auth.headers,
+        body: jsonEncode(<String, dynamic>{
+          ...scope,
+          'billit_auto_create_after_paid_business_invoice': enabled,
+          'billit_auto_create_environment': 'sandbox',
+        }),
+      )
+      .timeout(const Duration(seconds: 12));
+  final decoded = jsonDecode(utf8.decode(res.bodyBytes));
+  if (decoded is! Map) throw Exception('Invalid response');
+  final map = _safeBillitAutoCreateSettingsMap(decoded);
+  if (res.statusCode == 401 || res.statusCode == 403) {
+    throw BillitIntegrationApiException(
+      error: 'forbidden',
+      statusCode: res.statusCode,
+    );
+  }
+  if (res.statusCode < 200 || res.statusCode >= 300) {
+    throw BillitIntegrationApiException(
+      error: map['error']?.toString().isNotEmpty == true
+          ? map['error'].toString()
+          : 'billit_auto_create_settings_update_failed',
+      statusCode: res.statusCode,
+    );
+  }
+  return map;
+}
+
 Future<Map<String, dynamic>> fetchCompanyMollieTerminals({
   String? tenantId,
   String? companyId,
