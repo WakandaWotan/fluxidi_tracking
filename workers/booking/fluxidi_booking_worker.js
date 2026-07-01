@@ -2638,6 +2638,182 @@ async function handleAdminBillitSandboxOrderStatus({ request, url, env, document
   });
 }
 
+/* Patch B10e-A: COMPANY-scoped, SANDBOX-ONLY, READ-ONLY Billit order status
+ * refresh for an issued INVOICE document. Company sibling of
+ * handleAdminBillitSandboxOrderStatus: identical read-only behaviour and safe
+ * response shape, but company-session (or admin token) auth via
+ * _requireAdminOrCompanySessionForExplicitScope instead of admin-only. Scope is
+ * the AUTHENTICATED company scope; cross-company reads are rejected by the auth
+ * helper (403) and the strict document ownership check (404). It reuses the same
+ * shared helpers (resolveBillitOAuthConfig, loadIssuedDocumentRegistryRecordById,
+ * readBillitPartyIdForScope, acquireBillitSandboxAccessToken,
+ * fetchBillitSandboxOrderById) and makes exactly ONE outbound call
+ * (GET /v1/orders/{orderId}). It NEVER creates/links/sends/Peppol-sends, NEVER
+ * calls /v1/orders POST or /v1/orders/commands/send, NEVER writes the registry
+ * (no billit_export mutation, no immutable_snapshot / content_hash change), NEVER
+ * reconciles, NEVER supports production, and NEVER returns tokens, the raw OAuth
+ * record, request headers, or the raw Billit Order Object (Customer / Addresses /
+ * OrderLines / VAT / files are all dropped). Unlike the admin route, it enforces
+ * a strict invoice-only gate (409 document_not_invoice). */
+async function handleCompanyBillitSandboxOrderStatus({ request, url, env, documentId }) {
+  // 1. Company-scoped auth (company session OR admin token) + explicit scope.
+  //    Rejects unauthenticated (401), missing scope (400), cross-company (403).
+  const authScope = await _requireAdminOrCompanySessionForExplicitScope({
+    request,
+    url,
+    env,
+    routeLabel: "COMPANY_BILLIT_ORDER_STATUS",
+  });
+  if (!authScope.ok) return authScope.response;
+  const scope = {
+    tenant_id: authScope.explicitScope.tenant_id,
+    company_id: authScope.explicitScope.company_id,
+  };
+
+  // 2. Resolve config + SANDBOX-ONLY guard (before any KV/network work).
+  const config = resolveBillitOAuthConfig(env);
+  if (config.environment !== "sandbox") {
+    return json(
+      {
+        ok: false,
+        error: "billit_status_read_sandbox_only",
+        environment: config.environment,
+      },
+      409,
+    );
+  }
+
+  const docId = safeStr(documentId, 200);
+  if (!docId) return json({ ok: false, error: "missing_document_id" }, 400);
+  if (!env?.BOOKING_KV) return json({ ok: false, error: "missing_binding" }, 503);
+
+  // 3. Load the issued document + strict tenant/company ownership check.
+  const record = await loadIssuedDocumentRegistryRecordById(env, scope, docId);
+  const recordTenant = safeStr(record?.tenant_id ?? record?.tenantId, 80);
+  const recordCompany = safeStr(record?.company_id ?? record?.companyId, 80);
+  if (
+    !record ||
+    (recordTenant && recordTenant !== scope.tenant_id) ||
+    (recordCompany && recordCompany !== scope.company_id)
+  ) {
+    return json({ ok: false, error: "document_not_found" }, 404);
+  }
+
+  // 4. Strict invoice-only gate (B10e-A decision point 1).
+  const documentType = safeStr(record?.document_type ?? record?.documentType, 40).toLowerCase();
+  if (documentType !== "invoice") {
+    return json({ ok: false, error: "document_not_invoice" }, 409);
+  }
+
+  // 5. Require a persisted sandbox billit_export link.
+  const exportObj =
+    record.billit_export && typeof record.billit_export === "object" && !Array.isArray(record.billit_export)
+      ? record.billit_export
+      : null;
+  const exportOrderId = safeStr(exportObj?.order_id, 120);
+  if (!exportObj || !exportOrderId) {
+    return json({ ok: false, error: "billit_order_not_linked" }, 409);
+  }
+  if (safeStr(exportObj.environment, 24).toLowerCase() !== "sandbox") {
+    return json({ ok: false, error: "billit_export_not_sandbox" }, 409);
+  }
+
+  const recordDocNumber = safeStr(record?.document_number ?? record?.documentNumber, 80);
+  if (!recordDocNumber) {
+    return json({ ok: false, error: "document_number_missing" }, 409);
+  }
+
+  // 6. PartyID: prefer the linked export party_id; must match stored KV PartyID.
+  const knownPartyId = await readBillitPartyIdForScope(env, scope);
+  const exportPartyId = safeStr(exportObj.party_id, 120) || null;
+  if (knownPartyId && exportPartyId && knownPartyId !== exportPartyId) {
+    return json({ ok: false, error: "billit_party_id_mismatch" }, 409);
+  }
+  const effectivePartyId = exportPartyId || knownPartyId || null;
+
+  // 7. Acquire a usable sandbox access token (decrypt + single-use refresh).
+  const tokenResult = await acquireBillitSandboxAccessToken(env, scope, config);
+  if (!tokenResult.ok) {
+    return json(
+      { ok: false, error: tokenResult.error, environment: "sandbox" },
+      tokenResult.status || 500,
+    );
+  }
+
+  // 8. The single outbound read call (GET /v1/orders/{orderId}, sandbox). No
+  //    send, no create, no reconcile, no registry write.
+  const readResult = await fetchBillitSandboxOrderById(
+    config,
+    tokenResult.access_token,
+    effectivePartyId,
+    exportOrderId,
+  );
+  if (!readResult.ok) {
+    console.log(
+      `[COMPANY_BILLIT_ORDER_STATUS][SANDBOX][FAIL] doc=${docId.slice(0, 8)} status=${readResult.status ?? "-"}`,
+    );
+    return json(
+      {
+        ok: false,
+        error: "billit_order_read_failed",
+        environment: "sandbox",
+        status_code: readResult.status ?? null,
+        billit_error_code: readResult.billit_error_code ?? null,
+        billit_error_description: readResult.billit_error_description ?? null,
+      },
+      502,
+    );
+  }
+
+  // 9. Map sanitized live fields + soft warnings. No registry write (read-only).
+  const order = readResult.order || {};
+  const warnings = [];
+  if (!order.order_status) warnings.push("billit_status_unknown");
+  if (!order.order_id) warnings.push("billit_read_returned_no_order_id");
+  if (order.order_number && order.order_number !== recordDocNumber) {
+    warnings.push("billit_order_number_mismatch");
+  }
+  if (order.order_type && order.order_type !== "Invoice") {
+    warnings.push("billit_order_type_unexpected");
+  }
+  const recordCurrency = safeStr(record?.currency, 8).toUpperCase();
+  if (order.currency && recordCurrency && order.currency !== recordCurrency) {
+    warnings.push("billit_currency_mismatch");
+  }
+
+  console.log(
+    `[COMPANY_BILLIT_ORDER_STATUS][SANDBOX][OK] doc=${docId.slice(0, 8)} order=${exportOrderId ? "yes" : "no"} status=${order.order_status ? "yes" : "no"} refreshed=${tokenResult.refreshed}`,
+  );
+
+  return json({
+    ok: true,
+    sandbox_status_read: true,
+    document_id: docId,
+    document_number: recordDocNumber,
+    billit_party_id: effectivePartyId,
+    billit_order_id: exportOrderId,
+    billit_order_number: order.order_number ?? recordDocNumber,
+    local_status: safeStr(exportObj.status, 40) || null,
+    billit_status: order.order_status ?? null,
+    billit_order_date: order.order_date ?? null,
+    billit_expiry_date: order.expiry_date ?? null,
+    billit_created: order.created ?? null,
+    billit_last_modified: order.last_modified ?? null,
+    billit_is_sent: typeof order.is_sent === "boolean" ? order.is_sent : null,
+    billit_paid: typeof order.paid === "boolean" ? order.paid : null,
+    billit_paid_date: order.paid_date ?? null,
+    billit_currency: order.currency ?? null,
+    billit_order_type: order.order_type ?? null,
+    billit_order_direction: order.order_direction ?? null,
+    // Local link truth (never overwritten by a live read; read-only route).
+    sent: exportObj.sent === true,
+    peppol_sent: exportObj.peppol_sent === true,
+    // Response-only timestamp (B10e-A). NOT persisted to the registry.
+    status_checked_at: new Date().toISOString(),
+    warnings,
+  });
+}
+
 /* Admin-only, SANDBOX-ONLY, FAIL-CLOSED manual Peppol send of ONE linked Billit
  * sandbox order for an issued invoice document (Patch B7). Transport allowlist
  * is ["Peppol"] ONLY (no SMTP/email, no Letter). Requires an explicit
@@ -31566,6 +31742,52 @@ export default {
             const message = String(err?.message || "internal_error");
             console.log(
               `[COMPANY_DOCUMENT_LIST][ERR] ${safeStr(message, 200) || "unknown"}`,
+            );
+            return json({ ok: false, error: "internal_error" }, 500);
+          }
+        }
+      }
+
+      // GET /company/documents/:documentId/billit-order/status/sandbox
+      // Patch B10e-A: COMPANY-authenticated (company session OR admin token),
+      // SANDBOX-ONLY, READ-ONLY Billit order status refresh for an issued
+      // INVOICE document. Company sibling of the admin status route
+      // (GET /admin/documents/:documentId/billit-order/status/sandbox) with the
+      // exact same safe response shape and the same shared read helpers. Scope is
+      // the AUTHENTICATED company scope; cross-company reads are rejected. Makes
+      // exactly ONE outbound call (GET /v1/orders/{orderId}). It NEVER creates/
+      // links/sends/Peppol-sends, NEVER calls /v1/orders POST or
+      // /v1/orders/commands/send, NEVER writes the registry / reconciles, and
+      // NEVER returns tokens or the raw Billit response. The admin route is
+      // unchanged.
+      if (
+        request.method === "GET" &&
+        url.pathname.startsWith("/company/documents/") &&
+        url.pathname.endsWith("/billit-order/status/sandbox")
+      ) {
+        const companyBillitStatusSegments = url.pathname.split("/").filter(Boolean);
+        // Only the exact shape:
+        //   ["company","documents","<documentId>","billit-order","status","sandbox"]
+        if (
+          companyBillitStatusSegments.length === 6 &&
+          companyBillitStatusSegments[0] === "company" &&
+          companyBillitStatusSegments[1] === "documents" &&
+          companyBillitStatusSegments[3] === "billit-order" &&
+          companyBillitStatusSegments[4] === "status" &&
+          companyBillitStatusSegments[5] === "sandbox"
+        ) {
+          try {
+            const documentId =
+              safeStr(decodeURIComponent(companyBillitStatusSegments[2]), 200) || "";
+            return await handleCompanyBillitSandboxOrderStatus({
+              request,
+              url,
+              env,
+              documentId,
+            });
+          } catch (err) {
+            console.log(
+              `[COMPANY_BILLIT_ORDER_STATUS][SANDBOX][ERR] ${safeStr(err?.message, 160) || "unknown"}`,
             );
             return json({ ok: false, error: "internal_error" }, 500);
           }
