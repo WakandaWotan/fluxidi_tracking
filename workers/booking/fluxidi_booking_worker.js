@@ -2943,6 +2943,288 @@ async function handleAdminBillitSandboxOrderSend({ request, url, env, documentId
   });
 }
 
+/* Pure builder (Patch B7-4) for a MINIMAL Peppol-ready test-fixture booking
+ * record. Produces exactly the smallest field set that the existing
+ * deriveServerSideInvoiceContext + _issueInvoiceCore path already reads, so a
+ * later invoice issue can run UNCHANGED and the resulting invoice's
+ * billit-payload-preview reaches peppol.ready === true.
+ *
+ * Hard rules:
+ *   - no legs (single booking-level sale → deriveServerSideInvoiceContext uses
+ *     booking-level totals, never leg_required_for_roundtrip)
+ *   - amounts stored as decimal-euro numbers (the reader multiplies by 100)
+ *   - never invents buyer identity: billing_customer_snapshot is the caller's
+ *     already-normalized + readiness-validated billing customer
+ *   - never mutates inputs; returns a fresh plain object only. */
+function buildPeppolReadyBookingFixtureRecord({
+  scope,
+  body,
+  normalizedBillingCustomer,
+  readiness,
+  nowIso,
+}) {
+  const bodyObj = body && typeof body === "object" && !Array.isArray(body) ? body : {};
+  const currency = safeStr(bodyObj.currency, 8).toUpperCase();
+  const priceInclVatCents = Math.round(Number(bodyObj.price_incl_vat_cents));
+  const vatRatePercent = Number(bodyObj.vat_rate_percent);
+  // Definitional VAT split from the incl-VAT total + rate (never invented).
+  const totalExclVatCents = Math.round(
+    priceInclVatCents / (1 + vatRatePercent / 100),
+  );
+  const vatCents = priceInclVatCents - totalExclVatCents;
+  const totalInclVatEuros = priceInclVatCents / 100;
+  const subtotalExVatEuros = totalExclVatCents / 100;
+  const vatAmountEuros = vatCents / 100;
+
+  const shortRandom =
+    (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function")
+      ? crypto.randomUUID().slice(0, 8)
+      : Math.random().toString(36).slice(2, 10);
+  const bookingId = `fixture-peppol-${Date.now()}-${shortRandom}`;
+
+  const pickupIso = safeStr(bodyObj.pickup_iso ?? bodyObj.pickupIso, 40) || nowIso;
+  const pickupAddress =
+    safeStr(bodyObj.pickup_address ?? bodyObj.pickupAddress, 240) ||
+    "Peppol sandbox pickup";
+  const dropoffAddress =
+    safeStr(bodyObj.dropoff_address ?? bodyObj.dropoffAddress, 240) ||
+    "Peppol sandbox dropoff";
+  const customerEmail =
+    safeStr(bodyObj.customer_email ?? bodyObj.customerEmail, 240) ||
+    "peppol-sandbox-buyer@example.test";
+  const customerName =
+    safeStr(normalizedBillingCustomer?.display_name, 240) ||
+    safeStr(normalizedBillingCustomer?.legal_name, 240) ||
+    "Peppol Sandbox Buyer";
+
+  const record = {
+    // Identity in the shapes the existing booking loaders read.
+    id: bookingId,
+    booking_id: bookingId,
+    bookingId: bookingId,
+    canonical_booking_id: bookingId,
+    booking_uuid: bookingId,
+    // Scope (read by resolveBookingTenantScopeFromRecord).
+    tenant_id: scope.tenant_id,
+    company_id: scope.company_id,
+    // Lifecycle suitable for invoice issue (issue is read-only on the booking
+    // and does not gate on paid).
+    status: "confirmed",
+    payment_status: "unpaid",
+    created_at: nowIso,
+    createdAt: nowIso,
+    // Fixture provenance markers.
+    test_fixture: true,
+    fixture_type: "peppol_ready_invoice",
+    created_by: "admin_test_fixture",
+    // Currency + booking-level totals (decimal euros) for
+    // deriveServerSideInvoiceContext.
+    currency,
+    total_incl_vat: totalInclVatEuros,
+    subtotal_ex_vat: subtotalExVatEuros,
+    vat_amount: vatAmountEuros,
+    vat_rate_percent: vatRatePercent,
+    // Cents mirror (diagnostic; not required by the reader).
+    price_incl_vat_cents: priceInclVatCents,
+    total_incl_vat_cents: priceInclVatCents,
+    total_excl_vat_cents: totalExclVatCents,
+    vat_cents: vatCents,
+    // Minimal trip context.
+    from: pickupAddress,
+    to: dropoffAddress,
+    pickup_iso: pickupIso,
+    pickupIso: pickupIso,
+    service: "transfer",
+    line_description: "Taxirit - Peppol sandbox fixture",
+    // Customer name/email so buyer_snapshot carries name+email at issue.
+    custName: customerName,
+    customer_name: customerName,
+    custEmail: customerEmail,
+    customer_email: customerEmail,
+    // The already-normalized + readiness-validated billing customer.
+    billing_customer_snapshot: normalizedBillingCustomer,
+    billingCustomerSnapshot: normalizedBillingCustomer,
+    // Business-invoice intent markers (parity with real business bookings).
+    business_detected: true,
+    invoice_requested: true,
+    invoice_intent: "business_invoice",
+    invoice_state: "pending_payment",
+  };
+  // Stamp currency across the shapes the currency resolver reads.
+  _stampExplicitBookingCurrencyOnPersistedRecord(record, currency);
+
+  return {
+    booking_id: bookingId,
+    record,
+    totals: {
+      price_incl_vat_cents: priceInclVatCents,
+      total_excl_vat_cents: totalExclVatCents,
+      vat_cents: vatCents,
+      vat_rate_percent: vatRatePercent,
+    },
+  };
+}
+
+/* Admin-only, SANDBOX-ONLY test-fixture route (Patch B7-4) that writes exactly
+ * ONE booking:<id> record carrying a validated Peppol-ready
+ * billing_customer_snapshot + minimal pricing, so the existing
+ * POST /admin/documents/invoice/issue path can issue a fresh Peppol-ready
+ * invoice. It performs NO other side effects: no email, no calendar, no push,
+ * no compliance emit, no demand/driver/vehicle/tracking indexes, no payment, no
+ * invoice issue, no Billit/Peppol calls. NEVER touches existing documents and
+ * NEVER returns tokens/secrets/raw responses. */
+async function handleAdminPeppolReadyBookingFixture({ request, url, env }) {
+  // 1. Admin auth.
+  try {
+    _requireAdmin(request, url, env);
+  } catch (err) {
+    const message = String(err?.message || "Unauthorized");
+    return json(
+      {
+        ok: false,
+        error: message === "Unauthorized" ? "unauthorized" : "admin_unavailable",
+      },
+      message === "Unauthorized" ? 401 : 500,
+    );
+  }
+
+  // 2. Resolve config + SANDBOX-ONLY guard (before any work).
+  const config = resolveBillitOAuthConfig(env);
+  if (config.environment !== "sandbox") {
+    return json(
+      {
+        ok: false,
+        error: "test_fixture_sandbox_only",
+        environment: config.environment,
+      },
+      409,
+    );
+  }
+
+  // 3. Parse + validate the explicit confirmation body.
+  const body = await safeJson(request);
+  const bodyObj =
+    body && typeof body === "object" && !Array.isArray(body) ? body : {};
+  if (bodyObj.confirm_test_fixture !== true) {
+    return json({ ok: false, error: "confirm_test_fixture_required" }, 400);
+  }
+
+  // 4. Explicit tenant/company scope (query or body; no legacy fallback).
+  const scopedRoute = requireExplicitBookingRouteScope({ request, url, body: bodyObj });
+  if (!scopedRoute.ok) return scopedRoute.response;
+  const scope = {
+    tenant_id: scopedRoute.scope.tenant_id,
+    company_id: scopedRoute.scope.company_id,
+  };
+
+  if (!env?.BOOKING_KV) return json({ ok: false, error: "missing_binding" }, 503);
+
+  // 5. Currency (ISO-3, explicit only — no default).
+  const currency = safeStr(bodyObj.currency, 8).toUpperCase();
+  if (!currency) return json({ ok: false, error: "currency_required" }, 400);
+  if (!/^[A-Z]{3}$/.test(currency)) {
+    return json({ ok: false, error: "invalid_currency" }, 400);
+  }
+
+  // 6. Pricing: price_incl_vat_cents (positive integer) + valid vat_rate_percent.
+  const priceInclVatCents = Number(bodyObj.price_incl_vat_cents);
+  if (
+    !Number.isFinite(priceInclVatCents) ||
+    !Number.isInteger(priceInclVatCents) ||
+    priceInclVatCents <= 0
+  ) {
+    return json({ ok: false, error: "invalid_price_incl_vat_cents" }, 400);
+  }
+  const vatRatePercent = Number(bodyObj.vat_rate_percent);
+  if (
+    !Number.isFinite(vatRatePercent) ||
+    vatRatePercent <= 0 ||
+    vatRatePercent > 100
+  ) {
+    return json({ ok: false, error: "invalid_vat_rate_percent" }, 400);
+  }
+
+  // 7. Minimal trip fields required so the invoice has a real line source.
+  const pickupIso = safeStr(bodyObj.pickup_iso ?? bodyObj.pickupIso, 40);
+  if (!pickupIso) return json({ ok: false, error: "pickup_iso_required" }, 400);
+  const pickupAddress = safeStr(bodyObj.pickup_address ?? bodyObj.pickupAddress, 240);
+  const dropoffAddress = safeStr(bodyObj.dropoff_address ?? bodyObj.dropoffAddress, 240);
+  if (!pickupAddress || !dropoffAddress) {
+    return json({ ok: false, error: "trip_addresses_required" }, 400);
+  }
+
+  // 8. billing_customer required + must be legal + Peppol ready.
+  const hasBillingCustomer = !!(
+    bodyObj.billing_customer ||
+    bodyObj.billingCustomer ||
+    bodyObj.buyer ||
+    bodyObj.buyer_identity ||
+    bodyObj.buyerIdentity
+  );
+  if (!hasBillingCustomer) {
+    return json({ ok: false, error: "billing_customer_required" }, 400);
+  }
+  const normalizedBillingCustomer = normalizeBillingCustomerIdentityInput(bodyObj);
+  const readiness = buildBillingCustomerIdentityReadiness(normalizedBillingCustomer);
+  if (
+    readiness.ready !== true ||
+    readiness.legal_identity_ready !== true ||
+    readiness.peppol_target_ready !== true
+  ) {
+    return json(
+      {
+        ok: false,
+        error: "billing_customer_not_peppol_ready",
+        ready: readiness.ready === true,
+        legal_identity_ready: readiness.legal_identity_ready === true,
+        peppol_target_ready: readiness.peppol_target_ready === true,
+        missing_fields: Array.isArray(readiness.missing_fields)
+          ? readiness.missing_fields
+          : [],
+      },
+      409,
+    );
+  }
+
+  // 9. Build the minimal fixture booking record (pure).
+  const nowIso = new Date().toISOString();
+  const built = buildPeppolReadyBookingFixtureRecord({
+    scope,
+    body: bodyObj,
+    normalizedBillingCustomer,
+    readiness,
+    nowIso,
+  });
+
+  // 10. The ONLY write: exactly one booking:<id> KV put. No indexes, no email,
+  // no calendar, no push, no compliance, no tracking, no payment, no Billit.
+  try {
+    await env.BOOKING_KV.put(
+      `booking:${built.booking_id}`,
+      JSON.stringify(built.record),
+    );
+  } catch (_) {
+    return json({ ok: false, error: "fixture_persist_failed" }, 500);
+  }
+
+  console.log(
+    `[TEST_FIXTURE][PEPPOL_READY_BOOKING][OK] booking=${_bookingIntentMask(built.booking_id)} currency=${currency}`,
+  );
+  return json({
+    ok: true,
+    test_fixture: true,
+    booking_id: built.booking_id,
+    tenant_id: scope.tenant_id,
+    company_id: scope.company_id,
+    currency,
+    price_incl_vat_cents: built.totals.price_incl_vat_cents,
+    vat_rate_percent: built.totals.vat_rate_percent,
+    billing_customer_ready: true,
+    peppol_target_ready: true,
+    warnings: [],
+  });
+}
+
 // Small HTML response helper for the browser-facing OAuth callback. No
 // secrets/tokens ever included.
 function _billitCallbackHtml(message, status = 200) {
@@ -29206,6 +29488,29 @@ export default {
             );
             return json({ ok: false, error: "internal_error" }, 500);
           }
+        }
+      }
+
+      // POST /admin/test-fixtures/bookings/peppol-ready
+      // Patch B7-4: admin-only, SANDBOX-ONLY test-fixture route that writes
+      // exactly ONE booking:<id> record carrying a validated Peppol-ready
+      // billing_customer_snapshot + minimal pricing, so the existing
+      // POST /admin/documents/invoice/issue path can issue a fresh Peppol-ready
+      // invoice. It performs NO other side effects (no email/calendar/push/
+      // compliance/demand/tracking/payment), NEVER issues an invoice, NEVER
+      // touches existing documents, and NEVER calls Billit/Peppol (see
+      // handleAdminPeppolReadyBookingFixture).
+      if (
+        request.method === "POST" &&
+        url.pathname === "/admin/test-fixtures/bookings/peppol-ready"
+      ) {
+        try {
+          return await handleAdminPeppolReadyBookingFixture({ request, url, env });
+        } catch (err) {
+          console.log(
+            `[TEST_FIXTURE][PEPPOL_READY_BOOKING][ERR] ${safeStr(err?.message, 160) || "unknown"}`,
+          );
+          return json({ ok: false, error: "internal_error" }, 500);
         }
       }
 
