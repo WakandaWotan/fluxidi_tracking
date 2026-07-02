@@ -715,10 +715,217 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
     }
   }
 
+  /// B11-G: map a single Peppol readiness reason code (as emitted by the
+  /// backend `billit_peppol_not_ready` response's `reasons[]`) to an
+  /// actionable, localized customer-facing sentence. Handles both the current
+  /// backend codes (e.g. `missing_currency`, `missing_line_items`,
+  /// `missing_vat_rate`) and the prescriptive per-topic aliases used in the
+  /// Patch B11-G contract (e.g. `invoice_currency_missing`,
+  /// `invoice_lines_missing`, `invoice_vat_breakdown_missing`). Unknown codes
+  /// fall back to a labeled "unknown Peppol requirement" line that keeps the
+  /// raw code visible for support, but never exposes JSON or stack info.
+  String _mapPeppolReadinessReason(String code) {
+    switch (code.trim()) {
+      case 'customer_identity_missing':
+        return _tr(
+          nl: 'Klantidentiteit ontbreekt.',
+          en: 'Customer identity is missing.',
+          fr: 'L’identité du client est manquante.',
+          es: 'Falta la identidad del cliente.',
+        );
+      case 'customer_legal_name_missing':
+        return _tr(
+          nl: 'Wettelijke klantnaam ontbreekt.',
+          en: 'Customer legal name is missing.',
+          fr: 'Le nom légal du client est manquant.',
+          es: 'Falta el nombre legal del cliente.',
+        );
+      case 'customer_billing_address_missing':
+        return _tr(
+          nl: 'Facturatieadres van de klant ontbreekt.',
+          en: 'Customer billing address is missing.',
+          fr: 'L’adresse de facturation du client est manquante.',
+          es: 'Falta la dirección de facturación del cliente.',
+        );
+      case 'customer_country_missing':
+        return _tr(
+          nl: 'Land van de klant ontbreekt.',
+          en: 'Customer country is missing.',
+          fr: 'Le pays du client est manquant.',
+          es: 'Falta el país del cliente.',
+        );
+      case 'customer_vat_or_registration_missing':
+        return _tr(
+          nl: 'Btw-nummer of ondernemingsnummer van de klant ontbreekt.',
+          en: 'Customer VAT number or company registration number is missing.',
+          fr: 'Le numéro de TVA ou d’entreprise du client est manquant.',
+          es: 'Falta el número de IVA o de registro de la empresa del cliente.',
+        );
+      case 'customer_peppol_target_missing':
+        return _tr(
+          nl: 'Peppol-endpoint van de klant ontbreekt.',
+          en: 'Customer Peppol endpoint is missing.',
+          fr: 'Le point de terminaison Peppol du client est manquant.',
+          es: 'Falta el endpoint Peppol del cliente.',
+        );
+      case 'customer_peppol_scheme_missing':
+        return _tr(
+          nl: 'Peppol-schema van de klant ontbreekt.',
+          en: 'Customer Peppol scheme is missing.',
+          fr: 'Le schéma Peppol du client est manquant.',
+          es: 'Falta el esquema Peppol del cliente.',
+        );
+      case 'invoice_currency_missing':
+      case 'missing_currency':
+        return _tr(
+          nl: 'Factuurvaluta ontbreekt.',
+          en: 'Invoice currency is missing.',
+          fr: 'La devise de la facture est manquante.',
+          es: 'Falta la moneda de la factura.',
+        );
+      case 'invoice_totals_missing':
+      case 'missing_totals':
+      case 'missing_total':
+      case 'missing_subtotal':
+      case 'missing_vat_amount':
+        return _tr(
+          nl: 'Factuurtotalen ontbreken.',
+          en: 'Invoice totals are missing.',
+          fr: 'Les totaux de la facture sont manquants.',
+          es: 'Faltan los totales de la factura.',
+        );
+      case 'invoice_vat_breakdown_missing':
+      case 'missing_vat_rate':
+        return _tr(
+          nl: 'Btw-uitsplitsing ontbreekt.',
+          en: 'VAT breakdown is missing.',
+          fr: 'La ventilation de la TVA est manquante.',
+          es: 'Falta el desglose del IVA.',
+        );
+      case 'invoice_lines_missing':
+      case 'missing_line_items':
+        return _tr(
+          nl: 'Factuurlijnen ontbreken.',
+          en: 'Invoice line items are missing.',
+          fr: 'Les lignes de facture sont manquantes.',
+          es: 'Faltan las líneas de la factura.',
+        );
+      case 'seller_identity_missing':
+        return _tr(
+          nl: 'Bedrijfsidentiteit ontbreekt.',
+          en: 'Seller identity is missing.',
+          fr: 'L’identité du vendeur est manquante.',
+          es: 'Falta la identidad del vendedor.',
+        );
+      case 'seller_vat_or_registration_missing':
+        return _tr(
+          nl: 'Btw-nummer of ondernemingsnummer van je bedrijf ontbreekt.',
+          en: 'Seller VAT number or company registration number is missing.',
+          fr: 'Le numéro de TVA ou d’entreprise du vendeur est manquant.',
+          es: 'Falta el número de IVA o de registro de la empresa del vendedor.',
+        );
+      case 'seller_country_missing':
+        return _tr(
+          nl: 'Land van je bedrijf ontbreekt.',
+          en: 'Seller country is missing.',
+          fr: 'Le pays du vendeur est manquant.',
+          es: 'Falta el país del vendedor.',
+        );
+      default:
+        return _tr(
+          nl: 'Onbekende Peppol-voorwaarde ontbreekt: $code',
+          en: 'Unknown Peppol requirement is missing: $code',
+          fr: 'Exigence Peppol inconnue manquante : $code',
+          es: 'Falta un requisito Peppol desconocido: $code',
+        );
+    }
+  }
+
   void _showBillitPeppolSendSnackBar(String message) {
     final messenger = ScaffoldMessenger.maybeOf(context);
     if (messenger == null) return;
     messenger.showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  /// B11-G: safe extraction of a list-of-strings field (e.g. `reasons` or
+  /// `warnings`) from the backend send-route response. Ignores non-list values,
+  /// null items, and empty/whitespace-only entries. Returns a fresh list; the
+  /// caller is free to filter/dedupe further.
+  List<String> _extractStringList(Map<String, dynamic>? decoded, String key) {
+    if (decoded == null) return const <String>[];
+    final raw = decoded[key];
+    if (raw is! List) return const <String>[];
+    final out = <String>[];
+    for (final item in raw) {
+      if (item == null) continue;
+      final text = item.toString().trim();
+      if (text.isEmpty) continue;
+      out.add(text);
+    }
+    return out;
+  }
+
+  /// B11-G: show an actionable AlertDialog when the backend returned
+  /// `billit_peppol_not_ready`, listing the mapped, deduplicated readiness
+  /// reasons instead of a single opaque snackbar. Never exposes raw JSON,
+  /// warnings, or stack traces. Read-only UX — does not retry the send.
+  Future<void> _showPeppolNotReadyDialog(List<String> reasons) async {
+    if (!mounted) return;
+    final mapped = <String>[];
+    final seen = <String>{};
+    for (final code in reasons) {
+      final label = _mapPeppolReadinessReason(code);
+      if (seen.add(label)) mapped.add(label);
+    }
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(
+          _tr(
+            nl: 'Factuur is nog niet Peppol-klaar',
+            en: 'Invoice is not Peppol-ready yet',
+            fr: 'La facture n’est pas encore prête pour Peppol',
+            es: 'La factura aún no está lista para Peppol',
+          ),
+        ),
+        content: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                _tr(
+                  nl: 'Deze factuur kan nog niet via Peppol verzonden worden. Vul eerst de ontbrekende klant- en facturatiegegevens aan.',
+                  en: 'This invoice cannot be sent via Peppol yet. First complete the missing customer and billing details.',
+                  fr: 'Cette facture ne peut pas encore être envoyée via Peppol. Complétez d’abord les données client et de facturation manquantes.',
+                  es: 'Esta factura aún no se puede enviar por Peppol. Primero complete los datos de cliente y facturación que faltan.',
+                ),
+              ),
+              if (mapped.isNotEmpty) const SizedBox(height: 12),
+              for (final line in mapped)
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text('• '),
+                      Expanded(child: Text(line)),
+                    ],
+                  ),
+                ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: Text(
+              _tr(nl: 'Sluiten', en: 'Close', fr: 'Fermer', es: 'Cerrar'),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   /// B11-D: blocking confirmation before the sandbox Peppol send call.
@@ -891,6 +1098,11 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
       }
 
       final errorCode = decoded?['error']?.toString().trim();
+      if (errorCode == 'billit_peppol_not_ready') {
+        final reasons = _extractStringList(decoded, 'reasons');
+        await _showPeppolNotReadyDialog(reasons);
+        return;
+      }
       _showBillitPeppolSendSnackBar(_mapBillitPeppolSendError(errorCode));
     } catch (_) {
       if (!mounted || requestScopeKey != _activeScopeKey) return;
