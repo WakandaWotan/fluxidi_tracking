@@ -9,6 +9,8 @@ import {
   importHmacKey,
 } from "./modules/crypto_utils.js";
 import { corsHeaders, json } from "./modules/http_response.js";
+import { buildBuildTagResponse, listKvKeyNames } from "./modules/diagnostics.js";
+import { BOOKING_TEST_RESET_CONFIRM_PHRASE, allowDevResetEndpoints } from "./modules/dev_reset.js";
 import {
   _adminTokenFromRequest,
   _requireAdmin,
@@ -8714,9 +8716,7 @@ function hasValidAdminToken(request, url, env) {
   return !!got && got === expected;
 }
 
-function allowDevResetEndpoints(env) {
-  return String(env?.ALLOW_DEV_RESET_ENDPOINTS || "").trim().toLowerCase() === "true";
-}
+/* allowDevResetEndpoints() moved to ./modules/dev_reset.js (patch BW-M3). */
 
 const TENANT_BUSINESS_PROFILE_KEY = "tenant:business_profile:v1";
 const TENANT_TAX_PROFILE_KEY = "tenant:tax_profile:v1";
@@ -28528,20 +28528,7 @@ const SAFE_RESET_PROTECTED_BOOKING_KV_PREFIXES = [
   "config:",
 ];
 
-async function listKvKeyNames(namespace, prefix) {
-  if (!namespace) return [];
-  const out = [];
-  let cursor = undefined;
-  do {
-    const page = await namespace.list({ prefix, limit: 1000, cursor });
-    for (const item of page?.keys || []) {
-      if (item?.name) out.push(item.name);
-    }
-    cursor = page?.cursor;
-    if (page?.list_complete !== false) break;
-  } while (cursor);
-  return out;
-}
+/* listKvKeyNames() moved to ./modules/diagnostics.js (patch BW-M3). */
 
 async function collectSafeResetKeys(env) {
   const categories = {};
@@ -29017,7 +29004,7 @@ const BOOKING_TEST_RESET_MODES = [
   "full_test_reset",
 ];
 
-const BOOKING_TEST_RESET_CONFIRM_PHRASE = "RESET_TEST_BOOKINGS";
+/* BOOKING_TEST_RESET_CONFIRM_PHRASE moved to ./modules/dev_reset.js (patch BW-M3). */
 
 function _bookingTestResetScopedPrefix(scope, suffix) {
   const normalized = _safeResetNormalizedScope(scope);
@@ -34549,46 +34536,9 @@ export default {
         return new Response("Internal Error", { status: 500 });
       }
 
-      // Home
+      // Home (build-tag response moved to ./modules/diagnostics.js in patch BW-M3)
       if (url.pathname === "/" && request.method === "GET") {
-        return new Response(
-          `Fluxidi Booking API ✅
-
-Build: ${FLUXIDI_BUILD}
-
-POST /quote
-POST /lead
-POST /availability (calendar)
-POST /book (calendar + email + invoice)
-
-Payments (Mollie):
-POST /pay/create
-POST /webhook/mollie
-GET  /pay/status?id=
-GET  /pay/return?id=
-
-Invoice:
-POST /invoice/preview
-POST /invoice/pdf
-
-OAuth:
-GET /oauth/start
-GET /oauth/callback
-
-Mollie Connect:
-POST /admin/mollie/connect/start
-GET  /mollie/connect/callback
-GET  /admin/mollie/connect/status
-GET  /admin/mollie/connect/readiness
-POST /admin/mollie/connect/test-payment
-GET  /admin/mollie/connect/test-payment/status
-GET  /admin/mollie/terminals (?testmode=true for test snapshot)
-POST /admin/mollie/terminals/sync (body/query testmode=true for test sync)
-POST /admin/mollie/terminal-payment/start
-POST /admin/mollie/connect/disconnect
-`,
-          { headers: { "Content-Type": "text/plain; charset=utf-8", ...corsHeaders() } }
-        );
+        return buildBuildTagResponse(FLUXIDI_BUILD);
       }
 
       // =========================
