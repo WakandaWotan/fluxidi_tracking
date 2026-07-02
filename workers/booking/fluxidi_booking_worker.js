@@ -55318,9 +55318,18 @@ async function mollieFetchPayment(molliePaymentId, env, rideCredentials = null, 
  * Typically it includes "id=tr_..."
  */
 async function mollieWebhook(request, env) {
-  // ✅ Webhook should NEVER finalize bookings.
-  // Reason: /pay/status (called from /pay/return polling) is the single "finalizer".
-  // Webhook only updates KV with the latest Mollie status so the poller can act.
+  // Finalization model (updated for B11-T1 / B11-T1b):
+  //   - /pay/status (called from /pay/return polling) remains the PRIMARY
+  //     finalizer for the happy path.
+  //   - The webhook still always updates KV with the latest Mollie status so
+  //     the poller can act.
+  //   - Additionally, when Mollie reports `paid`, the webhook may DEFENSIVELY
+  //     canonicalize the paid record (finalizeBookingFromStored) and then run
+  //     the existing Document Core paid lifecycle, so a paid booking is not
+  //     left stuck at Documents=0 when no later /pay/status poll or
+  //     authoritative mark-paid ever runs (e.g. app killed on return, deep-
+  //     link race). This defensive path is idempotent and lock-guarded; it is
+  //     NOT a manual repair/backfill and never issues documents by hand.
   try {
     if (!env.BOOKING_KV) return { ok: false, error: "Missing BOOKING_KV binding" };
 
@@ -55503,6 +55512,278 @@ async function mollieWebhook(request, env) {
       console.log(
         `[PAYMENT_RESUME][WEBHOOK_FINALIZE] paymentBooking=${_bookingIntentMask(bookingId)} canonical=${_bookingIntentMask(paymentResumeCanonical)} outcome=${paymentResumeFinalize}`,
       );
+    }
+
+    // Patch B11-T1: defensive canonical finalize on paid (non-resume path).
+    //
+    // Complements the G3-K resume-finalize safety net above with parity for
+    // FIRST-TIME paid transitions. Mollie's webhook is reliable; the app /
+    // browser return-URL polling of /pay/status may not be (custom URL
+    // scheme deep-link races on iOS after externalApplication launchUrl,
+    // app force-kill dropping the fluxidiPendingPaymentNotifier, network
+    // drop on return, poll window expiry before Mollie transitions to
+    // `paid`, browser page closing before its own poller flips). Without
+    // this net a paid business booking can stay stuck at canonical
+    // payment_status=pending / invoice_state=pending_payment with no
+    // billing_customer_snapshot on the canonical, so
+    // maybeRunDocumentCoreInvoiceAfterPaidLifecycle never runs and no
+    // per-leg INV documents are issued (observed cause of B11-T for
+    // PLN-2026-000357 / 2026-07-923176).
+    //
+    // We reuse the exact same helper the resume path uses
+    // (finalizeBookingFromStored), which:
+    //   - holds the confirming_at lock (no double finalize),
+    //   - short-circuits on stored.confirmed_at (idempotent replays),
+    //   - re-runs handleBooking(stored.payload, ...) exactly ONCE with
+    //     __mollie_paid=true to persist the canonical record in its full
+    //     paid shape (operational_legs, billing_customer_snapshot when
+    //     the /book payload carried billing_customer, and paid
+    //     invoice_state).
+    //   - the CANONICAL Document Core / legacy invoice lifecycle is
+    //     invoked exclusively via /pay/status or
+    //     updateBookingPaymentAuthoritative call sites unchanged; this
+    //     patch never invokes those hooks directly. Idempotency inside
+    //     ensureDocumentCoreInvoiceForPaidBusinessBooking (deterministic
+    //     key inv-auto:<tenant>:<company>:<bookingId>:<legId>:v1) makes a
+    //     later /pay/status poll a no-op reuse.
+    //
+    // Contract:
+    //   - NEVER calls Billit APIs / /v1/orders / /v1/parties / token
+    //     acquire.
+    //   - NEVER creates a Billit sandbox order.
+    //   - NEVER sends via Peppol / calls /v1/orders/commands/send.
+    //   - NEVER calls _issueInvoiceCore directly.
+    //   - NEVER calls maybeRunDocumentCoreInvoiceAfterPaidLifecycle
+    //     directly (only finalizeBookingFromStored is invoked).
+    //   - NEVER duplicates handleBooking logic.
+    //   - NEVER re-creates Mollie payments (finalize sets __mollie_paid).
+    //   - NEVER logs raw PII (customer/company/VAT/email/address);
+    //     booking ids are masked via _bookingIntentMask.
+    //   - NEVER touches the resumed-payment branch above (guarded by
+    //     !isResumedMolliePaymentRecord).
+    //   - Best-effort only; the webhook itself must still return 200.
+    let webhookCanonicalFinalize = "not_attempted";
+    let webhookCanonicalFinalizeReason = "not_applicable";
+    let webhookCanonicalResolvedBookingId = null;
+    if (
+      mollieStatus === "paid" &&
+      !isResumedMolliePaymentRecord(stored, bookingId) &&
+      !safeStr(stored?.confirmed_at || stored?.confirmedAt, 80)
+    ) {
+      try {
+        const resolvedCanonical =
+          safeStr(stored?.public_booking_id, 160) ||
+          safeStr(stored?.publicBookingId, 160) ||
+          safeStr(stored?.payload?.__booking_id, 160) ||
+          safeStr(stored?.payload?.public_booking_id, 160) ||
+          safeStr(stored?.payload?.publicBookingId, 160) ||
+          "";
+        webhookCanonicalResolvedBookingId = resolvedCanonical || null;
+        if (!resolvedCanonical) {
+          webhookCanonicalFinalize = "skipped";
+          webhookCanonicalFinalizeReason = "missing_canonical_booking_id";
+          console.log(
+            `[MOLLIE_WEBHOOK][CANONICAL_FINALIZE][SKIP] paymentBooking=${_bookingIntentMask(bookingId)} reason=${webhookCanonicalFinalizeReason}`,
+          );
+        } else {
+          // Cheap read-only check: if the canonical is already paid+confirmed
+          // there is no work to do. finalizeBookingFromStored also handles
+          // this (short-circuits on stored.confirmed_at), but reading the
+          // canonical upfront avoids taking the confirming_at lock on the
+          // shadow when nothing needs to happen and produces a cleaner SKIP
+          // log for observability.
+          let canonicalAlreadyPaidConfirmed = false;
+          try {
+            const canonicalRec = await env.BOOKING_KV.get(
+              `booking:${resolvedCanonical}`,
+              { type: "json" },
+            );
+            if (
+              canonicalRec &&
+              typeof canonicalRec === "object" &&
+              !Array.isArray(canonicalRec)
+            ) {
+              const canonicalPaymentStatus = safeStr(
+                canonicalRec?.payment_status || canonicalRec?.paymentStatus,
+                32,
+              ).toLowerCase();
+              const canonicalConfirmedAt = safeStr(
+                canonicalRec?.confirmed_at || canonicalRec?.confirmedAt,
+                80,
+              );
+              if (canonicalPaymentStatus === "paid" && canonicalConfirmedAt) {
+                canonicalAlreadyPaidConfirmed = true;
+              }
+            }
+          } catch (_) {
+            // Best-effort only; if unavailable, let finalizeBookingFromStored's
+            // own guards decide.
+          }
+          if (canonicalAlreadyPaidConfirmed) {
+            webhookCanonicalFinalize = "skipped";
+            webhookCanonicalFinalizeReason = "canonical_already_paid_confirmed";
+            console.log(
+              `[MOLLIE_WEBHOOK][CANONICAL_FINALIZE][SKIP] paymentBooking=${_bookingIntentMask(bookingId)} canonical=${_bookingIntentMask(resolvedCanonical)} reason=${webhookCanonicalFinalizeReason}`,
+            );
+          } else {
+            console.log(
+              `[MOLLIE_WEBHOOK][CANONICAL_FINALIZE][START] paymentBooking=${_bookingIntentMask(bookingId)} canonical=${_bookingIntentMask(resolvedCanonical)} mollieStatus=paid`,
+            );
+            const finalizeResult = await finalizeBookingFromStored(stored, env, request, {
+              bypassLock: false,
+              paymentBookingId: bookingId,
+              tenantScope: bookingScope,
+            });
+            if (finalizeResult?.updatedStored) {
+              await env.BOOKING_KV.put(
+                key,
+                JSON.stringify(finalizeResult.updatedStored),
+                { expirationTtl: 60 * 60 * 24 * 30 },
+              );
+            }
+            webhookCanonicalFinalize = finalizeResult?.already
+              ? "already_paid"
+              : finalizeResult?.alreadyRunning
+                ? "already_running"
+                : finalizeResult?.ok === true
+                  ? "applied"
+                  : "failed";
+            // B11-T1b logging cleanup: never emit [OK] for a failed finalize.
+            // finalizeBookingFromStored returns ok:true for applied /
+            // already_paid / already_running and ok:false only on a real
+            // finalize failure. In the failure case we log [SKIP] with a
+            // fixed reason code (finalize_not_ok) instead of an [OK] line
+            // carrying outcome=failed, so ops greps stay clean.
+            const finalizeReportedOk = finalizeResult?.ok === true;
+            if (!finalizeReportedOk) {
+              webhookCanonicalFinalizeReason = "finalize_not_ok";
+              console.log(
+                `[MOLLIE_WEBHOOK][CANONICAL_FINALIZE][SKIP] paymentBooking=${_bookingIntentMask(bookingId)} canonical=${_bookingIntentMask(resolvedCanonical)} outcome=${webhookCanonicalFinalize} reason=${webhookCanonicalFinalizeReason}`,
+              );
+            } else {
+              webhookCanonicalFinalizeReason = webhookCanonicalFinalize;
+              console.log(
+                `[MOLLIE_WEBHOOK][CANONICAL_FINALIZE][OK] paymentBooking=${_bookingIntentMask(bookingId)} canonical=${_bookingIntentMask(resolvedCanonical)} outcome=${webhookCanonicalFinalize} reason=${webhookCanonicalFinalizeReason}`,
+              );
+
+              // Patch B11-T1b: after a SUCCESSFUL canonical finalize, invoke
+              // the EXISTING Document Core paid lifecycle for this canonical
+              // booking. Without this a webhook-only paid event (no later
+              // /pay/status poll and no authoritative mark-paid) would leave
+              // Documents at 0 even though the canonical is now paid and
+              // carries a billing_customer_snapshot (observed B11-T cause for
+              // PLN-2026-000357 / 2026-07-923176).
+              //
+              // This reuses the SAME wrapper that /pay/status and
+              // updateBookingPaymentAuthoritative already call
+              // (maybeRunDocumentCoreInvoiceAfterPaidLifecycle), so the B11-R
+              // multi-leg iterator and all idempotency are shared:
+              //   - findExistingInvoiceDocumentForBooking, and
+              //   - inv-auto:<tenant>:<company>:<bookingId>:<legId>:v1
+              // mean a duplicate webhook delivery OR a later /pay/status poll
+              // reuses the same INV documents instead of creating new ones. No
+              // new KV idempotency key is introduced here.
+              //
+              // Contract:
+              //   - NEVER calls _issueInvoiceCore directly.
+              //   - NEVER calls ensureDocumentCoreInvoiceForPaidBusinessBooking
+              //     directly (only via the shared wrapper).
+              //   - NEVER duplicates B11-R leg logic.
+              //   - NEVER calls Billit auto-create / Peppol here.
+              //   - NEVER logs raw PII (masked ids, reason codes, booleans,
+              //     first-8 document id, counts only).
+              //   - Best-effort: any throw is caught; the webhook still
+              //     returns its normal ok response.
+              try {
+                const canonicalRec = await env.BOOKING_KV.get(
+                  `booking:${resolvedCanonical}`,
+                  { type: "json" },
+                );
+                if (
+                  !canonicalRec ||
+                  typeof canonicalRec !== "object" ||
+                  Array.isArray(canonicalRec)
+                ) {
+                  console.log(
+                    `[MOLLIE_WEBHOOK][DOCUMENT_CORE_LIFECYCLE][SKIP] paymentBooking=${_bookingIntentMask(bookingId)} canonical=${_bookingIntentMask(resolvedCanonical)} reason=canonical_not_found`,
+                  );
+                } else {
+                  const canonicalPaymentStatus = safeStr(
+                    canonicalRec?.payment_status || canonicalRec?.paymentStatus,
+                    32,
+                  ).toLowerCase();
+                  const canonicalStatus = safeStr(canonicalRec?.status, 32).toUpperCase();
+                  const canonicalConfirmedAt = safeStr(
+                    canonicalRec?.confirmed_at || canonicalRec?.confirmedAt,
+                    80,
+                  );
+                  const canonicalIsPaid =
+                    canonicalPaymentStatus === "paid" ||
+                    canonicalStatus === "PAID" ||
+                    canonicalStatus === "CONFIRMED" ||
+                    !!canonicalConfirmedAt;
+                  const canonicalInvoiceContext =
+                    _invoiceLifecycleContextFromRecord(canonicalRec);
+                  const canonicalBusinessInvoiceIntent =
+                    canonicalInvoiceContext?.businessInvoiceIntent === true;
+                  if (!canonicalIsPaid) {
+                    console.log(
+                      `[MOLLIE_WEBHOOK][DOCUMENT_CORE_LIFECYCLE][SKIP] paymentBooking=${_bookingIntentMask(bookingId)} canonical=${_bookingIntentMask(resolvedCanonical)} reason=canonical_not_paid`,
+                    );
+                  } else if (!canonicalBusinessInvoiceIntent) {
+                    console.log(
+                      `[MOLLIE_WEBHOOK][DOCUMENT_CORE_LIFECYCLE][SKIP] paymentBooking=${_bookingIntentMask(bookingId)} canonical=${_bookingIntentMask(resolvedCanonical)} reason=not_business_invoice_intent`,
+                    );
+                  } else {
+                    console.log(
+                      `[MOLLIE_WEBHOOK][DOCUMENT_CORE_LIFECYCLE][START] paymentBooking=${_bookingIntentMask(bookingId)} canonical=${_bookingIntentMask(resolvedCanonical)} source=mollie_webhook_paid_lifecycle`,
+                    );
+                    const documentCoreResult =
+                      await maybeRunDocumentCoreInvoiceAfterPaidLifecycle(
+                        env,
+                        bookingScope,
+                        resolvedCanonical,
+                        {
+                          source: "mollie_webhook_paid_lifecycle",
+                          effectiveScope: bookingScope,
+                          rec: canonicalRec,
+                        },
+                      );
+                    const dcOk = documentCoreResult?.ok === true;
+                    const dcSkipped = documentCoreResult?.skipped === true;
+                    const dcReason = safeStr(documentCoreResult?.reason, 80) || "unknown";
+                    const dcMultiLeg = documentCoreResult?.multi_leg === true;
+                    const dcDocId = safeStr(documentCoreResult?.document_id, 200) || "";
+                    const dcDocIdMask = dcDocId ? dcDocId.slice(0, 8) : "-";
+                    const dcCounts = dcMultiLeg
+                      ? `legs_total=${documentCoreResult?.legs_total ?? 0} legs_ok=${documentCoreResult?.legs_ok ?? 0} legs_skipped=${documentCoreResult?.legs_skipped ?? 0} legs_error=${documentCoreResult?.legs_error ?? 0} legs_reused=${documentCoreResult?.legs_reused ?? 0}`
+                      : `document_id=${dcDocIdMask}`;
+                    console.log(
+                      `[MOLLIE_WEBHOOK][DOCUMENT_CORE_LIFECYCLE][OK] paymentBooking=${_bookingIntentMask(bookingId)} canonical=${_bookingIntentMask(resolvedCanonical)} ok=${dcOk ? "true" : "false"} skipped=${dcSkipped ? "true" : "false"} reason=${dcReason} multi_leg=${dcMultiLeg ? "true" : "false"} ${dcCounts}`,
+                    );
+                  }
+                }
+              } catch (documentCoreErr) {
+                const documentCoreReason =
+                  safeStr(documentCoreErr?.message || documentCoreErr, 120) ||
+                  "exception";
+                console.log(
+                  `[MOLLIE_WEBHOOK][DOCUMENT_CORE_LIFECYCLE][ERROR] paymentBooking=${_bookingIntentMask(bookingId)} canonical=${_bookingIntentMask(resolvedCanonical)} reason=${documentCoreReason}`,
+                );
+              }
+            }
+          }
+        }
+      } catch (canonicalFinalizeErr) {
+        const reason =
+          safeStr(canonicalFinalizeErr?.message || canonicalFinalizeErr, 140) ||
+          "exception";
+        webhookCanonicalFinalize = "error";
+        webhookCanonicalFinalizeReason = reason;
+        console.log(
+          `[MOLLIE_WEBHOOK][CANONICAL_FINALIZE][ERROR] paymentBooking=${_bookingIntentMask(bookingId)} canonical=${_bookingIntentMask(webhookCanonicalResolvedBookingId)} reason=${reason}`,
+        );
+      }
     }
 
     return { ok: true, received: true, processed: true, bookingId, mollieStatus, action: "status-updated" };
@@ -79352,6 +79633,147 @@ async function updateBookingPaymentAuthoritative(
         ? (invoiceContext.businessInvoiceIntent ? "ready_to_send" : "none")
         : (invoiceContext.businessInvoiceIntent ? "pending_payment" : "none"),
   });
+
+  // Patch B11-T2: back-stamp billing_customer_snapshot on the canonical
+  // record when the authoritative payment update marks a business booking
+  // paid but the record was persisted in its provisional / Mollie-unpaid
+  // shape (which does not yet carry billing_customer_snapshot). Without
+  // this stamp, maybeRunDocumentCoreInvoiceAfterPaidLifecycle below would
+  // iterate eligible legs and every leg would skip with
+  // billit_auto_billing_customer_missing inside
+  // ensureDocumentCoreInvoiceForPaidBusinessBooking (observed cause of
+  // B11-T for QR/manual/authoritative mark-paid paths on provisional
+  // canonical records that never reached the /pay/status finalize path).
+  //
+  // Reuses the SAME normalizer that handleBooking uses at /book time
+  // (normalizeBillingCustomerIdentityInput) so the resulting snapshot
+  // shape matches the one the finalize-time 2nd handleBooking would have
+  // produced. Set-if-blank only: an already-present snapshot on rec or
+  // rec.booking is preserved verbatim.
+  //
+  // Contract:
+  //   - NEVER fabricates missing fields (invents no VAT / legal_name /
+  //     billing_address / peppol data).
+  //   - NEVER overrides an existing snapshot on rec or rec.booking.
+  //   - NEVER calls Billit APIs, Peppol send, _issueInvoiceCore, or the
+  //     Document Core hooks directly.
+  //   - NEVER logs raw PII (only presence booleans + reason codes;
+  //     booking id masked via _bookingIntentMask).
+  //   - Runs ONLY on a new paid transition (matches the wasAlreadyPaid
+  //     gate below) so idempotent refreshes never re-stamp.
+  //   - Purely additive on rec / rec.booking; existing paid-transition
+  //     hooks below (_maybeGenerateBusinessInvoiceForPaidBooking and
+  //     maybeRunDocumentCoreInvoiceAfterPaidLifecycle) read the updated
+  //     rec and its persisted KV form after line `await env.BOOKING_KV.put(key, JSON.stringify(rec));`
+  //     without any behavioral change of their own.
+  if (normalizedStatus === "paid" && !wasAlreadyPaid) {
+    try {
+      const preStampInvoiceContext = _invoiceLifecycleContextFromRecord(rec);
+      const preStampBusinessIntent =
+        preStampInvoiceContext?.businessInvoiceIntent === true;
+      // B11-T1b: treat BOTH snake_case and camelCase snapshots as existing so
+      // a snapshot written by any prior path (some records only carry the
+      // camelCase alias) is preserved and never overwritten.
+      const _isSnapshotObject = (v) =>
+        !!(v && typeof v === "object" && !Array.isArray(v));
+      const existingSnapshotOnRec = !!(
+        _isSnapshotObject(rec?.billing_customer_snapshot) ||
+        _isSnapshotObject(rec?.billingCustomerSnapshot)
+      );
+      const existingSnapshotOnBooking = !!(
+        rec?.booking &&
+        typeof rec.booking === "object" &&
+        !Array.isArray(rec.booking) &&
+        (_isSnapshotObject(rec.booking.billing_customer_snapshot) ||
+          _isSnapshotObject(rec.booking.billingCustomerSnapshot))
+      );
+      const hasExistingSnapshotAnywhere =
+        existingSnapshotOnRec || existingSnapshotOnBooking;
+      const hasPayloadBillingCustomer = !!(
+        rec?.payload &&
+        typeof rec.payload === "object" &&
+        !Array.isArray(rec.payload) &&
+        (rec.payload.billing_customer ||
+          rec.payload.billingCustomer ||
+          rec.payload.buyer ||
+          rec.payload.buyer_identity ||
+          rec.payload.buyerIdentity)
+      );
+      if (!preStampBusinessIntent) {
+        console.log(
+          `[PAYMENT_AUTHORITATIVE][BILLING_SNAPSHOT][SKIP] booking=${_bookingIntentMask(bookingId)} reason=not_business_invoice_intent hasExistingSnapshot=${hasExistingSnapshotAnywhere ? "true" : "false"} hasPayloadBillingCustomer=${hasPayloadBillingCustomer ? "true" : "false"}`,
+        );
+      } else if (hasExistingSnapshotAnywhere) {
+        console.log(
+          `[PAYMENT_AUTHORITATIVE][BILLING_SNAPSHOT][SKIP] booking=${_bookingIntentMask(bookingId)} reason=existing_snapshot_preserved onRec=${existingSnapshotOnRec ? "true" : "false"} onBooking=${existingSnapshotOnBooking ? "true" : "false"}`,
+        );
+      } else if (!hasPayloadBillingCustomer) {
+        console.log(
+          `[PAYMENT_AUTHORITATIVE][BILLING_SNAPSHOT][SKIP] booking=${_bookingIntentMask(bookingId)} reason=missing_payload_billing_customer`,
+        );
+      } else {
+        const normalized = normalizeBillingCustomerIdentityInput(rec.payload);
+        const billingAddress =
+          normalized?.billing_address &&
+          typeof normalized.billing_address === "object" &&
+          !Array.isArray(normalized.billing_address)
+            ? normalized.billing_address
+            : {};
+        const peppol =
+          normalized?.peppol &&
+          typeof normalized.peppol === "object" &&
+          !Array.isArray(normalized.peppol)
+            ? normalized.peppol
+            : {};
+        const hasAnyMeaningfulField = !!(
+          normalized?.legal_name ||
+          normalized?.vat_number ||
+          normalized?.company_registration_number ||
+          normalized?.buyer_reference ||
+          normalized?.customer_type ||
+          billingAddress.street ||
+          billingAddress.postal_code ||
+          billingAddress.city ||
+          billingAddress.country ||
+          peppol.endpoint_id ||
+          peppol.scheme
+        );
+        if (!hasAnyMeaningfulField) {
+          console.log(
+            `[PAYMENT_AUTHORITATIVE][BILLING_SNAPSHOT][SKIP] booking=${_bookingIntentMask(bookingId)} reason=normalized_billing_customer_empty`,
+          );
+        } else {
+          rec.billing_customer_snapshot = normalized;
+          rec.billingCustomerSnapshot = normalized;
+          if (
+            rec.booking &&
+            typeof rec.booking === "object" &&
+            !Array.isArray(rec.booking)
+          ) {
+            rec.booking.billing_customer_snapshot = normalized;
+            rec.booking.billingCustomerSnapshot = normalized;
+          }
+          const anyAddressSet = !!(
+            billingAddress.street ||
+            billingAddress.postal_code ||
+            billingAddress.city ||
+            billingAddress.country
+          );
+          const anyPeppolSet = !!(peppol.endpoint_id || peppol.scheme);
+          console.log(
+            `[PAYMENT_AUTHORITATIVE][BILLING_SNAPSHOT][STAMP] booking=${_bookingIntentMask(bookingId)} legalNameSet=${normalized.legal_name ? "true" : "false"} vatSet=${normalized.vat_number ? "true" : "false"} regSet=${normalized.company_registration_number ? "true" : "false"} addressSet=${anyAddressSet ? "true" : "false"} peppolSet=${anyPeppolSet ? "true" : "false"}`,
+          );
+        }
+      }
+    } catch (billingSnapshotErr) {
+      const reason =
+        safeStr(billingSnapshotErr?.message || billingSnapshotErr, 140) ||
+        "exception";
+      console.log(
+        `[PAYMENT_AUTHORITATIVE][BILLING_SNAPSHOT][ERROR] booking=${_bookingIntentMask(bookingId)} reason=${reason}`,
+      );
+    }
+  }
 
   if (normalizedStatus === "paid" && !wasAlreadyPaid) {
     const invoiceLifecycle = await _maybeGenerateBusinessInvoiceForPaidBooking({
