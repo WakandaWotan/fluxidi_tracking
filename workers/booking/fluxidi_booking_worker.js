@@ -4351,7 +4351,64 @@ async function maybeRunBillitAutoCreateAfterPaidLifecycle(env, scope, bookingId,
   }
 }
 
-/* Patch B11-K: Billit-independent Document Core invoice lifecycle wrapper.
+/* Patch B11-R: read-only, de-duped collection of a booking record's operational
+ * legs. Mirrors the leg-container walk + signature-based container de-dup
+ * already used by `deriveServerSideInvoiceContext` (so leg selection stays
+ * consistent between "single leg vs multi-leg" detection and downstream
+ * `_issueInvoiceCore` derivation), and additionally de-dupes by leg_id so a
+ * record that carries the same physical leg under multiple aliases
+ * (operational_legs vs operationalLegs vs booking.* vs payload.*) still yields
+ * at most one entry per leg.
+ *
+ * NEVER mutates the record. NEVER calls Billit / Peppol / Mollie / Chiron.
+ * Returns [] when the input is missing or not a plain object.
+ */
+function _collectOperationalLegsForDocumentCoreInvoiceLifecycle(rec) {
+  if (!rec || typeof rec !== "object" || Array.isArray(rec)) return [];
+  const legContainers = [];
+  if (Array.isArray(rec?.operational_legs)) legContainers.push(rec.operational_legs);
+  if (Array.isArray(rec?.operationalLegs)) legContainers.push(rec.operationalLegs);
+  if (rec?.booking && typeof rec.booking === "object") {
+    if (Array.isArray(rec.booking.operational_legs)) {
+      legContainers.push(rec.booking.operational_legs);
+    }
+    if (Array.isArray(rec.booking.operationalLegs)) {
+      legContainers.push(rec.booking.operationalLegs);
+    }
+  }
+  if (rec?.payload && typeof rec.payload === "object") {
+    if (Array.isArray(rec.payload.operational_legs)) {
+      legContainers.push(rec.payload.operational_legs);
+    }
+    if (Array.isArray(rec.payload.operationalLegs)) {
+      legContainers.push(rec.payload.operationalLegs);
+    }
+  }
+  const allLegs = [];
+  const seenSignatures = new Set();
+  const seenLegIds = new Set();
+  for (const list of legContainers) {
+    if (!Array.isArray(list) || list.length === 0) continue;
+    const firstId =
+      safeStr(list[0]?.leg_id ?? list[0]?.legId) || `len:${list.length}`;
+    const signature = `${list.length}:${firstId}`;
+    if (seenSignatures.has(signature)) continue;
+    seenSignatures.add(signature);
+    for (const leg of list) {
+      if (!leg || typeof leg !== "object" || Array.isArray(leg)) continue;
+      const legId = safeStr(leg?.leg_id ?? leg?.legId, 200);
+      if (legId) {
+        if (seenLegIds.has(legId)) continue;
+        seenLegIds.add(legId);
+      }
+      allLegs.push(leg);
+    }
+  }
+  return allLegs;
+}
+
+/* Patch B11-K + B11-R: Billit-independent Document Core invoice lifecycle
+ * wrapper.
  *
  * Ensures every PAID business_invoice booking gets an idempotent Document Core
  * invoice record, INDEPENDENT of:
@@ -4367,6 +4424,17 @@ async function maybeRunBillitAutoCreateAfterPaidLifecycle(env, scope, bookingId,
  * finalization (`/pay/status`, driver-manual `POST /bookings/:id/payment`)
  * cannot fail because of Document Core issue problems.
  *
+ * B11-R (roundtrip coverage): when the booking record carries more than one
+ * operational leg, the wrapper iterates the eligible legs and calls the inner
+ * helper once per leg with `sourceLegId` / `sourceLegType` populated - so
+ * `deriveServerSideInvoiceContext` uses leg-level totals instead of refusing
+ * the whole parent with `leg_required_for_roundtrip`. The inner helper's
+ * deterministic idempotency key
+ * (`inv-auto:<tenant>:<company>:<bookingId>:<legId>:v1`) makes per-leg replays
+ * safe; each leg reuses its own already-issued invoice via
+ * `findExistingInvoiceDocumentForBooking`. Single-leg / no-leg records keep
+ * the original B11-K behavior verbatim (one call, `sourceLegId: null`).
+ *
  * Contract:
  *   - NEVER calls Billit APIs (no /v1/orders, no /v1/parties, no token acquire).
  *   - NEVER creates a Billit sandbox order.
@@ -4376,7 +4444,10 @@ async function maybeRunBillitAutoCreateAfterPaidLifecycle(env, scope, bookingId,
  *     findExistingInvoiceDocumentForBooking inside the inner helper).
  *   - NEVER loosens Peppol readiness gates (this path does not touch Peppol).
  *   - NEVER checks or reads Billit auto-create settings.
+ *   - NEVER reads Billit OAuth config or party_id.
  *   - NEVER logs full billing customer PII; only masked ids and short reasons.
+ *   - NEVER mutates the booking record (leg detection is read-only; the inner
+ *     helper reloads the record from KV and only mutates the doc registry).
  *
  * Skippable outcomes (not eligible) - logged as SKIP with a reason:
  *   source_booking_not_found, not_in_scope, booking_not_paid,
@@ -4393,6 +4464,13 @@ async function maybeRunDocumentCoreInvoiceAfterPaidLifecycle(env, scope, booking
       ? opts.effectiveScope
       : null;
   const maskedBooking = _bookingIntentMask(bookingId);
+  const SKIPPABLE_INNER_REASONS = new Set([
+    "source_booking_not_found",
+    "not_in_scope",
+    "booking_not_paid",
+    "not_business_invoice_intent",
+    "billit_auto_billing_customer_missing",
+  ]);
   try {
     const invoiceScope =
       scope && typeof scope === "object"
@@ -4420,57 +4498,254 @@ async function maybeRunDocumentCoreInvoiceAfterPaidLifecycle(env, scope, booking
       return { ok: true, skipped: true, reason: "missing_binding" };
     }
 
+    // B11-R: detect multi-leg / roundtrip bookings so we can iterate per-leg
+    // instead of failing with `leg_required_for_roundtrip`. Prefer a caller-
+    // provided record (already loaded during payStatus /
+    // updateBookingPaymentAuthoritative) but fall back to a defensive KV
+    // read so callers without a rec still get the same behavior. The rec is
+    // used ONLY for leg detection; the inner helper reloads the canonical
+    // record from KV before issuing anything.
+    let bookingRecForLegDetection = null;
+    if (
+      opts.rec &&
+      typeof opts.rec === "object" &&
+      !Array.isArray(opts.rec)
+    ) {
+      bookingRecForLegDetection = opts.rec;
+    } else {
+      try {
+        bookingRecForLegDetection = await env.BOOKING_KV.get(
+          `booking:${bookingId}`,
+          { type: "json" },
+        );
+      } catch (_) {
+        bookingRecForLegDetection = null;
+      }
+    }
+    const operationalLegs = _collectOperationalLegsForDocumentCoreInvoiceLifecycle(
+      bookingRecForLegDetection,
+    );
+    const isMultiLegRecord = operationalLegs.length > 1;
+    const eligibleLegs = [];
+    let cancelledLegSkippedCount = 0;
+    let missingLegIdSkippedCount = 0;
+    for (const leg of operationalLegs) {
+      const legId = safeStr(leg?.leg_id ?? leg?.legId, 200);
+      if (!legId) {
+        missingLegIdSkippedCount += 1;
+        continue;
+      }
+      const legLifecycle = _normLifecycleStatus(
+        leg?.status ??
+          leg?.lifecycle_status ??
+          leg?.lifecycleStatus ??
+          "",
+      );
+      if (legLifecycle === "CANCELLED") {
+        cancelledLegSkippedCount += 1;
+        continue;
+      }
+      eligibleLegs.push(leg);
+    }
+
     console.log(
-      `[DOCUMENT_CORE_INVOICE_LIFECYCLE][START] booking=${maskedBooking} source=${source}`,
+      `[DOCUMENT_CORE_INVOICE_LIFECYCLE][START] booking=${maskedBooking} source=${source} legs_total=${operationalLegs.length} legs_eligible=${eligibleLegs.length} multi_leg=${isMultiLegRecord ? "true" : "false"}`,
     );
 
-    const result = await ensureDocumentCoreInvoiceForPaidBusinessBooking(
-      env,
-      invoiceScope,
-      bookingId,
-      {
-        sourceLegId: null,
-        sourceLegType: null,
-        scopeForBookingMatch: effectiveScope,
-      },
-    );
+    if (!isMultiLegRecord) {
+      // Preserve B11-K single-leg / no-leg behavior verbatim. This is the path
+      // that keeps PLN-2026-000353 / INV-2026-000007-style bookings working;
+      // `sourceLegId: null` lets deriveServerSideInvoiceContext use booking-
+      // level totals when the record has 0 or 1 operational legs.
+      const result = await ensureDocumentCoreInvoiceForPaidBusinessBooking(
+        env,
+        invoiceScope,
+        bookingId,
+        {
+          sourceLegId: null,
+          sourceLegType: null,
+          scopeForBookingMatch: effectiveScope,
+        },
+      );
 
-    if (result && result.ok === true) {
-      const documentId = safeStr(result.document_id, 200) || "";
-      const documentNumber = safeStr(result.document_number, 80) || "";
-      const docIdMask = documentId ? documentId.slice(0, 8) : "-";
-      const reused = result.reused_existing_invoice === true;
+      if (result && result.ok === true) {
+        const documentId = safeStr(result.document_id, 200) || "";
+        const documentNumber = safeStr(result.document_number, 80) || "";
+        const docIdMask = documentId ? documentId.slice(0, 8) : "-";
+        const reused = result.reused_existing_invoice === true;
+        console.log(
+          `[DOCUMENT_CORE_INVOICE_LIFECYCLE][OK] booking=${maskedBooking} source=${source} reused=${reused ? "true" : "false"} document_id=${docIdMask} document_number=${documentNumber || "-"}`,
+        );
+        return {
+          ok: true,
+          skipped: false,
+          reason: reused ? "idempotent_replay" : "created",
+          document_id: documentId || null,
+          document_number: documentNumber || null,
+          reused_existing_invoice: reused,
+        };
+      }
+
+      const reason = safeStr(result?.error, 80) || "unknown";
+      if (SKIPPABLE_INNER_REASONS.has(reason)) {
+        console.log(
+          `[DOCUMENT_CORE_INVOICE_LIFECYCLE][SKIP] booking=${maskedBooking} source=${source} reason=${reason}`,
+        );
+        return { ok: true, skipped: true, reason };
+      }
       console.log(
-        `[DOCUMENT_CORE_INVOICE_LIFECYCLE][OK] booking=${maskedBooking} source=${source} reused=${reused ? "true" : "false"} document_id=${docIdMask} document_number=${documentNumber || "-"}`,
+        `[DOCUMENT_CORE_INVOICE_LIFECYCLE][ERROR] booking=${maskedBooking} source=${source} error=${reason}`,
+      );
+      return { ok: false, skipped: false, reason };
+    }
+
+    // Multi-leg / roundtrip path (B11-R).
+    //
+    // If the record is multi-leg but every leg was filtered out (all cancelled
+    // or all missing a leg_id) there is nothing safe to invoice - falling back
+    // to the single-leg path would trigger `leg_required_for_roundtrip` in
+    // deriveServerSideInvoiceContext. Log a summary and return skipped.
+    if (eligibleLegs.length === 0) {
+      console.log(
+        `[DOCUMENT_CORE_INVOICE_LIFECYCLE][MULTI_LEG_SUMMARY] booking=${maskedBooking} source=${source} total=0 ok=0 skipped=0 error=0 reused=0 cancelled_legs_ignored=${cancelledLegSkippedCount} missing_leg_id_ignored=${missingLegIdSkippedCount}`,
       );
       return {
         ok: true,
-        skipped: false,
-        reason: reused ? "idempotent_replay" : "created",
-        document_id: documentId || null,
-        document_number: documentNumber || null,
-        reused_existing_invoice: reused,
+        skipped: true,
+        reason: "no_eligible_legs_for_multi_leg_booking",
+        multi_leg: true,
+        legs: [],
+        legs_total: 0,
+        legs_ok: 0,
+        legs_skipped: 0,
+        legs_error: 0,
+        legs_reused: 0,
+        cancelled_legs_ignored: cancelledLegSkippedCount,
+        missing_leg_id_ignored: missingLegIdSkippedCount,
       };
     }
 
-    const reason = safeStr(result?.error, 80) || "unknown";
-    const skippableReasons = new Set([
-      "source_booking_not_found",
-      "not_in_scope",
-      "booking_not_paid",
-      "not_business_invoice_intent",
-      "billit_auto_billing_customer_missing",
-    ]);
-    if (skippableReasons.has(reason)) {
+    const legResults = [];
+    let legOkCount = 0;
+    let legSkippedCount = 0;
+    let legErrorCount = 0;
+    let legReusedCount = 0;
+    for (let idx = 0; idx < eligibleLegs.length; idx += 1) {
+      const leg = eligibleLegs[idx];
+      const legId = safeStr(leg?.leg_id ?? leg?.legId, 200);
+      const legType = safeStr(leg?.leg_type ?? leg?.legType, 24) || "";
+      const legMask = _bookingIntentMask(legId) || "-";
+      const legTypeToken = legType || "-";
+      const positionToken = `${idx + 1}/${eligibleLegs.length}`;
       console.log(
-        `[DOCUMENT_CORE_INVOICE_LIFECYCLE][SKIP] booking=${maskedBooking} source=${source} reason=${reason}`,
+        `[DOCUMENT_CORE_INVOICE_LIFECYCLE][LEG_START] booking=${maskedBooking} leg=${legMask} leg_type=${legTypeToken} index=${positionToken} source=${source}`,
       );
-      return { ok: true, skipped: true, reason };
+      let legResult = null;
+      try {
+        legResult = await ensureDocumentCoreInvoiceForPaidBusinessBooking(
+          env,
+          invoiceScope,
+          bookingId,
+          {
+            sourceLegId: legId,
+            sourceLegType: legType || null,
+            scopeForBookingMatch: effectiveScope,
+          },
+        );
+      } catch (legErr) {
+        legErrorCount += 1;
+        const legErrReason = safeStr(legErr?.message, 120) || "exception";
+        console.log(
+          `[DOCUMENT_CORE_INVOICE_LIFECYCLE][LEG_ERROR] booking=${maskedBooking} leg=${legMask} leg_type=${legTypeToken} error=${legErrReason}`,
+        );
+        legResults.push({
+          leg_id: legId,
+          leg_type: legType || null,
+          ok: false,
+          skipped: false,
+          reason: legErrReason,
+          document_id: null,
+          document_number: null,
+          reused_existing_invoice: false,
+        });
+        continue;
+      }
+
+      if (legResult && legResult.ok === true) {
+        const documentId = safeStr(legResult.document_id, 200) || "";
+        const documentNumber = safeStr(legResult.document_number, 80) || "";
+        const docIdMask = documentId ? documentId.slice(0, 8) : "-";
+        const reused = legResult.reused_existing_invoice === true;
+        legOkCount += 1;
+        if (reused) legReusedCount += 1;
+        console.log(
+          `[DOCUMENT_CORE_INVOICE_LIFECYCLE][LEG_OK] booking=${maskedBooking} leg=${legMask} leg_type=${legTypeToken} reused=${reused ? "true" : "false"} document_id=${docIdMask} document_number=${documentNumber || "-"}`,
+        );
+        legResults.push({
+          leg_id: legId,
+          leg_type: legType || null,
+          ok: true,
+          skipped: false,
+          reason: reused ? "idempotent_replay" : "created",
+          document_id: documentId || null,
+          document_number: documentNumber || null,
+          reused_existing_invoice: reused,
+        });
+        continue;
+      }
+
+      const legErrCode = safeStr(legResult?.error, 80) || "unknown";
+      if (SKIPPABLE_INNER_REASONS.has(legErrCode)) {
+        legSkippedCount += 1;
+        console.log(
+          `[DOCUMENT_CORE_INVOICE_LIFECYCLE][LEG_SKIP] booking=${maskedBooking} leg=${legMask} leg_type=${legTypeToken} reason=${legErrCode}`,
+        );
+        legResults.push({
+          leg_id: legId,
+          leg_type: legType || null,
+          ok: true,
+          skipped: true,
+          reason: legErrCode,
+          document_id: null,
+          document_number: null,
+          reused_existing_invoice: false,
+        });
+        continue;
+      }
+      legErrorCount += 1;
+      console.log(
+        `[DOCUMENT_CORE_INVOICE_LIFECYCLE][LEG_ERROR] booking=${maskedBooking} leg=${legMask} leg_type=${legTypeToken} error=${legErrCode}`,
+      );
+      legResults.push({
+        leg_id: legId,
+        leg_type: legType || null,
+        ok: false,
+        skipped: false,
+        reason: legErrCode,
+        document_id: null,
+        document_number: null,
+        reused_existing_invoice: false,
+      });
     }
+
+    const overallOk = legErrorCount === 0;
     console.log(
-      `[DOCUMENT_CORE_INVOICE_LIFECYCLE][ERROR] booking=${maskedBooking} source=${source} error=${reason}`,
+      `[DOCUMENT_CORE_INVOICE_LIFECYCLE][MULTI_LEG_SUMMARY] booking=${maskedBooking} source=${source} total=${eligibleLegs.length} ok=${legOkCount} skipped=${legSkippedCount} error=${legErrorCount} reused=${legReusedCount} cancelled_legs_ignored=${cancelledLegSkippedCount} missing_leg_id_ignored=${missingLegIdSkippedCount}`,
     );
-    return { ok: false, skipped: false, reason };
+    return {
+      ok: overallOk,
+      skipped: false,
+      reason: overallOk ? "multi_leg_processed" : "multi_leg_partial_error",
+      multi_leg: true,
+      legs: legResults,
+      legs_total: eligibleLegs.length,
+      legs_ok: legOkCount,
+      legs_skipped: legSkippedCount,
+      legs_error: legErrorCount,
+      legs_reused: legReusedCount,
+      cancelled_legs_ignored: cancelledLegSkippedCount,
+      missing_leg_id_ignored: missingLegIdSkippedCount,
+    };
   } catch (err) {
     // Fail-closed: never throw to the payment lifecycle caller.
     console.log(
@@ -79115,6 +79390,10 @@ async function updateBookingPaymentAuthoritative(
         {
           source: "payment_update",
           effectiveScope: tenantScope,
+          // Patch B11-R: pass the already-persisted paid record so the wrapper
+          // can detect multi-leg / roundtrip bookings without a second KV read.
+          // Optional; the wrapper still falls back to a defensive KV load.
+          rec,
         },
       );
     } catch (documentCoreErr) {
@@ -91169,6 +91448,11 @@ async function payStatus(request, env, requestedScopeOverride = null) {
             {
               source: "pay_status_paid_lifecycle",
               effectiveScope,
+              // Patch B11-R: pass the resolved canonical record so the wrapper
+              // can detect multi-leg / roundtrip bookings without a second KV
+              // read. Optional; the wrapper still falls back to a defensive
+              // KV load.
+              rec: invoiceRecordInfo.rec,
             },
           );
         } catch (documentCoreErr) {
