@@ -1,6 +1,13 @@
 /* Modularization patch BW-M1: shared low-risk helpers moved to ./modules/*.
  * Imported back here so all existing call sites keep the same names/behavior. */
-import { safeStr } from "./modules/parsing_utils.js";
+import { safeStr, money2, envFlag, to2, round2 } from "./modules/parsing_utils.js";
+import {
+  base64urlEncodeBytes,
+  base64urlDecodeToBytes,
+  jsonBase64urlEncode,
+  jsonBase64urlDecode,
+  importHmacKey,
+} from "./modules/crypto_utils.js";
 import { corsHeaders, json } from "./modules/http_response.js";
 import {
   _adminTokenFromRequest,
@@ -73,59 +80,7 @@ function shouldAllowGlobalGoogleCalendarFallback(env, scope = null) {
 const CALENDAR_OAUTH_NONCE_TTL_SECONDS = 600;
 const CALENDAR_OAUTH_STATE_PURPOSE = "google_calendar_oauth";
 
-function base64urlEncodeBytes(bytes) {
-  const arr = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes || []);
-  let binary = "";
-  const chunkSize = 0x2000;
-  for (let i = 0; i < arr.length; i += chunkSize) {
-    const end = Math.min(i + chunkSize, arr.length);
-    let chunk = "";
-    for (let j = i; j < end; j++) chunk += String.fromCharCode(arr[j]);
-    binary += chunk;
-  }
-  return btoa(binary)
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=+$/g, "");
-}
-
-function base64urlDecodeToBytes(str) {
-  const raw = String(str || "").trim();
-  if (!raw) return new Uint8Array();
-  const normalized = raw
-    .replace(/-/g, "+")
-    .replace(/_/g, "/")
-    .padEnd(Math.ceil(raw.length / 4) * 4, "=");
-  const bin = atob(normalized);
-  const out = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
-  return out;
-}
-
-function jsonBase64urlEncode(obj) {
-  const text = JSON.stringify(obj ?? {});
-  const bytes = new TextEncoder().encode(text);
-  return base64urlEncodeBytes(bytes);
-}
-
-function jsonBase64urlDecode(str) {
-  const bytes = base64urlDecodeToBytes(str);
-  const text = new TextDecoder().decode(bytes);
-  return JSON.parse(text);
-}
-
-async function importHmacKey(secret) {
-  const normalized = String(secret || "").trim();
-  if (!normalized) throw new Error("missing_calendar_oauth_state_secret");
-  const raw = new TextEncoder().encode(normalized);
-  return crypto.subtle.importKey(
-    "raw",
-    raw,
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign", "verify"],
-  );
-}
+/* base64url* / jsonBase64url* / importHmacKey moved to ./modules/crypto_utils.js (patch BW-M2). */
 
 async function signCalendarOAuthState(payloadB64, secret) {
   const key = await importHmacKey(secret);
@@ -47154,28 +47109,7 @@ function escapeHtml(str) {
 
 /* ===================== PAYMENTS (MOLLIE) ===================== */
 
-function money2(value) {
-  // Robust euro number parsing: accepts numbers, "143.24", "143,24", "€ 143,24"
-  if (value == null) return "0.00";
-  let s = String(value).trim();
-  // keep digits, dot, comma, minus
-  s = s.replace(/[^0-9,\.\-]/g, "");
-  // If we have both comma and dot, assume dot is thousands sep and comma is decimal (e.g. 1.234,56)
-  if (s.includes(",") && s.includes(".")) {
-    // remove dots (thousands), then replace comma with dot
-    s = s.replace(/\./g, "").replace(/,/g, ".");
-  } else {
-    // otherwise just replace comma with dot
-    s = s.replace(/,/g, ".");
-  }
-  const n = Number(s);
-  if (!Number.isFinite(n)) return "0.00";
-  return (Math.round(n * 100) / 100).toFixed(2);
-}
-
-function envFlag(value) {
-  return ["1", "true", "yes", "on"].includes(String(value ?? "").trim().toLowerCase());
-}
+/* money2() and envFlag() moved to ./modules/parsing_utils.js (patch BW-M2). */
 
 function mollieKeyKind(apiKey) {
   const key = String(apiKey || "").trim();
@@ -64878,12 +64812,7 @@ function calcPrice({
   };
 }
 
-function to2(n) { return (Math.round(Number(n || 0) * 100) / 100).toFixed(2); }
-
-function round2(n) {
-  // keep monetary rounding consistent
-  return to2(n);
-}
+/* to2() and round2() moved to ./modules/parsing_utils.js (patch BW-M2). */
 
 function _formatSurchargePercentLabel(rate) {
   const n = Number(rate);
