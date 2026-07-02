@@ -3303,6 +3303,13 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
     _logPaymentPickerResolution();
     if (_allowsCustomerSessionLink) {
       unawaited(_prefillFromCustomerProfile());
+    } else {
+      // B11-S: driver / companyAdmin (operator) contexts do not have a customer
+      // profile prefill. Mirror the customer billing prefill from the local
+      // company/business profile so operator-created business rides emit the
+      // same billing_customer contract (and therefore get a Document Core
+      // invoice) without any backend change.
+      unawaited(_prefillBillingDetailsFromCompanyProfileForOperatorContext());
     }
   }
 
@@ -3386,6 +3393,107 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
       );
     } catch (_) {
       // Keep booking flow resilient if local profile load fails.
+    }
+  }
+
+  /// B11-S: operator (driver / companyAdmin) billing prefill parity.
+  ///
+  /// The customer flow auto-enables + prefills the "Ik wil een factuur op
+  /// bedrijf" billing section from the saved customer profile via
+  /// [_prefillFromCustomerProfile]. Driver / companyAdmin contexts have no such
+  /// prefill, so operator-created business rides used to omit the entire
+  /// billing_customer object and were stored as non-business (no Document Core
+  /// invoice). This mirror sources the operator's OWN company identity from the
+  /// local [CompanySessionStore] profile (no network call) and, when a
+  /// meaningful business identity exists, set-if-blank fills the billing fields
+  /// and turns the billing toggle ON.
+  ///
+  /// Contract:
+  ///   - Never runs for [BookingEntryContext.customer] (customer flow unchanged).
+  ///   - Set-if-blank only; never overwrites manual user edits.
+  ///   - Never forces business intent when no meaningful company identity
+  ///     exists (the toggle stays OFF, no billing_customer is emitted).
+  ///   - The user can still turn the toggle OFF for a private ride.
+  ///   - Reuses [_buildBillingCustomerPayloadFields] as the single
+  ///     billing_customer emitter; adds no invoice_intent (backend derives it).
+  Future<void>
+  _prefillBillingDetailsFromCompanyProfileForOperatorContext() async {
+    if (widget.entryContext == BookingEntryContext.customer) return;
+    try {
+      final profile = await CompanySessionStore.instance.loadProfile();
+      if (!mounted || profile == null) return;
+
+      final companyName = profile.companyName.trim();
+      final vatNumber = profile.vatNumber.trim();
+      final street = profile.addressLine.trim();
+      final postal = profile.postalCode.trim();
+      final city = profile.city.trim();
+      final country = profile.countryCode.trim().toUpperCase();
+      final contactEmail = profile.billingEmail.trim().isNotEmpty
+          ? profile.billingEmail.trim()
+          : (profile.companyEmail.trim().isNotEmpty
+                ? profile.companyEmail.trim()
+                : profile.email.trim());
+
+      // Meaningful business identity gate. Mirror the backend's notion so we
+      // never auto-enable business billing without real company data: a VAT
+      // number alone, or a company name together with at least one billing
+      // address component. Company name alone (no VAT, no address) is NOT
+      // enough and leaves the toggle OFF.
+      final hasAddress =
+          street.isNotEmpty ||
+          postal.isNotEmpty ||
+          city.isNotEmpty ||
+          country.isNotEmpty;
+      final hasMeaningfulBusinessIdentity =
+          vatNumber.isNotEmpty || (companyName.isNotEmpty && hasAddress);
+      if (!hasMeaningfulBusinessIdentity) {
+        debugPrint(
+          '[CALCULATOR][OPERATOR_BILLING_PREFILL] skipped reason=no_company_identity context=${widget.entryContext.name}',
+        );
+        return;
+      }
+
+      void setIfBlank(TextEditingController controller, String value) {
+        if (controller.text.trim().isNotEmpty) return;
+        final incoming = value.trim();
+        if (incoming.isEmpty) return;
+        controller.text = incoming;
+      }
+
+      // Billing section fields (source of truth for billing_customer).
+      setIfBlank(_billingLegalNameCtrl, companyName);
+      setIfBlank(_billingVatCtrl, vatNumber);
+      setIfBlank(_billingStreetCtrl, street);
+      setIfBlank(_billingPostalCtrl, postal);
+      setIfBlank(_billingCityCtrl, city);
+      setIfBlank(_billingCountryCtrl, country);
+      setIfBlank(_billingContactEmailCtrl, contactEmail);
+      // Keep legacy holders populated for existing top-level payload keys, the
+      // same way the customer prefill does.
+      setIfBlank(_companyNameCtrl, companyName);
+      setIfBlank(_vatNumberCtrl, vatNumber);
+
+      if (!_billingDetailsEnabled && mounted) {
+        setState(() {
+          _billingDetailsEnabled = true;
+        });
+      }
+
+      // Start the ride-contact card compact when billing is enabled and the
+      // contact is already complete, matching the customer prefill polish.
+      if (mounted) {
+        final startCompact = _billingDetailsEnabled && _rideContactComplete();
+        if (startCompact && _customerDetailsExpanded) {
+          setState(() => _customerDetailsExpanded = false);
+        }
+      }
+
+      debugPrint(
+        '[CALCULATOR][OPERATOR_BILLING_PREFILL] context=${widget.entryContext.name} companyPrefilled=${_billingLegalNameCtrl.text.trim().isNotEmpty} vatPrefilled=${_billingVatCtrl.text.trim().isNotEmpty} addressPrefilled=${_billingStreetCtrl.text.trim().isNotEmpty} invoiceEmailPrefilled=${_billingContactEmailCtrl.text.trim().isNotEmpty} billingEnabled=$_billingDetailsEnabled',
+      );
+    } catch (_) {
+      // Keep booking flow resilient if the company profile load fails.
     }
   }
 
@@ -6146,6 +6254,24 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
               ),
             ),
           ),
+          if (_billingDetailsEnabled &&
+              widget.entryContext != BookingEntryContext.customer) ...[
+            const SizedBox(height: 2),
+            Text(
+              _localizedText(
+                nl: 'Zakelijke rit: factuurgegevens zijn vooraf ingevuld vanuit je bedrijfsprofiel.',
+                en: 'Business ride: billing details are prefilled from your company profile.',
+                fr: 'Course professionnelle : les données de facturation sont préremplies depuis le profil de votre entreprise.',
+                es: 'Viaje de empresa: los datos de facturación se rellenan desde el perfil de tu empresa.',
+              ),
+              style: TextStyle(
+                color: _textMuted.withOpacity(0.95),
+                fontSize: 11,
+                height: 1.25,
+                fontStyle: FontStyle.italic,
+              ),
+            ),
+          ],
           if (_billingDetailsEnabled) ...[
             const SizedBox(height: 4),
             _input(
