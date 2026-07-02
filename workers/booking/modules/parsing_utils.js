@@ -35,3 +35,20 @@ export function round2(n) {
   // keep monetary rounding consistent
   return to2(n);
 }
+
+export function sanitizeTenantString(value, maxLength = 240) {
+  const text = String(value == null ? "" : value).replace(/\0/g, "").trim();
+  return text.length > maxLength ? text.slice(0, maxLength) : text;
+}
+
+export function getBaseUrl(request) {
+  const u = new URL(request.url);
+  return `${u.protocol}//${u.host}`;
+}
+
+export function boolish(value) {
+  if (value === true) return true;
+  if (value === false || value == null) return false;
+  const s = String(value).trim().toLowerCase();
+  return s === "true" || s === "1" || s === "yes" || s === "y" || s === "on";
+}

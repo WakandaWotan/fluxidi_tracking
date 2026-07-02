@@ -15,3 +15,10 @@ export function json(obj, status = 200) {
     headers: { "Content-Type": "application/json; charset=utf-8", ...corsHeaders() },
   });
 }
+
+export function html(content, status = 200) {
+  return new Response(content, {
+    status,
+    headers: { "Content-Type": "text/html; charset=utf-8", ...corsHeaders() },
+  });
+}
