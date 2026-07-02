@@ -4351,6 +4351,135 @@ async function maybeRunBillitAutoCreateAfterPaidLifecycle(env, scope, bookingId,
   }
 }
 
+/* Patch B11-K: Billit-independent Document Core invoice lifecycle wrapper.
+ *
+ * Ensures every PAID business_invoice booking gets an idempotent Document Core
+ * invoice record, INDEPENDENT of:
+ *   - the billit_auto_create_after_paid_business_invoice company setting
+ *   - the presence of a linked Billit party_id
+ *   - the Billit OAuth config / environment (sandbox vs production)
+ *   - Billit sandbox order creation
+ *   - Peppol readiness gates
+ *
+ * Wraps the existing (already Billit-free) ensureDocumentCoreInvoiceForPaidBusinessBooking
+ * helper - NO invoice-issue logic is duplicated. The wrapper adds lifecycle
+ * logging, safe scope normalization, and error swallowing so payment
+ * finalization (`/pay/status`, driver-manual `POST /bookings/:id/payment`)
+ * cannot fail because of Document Core issue problems.
+ *
+ * Contract:
+ *   - NEVER calls Billit APIs (no /v1/orders, no /v1/parties, no token acquire).
+ *   - NEVER creates a Billit sandbox order.
+ *   - NEVER sends via Peppol / calls /v1/orders/commands/send.
+ *   - NEVER throws to its caller.
+ *   - NEVER mutates already-issued documents (idempotent via
+ *     findExistingInvoiceDocumentForBooking inside the inner helper).
+ *   - NEVER loosens Peppol readiness gates (this path does not touch Peppol).
+ *   - NEVER checks or reads Billit auto-create settings.
+ *   - NEVER logs full billing customer PII; only masked ids and short reasons.
+ *
+ * Skippable outcomes (not eligible) - logged as SKIP with a reason:
+ *   source_booking_not_found, not_in_scope, booking_not_paid,
+ *   not_business_invoice_intent, billit_auto_billing_customer_missing.
+ * The last name is inherited verbatim from the inner helper's return value
+ * so log analytics/dashboards keyed on that string keep matching; it is a
+ * billing_customer_snapshot presence check and does NOT involve Billit APIs.
+ */
+async function maybeRunDocumentCoreInvoiceAfterPaidLifecycle(env, scope, bookingId, options = {}) {
+  const opts = options && typeof options === "object" && !Array.isArray(options) ? options : {};
+  const source = safeStr(opts.source, 60) || "paid_lifecycle";
+  const effectiveScope =
+    opts.effectiveScope && typeof opts.effectiveScope === "object"
+      ? opts.effectiveScope
+      : null;
+  const maskedBooking = _bookingIntentMask(bookingId);
+  try {
+    const invoiceScope =
+      scope && typeof scope === "object"
+        ? {
+            tenant_id: safeStr(scope.tenant_id, 96),
+            company_id: safeStr(scope.company_id, 96),
+          }
+        : null;
+    if (!invoiceScope?.tenant_id || !invoiceScope?.company_id) {
+      console.log(
+        `[DOCUMENT_CORE_INVOICE_LIFECYCLE][SKIP] booking=${maskedBooking} source=${source} reason=missing_tenant_scope`,
+      );
+      return { ok: true, skipped: true, reason: "missing_tenant_scope" };
+    }
+    if (!safeStr(bookingId, 200)) {
+      console.log(
+        `[DOCUMENT_CORE_INVOICE_LIFECYCLE][SKIP] booking=- source=${source} reason=missing_booking_id`,
+      );
+      return { ok: true, skipped: true, reason: "missing_booking_id" };
+    }
+    if (!env?.BOOKING_KV || !env?.DOCUMENT_REFERENCE_SEQUENCE) {
+      console.log(
+        `[DOCUMENT_CORE_INVOICE_LIFECYCLE][SKIP] booking=${maskedBooking} source=${source} reason=missing_binding`,
+      );
+      return { ok: true, skipped: true, reason: "missing_binding" };
+    }
+
+    console.log(
+      `[DOCUMENT_CORE_INVOICE_LIFECYCLE][START] booking=${maskedBooking} source=${source}`,
+    );
+
+    const result = await ensureDocumentCoreInvoiceForPaidBusinessBooking(
+      env,
+      invoiceScope,
+      bookingId,
+      {
+        sourceLegId: null,
+        sourceLegType: null,
+        scopeForBookingMatch: effectiveScope,
+      },
+    );
+
+    if (result && result.ok === true) {
+      const documentId = safeStr(result.document_id, 200) || "";
+      const documentNumber = safeStr(result.document_number, 80) || "";
+      const docIdMask = documentId ? documentId.slice(0, 8) : "-";
+      const reused = result.reused_existing_invoice === true;
+      console.log(
+        `[DOCUMENT_CORE_INVOICE_LIFECYCLE][OK] booking=${maskedBooking} source=${source} reused=${reused ? "true" : "false"} document_id=${docIdMask} document_number=${documentNumber || "-"}`,
+      );
+      return {
+        ok: true,
+        skipped: false,
+        reason: reused ? "idempotent_replay" : "created",
+        document_id: documentId || null,
+        document_number: documentNumber || null,
+        reused_existing_invoice: reused,
+      };
+    }
+
+    const reason = safeStr(result?.error, 80) || "unknown";
+    const skippableReasons = new Set([
+      "source_booking_not_found",
+      "not_in_scope",
+      "booking_not_paid",
+      "not_business_invoice_intent",
+      "billit_auto_billing_customer_missing",
+    ]);
+    if (skippableReasons.has(reason)) {
+      console.log(
+        `[DOCUMENT_CORE_INVOICE_LIFECYCLE][SKIP] booking=${maskedBooking} source=${source} reason=${reason}`,
+      );
+      return { ok: true, skipped: true, reason };
+    }
+    console.log(
+      `[DOCUMENT_CORE_INVOICE_LIFECYCLE][ERROR] booking=${maskedBooking} source=${source} error=${reason}`,
+    );
+    return { ok: false, skipped: false, reason };
+  } catch (err) {
+    // Fail-closed: never throw to the payment lifecycle caller.
+    console.log(
+      `[DOCUMENT_CORE_INVOICE_LIFECYCLE][ERROR] booking=${maskedBooking} source=${source} error=${safeStr(err?.message, 120) || "exception"}`,
+    );
+    return { ok: false, skipped: false, reason: "exception" };
+  }
+}
+
 async function handleAdminBookingBillitAutoCreateSandbox({ request, url, env, bookingId }) {
   // 1. Admin auth.
   try {
@@ -78964,6 +79093,38 @@ async function updateBookingPaymentAuthoritative(
   }
 
   await env.BOOKING_KV.put(key, JSON.stringify(rec));
+
+  // Patch B11-K: Billit-independent Document Core invoice ensure hook.
+  //
+  // Runs AFTER the paid record has been persisted so the helper's internal
+  // KV read sees the fresh paid state. Only triggers on a new paid transition
+  // (matches the legacy invoice hook above) to avoid re-processing on
+  // idempotent refreshes. Never calls Billit / Peppol; never throws to the
+  // payment update caller. Idempotent via findExistingInvoiceDocumentForBooking
+  // inside the inner helper.
+  if (normalizedStatus === "paid" && !wasAlreadyPaid) {
+    try {
+      const documentCoreScope = {
+        tenant_id: safeStr(tenantScope?.tenant_id, 96),
+        company_id: safeStr(tenantScope?.company_id, 96),
+      };
+      await maybeRunDocumentCoreInvoiceAfterPaidLifecycle(
+        env,
+        documentCoreScope,
+        bookingId,
+        {
+          source: "payment_update",
+          effectiveScope: tenantScope,
+        },
+      );
+    } catch (documentCoreErr) {
+      // Defensive only; the helper is designed to never throw.
+      console.log(
+        `[DOCUMENT_CORE_INVOICE_LIFECYCLE][ERROR] booking=${_bookingIntentMask(bookingId)} source=payment_update error=${safeStr(documentCoreErr?.message || documentCoreErr, 120) || "exception"}`,
+      );
+    }
+  }
+
   const indexUpsertResult = await upsertCompanyBookingsListIndexBestEffort(
     env,
     bookingId,
@@ -90985,13 +91146,48 @@ async function payStatus(request, env, requestedScopeOverride = null) {
         );
       }
 
+      // Patch B11-K: Billit-independent Document Core invoice lifecycle hook.
+      // Runs AFTER the legacy invoice lifecycle above (which already persisted
+      // invoiceRecordInfo.rec to KV when mutated) and BEFORE the B8e-B Billit
+      // auto-create hook below, so a subsequent Billit auto-create run - if
+      // enabled and configured - idempotently reuses this same Document Core
+      // invoice. It is INDEPENDENT of the billit_auto_create_after_paid_business_invoice
+      // company setting, of billit_party_id, of the Billit OAuth config, and
+      // of Peppol readiness. It NEVER calls Billit APIs, NEVER creates a
+      // Billit sandbox order, NEVER sends via Peppol, and is wrapped so it
+      // cannot throw out of payStatus or block payment finalization.
+      if (invoiceRecordInfo?.rec && invoiceRecordInfo?.booking_id) {
+        try {
+          const documentCoreScope = {
+            tenant_id: effectiveScope.tenant_id,
+            company_id: effectiveScope.company_id,
+          };
+          await maybeRunDocumentCoreInvoiceAfterPaidLifecycle(
+            env,
+            documentCoreScope,
+            invoiceRecordInfo.booking_id,
+            {
+              source: "pay_status_paid_lifecycle",
+              effectiveScope,
+            },
+          );
+        } catch (documentCoreErr) {
+          // Defensive only; the helper is designed to never throw.
+          console.log(
+            `[DOCUMENT_CORE_INVOICE_LIFECYCLE][ERROR] booking=${_bookingIntentMask(invoiceRecordInfo.booking_id)} source=pay_status_paid_lifecycle error=${safeStr(documentCoreErr?.message || documentCoreErr, 120) || "exception"}`,
+          );
+        }
+      }
+
       // Patch B8e-B: sandbox-only, setting-gated Billit auto-create hook. Runs
-      // AFTER the legacy invoice lifecycle above and reuses the same resolved,
-      // scope-verified canonical record (invoiceRecordInfo) + effectiveScope.
-      // It is intentionally NOT wired into mollieWebhook, NEVER sends Peppol /
-      // calls /v1/orders/commands/send, NEVER supports production, and is
-      // wrapped so it can NEVER throw out of payStatus or block payment
-      // finalization. Default OFF: a false/missing company setting no-ops here.
+      // AFTER the Document Core invoice ensure hook above so it idempotently
+      // reuses that invoice (via findExistingInvoiceDocumentForBooking inside
+      // ensureDocumentCoreInvoiceForPaidBusinessBooking) when linking a Billit
+      // sandbox order. It is intentionally NOT wired into mollieWebhook,
+      // NEVER sends Peppol / calls /v1/orders/commands/send, NEVER supports
+      // production, and is wrapped so it can NEVER throw out of payStatus or
+      // block payment finalization. Default OFF: a false/missing company
+      // setting no-ops here.
       if (invoiceRecordInfo?.rec && invoiceRecordInfo?.booking_id) {
         try {
           const billitAutoScope = {
