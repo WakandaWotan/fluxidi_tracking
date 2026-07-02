@@ -91194,7 +91194,7 @@ async function payStatus(request, env, requestedScopeOverride = null) {
             tenant_id: effectiveScope.tenant_id,
             company_id: effectiveScope.company_id,
           };
-          await maybeRunBillitAutoCreateAfterPaidLifecycle(
+          const billitAutoResult = await maybeRunBillitAutoCreateAfterPaidLifecycle(
             env,
             billitAutoScope,
             invoiceRecordInfo.booking_id,
@@ -91205,6 +91205,28 @@ async function payStatus(request, env, requestedScopeOverride = null) {
               nowIso: new Date().toISOString(),
             },
           );
+          // Patch B11-O: single grep-able summary line for the Billit auto-create
+          // outcome per `/pay/status` finalization. Envelope-only masked fields;
+          // never tokens, raw Billit body, or billing customer PII. Fail-closed:
+          // this log block never mutates state and never throws to payStatus.
+          try {
+            const summaryBooking = _bookingIntentMask(invoiceRecordInfo.booking_id);
+            const summaryOk = billitAutoResult?.ok === true ? "true" : "false";
+            const summarySkipped =
+              billitAutoResult?.skipped === true ? "true" : "false";
+            const summaryReason = safeStr(billitAutoResult?.reason, 80) || "-";
+            const summaryReused =
+              billitAutoResult?.reused_existing_invoice === true ? "true" : "false";
+            const summaryOrderPresent =
+              safeStr(billitAutoResult?.billit_order_id, 120) ? "true" : "false";
+            const summaryDocId = safeStr(billitAutoResult?.document_id, 200) || "";
+            const summaryDocIdMask = summaryDocId ? summaryDocId.slice(0, 8) : "-";
+            console.log(
+              `[BILLIT_AUTO_CREATE_LIFECYCLE][PAY_STATUS_SUMMARY] booking=${summaryBooking} ok=${summaryOk} skipped=${summarySkipped} reason=${summaryReason} reused_existing_invoice=${summaryReused} billit_order_id_present=${summaryOrderPresent} document_id=${summaryDocIdMask} source=pay_status_paid_lifecycle`,
+            );
+          } catch (_) {
+            // Never throw from the summary log block.
+          }
         } catch (billitAutoErr) {
           // Defensive only; the helper is designed to never throw.
           console.warn(

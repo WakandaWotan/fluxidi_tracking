@@ -610,6 +610,30 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
     return true;
   }
 
+  /// B11-O: after B11-K decoupled Document Core invoice creation from the
+  /// Billit auto-create path, an *issued* invoice can legitimately exist with
+  /// NO Billit link (e.g. auto-create setting off, Billit not linked, or the
+  /// Billit sandbox order create skipped/failed silently). Before B11-O the
+  /// card rendered blank in that state; this helper flags it so the row shows
+  /// an explicit, informational "not linked to Billit yet" line matching the
+  /// existing document-card styling. Never applies to credit notes / refund
+  /// proofs, to non-issued rows, or to rows that already carry a linked Billit
+  /// export with an order id — those keep their existing Billit/Peppol UI
+  /// byte-for-byte.
+  bool _shouldShowBillitNotLinkedYet(_BookingDocumentMetadata doc) {
+    if (doc.documentType.trim().toLowerCase() != 'invoice') return false;
+    final state =
+        (doc.lifecycleState.isNotEmpty
+                ? doc.lifecycleState
+                : doc.documentStatus)
+            .trim()
+            .toLowerCase();
+    if (state != 'issued') return false;
+    final export = doc.billitExport;
+    if (export != null && export.orderId.trim().isNotEmpty) return false;
+    return true;
+  }
+
   /// B11-D: map audited backend error codes to compact customer-facing text.
   /// Never exposes raw JSON or stack traces in the snackbar.
   String _mapBillitPeppolSendError(String? errorCode) {
@@ -1480,6 +1504,8 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
           ],
           if (doc.billitExport != null)
             _buildBillitStatusBlock(tokens, doc.billitExport!),
+          if (_shouldShowBillitNotLinkedYet(doc))
+            _buildBillitNotLinkedYetBlock(tokens),
           if (_shouldShowBillitRefresh(doc))
             _buildBillitRefreshButton(tokens, doc),
           if (_shouldShowBillitPeppolSend(doc))
@@ -1575,6 +1601,46 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
           ),
           style: const TextStyle(fontSize: 11.0, fontWeight: FontWeight.w700),
         ),
+      ),
+    );
+  }
+
+  /// B11-O: compact, read-only "not linked to Billit yet" line for an issued
+  /// invoice whose Document Core record has no Billit export / no Billit order
+  /// id yet. Pure display: no onTap, no button, no network call, no confirmation
+  /// dialog. Never triggers a Billit create / link / send / reconcile and never
+  /// tells the user anything is wrong — it just makes an otherwise blank card
+  /// area explicit and consistent with older invoices that DO show a Billit
+  /// block. Existing linked-Billit rows never render this and are unaffected.
+  Widget _buildBillitNotLinkedYetBlock(_CompanyBookingsThemeTokens tokens) {
+    final primary = _tr(
+      nl: 'Nog niet gekoppeld aan Billit',
+      en: 'Not linked to Billit yet',
+      fr: 'Pas encore lié à Billit',
+      es: 'Aún no vinculado a Billit',
+    );
+    final subtext = _tr(
+      nl: 'Peppol is beschikbaar zodra deze factuur in Billit klaarstaat.',
+      en: 'Peppol becomes available once this invoice is ready in Billit.',
+      fr: 'Peppol sera disponible dès que cette facture sera prête dans Billit.',
+      es: 'Peppol estará disponible cuando esta factura esté lista en Billit.',
+    );
+    return Padding(
+      padding: const EdgeInsets.only(top: 6),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _billitStatusChip(tokens, primary, primary: false),
+          const SizedBox(height: 3),
+          Text(
+            subtext,
+            style: TextStyle(
+              color: tokens.textTertiary.withOpacity(0.85),
+              fontSize: 9.8,
+              fontStyle: FontStyle.italic,
+            ),
+          ),
+        ],
       ),
     );
   }
