@@ -3239,6 +3239,11 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
   bool _customerDetailsExpanded = true;
   final TextEditingController _billingLegalNameCtrl = TextEditingController();
   final TextEditingController _billingVatCtrl = TextEditingController();
+  // B11-I: canonical company_registration_number (KBO / enterprise / registry).
+  // Alternative-or-fallback to VAT for Peppol legal identity readiness. Backend
+  // already accepts it via normalizeBillingCustomerIdentityInput.
+  final TextEditingController _billingRegistrationNumberCtrl =
+      TextEditingController();
   final TextEditingController _billingStreetCtrl = TextEditingController();
   final TextEditingController _billingPostalCtrl = TextEditingController();
   final TextEditingController _billingCityCtrl = TextEditingController();
@@ -3491,6 +3496,7 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
     _messageCtrl.dispose();
     _billingLegalNameCtrl.dispose();
     _billingVatCtrl.dispose();
+    _billingRegistrationNumberCtrl.dispose();
     _billingStreetCtrl.dispose();
     _billingPostalCtrl.dispose();
     _billingCityCtrl.dispose();
@@ -5023,6 +5029,9 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
     if (!_billingDetailsEnabled) return const <String, dynamic>{};
     final legalName = _billingLegalNameCtrl.text.trim();
     final vat = _billingVatCtrl.text.trim();
+    // B11-I: canonical company_registration_number (KBO / enterprise / registry
+    // number). Alternative-or-fallback to VAT for Peppol legal identity.
+    final registrationNumber = _billingRegistrationNumberCtrl.text.trim();
     final street = _billingStreetCtrl.text.trim();
     final postal = _billingPostalCtrl.text.trim();
     final city = _billingCityCtrl.text.trim();
@@ -5037,6 +5046,7 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
     final hasAny =
         legalName.isNotEmpty ||
         vat.isNotEmpty ||
+        registrationNumber.isNotEmpty ||
         street.isNotEmpty ||
         postal.isNotEmpty ||
         city.isNotEmpty ||
@@ -5052,6 +5062,9 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
       'contact_phone': contactPhone.isNotEmpty ? contactPhone : null,
       'legal_name': legalName.isNotEmpty ? legalName : null,
       'vat_number': vat.isNotEmpty ? vat : null,
+      'company_registration_number': registrationNumber.isNotEmpty
+          ? registrationNumber
+          : null,
       'billing_address': <String, dynamic>{
         'street': street.isNotEmpty ? street : null,
         'postal_code': postal.isNotEmpty ? postal : null,
@@ -5073,12 +5086,19 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
     if (!_billingDetailsEnabled) return null;
     final hasLegal = _billingLegalNameCtrl.text.trim().isNotEmpty;
     final hasVat = _billingVatCtrl.text.trim().isNotEmpty;
-    if (hasLegal && hasVat && _billingAddressComplete) return null;
+    // B11-I: KBO / company registration number satisfies the same legal-identity
+    // slot as VAT for Peppol readiness. Either is enough here.
+    final hasRegistration = _billingRegistrationNumberCtrl.text
+        .trim()
+        .isNotEmpty;
+    if (hasLegal && (hasVat || hasRegistration) && _billingAddressComplete) {
+      return null;
+    }
     return _localizedText(
-      nl: 'Factuurgegevens lijken onvolledig (bedrijfsnaam, btw of adres). Je boeking gaat gewoon door.',
-      en: 'Billing details look incomplete (company name, VAT or address). Your booking still continues.',
-      fr: 'Les données de facturation semblent incomplètes (nom, TVA ou adresse). Votre réservation se poursuit.',
-      es: 'Los datos de facturación parecen incompletos (nombre, IVA o dirección). Tu reserva continúa igualmente.',
+      nl: 'Factuurgegevens lijken onvolledig (bedrijfsnaam, btw-/ondernemingsnummer of adres). Je boeking gaat gewoon door.',
+      en: 'Billing details look incomplete (company name, VAT/registration number or address). Your booking still continues.',
+      fr: 'Les données de facturation semblent incomplètes (nom, numéro de TVA/d’entreprise ou adresse). Votre réservation se poursuit.',
+      es: 'Los datos de facturación parecen incompletos (nombre, número de IVA/registro o dirección). Tu reserva continúa igualmente.',
     );
   }
 
@@ -6142,12 +6162,23 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
             _input(
               _billingVatCtrl,
               _localizedText(
-                nl: 'Btw-/KBO-nummer',
-                en: 'VAT / company number',
-                fr: 'Numéro de TVA / BCE',
-                es: 'Número de IVA / empresa',
+                nl: 'Btw-nummer',
+                en: 'VAT number',
+                fr: 'Numéro de TVA',
+                es: 'Número de IVA',
               ),
               icon: Icons.receipt_long_outlined,
+            ),
+            const SizedBox(height: 8),
+            _input(
+              _billingRegistrationNumberCtrl,
+              _localizedText(
+                nl: 'Ondernemingsnummer / KBO',
+                en: 'Company registration number',
+                fr: 'Numéro d’entreprise',
+                es: 'Número de registro de empresa',
+              ),
+              icon: Icons.badge_outlined,
             ),
             const SizedBox(height: 8),
             _input(
@@ -6245,6 +6276,16 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
               ),
             ),
             if (_billingPeppolExpanded) ...[
+              const SizedBox(height: 8),
+              Text(
+                _localizedText(
+                  nl: 'Voor Peppol heb je minstens een wettelijke bedrijfsnaam, btw-nummer of ondernemingsnummer, facturatieadres, land en Peppol endpoint nodig.',
+                  en: 'For Peppol, you need at least a legal company name, VAT number or company registration number, billing address, country and Peppol endpoint.',
+                  fr: 'Pour Peppol, il faut au minimum un nom légal d’entreprise, un numéro de TVA ou d’entreprise, une adresse de facturation, un pays et un endpoint Peppol.',
+                  es: 'Para Peppol, necesitas al menos un nombre legal de empresa, número de IVA o registro de empresa, dirección de facturación, país y endpoint Peppol.',
+                ),
+                style: TextStyle(color: _textMuted, fontSize: 12),
+              ),
               const SizedBox(height: 8),
               _input(
                 _billingPeppolEndpointCtrl,
