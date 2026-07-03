@@ -37495,6 +37495,7 @@ export default {
       // POST /bookings/:id/checkout-resume
       // POST /bookings/:id/status
       // POST /bookings/:id/payment
+      // POST /bookings/:parentId/legs/:legId/payment
       // POST /bookings/:id/receipt/email
       // POST /bookings/:id/credit-decision
       // POST /bookings/:id/mollie-refund
@@ -37936,6 +37937,54 @@ export default {
             out?.error === "future_pickup_not_started" ||
             out?.error === "future_completion_not_allowed"
           ) statusCode = 409;
+          return json(out, statusCode);
+        }
+
+        if (
+          pathParts.length === 5 &&
+          pathParts[2] === "legs" &&
+          pathParts[4] === "payment" &&
+          request.method === "POST"
+        ) {
+          const legId = decodeURIComponent(pathParts[3] || "").trim();
+          if (!legId) {
+            return json({ ok: false, error: "leg_id is required" }, 400);
+          }
+          _requireAdmin(request, url, env);
+          const body = await safeJson(request);
+          const scopedRoute = requireExplicitBookingRouteScope({ request, url, body });
+          if (!scopedRoute.ok) return scopedRoute.response;
+          const tenantScope = scopedRoute.scope;
+          const { rec } = await loadBookingRecord(env, bookingId);
+          const ownershipBlock = await enforceDriverOwnershipForMutation({
+            request,
+            url,
+            body,
+            rec,
+            tenantScope,
+            env,
+          });
+          if (ownershipBlock) {
+            return json({ ok: false, error: "booking_not_assigned_to_driver" }, 403);
+          }
+          const out = await updateBookingOperationalLegPaymentAuthoritative(
+            bookingId,
+            legId,
+            body,
+            env,
+            ctx,
+            tenantScope,
+          );
+          let statusCode = out?.ok ? 200 : 400;
+          if (out?.error === "missing_tenant_scope") statusCode = 400;
+          else if (out?.error === "forbidden") statusCode = 403;
+          else if (
+            out?.error === "booking_not_found" ||
+            out?.error === "operational_leg_not_found" ||
+            out?.error === "operational_legs_not_found"
+          ) {
+            statusCode = 404;
+          }
           return json(out, statusCode);
         }
 
@@ -74292,6 +74341,556 @@ async function updateBookingOperationalLegStatusAuthoritative(
     cancelled_legs_count: cancelledLegsCount,
     pending_legs_count: pendingLegsCount,
     operational_legs_count: operationalLegsCount,
+  };
+}
+
+function _operationalLegPaymentStatusToken(legEntry) {
+  return String(
+    legEntry?.payment_status ??
+      legEntry?.paymentStatus ??
+      "",
+  )
+    .trim()
+    .toLowerCase();
+}
+
+function _isOperationalLegEntryPaid(legEntry) {
+  const token = _operationalLegPaymentStatusToken(legEntry);
+  return (
+    token === "paid" ||
+    token === "confirmed" ||
+    token === "completed" ||
+    token === "success" ||
+    token === "settled"
+  );
+}
+
+function _operationalLegLifecycleCancelledForPayment(legEntry) {
+  const status = _normLifecycleStatus(
+    legEntry?.status ??
+      legEntry?.lifecycle_status ??
+      legEntry?.lifecycleStatus ??
+      "PENDING",
+  );
+  return status === "CANCELLED";
+}
+
+function _collectPayableOperationalLegsForPaymentAggregation(rec) {
+  return _bookingOperationalLegsFromRecord(rec).filter((entry) => {
+    if (!entry || typeof entry !== "object") return false;
+    const legId = safeStr(entry?.leg_id ?? entry?.legId, 200);
+    if (!legId) return false;
+    if (_operationalLegLifecycleCancelledForPayment(entry)) return false;
+    return true;
+  });
+}
+
+function _allPayableOperationalLegsPaid(rec) {
+  const payable = _collectPayableOperationalLegsForPaymentAggregation(rec);
+  if (!payable.length) return false;
+  return payable.every((entry) => _isOperationalLegEntryPaid(entry));
+}
+
+function _aggregateOperationalLegPaymentFieldsForParent(rec, payableLegs) {
+  let totalAmount = 0;
+  let hasAmount = false;
+  let latestPaidAt = "";
+  let latestPaidAtMs = 0;
+  const methods = new Set();
+  let lastMethod = "";
+  let lastSource = "in_car";
+  let lastDriverId = "";
+  const currency =
+    safeStr(rec?.currency ?? rec?.booking?.currency, 8)?.toUpperCase() || "EUR";
+  for (const leg of payableLegs) {
+    const amt = Number(leg?.payment_amount ?? leg?.paymentAmount);
+    if (Number.isFinite(amt)) {
+      totalAmount += amt;
+      hasAmount = true;
+    }
+    const paidAt = safeStr(leg?.paid_at ?? leg?.paidAt, 64);
+    if (paidAt) {
+      const ms = Date.parse(paidAt);
+      if (Number.isFinite(ms) && ms >= latestPaidAtMs) {
+        latestPaidAtMs = ms;
+        latestPaidAt = paidAt;
+      }
+    }
+    const method = safeStr(leg?.payment_method ?? leg?.paymentMethod, 32).toLowerCase();
+    if (method) {
+      methods.add(method);
+      lastMethod = method;
+    }
+    const source = safeStr(leg?.payment_source ?? leg?.paymentSource, 32).toLowerCase();
+    if (source) lastSource = source;
+    const driverId = safeStr(leg?.paid_by_driver_id ?? leg?.paidByDriverId, 96);
+    if (driverId) lastDriverId = driverId;
+  }
+  const resolvedPaidAt = latestPaidAt || new Date().toISOString();
+  const paymentMethod =
+    methods.size === 1 ? [...methods][0] : (lastMethod || "cash");
+  return {
+    payment_status: "paid",
+    paymentStatus: "paid",
+    paid_at: resolvedPaidAt,
+    paidAt: resolvedPaidAt,
+    payment_method: paymentMethod,
+    paymentMethod: paymentMethod,
+    payment_provider: "manual",
+    paymentProvider: "manual",
+    payment_mode: "manual",
+    paymentMode: "manual",
+    payment_source: lastSource || "in_car",
+    paymentSource: lastSource || "in_car",
+    currency,
+    ...(hasAmount
+      ? { payment_amount: totalAmount, paymentAmount: totalAmount }
+      : {}),
+    ...(lastDriverId
+      ? { paid_by_driver_id: lastDriverId, paidByDriverId: lastDriverId }
+      : {}),
+  };
+}
+
+function _applyParentAuthoritativePaymentFieldsFromLegAggregation(rec, parentFields) {
+  if (!rec || typeof rec !== "object" || !parentFields) return;
+  const normalizedStatus = safeStr(
+    parentFields?.payment_status ?? parentFields?.paymentStatus,
+    40,
+  ).toLowerCase();
+  rec.payment_status = normalizedStatus;
+  rec.paymentStatus = normalizedStatus;
+  if (normalizedStatus === "paid") {
+    const paidAt = safeStr(parentFields?.paid_at ?? parentFields?.paidAt, 64);
+    if (paidAt) {
+      rec.paid_at = paidAt;
+      rec.paidAt = paidAt;
+    }
+  }
+  const method = safeStr(parentFields?.payment_method ?? parentFields?.paymentMethod, 32);
+  if (method) {
+    rec.payment_method = method;
+    rec.paymentMethod = method;
+  }
+  const provider = safeStr(
+    parentFields?.payment_provider ?? parentFields?.paymentProvider,
+    32,
+  );
+  if (provider) {
+    rec.payment_provider = provider;
+    rec.paymentProvider = provider;
+  }
+  const mode = safeStr(parentFields?.payment_mode ?? parentFields?.paymentMode, 32);
+  if (mode) {
+    rec.payment_mode = mode;
+    rec.paymentMode = mode;
+  }
+  const source = safeStr(parentFields?.payment_source ?? parentFields?.paymentSource, 32);
+  if (source) {
+    rec.payment_source = source;
+    rec.paymentSource = source;
+  }
+  const currency = safeStr(parentFields?.currency, 8)?.toUpperCase();
+  if (currency) rec.currency = currency;
+  const amountRaw = parentFields?.payment_amount ?? parentFields?.paymentAmount;
+  const amountNum = Number(amountRaw);
+  if (Number.isFinite(amountNum)) {
+    rec.payment_amount = amountNum;
+    rec.paymentAmount = amountNum;
+  }
+  const paidByDriverId = safeStr(
+    parentFields?.paid_by_driver_id ?? parentFields?.paidByDriverId,
+    96,
+  );
+  if (paidByDriverId) {
+    rec.paid_by_driver_id = paidByDriverId;
+    rec.paidByDriverId = paidByDriverId;
+  }
+  if (rec.booking && typeof rec.booking === "object") {
+    rec.booking.payment_status = rec.payment_status;
+    rec.booking.paymentStatus = rec.paymentStatus;
+    if (rec.paid_at) {
+      rec.booking.paid_at = rec.paid_at;
+      rec.booking.paidAt = rec.paidAt;
+    }
+    if (rec.payment_method) {
+      rec.booking.payment_method = rec.payment_method;
+      rec.booking.paymentMethod = rec.paymentMethod;
+    }
+    if (rec.payment_provider) {
+      rec.booking.payment_provider = rec.payment_provider;
+      rec.booking.paymentProvider = rec.paymentProvider;
+    }
+    if (rec.payment_mode) {
+      rec.booking.payment_mode = rec.payment_mode;
+      rec.booking.paymentMode = rec.paymentMode;
+    }
+    if (rec.payment_source) {
+      rec.booking.payment_source = rec.payment_source;
+      rec.booking.paymentSource = rec.paymentSource;
+    }
+    if (rec.currency) rec.booking.currency = rec.booking.currency || rec.currency;
+    if (rec.payment_amount != null) {
+      rec.booking.payment_amount = rec.payment_amount;
+      rec.booking.paymentAmount = rec.paymentAmount;
+    }
+    if (rec.paid_by_driver_id) {
+      rec.booking.paid_by_driver_id = rec.paid_by_driver_id;
+      rec.booking.paidByDriverId = rec.paidByDriverId;
+    }
+  }
+}
+
+function _maybeBackStampBillingCustomerSnapshotOnAuthoritativePaidTransition(rec, bookingId) {
+  try {
+    const preStampInvoiceContext = _invoiceLifecycleContextFromRecord(rec);
+    const preStampBusinessIntent =
+      preStampInvoiceContext?.businessInvoiceIntent === true;
+    const _isSnapshotObject = (v) =>
+      !!(v && typeof v === "object" && !Array.isArray(v));
+    const existingSnapshotOnRec = !!(
+      _isSnapshotObject(rec?.billing_customer_snapshot) ||
+      _isSnapshotObject(rec?.billingCustomerSnapshot)
+    );
+    const existingSnapshotOnBooking = !!(
+      rec?.booking &&
+      typeof rec.booking === "object" &&
+      !Array.isArray(rec.booking) &&
+      (_isSnapshotObject(rec.booking.billing_customer_snapshot) ||
+        _isSnapshotObject(rec.booking.billingCustomerSnapshot))
+    );
+    const hasExistingSnapshotAnywhere =
+      existingSnapshotOnRec || existingSnapshotOnBooking;
+    const hasPayloadBillingCustomer = !!(
+      rec?.payload &&
+      typeof rec.payload === "object" &&
+      !Array.isArray(rec.payload) &&
+      (rec.payload.billing_customer ||
+        rec.payload.billingCustomer ||
+        rec.payload.buyer ||
+        rec.payload.buyer_identity ||
+        rec.payload.buyerIdentity)
+    );
+    if (!preStampBusinessIntent) {
+      console.log(
+        `[LEG_PAYMENT][BILLING_SNAPSHOT][SKIP] booking=${_bookingIntentMask(bookingId)} reason=not_business_invoice_intent hasExistingSnapshot=${hasExistingSnapshotAnywhere ? "true" : "false"} hasPayloadBillingCustomer=${hasPayloadBillingCustomer ? "true" : "false"}`,
+      );
+    } else if (hasExistingSnapshotAnywhere) {
+      console.log(
+        `[LEG_PAYMENT][BILLING_SNAPSHOT][SKIP] booking=${_bookingIntentMask(bookingId)} reason=existing_snapshot_preserved onRec=${existingSnapshotOnRec ? "true" : "false"} onBooking=${existingSnapshotOnBooking ? "true" : "false"}`,
+      );
+    } else if (!hasPayloadBillingCustomer) {
+      console.log(
+        `[LEG_PAYMENT][BILLING_SNAPSHOT][SKIP] booking=${_bookingIntentMask(bookingId)} reason=missing_payload_billing_customer`,
+      );
+    } else {
+      const normalized = normalizeBillingCustomerIdentityInput(rec.payload);
+      const billingAddress =
+        normalized?.billing_address &&
+        typeof normalized.billing_address === "object" &&
+        !Array.isArray(normalized.billing_address)
+          ? normalized.billing_address
+          : {};
+      const peppol =
+        normalized?.peppol &&
+        typeof normalized.peppol === "object" &&
+        !Array.isArray(normalized.peppol)
+          ? normalized.peppol
+          : {};
+      const hasAnyMeaningfulField = !!(
+        normalized?.legal_name ||
+        normalized?.vat_number ||
+        normalized?.company_registration_number ||
+        normalized?.buyer_reference ||
+        normalized?.customer_type ||
+        billingAddress.street ||
+        billingAddress.postal_code ||
+        billingAddress.city ||
+        billingAddress.country ||
+        peppol.endpoint_id ||
+        peppol.scheme
+      );
+      if (!hasAnyMeaningfulField) {
+        console.log(
+          `[LEG_PAYMENT][BILLING_SNAPSHOT][SKIP] booking=${_bookingIntentMask(bookingId)} reason=normalized_billing_customer_empty`,
+        );
+      } else {
+        rec.billing_customer_snapshot = normalized;
+        rec.billingCustomerSnapshot = normalized;
+        if (
+          rec.booking &&
+          typeof rec.booking === "object" &&
+          !Array.isArray(rec.booking)
+        ) {
+          rec.booking.billing_customer_snapshot = normalized;
+          rec.booking.billingCustomerSnapshot = normalized;
+        }
+        const anyAddressSet = !!(
+          billingAddress.street ||
+          billingAddress.postal_code ||
+          billingAddress.city ||
+          billingAddress.country
+        );
+        const anyPeppolSet = !!(peppol.endpoint_id || peppol.scheme);
+        console.log(
+          `[LEG_PAYMENT][BILLING_SNAPSHOT][STAMP] booking=${_bookingIntentMask(bookingId)} legalNameSet=${normalized.legal_name ? "true" : "false"} vatSet=${normalized.vat_number ? "true" : "false"} regSet=${normalized.company_registration_number ? "true" : "false"} addressSet=${anyAddressSet ? "true" : "false"} peppolSet=${anyPeppolSet ? "true" : "false"}`,
+        );
+      }
+    }
+  } catch (billingSnapshotErr) {
+    const reason =
+      safeStr(billingSnapshotErr?.message || billingSnapshotErr, 140) ||
+      "exception";
+    console.log(
+      `[LEG_PAYMENT][BILLING_SNAPSHOT][ERROR] booking=${_bookingIntentMask(bookingId)} reason=${reason}`,
+    );
+  }
+}
+
+async function updateBookingOperationalLegPaymentAuthoritative(
+  bookingId,
+  legId,
+  payment,
+  env,
+  ctx,
+  tenantScope = null,
+) {
+  if (!tenantScope?.hasScope) {
+    return missingTenantScopeError();
+  }
+  const safeBookingId = safeStr(bookingId, 160);
+  const safeLegId = safeStr(legId, 200);
+  if (!safeBookingId) return { ok: false, error: "booking_id is required" };
+  if (!safeLegId) return { ok: false, error: "leg_id is required" };
+
+  const { key, rec } = await loadBookingRecord(env, safeBookingId);
+  if (!bookingMatchesRequiredTenantCompanyScope(rec, tenantScope)) {
+    return { ok: false, error: "forbidden" };
+  }
+
+  const operationalLegsBefore = _bookingOperationalLegsFromRecord(rec);
+  if (!operationalLegsBefore.length) {
+    const parentWasAlreadyPaid =
+      String(rec?.payment_status || rec?.paymentStatus || "").toLowerCase() === "paid";
+    const fallbackOut = await updateBookingPaymentAuthoritative(
+      safeBookingId,
+      payment,
+      env,
+      ctx,
+      tenantScope,
+    );
+    if (!fallbackOut?.ok) return fallbackOut;
+    const parentPaidNow =
+      String(fallbackOut?.payment_status || fallbackOut?.paymentStatus || "")
+        .toLowerCase() === "paid";
+    return {
+      ok: true,
+      booking_id: safeBookingId,
+      leg_id: safeLegId,
+      leg_payment_status: parentPaidNow ? "paid" : "unpaid",
+      parent_payment_status: parentPaidNow ? "paid" : "unpaid",
+      all_legs_paid: parentPaidNow,
+      lifecycle_ran: parentPaidNow && !parentWasAlreadyPaid,
+    };
+  }
+
+  _materializeOperationalLegIfMissingFromReadModel(rec, safeBookingId, safeLegId);
+
+  const targetLegBefore = _findOperationalLegEntryById(rec, safeLegId);
+  if (!targetLegBefore) {
+    return { ok: false, error: "operational_leg_not_found" };
+  }
+
+  const asText = (value) => String(value ?? "").trim();
+  const rawStatus = asText(payment?.payment_status || payment?.paymentStatus).toLowerCase();
+  const normalizedLegStatus =
+    rawStatus === "paid" ||
+    rawStatus === "confirmed" ||
+    rawStatus === "completed" ||
+    rawStatus === "success" ||
+    rawStatus === "settled"
+      ? "paid"
+      : rawStatus === "pending" || rawStatus === "authorized" || rawStatus === "open"
+        ? "pending"
+        : rawStatus === "failed" || rawStatus === "cancelled" || rawStatus === "canceled"
+          ? "failed"
+          : "paid";
+  const method = asText(payment?.payment_method || payment?.paymentMethod).toLowerCase();
+  const source =
+    asText(payment?.payment_source || payment?.paymentSource).toLowerCase() || "in_car";
+  const providerRaw = asText(payment?.payment_provider || payment?.paymentProvider).toLowerCase();
+  const paymentProvider =
+    providerRaw ||
+    (source === "mollie" || method === "mollie" ? "mollie" : "manual");
+  const paidAt = asText(payment?.paid_at || payment?.paidAt) || new Date().toISOString();
+  const currency =
+    asText(payment?.currency || rec?.booking?.currency || rec?.currency || "EUR").toUpperCase() ||
+    "EUR";
+  const amountRaw = payment?.amount ?? payment?.price ?? payment?.total;
+  const amountNum = Number(amountRaw);
+  const amount = Number.isFinite(amountNum) ? amountNum : null;
+  const paidByDriverId = asText(payment?.paid_by_driver_id || payment?.paidByDriverId);
+  const nowIso = new Date().toISOString();
+
+  const legWasAlreadyPaid = _isOperationalLegEntryPaid(targetLegBefore);
+  const parentWasAlreadyPaid =
+    String(rec?.payment_status || rec?.paymentStatus || "").toLowerCase() === "paid";
+
+  const legMatched = _mutateOperationalLegEntryInRecord(rec, safeLegId, (entry) => {
+    const next = {
+      ...entry,
+      payment_status: normalizedLegStatus,
+      paymentStatus: normalizedLegStatus,
+      payment_method: method || entry?.payment_method || entry?.paymentMethod || null,
+      paymentMethod: method || entry?.paymentMethod || entry?.payment_method || null,
+      payment_provider: paymentProvider,
+      paymentProvider: paymentProvider,
+      payment_source: source,
+      paymentSource: source,
+      paid_at: normalizedLegStatus === "paid" ? paidAt : entry?.paid_at || null,
+      paidAt: normalizedLegStatus === "paid" ? paidAt : entry?.paidAt || null,
+      updated_at: nowIso,
+      updatedAt: nowIso,
+    };
+    if (amount != null) {
+      next.payment_amount = amount;
+      next.paymentAmount = amount;
+    }
+    if (paidByDriverId) {
+      next.paid_by_driver_id = paidByDriverId;
+      next.paidByDriverId = paidByDriverId;
+    }
+    if (currency) next.currency = currency;
+    return next;
+  });
+  if (!legMatched) {
+    return { ok: false, error: "operational_leg_not_found" };
+  }
+
+  const payableLegs = _collectPayableOperationalLegsForPaymentAggregation(rec);
+  if (!payableLegs.length) {
+    return { ok: false, error: "operational_legs_not_found" };
+  }
+
+  const allLegsPaid = _allPayableOperationalLegsPaid(rec);
+  const isMultiLegPayable = payableLegs.length > 1;
+  let lifecycleRan = false;
+
+  console.log(
+    `[LEG_PAYMENT][UPDATE] booking=${_bookingIntentMask(safeBookingId)} leg=${_bookingIntentMask(safeLegId)} leg_status=${normalizedLegStatus} method=${method || "-"} amount=${amount != null ? amount : "-"} payable_legs=${payableLegs.length} multi_leg=${isMultiLegPayable ? "true" : "false"} all_legs_paid=${allLegsPaid ? "true" : "false"} leg_was_already_paid=${legWasAlreadyPaid ? "true" : "false"} parent_was_already_paid=${parentWasAlreadyPaid ? "true" : "false"}`,
+  );
+
+  if (allLegsPaid) {
+    const parentFields = _aggregateOperationalLegPaymentFieldsForParent(rec, payableLegs);
+    _applyParentAuthoritativePaymentFieldsFromLegAggregation(rec, parentFields);
+    rec.updatedAt = nowIso;
+
+    const invoiceContext = _invoiceLifecycleContextFromRecord(rec);
+    _applyPaymentInvoiceLifecycleToRecord(rec, {
+      paymentMode: "manual",
+      paymentProvider: "manual",
+      paymentStatus: "paid",
+      invoiceRequested:
+        invoiceContext.businessInvoiceIntent ? true : invoiceContext.invoiceRequested,
+      invoiceIntent: invoiceContext.businessInvoiceIntent
+        ? "business_invoice"
+        : invoiceContext.invoiceIntent,
+      invoiceState: invoiceContext.businessInvoiceIntent ? "ready_to_send" : "none",
+    });
+
+    if (!parentWasAlreadyPaid) {
+      _maybeBackStampBillingCustomerSnapshotOnAuthoritativePaidTransition(rec, safeBookingId);
+      const invoiceLifecycle = await _maybeGenerateBusinessInvoiceForPaidBooking({
+        env,
+        bookingId: safeBookingId,
+        rec,
+        source: "leg_payment_update",
+      });
+      if (invoiceLifecycle?.ok !== true && invoiceLifecycle?.skipped !== true) {
+        console.log(
+          `[INVOICE_LIFECYCLE][ERROR] bookingId=${safeStr(safeBookingId)} source=leg_payment_update reason=${safeStr(invoiceLifecycle?.reason || "unknown", 160) || "unknown"}`,
+        );
+      }
+    }
+
+    await env.BOOKING_KV.put(key, JSON.stringify(rec));
+
+    if (!parentWasAlreadyPaid) {
+      await runPaidBookingAfterLifecycle(
+        env,
+        {
+          tenant_id: safeStr(tenantScope?.tenant_id, 96),
+          company_id: safeStr(tenantScope?.company_id, 96),
+        },
+        safeBookingId,
+        {
+          source: "leg_payment_update",
+          effectiveScope: tenantScope,
+          rec,
+          background: false,
+        },
+      );
+      lifecycleRan = true;
+    }
+
+    await upsertCompanyBookingsListIndexBestEffort(
+      env,
+      safeBookingId,
+      rec,
+      normalizeFleetTenantScope(tenantScope),
+    );
+    await upsertDashboardBookingsKpiProjectionBestEffort(
+      env,
+      safeBookingId,
+      rec,
+      normalizeFleetTenantScope(tenantScope),
+    );
+    const kpiSyncSource =
+      method === "qr_code" || method === "qr"
+        ? "booking_leg_payment_update_qr"
+        : "booking_leg_payment_update";
+    await syncScopedTrackingTripKpiBestEffort({
+      env,
+      bookingId: safeBookingId,
+      rec,
+      tenantScope,
+      source: kpiSyncSource,
+    });
+    const complianceEvent = buildBookingPaymentUpdateComplianceEvent(rec, safeBookingId, payment);
+    if (complianceEvent) {
+      const emitTask = emitComplianceEventBestEffort(env, complianceEvent, {
+        timeoutMs: 1500,
+        logLabel: "leg_payment_update",
+      });
+      if (ctx && typeof ctx.waitUntil === "function") {
+        ctx.waitUntil(emitTask);
+      } else {
+        await emitTask;
+      }
+    }
+  } else {
+    rec.updatedAt = nowIso;
+    await env.BOOKING_KV.put(key, JSON.stringify(rec));
+    await upsertCompanyBookingsListIndexBestEffort(
+      env,
+      safeBookingId,
+      rec,
+      normalizeFleetTenantScope(tenantScope),
+    );
+  }
+
+  const parentPaymentStatus = String(
+    rec?.payment_status || rec?.paymentStatus || "unpaid",
+  ).toLowerCase();
+
+  return {
+    ok: true,
+    booking_id: safeBookingId,
+    leg_id: safeLegId,
+    leg_payment_status: normalizedLegStatus,
+    parent_payment_status: parentPaymentStatus || "unpaid",
+    all_legs_paid: allLegsPaid,
+    lifecycle_ran: lifecycleRan,
   };
 }
 
