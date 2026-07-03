@@ -3196,13 +3196,19 @@ async function ensureBillitOrderForPaidBusinessBooking(env, scope, bookingId, op
 }
 
 /* Patch B8e-B: sandbox-only, setting-gated lifecycle wrapper around the proven
- * B8c helper. It is called from payStatus AFTER a booking is finalized as paid.
+ * B8c helper. Invoked from runPaidBookingAfterLifecycle AFTER Document Core
+ * (payStatus, manual mark-paid, mollieWebhook paid branches).
  *
- * IMPORTANT: This is sandbox-only and setting-gated. It intentionally does NOT
- * run from mollieWebhook and must NOT send Peppol / call
- * /v1/orders/commands/send. It NEVER throws to its caller (payStatus must not
- * be blocked or failed by Billit), NEVER supports production, and NEVER returns
- * or logs tokens/secrets/raw Billit responses/customer/order lines.
+ * IMPORTANT: Sandbox-only and setting-gated. Must NOT send Peppol / call
+ * /v1/orders/commands/send. NEVER throws to its caller, NEVER supports
+ * production, and NEVER returns or logs tokens/secrets/raw Billit responses.
+ *
+ * B11-R parity (P1): multi-leg roundtrips iterate eligible operational legs and
+ * call ensureBillitOrderForPaidBusinessBooking once per leg with sourceLegId /
+ * sourceLegType so each issued per-leg INV can link its own billit_export.
+ * Single-leg / no-leg records keep the original one-call path (sourceLegId
+ * null). Idempotency is per document via billit_export.order_id + document-
+ * scoped Idempotent-Key inside ensureBillitSandboxOrderForIssuedInvoice.
  *
  * Default behavior is OFF: a false/missing company setting skips before any
  * Billit work. */
@@ -3216,6 +3222,44 @@ async function maybeRunBillitAutoCreateAfterPaidLifecycle(env, scope, bookingId,
       ? opts.effectiveScope
       : null;
   const maskedBooking = _bookingIntentMask(bookingId);
+
+  const billitLifecycleEnvelopeFromOrderResult = (orderResult) => {
+    const body =
+      orderResult && typeof orderResult.body === "object" ? orderResult.body : {};
+    const warnings = Array.isArray(body?.warnings) ? body.warnings : [];
+    if (orderResult?.ok !== true) {
+      return {
+        ok: false,
+        skipped: false,
+        reason: safeStr(body?.error, 80) || "billit_auto_create_failed",
+        document_id: safeStr(body?.document_id, 120) || null,
+        document_number: safeStr(body?.document_number, 120) || null,
+        billit_order_id: body?.billit_order_id ?? null,
+        billit_status: safeStr(body?.billit_status, 40) || null,
+        reused_existing_invoice: body?.reused_existing_invoice === true,
+        billit_already_created: body?.billit_already_created === true,
+        sent: false,
+        peppol_sent: false,
+        warnings,
+      };
+    }
+    const idempotentReplay =
+      body?.reused_existing_invoice === true || body?.billit_already_created === true;
+    return {
+      ok: true,
+      skipped: false,
+      reason: idempotentReplay ? "idempotent_replay" : "created",
+      document_id: safeStr(body?.document_id, 120) || null,
+      document_number: safeStr(body?.document_number, 120) || null,
+      billit_order_id: body?.billit_order_id ?? null,
+      billit_status: safeStr(body?.billit_status, 40) || null,
+      reused_existing_invoice: body?.reused_existing_invoice === true,
+      billit_already_created: body?.billit_already_created === true,
+      sent: false,
+      peppol_sent: false,
+      warnings,
+    };
+  };
 
   try {
     // Setting gate (read-only; missing/legacy profile => OFF).
@@ -3253,61 +3297,217 @@ async function maybeRunBillitAutoCreateAfterPaidLifecycle(env, scope, bookingId,
       }
     }
 
-    console.log(`[BILLIT_AUTO_CREATE_LIFECYCLE] started booking=${maskedBooking} source=${source}`);
-
     const scopeForBookingMatch =
       effectiveScope || { ...(scope || {}), hasScope: true };
-    const result = await ensureBillitOrderForPaidBusinessBooking(env, scope, bookingId, {
-      source: "paid_lifecycle_sandbox",
-      environment: "sandbox",
-      config,
-      confirmSandbox: true,
-      sourceLegId: null,
-      sourceLegType: null,
-      nowIso,
-      scopeForBookingMatch,
-    });
 
-    const body = result && typeof result.body === "object" ? result.body : {};
-    if (result?.ok !== true) {
+    // B11-R parity: detect multi-leg / roundtrip bookings (read-only leg walk).
+    let bookingRecForLegDetection = null;
+    if (rec) {
+      bookingRecForLegDetection = rec;
+    } else {
+      try {
+        bookingRecForLegDetection = await env.BOOKING_KV.get(
+          `booking:${bookingId}`,
+          { type: "json" },
+        );
+      } catch (_) {
+        bookingRecForLegDetection = null;
+      }
+    }
+    const operationalLegs = _collectOperationalLegsForDocumentCoreInvoiceLifecycle(
+      bookingRecForLegDetection,
+    );
+    const isMultiLegRecord = operationalLegs.length > 1;
+    const eligibleLegs = [];
+    let cancelledLegSkippedCount = 0;
+    let missingLegIdSkippedCount = 0;
+    for (const leg of operationalLegs) {
+      const legId = safeStr(leg?.leg_id ?? leg?.legId, 200);
+      if (!legId) {
+        missingLegIdSkippedCount += 1;
+        continue;
+      }
+      const legLifecycle = _normLifecycleStatus(
+        leg?.status ??
+          leg?.lifecycle_status ??
+          leg?.lifecycleStatus ??
+          "",
+      );
+      if (legLifecycle === "CANCELLED") {
+        cancelledLegSkippedCount += 1;
+        continue;
+      }
+      eligibleLegs.push(leg);
+    }
+
+    console.log(
+      `[BILLIT_AUTO_CREATE_LIFECYCLE][START] booking=${maskedBooking} source=${source} legs_total=${operationalLegs.length} legs_eligible=${eligibleLegs.length} multi_leg=${isMultiLegRecord ? "true" : "false"}`,
+    );
+
+    if (!isMultiLegRecord) {
+      // Preserve B8e-B single-leg / no-leg behavior verbatim.
+      const result = await ensureBillitOrderForPaidBusinessBooking(env, scope, bookingId, {
+        source: "paid_lifecycle_sandbox",
+        environment: "sandbox",
+        config,
+        confirmSandbox: true,
+        sourceLegId: null,
+        sourceLegType: null,
+        nowIso,
+        scopeForBookingMatch,
+      });
+      const envelope = billitLifecycleEnvelopeFromOrderResult(result);
+      if (envelope.ok !== true) {
+        console.log(
+          `[BILLIT_AUTO_CREATE_LIFECYCLE] failed booking=${maskedBooking} reason=${safeStr(envelope.reason, 80) || "unknown"}`,
+        );
+        return envelope;
+      }
       console.log(
-        `[BILLIT_AUTO_CREATE_LIFECYCLE] failed booking=${maskedBooking} reason=${safeStr(body?.error, 80) || "unknown"}`,
+        `[BILLIT_AUTO_CREATE_LIFECYCLE] ${envelope.reason === "idempotent_replay" ? "idempotent_replay" : "succeeded"} booking=${maskedBooking} order=${envelope.billit_order_id ?? "-"} status=${safeStr(envelope.billit_status, 40) || "-"}`,
+      );
+      return envelope;
+    }
+
+    // Multi-leg / roundtrip path (P1): one Billit create per eligible leg invoice.
+    if (eligibleLegs.length === 0) {
+      console.log(
+        `[BILLIT_AUTO_CREATE_LIFECYCLE][MULTI_LEG_SUMMARY] booking=${maskedBooking} source=${source} total=0 ok=0 fail=0 cancelled_legs_ignored=${cancelledLegSkippedCount} missing_leg_id_ignored=${missingLegIdSkippedCount}`,
       );
       return {
-        ok: false,
-        skipped: false,
-        reason: safeStr(body?.error, 80) || "billit_auto_create_failed",
-        document_id: safeStr(body?.document_id, 120) || null,
-        document_number: safeStr(body?.document_number, 120) || null,
-        billit_order_id: body?.billit_order_id ?? null,
-        billit_status: safeStr(body?.billit_status, 40) || null,
-        reused_existing_invoice: body?.reused_existing_invoice === true,
-        billit_already_created: body?.billit_already_created === true,
+        ok: true,
+        skipped: true,
+        reason: "no_eligible_legs_for_multi_leg_booking",
+        multi_leg: true,
+        legs: [],
+        legs_total: 0,
+        legs_ok: 0,
+        legs_error: 0,
+        cancelled_legs_ignored: cancelledLegSkippedCount,
+        missing_leg_id_ignored: missingLegIdSkippedCount,
         sent: false,
         peppol_sent: false,
-        warnings: Array.isArray(body?.warnings) ? body.warnings : [],
+        warnings: [],
       };
     }
 
-    const idempotentReplay =
-      body?.reused_existing_invoice === true || body?.billit_already_created === true;
+    const legResults = [];
+    let legOkCount = 0;
+    let legErrorCount = 0;
+    let firstSuccessEnvelope = null;
+    for (let idx = 0; idx < eligibleLegs.length; idx += 1) {
+      const leg = eligibleLegs[idx];
+      const legId = safeStr(leg?.leg_id ?? leg?.legId, 200);
+      const legType = safeStr(leg?.leg_type ?? leg?.legType, 24) || "";
+      const legMask = _bookingIntentMask(legId) || "-";
+      const legTypeToken = legType || "-";
+      const positionToken = `${idx + 1}/${eligibleLegs.length}`;
+      console.log(
+        `[BILLIT_AUTO_CREATE_LIFECYCLE][LEG_START] booking=${maskedBooking} leg=${legMask} leg_type=${legTypeToken} index=${positionToken} source=${source}`,
+      );
+      let orderResult = null;
+      try {
+        orderResult = await ensureBillitOrderForPaidBusinessBooking(env, scope, bookingId, {
+          source: "paid_lifecycle_sandbox",
+          environment: "sandbox",
+          config,
+          confirmSandbox: true,
+          sourceLegId: legId,
+          sourceLegType: legType || null,
+          nowIso,
+          scopeForBookingMatch,
+        });
+      } catch (legErr) {
+        legErrorCount += 1;
+        const legErrReason = safeStr(legErr?.message, 120) || "exception";
+        console.log(
+          `[BILLIT_AUTO_CREATE_LIFECYCLE][LEG_ERROR] booking=${maskedBooking} leg=${legMask} leg_type=${legTypeToken} error=${legErrReason}`,
+        );
+        legResults.push({
+          source_leg_id: legId,
+          source_leg_type: legType || null,
+          ok: false,
+          skipped: false,
+          reason: legErrReason,
+          document_id: null,
+          document_number: null,
+          billit_order_id: null,
+          billit_status: null,
+          reused_existing_invoice: false,
+          billit_already_created: false,
+        });
+        continue;
+      }
+
+      const envelope = billitLifecycleEnvelopeFromOrderResult(orderResult);
+      if (envelope.ok !== true) {
+        legErrorCount += 1;
+        console.log(
+          `[BILLIT_AUTO_CREATE_LIFECYCLE][LEG_ERROR] booking=${maskedBooking} leg=${legMask} leg_type=${legTypeToken} error=${safeStr(envelope.reason, 80) || "unknown"}`,
+        );
+        legResults.push({
+          source_leg_id: legId,
+          source_leg_type: legType || null,
+          ok: false,
+          skipped: false,
+          reason: safeStr(envelope.reason, 80) || "billit_auto_create_failed",
+          document_id: safeStr(envelope.document_id, 120) || null,
+          document_number: safeStr(envelope.document_number, 120) || null,
+          billit_order_id: envelope.billit_order_id ?? null,
+          billit_status: safeStr(envelope.billit_status, 40) || null,
+          reused_existing_invoice: envelope.reused_existing_invoice === true,
+          billit_already_created: envelope.billit_already_created === true,
+        });
+        continue;
+      }
+
+      legOkCount += 1;
+      if (!firstSuccessEnvelope) firstSuccessEnvelope = envelope;
+      const docIdMask = envelope.document_id ? envelope.document_id.slice(0, 8) : "-";
+      console.log(
+        `[BILLIT_AUTO_CREATE_LIFECYCLE][LEG_OK] booking=${maskedBooking} leg=${legMask} leg_type=${legTypeToken} reused=${envelope.reason === "idempotent_replay" ? "true" : "false"} document_id=${docIdMask} order=${envelope.billit_order_id ?? "-"}`,
+      );
+      legResults.push({
+        source_leg_id: legId,
+        source_leg_type: legType || null,
+        ok: true,
+        skipped: false,
+        reason: envelope.reason,
+        document_id: envelope.document_id,
+        document_number: envelope.document_number,
+        billit_order_id: envelope.billit_order_id ?? null,
+        billit_status: envelope.billit_status,
+        reused_existing_invoice: envelope.reused_existing_invoice === true,
+        billit_already_created: envelope.billit_already_created === true,
+      });
+    }
+
+    const overallOk = legErrorCount === 0;
     console.log(
-      `[BILLIT_AUTO_CREATE_LIFECYCLE] ${idempotentReplay ? "idempotent_replay" : "succeeded"} booking=${maskedBooking} order=${body?.billit_order_id ?? "-"} status=${safeStr(body?.billit_status, 40) || "-"}`,
+      `[BILLIT_AUTO_CREATE_LIFECYCLE][MULTI_LEG_SUMMARY] booking=${maskedBooking} source=${source} total=${eligibleLegs.length} ok=${legOkCount} fail=${legErrorCount} cancelled_legs_ignored=${cancelledLegSkippedCount} missing_leg_id_ignored=${missingLegIdSkippedCount}`,
     );
 
+    const topEnvelope = firstSuccessEnvelope || {};
     return {
-      ok: true,
+      ok: overallOk,
       skipped: false,
-      reason: idempotentReplay ? "idempotent_replay" : "created",
-      document_id: safeStr(body?.document_id, 120) || null,
-      document_number: safeStr(body?.document_number, 120) || null,
-      billit_order_id: body?.billit_order_id ?? null,
-      billit_status: safeStr(body?.billit_status, 40) || null,
-      reused_existing_invoice: body?.reused_existing_invoice === true,
-      billit_already_created: body?.billit_already_created === true,
+      reason: overallOk ? "multi_leg_processed" : "multi_leg_partial_error",
+      multi_leg: true,
+      legs: legResults,
+      legs_total: eligibleLegs.length,
+      legs_ok: legOkCount,
+      legs_error: legErrorCount,
+      cancelled_legs_ignored: cancelledLegSkippedCount,
+      missing_leg_id_ignored: missingLegIdSkippedCount,
+      document_id: safeStr(topEnvelope.document_id, 120) || null,
+      document_number: safeStr(topEnvelope.document_number, 120) || null,
+      billit_order_id: topEnvelope.billit_order_id ?? null,
+      billit_status: safeStr(topEnvelope.billit_status, 40) || null,
+      reused_existing_invoice: topEnvelope.reused_existing_invoice === true,
+      billit_already_created: topEnvelope.billit_already_created === true,
       sent: false,
       peppol_sent: false,
-      warnings: Array.isArray(body?.warnings) ? body.warnings : [],
+      warnings: Array.isArray(topEnvelope.warnings) ? topEnvelope.warnings : [],
     };
   } catch (err) {
     // Fail-closed: never throw to payStatus. Log a masked reason only.
@@ -3731,10 +3931,13 @@ async function maybeRunDocumentCoreInvoiceAfterPaidLifecycle(env, scope, booking
  * B11-T1b first-time paid branch and the G3-K resume paid branch) share the
  * exact same ordering, logging, and fail-closed semantics.
  *
- * Order is fixed: Document Core FIRST, Billit SECOND. The inner Billit wrapper
- * idempotently reuses the INV record the Document Core wrapper just ensured
- * (via findExistingInvoiceDocumentForBooking) so this ordering guarantees
- * per-leg replays never issue a duplicate invoice or a duplicate Billit order.
+ * Order is fixed: Document Core FIRST, Billit SECOND. Document Core issues
+ * per-leg INV records on multi-leg roundtrips (B11-R); the Billit wrapper
+ * mirrors that shape and calls ensureBillitOrderForPaidBusinessBooking once
+ * per eligible leg with sourceLegId / sourceLegType so each issued invoice can
+ * link its own billit_export. Single-leg bookings keep one Billit call with
+ * sourceLegId null. Idempotent replays reuse existing billit_export.order_id
+ * and document-scoped Idempotent-Keys — no duplicate invoices or orders.
  *
  * Background mode: when `options.background === true` AND the caller passed a
  * `ctx` with a `waitUntil` function, the whole chain is scheduled via
