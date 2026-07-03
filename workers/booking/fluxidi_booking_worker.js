@@ -172,6 +172,47 @@ import {
   resolveExplicitBookingRequestScope,
   bookingMatchesRequiredTenantCompanyScope,
 } from "./modules/auth_scope.js";
+import {
+  COMPANY_DRIVER_INDEX_KEY_PREFIX,
+  COMPANY_DRIVER_INDEX_KEY_MIDDLE,
+  COMPANY_DRIVER_INDEX_KEY_SUFFIX,
+  COMPANY_DRIVER_LINK_CHALLENGE_KEY_PREFIX,
+  COMPANY_DRIVER_LINK_CHALLENGE_KEY_SUFFIX,
+  COMPANY_DRIVER_LINK_ACTIVE_KEY_PREFIX,
+  COMPANY_DRIVER_LINK_ACTIVE_KEY_SUFFIX,
+  COMPANY_DRIVER_LINK_DEFAULT_TTL_SECONDS,
+  COMPANY_DRIVER_LINK_MAX_TTL_SECONDS,
+  PUBLIC_DRIVER_SESSION_KEY_PREFIX,
+  PUBLIC_DRIVER_SESSION_KEY_SUFFIX,
+  _normalizeDriverPairingTtl,
+  _normalizeDriverPairingCode,
+  _validateDriverPairingCode,
+  _normalizeDriverDisplayName,
+  _normalizeDriverEmployeeNumber,
+  _normalizeDriverLoginCode,
+  _maskPublicDriverLoginValue,
+  _driverCodeLast4,
+  _normalizeDriverPhone,
+  _normalizeDriverPhoneForAdminUpsert,
+  _normalizeDriverAvailabilityStatus,
+  _driverAvailabilityAllowsDispatch,
+  _normalizeDriverPairingSessionExpiry,
+  _allowDriverLoginPlaintextFallback,
+  _generateDriverLoginSalt,
+  _generateDriverPairingCode,
+  _driverLoginHashCandidates,
+  _driverRecordMatchesLoginCode,
+  _companyDriverIndexKey,
+  _companyDriverLinkChallengeKey,
+  _companyDriverLinkActiveKey,
+  _publicDriverSessionKey,
+  _companyDriverLinkChallengeId,
+  _hashDriverSessionToken,
+  _publicDriverLoginFail,
+  _publicDriverAuthFail,
+  _readPayloadDriverIdCandidates,
+  _assignedDriverSummaryFromDriverId,
+} from "./modules/driver_ops.js";
 
 /* -------- Google API helpers (hoisted at top to avoid any ReferenceError) -------- */
 
@@ -12250,24 +12291,21 @@ const COMPANY_ADMIN_PAIRING_ACTIVE_KEY_SUFFIX = ":v1";
 const COMPANY_ADMIN_PAIRING_DEFAULT_TTL_SECONDS = 10 * 60;
 const COMPANY_ADMIN_PAIRING_MAX_TTL_SECONDS = 30 * 60;
 const COMPANY_ADMIN_PAIRING_MAX_ATTEMPTS = 5;
-const COMPANY_DRIVER_INDEX_KEY_PREFIX = "tenant:";
-const COMPANY_DRIVER_INDEX_KEY_MIDDLE = ":company:";
-const COMPANY_DRIVER_INDEX_KEY_SUFFIX = ":drivers:index:v1";
+// BW-M7A: COMPANY_DRIVER_INDEX_KEY_PREFIX/MIDDLE/SUFFIX moved to
+// ./modules/driver_ops.js (imported above).
 const DRIVER_DOCUMENT_PRIVATE_R2_PREFIX = "driver-documents/v1";
 const DRIVER_DOCUMENT_KV_KEY_PREFIX = "driver_document_v1/tenant/";
 const DRIVER_DOCUMENT_INDEX_KV_KEY_PREFIX = "driver_document_index_v1/tenant/";
-const COMPANY_DRIVER_LINK_CHALLENGE_KEY_PREFIX = "company_driver_link:challenge:";
-const COMPANY_DRIVER_LINK_CHALLENGE_KEY_SUFFIX = ":v1";
-const COMPANY_DRIVER_LINK_ACTIVE_KEY_PREFIX = "company_driver_link:active:";
-const COMPANY_DRIVER_LINK_ACTIVE_KEY_SUFFIX = ":v1";
-const COMPANY_DRIVER_LINK_DEFAULT_TTL_SECONDS = 10 * 60;
-const COMPANY_DRIVER_LINK_MAX_TTL_SECONDS = 30 * 60;
+// BW-M7A: COMPANY_DRIVER_LINK_CHALLENGE_KEY_PREFIX/SUFFIX,
+// COMPANY_DRIVER_LINK_ACTIVE_KEY_PREFIX/SUFFIX,
+// COMPANY_DRIVER_LINK_DEFAULT_TTL_SECONDS, COMPANY_DRIVER_LINK_MAX_TTL_SECONDS
+// moved to ./modules/driver_ops.js (imported above).
 const COMPANY_DRIVER_LINK_DEFAULT_MAX_ATTEMPTS = 5;
 const COMPANY_SESSION_KEY_PREFIX = "company_admin:session:";
 const COMPANY_SESSION_KEY_SUFFIX = ":v1";
 const COMPANY_SESSION_TTL_SECONDS = 30 * 24 * 60 * 60;
-const PUBLIC_DRIVER_SESSION_KEY_PREFIX = "public_driver:session:";
-const PUBLIC_DRIVER_SESSION_KEY_SUFFIX = ":v1";
+// BW-M7A: PUBLIC_DRIVER_SESSION_KEY_PREFIX/SUFFIX moved to
+// ./modules/driver_ops.js (imported above).
 const PUBLIC_DRIVER_SESSION_TTL_SECONDS = 30 * 24 * 60 * 60;
 
 function normalizePublicCompanyCode(value) {
@@ -13511,34 +13549,10 @@ function _projectCompanyAdminSessionPayload(record, nowIso) {
   };
 }
 
-function _normalizeDriverPairingTtl(value) {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) return COMPANY_DRIVER_LINK_DEFAULT_TTL_SECONDS;
-  const rounded = Math.round(parsed);
-  if (rounded <= 0) return COMPANY_DRIVER_LINK_DEFAULT_TTL_SECONDS;
-  return Math.min(COMPANY_DRIVER_LINK_MAX_TTL_SECONDS, rounded);
-}
-
-function _normalizeDriverPairingCode(value) {
-  return sanitizeTenantString(value, 40).toUpperCase().replace(/\s+/g, "");
-}
-
-function _validateDriverPairingCode(value) {
-  const code = _normalizeDriverPairingCode(value);
-  if (!code) return { ok: false, code: "", error: "invalid_pairing_code" };
-  if (!/^[A-Z0-9]{4,12}$/.test(code)) {
-    return { ok: false, code, error: "invalid_pairing_code" };
-  }
-  return { ok: true, code };
-}
-
-function _normalizeDriverDisplayName(value) {
-  return sanitizeTenantString(value, 160);
-}
-
-function _normalizeDriverEmployeeNumber(value) {
-  return sanitizeTenantString(value, 80);
-}
+// BW-M7A: _normalizeDriverPairingTtl, _normalizeDriverPairingCode,
+// _validateDriverPairingCode, _normalizeDriverDisplayName,
+// _normalizeDriverEmployeeNumber moved to ./modules/driver_ops.js
+// (imported above).
 
 function _normalizeSafeRemoteMediaRef(value) {
   const text = sanitizeTenantString(value, 1200);
@@ -13654,27 +13668,9 @@ function _normalizeVehiclePhotoRefList(value) {
   return out;
 }
 
-function _normalizeDriverLoginCode(value) {
-  return sanitizeTenantString(value, 80).trim().toLowerCase();
-}
-
-function _maskPublicDriverLoginValue(value) {
-  const text = sanitizeTenantString(value, 80);
-  if (!text) return "empty";
-  if (text.length <= 2) return "*".repeat(text.length);
-  return `${text.slice(0, 1)}***${text.slice(-1)}(len=${text.length})`;
-}
-
-function _publicDriverLoginFail(reason = "verification_failed") {
-  console.log(`[PUBLIC_DRIVER_LOGIN][FAIL] reason=${sanitizeTenantString(reason, 48) || "verification_failed"}`);
-  return json({ ok: false, error: "verification_failed" }, 403);
-}
-
-function _generateDriverLoginSalt() {
-  return (crypto?.randomUUID ? crypto.randomUUID() : `dls_${Date.now()}_${Math.random()}`)
-    .replace(/[^a-zA-Z0-9_-]+/g, "")
-    .slice(0, 80);
-}
+// BW-M7A: _normalizeDriverLoginCode, _maskPublicDriverLoginValue,
+// _publicDriverLoginFail, _generateDriverLoginSalt moved to
+// ./modules/driver_ops.js (imported above).
 
 function _generateSecureDriverLoginCode(length = 24) {
   const normalizedLength = Math.max(20, Math.min(64, Math.round(Number(length) || 24)));
@@ -13693,98 +13689,11 @@ function _generateSecureDriverLoginCode(length = 24) {
   return `${fallback}${"X".repeat(normalizedLength - fallback.length)}`.slice(0, normalizedLength);
 }
 
-function _driverCodeLast4(value) {
-  const text = sanitizeTenantString(value, 120);
-  if (!text) return "";
-  return text.length <= 4 ? text : text.slice(-4);
-}
-
-function _allowDriverLoginPlaintextFallback(env) {
-  const raw = sanitizeTenantString(
-    env?.DRIVER_LOGIN_ALLOW_PLAINTEXT_FALLBACK,
-    40,
-  )
-    .trim()
-    .toLowerCase();
-  if (raw === "false" || raw === "0") return false;
-  return true;
-}
-
-function _driverLoginHashCandidates(normalizedCode, salt) {
-  const code = _normalizeDriverLoginCode(normalizedCode);
-  if (!code) return [];
-  const out = [code];
-  const safeSalt = sanitizeTenantString(salt, 120);
-  if (safeSalt) out.unshift(`${safeSalt}:${code}`);
-  return out;
-}
-
-async function _driverRecordMatchesLoginCode(driverRecord, enteredCode, env = null) {
-  const normalizedEntered = _normalizeDriverLoginCode(enteredCode);
-  if (!normalizedEntered) return { matched: false, mode: "none" };
-  const hash = sanitizeTenantString(
-    driverRecord?.driver_code_hash ??
-      driverRecord?.driverCodeHash,
-    200,
-  ).toLowerCase();
-  const salt = sanitizeTenantString(
-    driverRecord?.driver_code_salt ??
-      driverRecord?.driverCodeSalt,
-    120,
-  );
-  if (hash) {
-    const hashCandidates = _driverLoginHashCandidates(normalizedEntered, salt);
-    for (const candidate of hashCandidates) {
-      const computed = (await _sha256Hex(candidate)).toLowerCase();
-      if (_constantTimeEquals(hash, computed)) return { matched: true, mode: "hash" };
-    }
-  }
-  if (_allowDriverLoginPlaintextFallback(env)) {
-    const codeCandidates = [
-      { matched_field: "driver_code", value: driverRecord?.driver_code },
-      { matched_field: "driver_code", value: driverRecord?.driverCode },
-      { matched_field: "login_code", value: driverRecord?.login_code },
-      { matched_field: "login_code", value: driverRecord?.loginCode },
-      { matched_field: "employee_number", value: driverRecord?.employee_number },
-      { matched_field: "employee_number", value: driverRecord?.employeeNumber },
-    ]
-      .map((entry) => ({
-        matched_field: entry.matched_field,
-        value: _normalizeDriverLoginCode(entry.value),
-      }))
-      .filter((entry) => !!entry.value);
-    for (const candidate of codeCandidates) {
-      if (_constantTimeEquals(candidate.value, normalizedEntered)) {
-        return {
-          matched: true,
-          mode: "plaintext",
-          matched_field: candidate.matched_field,
-        };
-      }
-    }
-  }
-  return { matched: false, mode: "none" };
-}
-
-function _normalizeDriverPhone(value) {
-  return sanitizeTenantString(value, 40);
-}
-
-function _normalizeDriverPhoneForAdminUpsert(value) {
-  const raw = sanitizeTenantString(value, 80).trim();
-  if (!raw) return "";
-  if (!raw.startsWith("+")) return "";
-  const digits = raw.slice(1).replace(/[^0-9]/g, "");
-  return `+${digits}`;
-}
-
-function _normalizeDriverPairingSessionExpiry(nowMs = Date.now()) {
-  return new Date(nowMs + 12 * 60 * 60 * 1000).toISOString();
-}
-
-function _companyDriverIndexKey(scope) {
-  return `${COMPANY_DRIVER_INDEX_KEY_PREFIX}${scope.tenant_id}${COMPANY_DRIVER_INDEX_KEY_MIDDLE}${scope.company_id}${COMPANY_DRIVER_INDEX_KEY_SUFFIX}`;
-}
+// BW-M7A: _driverCodeLast4, _allowDriverLoginPlaintextFallback,
+// _driverLoginHashCandidates, _driverRecordMatchesLoginCode,
+// _normalizeDriverPhone, _normalizeDriverPhoneForAdminUpsert,
+// _normalizeDriverPairingSessionExpiry, _companyDriverIndexKey moved to
+// ./modules/driver_ops.js (imported above).
 
 function _safeDriverDocumentScopePart(value, maxLen = 96) {
   const text = sanitizeTenantString(value, maxLen);
@@ -14432,41 +14341,15 @@ async function handleAdminDriverDocumentsDelete(request, url, env, documentIdInp
   return json({ ok: true }, 200);
 }
 
-function _companyDriverLinkChallengeKey(challengeId) {
-  return `${COMPANY_DRIVER_LINK_CHALLENGE_KEY_PREFIX}${challengeId}${COMPANY_DRIVER_LINK_CHALLENGE_KEY_SUFFIX}`;
-}
-
-function _companyDriverLinkActiveKey(companyCode) {
-  return `${COMPANY_DRIVER_LINK_ACTIVE_KEY_PREFIX}${companyCode}${COMPANY_DRIVER_LINK_ACTIVE_KEY_SUFFIX}`;
-}
-
-function _publicDriverSessionKey(tokenHash) {
-  const safeHash = sanitizeTenantString(tokenHash, 200).toLowerCase();
-  if (!safeHash) return "";
-  return `${PUBLIC_DRIVER_SESSION_KEY_PREFIX}${safeHash}${PUBLIC_DRIVER_SESSION_KEY_SUFFIX}`;
-}
+// BW-M7A: _companyDriverLinkChallengeKey, _companyDriverLinkActiveKey,
+// _publicDriverSessionKey, _companyDriverLinkChallengeId,
+// _generateDriverPairingCode, _hashDriverSessionToken moved to
+// ./modules/driver_ops.js (imported above).
 
 function _companySessionKey(tokenHash) {
   const safeHash = sanitizeTenantString(tokenHash, 200).toLowerCase();
   if (!safeHash) return "";
   return `${COMPANY_SESSION_KEY_PREFIX}${safeHash}${COMPANY_SESSION_KEY_SUFFIX}`;
-}
-
-function _companyDriverLinkChallengeId() {
-  return (crypto?.randomUUID ? crypto.randomUUID() : `dcl_${Date.now()}_${Math.random()}`)
-    .replace(/[^a-zA-Z0-9_-]+/g, "");
-}
-
-function _generateDriverPairingCode(length = 6) {
-  const normalizedLength = Math.max(4, Math.min(12, Math.round(Number(length) || 6)));
-  const alphabet = "0123456789";
-  const values = new Uint8Array(normalizedLength);
-  crypto.getRandomValues(values);
-  let out = "";
-  for (const value of values) {
-    out += alphabet[value % alphabet.length];
-  }
-  return out;
 }
 
 function _generateOpaqueToken(byteLength = 32, prefix = "dst_") {
@@ -14475,13 +14358,6 @@ function _generateOpaqueToken(byteLength = 32, prefix = "dst_") {
   crypto.getRandomValues(bytes);
   const normalizedPrefix = sanitizeTenantString(prefix, 16).trim() || "dst_";
   return `${normalizedPrefix}${base64urlEncodeBytes(bytes)}`;
-}
-
-async function _hashDriverSessionToken(token) {
-  const normalized = sanitizeTenantString(token, 512);
-  if (!normalized) return "";
-  const hash = await _sha256Hex(normalized);
-  return sanitizeTenantString(hash, 200).toLowerCase();
 }
 
 async function _hashCompanySessionToken(token) {
@@ -14505,9 +14381,8 @@ function _extractBearerToken(request) {
   return token || "";
 }
 
-function _publicDriverAuthFail() {
-  return json({ ok: false, error: "unauthorized" }, 401);
-}
+// BW-M7A: _publicDriverAuthFail moved to ./modules/driver_ops.js
+// (imported above).
 
 function _companyAuthFail() {
   return json({ ok: false, error: "unauthorized" }, 401);
@@ -14634,13 +14509,8 @@ async function _loadPublicDriverSessionFromRequest(request, env) {
   };
 }
 
-function _readPayloadDriverIdCandidates(body) {
-  const candidates = [
-    safeStr(body?.driver_id ?? body?.driverId, 96),
-    safeStr(body?.assigned_driver_id ?? body?.assignedDriverId, 96),
-  ].filter(Boolean);
-  return [...new Set(candidates)];
-}
+// BW-M7A: _readPayloadDriverIdCandidates moved to ./modules/driver_ops.js
+// (imported above).
 
 function _readPayloadAssignedVehicleId(body) {
   return safeStr(body?.assigned_vehicle_id ?? body?.assignedVehicleId, 96);
@@ -14700,15 +14570,8 @@ async function _resolveBookExplicitAssignmentTrust({
   return { trusted: true, source: "company_session" };
 }
 
-function _assignedDriverSummaryFromDriverId(driverId) {
-  const normalized = safeStr(driverId, 96);
-  if (!normalized) return null;
-  return {
-    driver_id: normalized,
-    driverId: normalized,
-    id: normalized,
-  };
-}
+// BW-M7A: _assignedDriverSummaryFromDriverId moved to ./modules/driver_ops.js
+// (imported above).
 
 function _bookingAssignmentAliasFields(assignedDriver, assignedVehicleId) {
   const vehicleId = safeStr(assignedVehicleId, 128) || null;
@@ -15151,42 +15014,8 @@ async function _issuePublicDriverSessionToken(env, {
   };
 }
 
-function _normalizeDriverAvailabilityStatus(value, fallback = "available") {
-  const normalized = sanitizeTenantString(value, 40).toLowerCase();
-  switch (normalized) {
-    case "available":
-    case "ready":
-    case "online":
-      return "available";
-    case "paused":
-    case "pause":
-    case "unavailable":
-    case "not_available":
-      return "paused";
-    case "offline":
-      return "offline";
-    case "busy":
-    case "on_trip":
-    case "on_the_way":
-    case "waiting":
-      return "busy";
-    default: {
-      const safeFallback = sanitizeTenantString(fallback, 40).toLowerCase();
-      if (
-        safeFallback === "paused" ||
-        safeFallback === "offline" ||
-        safeFallback === "busy"
-      ) {
-        return safeFallback;
-      }
-      return "available";
-    }
-  }
-}
-
-function _driverAvailabilityAllowsDispatch(status) {
-  return _normalizeDriverAvailabilityStatus(status, "available") === "available";
-}
+// BW-M7A: _normalizeDriverAvailabilityStatus, _driverAvailabilityAllowsDispatch
+// moved to ./modules/driver_ops.js (imported above).
 
 async function _loadDriverIndexRecord(env, scope) {
   if (!env?.BOOKING_KV) return null;

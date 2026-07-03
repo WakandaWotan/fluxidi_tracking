@@ -65,3 +65,21 @@ export async function sha256Hex(input) {
     .map((b) => b.toString(16).padStart(2, "0"))
     .join("");
 }
+
+// BW-M7A: pure constant-time string comparison. Byte-identical logic to the
+// existing `_constantTimeEquals` in fluxidi_booking_worker.js (which stays
+// untouched to keep its 19 in-file callers stable); this shared export lets
+// modularized code (driver_ops.js, future modules) do timing-safe comparisons
+// without importing back into main.
+export function constantTimeEquals(a, b) {
+  const left = String(a || "");
+  const right = String(b || "");
+  const maxLen = Math.max(left.length, right.length);
+  let diff = left.length ^ right.length;
+  for (let i = 0; i < maxLen; i += 1) {
+    const ca = i < left.length ? left.charCodeAt(i) : 0;
+    const cb = i < right.length ? right.charCodeAt(i) : 0;
+    diff |= (ca ^ cb);
+  }
+  return diff === 0;
+}
