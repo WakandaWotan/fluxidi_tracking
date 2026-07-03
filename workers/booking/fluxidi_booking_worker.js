@@ -225,6 +225,12 @@ import {
   _readPayloadDriverIdCandidates,
   _assignedDriverSummaryFromDriverId,
 } from "./modules/driver_ops.js";
+import {
+  _pick,
+  _bookingIntentMask,
+  _normLifecycleStatus,
+  isTerminalLifecycleStatus,
+} from "./modules/booking_utils.js";
 
 /* -------- Google API helpers (hoisted at top to avoid any ReferenceError) -------- */
 
@@ -53396,12 +53402,8 @@ function _bookingIntentHash(parts = []) {
   return (hash >>> 0).toString(16).padStart(8, "0");
 }
 
-function _bookingIntentMask(value) {
-  const raw = safeStr(value, 128);
-  if (!raw) return "";
-  if (raw.length <= 6) return raw;
-  return `${raw.slice(0, 3)}...${raw.slice(-3)}`;
-}
+// BW-M8a: `_bookingIntentMask` moved to ./modules/booking_utils.js.
+// Imported at the top of this file; behavior byte-identical.
 
 function _bookingIntentScopeMask(scope = {}) {
   return {
@@ -63100,44 +63102,11 @@ async function trackingLast(url, env, requestedScope = null) {
   }
 }
 
-function _normLifecycleStatus(v) {
-  const raw = String(v || "").toUpperCase().trim();
-  if (raw === "COMPLETED" || raw === "COMPLETE" || raw === "DONE" || raw === "CLOSED") {
-    return "COMPLETED";
-  }
-  if (
-    raw === "CANCELLED" ||
-    raw === "CANCELED" ||
-    raw === "DELETED" ||
-    raw === "ARCHIVED" ||
-    raw === "DECLINED" ||
-    raw === "FAILED" ||
-    raw === "EXPIRED"
-  ) {
-    return "CANCELLED";
-  }
-  if (raw === "BOOKED" || raw === "CONFIRMED" || raw === "PENDING" || raw === "ACTIVE" || raw === "OPEN") {
-    return "PENDING";
-  }
-  return "PENDING";
-}
-
-const TERMINAL_BOOKING_LIFECYCLE_STATUSES = new Set([
-  "COMPLETED",
-  "CANCELLED",
-  "CANCELED",
-  "DELETED",
-  "DECLINED",
-  "FAILED",
-  "EXPIRED",
-]);
-
-function isTerminalLifecycleStatus(value) {
-  const raw = String(value || "").toUpperCase().trim();
-  if (TERMINAL_BOOKING_LIFECYCLE_STATUSES.has(raw)) return true;
-  const normalized = _normLifecycleStatus(raw);
-  return normalized === "COMPLETED" || normalized === "CANCELLED";
-}
+// BW-M8a: `_normLifecycleStatus`, `TERMINAL_BOOKING_LIFECYCLE_STATUSES`
+// (kept module-private inside booking_utils.js — sole consumer was
+// `isTerminalLifecycleStatus`), and `isTerminalLifecycleStatus` moved to
+// ./modules/booking_utils.js. Imported at the top of this file; behavior
+// byte-identical.
 
 function bookingPickupIsoFromRecord(rec) {
   return safeStr(
@@ -63821,14 +63790,8 @@ async function releaseAllocatorReservationForBooking({
   }
 }
 
-function _pick(obj, path, fb = null) {
-  let cur = obj;
-  for (const key of path) {
-    if (!cur || typeof cur !== "object" || !(key in cur)) return fb;
-    cur = cur[key];
-  }
-  return cur == null ? fb : cur;
-}
+// BW-M8a: `_pick` moved to ./modules/booking_utils.js.
+// Imported at the top of this file; behavior byte-identical.
 
 async function existingCalendarForBooking(env, bookingId) {
   try {
