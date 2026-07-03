@@ -231,6 +231,12 @@ import {
   _normLifecycleStatus,
   isTerminalLifecycleStatus,
 } from "./modules/booking_utils.js";
+import {
+  _bookingPaymentStatusTokens,
+  _bookingRecordIsPaidForCredit,
+  _bookingRecordPaymentStatusNormalized,
+  _resolveBookingRecordPaymentStatusForProjection,
+} from "./modules/booking_payment_classify.js";
 
 /* -------- Google API helpers (hoisted at top to avoid any ReferenceError) -------- */
 
@@ -46594,17 +46600,9 @@ async function _maybeGenerateBusinessInvoiceForPaidBooking({
  * CHIRON_* path constants + CHIRON_INTERNAL_PROXY_MODE moved to
  * ./modules/chiron_bridge.js (patch BW-M5). */
 
-function _bookingRecordPaymentStatusNormalized(rec) {
-  if (_bookingRecordIsPaidForCredit(rec)) return "paid";
-  return normalizeCompliancePaymentStatus(
-    rec?.payment_status ??
-      rec?.paymentStatus ??
-      rec?.booking?.payment_status ??
-      rec?.booking?.paymentStatus ??
-      rec?.payload?.payment_status ??
-      rec?.payload?.paymentStatus,
-  );
-}
+// BW-M8b: `_bookingRecordPaymentStatusNormalized` moved to
+// ./modules/booking_payment_classify.js. Imported at the top of this
+// file; behavior byte-identical.
 
 function _bookingRecordOnlinePaidProviderSet() {
   return new Set([
@@ -46638,73 +46636,9 @@ function _bookingRecordPaymentProviderToken(rec) {
   ).toLowerCase();
 }
 
-function _bookingPaymentStatusTokens(rec) {
-  if (!rec || typeof rec !== "object") return [];
-  const booking = rec?.booking && typeof rec.booking === "object" ? rec.booking : {};
-  const payload = rec?.payload && typeof rec.payload === "object" ? rec.payload : {};
-  return [
-    rec?.payment_status,
-    rec?.paymentStatus,
-    booking?.payment_status,
-    booking?.paymentStatus,
-    payload?.payment_status,
-    payload?.paymentStatus,
-    rec?.mollie?.status,
-    booking?.mollie?.status,
-    payload?.mollie?.status,
-  ]
-    .map((value) =>
-      safeStr(value, 64).toLowerCase().replaceAll("-", "_").replaceAll(" ", "_"),
-    )
-    .filter(Boolean);
-}
-
-function _bookingRecordIsPaidForCredit(rec) {
-  if (!rec || typeof rec !== "object") return false;
-  const booking = rec?.booking && typeof rec.booking === "object" ? rec.booking : {};
-  const payload = rec?.payload && typeof rec.payload === "object" ? rec.payload : {};
-  const paidLike = new Set([
-    "paid",
-    "confirmed",
-    "completed",
-    "success",
-    "settled",
-    "succeeded",
-    "captured",
-  ]);
-  const notPaidLike = new Set([
-    "pending",
-    "open",
-    "checkout_open",
-    "online_pending",
-    "created",
-    "waiting",
-    "failed",
-    "cancelled",
-    "canceled",
-    "expired",
-    "abandoned",
-    "not_confirmed",
-    "unknown",
-    "unpaid",
-    "not_paid",
-    "initializing",
-    "payment_checkout_failed",
-    "processing",
-    "authorized",
-  ]);
-  const statusTokens = _bookingPaymentStatusTokens(rec);
-  if (statusTokens.some((token) => paidLike.has(token))) return true;
-  if (statusTokens.some((token) => notPaidLike.has(token))) return false;
-  if (
-    rec?.__mollie_paid === true ||
-    booking?.__mollie_paid === true ||
-    payload?.__mollie_paid === true
-  ) {
-    return true;
-  }
-  return false;
-}
+// BW-M8b: `_bookingPaymentStatusTokens` and `_bookingRecordIsPaidForCredit`
+// moved to ./modules/booking_payment_classify.js. Imported at the top of
+// this file; behavior byte-identical.
 
 function _logBookingPaymentClassify(rec, fields = {}) {
   const bookingId = safeStr(rec?.booking_id ?? rec?.bookingId ?? rec?.booking?.booking_id, 160);
@@ -46724,19 +46658,9 @@ function _logBookingPaymentClassify(rec, fields = {}) {
   );
 }
 
-function _resolveBookingRecordPaymentStatusForProjection(rec) {
-  if (_bookingRecordIsPaidForCredit(rec)) return "paid";
-  const raw = safeStr(
-    rec?.payment_status ??
-      rec?.paymentStatus ??
-      rec?.booking?.payment_status ??
-      rec?.booking?.paymentStatus ??
-      rec?.payload?.payment_status ??
-      rec?.payload?.paymentStatus,
-    40,
-  );
-  return raw || null;
-}
+// BW-M8b: `_resolveBookingRecordPaymentStatusForProjection` moved to
+// ./modules/booking_payment_classify.js. Imported at the top of this
+// file; behavior byte-identical.
 
 function _isPendingCreditRefundStatusToken(value) {
   const token = safeStr(value, 64).toLowerCase().replaceAll("-", "_").replaceAll(" ", "_");
