@@ -173,6 +173,18 @@ import {
   bookingMatchesRequiredTenantCompanyScope,
 } from "./modules/auth_scope.js";
 import {
+  customerScopedBookingsIndexKey,
+  driverScopedBookingsIndexKey,
+  vehicleScopedBookingsIndexKey,
+  companyBookingsListIndexKey,
+  _isScopedBookingIndexLikeKey,
+  bookingAssignmentIndexItemFromRecord,
+  readScopedAssignmentBookingIndex,
+  readCustomerScopedBookingIndex,
+  readCompanyBookingsListIndex,
+  _companyBookingsListIndexStaleAfterMs,
+} from "./modules/booking_indexes.js";
+import {
   COMPANY_DRIVER_INDEX_KEY_PREFIX,
   COMPANY_DRIVER_INDEX_KEY_MIDDLE,
   COMPANY_DRIVER_INDEX_KEY_SUFFIX,
@@ -18851,58 +18863,8 @@ function _projectSafeCustomerBookingSummary(bookingId, rec, scope) {
   };
 }
 
-function customerScopedBookingsIndexKey(tenantId, companyId, customerId) {
-  const tenant = sanitizeTenantString(tenantId, 80);
-  const company = sanitizeTenantString(companyId, 80);
-  const customer = _normalizeCustomerIdentityId(customerId);
-  if (!tenant || !company || !customer) return "";
-  return `tenant:${tenant}:company:${company}:customer:${customer}:bookings:v1`;
-}
-
-async function readCustomerScopedBookingIndex(env, scope) {
-  if (!env?.BOOKING_KV) return { ok: false, key: "", index: null };
-  const tenantId = sanitizeTenantString(scope?.tenant_id ?? scope?.tenantId, 80);
-  const companyId = sanitizeTenantString(scope?.company_id ?? scope?.companyId, 80);
-  const customerId = _normalizeCustomerIdentityId(scope?.customer_id ?? scope?.customerId);
-  const key = customerScopedBookingsIndexKey(tenantId, companyId, customerId);
-  if (!key) return { ok: false, key: "", index: null };
-  const raw = await env.BOOKING_KV.get(key, { type: "json" });
-  const source = raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
-  const incomingItems = Array.isArray(source.items) ? source.items : [];
-  const items = incomingItems
-    .map((entry) => {
-      const item = entry && typeof entry === "object" ? entry : {};
-      const bookingId = safeStr(item.booking_id ?? item.bookingId, 160);
-      if (!bookingId) return null;
-      const sortTsRaw = Number(item.sort_ts ?? item.sortTs);
-      const sortTs = Number.isFinite(sortTsRaw) ? Math.max(0, Math.trunc(sortTsRaw)) : 0;
-      return {
-        booking_id: bookingId,
-        sort_ts: sortTs,
-        created_at: safeStr(item.created_at ?? item.createdAt, 80),
-        updated_at: safeStr(item.updated_at ?? item.updatedAt, 80),
-        pickup_iso: safeStr(item.pickup_iso ?? item.pickupIso, 80),
-        public_booking_reference: safeStr(
-          item.public_booking_reference ?? item.publicBookingReference,
-          120,
-        ),
-        planning_reference: safeStr(item.planning_reference ?? item.planningReference, 120),
-      };
-    })
-    .filter((entry) => !!entry);
-  return {
-    ok: true,
-    key,
-    index: {
-      version: 1,
-      tenant_id: tenantId,
-      company_id: companyId,
-      customer_id: customerId,
-      updated_at: safeStr(source.updated_at ?? source.updatedAt, 80),
-      items,
-    },
-  };
-}
+// BW-M7B: customerScopedBookingsIndexKey, readCustomerScopedBookingIndex
+// moved to ./modules/booking_indexes.js (imported above).
 
 async function upsertCustomerScopedBookingIndexForBooking(env, bookingId, rec) {
   if (!env?.BOOKING_KV) return { ok: false, reason: "missing_kv" };
@@ -18999,92 +18961,9 @@ async function upsertCustomerScopedBookingIndexForBooking(env, bookingId, rec) {
   return { ok: true, key, count: capped.length };
 }
 
-function driverScopedBookingsIndexKey(scope, driverId) {
-  const tenant = sanitizeTenantString(scope?.tenant_id ?? scope?.tenantId, 80);
-  const company = sanitizeTenantString(scope?.company_id ?? scope?.companyId, 80);
-  const driver = sanitizeTenantString(driverId, 96);
-  if (!tenant || !company || !driver) return "";
-  return `tenant:${tenant}:company:${company}:driver:${driver}:bookings:v1`;
-}
-
-function vehicleScopedBookingsIndexKey(scope, vehicleId) {
-  const tenant = sanitizeTenantString(scope?.tenant_id ?? scope?.tenantId, 80);
-  const company = sanitizeTenantString(scope?.company_id ?? scope?.companyId, 80);
-  const vehicle = sanitizeTenantString(vehicleId, 128);
-  if (!tenant || !company || !vehicle) return "";
-  return `tenant:${tenant}:company:${company}:vehicle:${vehicle}:bookings:v1`;
-}
-
-function bookingAssignmentIndexItemFromRecord(bookingId, rec) {
-  const safeBookingId = safeStr(bookingId, 160);
-  if (!safeBookingId || !rec || typeof rec !== "object") return null;
-  const createdAt = safeStr(
-    rec?.created_at ?? rec?.createdAt ?? rec?.booking?.created_at ?? rec?.booking?.createdAt,
-    80,
-  );
-  const updatedAt = safeStr(
-    rec?.updated_at ?? rec?.updatedAt ?? rec?.booking?.updated_at ?? rec?.booking?.updatedAt,
-    80,
-  ) || new Date().toISOString();
-  const pickupIso = safeStr(
-    rec?.booking?.pickup_iso ??
-      rec?.booking?.pickupStartIso ??
-      rec?.quote?.pickup_iso ??
-      rec?.pickup_iso,
-    80,
-  );
-  const sortTs = Math.max(
-    _toMsOrZero(pickupIso),
-    _toMsOrZero(updatedAt),
-    _toMsOrZero(createdAt),
-    Date.now(),
-  );
-  return {
-    booking_id: safeBookingId,
-    sort_ts: sortTs,
-    pickup_iso: pickupIso,
-    updated_at: updatedAt,
-  };
-}
-
-async function readScopedAssignmentBookingIndex(env, key) {
-  if (!env?.BOOKING_KV || !safeStr(key, 260)) {
-    return { ok: false, key: safeStr(key, 260), index: null, exists: false, valid: false };
-  }
-  try {
-    const raw = await env.BOOKING_KV.get(key, { type: "json" });
-    const rawObject = raw && typeof raw === "object" && !Array.isArray(raw) ? raw : null;
-    const source = rawObject || {};
-    const incomingItems = Array.isArray(source.items) ? source.items : [];
-    const items = incomingItems
-      .map((entry) => {
-        const item = entry && typeof entry === "object" ? entry : {};
-        const bookingId = safeStr(item?.booking_id ?? item?.bookingId, 160);
-        if (!bookingId) return null;
-        const sortTsRaw = Number(item?.sort_ts ?? item?.sortTs);
-        return {
-          booking_id: bookingId,
-          sort_ts: Number.isFinite(sortTsRaw) ? Math.max(0, Math.trunc(sortTsRaw)) : 0,
-          pickup_iso: safeStr(item?.pickup_iso ?? item?.pickupIso, 80),
-          updated_at: safeStr(item?.updated_at ?? item?.updatedAt, 80),
-        };
-      })
-      .filter((entry) => !!entry);
-    return {
-      ok: true,
-      key,
-      exists: !!rawObject,
-      valid: !rawObject || Array.isArray(rawObject?.items),
-      index: {
-        version: 1,
-        updated_at: safeStr(source?.updated_at ?? source?.updatedAt, 80),
-        items,
-      },
-    };
-  } catch (_) {
-    return { ok: false, key, index: null, exists: false, valid: false };
-  }
-}
+// BW-M7B: driverScopedBookingsIndexKey, vehicleScopedBookingsIndexKey,
+// bookingAssignmentIndexItemFromRecord, readScopedAssignmentBookingIndex
+// moved to ./modules/booking_indexes.js (imported above).
 
 async function saveScopedAssignmentBookingIndex(env, key, indexObj) {
   if (!env?.BOOKING_KV || !safeStr(key, 260)) return { ok: false, key };
@@ -19246,12 +19125,8 @@ async function removeDriverVehicleBookingIndexesBestEffort(env, bookingId, recOr
 
 const COMPANY_BOOKINGS_LIST_INDEX_MAX_ITEMS = 2000;
 
-function companyBookingsListIndexKey(scope) {
-  const tenant = sanitizeTenantString(scope?.tenant_id ?? scope?.tenantId, 80);
-  const company = sanitizeTenantString(scope?.company_id ?? scope?.companyId, 80);
-  if (!tenant || !company) return "";
-  return `tenant:${tenant}:company:${company}:bookings:list:v1`;
-}
+// BW-M7B: companyBookingsListIndexKey moved to ./modules/booking_indexes.js
+// (imported above).
 
 function bookingListIndexItemFromRecord(bookingId, rec) {
   const safeBookingId = safeStr(bookingId, 160);
@@ -19344,49 +19219,8 @@ function bookingListIndexItemFromRecord(bookingId, rec) {
   };
 }
 
-async function readCompanyBookingsListIndex(env, scope) {
-  const key = companyBookingsListIndexKey(scope);
-  if (!key || !env?.BOOKING_KV) return { ok: false, key, index: null, exists: false, valid: false };
-  try {
-    const raw = await env.BOOKING_KV.get(key, { type: "json" });
-    const rawObject = raw && typeof raw === "object" && !Array.isArray(raw) ? raw : null;
-    const source = rawObject || {};
-    const rawItems = Array.isArray(source?.items) ? source.items : [];
-    const items = rawItems
-      .map((entry) => (entry && typeof entry === "object" ? entry : null))
-      .filter((entry) => !!safeStr(entry?.booking_id ?? entry?.bookingId, 160))
-      .map((entry) => ({
-        booking_id: safeStr(entry?.booking_id ?? entry?.bookingId, 160),
-        sort_ts: Number.isFinite(Number(entry?.sort_ts ?? entry?.sortTs))
-          ? Math.max(0, Math.trunc(Number(entry?.sort_ts ?? entry?.sortTs)))
-          : 0,
-        pickup_iso: safeStr(entry?.pickup_iso ?? entry?.pickupIso, 80),
-        updated_at: safeStr(entry?.updated_at ?? entry?.updatedAt, 80),
-        lifecycle: safeStr(entry?.lifecycle, 40),
-        status: safeStr(entry?.status, 40),
-        public_booking_reference: safeStr(
-          entry?.public_booking_reference ?? entry?.publicBookingReference,
-          120,
-        ),
-        planning_reference: safeStr(entry?.planning_reference ?? entry?.planningReference, 120),
-        assigned_driver_id: safeStr(entry?.assigned_driver_id ?? entry?.assignedDriverId, 96),
-        assigned_vehicle_id: safeStr(entry?.assigned_vehicle_id ?? entry?.assignedVehicleId, 128),
-      }));
-    return {
-      ok: true,
-      key,
-      exists: !!rawObject,
-      valid: !rawObject || Array.isArray(rawObject?.items),
-      index: {
-        version: 1,
-        updated_at: safeStr(source?.updated_at ?? source?.updatedAt, 80),
-        items,
-      },
-    };
-  } catch (_) {
-    return { ok: false, key, index: null, exists: false, valid: false };
-  }
-}
+// BW-M7B: readCompanyBookingsListIndex moved to ./modules/booking_indexes.js
+// (imported above).
 
 async function saveCompanyBookingsListIndex(env, scope, indexObj) {
   const key = companyBookingsListIndexKey(scope);
@@ -19544,16 +19378,8 @@ async function rebuildCompanyBookingsListIndexForScope(env, scope, { dryRun = fa
   };
 }
 
-function _companyBookingsListIndexStaleAfterMs(env, options = {}) {
-  const raw = Number(
-    options?.staleAfterMs ??
-      env?.COMPANY_BOOKINGS_LIST_INDEX_STALE_AFTER_MS ??
-      0,
-  );
-  if (!Number.isFinite(raw)) return 0;
-  const normalized = Math.trunc(raw);
-  return normalized > 0 ? normalized : 0;
-}
+// BW-M7B: _companyBookingsListIndexStaleAfterMs moved to
+// ./modules/booking_indexes.js (imported above).
 
 async function hydrateCustomerBookingsFromScopedIndex(
   env,
@@ -27086,9 +26912,8 @@ function _bookingTestResetScopedPrefix(scope, suffix) {
   return `tenant:${normalized.tenant_id}:company:${normalized.company_id}:${suffix}`;
 }
 
-function _isScopedBookingIndexLikeKey(key) {
-  return /:bookings:v1$/.test(String(key || ""));
-}
+// BW-M7B: _isScopedBookingIndexLikeKey moved to ./modules/booking_indexes.js
+// (imported above).
 
 function _bookingTestResetKeyPreview(key, maxLen = 120) {
   const text = String(key || "");
