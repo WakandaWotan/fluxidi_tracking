@@ -77597,6 +77597,31 @@ function buildBillitPayloadPreviewFromProviderNeutralDocument(docPreview, scope)
   };
 }
 
+/* P2: Snap near-statutory BE VAT percentages to Billit-accepted rates when the
+ * invoice context is Belgian. Narrow tolerance bands only; never coerces large
+ * invalid rates. Read-only export safeguard for immutable docs with split drift. */
+function _normalizeBeStatutoryVatPercentageForBillit(vatPercent, beContext = {}) {
+  const raw = Number(vatPercent);
+  if (!Number.isFinite(raw)) return vatPercent;
+  const countryCode = safeStr(beContext.countryCode, 8).toUpperCase();
+  const sellerCountryCode = safeStr(beContext.sellerCountryCode, 8).toUpperCase();
+  const customerVat = safeStr(beContext.customerVat, 64).toUpperCase();
+  const isBe =
+    countryCode === "BE" ||
+    sellerCountryCode === "BE" ||
+    customerVat.startsWith("BE");
+  if (!isBe) return vatPercent;
+  const bands = [
+    { target: 6, min: 5.99, max: 6.01 },
+    { target: 12, min: 11.99, max: 12.01 },
+    { target: 21, min: 20.99, max: 21.01 },
+  ];
+  for (const band of bands) {
+    if (raw >= band.min && raw <= band.max) return band.target;
+  }
+  return vatPercent;
+}
+
 /* Pure, dry-run mapper that projects the provider-neutral Billit payload
  * preview (output of buildBillitPayloadPreviewFromProviderNeutralDocument) into
  * a sanitized Billit Order *candidate* shape (field-name hints only).
@@ -77714,6 +77739,14 @@ function buildBillitOrderCandidatePreview(providerNeutralPreview, options = {}) 
             ? vatPercentRaw
             : null;
       if (unitPrice === null || vatPercent === null) lineVatIncomplete = true;
+      const beVatContext = {
+        countryCode:
+          safeStr(structuredAddr?.country, 8).toUpperCase() ||
+          safeStr(customer.country_code, 8).toUpperCase() ||
+          null,
+        customerVat: counterPartyVat,
+        sellerCountryCode: safeStr(preview.seller?.country_code, 8).toUpperCase() || null,
+      };
       orderLines.push({
         Description: safeStr(li.description, 240) || null,
         Quantity:
@@ -77723,7 +77756,7 @@ function buildBillitOrderCandidatePreview(providerNeutralPreview, options = {}) 
               ? quantityRaw
               : null,
         UnitPriceExcl: unitPrice,
-        VATPercentage: vatPercent,
+        VATPercentage: _normalizeBeStatutoryVatPercentageForBillit(vatPercent, beVatContext),
       });
     }
     if (orderLines.length === 0) lineVatIncomplete = true;
@@ -77930,7 +77963,12 @@ function buildBillitOfficialOrderRequestPreview(providerNeutralPreview, options 
     if (!li || typeof li !== "object" || Array.isArray(li)) continue;
     const quantity = _numOrNull(li.quantity);
     const unitPriceExcl = _numOrNull(li.unit_price_ex_vat);
-    const vatPercentage = _numOrNull(li.vat_rate_percent);
+    const vatPercentageRaw = _numOrNull(li.vat_rate_percent);
+    const vatPercentage = _normalizeBeStatutoryVatPercentageForBillit(vatPercentageRaw, {
+      countryCode,
+      customerVat,
+      sellerCountryCode: safeStr(preview.seller?.country_code, 8).toUpperCase() || null,
+    });
     if (unitPriceExcl === null || vatPercentage === null) {
       lineFieldsIncomplete = true;
     }
@@ -78439,6 +78477,51 @@ function _normalizeCompanyCreatedByRole(rawRole) {
  * is reliable. Used by deriveServerSide{Invoice,Credit}Context to also honour
  * client-supplied rates so a request that carries the rate doesn't lose it.
  */
+/* P2: Collect explicit booking/pricing VAT rate candidates (percent or 0..1
+ * fraction). Per-leg invoice/credit derivation prefers leg-local rate first,
+ * then inherits booking/pricing/quote rates BEFORE any arithmetic fallback from
+ * rounded split amounts (which can drift to e.g. 6.01 for BE 6% taxi). */
+function _collectBookingPricingExplicitVatRateCandidates(
+  rec,
+  { legEntry = null, sourceKind = "booking", pricingProfile = null } = {},
+) {
+  const legFirst =
+    sourceKind === "leg" && legEntry && typeof legEntry === "object"
+      ? [
+          legEntry?.vat_rate_percent,
+          legEntry?.vatRatePercent,
+          legEntry?.vat_rate,
+          legEntry?.vatRate,
+        ]
+      : [];
+  const bookingLevel = [
+    rec?.vat_rate_percent,
+    rec?.vatRatePercent,
+    rec?.booking?.vat_rate_percent,
+    rec?.booking?.vatRatePercent,
+    rec?.payload?.vat_rate_percent,
+    rec?.payload?.vatRatePercent,
+    rec?.vat_rate,
+    rec?.vatRate,
+    rec?.booking?.vat_rate,
+    rec?.booking?.vatRate,
+    rec?.payload?.vat_rate,
+    rec?.payload?.vatRate,
+    pricingProfile?.vat_rate_percent,
+    pricingProfile?.vatRatePercent,
+    pricingProfile?.vat_rate,
+    pricingProfile?.vatRate,
+    _pick(rec, ["quote", "vat_rate_percent"], null),
+    _pick(rec, ["quote", "vatRatePercent"], null),
+    _pick(rec, ["quote", "vat_rate"], null),
+    _pick(rec, ["quote", "vatRate"], null),
+    _pick(rec, ["quote", "pricing", "vat_rate_percent"], null),
+    _pick(rec, ["payload", "quote", "vat_rate_percent"], null),
+    _pick(rec, ["booking", "quote", "vat_rate_percent"], null),
+  ];
+  return sourceKind === "leg" ? [...legFirst, ...bookingLevel] : bookingLevel;
+}
+
 function _resolveBestVatRatePercent(candidates, subtotalExVat, vatAmount) {
   const _normalize = (value) => {
     if (value === null || value === undefined || value === "") return null;
@@ -80534,27 +80617,11 @@ function deriveServerSideCreditContext(rec, options = {}) {
           _pick(rec, ["payload", "quote", "total_price_vat"], null),
           _pick(rec, ["booking", "quote", "total_price_vat"], null),
         ];
-  const vatRateCandidates =
-    sourceKind === "leg"
-      ? [legEntry?.vat_rate_percent, legEntry?.vatRatePercent, legEntry?.vat_rate, legEntry?.vatRate]
-      : [
-          rec?.vat_rate_percent,
-          rec?.vatRatePercent,
-          rec?.booking?.vat_rate_percent,
-          rec?.booking?.vatRatePercent,
-          rec?.payload?.vat_rate_percent,
-          rec?.payload?.vatRatePercent,
-          rec?.vat_rate,
-          rec?.vatRate,
-          rec?.booking?.vat_rate,
-          rec?.booking?.vatRate,
-          rec?.payload?.vat_rate,
-          rec?.payload?.vatRate,
-          _pick(rec, ["quote", "vat_rate_percent"], null),
-          _pick(rec, ["quote", "vatRatePercent"], null),
-          _pick(rec, ["quote", "vat_rate"], null),
-          _pick(rec, ["quote", "vatRate"], null),
-        ];
+  const vatRateCandidates = _collectBookingPricingExplicitVatRateCandidates(rec, {
+    legEntry,
+    sourceKind,
+    pricingProfile,
+  });
   const subtotalExVat = _firstFiniteNonNegative(subtotalExVatCandidates);
   const vatAmount = _firstFiniteNonNegative(vatAmountCandidates);
   let vatRatePercent = _firstFiniteNonNegative(vatRateCandidates);
@@ -80570,6 +80637,11 @@ function deriveServerSideCreditContext(rec, options = {}) {
   if (vatRatePercent === null) {
     vatRatePercent = _resolveBestVatRatePercent(
       [
+        ..._collectBookingPricingExplicitVatRateCandidates(rec, {
+          legEntry,
+          sourceKind,
+          pricingProfile,
+        }),
         options?.expected_totals?.vat_rate_percent,
         options?.expected_totals?.vatRatePercent,
         options?.expected_totals?.tax_rate_percent,
@@ -81275,33 +81347,11 @@ function deriveServerSideInvoiceContext(rec, options = {}) {
           _pick(rec, ["payload", "quote", "total_price_vat"], null),
           _pick(rec, ["booking", "quote", "total_price_vat"], null),
         ];
-  const vatRateCandidates =
-    sourceKind === "leg"
-      ? [
-          legEntry?.vat_rate_percent,
-          legEntry?.vatRatePercent,
-          legEntry?.vat_rate,
-          legEntry?.vatRate,
-        ]
-      : [
-          rec?.vat_rate_percent,
-          rec?.vatRatePercent,
-          rec?.booking?.vat_rate_percent,
-          rec?.booking?.vatRatePercent,
-          rec?.payload?.vat_rate_percent,
-          rec?.payload?.vatRatePercent,
-          rec?.vat_rate,
-          rec?.vatRate,
-          rec?.booking?.vat_rate,
-          rec?.booking?.vatRate,
-          rec?.payload?.vat_rate,
-          rec?.payload?.vatRate,
-          _pick(rec, ["quote", "vat_rate_percent"], null),
-          _pick(rec, ["quote", "vatRatePercent"], null),
-          _pick(rec, ["quote", "vat_rate"], null),
-          _pick(rec, ["quote", "vatRate"], null),
-        ];
-
+  const vatRateCandidates = _collectBookingPricingExplicitVatRateCandidates(rec, {
+    legEntry,
+    sourceKind,
+    pricingProfile,
+  });
   const subtotalExVat = _firstFiniteNonNegative(subtotalExVatCandidates);
   const vatAmount = _firstFiniteNonNegative(vatAmountCandidates);
   let vatRatePercent = _firstFiniteNonNegative(vatRateCandidates);
@@ -81314,6 +81364,11 @@ function deriveServerSideInvoiceContext(rec, options = {}) {
   if (vatRatePercent === null) {
     vatRatePercent = _resolveBestVatRatePercent(
       [
+        ..._collectBookingPricingExplicitVatRateCandidates(rec, {
+          legEntry,
+          sourceKind,
+          pricingProfile,
+        }),
         options?.expected_totals?.vat_rate_percent,
         options?.expected_totals?.vatRatePercent,
         options?.expected_totals?.tax_rate_percent,
