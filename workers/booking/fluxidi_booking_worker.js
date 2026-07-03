@@ -9,6 +9,8 @@ import {
   sanitizeTenantString,
   getBaseUrl,
   boolish,
+  bookingReferenceScopePart,
+  documentReferenceTypePart,
 } from "./modules/parsing_utils.js";
 import {
   base64urlEncodeBytes,
@@ -16,6 +18,7 @@ import {
   jsonBase64urlEncode,
   jsonBase64urlDecode,
   importHmacKey,
+  sha256Hex,
 } from "./modules/crypto_utils.js";
 import { corsHeaders, json, html } from "./modules/http_response.js";
 import { buildBuildTagResponse, listKvKeyNames } from "./modules/diagnostics.js";
@@ -79,6 +82,41 @@ import {
   CHIRON_INTERNAL_PROXY_MODE,
   _proxyChironConfigStatusToComplianceWorker,
 } from "./modules/chiron_bridge.js";
+import {
+  DOCUMENT_TYPE_CREDIT_NOTE,
+  DOCUMENT_TYPE_REFUND_PROOF,
+  DOCUMENT_TYPE_INVOICE,
+  DOCUMENT_PREFIX_CREDIT_NOTE,
+  DOCUMENT_PREFIX_REFUND_PROOF,
+  DOCUMENT_PREFIX_INVOICE,
+  DOCUMENT_SEQUENCE_TYPE_CREDIT_NOTE,
+  DOCUMENT_SEQUENCE_TYPE_REFUND_PROOF,
+  DOCUMENT_SEQUENCE_TYPE_INVOICE,
+  documentRegistryScopeParts,
+  documentRegistrySegment,
+  documentRegistryTypePart,
+  buildDocumentRegistryKey,
+  buildDocumentNumberIndexKey,
+  buildDocumentsByBookingKey,
+  buildDocumentsByLegKey,
+  buildDocumentsByRefundKey,
+  buildDocumentIdempotencyKey,
+  buildDocumentReferenceIndexKey,
+  findDocumentByIdempotency,
+  loadIssuedDocumentRegistryRecordById,
+  buildCreditNoteReplaySafeFields,
+  buildRefundProofReplaySafeFields,
+  buildInvoiceReplaySafeFields,
+  buildIssuedDocumentPublicMetadata,
+  _normalizeCanonicalBookingIdForMatch,
+  buildDocumentsByBookingPrefix,
+  listIssuedDocumentsForBooking,
+  listIssuedDocumentRecordsForBooking,
+  getDocumentSourceInvoiceReference,
+  canonicalizeDocumentSnapshot,
+  stableDocumentJson,
+  hashDocumentSnapshot,
+} from "./modules/document_core.js";
 import {
   MOLLIE_CONNECT_OAUTH_NONCE_TTL_SECONDS,
   MOLLIE_CONNECT_OAUTH_STATE_PURPOSE,
@@ -26306,13 +26344,8 @@ function regionInterestInputTooLong(rawBody = {}) {
   return false;
 }
 
-async function sha256Hex(input) {
-  const bytes = new TextEncoder().encode(String(input || ""));
-  const digest = await crypto.subtle.digest("SHA-256", bytes);
-  return Array.from(new Uint8Array(digest))
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
-}
+// BW-M6: `sha256Hex` moved to ./modules/crypto_utils.js. Imported at the top
+// of this file — no behavior change, just a smaller top-level surface here.
 
 async function countRegionInterestContacts(env, { country, postcode }) {
   if (!env?.BOOKING_KV) return 0;
@@ -78785,12 +78818,8 @@ function documentReferenceYearFromPickupIso(pickupIso) {
   return yyyy;
 }
 
-function bookingReferenceScopePart(value, fallback) {
-  const raw = safeStr(value, 120).toLowerCase();
-  if (!raw) return fallback;
-  const normalized = raw.replace(/[^a-z0-9._-]+/g, "_").replace(/^_+|_+$/g, "");
-  return normalized || fallback;
-}
+// BW-M6: `bookingReferenceScopePart` moved to ./modules/parsing_utils.js.
+// Imported at the top of this file — no behavior change.
 
 function bookingReferenceScopeName(tenantId, companyId, yearMonth) {
   const tenantPart = bookingReferenceScopePart(tenantId, "fluxidi");
@@ -78798,12 +78827,8 @@ function bookingReferenceScopeName(tenantId, companyId, yearMonth) {
   return `booking_ref:${tenantPart}:${companyPart}:${yearMonth}`;
 }
 
-function documentReferenceTypePart(value, fallback) {
-  const raw = safeStr(value, 64).toLowerCase();
-  if (!raw) return fallback;
-  const normalized = raw.replace(/[^a-z0-9._-]+/g, "_").replace(/^_+|_+$/g, "");
-  return normalized || fallback;
-}
+// BW-M6: `documentReferenceTypePart` moved to ./modules/parsing_utils.js.
+// Imported at the top of this file — no behavior change.
 
 function documentReferenceScopeName(tenantId, companyId, sequenceType, year) {
   const tenantPart = bookingReferenceScopePart(tenantId, "fluxidi");
@@ -78812,687 +78837,38 @@ function documentReferenceScopeName(tenantId, companyId, sequenceType, year) {
   return `doc_ref_seq:${tenantPart}:${companyPart}:${typePart}:${year}`;
 }
 
-/* ===================== DOCUMENT REGISTRY KEY SPACE (Patch 2G-E) =====================
- * Pure constants + key builders for the FUTURE provider-neutral document
- * registry/numbering recommended by the 2G-D audit. This block is intentionally
- * inert:
- *   - no KV reads/writes
- *   - no Durable Object calls
- *   - no number allocation
- *   - no routes / endpoints
- *   - no persistence / no behavior change
- * It only standardizes the registry key vocabulary so later patches stay
- * consistent. Scope/type segments reuse the existing normalization
- * (bookingReferenceScopePart / documentReferenceTypePart). Opaque id segments in
- * the NEW keys are normalized the same way for KV-key safety; because reads and
- * writes will both go through these builders, the normalization stays symmetric.
- */
-const DOCUMENT_TYPE_CREDIT_NOTE = "credit_note";
-const DOCUMENT_TYPE_REFUND_PROOF = "refund_proof";
-// Patch 2G-W: Document Core invoice type. DRY-RUN + ADDITIVE-SHAPE only in this
-// patch — there is NO real invoice issue route, NO real INV allocation, and NO
-// KV persistence yet. This is the future official accounting/e-invoice (Peppol)
-// document type, kept SEPARATE from the legacy FLX-YYYY-MM-#### invoice/PDF
-// pipeline (renderInvoiceHtml / nextInvoiceNumber / INVOICE_KV), which this
-// patch does not touch.
-const DOCUMENT_TYPE_INVOICE = "invoice";
+// BW-M6: Document Core registry key space (Patch 2G-E) moved to
+// ./modules/document_core.js. Symbols imported at the top of this file:
+//   - DOCUMENT_TYPE_CREDIT_NOTE / DOCUMENT_TYPE_REFUND_PROOF / DOCUMENT_TYPE_INVOICE
+//   - DOCUMENT_PREFIX_CREDIT_NOTE / DOCUMENT_PREFIX_REFUND_PROOF / DOCUMENT_PREFIX_INVOICE
+//   - DOCUMENT_SEQUENCE_TYPE_CREDIT_NOTE / DOCUMENT_SEQUENCE_TYPE_REFUND_PROOF / DOCUMENT_SEQUENCE_TYPE_INVOICE
+//   - documentRegistryScopeParts / documentRegistrySegment / documentRegistryTypePart
+//   - buildDocumentRegistryKey / buildDocumentNumberIndexKey
+//   - buildDocumentsByBookingKey / buildDocumentsByLegKey / buildDocumentsByRefundKey
+//   - buildDocumentIdempotencyKey / buildDocumentReferenceIndexKey
+// No behavior change; pure key builders only.
 
-// Human-facing reference prefixes (used ONLY by future sequence allocation).
-const DOCUMENT_PREFIX_CREDIT_NOTE = "FCN"; // Fluxidi Credit Note
-const DOCUMENT_PREFIX_REFUND_PROOF = "FRP"; // Fluxidi Refund Proof
-// Patch 2G-W: Document Core invoice prefix. Real numbers will be INV-YYYY-######
-// when a real allocator/issue route lands LATER; this patch only ever emits the
-// fixed dry-run literal DRYRUN-INV-000000 and never allocates a real INV number.
-const DOCUMENT_PREFIX_INVOICE = "INV"; // Fluxidi Document Core Invoice
+// BW-M6: `findDocumentByIdempotency` (Patch 2G-G) and
+// `loadIssuedDocumentRegistryRecordById` (Patch 2G-N-I) moved to
+// ./modules/document_core.js. Both are read-only KV lookups against the
+// existing doc_idempotency / doc_registry key space. Imported at the top of
+// this file — no behavior change.
 
-// Base sequence-type tokens for DOCUMENT_REFERENCE_SEQUENCE. Future allocation
-// appends year/month, mirroring the existing invoice sequence pattern.
-const DOCUMENT_SEQUENCE_TYPE_CREDIT_NOTE = "credit_note";
-const DOCUMENT_SEQUENCE_TYPE_REFUND_PROOF = "refund_proof";
-// Patch 2G-W: Document Core invoice sequence type. Its own counter, never shared
-// with credit_note / refund_proof and never the legacy FLX invoice sequence.
-const DOCUMENT_SEQUENCE_TYPE_INVOICE = "invoice";
+// BW-M6: `buildCreditNoteReplaySafeFields` (2G-N-I),
+// `buildRefundProofReplaySafeFields` (R2), `buildInvoiceReplaySafeFields`
+// (2G-Y-A), and `buildIssuedDocumentPublicMetadata` (2G-O) moved to
+// ./modules/document_core.js. All are pure projections over the canonical
+// registry record. Imported at the top of this file — no behavior change.
 
-// Requires a tenant AND company scope, consistent with nextInvoiceNumber /
-// allocateScopedInvoiceSequence (which throw "missing_tenant_scope").
-function documentRegistryScopeParts(scope) {
-  const tenantRaw = safeStr(scope?.tenant_id ?? scope?.tenantId);
-  const companyRaw = safeStr(scope?.company_id ?? scope?.companyId);
-  if (!tenantRaw || !companyRaw) {
-    throw new Error("missing_tenant_scope");
-  }
-  const tenantPart = bookingReferenceScopePart(tenantRaw, "fluxidi");
-  const companyPart = bookingReferenceScopePart(companyRaw, tenantPart);
-  return { tenantPart, companyPart };
-}
-
-// Normalizes an opaque id/number segment for a NEW registry key. Throws a
-// descriptive "missing_<label>" error when empty.
-function documentRegistrySegment(value, label) {
-  const part = bookingReferenceScopePart(value, "");
-  if (!part) throw new Error(`missing_${label}`);
-  return part;
-}
-
-function documentRegistryTypePart(documentType) {
-  const typePart = documentReferenceTypePart(documentType, "");
-  if (!typePart) throw new Error("missing_document_type");
-  return typePart;
-}
-
-// doc_registry:<tenant>:<company>:<documentId> — canonical registry record key.
-function buildDocumentRegistryKey(scope, documentId) {
-  const { tenantPart, companyPart } = documentRegistryScopeParts(scope);
-  const docPart = documentRegistrySegment(documentId, "document_id");
-  return `doc_registry:${tenantPart}:${companyPart}:${docPart}`;
-}
-
-// doc_number_idx:<tenant>:<company>:<type>:<documentNumber> — number lookup.
-function buildDocumentNumberIndexKey(scope, documentType, documentNumber) {
-  const { tenantPart, companyPart } = documentRegistryScopeParts(scope);
-  const typePart = documentRegistryTypePart(documentType);
-  const numberPart = documentRegistrySegment(documentNumber, "document_number");
-  return `doc_number_idx:${tenantPart}:${companyPart}:${typePart}:${numberPart}`;
-}
-
-// doc_by_booking:<tenant>:<company>:<canonicalBookingId>:<type>:<documentId>
-function buildDocumentsByBookingKey(
-  scope,
-  canonicalBookingId,
-  documentType,
-  documentId,
-) {
-  const { tenantPart, companyPart } = documentRegistryScopeParts(scope);
-  const bookingPart = documentRegistrySegment(
-    canonicalBookingId,
-    "canonical_booking_id",
-  );
-  const typePart = documentRegistryTypePart(documentType);
-  const docPart = documentRegistrySegment(documentId, "document_id");
-  return `doc_by_booking:${tenantPart}:${companyPart}:${bookingPart}:${typePart}:${docPart}`;
-}
-
-// doc_by_leg:<tenant>:<company>:<canonicalBookingId>:<legId>:<type>:<documentId>
-// Leg-first: leg-scoped documents index under their own leg id so a roundtrip
-// parent never aggregates leg documents.
-function buildDocumentsByLegKey(
-  scope,
-  canonicalBookingId,
-  legId,
-  documentType,
-  documentId,
-) {
-  const { tenantPart, companyPart } = documentRegistryScopeParts(scope);
-  const bookingPart = documentRegistrySegment(
-    canonicalBookingId,
-    "canonical_booking_id",
-  );
-  const legPart = documentRegistrySegment(legId, "leg_id");
-  const typePart = documentRegistryTypePart(documentType);
-  const docPart = documentRegistrySegment(documentId, "document_id");
-  return `doc_by_leg:${tenantPart}:${companyPart}:${bookingPart}:${legPart}:${typePart}:${docPart}`;
-}
-
-// doc_by_refund:<tenant>:<company>:<refundId>:<documentId>
-function buildDocumentsByRefundKey(scope, refundId, documentId) {
-  const { tenantPart, companyPart } = documentRegistryScopeParts(scope);
-  const refundPart = documentRegistrySegment(refundId, "refund_id");
-  const docPart = documentRegistrySegment(documentId, "document_id");
-  return `doc_by_refund:${tenantPart}:${companyPart}:${refundPart}:${docPart}`;
-}
-
-// doc_idempotency:<tenant>:<company>:<type>:<idempotencyKey> — future issue dedup.
-function buildDocumentIdempotencyKey(scope, documentType, idempotencyKey) {
-  const { tenantPart, companyPart } = documentRegistryScopeParts(scope);
-  const typePart = documentRegistryTypePart(documentType);
-  const idemPart = documentRegistrySegment(idempotencyKey, "idempotency_key");
-  return `doc_idempotency:${tenantPart}:${companyPart}:${typePart}:${idemPart}`;
-}
-
-// doc_ref:<tenant>:<company>:<type>:<documentReference> — READ-SIDE mirror of the
-// EXISTING putDocumentReferenceIndex() key. Uses the same case-preserving
-// safeStr() for the reference so, for properly tenant/company-scoped input, it
-// returns a byte-identical key. Do NOT normalize the reference here or it would
-// diverge from the existing writes.
-function buildDocumentReferenceIndexKey(scope, sequenceType, documentReference) {
-  const { tenantPart, companyPart } = documentRegistryScopeParts(scope);
-  const typePart = documentReferenceTypePart(sequenceType, "");
-  const reference = safeStr(documentReference);
-  if (!typePart) throw new Error("missing_sequence_type");
-  if (!reference) throw new Error("missing_document_reference");
-  return `doc_ref:${tenantPart}:${companyPart}:${typePart}:${reference}`;
-}
-
-/* Read-only document idempotency lookup (Patch 2G-G).
- *
- * For FUTURE document issue endpoints ONLY. Idempotency MUST be checked BEFORE
- * any sequence allocation: a duplicate retry (same tenant/company + document
- * type + idempotency key) must return the already-issued document instead of
- * allocating a NEW number. This helper is intentionally inert in this patch:
- *   - read-only (one BOOKING_KV.get); no writes
- *   - no DOCUMENT_REFERENCE_SEQUENCE / Durable Object calls
- *   - no number allocation, no registry create/update, no audit events
- *   - no routes; it is not invoked from any existing runtime path.
- *
- * Returns null when not found / not resolvable, or a small neutral result when
- * found. Never throws on missing scope or malformed stored data.
- */
-async function findDocumentByIdempotency(env, scope, documentType, idempotencyKey) {
-  if (!env?.BOOKING_KV) return null;
-
-  let key;
-  try {
-    key = buildDocumentIdempotencyKey(scope, documentType, idempotencyKey);
-  } catch (_) {
-    // Missing tenant/company scope, document type, or idempotency key.
-    return null;
-  }
-
-  // Read as text so a plain document_id string is tolerated as a future
-  // fallback (KV { type: "json" } would throw on a non-JSON value).
-  const raw = await env.BOOKING_KV.get(key);
-  const stored = safeStr(raw);
-  if (!stored) return null;
-
-  let record = null;
-  if (stored.startsWith("{")) {
-    try {
-      record = JSON.parse(stored);
-    } catch (_) {
-      // Tolerate malformed data: log a PII-free diagnostic and treat as miss.
-      console.log(
-        `[DOCUMENT_IDEMPOTENCY][PARSE_WARN] malformed json (type=${documentReferenceTypePart(documentType, "")})`,
-      );
-      return null;
-    }
-  }
-
-  if (record && typeof record === "object") {
-    const documentId = safeStr(record.document_id || record.documentId);
-    if (!documentId) return null;
-    return {
-      document_id: documentId,
-      document_number:
-        safeStr(record.document_number || record.documentNumber) || null,
-      proof_reference:
-        safeStr(record.proof_reference || record.proofReference) || null,
-      document_type:
-        safeStr(record.document_type || record.documentType) ||
-        safeStr(documentType) ||
-        null,
-      idempotent_replay: true,
-    };
-  }
-
-  // Plain document_id string fallback.
-  return {
-    document_id: stored,
-    document_number: null,
-    proof_reference: null,
-    document_type: safeStr(documentType) || null,
-    idempotent_replay: true,
-  };
-}
-
-// 2G-N-I: read-only loader for the canonical issued registry record by
-// document_id. Used by the credit-note issue route's idempotent-replay branch
-// so the replay response can mirror the original success contract
-// (lifecycle_state / issue_timestamp / currency / content_hash) without
-// re-deriving anything. Pure read: no allocation, no write, no compliance emit.
-// Returns the parsed registry record object or null when missing/unreadable.
-async function loadIssuedDocumentRegistryRecordById(env, scope, documentId) {
-  if (!env?.BOOKING_KV) return null;
-  const safeDocumentId = safeStr(documentId, 200);
-  if (!safeDocumentId) return null;
-  let key;
-  try {
-    key = buildDocumentRegistryKey(scope, safeDocumentId);
-  } catch (_) {
-    return null;
-  }
-  let record = null;
-  try {
-    record = await env.BOOKING_KV.get(key, { type: "json" });
-  } catch (_) {
-    return null;
-  }
-  if (!record || typeof record !== "object" || Array.isArray(record)) return null;
-  return record;
-}
-
-// 2G-N-I: build the safe public replay field set from the idempotency hit and
-// (optionally) the canonical registry record. Mirrors the original success
-// response contract for POST /admin/documents/credit-note/issue. Any field that
-// is genuinely absent on an older stored record is returned as null rather than
-// guessed. No PII (buyer/seller snapshots) is ever surfaced here.
-function buildCreditNoteReplaySafeFields(idemHit, registryRecord) {
-  const rec =
-    registryRecord && typeof registryRecord === "object" ? registryRecord : {};
-  const documentId =
-    safeStr(idemHit?.document_id, 200) ||
-    safeStr(rec.document_id ?? rec.documentId, 200) ||
-    null;
-  const documentNumber =
-    safeStr(idemHit?.document_number, 80) ||
-    safeStr(rec.document_number ?? rec.documentNumber, 80) ||
-    null;
-  const lifecycleState =
-    safeStr(rec.lifecycle_state ?? rec.lifecycleState ?? rec.document_status, 40) ||
-    null;
-  const issueTimestamp =
-    safeStr(rec.issue_timestamp ?? rec.issueTimestamp, 80) || null;
-  const currency = safeStr(rec.currency, 8).toUpperCase() || null;
-  const contentHash = safeStr(rec.content_hash ?? rec.contentHash, 128) || null;
-  return {
-    document_id: documentId,
-    document_number: documentNumber,
-    lifecycle_state: lifecycleState,
-    issue_timestamp: issueTimestamp,
-    currency,
-    content_hash: contentHash,
-  };
-}
-
-// R2 — Refund-proof analogue of buildCreditNoteReplaySafeFields. Returned to
-// the issue-route replay branch so an idempotent retry surfaces the SAME safe
-// public envelope the original issue did, without surfacing buyer/seller PII
-// or the immutable snapshot. Mirrors the credit-note shape but uses
-// proof_reference (FRP-*) instead of document_number, and additionally exposes
-// the refund-proof–specific source fields (source_refund_id, source_leg_*).
-// Absent fields on older stored records stay null rather than being guessed.
-function buildRefundProofReplaySafeFields(idemHit, registryRecord) {
-  const rec =
-    registryRecord && typeof registryRecord === "object" ? registryRecord : {};
-  const documentId =
-    safeStr(idemHit?.document_id, 200) ||
-    safeStr(rec.document_id ?? rec.documentId, 200) ||
-    null;
-  const proofReference =
-    safeStr(idemHit?.proof_reference, 80) ||
-    safeStr(rec.proof_reference ?? rec.proofReference, 80) ||
-    null;
-  const lifecycleState =
-    safeStr(rec.lifecycle_state ?? rec.lifecycleState ?? rec.document_status, 40) ||
-    null;
-  const issueTimestamp =
-    safeStr(rec.issue_timestamp ?? rec.issueTimestamp, 80) || null;
-  const currency = safeStr(rec.currency, 8).toUpperCase() || null;
-  const contentHash = safeStr(rec.content_hash ?? rec.contentHash, 128) || null;
-  const sourceBookingId =
-    safeStr(rec.source_booking_id ?? rec.sourceBookingId, 200) || null;
-  const sourceLegId =
-    safeStr(rec.source_leg_id ?? rec.sourceLegId, 200) || null;
-  const sourceLegType =
-    safeStr(rec.source_leg_type ?? rec.sourceLegType, 24) || null;
-  const sourceRefundId =
-    safeStr(rec.source_refund_id ?? rec.sourceRefundId, 200) || null;
-  return {
-    document_id: documentId,
-    proof_reference: proofReference,
-    lifecycle_state: lifecycleState,
-    issue_timestamp: issueTimestamp,
-    currency,
-    content_hash: contentHash,
-    source_booking_id: sourceBookingId,
-    source_leg_id: sourceLegId,
-    source_leg_type: sourceLegType,
-    source_refund_id: sourceRefundId,
-  };
-}
-
-// 2G-Y-A — Invoice analogue of buildCreditNoteReplaySafeFields. Returned to the
-// invoice issue-route replay branch so an idempotent retry surfaces the SAME
-// safe public envelope the original issue did, without surfacing buyer/seller
-// PII or the immutable snapshot. Uses document_number (INV-*) like credit_note,
-// and additionally exposes the source binding (source_booking_id / source_leg_*)
-// the invoice success response returns. Absent fields on older stored records
-// stay null rather than being guessed.
-function buildInvoiceReplaySafeFields(idemHit, registryRecord) {
-  const rec =
-    registryRecord && typeof registryRecord === "object" ? registryRecord : {};
-  const documentId =
-    safeStr(idemHit?.document_id, 200) ||
-    safeStr(rec.document_id ?? rec.documentId, 200) ||
-    null;
-  const documentNumber =
-    safeStr(idemHit?.document_number, 80) ||
-    safeStr(rec.document_number ?? rec.documentNumber, 80) ||
-    null;
-  const lifecycleState =
-    safeStr(rec.lifecycle_state ?? rec.lifecycleState ?? rec.document_status, 40) ||
-    null;
-  const issueTimestamp =
-    safeStr(rec.issue_timestamp ?? rec.issueTimestamp, 80) || null;
-  const currency = safeStr(rec.currency, 8).toUpperCase() || null;
-  const contentHash = safeStr(rec.content_hash ?? rec.contentHash, 128) || null;
-  const sourceBookingId =
-    safeStr(rec.source_booking_id ?? rec.sourceBookingId, 200) || null;
-  const sourceLegId =
-    safeStr(rec.source_leg_id ?? rec.sourceLegId, 200) || null;
-  const sourceLegType =
-    safeStr(rec.source_leg_type ?? rec.sourceLegType, 24) || null;
-  return {
-    document_id: documentId,
-    document_number: documentNumber,
-    lifecycle_state: lifecycleState,
-    issue_timestamp: issueTimestamp,
-    currency,
-    content_hash: contentHash,
-    source_booking_id: sourceBookingId,
-    source_leg_id: sourceLegId,
-    source_leg_type: sourceLegType,
-  };
-}
-
-// 2G-O: build the safe public metadata projection of a canonical issued
-// registry record for GET /admin/documents/:documentId. Surfaces ONLY
-// non-sensitive document/reference metadata. Never exposes buyer/seller
-// snapshots, names, emails, phones, addresses, IBANs, idempotency keys,
-// provider tokens, the immutable snapshot, or the raw registry object. Absent
-// fields are returned as null rather than guessed.
-function buildIssuedDocumentPublicMetadata(record) {
-  const rec = record && typeof record === "object" ? record : {};
-  return {
-    document_id: safeStr(rec.document_id ?? rec.documentId, 200) || null,
-    document_type: safeStr(rec.document_type ?? rec.documentType, 40) || null,
-    document_number: safeStr(rec.document_number ?? rec.documentNumber, 80) || null,
-    proof_reference: safeStr(rec.proof_reference ?? rec.proofReference, 80) || null,
-    lifecycle_state:
-      safeStr(rec.lifecycle_state ?? rec.lifecycleState, 40) || null,
-    document_status:
-      safeStr(rec.document_status ?? rec.documentStatus, 40) || null,
-    issue_timestamp: safeStr(rec.issue_timestamp ?? rec.issueTimestamp, 80) || null,
-    currency: safeStr(rec.currency, 8).toUpperCase() || null,
-    content_hash: safeStr(rec.content_hash ?? rec.contentHash, 128) || null,
-    source_booking_id:
-      safeStr(rec.source_booking_id ?? rec.sourceBookingId, 200) || null,
-    source_leg_id: safeStr(rec.source_leg_id ?? rec.sourceLegId, 200) || null,
-    source_leg_type: safeStr(rec.source_leg_type ?? rec.sourceLegType, 24) || null,
-    // B6b: safe Billit export link projection (envelope-only; null when absent).
-    // Never exposes tokens, the raw OAuth record, or the raw Billit response.
-    billit_export: buildSafeBillitExportProjection(rec),
-  };
-}
-
-// 2G-R: normalize a booking identifier for canonical-booking equality checks.
-// Trims and strips any trailing operational-leg suffix (":OUTBOUND" / ":RETURN"
-// or any ":<LEG>") so a leg id and its parent canonical booking compare equal.
-// Performs NO fuzzy matching beyond canonical-booking equality.
-function _normalizeCanonicalBookingIdForMatch(value) {
-  const base = safeStr(value, 200);
-  if (!base) return "";
-  const colon = base.indexOf(":");
-  return colon > 0 ? base.slice(0, colon) : base;
-}
-
-// 2G-P: scoped prefix for the per-booking document index written at issue time
-// (doc_by_booking:<tenant>:<company>:<bookingPart>:<type>:<documentId>). Pure
-// key-string builder — performs no I/O. Throws missing_<field> on bad scope.
-function buildDocumentsByBookingPrefix(scope, canonicalBookingId) {
-  const { tenantPart, companyPart } = documentRegistryScopeParts(scope);
-  const bookingPart = documentRegistrySegment(
-    canonicalBookingId,
-    "canonical_booking_id",
-  );
-  return `doc_by_booking:${tenantPart}:${companyPart}:${bookingPart}:`;
-}
-
-// 2G-P: read-only listing of issued document metadata for one booking. Uses the
-// existing scoped doc_by_booking index (no scan of unrelated keys, no writes).
-// For each index entry it loads the canonical registry record and projects only
-// the safe public metadata (buildIssuedDocumentPublicMetadata). Cross-tenant
-// records are skipped defensively. Never allocates, writes, or emits events.
-async function listIssuedDocumentsForBooking(env, scope, canonicalBookingId) {
-  if (!env?.BOOKING_KV) return { ok: false, error: "missing_binding" };
-  let prefix;
-  try {
-    prefix = buildDocumentsByBookingPrefix(scope, canonicalBookingId);
-  } catch (_) {
-    return { ok: false, error: "missing_tenant_scope" };
-  }
-  const requestedCanonical = _normalizeCanonicalBookingIdForMatch(
-    canonicalBookingId,
-  );
-  const seenDocumentIds = new Set();
-  const documents = [];
-  let staleSkippedCount = 0;
-  let cursor = undefined;
-  do {
-    const listed = await env.BOOKING_KV.list({ prefix, limit: 1000, cursor });
-    const keys = Array.isArray(listed?.keys) ? listed.keys : [];
-    for (const item of keys) {
-      const key = safeStr(item?.name, 320);
-      if (!key || !key.startsWith(prefix)) continue;
-      // The index value is the documentId; fall back to the trailing key
-      // segment if the value is somehow empty.
-      let documentId = safeStr(await env.BOOKING_KV.get(key), 200);
-      if (!documentId) {
-        const parts = key.split(":");
-        documentId = safeStr(parts[parts.length - 1], 200);
-      }
-      if (!documentId || seenDocumentIds.has(documentId)) continue;
-      seenDocumentIds.add(documentId);
-      const record = await loadIssuedDocumentRegistryRecordById(
-        env,
-        scope,
-        documentId,
-      );
-      if (!record) continue;
-      const recTenant = safeStr(record?.tenant_id ?? record?.tenantId, 80);
-      const recCompany = safeStr(record?.company_id ?? record?.companyId, 80);
-      if (
-        (recTenant && recTenant !== scope.tenant_id) ||
-        (recCompany && recCompany !== scope.company_id)
-      ) {
-        continue;
-      }
-      // 2G-R: defensive source-booking binding check. A stale or mis-indexed
-      // doc_by_booking entry could surface a document whose stored source
-      // booking is NOT the requested booking. buildIssuedDocumentRegistryRecord
-      // ALWAYS persists source_booking_id at issue time, so a record that is
-      // missing both source_booking_id and source_parent_booking_id is treated
-      // as untrustworthy and skipped (conservative). Comparison is strict
-      // canonical-booking equality (leg suffix stripped on both sides); tenant/
-      // company matching above is NOT loosened by this check.
-      const recordSourceBookingId =
-        safeStr(record?.source_booking_id ?? record?.sourceBookingId, 200) ||
-        safeStr(
-          record?.source_parent_booking_id ?? record?.sourceParentBookingId,
-          200,
-        );
-      const normalizedRecordSource = _normalizeCanonicalBookingIdForMatch(
-        recordSourceBookingId,
-      );
-      if (
-        !normalizedRecordSource ||
-        normalizedRecordSource !== requestedCanonical
-      ) {
-        staleSkippedCount += 1;
-        const docMask = documentId.slice(0, 8);
-        console.log(
-          `[DOCUMENT_LIST][STALE_INDEX_SKIP] requested=${_bookingIntentMask(canonicalBookingId)} doc=${docMask} reason=source_booking_mismatch`,
-        );
-        continue;
-      }
-      documents.push(buildIssuedDocumentPublicMetadata(record));
-    }
-    cursor = listed?.list_complete ? undefined : listed?.cursor;
-  } while (cursor);
-  const warnings = [];
-  if (staleSkippedCount > 0) {
-    warnings.push("stale_document_index_entry_skipped");
-  }
-  return { ok: true, documents, warnings };
-}
-
-/* 2G-T — read-only list of issued document REGISTRY RECORDS for one booking.
- *
- * Sibling of `listIssuedDocumentsForBooking` (which projects safe public
- * metadata). The metadata projection intentionally omits buyer_snapshot /
- * seller_snapshot (PII) — fine for the public list route, but the export-
- * readiness classifier needs those fields to evaluate customer/business
- * identity completeness without fabricating data. This helper therefore
- * yields the FULL canonical registry record per match.
- *
- * Same iteration shape, same defensive guards, same masked log line family
- * — only the projection differs:
- *   - same scoped `doc_by_booking:` prefix (no broad scan)
- *   - same tenant/company cross-check (cross-tenant rows skipped silently)
- *   - same 2G-R `source_booking_id` defensive equality (stale index skipped)
- *   - same `seenDocumentIds` dedup
- *
- * READ-ONLY: no `BOOKING_KV.put/delete`, no allocation, no DO call, no
- * compliance event emit, no Mollie/Chiron/Peppol/Billit network call.
- * Safe to call repeatedly; never affects any existing route.
- */
-async function listIssuedDocumentRecordsForBooking(
-  env,
-  scope,
-  canonicalBookingId,
-) {
-  if (!env?.BOOKING_KV) return { ok: false, error: "missing_binding" };
-  let prefix;
-  try {
-    prefix = buildDocumentsByBookingPrefix(scope, canonicalBookingId);
-  } catch (_) {
-    return { ok: false, error: "missing_tenant_scope" };
-  }
-  const requestedCanonical = _normalizeCanonicalBookingIdForMatch(
-    canonicalBookingId,
-  );
-  const seenDocumentIds = new Set();
-  const records = [];
-  let staleSkippedCount = 0;
-  let cursor = undefined;
-  do {
-    const listed = await env.BOOKING_KV.list({ prefix, limit: 1000, cursor });
-    const keys = Array.isArray(listed?.keys) ? listed.keys : [];
-    for (const item of keys) {
-      const key = safeStr(item?.name, 320);
-      if (!key || !key.startsWith(prefix)) continue;
-      let documentId = safeStr(await env.BOOKING_KV.get(key), 200);
-      if (!documentId) {
-        const parts = key.split(":");
-        documentId = safeStr(parts[parts.length - 1], 200);
-      }
-      if (!documentId || seenDocumentIds.has(documentId)) continue;
-      seenDocumentIds.add(documentId);
-      const record = await loadIssuedDocumentRegistryRecordById(
-        env,
-        scope,
-        documentId,
-      );
-      if (!record) continue;
-      const recTenant = safeStr(record?.tenant_id ?? record?.tenantId, 80);
-      const recCompany = safeStr(record?.company_id ?? record?.companyId, 80);
-      if (
-        (recTenant && recTenant !== scope.tenant_id) ||
-        (recCompany && recCompany !== scope.company_id)
-      ) {
-        continue;
-      }
-      const recordSourceBookingId =
-        safeStr(record?.source_booking_id ?? record?.sourceBookingId, 200) ||
-        safeStr(
-          record?.source_parent_booking_id ?? record?.sourceParentBookingId,
-          200,
-        );
-      const normalizedRecordSource = _normalizeCanonicalBookingIdForMatch(
-        recordSourceBookingId,
-      );
-      if (
-        !normalizedRecordSource ||
-        normalizedRecordSource !== requestedCanonical
-      ) {
-        staleSkippedCount += 1;
-        const docMask = documentId.slice(0, 8);
-        console.log(
-          `[DOCUMENT_EXPORT_READINESS][STALE_INDEX_SKIP] requested=${_bookingIntentMask(canonicalBookingId)} doc=${docMask} reason=source_booking_mismatch`,
-        );
-        continue;
-      }
-      records.push(record);
-    }
-    cursor = listed?.list_complete ? undefined : listed?.cursor;
-  } while (cursor);
-  const warnings = [];
-  if (staleSkippedCount > 0) {
-    warnings.push("stale_document_index_entry_skipped");
-  }
-  return { ok: true, records, warnings };
-}
-
-/* 2G-V — pure source-invoice-reference reader for Document Core.
- *
- * Read-only / inert. Conservatively probes the EXISTING canonical registry
- * record for a safe parent-invoice / original-invoice reference. Used by
- * BOTH `classifyDocumentExportReadiness` (Peppol gate for credit-note) AND
- * `buildDocumentExportPreview` (provider-neutral preview's
- * `source_binding.source_invoice_reference`) so the two flows agree.
- *
- * Purity / inertness contract:
- *   - no KV read/write, no DO call, no allocation, no compliance event,
- *     no Billit/Peppol/Mollie/Chiron network call,
- *   - never mutates the input record,
- *   - never invents data: only fields already present on the record are
- *     considered; absent → empty string,
- *   - never gates an existing issue/replay/list/preview/readiness/lookup/
- *     dry-run route.
- *
- * Candidate field order (first non-empty wins). All paths are top-level on
- * the registry envelope OR on a single nested `source_invoice` / `sourceInvoice`
- * object — no deep walks, no payload/booking/quote probing.
- */
-function getDocumentSourceInvoiceReference(record) {
-  const rec = record && typeof record === "object" && !Array.isArray(record)
-    ? record
-    : {};
-  const candidates = [
-    rec.source_invoice_reference,
-    rec.sourceInvoiceReference,
-    rec.source_invoice_number,
-    rec.sourceInvoiceNumber,
-    rec.source_invoice_document_number,
-    rec.sourceInvoiceDocumentNumber,
-    rec.original_invoice_reference,
-    rec.originalInvoiceReference,
-    rec.credited_invoice_reference,
-    rec.creditedInvoiceReference,
-  ];
-  // Nested `source_invoice` / `sourceInvoice` object — only the well-known
-  // `number` / `reference` / `id` fields, never an arbitrary object spread.
-  const nestedSnake =
-    rec.source_invoice && typeof rec.source_invoice === "object" && !Array.isArray(rec.source_invoice)
-      ? rec.source_invoice
-      : null;
-  const nestedCamel =
-    rec.sourceInvoice && typeof rec.sourceInvoice === "object" && !Array.isArray(rec.sourceInvoice)
-      ? rec.sourceInvoice
-      : null;
-  if (nestedSnake) {
-    candidates.push(
-      nestedSnake.number,
-      nestedSnake.reference,
-      nestedSnake.document_number,
-      nestedSnake.documentNumber,
-      nestedSnake.id,
-    );
-  }
-  if (nestedCamel) {
-    candidates.push(
-      nestedCamel.number,
-      nestedCamel.reference,
-      nestedCamel.document_number,
-      nestedCamel.documentNumber,
-      nestedCamel.id,
-    );
-  }
-  for (const candidate of candidates) {
-    const value = safeStr(candidate, 80);
-    if (value) return value;
-  }
-  return "";
-}
+// BW-M6: `_normalizeCanonicalBookingIdForMatch` (2G-R),
+// `buildDocumentsByBookingPrefix` (2G-P),
+// `listIssuedDocumentsForBooking` (2G-P),
+// `listIssuedDocumentRecordsForBooking` (2G-T), and
+// `getDocumentSourceInvoiceReference` (2G-V) moved to
+// ./modules/document_core.js. All are read-only against the existing
+// doc_by_booking / doc_registry key space. Imported at the top of this file
+// — no behavior change (log lines use an internal masking helper inside the
+// module that reproduces `_bookingIntentMask` byte-for-byte).
 
 /* 2G-T — pure document export-readiness classifier.
  *
@@ -81974,71 +81350,10 @@ async function allocateInvoiceReference(env, scope, options = {}) {
   });
 }
 
-/* Pure document snapshot canonicalizer + content hash (Patch 2G-I).
- *
- * For FUTURE issued (immutable) document snapshots ONLY. When a document is
- * issued, the backend freezes a snapshot together with its issue timestamp,
- * document reference and document number, then stores a content_hash so the
- * snapshot can later be verified as unchanged. These helpers are PURE and inert:
- *   - no KV read/write, no DOCUMENT_REFERENCE_SEQUENCE, no allocation
- *   - no registry records, no idempotency keys, no compliance events, no routes
- *   - not invoked anywhere in this patch.
- *
- * Rules for the future caller:
- *   - content_hash MUST be computed AFTER the backend issue timestamp /
- *     reference / number are known (they are part of the snapshot input).
- *   - An issued snapshot's hash MUST NOT be recalculated from mutable booking
- *     data later — persist the canonical JSON + hash at issue time and treat
- *     them as immutable.
- *   - These helpers do NOT allocate numbers and do NOT persist anything.
- *
- * Example (SHAPE ONLY — not runtime data) of a future snapshot input:
- *   {
- *     document_type, document_number, document_reference, issued_at,
- *     tenant_id, company_id, canonical_booking_id, leg_id,
- *     seller: {...}, buyer: {...}, totals: {...}, lines: [...]
- *   }
- */
-
-// Recursively normalizes a snapshot into a deterministic structure: object keys
-// sorted, arrays kept in order, `undefined` omitted (object keys) or coerced to
-// null (array slots), `null` preserved. Does NOT mutate the input.
-function canonicalizeDocumentSnapshot(snapshot) {
-  const normalize = (value) => {
-    if (value === null) return null;
-    if (Array.isArray(value)) {
-      // Arrays keep their order; undefined slots become null for determinism.
-      return value.map((item) =>
-        item === undefined ? null : normalize(item),
-      );
-    }
-    if (typeof value === "object") {
-      const out = {};
-      for (const key of Object.keys(value).sort()) {
-        const child = normalize(value[key]);
-        // Omit undefined-valued keys so output is stable regardless of input.
-        if (child !== undefined) out[key] = child;
-      }
-      return out;
-    }
-    // Primitives pass through unchanged (undefined stays undefined → omitted).
-    return value;
-  };
-  const root = normalize(snapshot);
-  // A top-level undefined/primitive snapshot still canonicalizes consistently.
-  return root === undefined ? null : root;
-}
-
-// Deterministic JSON string for a snapshot (stable, recursively-sorted keys).
-function stableDocumentJson(value) {
-  return JSON.stringify(canonicalizeDocumentSnapshot(value));
-}
-
-// SHA-256 (lowercase hex) over the canonical JSON. Reuses the existing
-// sha256Hex() helper. Async because crypto.subtle.digest is async.
-async function hashDocumentSnapshot(snapshot) {
-  return sha256Hex(stableDocumentJson(snapshot));
-}
+// BW-M6: `canonicalizeDocumentSnapshot`, `stableDocumentJson` and
+// `hashDocumentSnapshot` (Patch 2G-I) moved to ./modules/document_core.js.
+// Pure recursive canonicalizer + deterministic JSON + SHA-256 helper.
+// Imported at the top of this file — no behavior change.
 
 // 2G-S-B1: normalize a client-supplied created_by_role for the COMPANY issue
 // route to an allowed company role. Never honors elevated roles (e.g. "admin")

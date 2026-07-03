@@ -55,3 +55,13 @@ export async function importHmacKey(secret) {
     ["sign", "verify"],
   );
 }
+
+// BW-M6: pure SHA-256 hex digest helper. Moved verbatim from
+// fluxidi_booking_worker.js (no behavior change). Uses WebCrypto SubtleCrypto.
+export async function sha256Hex(input) {
+  const bytes = new TextEncoder().encode(String(input || ""));
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}

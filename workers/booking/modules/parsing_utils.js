@@ -52,3 +52,24 @@ export function boolish(value) {
   const s = String(value).trim().toLowerCase();
   return s === "true" || s === "1" || s === "yes" || s === "y" || s === "on";
 }
+
+// BW-M6: pure scope-segment normalizer. Moved verbatim from
+// fluxidi_booking_worker.js. Lowercases, trims to 120 chars, replaces
+// non-[a-z0-9._-] with underscores, strips leading/trailing underscores.
+// Returns `fallback` when input is empty after normalization.
+export function bookingReferenceScopePart(value, fallback) {
+  const raw = safeStr(value, 120).toLowerCase();
+  if (!raw) return fallback;
+  const normalized = raw.replace(/[^a-z0-9._-]+/g, "_").replace(/^_+|_+$/g, "");
+  return normalized || fallback;
+}
+
+// BW-M6: pure document-type segment normalizer. Moved verbatim from
+// fluxidi_booking_worker.js. Same normalization shape as bookingReferenceScopePart
+// but bounded at 64 chars.
+export function documentReferenceTypePart(value, fallback) {
+  const raw = safeStr(value, 64).toLowerCase();
+  if (!raw) return fallback;
+  const normalized = raw.replace(/[^a-z0-9._-]+/g, "_").replace(/^_+|_+$/g, "");
+  return normalized || fallback;
+}
