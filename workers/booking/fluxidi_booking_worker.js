@@ -62,6 +62,24 @@ import {
 } from "./modules/billit_provider.js";
 import { peppolIdentifierFromBelgianEnterpriseNumber } from "./modules/peppol_readiness.js";
 import {
+  COMPLIANCE_APPEND_PATH,
+  buildComplianceAppendUrl,
+  normalizeCompliancePaymentStatus,
+  normalizeComplianceText,
+  isUnknownLikeCompliancePaymentValue,
+  pickMeaningfulCompliancePaymentValue,
+  compliancePaymentLooksMollieOnline,
+  emitComplianceEventBestEffort,
+} from "./modules/compliance_events.js";
+import {
+  CHIRON_CONFIG_STATUS_PATH,
+  CHIRON_CONFIG_TEST_CREDENTIALS_PATH,
+  CHIRON_CONFIG_TEST_CREDENTIALS_CLEAR_PATH,
+  CHIRON_CONNECTION_TEST_PATH,
+  CHIRON_INTERNAL_PROXY_MODE,
+  _proxyChironConfigStatusToComplianceWorker,
+} from "./modules/chiron_bridge.js";
+import {
   MOLLIE_CONNECT_OAUTH_NONCE_TTL_SECONDS,
   MOLLIE_CONNECT_OAUTH_STATE_PURPOSE,
   MOLLIE_CONNECT_OAUTH_SCOPES,
@@ -46878,50 +46896,10 @@ async function _maybeGenerateBusinessInvoiceForPaidBooking({
   };
 }
 
-const COMPLIANCE_APPEND_PATH = "/compliance/events/append";
-const CHIRON_CONFIG_STATUS_PATH = "/admin/chiron/config/status";
-const CHIRON_CONFIG_TEST_CREDENTIALS_PATH = "/admin/chiron/config/test-credentials";
-const CHIRON_CONFIG_TEST_CREDENTIALS_CLEAR_PATH =
-  "/admin/chiron/config/test-credentials/clear";
-const CHIRON_CONNECTION_TEST_PATH = "/admin/chiron/connection/test";
-const CHIRON_INTERNAL_PROXY_MODE = "booking_worker_v1";
-
-function buildComplianceAppendUrl(baseUrlRaw) {
-  const normalized = safeStr(baseUrlRaw);
-  if (!normalized) return null;
-  try {
-    const parsed = new URL(normalized);
-    parsed.search = "";
-    parsed.hash = "";
-    const normalizedPath = parsed.pathname.replace(/\/+$/, "");
-    if (normalizedPath === COMPLIANCE_APPEND_PATH) return parsed;
-    if (normalizedPath === "" || normalizedPath === "/") {
-      parsed.pathname = COMPLIANCE_APPEND_PATH;
-      return parsed;
-    }
-    return null;
-  } catch (_) {
-    return null;
-  }
-}
-
-function normalizeCompliancePaymentStatus(value) {
-  const raw = safeStr(value).toLowerCase();
-  if (!raw) return "unknown";
-  if (raw === "paid" || raw === "confirmed" || raw === "completed" || raw === "success" || raw === "settled") {
-    return "paid";
-  }
-  if (raw === "pending" || raw === "authorized" || raw === "open" || raw === "processing") {
-    return "pending";
-  }
-  if (raw === "failed" || raw === "cancelled" || raw === "canceled" || raw === "declined") {
-    return "failed";
-  }
-  if (raw === "unpaid" || raw === "not_paid") {
-    return "unpaid";
-  }
-  return "unknown";
-}
+/* COMPLIANCE_APPEND_PATH / buildComplianceAppendUrl / normalizeCompliancePaymentStatus
+ * moved to ./modules/compliance_events.js (patch BW-M5).
+ * CHIRON_* path constants + CHIRON_INTERNAL_PROXY_MODE moved to
+ * ./modules/chiron_bridge.js (patch BW-M5). */
 
 function _bookingRecordPaymentStatusNormalized(rec) {
   if (_bookingRecordIsPaidForCredit(rec)) return "paid";
@@ -51569,33 +51547,9 @@ async function applyMollieRefundAuthoritative(
   };
 }
 
-function normalizeComplianceText(value, fallback = "unknown") {
-  const text = safeStr(value).toLowerCase();
-  return text || fallback;
-}
-
-function isUnknownLikeCompliancePaymentValue(value) {
-  const raw = String(value ?? "").trim().toLowerCase();
-  return (
-    raw === "" ||
-    raw === "unknown" ||
-    raw === "onbekend" ||
-    raw === "—" ||
-    raw === "-" ||
-    raw === "null" ||
-    raw === "undefined"
-  );
-}
-
-function pickMeaningfulCompliancePaymentValue(...candidates) {
-  for (const candidate of candidates) {
-    const text = safeStr(candidate);
-    if (!text) continue;
-    if (isUnknownLikeCompliancePaymentValue(text)) continue;
-    return text;
-  }
-  return null;
-}
+/* normalizeComplianceText, isUnknownLikeCompliancePaymentValue,
+ * pickMeaningfulCompliancePaymentValue, compliancePaymentLooksMollieOnline
+ * moved to ./modules/compliance_events.js (patch BW-M5). */
 
 function normalizeMolliePaymentMethodForCompliance(raw) {
   const token = normalizeBookingPaymentMethodId(raw);
@@ -51610,18 +51564,6 @@ function normalizeMolliePaymentMethodForCompliance(raw) {
     wero: "payconiq_wero",
   };
   return aliases[token] || token;
-}
-
-function compliancePaymentLooksMollieOnline({ provider, source } = {}) {
-  const prov = String(provider ?? "").trim().toLowerCase();
-  const src = String(source ?? "").trim().toLowerCase();
-  return (
-    prov === "mollie" ||
-    src === "mollie" ||
-    src === "online" ||
-    src === "online_payment" ||
-    src === "online-payment"
-  );
 }
 
 function peekCompliancePaymentMethodRaw(recordOrBooking, payment) {
@@ -52418,140 +52360,8 @@ function buildBookingStatusUpdateComplianceEvent(
   });
 }
 
-async function _proxyChironConfigStatusToComplianceWorker(env, explicitScope, options = {}) {
-  const adminToken = safeStr(env?.COMPLIANCE_ADMIN_TOKEN || env?.ADMIN_TOKEN);
-  if (!adminToken) {
-    return json({ ok: false, error: "compliance_auth_not_configured" }, 503);
-  }
-  if (!env?.COMPLIANCE_WORKER || typeof env.COMPLIANCE_WORKER.fetch !== "function") {
-    return json({ ok: false, error: "compliance_worker_binding_missing" }, 500);
-  }
-
-  const tenantId = sanitizeTenantString(explicitScope?.tenant_id, 80);
-  const companyId = sanitizeTenantString(explicitScope?.company_id, 80);
-  if (!tenantId || !companyId) {
-    return json(missingTenantScopeError(), 400);
-  }
-
-  const method = safeStr(options?.method) || "GET";
-  const body = options?.body ?? null;
-  const requestedCompliancePath =
-    safeStr(options?.compliancePath, 256) || CHIRON_CONFIG_STATUS_PATH;
-  const compliancePath = requestedCompliancePath;
-  if (
-    compliancePath !== CHIRON_CONFIG_STATUS_PATH &&
-    compliancePath !== CHIRON_CONFIG_TEST_CREDENTIALS_PATH &&
-    compliancePath !== CHIRON_CONNECTION_TEST_PATH &&
-    compliancePath !== CHIRON_CONFIG_TEST_CREDENTIALS_CLEAR_PATH
-  ) {
-    return json({ ok: false, error: "invalid_compliance_proxy_path" }, 400);
-  }
-
-  const proxyUrl = new URL(`https://fluxidi-compliance-api.internal${compliancePath}`);
-  proxyUrl.searchParams.set("tenant_id", tenantId);
-  proxyUrl.searchParams.set("company_id", companyId);
-
-  const headers = {
-    accept: "application/json",
-    "x-fluxidi-internal-proxy": CHIRON_INTERNAL_PROXY_MODE,
-    "x-fluxidi-proxy-token": adminToken,
-    "x-fluxidi-proxy-tenant-id": tenantId,
-    "x-fluxidi-proxy-company-id": companyId,
-  };
-  if (method === "POST") {
-    headers["content-type"] = "application/json";
-  }
-
-  const proxyReq = new Request(proxyUrl.toString(), {
-    method,
-    headers,
-    body:
-      method === "POST" && body && typeof body === "object" && !Array.isArray(body)
-        ? JSON.stringify(body)
-        : undefined,
-  });
-
-  try {
-    const resp = await env.COMPLIANCE_WORKER.fetch(proxyReq);
-    const responseBody = await resp.text();
-    return new Response(responseBody, {
-      status: resp.status,
-      headers: {
-        "content-type": resp.headers.get("content-type") || "application/json; charset=utf-8",
-        "cache-control": "no-store",
-      },
-    });
-  } catch (_) {
-    return json({ ok: false, error: "compliance_proxy_failed" }, 502);
-  }
-}
-
-async function emitComplianceEventBestEffort(env, event, options = {}) {
-  try {
-    const baseUrlRaw = safeStr(env?.COMPLIANCE_API_URL);
-    const adminToken = safeStr(env?.COMPLIANCE_ADMIN_TOKEN || env?.ADMIN_TOKEN);
-    const logLabel = safeStr(options?.logLabel) || "payment_update";
-    if (!baseUrlRaw || !adminToken) {
-      console.log(`[COMPLIANCE_EMIT][${logLabel}] skipped reason=missing_config`);
-      return { ok: false, skipped: "missing_config" };
-    }
-    if (!event || typeof event !== "object" || Array.isArray(event)) {
-      console.log(`[COMPLIANCE_EMIT][${logLabel}] skipped reason=invalid_event`);
-      return { ok: false, skipped: "invalid_event" };
-    }
-    const appendUrl = buildComplianceAppendUrl(baseUrlRaw);
-    if (!appendUrl) {
-      console.log(`[COMPLIANCE_EMIT][${logLabel}] skipped reason=invalid_url_config`);
-      return { ok: false, skipped: "invalid_url_config" };
-    }
-
-    const requestedTimeout = Number(options?.timeoutMs);
-    const timeoutMs = Number.isFinite(requestedTimeout)
-      ? Math.max(1, Math.min(1500, Math.round(requestedTimeout)))
-      : 1500;
-    const controller = new AbortController();
-    const timer = setTimeout(() => {
-      controller.abort();
-    }, timeoutMs);
-
-    try {
-      const req = new Request(appendUrl.toString(), {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          authorization: `Bearer ${adminToken}`,
-        },
-        body: JSON.stringify(event),
-        signal: controller.signal,
-      });
-      const hasServiceBinding = !!(env?.COMPLIANCE_WORKER && typeof env.COMPLIANCE_WORKER.fetch === "function");
-      const transport = hasServiceBinding ? "service_binding" : "public_fetch";
-      const resp = hasServiceBinding
-        ? await env.COMPLIANCE_WORKER.fetch(req)
-        : await fetch(req);
-      if (!resp.ok) {
-        console.log(
-          `[COMPLIANCE_EMIT][${logLabel}] failed status=${resp.status} transport=${transport} origin=${appendUrl.origin} path=${appendUrl.pathname}`,
-        );
-        return { ok: false, status: resp.status };
-      }
-      // TODO: reduce/remove success log after rollout verification.
-      console.log(`[COMPLIANCE_EMIT][${logLabel}] ok transport=${transport}`);
-      return { ok: true, status: resp.status };
-    } catch (err) {
-      if (err?.name === "AbortError") {
-        console.log(`[COMPLIANCE_EMIT][${logLabel}] failed error=timeout`);
-        return { ok: false, error: "timeout" };
-      }
-      console.log(`[COMPLIANCE_EMIT][${logLabel}] failed error=fetch_failed`);
-      return { ok: false, error: "fetch_failed" };
-    } finally {
-      clearTimeout(timer);
-    }
-  } catch (_) {
-    return { ok: false, error: "internal_error" };
-  }
-}
+/* _proxyChironConfigStatusToComplianceWorker moved to ./modules/chiron_bridge.js (patch BW-M5).
+ * emitComplianceEventBestEffort moved to ./modules/compliance_events.js (patch BW-M5). */
 
 function maskEmailForLog(value) {
   const email = safeStr(value);
