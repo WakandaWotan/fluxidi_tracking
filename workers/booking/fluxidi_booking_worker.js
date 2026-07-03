@@ -3722,6 +3722,179 @@ async function maybeRunDocumentCoreInvoiceAfterPaidLifecycle(env, scope, booking
   }
 }
 
+/* Patch BW-Paid-Lifecycle: central after-paid lifecycle orchestrator.
+ *
+ * Consolidates the two paid-lifecycle hooks (Document Core invoice ensure +
+ * Billit sandbox auto-create) behind a single call-site so
+ * updateBookingPaymentAuthoritative (chauffeur/company/admin manual mark-paid),
+ * payStatus (Mollie customer-return polling), and mollieWebhook (both the
+ * B11-T1b first-time paid branch and the G3-K resume paid branch) share the
+ * exact same ordering, logging, and fail-closed semantics.
+ *
+ * Order is fixed: Document Core FIRST, Billit SECOND. The inner Billit wrapper
+ * idempotently reuses the INV record the Document Core wrapper just ensured
+ * (via findExistingInvoiceDocumentForBooking) so this ordering guarantees
+ * per-leg replays never issue a duplicate invoice or a duplicate Billit order.
+ *
+ * Background mode: when `options.background === true` AND the caller passed a
+ * `ctx` with a `waitUntil` function, the whole chain is scheduled via
+ * ctx.waitUntil so the caller's HTTP response is not delayed by the Billit
+ * outbound call (which is what mollieWebhook needs: Mollie must receive 200
+ * quickly to avoid webhook retries). In all other cases the chain is awaited.
+ *
+ * Contract:
+ *   - NEVER throws to the caller (each inner wrapper is already fail-closed;
+ *     an outer try/catch here catches synchronous set-up errors too).
+ *   - NEVER sends via Peppol / calls /v1/orders/commands/send.
+ *   - NEVER calls _issueInvoiceCore or handleBooking directly.
+ *   - NEVER writes payment_status / paid_at / payment_method / invoice_state
+ *     itself (only the inner wrappers may mutate the document registry).
+ *   - NEVER logs raw PII (masked ids + reason codes + booleans + first-8
+ *     document id + counts only).
+ *   - NEVER creates a Billit production order (inner wrapper is sandbox +
+ *     setting-gated).
+ *   - Idempotent replays are safe: deterministic keys inside both wrappers
+ *     (`inv-auto:<t>:<c>:<b>:<leg>:v1` + `billit_export.order_id` duplicate
+ *     guard) mean a Mollie webhook retry OR a later /pay/status poll OR a
+ *     later manual mark-paid all reuse the same records.
+ */
+async function runPaidBookingAfterLifecycle(env, scope, bookingId, options = {}) {
+  const opts = options && typeof options === "object" && !Array.isArray(options) ? options : {};
+  const source = safeStr(opts.source, 60) || "paid_lifecycle";
+  const maskedBooking = _bookingIntentMask(bookingId);
+  const skipDocumentCore = opts.skipDocumentCore === true;
+  const skipBillit = opts.skipBillit === true;
+  const rec = opts.rec && typeof opts.rec === "object" ? opts.rec : null;
+  const effectiveScope =
+    opts.effectiveScope && typeof opts.effectiveScope === "object"
+      ? opts.effectiveScope
+      : null;
+  const nowIso = safeStr(opts.nowIso, 40) || new Date().toISOString();
+  const ctx = opts.ctx || null;
+  const wantsBackground =
+    opts.background === true && ctx && typeof ctx.waitUntil === "function";
+
+  const normalizedScope =
+    scope && typeof scope === "object"
+      ? {
+          tenant_id: safeStr(scope.tenant_id, 96),
+          company_id: safeStr(scope.company_id, 96),
+        }
+      : { tenant_id: "", company_id: "" };
+
+  const runChain = async () => {
+    const chainResult = { document_core_result: null, billit_result: null };
+    // Document Core FIRST. The wrapper is already fail-closed, but guard the
+    // call anyway so a synchronous set-up error cannot leak into the Billit
+    // step or bubble to the caller.
+    if (!skipDocumentCore) {
+      try {
+        chainResult.document_core_result = await maybeRunDocumentCoreInvoiceAfterPaidLifecycle(
+          env,
+          normalizedScope,
+          bookingId,
+          {
+            source,
+            effectiveScope,
+            rec,
+          },
+        );
+      } catch (documentCoreErr) {
+        console.log(
+          `[PAID_AFTER_LIFECYCLE][DOCUMENT_CORE_ERROR] booking=${maskedBooking} source=${source} error=${safeStr(documentCoreErr?.message || documentCoreErr, 120) || "exception"}`,
+        );
+      }
+    }
+    // Billit SECOND. Always runs regardless of Document Core outcome; the
+    // inner wrapper is setting-gated and sandbox-only and its own
+    // duplicate-guard reuses any invoice / Billit order already linked.
+    if (!skipBillit) {
+      try {
+        chainResult.billit_result = await maybeRunBillitAutoCreateAfterPaidLifecycle(
+          env,
+          normalizedScope,
+          bookingId,
+          {
+            source,
+            rec,
+            effectiveScope,
+            nowIso,
+          },
+        );
+      } catch (billitErr) {
+        console.log(
+          `[PAID_AFTER_LIFECYCLE][BILLIT_ERROR] booking=${maskedBooking} source=${source} error=${safeStr(billitErr?.message || billitErr, 120) || "exception"}`,
+        );
+      }
+    }
+    // One grep-able summary line per invocation. Envelope-only, no PII.
+    try {
+      const dc = chainResult.document_core_result || {};
+      const bi = chainResult.billit_result || {};
+      const dcOk = dc?.ok === true ? "true" : "false";
+      const dcSkipped = dc?.skipped === true ? "true" : "false";
+      const dcReason = safeStr(dc?.reason, 80) || (skipDocumentCore ? "skipped_by_caller" : "-");
+      const dcMultiLeg = dc?.multi_leg === true ? "true" : "false";
+      const biOk = bi?.ok === true ? "true" : "false";
+      const biSkipped = bi?.skipped === true ? "true" : "false";
+      const biReason = safeStr(bi?.reason, 80) || (skipBillit ? "skipped_by_caller" : "-");
+      const biOrderPresent = safeStr(bi?.billit_order_id, 120) ? "true" : "false";
+      console.log(
+        `[PAID_AFTER_LIFECYCLE][SUMMARY] booking=${maskedBooking} source=${source} dc_ok=${dcOk} dc_skipped=${dcSkipped} dc_reason=${dcReason} dc_multi_leg=${dcMultiLeg} billit_ok=${biOk} billit_skipped=${biSkipped} billit_reason=${biReason} billit_order_id_present=${biOrderPresent}`,
+      );
+    } catch (_) {
+      // Never throw from the summary log block.
+    }
+    return chainResult;
+  };
+
+  if (!normalizedScope.tenant_id || !normalizedScope.company_id) {
+    console.log(
+      `[PAID_AFTER_LIFECYCLE][SKIP] booking=${maskedBooking} source=${source} reason=missing_tenant_scope`,
+    );
+    return { skipped: true, reason: "missing_tenant_scope" };
+  }
+  if (!safeStr(bookingId, 200)) {
+    console.log(
+      `[PAID_AFTER_LIFECYCLE][SKIP] booking=- source=${source} reason=missing_booking_id`,
+    );
+    return { skipped: true, reason: "missing_booking_id" };
+  }
+
+  if (wantsBackground) {
+    try {
+      ctx.waitUntil(runChain());
+    } catch (scheduleErr) {
+      // Fall back to synchronous await if ctx.waitUntil unexpectedly throws.
+      console.log(
+        `[PAID_AFTER_LIFECYCLE][WAITUNTIL_FALLBACK] booking=${maskedBooking} source=${source} error=${safeStr(scheduleErr?.message || scheduleErr, 120) || "exception"}`,
+      );
+      try {
+        return await runChain();
+      } catch (fallbackErr) {
+        console.log(
+          `[PAID_AFTER_LIFECYCLE][FALLBACK_ERROR] booking=${maskedBooking} source=${source} error=${safeStr(fallbackErr?.message || fallbackErr, 120) || "exception"}`,
+        );
+        return { error: true };
+      }
+    }
+    console.log(
+      `[PAID_AFTER_LIFECYCLE][SCHEDULED] booking=${maskedBooking} source=${source}`,
+    );
+    return { scheduled: true };
+  }
+
+  try {
+    return await runChain();
+  } catch (err) {
+    // Defensive; runChain already swallows inner failures.
+    console.log(
+      `[PAID_AFTER_LIFECYCLE][ERROR] booking=${maskedBooking} source=${source} error=${safeStr(err?.message || err, 120) || "exception"}`,
+    );
+    return { error: true };
+  }
+}
+
 async function handleAdminBookingBillitAutoCreateSandbox({ request, url, env, bookingId }) {
   // 1. Admin auth.
   try {
@@ -32112,7 +32285,11 @@ export default {
 
       // Mollie webhook: verify payment -> if paid, confirm booking
       if (url.pathname === "/webhook/mollie" && request.method === "POST") {
-        const out = await mollieWebhook(request, env);
+        // Patch BW-Paid-Lifecycle: pass ctx so the webhook can schedule the
+        // after-paid lifecycle chain via ctx.waitUntil (Document Core INV
+        // ensure + Billit sandbox auto-create) without delaying the 200
+        // response Mollie needs to avoid webhook retries.
+        const out = await mollieWebhook(request, env, ctx);
         // Mollie expects 200 even if we already processed (idempotent)
         return json(out, 200);
       }
@@ -52225,7 +52402,7 @@ async function mollieFetchPayment(molliePaymentId, env, rideCredentials = null, 
  * Mollie sends webhooks with content-type application/x-www-form-urlencoded by default.
  * Typically it includes "id=tr_..."
  */
-async function mollieWebhook(request, env) {
+async function mollieWebhook(request, env, ctx = null) {
   // Finalization model (updated for B11-T1 / B11-T1b):
   //   - /pay/status (called from /pay/return polling) remains the PRIMARY
   //     finalizer for the happy path.
@@ -52420,6 +52597,27 @@ async function mollieWebhook(request, env) {
       console.log(
         `[PAYMENT_RESUME][WEBHOOK_FINALIZE] paymentBooking=${_bookingIntentMask(bookingId)} canonical=${_bookingIntentMask(paymentResumeCanonical)} outcome=${paymentResumeFinalize}`,
       );
+
+      // Patch BW-Paid-Lifecycle (Gap #1 fix): after a SUCCESSFUL G3-K resume
+      // canonical finalize, run the CENTRAL after-paid lifecycle helper via
+      // ctx.waitUntil. Before this patch the resume branch skipped the
+      // Document Core INV ensure hook entirely (only the B11-T1b first-time
+      // branch had it), so resumed Mollie payments finalized ONLY via the
+      // webhook (customer never returned to poll /pay/status) never produced
+      // an INV document and never linked a Billit sandbox order. The helper
+      // is fail-closed, idempotent, sandbox-only for the Billit step, and
+      // scheduled via ctx.waitUntil so Mollie still receives its 200 promptly.
+      if (
+        paymentResumeCanonical &&
+        (paymentResumeFinalize === "applied" || paymentResumeFinalize === "already_paid")
+      ) {
+        await runPaidBookingAfterLifecycle(env, bookingScope, paymentResumeCanonical, {
+          source: "mollie_webhook_resume_paid_lifecycle",
+          effectiveScope: bookingScope,
+          ctx,
+          background: true,
+        });
+      }
     }
 
     // Patch B11-T1: defensive canonical finalize on paid (non-resume path).
@@ -52574,111 +52772,33 @@ async function mollieWebhook(request, env) {
                 `[MOLLIE_WEBHOOK][CANONICAL_FINALIZE][OK] paymentBooking=${_bookingIntentMask(bookingId)} canonical=${_bookingIntentMask(resolvedCanonical)} outcome=${webhookCanonicalFinalize} reason=${webhookCanonicalFinalizeReason}`,
               );
 
-              // Patch B11-T1b: after a SUCCESSFUL canonical finalize, invoke
-              // the EXISTING Document Core paid lifecycle for this canonical
-              // booking. Without this a webhook-only paid event (no later
-              // /pay/status poll and no authoritative mark-paid) would leave
-              // Documents at 0 even though the canonical is now paid and
-              // carries a billing_customer_snapshot (observed B11-T cause for
-              // PLN-2026-000357 / 2026-07-923176).
+              // Patch BW-Paid-Lifecycle: after a SUCCESSFUL canonical finalize,
+              // invoke the CENTRAL after-paid lifecycle helper via
+              // ctx.waitUntil so Mollie's 200 response is not delayed by the
+              // Billit sandbox outbound call. The helper runs Document Core
+              // INV ensure FIRST (fixes the historical B11-T cause where
+              // Documents stayed at 0 when /pay/status was never polled) and
+              // Billit sandbox auto-create SECOND (setting-gated, sandbox
+              // only, deliberately never wired into the webhook before
+              // BW-Paid-Lifecycle because a synchronous Billit call could
+              // trigger Mollie webhook retries). Both inner wrappers are
+              // idempotent so a duplicate webhook delivery reuses the same
+              // INV / Billit order envelope.
               //
-              // This reuses the SAME wrapper that /pay/status and
-              // updateBookingPaymentAuthoritative already call
-              // (maybeRunDocumentCoreInvoiceAfterPaidLifecycle), so the B11-R
-              // multi-leg iterator and all idempotency are shared:
-              //   - findExistingInvoiceDocumentForBooking, and
-              //   - inv-auto:<tenant>:<company>:<bookingId>:<legId>:v1
-              // mean a duplicate webhook delivery OR a later /pay/status poll
-              // reuses the same INV documents instead of creating new ones. No
-              // new KV idempotency key is introduced here.
-              //
-              // Contract:
+              // Contract (delegated to the helper):
               //   - NEVER calls _issueInvoiceCore directly.
-              //   - NEVER calls ensureDocumentCoreInvoiceForPaidBusinessBooking
-              //     directly (only via the shared wrapper).
-              //   - NEVER duplicates B11-R leg logic.
-              //   - NEVER calls Billit auto-create / Peppol here.
-              //   - NEVER logs raw PII (masked ids, reason codes, booleans,
-              //     first-8 document id, counts only).
-              //   - Best-effort: any throw is caught; the webhook still
-              //     returns its normal ok response.
-              try {
-                const canonicalRec = await env.BOOKING_KV.get(
-                  `booking:${resolvedCanonical}`,
-                  { type: "json" },
-                );
-                if (
-                  !canonicalRec ||
-                  typeof canonicalRec !== "object" ||
-                  Array.isArray(canonicalRec)
-                ) {
-                  console.log(
-                    `[MOLLIE_WEBHOOK][DOCUMENT_CORE_LIFECYCLE][SKIP] paymentBooking=${_bookingIntentMask(bookingId)} canonical=${_bookingIntentMask(resolvedCanonical)} reason=canonical_not_found`,
-                  );
-                } else {
-                  const canonicalPaymentStatus = safeStr(
-                    canonicalRec?.payment_status || canonicalRec?.paymentStatus,
-                    32,
-                  ).toLowerCase();
-                  const canonicalStatus = safeStr(canonicalRec?.status, 32).toUpperCase();
-                  const canonicalConfirmedAt = safeStr(
-                    canonicalRec?.confirmed_at || canonicalRec?.confirmedAt,
-                    80,
-                  );
-                  const canonicalIsPaid =
-                    canonicalPaymentStatus === "paid" ||
-                    canonicalStatus === "PAID" ||
-                    canonicalStatus === "CONFIRMED" ||
-                    !!canonicalConfirmedAt;
-                  const canonicalInvoiceContext =
-                    _invoiceLifecycleContextFromRecord(canonicalRec);
-                  const canonicalBusinessInvoiceIntent =
-                    canonicalInvoiceContext?.businessInvoiceIntent === true;
-                  if (!canonicalIsPaid) {
-                    console.log(
-                      `[MOLLIE_WEBHOOK][DOCUMENT_CORE_LIFECYCLE][SKIP] paymentBooking=${_bookingIntentMask(bookingId)} canonical=${_bookingIntentMask(resolvedCanonical)} reason=canonical_not_paid`,
-                    );
-                  } else if (!canonicalBusinessInvoiceIntent) {
-                    console.log(
-                      `[MOLLIE_WEBHOOK][DOCUMENT_CORE_LIFECYCLE][SKIP] paymentBooking=${_bookingIntentMask(bookingId)} canonical=${_bookingIntentMask(resolvedCanonical)} reason=not_business_invoice_intent`,
-                    );
-                  } else {
-                    console.log(
-                      `[MOLLIE_WEBHOOK][DOCUMENT_CORE_LIFECYCLE][START] paymentBooking=${_bookingIntentMask(bookingId)} canonical=${_bookingIntentMask(resolvedCanonical)} source=mollie_webhook_paid_lifecycle`,
-                    );
-                    const documentCoreResult =
-                      await maybeRunDocumentCoreInvoiceAfterPaidLifecycle(
-                        env,
-                        bookingScope,
-                        resolvedCanonical,
-                        {
-                          source: "mollie_webhook_paid_lifecycle",
-                          effectiveScope: bookingScope,
-                          rec: canonicalRec,
-                        },
-                      );
-                    const dcOk = documentCoreResult?.ok === true;
-                    const dcSkipped = documentCoreResult?.skipped === true;
-                    const dcReason = safeStr(documentCoreResult?.reason, 80) || "unknown";
-                    const dcMultiLeg = documentCoreResult?.multi_leg === true;
-                    const dcDocId = safeStr(documentCoreResult?.document_id, 200) || "";
-                    const dcDocIdMask = dcDocId ? dcDocId.slice(0, 8) : "-";
-                    const dcCounts = dcMultiLeg
-                      ? `legs_total=${documentCoreResult?.legs_total ?? 0} legs_ok=${documentCoreResult?.legs_ok ?? 0} legs_skipped=${documentCoreResult?.legs_skipped ?? 0} legs_error=${documentCoreResult?.legs_error ?? 0} legs_reused=${documentCoreResult?.legs_reused ?? 0}`
-                      : `document_id=${dcDocIdMask}`;
-                    console.log(
-                      `[MOLLIE_WEBHOOK][DOCUMENT_CORE_LIFECYCLE][OK] paymentBooking=${_bookingIntentMask(bookingId)} canonical=${_bookingIntentMask(resolvedCanonical)} ok=${dcOk ? "true" : "false"} skipped=${dcSkipped ? "true" : "false"} reason=${dcReason} multi_leg=${dcMultiLeg ? "true" : "false"} ${dcCounts}`,
-                    );
-                  }
-                }
-              } catch (documentCoreErr) {
-                const documentCoreReason =
-                  safeStr(documentCoreErr?.message || documentCoreErr, 120) ||
-                  "exception";
-                console.log(
-                  `[MOLLIE_WEBHOOK][DOCUMENT_CORE_LIFECYCLE][ERROR] paymentBooking=${_bookingIntentMask(bookingId)} canonical=${_bookingIntentMask(resolvedCanonical)} reason=${documentCoreReason}`,
-                );
-              }
+              //   - NEVER sends via Peppol / calls /v1/orders/commands/send.
+              //   - NEVER duplicates B11-R leg logic (the Document Core
+              //     wrapper still owns per-leg iteration).
+              //   - NEVER logs raw PII.
+              //   - NEVER throws to the webhook (helper is fail-closed and
+              //     the scheduled task runs after the response is sent).
+              await runPaidBookingAfterLifecycle(env, bookingScope, resolvedCanonical, {
+                source: "mollie_webhook_paid_lifecycle",
+                effectiveScope: bookingScope,
+                ctx,
+                background: true,
+              });
             }
           }
         }
@@ -74269,39 +74389,34 @@ async function updateBookingPaymentAuthoritative(
 
   await env.BOOKING_KV.put(key, JSON.stringify(rec));
 
-  // Patch B11-K: Billit-independent Document Core invoice ensure hook.
+  // Patch BW-Paid-Lifecycle: central after-paid lifecycle hook.
   //
-  // Runs AFTER the paid record has been persisted so the helper's internal
-  // KV read sees the fresh paid state. Only triggers on a new paid transition
-  // (matches the legacy invoice hook above) to avoid re-processing on
-  // idempotent refreshes. Never calls Billit / Peppol; never throws to the
-  // payment update caller. Idempotent via findExistingInvoiceDocumentForBooking
-  // inside the inner helper.
+  // Runs AFTER the paid record has been persisted so the inner Document Core
+  // wrapper's KV read sees the fresh paid state. Only triggers on a new paid
+  // transition (matches the legacy invoice hook above) to avoid re-processing
+  // on idempotent refreshes. Awaited (background:false) because the caller is
+  // a Flutter client that tolerates ~1-3s latency and consumes the response
+  // synchronously - matches previous chauffeur/manual mark-paid behavior for
+  // Document Core, and adds Billit sandbox auto-create parity with /pay/status
+  // (setting-gated, sandbox-only, fail-closed inside the wrapper).
   if (normalizedStatus === "paid" && !wasAlreadyPaid) {
-    try {
-      const documentCoreScope = {
+    await runPaidBookingAfterLifecycle(
+      env,
+      {
         tenant_id: safeStr(tenantScope?.tenant_id, 96),
         company_id: safeStr(tenantScope?.company_id, 96),
-      };
-      await maybeRunDocumentCoreInvoiceAfterPaidLifecycle(
-        env,
-        documentCoreScope,
-        bookingId,
-        {
-          source: "payment_update",
-          effectiveScope: tenantScope,
-          // Patch B11-R: pass the already-persisted paid record so the wrapper
-          // can detect multi-leg / roundtrip bookings without a second KV read.
-          // Optional; the wrapper still falls back to a defensive KV load.
-          rec,
-        },
-      );
-    } catch (documentCoreErr) {
-      // Defensive only; the helper is designed to never throw.
-      console.log(
-        `[DOCUMENT_CORE_INVOICE_LIFECYCLE][ERROR] booking=${_bookingIntentMask(bookingId)} source=payment_update error=${safeStr(documentCoreErr?.message || documentCoreErr, 120) || "exception"}`,
-      );
-    }
+      },
+      bookingId,
+      {
+        source: "payment_update",
+        effectiveScope: tenantScope,
+        // Patch B11-R: pass the already-persisted paid record so the wrapper
+        // can detect multi-leg / roundtrip bookings without a second KV read.
+        // Optional; the wrapper still falls back to a defensive KV load.
+        rec,
+        background: false,
+      },
+    );
   }
 
   const indexUpsertResult = await upsertCompanyBookingsListIndexBestEffort(
@@ -85415,98 +85530,35 @@ async function payStatus(request, env, requestedScopeOverride = null) {
         );
       }
 
-      // Patch B11-K: Billit-independent Document Core invoice lifecycle hook.
+      // Patch BW-Paid-Lifecycle: central after-paid lifecycle hook.
       // Runs AFTER the legacy invoice lifecycle above (which already persisted
-      // invoiceRecordInfo.rec to KV when mutated) and BEFORE the B8e-B Billit
-      // auto-create hook below, so a subsequent Billit auto-create run - if
-      // enabled and configured - idempotently reuses this same Document Core
-      // invoice. It is INDEPENDENT of the billit_auto_create_after_paid_business_invoice
-      // company setting, of billit_party_id, of the Billit OAuth config, and
-      // of Peppol readiness. It NEVER calls Billit APIs, NEVER creates a
-      // Billit sandbox order, NEVER sends via Peppol, and is wrapped so it
-      // cannot throw out of payStatus or block payment finalization.
+      // invoiceRecordInfo.rec to KV when mutated) so the inner Document Core
+      // wrapper's KV read sees the fresh paid state, and the inner Billit
+      // sandbox auto-create wrapper idempotently reuses the INV record the
+      // Document Core wrapper just ensured (via
+      // findExistingInvoiceDocumentForBooking inside
+      // ensureDocumentCoreInvoiceForPaidBusinessBooking).
+      //
+      // Awaited (background:false) because payStatus is a customer poller;
+      // there is no Mollie retry pressure here and the caller relies on the
+      // response projection above being consistent with the freshly ensured
+      // invoice state. Neither inner wrapper mutates invoiceRecordInfo.rec,
+      // so the projection block above stays authoritative.
       if (invoiceRecordInfo?.rec && invoiceRecordInfo?.booking_id) {
-        try {
-          const documentCoreScope = {
+        await runPaidBookingAfterLifecycle(
+          env,
+          {
             tenant_id: effectiveScope.tenant_id,
             company_id: effectiveScope.company_id,
-          };
-          await maybeRunDocumentCoreInvoiceAfterPaidLifecycle(
-            env,
-            documentCoreScope,
-            invoiceRecordInfo.booking_id,
-            {
-              source: "pay_status_paid_lifecycle",
-              effectiveScope,
-              // Patch B11-R: pass the resolved canonical record so the wrapper
-              // can detect multi-leg / roundtrip bookings without a second KV
-              // read. Optional; the wrapper still falls back to a defensive
-              // KV load.
-              rec: invoiceRecordInfo.rec,
-            },
-          );
-        } catch (documentCoreErr) {
-          // Defensive only; the helper is designed to never throw.
-          console.log(
-            `[DOCUMENT_CORE_INVOICE_LIFECYCLE][ERROR] booking=${_bookingIntentMask(invoiceRecordInfo.booking_id)} source=pay_status_paid_lifecycle error=${safeStr(documentCoreErr?.message || documentCoreErr, 120) || "exception"}`,
-          );
-        }
-      }
-
-      // Patch B8e-B: sandbox-only, setting-gated Billit auto-create hook. Runs
-      // AFTER the Document Core invoice ensure hook above so it idempotently
-      // reuses that invoice (via findExistingInvoiceDocumentForBooking inside
-      // ensureDocumentCoreInvoiceForPaidBusinessBooking) when linking a Billit
-      // sandbox order. It is intentionally NOT wired into mollieWebhook,
-      // NEVER sends Peppol / calls /v1/orders/commands/send, NEVER supports
-      // production, and is wrapped so it can NEVER throw out of payStatus or
-      // block payment finalization. Default OFF: a false/missing company
-      // setting no-ops here.
-      if (invoiceRecordInfo?.rec && invoiceRecordInfo?.booking_id) {
-        try {
-          const billitAutoScope = {
-            tenant_id: effectiveScope.tenant_id,
-            company_id: effectiveScope.company_id,
-          };
-          const billitAutoResult = await maybeRunBillitAutoCreateAfterPaidLifecycle(
-            env,
-            billitAutoScope,
-            invoiceRecordInfo.booking_id,
-            {
-              source: "pay_status_paid_lifecycle",
-              rec: invoiceRecordInfo.rec,
-              effectiveScope,
-              nowIso: new Date().toISOString(),
-            },
-          );
-          // Patch B11-O: single grep-able summary line for the Billit auto-create
-          // outcome per `/pay/status` finalization. Envelope-only masked fields;
-          // never tokens, raw Billit body, or billing customer PII. Fail-closed:
-          // this log block never mutates state and never throws to payStatus.
-          try {
-            const summaryBooking = _bookingIntentMask(invoiceRecordInfo.booking_id);
-            const summaryOk = billitAutoResult?.ok === true ? "true" : "false";
-            const summarySkipped =
-              billitAutoResult?.skipped === true ? "true" : "false";
-            const summaryReason = safeStr(billitAutoResult?.reason, 80) || "-";
-            const summaryReused =
-              billitAutoResult?.reused_existing_invoice === true ? "true" : "false";
-            const summaryOrderPresent =
-              safeStr(billitAutoResult?.billit_order_id, 120) ? "true" : "false";
-            const summaryDocId = safeStr(billitAutoResult?.document_id, 200) || "";
-            const summaryDocIdMask = summaryDocId ? summaryDocId.slice(0, 8) : "-";
-            console.log(
-              `[BILLIT_AUTO_CREATE_LIFECYCLE][PAY_STATUS_SUMMARY] booking=${summaryBooking} ok=${summaryOk} skipped=${summarySkipped} reason=${summaryReason} reused_existing_invoice=${summaryReused} billit_order_id_present=${summaryOrderPresent} document_id=${summaryDocIdMask} source=pay_status_paid_lifecycle`,
-            );
-          } catch (_) {
-            // Never throw from the summary log block.
-          }
-        } catch (billitAutoErr) {
-          // Defensive only; the helper is designed to never throw.
-          console.warn(
-            `[BILLIT_AUTO_CREATE_LIFECYCLE] failed booking=${_bookingIntentMask(invoiceRecordInfo.booking_id)} reason=${safeStr(billitAutoErr?.message || billitAutoErr, 120) || "exception"}`,
-          );
-        }
+          },
+          invoiceRecordInfo.booking_id,
+          {
+            source: "pay_status_paid_lifecycle",
+            effectiveScope,
+            rec: invoiceRecordInfo.rec,
+            background: false,
+          },
+        );
       }
     }
 
