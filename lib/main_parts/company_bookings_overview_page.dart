@@ -3458,11 +3458,25 @@ class _CompanyBookingsOverviewPageState
             if (_documentsBookingId(item).isNotEmpty) ...[
               const SizedBox(height: 10),
               _BookingDocumentsSection(
-                // Key by the canonical booking identity used for the documents
-                // fetch so switching tabs/filters (which recycles list-item
-                // widgets) never reuses another booking's documents state.
-                key: ValueKey('booking-documents-${_documentsBookingId(item)}'),
+                // Key by canonical booking + leg identity so switching tabs or
+                // scrolling never reuses another leg's filtered documents state.
+                key: ValueKey(
+                  'booking-documents-${_documentsBookingId(item)}-'
+                  '${item.legId.trim()}-${item.legType.trim().toLowerCase()}',
+                ),
                 bookingId: _documentsBookingId(item),
+                sourceLegId:
+                    _CompanyBookingOverviewItem.isRoundtripOperationalLegRow(
+                      item,
+                    )
+                    ? item.legId
+                    : null,
+                sourceLegType:
+                    _CompanyBookingOverviewItem.isRoundtripOperationalLegRow(
+                      item,
+                    )
+                    ? item.legType
+                    : null,
                 tokens: tokens,
               ),
             ],

@@ -222,6 +222,31 @@ class _BookingDocumentMetadata {
       if (parsedExport.hasDisplayableStatus) billitExport = parsedExport;
     }
 
+    var sourceLegId = readAny(const ['source_leg_id', 'sourceLegId']);
+    var sourceLegType = readAny(const ['source_leg_type', 'sourceLegType']);
+    final rawSource = json['source'];
+    if (rawSource is Map) {
+      final sourceMap = rawSource.map((k, v) => MapEntry(k.toString(), v));
+      String readFromMap(List<String> keys) {
+        for (final key in keys) {
+          final text = (sourceMap[key] ?? '').toString().trim();
+          if (text.isNotEmpty && text.toLowerCase() != 'null') return text;
+        }
+        return '';
+      }
+
+      if (sourceLegId.isEmpty) {
+        sourceLegId = readFromMap(const ['leg_id', 'legId', 'source_leg_id']);
+      }
+      if (sourceLegType.isEmpty) {
+        sourceLegType = readFromMap(const [
+          'leg_type',
+          'legType',
+          'source_leg_type',
+        ]);
+      }
+    }
+
     return _BookingDocumentMetadata(
       documentId: readAny(const ['document_id', 'documentId']),
       documentType: readAny(const ['document_type', 'documentType']),
@@ -233,8 +258,8 @@ class _BookingDocumentMetadata {
       currency: readAny(const ['currency']),
       contentHash: readAny(const ['content_hash', 'contentHash']),
       sourceBookingId: readAny(const ['source_booking_id', 'sourceBookingId']),
-      sourceLegId: readAny(const ['source_leg_id', 'sourceLegId']),
-      sourceLegType: readAny(const ['source_leg_type', 'sourceLegType']),
+      sourceLegId: sourceLegId,
+      sourceLegType: sourceLegType,
       billitExport: billitExport,
     );
   }
@@ -272,6 +297,34 @@ class _BookingDocumentMetadata {
   }
 }
 
+/// P1-B: client-side leg filter for roundtrip leg cards. When [sourceLegId]
+/// and/or [sourceLegType] are set, only documents whose leg metadata matches
+/// are shown. Documents without leg metadata never appear on filtered leg
+/// cards; parent/single-trip views pass no filter and show everything.
+bool _bookingDocumentMatchesLegFilter(
+  _BookingDocumentMetadata doc, {
+  String? sourceLegId,
+  String? sourceLegType,
+}) {
+  final filterLegId = (sourceLegId ?? '').trim();
+  final filterLegType = (sourceLegType ?? '').trim().toLowerCase();
+  if (filterLegId.isEmpty && filterLegType.isEmpty) return true;
+
+  final docLegId = doc.sourceLegId.trim();
+  final docLegType = doc.sourceLegType.trim().toLowerCase();
+  if (docLegId.isEmpty && docLegType.isEmpty) return false;
+
+  var idOk = true;
+  var typeOk = true;
+  if (filterLegId.isNotEmpty) {
+    idOk = docLegId.isNotEmpty && docLegId == filterLegId;
+  }
+  if (filterLegType.isNotEmpty) {
+    typeOk = docLegType.isNotEmpty && docLegType == filterLegType;
+  }
+  return idOk && typeOk;
+}
+
 /// Compact, read-only "Documenten" section shown on a company/admin booking
 /// card. Lazily fetches issued documents for the booking the first time the
 /// section is expanded so a long bookings list never fires a request per row.
@@ -281,11 +334,16 @@ class _BookingDocumentMetadata {
 class _BookingDocumentsSection extends StatefulWidget {
   final String bookingId;
   final _CompanyBookingsThemeTokens tokens;
+  /// Optional roundtrip leg filter (outbound/return leg cards only).
+  final String? sourceLegId;
+  final String? sourceLegType;
 
   const _BookingDocumentsSection({
     super.key,
     required this.bookingId,
     required this.tokens,
+    this.sourceLegId,
+    this.sourceLegType,
   });
 
   @override
@@ -320,6 +378,22 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
   /// canonical booking id.
   String get _documentsScopeKey => widget.bookingId.trim();
 
+  bool get _hasLegFilter =>
+      (widget.sourceLegId ?? '').trim().isNotEmpty ||
+      (widget.sourceLegType ?? '').trim().isNotEmpty;
+
+  String get _legFilterScopeKey =>
+      '${(widget.sourceLegId ?? '').trim()}::${(widget.sourceLegType ?? '').trim().toLowerCase()}';
+
+  List<_BookingDocumentMetadata> get _filteredDocuments =>
+      _documents.where((doc) {
+        return _bookingDocumentMatchesLegFilter(
+          doc,
+          sourceLegId: widget.sourceLegId,
+          sourceLegType: widget.sourceLegType,
+        );
+      }).toList(growable: false);
+
   @override
   void initState() {
     super.initState();
@@ -334,7 +408,19 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
   void didUpdateWidget(covariant _BookingDocumentsSection oldWidget) {
     super.didUpdateWidget(oldWidget);
     final nextScopeKey = _documentsScopeKey;
-    if (nextScopeKey == _activeScopeKey) return;
+    final nextLegFilterKey = _legFilterScopeKey;
+    final oldLegFilterKey =
+        '${(oldWidget.sourceLegId ?? '').trim()}::${(oldWidget.sourceLegType ?? '').trim().toLowerCase()}';
+    if (nextScopeKey == _activeScopeKey && nextLegFilterKey == oldLegFilterKey) {
+      return;
+    }
+
+    if (nextScopeKey == _activeScopeKey) {
+      // Same canonical booking, different leg filter (rare without a distinct
+      // key). Re-filter the already-fetched documents without a new network call.
+      setState(() {});
+      return;
+    }
 
     // The booking identity changed under a reused State element (switching
     // tabs/filters recycles this widget position). Re-wire the per-booking
@@ -1302,7 +1388,7 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
                       border: Border.all(color: tokens.accent.withOpacity(0.4)),
                     ),
                     child: Text(
-                      '${_documents.length}',
+                      '${_filteredDocuments.length}',
                       style: TextStyle(
                         color: tokens.accent,
                         fontSize: 10.4,
@@ -1395,23 +1481,32 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
         ),
       );
     }
-    if (_documents.isEmpty) {
+    if (_filteredDocuments.isEmpty) {
       return Padding(
         padding: const EdgeInsets.symmetric(vertical: 6),
         child: Text(
-          _tr(
-            nl: 'Nog geen documenten voor deze boeking.',
-            en: 'No documents for this booking yet.',
-            fr: 'Aucun document pour cette réservation.',
-            es: 'Aún no hay documentos para esta reserva.',
-          ),
+          _hasLegFilter
+              ? _tr(
+                  nl: 'Nog geen documenten voor deze rit.',
+                  en: 'No documents for this ride yet.',
+                  fr: 'Aucun document pour ce trajet.',
+                  es: 'Aún no hay documentos para este trayecto.',
+                )
+              : _tr(
+                  nl: 'Nog geen documenten voor deze boeking.',
+                  en: 'No documents for this booking yet.',
+                  fr: 'Aucun document pour cette réservation.',
+                  es: 'Aún no hay documentos para esta reserva.',
+                ),
           style: TextStyle(color: tokens.textTertiary, fontSize: 11.4),
         ),
       );
     }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
-      children: [for (final doc in _documents) _buildDocumentRow(tokens, doc)],
+      children: [
+        for (final doc in _filteredDocuments) _buildDocumentRow(tokens, doc),
+      ],
     );
   }
 
