@@ -351,6 +351,11 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
   // B11-D: per-document Peppol send in-flight set, keyed by document_id so one
   // send never blocks unrelated rows or the status refresh button.
   Set<String> _sendingPeppolDocIds = <String>{};
+  // B12-G2: proactive Peppol readiness preview cache, keyed by document_id
+  // within the active booking scope. Discarded when the booking identity changes.
+  Map<String, BookingPeppolReadinessState> _peppolReadinessByDocId =
+      <String, BookingPeppolReadinessState>{};
+  Set<String> _fetchingPeppolReadinessDocIds = <String>{};
   late ValueNotifier<int> _refreshSignal;
   // Stable identity of the booking whose documents are currently held in state.
   // Used to (a) reset state when a reused State element is handed a different
@@ -426,6 +431,8 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
       _documents = const <_BookingDocumentMetadata>[];
       _refreshingDocIds = <String>{};
       _sendingPeppolDocIds = <String>{};
+      _peppolReadinessByDocId = <String, BookingPeppolReadinessState>{};
+      _fetchingPeppolReadinessDocIds = <String>{};
       _loaded = false;
       _loading = false;
       _error = false;
@@ -517,6 +524,7 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
         _loading = false;
         _error = false;
       });
+      _kickPeppolReadinessFetches(parsed, requestScopeKey);
     } catch (_) {
       if (!mounted || requestScopeKey != _activeScopeKey) return;
       setState(() {
@@ -532,6 +540,107 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
     setState(() => _expanded = next);
     if (next && !_loaded && !_loading) {
       _loadDocuments();
+    }
+  }
+
+  /// B12-G2: mirrors backend/company send eligibility for readiness fetch.
+  bool _shouldFetchPeppolReadiness(_BookingDocumentMetadata doc) {
+    final export = doc.billitExport;
+    if (export == null) return false;
+    return shouldFetchBookingPeppolReadiness(
+      documentType: doc.documentType,
+      documentId: doc.documentId,
+      billitEnvironment: export.environment,
+      billitOrderId: export.orderId,
+      billitSent: export.sent,
+      billitPeppolSent: export.peppolSent,
+      billitTransportType: export.transportType,
+    );
+  }
+
+  BookingPeppolReadinessState? _peppolReadinessFor(String docId) {
+    return _peppolReadinessByDocId[docId.trim()];
+  }
+
+  void _kickPeppolReadinessFetches(
+    List<_BookingDocumentMetadata> docs,
+    String requestScopeKey,
+  ) {
+    for (final doc in docs) {
+      if (!_shouldFetchPeppolReadiness(doc)) continue;
+      final docId = doc.documentId.trim();
+      if (docId.isEmpty) continue;
+      if (_fetchingPeppolReadinessDocIds.contains(docId)) continue;
+      unawaited(_fetchPeppolReadiness(doc, requestScopeKey));
+    }
+  }
+
+  /// B12-G2: read-only Peppol readiness preview for ONE invoice via
+  /// `GET /company/documents/:documentId/billit-payload-preview`. Never sends
+  /// Peppol or calls Billit send/status refresh endpoints.
+  Future<void> _fetchPeppolReadiness(
+    _BookingDocumentMetadata doc,
+    String requestScopeKey,
+  ) async {
+    final docId = doc.documentId.trim();
+    if (docId.isEmpty || !_shouldFetchPeppolReadiness(doc)) return;
+    if (_fetchingPeppolReadinessDocIds.contains(docId)) return;
+
+    setState(() {
+      _fetchingPeppolReadinessDocIds = <String>{
+        ..._fetchingPeppolReadinessDocIds,
+        docId,
+      };
+      _peppolReadinessByDocId = <String, BookingPeppolReadinessState>{
+        ..._peppolReadinessByDocId,
+        docId: BookingPeppolReadinessState.loading,
+      };
+    });
+
+    try {
+      final uri = _withActiveBookingScope(
+        kBookingBaseUrl,
+        '/company/documents/${Uri.encodeComponent(docId)}/billit-payload-preview',
+      );
+      final auth = await resolveCompanyOwnerAuthHeaders();
+      final res = await http
+          .get(uri, headers: auth.headers)
+          .timeout(const Duration(seconds: 12));
+      if (!mounted || requestScopeKey != _activeScopeKey) return;
+
+      BookingPeppolReadinessState next = BookingPeppolReadinessState.unknown;
+      if (res.statusCode == 200) {
+        final decoded = jsonDecode(res.body);
+        if (decoded is Map) {
+          next = parseBookingPeppolReadinessResponse(
+            decoded.map((k, v) => MapEntry(k.toString(), v)),
+          );
+        }
+      }
+
+      if (!mounted || requestScopeKey != _activeScopeKey) return;
+      setState(() {
+        _peppolReadinessByDocId = <String, BookingPeppolReadinessState>{
+          ..._peppolReadinessByDocId,
+          docId: next,
+        };
+      });
+    } catch (_) {
+      if (!mounted || requestScopeKey != _activeScopeKey) return;
+      setState(() {
+        _peppolReadinessByDocId = <String, BookingPeppolReadinessState>{
+          ..._peppolReadinessByDocId,
+          docId: BookingPeppolReadinessState.unknown,
+        };
+      });
+    } finally {
+      if (mounted && requestScopeKey == _activeScopeKey) {
+        setState(() {
+          _fetchingPeppolReadinessDocIds = <String>{
+            ..._fetchingPeppolReadinessDocIds,
+          }..remove(docId);
+        });
+      }
     }
   }
 
@@ -587,6 +696,13 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
         decoded.map((k, v) => MapEntry(k.toString(), v)),
       );
       success = true;
+      final refreshedDoc = _documents.firstWhere(
+        (d) => d.documentId == docId,
+        orElse: () => doc,
+      );
+      if (_shouldFetchPeppolReadiness(refreshedDoc)) {
+        unawaited(_fetchPeppolReadiness(refreshedDoc, requestScopeKey));
+      }
     } catch (_) {
       // Non-blocking: keep the existing status and fall through to the toast.
     } finally {
@@ -1226,6 +1342,31 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
     _BookingDocumentMetadata doc,
   ) async {
     if (_sendingPeppolDocIds.contains(doc.documentId.trim())) return;
+
+    final gate = evaluateBookingPeppolSendGate(
+      _peppolReadinessFor(doc.documentId),
+    );
+    switch (gate) {
+      case BookingPeppolSendGate.blockNotReady:
+        final reasons =
+            _peppolReadinessFor(doc.documentId)?.reasons ?? const <String>[];
+        await _showPeppolNotReadyDialog(reasons);
+        return;
+      case BookingPeppolSendGate.blockLoading:
+        _showBillitPeppolSendSnackBar(
+          _tr(
+            nl: 'Peppol-gereedheid wordt nog gecontroleerd.',
+            en: 'Peppol readiness is still being checked.',
+            fr: 'La préparation Peppol est encore en cours de vérification.',
+            es: 'La preparación Peppol aún se está comprobando.',
+          ),
+        );
+        return;
+      case BookingPeppolSendGate.allow:
+      case BookingPeppolSendGate.allowWithBackendGuard:
+        break;
+    }
+
     final confirmed = await _confirmBillitPeppolSendDialog(doc);
     if (!confirmed || !mounted) return;
     await _sendBillitPeppolSandbox(doc);
@@ -1585,7 +1726,7 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
             ),
           ],
           if (doc.billitExport != null)
-            _buildBillitStatusBlock(tokens, doc.billitExport!),
+            _buildBillitStatusBlock(tokens, doc, doc.billitExport!),
           if (_shouldShowBillitNotLinkedYet(doc))
             _buildBillitNotLinkedYetBlock(tokens),
           if (_shouldShowBillitRefresh(doc))
@@ -1651,6 +1792,14 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
     _BookingDocumentMetadata doc,
   ) {
     final sending = _sendingPeppolDocIds.contains(doc.documentId.trim());
+    final gate = evaluateBookingPeppolSendGate(
+      _peppolReadinessFor(doc.documentId),
+    );
+    final blocked = gate == BookingPeppolSendGate.blockNotReady ||
+        gate == BookingPeppolSendGate.blockLoading;
+    final Color actionColor = gate == BookingPeppolSendGate.blockNotReady
+        ? tokens.textSecondary
+        : tokens.accent;
     return Padding(
       padding: const EdgeInsets.only(top: 6),
       child: TextButton.icon(
@@ -1658,7 +1807,7 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
             ? null
             : () => _promptAndSendBillitPeppolSandbox(doc),
         style: TextButton.styleFrom(
-          foregroundColor: tokens.accent,
+          foregroundColor: actionColor,
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
           minimumSize: const Size(0, 30),
           tapTargetSize: MaterialTapTargetSize.shrinkWrap,
@@ -1673,7 +1822,11 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
                   valueColor: AlwaysStoppedAnimation<Color>(tokens.accent),
                 ),
               )
-            : Icon(Icons.send_outlined, size: 14, color: tokens.accent),
+            : Icon(
+                blocked ? Icons.info_outline : Icons.send_outlined,
+                size: 14,
+                color: actionColor,
+              ),
         label: Text(
           _tr(
             nl: 'Verstuur via Peppol',
@@ -1681,7 +1834,11 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
             fr: 'Envoyer via Peppol',
             es: 'Enviar por Peppol',
           ),
-          style: const TextStyle(fontSize: 11.0, fontWeight: FontWeight.w700),
+          style: TextStyle(
+            fontSize: 11.0,
+            fontWeight: FontWeight.w700,
+            color: actionColor,
+          ),
         ),
       ),
     );
@@ -1727,11 +1884,13 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
     );
   }
 
-  /// B10c: read-only Billit/Peppol status block rendered beneath a document's
-  /// metadata. Pure display: no onTap, no button, no network call, no send.
-  /// Everything is derived from the already-fetched `billit_export` envelope.
+  /// B10c / B12-G2: read-only Billit/Peppol status block rendered beneath a
+  /// document's metadata. Proactive Peppol readiness chip is shown for eligible
+  /// unsent sandbox invoices (hidden once sent via Peppol). Pure display except
+  /// the not-ready chip, which opens the readiness dialog on tap.
   Widget _buildBillitStatusBlock(
     _CompanyBookingsThemeTokens tokens,
+    _BookingDocumentMetadata doc,
     _BillitExportMetadata export,
   ) {
     final billitStatus = export.billitStatus.toLowerCase();
@@ -1792,6 +1951,15 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
 
     if (primaryLabel == null) return const SizedBox.shrink();
 
+    final showReadinessChip = shouldShowBookingPeppolReadinessChip(
+      fetchEligible: _shouldFetchPeppolReadiness(doc),
+      sentViaPeppol: export.isSentViaPeppol,
+    );
+    final readiness = showReadinessChip
+        ? (_peppolReadinessFor(doc.documentId) ??
+            BookingPeppolReadinessState.loading)
+        : null;
+
     String detailLine = '';
     if (export.orderNumber.isNotEmpty) {
       detailLine = 'Billit: ${export.orderNumber}';
@@ -1816,6 +1984,8 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
               _billitStatusChip(tokens, primaryLabel, primary: true),
               if (secondaryLabel != null)
                 _billitStatusChip(tokens, secondaryLabel, primary: false),
+              if (readiness != null)
+                _buildPeppolReadinessChip(tokens, doc, readiness),
             ],
           ),
           if (detailLine.isNotEmpty) ...[
@@ -1843,9 +2013,91 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
               ),
             ),
           ],
+          if (readiness != null &&
+              readiness.phase == BookingPeppolReadinessPhase.notReady &&
+              readiness.reasons.isNotEmpty) ...[
+            const SizedBox(height: 3),
+            ...readiness.reasons.map((code) {
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 2),
+                child: Text(
+                  '• ${_mapPeppolReadinessReason(code)}',
+                  style: TextStyle(
+                    color: tokens.textTertiary,
+                    fontSize: 9.8,
+                  ),
+                ),
+              );
+            }),
+          ],
         ],
       ),
     );
+  }
+
+  /// B12-G2: proactive Peppol readiness chip inside the Billit status block.
+  Widget _buildPeppolReadinessChip(
+    _CompanyBookingsThemeTokens tokens,
+    _BookingDocumentMetadata doc,
+    BookingPeppolReadinessState readiness,
+  ) {
+    late final String label;
+    late final bool primary;
+    late final bool warning;
+    VoidCallback? onTap;
+
+    switch (readiness.phase) {
+      case BookingPeppolReadinessPhase.loading:
+        label = _tr(
+          nl: 'Peppol-gereedheid controleren…',
+          en: 'Checking Peppol readiness…',
+          fr: 'Vérification de la préparation Peppol…',
+          es: 'Comprobando preparación Peppol…',
+        );
+        primary = false;
+        warning = false;
+        break;
+      case BookingPeppolReadinessPhase.ready:
+        label = _tr(
+          nl: 'Klaar voor Peppol',
+          en: 'Ready for Peppol',
+          fr: 'Prêt pour Peppol',
+          es: 'Listo para Peppol',
+        );
+        primary = true;
+        warning = false;
+        break;
+      case BookingPeppolReadinessPhase.notReady:
+        label = _tr(
+          nl: 'Peppol-instelling nodig',
+          en: 'Peppol setup needed',
+          fr: 'Configuration Peppol requise',
+          es: 'Configuración Peppol necesaria',
+        );
+        primary = false;
+        warning = true;
+        onTap = () => _showPeppolNotReadyDialog(readiness.reasons);
+        break;
+      case BookingPeppolReadinessPhase.unknown:
+        label = _tr(
+          nl: 'Peppol-gereedheid niet gecontroleerd',
+          en: 'Peppol readiness not checked',
+          fr: 'Préparation Peppol non vérifiée',
+          es: 'Preparación Peppol no comprobada',
+        );
+        primary = false;
+        warning = false;
+        break;
+    }
+
+    final chip = _billitStatusChip(
+      tokens,
+      label,
+      primary: primary,
+      warning: warning,
+    );
+    if (onTap == null) return chip;
+    return GestureDetector(onTap: onTap, child: chip);
   }
 
   /// Subtle, read-only status chip. Deliberately styled unlike a button (no
@@ -1854,14 +2106,23 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
     _CompanyBookingsThemeTokens tokens,
     String label, {
     required bool primary,
+    bool warning = false,
   }) {
-    final Color bg = primary
+    final Color bg = warning
+        ? const Color(0xFFFFF3E0)
+        : primary
         ? tokens.accent.withOpacity(0.12)
         : tokens.textSecondary.withOpacity(0.10);
-    final Color border = primary
+    final Color border = warning
+        ? const Color(0xFFFFB74D).withOpacity(0.55)
+        : primary
         ? tokens.accent.withOpacity(0.4)
         : tokens.textSecondary.withOpacity(0.3);
-    final Color fg = primary ? tokens.accent : tokens.textSecondary;
+    final Color fg = warning
+        ? const Color(0xFFE65100)
+        : primary
+        ? tokens.accent
+        : tokens.textSecondary;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
       decoration: BoxDecoration(
