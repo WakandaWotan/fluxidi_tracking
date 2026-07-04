@@ -61,7 +61,24 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
   final TextEditingController _emailController = TextEditingController();
   final TextEditingController _companyNameController = TextEditingController();
   final TextEditingController _vatNumberController = TextEditingController();
+  final TextEditingController _billingLegalNameController =
+      TextEditingController();
+  final TextEditingController _billingVatController = TextEditingController();
+  final TextEditingController _billingRegistrationNumberController =
+      TextEditingController();
+  final TextEditingController _billingStreetController = TextEditingController();
+  final TextEditingController _billingPostalController = TextEditingController();
+  final TextEditingController _billingCityController = TextEditingController();
+  final TextEditingController _billingCountryController = TextEditingController();
+  final TextEditingController _billingContactEmailController =
+      TextEditingController();
+  final TextEditingController _billingPeppolEndpointController =
+      TextEditingController();
+  final TextEditingController _billingPeppolSchemeController =
+      TextEditingController();
 
+  bool _billingDetailsEnabled = false;
+  bool _billingPeppolExpanded = false;
   bool _isSubmitting = false;
   bool _isSubmitted = false;
   bool _isReturningToCustomerPage = false;
@@ -73,14 +90,8 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
   @override
   void initState() {
     super.initState();
-    _vatNumberController.addListener(_onVatNumberChanged);
     _logPaymentPickerResolution();
     unawaited(_prefillFromCustomerProfile());
-  }
-
-  void _onVatNumberChanged() {
-    if (!mounted) return;
-    setState(() {});
   }
 
   Future<void> _prefillFromCustomerProfile() async {
@@ -100,6 +111,44 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
       setIfBlank(_emailController, profile.email);
       setIfBlank(_companyNameController, profile.companyName);
       setIfBlank(_vatNumberController, profile.vatNumber);
+      setIfBlank(_billingLegalNameController, profile.companyName);
+      setIfBlank(_billingVatController, profile.vatNumber);
+      setIfBlank(_billingStreetController, profile.billingStreet);
+      setIfBlank(_billingPostalController, profile.billingPostalCode);
+      setIfBlank(_billingCityController, profile.billingCity);
+      setIfBlank(_billingCountryController, profile.billingCountry);
+      setIfBlank(
+        _billingContactEmailController,
+        profile.invoiceEmail.trim().isNotEmpty
+            ? profile.invoiceEmail
+            : profile.email,
+      );
+      setIfBlank(_billingPeppolEndpointController, profile.peppolEndpointId);
+      setIfBlank(_billingPeppolSchemeController, profile.peppolScheme);
+      final profileHasPeppol =
+          profile.peppolEndpointId.trim().isNotEmpty ||
+          profile.peppolScheme.trim().isNotEmpty;
+      final profileHasBusinessIdentity =
+          profile.companyName.trim().isNotEmpty ||
+          profile.vatNumber.trim().isNotEmpty ||
+          profile.billingStreet.trim().isNotEmpty ||
+          profile.billingCity.trim().isNotEmpty ||
+          profile.billingPostalCode.trim().isNotEmpty ||
+          profile.billingCountry.trim().isNotEmpty ||
+          profile.invoiceEmail.trim().isNotEmpty ||
+          profileHasPeppol;
+      if (profileHasBusinessIdentity) {
+        setIfBlank(_billingContactEmailController, profile.email);
+        setIfBlank(_billingCountryController, 'BE');
+        if ((!_billingDetailsEnabled ||
+                (profileHasPeppol && !_billingPeppolExpanded)) &&
+            mounted) {
+          setState(() {
+            _billingDetailsEnabled = true;
+            if (profileHasPeppol) _billingPeppolExpanded = true;
+          });
+        }
+      }
     } catch (_) {
       // Best-effort prefill only; never block airport booking flow.
     }
@@ -122,12 +171,21 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
 
   @override
   void dispose() {
-    _vatNumberController.removeListener(_onVatNumberChanged);
     _nameController.dispose();
     _phoneController.dispose();
     _emailController.dispose();
     _companyNameController.dispose();
     _vatNumberController.dispose();
+    _billingLegalNameController.dispose();
+    _billingVatController.dispose();
+    _billingRegistrationNumberController.dispose();
+    _billingStreetController.dispose();
+    _billingPostalController.dispose();
+    _billingCityController.dispose();
+    _billingCountryController.dispose();
+    _billingContactEmailController.dispose();
+    _billingPeppolEndpointController.dispose();
+    _billingPeppolSchemeController.dispose();
     super.dispose();
   }
 
@@ -668,8 +726,6 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
     required String name,
     required String phone,
     required String email,
-    String companyName = '',
-    String vatNumber = '',
   }) {
     final base = Map<String, dynamic>.from(widget.payload);
     final tenantId = (base['tenant_id'] ?? base['tenantId'] ?? '').toString();
@@ -687,6 +743,17 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
     };
 
     final paymentSelection = _bookingPaymentSelection;
+    final billingCustomerFields = _buildBillingCustomerPayloadFields(
+      defaultEmail: email,
+      defaultPhone: phone,
+    );
+    final businessFields = _buildBusinessBookingPayloadFields(
+      email: email,
+      billingCustomerFields: billingCustomerFields,
+    );
+    final companyName = businessFields.effectiveCompanyName;
+    final vatNumber = businessFields.effectiveVatNumber;
+    final invoiceEmail = businessFields.effectiveInvoiceEmail;
 
     return <String, dynamic>{
       ...base,
@@ -711,6 +778,11 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
           'vat_number': vatNumber,
           'vatNumber': vatNumber,
         },
+        if (invoiceEmail.isNotEmpty) ...{
+          'invoice_email': invoiceEmail,
+          'invoiceEmail': invoiceEmail,
+        },
+        ...businessFields.customerFragment,
       },
       'customer_name': name,
       'customer_phone': phone,
@@ -729,9 +801,412 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
         'vat_number': vatNumber,
         'vatNumber': vatNumber,
       },
+      if (invoiceEmail.isNotEmpty) ...{
+        'invoice_email': invoiceEmail,
+        'invoiceEmail': invoiceEmail,
+      },
+      ...businessFields.topLevelFragment,
+      ...billingCustomerFields,
       'quote': widget.quote,
       'airport_transfer': airportTransfer,
     };
+  }
+
+  void _onBillingDetailsToggled(bool enabled) {
+    setState(() {
+      _billingDetailsEnabled = enabled;
+      if (enabled) {
+        if (_billingLegalNameController.text.trim().isEmpty &&
+            _companyNameController.text.trim().isNotEmpty) {
+          _billingLegalNameController.text = _companyNameController.text.trim();
+        }
+        if (_billingVatController.text.trim().isEmpty &&
+            _vatNumberController.text.trim().isNotEmpty) {
+          _billingVatController.text = _vatNumberController.text.trim();
+        }
+        if (_billingContactEmailController.text.trim().isEmpty &&
+            _emailController.text.trim().isNotEmpty) {
+          _billingContactEmailController.text = _emailController.text.trim();
+        }
+        if (_billingCountryController.text.trim().isEmpty) {
+          _billingCountryController.text = 'BE';
+        }
+      }
+    });
+  }
+
+  bool get _billingAddressComplete =>
+      _billingStreetController.text.trim().isNotEmpty &&
+      _billingPostalController.text.trim().isNotEmpty &&
+      _billingCityController.text.trim().isNotEmpty &&
+      _billingCountryController.text.trim().isNotEmpty;
+
+  Map<String, dynamic> _buildBillingCustomerPayloadFields({
+    required String defaultEmail,
+    required String defaultPhone,
+  }) {
+    if (!_billingDetailsEnabled) return const <String, dynamic>{};
+    final legalName = _billingLegalNameController.text.trim();
+    final vat = _billingVatController.text.trim();
+    final registrationNumber = _billingRegistrationNumberController.text.trim();
+    final street = _billingStreetController.text.trim();
+    final postal = _billingPostalController.text.trim();
+    final city = _billingCityController.text.trim();
+    final country = _billingCountryController.text.trim().toUpperCase();
+    final contactEmail = _billingContactEmailController.text.trim().isNotEmpty
+        ? _billingContactEmailController.text.trim()
+        : defaultEmail.trim();
+    final contactPhone = defaultPhone.trim();
+    final peppolEndpoint = _billingPeppolEndpointController.text.trim();
+    final peppolScheme = _billingPeppolSchemeController.text.trim();
+
+    final hasAny =
+        legalName.isNotEmpty ||
+        vat.isNotEmpty ||
+        registrationNumber.isNotEmpty ||
+        street.isNotEmpty ||
+        postal.isNotEmpty ||
+        city.isNotEmpty ||
+        country.isNotEmpty ||
+        peppolEndpoint.isNotEmpty ||
+        peppolScheme.isNotEmpty;
+    if (!hasAny) return const <String, dynamic>{};
+
+    final billingCustomer = <String, dynamic>{
+      'customer_type': 'business',
+      'display_name': legalName.isNotEmpty ? legalName : null,
+      'contact_email': contactEmail.isNotEmpty ? contactEmail : null,
+      'contact_phone': contactPhone.isNotEmpty ? contactPhone : null,
+      'legal_name': legalName.isNotEmpty ? legalName : null,
+      'vat_number': vat.isNotEmpty ? vat : null,
+      'company_registration_number': registrationNumber.isNotEmpty
+          ? registrationNumber
+          : null,
+      'billing_address': <String, dynamic>{
+        'street': street.isNotEmpty ? street : null,
+        'postal_code': postal.isNotEmpty ? postal : null,
+        'city': city.isNotEmpty ? city : null,
+        'country': country.isNotEmpty ? country : null,
+      },
+      'peppol': <String, dynamic>{
+        'endpoint_id': peppolEndpoint.isNotEmpty ? peppolEndpoint : null,
+        'scheme': peppolScheme.isNotEmpty ? peppolScheme : null,
+      },
+    };
+    return <String, dynamic>{'billing_customer': billingCustomer};
+  }
+
+  String? _billingCustomerValidationWarning() {
+    if (!_billingDetailsEnabled) return null;
+    final hasLegal = _billingLegalNameController.text.trim().isNotEmpty;
+    final hasVat = _billingVatController.text.trim().isNotEmpty;
+    final hasRegistration = _billingRegistrationNumberController.text
+        .trim()
+        .isNotEmpty;
+    if (hasLegal && (hasVat || hasRegistration) && _billingAddressComplete) {
+      return null;
+    }
+    return _t(
+      nl: 'Factuurgegevens lijken onvolledig (bedrijfsnaam, btw-/ondernemingsnummer of adres). Je boeking gaat gewoon door.',
+      en: 'Billing details look incomplete (company name, VAT/registration number or address). Your booking still continues.',
+      fr: 'Les données de facturation semblent incomplètes (nom, numéro de TVA/d’entreprise ou adresse). Votre réservation se poursuit.',
+      es: 'Los datos de facturación parecen incompletos (nombre, número de IVA/registro o dirección). Tu reserva continúa igualmente.',
+    );
+  }
+
+  ({
+    String effectiveCompanyName,
+    String effectiveVatNumber,
+    String effectiveInvoiceEmail,
+    Map<String, dynamic> topLevelFragment,
+    Map<String, dynamic> customerFragment,
+  })
+  _buildBusinessBookingPayloadFields({
+    required String email,
+    required Map<String, dynamic> billingCustomerFields,
+  }) {
+    if (!_billingDetailsEnabled) {
+      return (
+        effectiveCompanyName: '',
+        effectiveVatNumber: '',
+        effectiveInvoiceEmail: '',
+        topLevelFragment: const <String, dynamic>{
+          'business_detected': false,
+          'businessDetected': false,
+          'invoice_requested': false,
+          'invoiceRequested': false,
+        },
+        customerFragment: const <String, dynamic>{
+          'business_detected': false,
+          'businessDetected': false,
+          'invoice_requested': false,
+          'invoiceRequested': false,
+        },
+      );
+    }
+
+    final legalName = _billingLegalNameController.text.trim();
+    final vat = _billingVatController.text.trim();
+    final invoiceEmail = _billingContactEmailController.text.trim().isNotEmpty
+        ? _billingContactEmailController.text.trim()
+        : email.trim();
+    _companyNameController.text = legalName;
+    _vatNumberController.text = vat;
+
+    return (
+      effectiveCompanyName: legalName,
+      effectiveVatNumber: vat,
+      effectiveInvoiceEmail: invoiceEmail,
+      topLevelFragment: <String, dynamic>{
+        'business_detected': true,
+        'businessDetected': true,
+        'invoice_requested': true,
+        'invoiceRequested': true,
+        'invoice_intent': 'business_invoice',
+        'invoiceIntent': 'business_invoice',
+        if (invoiceEmail.isNotEmpty) ...{
+          'invoice_email': invoiceEmail,
+          'invoiceEmail': invoiceEmail,
+        },
+      },
+      customerFragment: <String, dynamic>{
+        'business_detected': true,
+        'businessDetected': true,
+        'invoice_requested': true,
+        'invoiceRequested': true,
+        'invoice_intent': 'business_invoice',
+        'invoiceIntent': 'business_invoice',
+      },
+    );
+  }
+
+  Widget _billingDetailsSectionCard() {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+      decoration: BoxDecoration(
+        color: _card,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: _border.withOpacity(_isDarkTheme ? 0.82 : 0.95),
+        ),
+        boxShadow: <BoxShadow>[
+          BoxShadow(
+            color: _shadow.withOpacity(_isDarkTheme ? 0.35 : 0.14),
+            blurRadius: 18,
+            offset: const Offset(0, 10),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            _t(
+              nl: 'Factuurgegevens',
+              en: 'Billing details',
+              fr: 'Données de facturation',
+              es: 'Datos de facturación',
+            ),
+            style: TextStyle(
+              color: _gold,
+              fontSize: 13.3,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(height: 6),
+          SwitchListTile.adaptive(
+            contentPadding: EdgeInsets.zero,
+            dense: true,
+            value: _billingDetailsEnabled,
+            onChanged: _isSubmitting || _isSubmitted
+                ? null
+                : _onBillingDetailsToggled,
+            activeColor: _gold,
+            title: Text(
+              _t(
+                nl: 'Ik heb een bedrijfsfactuur nodig',
+                en: 'I need a company invoice',
+                fr: 'J’ai besoin d’une facture d’entreprise',
+                es: 'Necesito una factura de empresa',
+              ),
+              style: TextStyle(
+                color: _textPrimary,
+                fontWeight: FontWeight.w600,
+                fontSize: 13,
+              ),
+            ),
+          ),
+          if (_billingDetailsEnabled) ...[
+            const SizedBox(height: 4),
+            _inputField(
+              controller: _billingLegalNameController,
+              label: _t(
+                nl: 'Bedrijfsnaam',
+                en: 'Company name',
+                fr: 'Nom de l’entreprise',
+                es: 'Nombre de la empresa',
+              ),
+              icon: Icons.business_outlined,
+            ),
+            const SizedBox(height: 8),
+            _inputField(
+              controller: _billingVatController,
+              label: _t(
+                nl: 'Btw-nummer',
+                en: 'VAT number',
+                fr: 'Numéro de TVA',
+                es: 'Número de IVA',
+              ),
+              icon: Icons.receipt_long_outlined,
+            ),
+            const SizedBox(height: 8),
+            _inputField(
+              controller: _billingRegistrationNumberController,
+              label: _t(
+                nl: 'Ondernemingsnummer / KBO',
+                en: 'Company registration number',
+                fr: 'Numéro d’entreprise',
+                es: 'Número de registro de empresa',
+              ),
+              icon: Icons.badge_outlined,
+            ),
+            const SizedBox(height: 8),
+            _inputField(
+              controller: _billingStreetController,
+              label: _t(
+                nl: 'Straat en nummer',
+                en: 'Street and number',
+                fr: 'Rue et numéro',
+                es: 'Calle y número',
+              ),
+              icon: Icons.location_on_outlined,
+            ),
+            const SizedBox(height: 8),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: _inputField(
+                    controller: _billingPostalController,
+                    label: _t(
+                      nl: 'Postcode',
+                      en: 'Postal code',
+                      fr: 'Code postal',
+                      es: 'Código postal',
+                    ),
+                    icon: Icons.markunread_mailbox_outlined,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  flex: 2,
+                  child: _inputField(
+                    controller: _billingCityController,
+                    label: _t(
+                      nl: 'Gemeente',
+                      en: 'City',
+                      fr: 'Ville',
+                      es: 'Ciudad',
+                    ),
+                    icon: Icons.location_city_outlined,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            _inputField(
+              controller: _billingCountryController,
+              label: _t(
+                nl: 'Land (bv. BE)',
+                en: 'Country (e.g. BE)',
+                fr: 'Pays (ex. BE)',
+                es: 'País (p. ej. BE)',
+              ),
+              icon: Icons.public_outlined,
+            ),
+            const SizedBox(height: 8),
+            _inputField(
+              controller: _billingContactEmailController,
+              label: _t(
+                nl: 'Factuur e-mail',
+                en: 'Invoice email',
+                fr: 'E-mail de facturation',
+                es: 'Correo de factura',
+              ),
+              icon: Icons.alternate_email_rounded,
+              keyboardType: TextInputType.emailAddress,
+            ),
+            const SizedBox(height: 8),
+            InkWell(
+              onTap: _isSubmitting || _isSubmitted
+                  ? null
+                  : () => setState(
+                      () => _billingPeppolExpanded = !_billingPeppolExpanded,
+                    ),
+              child: Row(
+                children: [
+                  Icon(
+                    _billingPeppolExpanded
+                        ? Icons.expand_less
+                        : Icons.expand_more,
+                    size: 18,
+                    color: _gold,
+                  ),
+                  const SizedBox(width: 4),
+                  Text(
+                    _t(
+                      nl: 'Geavanceerd (Peppol) - optioneel',
+                      en: 'Advanced (Peppol) - optional',
+                      fr: 'Avancé (Peppol) - optionnel',
+                      es: 'Avanzado (Peppol) - opcional',
+                    ),
+                    style: TextStyle(
+                      color: _textMuted,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            if (_billingPeppolExpanded) ...[
+              const SizedBox(height: 8),
+              _inputField(
+                controller: _billingPeppolEndpointController,
+                label: _t(
+                  nl: 'Peppol endpoint-ID (optioneel)',
+                  en: 'Peppol endpoint ID (optional)',
+                  fr: 'ID de point d’accès Peppol (optionnel)',
+                  es: 'ID de endpoint Peppol (opcional)',
+                ),
+                icon: Icons.hub_outlined,
+              ),
+              const SizedBox(height: 8),
+              _inputField(
+                controller: _billingPeppolSchemeController,
+                label: _t(
+                  nl: 'Peppol scheme (optioneel)',
+                  en: 'Peppol scheme (optional)',
+                  fr: 'Schéma Peppol (optionnel)',
+                  es: 'Esquema Peppol (opcional)',
+                ),
+                icon: Icons.tag_outlined,
+              ),
+            ],
+            const SizedBox(height: 6),
+            Text(
+              _t(
+                nl: 'Optioneel. Alleen nodig als je een bedrijfsfactuur wilt. Niet je passagiersnaam of op-/afstapadres.',
+                en: 'Optional. Only needed for a company invoice. Not your passenger name or pickup/dropoff address.',
+                fr: 'Optionnel. Uniquement pour une facture d’entreprise. Pas votre nom de passager ni l’adresse de prise en charge.',
+                es: 'Opcional. Solo para una factura de empresa. No el nombre del pasajero ni la dirección de recogida.',
+              ),
+              style: TextStyle(color: _textMuted, fontSize: 11.5, height: 1.25),
+            ),
+          ],
+        ],
+      ),
+    );
   }
 
   String _firstNonEmptyText(Iterable<dynamic> values) {
@@ -985,8 +1460,6 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
     final name = _nameController.text.trim();
     final phone = _phoneController.text.trim();
     final email = _emailController.text.trim();
-    final companyName = _companyNameController.text.trim();
-    final vatNumber = _vatNumberController.text.trim();
     if (name.isEmpty ||
         phone.isEmpty ||
         email.isEmpty ||
@@ -1002,12 +1475,21 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
       return;
     }
 
+    final billingWarning = _billingCustomerValidationWarning();
+    if (billingWarning != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          behavior: SnackBarBehavior.floating,
+          backgroundColor: _panel,
+          content: Text(billingWarning, style: TextStyle(color: _textPrimary)),
+        ),
+      );
+    }
+
     final payload = _buildBookPayload(
       name: name,
       phone: phone,
       email: email,
-      companyName: companyName,
-      vatNumber: vatNumber,
     );
     _logAirportBookPayloadCoords(payload);
     setState(() {
@@ -1153,8 +1635,7 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
           boolish(payload['businessDetected']) ||
           boolish(payload['invoice_requested']) ||
           boolish(payload['invoiceRequested']) ||
-          companyName.trim().isNotEmpty ||
-          vatNumber.trim().isNotEmpty;
+          _billingDetailsEnabled;
       final businessInvoiceIntent =
           responseBusinessDetected ||
           responseInvoiceRequested ||
@@ -2165,61 +2646,6 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
                         icon: Icons.alternate_email_rounded,
                         keyboardType: TextInputType.emailAddress,
                       ),
-                      const SizedBox(height: 12),
-                      Text(
-                        _t(
-                          nl: 'Facturatie optioneel',
-                          en: 'Billing optional',
-                          fr: 'Facturation optionnelle',
-                          es: 'Facturación opcional',
-                        ),
-                        style: TextStyle(
-                          color: _textMuted,
-                          fontSize: 12.2,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      _inputField(
-                        controller: _companyNameController,
-                        label: _t(
-                          nl: 'Bedrijfsnaam',
-                          en: 'Company name',
-                          fr: "Nom de l'entreprise",
-                          es: 'Nombre de la empresa',
-                        ),
-                        icon: Icons.business_outlined,
-                      ),
-                      const SizedBox(height: 8),
-                      _inputField(
-                        controller: _vatNumberController,
-                        label: _t(
-                          nl: 'BTW-nummer',
-                          en: 'VAT number',
-                          fr: 'Numéro de TVA',
-                          es: 'Número de IVA',
-                        ),
-                        icon: Icons.receipt_long_outlined,
-                        suffixIcon: _vatNumberController.text.trim().isEmpty
-                            ? null
-                            : IconButton(
-                                tooltip: _t(
-                                  nl: 'Wissen',
-                                  en: 'Clear',
-                                  fr: 'Effacer',
-                                  es: 'Borrar',
-                                ),
-                                onPressed: () {
-                                  _vatNumberController.clear();
-                                  if (mounted) setState(() {});
-                                },
-                                icon: Icon(
-                                  Icons.close_rounded,
-                                  color: _gold,
-                                  size: 18,
-                                ),
-                              ),
-                      ),
                       if (_submitError != null) ...[
                         const SizedBox(height: 8),
                         Text(
@@ -2263,6 +2689,8 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
                     ],
                   ),
                 ),
+                const SizedBox(height: 10),
+                _billingDetailsSectionCard(),
                 const SizedBox(height: 12),
                 FilledButton(
                   onPressed: _isSubmitting || _isSubmitted
