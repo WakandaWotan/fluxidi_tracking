@@ -78196,9 +78196,11 @@ function buildBillitPayloadPreviewFromProviderNeutralDocument(docPreview, scope)
   };
 }
 
-/* P2: Snap near-statutory BE VAT percentages to Billit-accepted rates when the
- * invoice context is Belgian. Narrow tolerance bands only; never coerces large
- * invalid rates. Read-only export safeguard for immutable docs with split drift. */
+/* P2 / P0-C: Snap near-statutory BE VAT percentages to Billit-accepted rates
+ * when the invoice context is Belgian. Tolerance bands absorb small leg-total
+ * rounding drift (e.g. 5.98% from split roundtrip amounts) without coercing
+ * obviously invalid rates (5.5, 7, 15, 19, …). Billit export / preview only;
+ * never mutates immutable Document Core invoice snapshots. */
 function _normalizeBeStatutoryVatPercentageForBillit(vatPercent, beContext = {}) {
   const raw = Number(vatPercent);
   if (!Number.isFinite(raw)) return vatPercent;
@@ -78211,9 +78213,9 @@ function _normalizeBeStatutoryVatPercentageForBillit(vatPercent, beContext = {})
     customerVat.startsWith("BE");
   if (!isBe) return vatPercent;
   const bands = [
-    { target: 6, min: 5.99, max: 6.01 },
-    { target: 12, min: 11.99, max: 12.01 },
-    { target: 21, min: 20.99, max: 21.01 },
+    { target: 6, min: 5.95, max: 6.05 },
+    { target: 12, min: 11.95, max: 12.05 },
+    { target: 21, min: 20.95, max: 21.05 },
   ];
   for (const band of bands) {
     if (raw >= band.min && raw <= band.max) return band.target;
