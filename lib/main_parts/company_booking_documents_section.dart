@@ -297,32 +297,19 @@ class _BookingDocumentMetadata {
   }
 }
 
-/// P1-B: client-side leg filter for roundtrip leg cards. When [sourceLegId]
-/// and/or [sourceLegType] are set, only documents whose leg metadata matches
-/// are shown. Documents without leg metadata never appear on filtered leg
-/// cards; parent/single-trip views pass no filter and show everything.
 bool _bookingDocumentMatchesLegFilter(
   _BookingDocumentMetadata doc, {
   String? sourceLegId,
   String? sourceLegType,
 }) {
-  final filterLegId = (sourceLegId ?? '').trim();
-  final filterLegType = (sourceLegType ?? '').trim().toLowerCase();
-  if (filterLegId.isEmpty && filterLegType.isEmpty) return true;
-
-  final docLegId = doc.sourceLegId.trim();
-  final docLegType = doc.sourceLegType.trim().toLowerCase();
-  if (docLegId.isEmpty && docLegType.isEmpty) return false;
-
-  var idOk = true;
-  var typeOk = true;
-  if (filterLegId.isNotEmpty) {
-    idOk = docLegId.isNotEmpty && docLegId == filterLegId;
-  }
-  if (filterLegType.isNotEmpty) {
-    typeOk = docLegType.isNotEmpty && docLegType == filterLegType;
-  }
-  return idOk && typeOk;
+  return bookingDocumentMatchesLegFilter(
+    BookingDocumentLegFields(
+      sourceLegId: doc.sourceLegId,
+      sourceLegType: doc.sourceLegType,
+    ),
+    sourceLegId: sourceLegId,
+    sourceLegType: sourceLegType,
+  );
 }
 
 /// Compact, read-only "Documenten" section shown on a company/admin booking
