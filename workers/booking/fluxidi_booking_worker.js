@@ -66,6 +66,7 @@ import {
   normalizeBillitExportMetadata,
   buildSafeBillitExportProjection,
   buildReconciledBillitExportFromLiveStatus,
+  buildBillitExportPeppolSendPendingEnvelope,
 } from "./modules/billit_provider.js";
 import { peppolIdentifierFromBelgianEnterpriseNumber } from "./modules/peppol_readiness.js";
 import {
@@ -1980,6 +1981,9 @@ async function handleCompanyBillitSandboxOrderStatus({ request, url, env, docume
     // Local link truth (never overwritten by a live read; read-only route).
     sent: exportObj.sent === true,
     peppol_sent: exportObj.peppol_sent === true,
+    send_pending: exportObj.send_pending === true,
+    peppol_send_pending: exportObj.peppol_send_pending === true,
+    reconcile_pending: exportObj.reconcile_pending === true,
     // Response-only timestamp (B10e-A). NOT persisted to the registry.
     status_checked_at: new Date().toISOString(),
     warnings,
@@ -2059,6 +2063,20 @@ async function loadBillitSandboxOrderContext({
   }
   if (rejectAlreadySent && exportObj.peppol_sent === true) {
     return { ok: false, response: json({ ok: false, error: "billit_order_already_peppol_sent" }, 409) };
+  }
+  if (rejectAlreadySent && safeStr(exportObj.status, 40).toLowerCase() === "sent") {
+    return { ok: false, response: json({ ok: false, error: "billit_order_already_sent" }, 409) };
+  }
+  if (rejectAlreadySent && exportObj.billit_is_sent === true) {
+    return { ok: false, response: json({ ok: false, error: "billit_order_already_sent" }, 409) };
+  }
+  if (
+    rejectAlreadySent &&
+    (exportObj.send_pending === true ||
+      exportObj.peppol_send_pending === true ||
+      exportObj.reconcile_pending === true)
+  ) {
+    return { ok: false, response: json({ ok: false, error: "billit_order_send_pending" }, 409) };
   }
 
   const knownPartyId = await readBillitPartyIdForScope(env, scope);
@@ -2237,6 +2255,28 @@ async function performBillitSandboxPeppolSend({ env, scope, config, ctx }) {
   }
   const send = sendResult.send || { send_status: null, transport_id: null, accepted: null };
   return { ok: true, tokenResult, send, billitStatusBefore };
+}
+
+/* Shared (Patch B12-K) persist defensive Peppol-send pending flags on the registry
+ * billit_export immediately after Billit accepts the send command and BEFORE
+ * reconcile readback. Updates ctx.record / ctx.exportObj in place when persist
+ * succeeds so a subsequent reconcile step sees the pending envelope. Never sets
+ * sent/peppol_sent true. */
+async function persistBillitSandboxPeppolSendPendingEnvelope(env, scope, ctx) {
+  const pendingExport = buildBillitExportPeppolSendPendingEnvelope({
+    existingExport: ctx.exportObj,
+  });
+  const persistResult = await persistBillitOrderExportOnDocumentRecord(
+    env,
+    scope,
+    ctx.record,
+    pendingExport,
+  );
+  if (persistResult.ok) {
+    ctx.record = persistResult.record;
+    ctx.exportObj = pendingExport;
+  }
+  return { ok: persistResult.ok, pendingExport, persistResult };
 }
 
 /* Shared (Patch B11-B) Billit SANDBOX reconcile-persist operation, used by the
@@ -2479,6 +2519,13 @@ async function handleAdminBillitSandboxOrderSend({ request, url, env, documentId
     return sendOp.response;
   }
 
+  const pendingOp = await persistBillitSandboxPeppolSendPendingEnvelope(env, scope, ctx);
+  if (!pendingOp.ok) {
+    console.log(
+      `[BILLIT_ORDER_SEND][SANDBOX][PENDING_PERSIST_WARN] doc=${docId.slice(0, 8)} order=${exportOrderId ? "yes" : "no"}`,
+    );
+  }
+
   // 15. NO persistence in B7 (deferred to B7b). sent / peppol_sent stay the
   // stored local link truth (both false here) until a later verified readback.
   const send = sendOp.send;
@@ -2502,6 +2549,9 @@ async function handleAdminBillitSandboxOrderSend({ request, url, env, documentId
     transport_id: send.transport_id,
     sent: false,
     peppol_sent: false,
+    send_pending: pendingOp.ok,
+    peppol_send_pending: pendingOp.ok,
+    reconcile_pending: pendingOp.ok,
     warnings,
   });
 }
@@ -2751,6 +2801,14 @@ async function handleCompanyBillitSandboxOrderSend({ request, url, env, document
     sendWarnings.push("billit_send_status_unknown");
   }
 
+  const pendingOp = await persistBillitSandboxPeppolSendPendingEnvelope(env, scope, ctx);
+  if (!pendingOp.ok) {
+    sendWarnings.push("billit_send_pending_persist_failed");
+    console.log(
+      `[COMPANY_BILLIT_ORDER_SEND][SANDBOX][PENDING_PERSIST_WARN] doc=${docId.slice(0, 8)} order=${exportOrderId ? "yes" : "no"}`,
+    );
+  }
+
   // 15. Post-send consistency: reuse the already-acquired token to read back the
   // live order and persist envelope-only sent/peppol_sent state (spread-and-put
   // preserves immutable snapshot/hash/totals/currency/buyer-seller snapshots).
@@ -2783,6 +2841,9 @@ async function handleCompanyBillitSandboxOrderSend({ request, url, env, document
         // Audit metadata: Billit transport id from the send summary (never a raw
         // body). See TODO below re: persisting it on billit_export.
         transport_id: send.transport_id,
+        send_pending: pendingOp.ok,
+        peppol_send_pending: pendingOp.ok,
+        reconcile_pending: pendingOp.ok,
         warnings: sendWarnings,
       },
       502,

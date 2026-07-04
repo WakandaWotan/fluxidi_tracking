@@ -56,6 +56,9 @@ class _BillitExportMetadata {
   final String sentAt;
   final String peppolSentAt;
   final String statusCheckedAt;
+  final bool sendPending;
+  final bool peppolSendPending;
+  final bool reconcilePending;
 
   const _BillitExportMetadata({
     required this.status,
@@ -71,6 +74,9 @@ class _BillitExportMetadata {
     required this.sentAt,
     required this.peppolSentAt,
     required this.statusCheckedAt,
+    this.sendPending = false,
+    this.peppolSendPending = false,
+    this.reconcilePending = false,
   });
 
   factory _BillitExportMetadata.fromJson(Map<String, dynamic> json) {
@@ -104,6 +110,11 @@ class _BillitExportMetadata {
       sentAt: readAny(const ['sent_at', 'sentAt']),
       peppolSentAt: readAny(const ['peppol_sent_at', 'peppolSentAt']),
       statusCheckedAt: readAny(const ['status_checked_at', 'statusCheckedAt']),
+      sendPending: json['send_pending'] == true || json['sendPending'] == true,
+      peppolSendPending:
+          json['peppol_send_pending'] == true || json['peppolSendPending'] == true,
+      reconcilePending:
+          json['reconcile_pending'] == true || json['reconcilePending'] == true,
     );
   }
 
@@ -124,6 +135,9 @@ class _BillitExportMetadata {
     Object? billitIsSent = _unset,
     Object? billitPaid = _unset,
     String? statusCheckedAt,
+    bool? sendPending,
+    bool? peppolSendPending,
+    bool? reconcilePending,
   }) {
     return _BillitExportMetadata(
       status: status ?? this.status,
@@ -141,6 +155,9 @@ class _BillitExportMetadata {
       sentAt: sentAt,
       peppolSentAt: peppolSentAt,
       statusCheckedAt: statusCheckedAt ?? this.statusCheckedAt,
+      sendPending: sendPending ?? this.sendPending,
+      peppolSendPending: peppolSendPending ?? this.peppolSendPending,
+      reconcilePending: reconcilePending ?? this.reconcilePending,
     );
   }
 
@@ -153,7 +170,14 @@ class _BillitExportMetadata {
       status.isNotEmpty ||
       billitStatus.isNotEmpty ||
       sent ||
-      peppolSent;
+      peppolSent ||
+      sendPending ||
+      peppolSendPending ||
+      reconcilePending;
+
+  /// B12-K: Billit accepted a Peppol send but local reconcile has not finished.
+  bool get isPeppolSendPending =>
+      sendPending || peppolSendPending || reconcilePending;
 
   /// The invoice has been handed to Peppol. Used to pick the "Verzonden via
   /// Peppol" primary badge and to hide the "sending is manual" hint.
@@ -750,6 +774,9 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
       billitIsSent: readBool('billit_is_sent'),
       billitPaid: readBool('billit_paid'),
       statusCheckedAt: readString(const ['status_checked_at']),
+      sendPending: readBool('send_pending'),
+      peppolSendPending: readBool('peppol_send_pending'),
+      reconcilePending: readBool('reconcile_pending'),
     );
 
     setState(() {
@@ -796,6 +823,8 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
     if (export.orderId.trim().isEmpty) return false;
     if (export.sent) return false;
     if (export.peppolSent) return false;
+    if (export.billitIsSent == true) return false;
+    if (export.isPeppolSendPending) return false;
     return true;
   }
 
@@ -882,6 +911,13 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
           en: 'This invoice has already been sent via Peppol.',
           fr: 'Cette facture a déjà été envoyée via Peppol.',
           es: 'Esta factura ya fue enviada por Peppol.',
+        );
+      case 'billit_order_send_pending':
+        return _tr(
+          nl: 'Peppol-verzending wordt bevestigd. Vernieuw de Billit-status.',
+          en: 'Peppol sending is being confirmed. Refresh the Billit status.',
+          fr: 'L’envoi Peppol est en cours de confirmation. Actualisez le statut Billit.',
+          es: 'El envío Peppol se está confirmando. Actualice el estado de Billit.',
         );
       case 'billit_peppol_not_ready':
         return _tr(
@@ -1221,6 +1257,30 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
       billitIsSent: readBool('billit_is_sent'),
       billitPaid: readBool('billit_paid'),
       statusCheckedAt: readString(const ['status_checked_at']),
+      sendPending: false,
+      peppolSendPending: false,
+      reconcilePending: false,
+    );
+
+    setState(() {
+      _documents = <_BookingDocumentMetadata>[..._documents];
+      _documents[index] = current.copyWithBillitExport(updatedExport);
+    });
+  }
+
+  /// B12-K: apply defensive pending flags after Billit accepted send but
+  /// reconcile has not completed yet (or failed).
+  void _applyBillitPeppolSendPending(String docId) {
+    final index = _documents.indexWhere((d) => d.documentId == docId);
+    if (index < 0) return;
+    final current = _documents[index];
+    final export = current.billitExport;
+    if (export == null) return;
+
+    final updatedExport = export.copyWith(
+      sendPending: true,
+      peppolSendPending: true,
+      reconcilePending: true,
     );
 
     setState(() {
@@ -1284,12 +1344,13 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
       if (decoded != null &&
           decoded['error'] == 'billit_order_reconcile_failed' &&
           decoded['sandbox_send'] == true) {
+        _applyBillitPeppolSendPending(docId);
         _showBillitPeppolSendSnackBar(
           _tr(
-            nl: 'Verzending gestart, maar de status is nog niet bevestigd. Vernieuw de Billit-status.',
-            en: 'Sending started, but the status has not been confirmed yet. Refresh the Billit status.',
-            fr: 'Envoi démarré, mais le statut n’est pas encore confirmé. Actualisez le statut Billit.',
-            es: 'Envío iniciado, pero el estado aún no está confirmado. Actualice el estado de Billit.',
+            nl: 'Peppol-verzending wordt bevestigd. Vernieuw de Billit-status.',
+            en: 'Peppol sending is being confirmed. Refresh the Billit status.',
+            fr: 'L’envoi Peppol est en cours de confirmation. Actualisez le statut Billit.',
+            es: 'El envío Peppol se está confirmando. Actualice el estado de Billit.',
           ),
         );
         _loadDocuments();
@@ -1899,7 +1960,20 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
     String? primaryLabel;
     String? secondaryLabel;
 
-    if (export.isSentViaPeppol) {
+    if (export.isPeppolSendPending) {
+      primaryLabel = _tr(
+        nl: 'Peppol-verzending wordt bevestigd',
+        en: 'Peppol sending is being confirmed',
+        fr: 'Envoi Peppol en cours de confirmation',
+        es: 'Envío Peppol en confirmación',
+      );
+      secondaryLabel = _tr(
+        nl: 'Vernieuw de Billit-status',
+        en: 'Refresh the Billit status',
+        fr: 'Actualisez le statut Billit',
+        es: 'Actualice el estado de Billit',
+      );
+    } else if (export.isSentViaPeppol) {
       primaryLabel = _tr(
         nl: 'Verzonden via Peppol',
         en: 'Sent via Peppol',
@@ -1954,7 +2028,7 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
     final showReadinessChip = shouldShowBookingPeppolReadinessChip(
       fetchEligible: _shouldFetchPeppolReadiness(doc),
       sentViaPeppol: export.isSentViaPeppol,
-    );
+    ) && !export.isPeppolSendPending;
     final readiness = showReadinessChip
         ? (_peppolReadinessFor(doc.documentId) ??
             BookingPeppolReadinessState.loading)

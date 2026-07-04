@@ -1543,6 +1543,50 @@ export function buildSafeBillitExportProjection(recordOrExport) {
     sent_at: safeStr(exp.sent_at ?? exp.sentAt, 40) || null,
     peppol_sent_at: safeStr(exp.peppol_sent_at ?? exp.peppolSentAt, 40) || null,
     status_checked_at: safeStr(exp.status_checked_at ?? exp.statusCheckedAt, 40) || null,
+    send_pending: exp.send_pending === true,
+    peppol_send_pending: exp.peppol_send_pending === true,
+    reconcile_pending: exp.reconcile_pending === true,
+  };
+}
+
+/* Pure builder (Patch B12-K) that marks a sandbox billit_export as Peppol-send
+ * pending immediately after Billit accepts the send command, BEFORE reconcile
+ * readback confirms is_sent. Preserves link-identity + prior lifecycle fields;
+ * does NOT set sent/peppol_sent true. Concurrent/retry sends must fail closed
+ * on the pending flags until reconcile clears them. */
+export function buildBillitExportPeppolSendPendingEnvelope({ existingExport, nowIso }) {
+  const src =
+    existingExport && typeof existingExport === "object" && !Array.isArray(existingExport)
+      ? existingExport
+      : {};
+  const now = safeStr(nowIso, 40) || new Date().toISOString();
+  return {
+    provider: safeStr(src.provider, 24) || "billit",
+    environment: safeStr(src.environment, 24) || "sandbox",
+    party_id: safeStr(src.party_id ?? src.partyId, 120) || null,
+    order_id: safeStr(src.order_id ?? src.orderId, 120) || null,
+    order_number: safeStr(src.order_number ?? src.orderNumber, 80) || null,
+    idempotency_key: safeStr(src.idempotency_key ?? src.idempotencyKey, 200) || null,
+    created_at: safeStr(src.created_at ?? src.createdAt, 40) || now,
+    source: safeStr(src.source, 64) || "admin_sandbox_create",
+    status: safeStr(src.status, 40) || "created",
+    billit_status: safeStr(src.billit_status, 80) || null,
+    billit_is_sent: typeof src.billit_is_sent === "boolean" ? src.billit_is_sent : null,
+    billit_paid: typeof src.billit_paid === "boolean" ? src.billit_paid : null,
+    billit_paid_date: safeStr(src.billit_paid_date ?? src.billitPaidDate, 40) || null,
+    billit_payment_sync_status: safeStr(src.billit_payment_sync_status, 40) || null,
+    billit_payment_synced_at: safeStr(src.billit_payment_synced_at, 40) || null,
+    billit_payment_sync_error: safeStr(src.billit_payment_sync_error, 120) || null,
+    sent: src.sent === true,
+    peppol_sent: src.peppol_sent === true,
+    sent_at: safeStr(src.sent_at ?? src.sentAt, 40) || null,
+    peppol_sent_at: safeStr(src.peppol_sent_at ?? src.peppolSentAt, 40) || null,
+    transport_type: "Peppol",
+    status_checked_at: safeStr(src.status_checked_at ?? src.statusCheckedAt, 40) || null,
+    updated_at: now,
+    send_pending: true,
+    peppol_send_pending: true,
+    reconcile_pending: true,
   };
 }
 
@@ -1595,5 +1639,8 @@ export function buildReconciledBillitExportFromLiveStatus({
     status_checked_at: now,
     updated_at: now,
     last_reconciled_by: "admin_sandbox_reconcile_sent",
+    send_pending: false,
+    peppol_send_pending: false,
+    reconcile_pending: false,
   };
 }
