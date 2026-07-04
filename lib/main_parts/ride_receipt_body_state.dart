@@ -3299,39 +3299,33 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
     final hasRowKey = (_operationalLegRowKeyForReceipt() ?? '')
         .trim()
         .isNotEmpty;
-    final useLegTripPaymentPath = _isPlannedOperationalLegPaymentItem();
+    final useLegBookingPaymentPath = _isPlannedOperationalLegPaymentItem();
     // Routing rule:
-    //   * Operational-leg planned receipts (one leg of a roundtrip/multi-
-    //     leg planned booking) → tracking-worker `/trip/payment` for ALL
-    //     methods (QR / cash / Bancontact). The booking-worker
-    //     `/bookings/:id/payment` path would mark the WHOLE booking as
-    //     paid, silently undercollecting the other leg's amount. The per-
-    //     trip path marks only the current leg paid, mirroring the
-    //     existing cash/Bancontact semantics on operational legs.
-    //     Booking-finance reconciliation across both legs is intentionally
-    //     out of scope for this patch — the booking record stays `unpaid`
-    //     until a future per-booking reconciliation lands.
+    //   * Operational-leg planned receipts (roundtrip / multi-leg) → booking-
+    //     worker `POST /bookings/:parentId/legs/:legId/payment`. Marks only
+    //     the current leg paid on the canonical record; parent becomes paid
+    //     (and Document Core / Billit lifecycle runs) once all payable legs
+    //     are paid.
+    //   * Direct trips without a booking id → tracking-worker `/trip/payment`
+    //     (local trip KV only; no canonical booking to reconcile).
     //   * Single-leg planned and direct/non-planned receipts → booking-
-    //     worker `/bookings/:id/payment` so QR / cash / Bancontact update
-    //     the authoritative booking record and trigger
-    //     `_trackingSyncMaterializeBookingFinanceKpiBestEffort` for the
-    //     monthly revenue KPI.
-    final useTripPaymentPath = bookingId.isEmpty || useLegTripPaymentPath;
+    //     worker `/bookings/:id/payment`.
+    final useTripPaymentPath = bookingId.isEmpty && !useLegBookingPaymentPath;
     final selectedAmount = _selectedPaymentAmount();
     final selectedScope = _selectedPaymentScopeLabel();
     final legAmountForLog = _receiptTotalAmount();
     final bookingTotalForLog = _detailDouble('booking_total_eur');
     debugPrint(
-      '[RECEIPT_PAYMENT][LEG_GUARD_DECISION] tripId=$tripId bookingId=$bookingId isPlannedReceipt=$_isPlannedReceipt hasLegId=$hasLegId hasLegType=$hasLegType hasRowKey=$hasRowKey useLegTripPaymentPath=$useLegTripPaymentPath method=$normalizedMethod isQr=$isQrPayment routing=${useTripPaymentPath ? "tracking_trip_payment" : "booking_worker_payment"}',
+      '[RECEIPT_PAYMENT][LEG_GUARD_DECISION] tripId=$tripId bookingId=$bookingId isPlannedReceipt=$_isPlannedReceipt hasLegId=$hasLegId hasLegType=$hasLegType hasRowKey=$hasRowKey useLegBookingPaymentPath=$useLegBookingPaymentPath method=$normalizedMethod isQr=$isQrPayment routing=${useLegBookingPaymentPath ? "booking_worker_leg_payment" : (useTripPaymentPath ? "tracking_trip_payment" : "booking_worker_payment")}',
     );
     debugPrint(
-      '[QR_PAYMENT][AMOUNT_RESOLUTION] booking=${_safeRefPreview(bookingId)} leg_amount=${legAmountForLog ?? "-"} booking_total=${bookingTotalForLog ?? "-"} selected_amount=${selectedAmount ?? "-"} selected_scope=$selectedScope is_planned_operational_leg=${_isPlannedOperationalLegPaymentItem()} method=$normalizedMethod isQr=$isQrPayment routing=${useTripPaymentPath ? "tracking_trip_payment" : "booking_worker_payment"}',
+      '[QR_PAYMENT][AMOUNT_RESOLUTION] booking=${_safeRefPreview(bookingId)} leg_amount=${legAmountForLog ?? "-"} booking_total=${bookingTotalForLog ?? "-"} selected_amount=${selectedAmount ?? "-"} selected_scope=$selectedScope is_planned_operational_leg=${_isPlannedOperationalLegPaymentItem()} method=$normalizedMethod isQr=$isQrPayment routing=${useLegBookingPaymentPath ? "booking_worker_leg_payment" : (useTripPaymentPath ? "tracking_trip_payment" : "booking_worker_payment")}',
     );
     if (isQrPayment && bookingId.isEmpty && !useTripPaymentPath) {
       // QR routed through the booking-worker path requires a bookingId to
       // reconcile to the company booking; without one the booking-finance
-      // contribution would never fire. Refuse explicitly. The trip-payment
-      // path validates `tripId` in its own branch below.
+      // contribution would never fire. The trip-payment path validates `tripId`
+      // in its own branch below.
       debugPrint(
         '[QR_PAYMENT][CONFIRM] status=missing_booking_id tripId=$tripId ref=${_safeRefPreview(tripId)} method=$normalizedMethod amount=${selectedAmount ?? "-"}',
       );
@@ -3341,6 +3335,145 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
       ).showSnackBar(SnackBar(content: Text(_receiptText('bookingIdMissing'))));
       return;
     }
+
+    if (useLegBookingPaymentPath) {
+      final parentBookingId = (_operationalLegParentBookingIdForReceipt() ?? '')
+          .trim();
+      final legId = (_operationalLegIdForReceipt() ?? '').trim();
+      if (parentBookingId.isEmpty || legId.isEmpty) {
+        if (!context.mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(_receiptText('bookingIdMissing'))),
+        );
+        return;
+      }
+      final amount = selectedAmount;
+      final paidAtIso = DateTime.now().toUtc().toIso8601String();
+      final payload = <String, dynamic>{
+        ...strictScope,
+        'payment_status': 'paid',
+        'payment_method': normalizedMethod,
+        'payment_source': 'in_car',
+        'payment_provider': 'manual',
+        'currency': item.currency.trim().isEmpty
+            ? 'EUR'
+            : item.currency.trim().toUpperCase(),
+        'paid_by_driver_id': kDriverId,
+        'paid_at': paidAtIso,
+        ..._driverMutationActorFields(
+          actorVehicleId: (item.vehicleId ?? '').trim(),
+        ),
+        if (amount != null) 'amount': amount,
+      };
+      final headers = <String, String>{'Content-Type': 'application/json'};
+      if (kAdminToken.trim().isNotEmpty) {
+        headers['x-admin-token'] = kAdminToken.trim();
+      }
+      try {
+        debugPrint(
+          '[RECEIPT_PAYMENT][LEG_BOOKING_PAYMENT] parentBookingId=$parentBookingId legId=$legId tripId=$tripId method=$normalizedMethod amount=${amount ?? "-"}',
+        );
+        final uri = Uri.parse(
+          '$kBookingBaseUrl/bookings/${Uri.encodeComponent(parentBookingId)}/legs/${Uri.encodeComponent(legId)}/payment',
+        ).replace(queryParameters: strictScope);
+        final res = await http
+            .post(uri, headers: headers, body: jsonEncode(payload))
+            .timeout(const Duration(seconds: 12));
+        final resBody = utf8.decode(res.bodyBytes);
+        final bodyPreview = resBody.length > 240
+            ? '${resBody.substring(0, 240)}...'
+            : resBody;
+        debugPrint(
+          '[RECEIPT_PAYMENT][LEG_BOOKING_PAYMENT][RES] code=${res.statusCode} bodyPreview=$bodyPreview',
+        );
+        final decoded = jsonDecode(resBody);
+        final root = decoded is Map
+            ? Map<String, dynamic>.from(decoded)
+            : <String, dynamic>{};
+        if (res.statusCode < 200 || res.statusCode >= 300) {
+          throw Exception(
+            (root['error'] ?? 'HTTP ${res.statusCode}').toString(),
+          );
+        }
+        if (root['ok'] != true) {
+          throw Exception(
+            (root['error'] ?? 'leg_payment_failed').toString(),
+          );
+        }
+        final allLegsPaid = _receiptBoolish(
+          root['all_legs_paid'] ?? root['allLegsPaid'],
+        );
+        final lifecycleRan = _receiptBoolish(
+          root['lifecycle_ran'] ?? root['lifecycleRan'],
+        );
+        final legPaymentStatus =
+            (root['leg_payment_status'] ??
+                    root['legPaymentStatus'] ??
+                    'paid')
+                .toString();
+        final parentPaymentStatus =
+            (root['parent_payment_status'] ??
+                    root['parentPaymentStatus'] ??
+                    '')
+                .toString();
+        final extracted = <String, dynamic>{
+          'payment_status': legPaymentStatus,
+          'paymentStatus': legPaymentStatus,
+          'payment_method': normalizedMethod,
+          'paymentMethod': normalizedMethod,
+          'payment_source': 'in_car',
+          'paymentSource': 'in_car',
+          'payment_provider': 'manual',
+          'paymentProvider': 'manual',
+          'paid_at': paidAtIso,
+          'paidAt': paidAtIso,
+          'paid_by_driver_id': kDriverId,
+          'paidByDriverId': kDriverId,
+          if (amount != null) 'payment_amount': amount,
+          if (amount != null) 'paymentAmount': amount,
+          if (parentPaymentStatus.isNotEmpty)
+            'parent_payment_status': parentPaymentStatus,
+          if (parentPaymentStatus.isNotEmpty)
+            'parentPaymentStatus': parentPaymentStatus,
+          'all_legs_paid': allLegsPaid,
+          'allLegsPaid': allLegsPaid,
+          'lifecycle_ran': lifecycleRan,
+          'lifecycleRan': lifecycleRan,
+        };
+        _mergePaymentFieldsIntoReceiptDetails(extracted);
+        _appendPaymentUpdateLedgerIfPaid(
+          fields: extracted,
+          method: normalizedMethod,
+          source: 'in_car',
+          backendConfirmed: true,
+        );
+        if (mounted) {
+          setState(() => _paymentStatus = _ReceiptPaymentStatus.paid);
+        }
+        if (!context.mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              allLegsPaid
+                  ? _legPaymentFullBookingSuccessMessage()
+                  : _legPaymentPartialSuccessMessage(),
+            ),
+          ),
+        );
+      } catch (err) {
+        debugPrint(
+          '[RECEIPT][LEG_BOOKING_PAYMENT_FAILED] parentBookingId=$parentBookingId legId=$legId method=$method err=$err',
+        );
+        if (!context.mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(_legPaymentBackendErrorMessage(err.toString())),
+          ),
+        );
+      }
+      return;
+    }
+
     if (useTripPaymentPath) {
       if (tripId.isEmpty) {
         if (!context.mounted) return;
@@ -3385,11 +3518,9 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
         final uri = Uri.parse(
           '$kWorkerBaseUrl/trip/payment',
         ).replace(queryParameters: strictScope);
-        if (useLegTripPaymentPath) {
-          debugPrint(
-            '[RECEIPT_PAYMENT][LEG_TRIP_PAYMENT] tripId=$tripId bookingId=$bookingId legId=$legId legType=$legType parentBookingId=$parentBookingId method=$normalizedMethod',
-          );
-        }
+        debugPrint(
+          '[RECEIPT_PAYMENT][TRIP_PAYMENT] tripId=$tripId bookingId=$bookingId method=$normalizedMethod',
+        );
         final res = await http
             .post(uri, headers: headers, body: jsonEncode(payload))
             .timeout(const Duration(seconds: 12));
@@ -3398,7 +3529,7 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
             ? '${resBody.substring(0, 240)}...'
             : resBody;
         debugPrint(
-          '[RECEIPT_PAYMENT][LEG_TRIP_PAYMENT][RES] code=${res.statusCode} bodyPreview=$bodyPreview',
+          '[RECEIPT_PAYMENT][TRIP_PAYMENT][RES] code=${res.statusCode} bodyPreview=$bodyPreview',
         );
         if (res.statusCode < 200 || res.statusCode >= 300) {
           throw Exception('HTTP ${res.statusCode}');
@@ -3455,9 +3586,8 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
     }
 
     // Booking-level payment (single-leg planned / direct receipts) goes
-    // through the booking-worker `/bookings/:id/payment` path. `selectedAmount`
-    // is whole-booking-scoped here (operational-leg receipts never reach
-    // this branch — they take the trip-payment path above).
+    // through the booking-worker `/bookings/:id/payment` path. Operational-leg
+    // roundtrip receipts take the leg-payment path above.
     final amount = selectedAmount;
     final paidAtIso = DateTime.now().toUtc().toIso8601String();
     final maskedRef = _safeRefPreview(bookingId);
@@ -3814,6 +3944,42 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
     final legType = (_operationalLegTypeTokenForReceipt() ?? '').trim();
     final rowKey = (_operationalLegRowKeyForReceipt() ?? '').trim();
     return legId.isNotEmpty || legType.isNotEmpty || rowKey.isNotEmpty;
+  }
+
+  bool _receiptBoolish(dynamic value) {
+    if (value is bool) return value;
+    final raw = (value ?? '').toString().trim().toLowerCase();
+    return raw == '1' || raw == 'true' || raw == 'yes' || raw == 'on';
+  }
+
+  String _legPaymentPartialSuccessMessage() {
+    return _tr(
+      nl:
+          'Deze rit is betaald. De volledige boeking is nog niet volledig betaald.',
+      en: 'This leg is paid. The booking is not fully paid yet.',
+      fr: 'Cette course est payee. La reservation nest pas encore entierement payee.',
+      es: 'Este tramo esta pagado. La reserva aun no esta totalmente pagada.',
+    );
+  }
+
+  String _legPaymentFullBookingSuccessMessage() {
+    return _tr(
+      nl: 'Boeking volledig betaald. Documenten worden klaargezet.',
+      en: 'Booking fully paid. Documents are being prepared.',
+      fr: 'Reservation entierement payee. Les documents sont en preparation.',
+      es: 'Reserva totalmente pagada. Los documentos se estan preparando.',
+    );
+  }
+
+  String _legPaymentBackendErrorMessage(String rawError) {
+    final detail = rawError.replaceFirst('Exception: ', '').trim();
+    if (detail.isEmpty) return _receiptText('paymentMarkFailed');
+    return _tr(
+      nl: 'Betaling mislukt: $detail',
+      en: 'Payment failed: $detail',
+      fr: 'Echec du paiement : $detail',
+      es: 'Error de pago: $detail',
+    );
   }
 
   String? _routeSegmentsText() {
