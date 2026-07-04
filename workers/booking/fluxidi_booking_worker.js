@@ -1609,6 +1609,200 @@ async function handleAdminBillitSandboxOrderStatus({ request, url, env, document
   });
 }
 
+/* B12-G1: mask a Peppol endpoint id for company-safe preview responses. Pure;
+ * never logs or persists. Shows only the last four characters when longer. */
+function maskPeppolEndpointIdForCompanyPreview(endpointId) {
+  const id = safeStr(endpointId, 80);
+  if (!id) return null;
+  if (id.length <= 4) return id;
+  return `...${id.slice(-4)}`;
+}
+
+/* B12-G1: shared read-only Billit/Peppol payload preview builder for ONE issued
+ * document. Loads the scoped registry record + business profile, runs the same
+ * export-readiness classifier and buildBillitPayloadPreviewFromProviderNeutralDocument
+ * mapper as the admin preview route. Pure side effects: KV/profile reads only;
+ * NEVER writes KV, NEVER calls Billit/Peppol, NEVER sends. */
+async function buildIssuedDocumentBillitPayloadPreview(env, scope, documentId) {
+  const docId = safeStr(documentId, 200);
+  if (!docId) {
+    return { ok: false, status: 400, error: "missing_document_id" };
+  }
+  if (!env?.BOOKING_KV) {
+    return { ok: false, status: 503, error: "missing_binding" };
+  }
+
+  const record = await loadIssuedDocumentRegistryRecordById(env, scope, docId);
+  const recordTenant = safeStr(record?.tenant_id ?? record?.tenantId, 80);
+  const recordCompany = safeStr(record?.company_id ?? record?.companyId, 80);
+  if (
+    !record ||
+    (recordTenant && recordTenant !== scope.tenant_id) ||
+    (recordCompany && recordCompany !== scope.company_id)
+  ) {
+    return { ok: false, status: 404, error: "document_not_found" };
+  }
+
+  let businessProfile = null;
+  try {
+    businessProfile = await loadBusinessProfile(env, scope, {
+      allowTenantLegacyFallback: true,
+    });
+  } catch (_) {
+    businessProfile = null;
+  }
+
+  const classification = classifyDocumentExportReadiness(record, businessProfile);
+
+  let overlay = null;
+  const docType = safeStr(
+    record?.document_type ?? record?.documentType,
+    40,
+  ).toLowerCase();
+  if (docType === "credit_note" && !getDocumentSourceInvoiceReference(record)) {
+    const bookingId =
+      safeStr(record?.source_booking_id ?? record?.sourceBookingId, 200) || "";
+    if (bookingId) {
+      const rLegId =
+        safeStr(record?.source_leg_id ?? record?.sourceLegId, 200) || "";
+      const rLegType =
+        safeStr(record?.source_leg_type ?? record?.sourceLegType, 24) || "";
+      try {
+        const lookup = await listIssuedDocumentRecordsForBooking(
+          env,
+          scope,
+          bookingId,
+        );
+        if (lookup.ok && Array.isArray(lookup.records)) {
+          const matches = lookup.records.filter((r) => {
+            const t = safeStr(r?.document_type ?? r?.documentType, 40).toLowerCase();
+            if (t !== "invoice") return false;
+            const lId = safeStr(r?.source_leg_id ?? r?.sourceLegId, 200) || "";
+            const lType =
+              safeStr(r?.source_leg_type ?? r?.sourceLegType, 24) || "";
+            return lId === rLegId && lType === rLegType;
+          });
+          if (matches.length === 1) {
+            const invNumber =
+              safeStr(
+                matches[0]?.document_number ?? matches[0]?.documentNumber,
+                80,
+              ) || null;
+            if (invNumber) {
+              overlay = { source_invoice_reference: invNumber };
+            }
+          }
+        }
+      } catch (_) {
+        overlay = null;
+      }
+    }
+  }
+
+  const docPreview = buildDocumentExportPreview(record, classification, overlay);
+
+  const billitEnvironmentRaw = safeStr(
+    env?.BILLIT_ENVIRONMENT ?? env?.BILLIT_MODE,
+    24,
+  ).toLowerCase();
+  const billitEnvironment =
+    billitEnvironmentRaw === "production" ? "production" : "sandbox";
+
+  const billitPayloadPreview = buildBillitPayloadPreviewFromProviderNeutralDocument(
+    docPreview,
+    {
+      ...scope,
+      billit_environment: billitEnvironment,
+    },
+  );
+
+  return {
+    ok: true,
+    billitPayloadPreview,
+    docMask: docId.slice(0, 8),
+  };
+}
+
+/* B12-G1: COMPANY-scoped, READ-ONLY Peppol readiness preview for ONE issued
+ * document. Company sibling of GET /admin/documents/:documentId/billit-payload-
+ * preview with a trimmed safe response for Flutter pre-send UX. Auth via company
+ * session OR admin token + authenticated explicit scope. Reuses
+ * buildIssuedDocumentBillitPayloadPreview (same readiness rules as admin). NEVER
+ * writes KV, NEVER calls Billit API/Peppol send, NEVER returns buyer/seller
+ * snapshots, full Billit payloads, or credentials. peppol.ready=false is returned
+ * as ok:true with reasons[] (not an HTTP failure). */
+async function handleCompanyBillitPeppolPayloadPreview({
+  request,
+  url,
+  env,
+  documentId,
+}) {
+  const authScope = await _requireAdminOrCompanySessionForExplicitScope({
+    request,
+    url,
+    env,
+    routeLabel: "COMPANY_BILLIT_PAYLOAD_PREVIEW",
+  });
+  if (!authScope.ok) return authScope.response;
+  const scope = {
+    tenant_id: authScope.explicitScope.tenant_id,
+    company_id: authScope.explicitScope.company_id,
+  };
+
+  try {
+    const built = await buildIssuedDocumentBillitPayloadPreview(
+      env,
+      scope,
+      documentId,
+    );
+    if (!built.ok) {
+      return json({ ok: false, error: built.error }, built.status || 400);
+    }
+
+    const preview = built.billitPayloadPreview;
+    const peppol =
+      preview?.peppol && typeof preview.peppol === "object" ? preview.peppol : {};
+    const customerPeppol =
+      preview?.customer?.peppol && typeof preview.customer.peppol === "object"
+        ? preview.customer.peppol
+        : {};
+    const endpointId = safeStr(customerPeppol.endpoint_id, 80);
+    const scheme = safeStr(customerPeppol.scheme, 40);
+
+    const response = {
+      ok: true,
+      dry_run: true,
+      document_id: preview.document_id ?? null,
+      document_number: preview.document_number ?? null,
+      peppol: {
+        candidate: peppol.candidate === true,
+        ready: peppol.ready === true,
+        reasons: Array.isArray(peppol.reasons) ? peppol.reasons.slice() : [],
+      },
+      warnings: Array.isArray(preview.warnings) ? preview.warnings.slice() : [],
+    };
+
+    const endpointIdMasked = maskPeppolEndpointIdForCompanyPreview(endpointId);
+    if (scheme || endpointIdMasked) {
+      response.target = {
+        scheme: scheme || null,
+        endpoint_id_masked: endpointIdMasked,
+      };
+    }
+
+    console.log(
+      `[COMPANY_BILLIT_PAYLOAD_PREVIEW][OK] doc=${built.docMask} peppol_ready=${response.peppol.ready} reasons=${response.peppol.reasons.length}`,
+    );
+    return json(response);
+  } catch (err) {
+    const message = String(err?.message || "internal_error");
+    console.log(
+      `[COMPANY_BILLIT_PAYLOAD_PREVIEW][ERR] ${safeStr(message, 200) || "unknown"}`,
+    );
+    return json({ ok: false, error: "internal_error" }, 500);
+  }
+}
+
 /* Patch B10e-A: COMPANY-scoped, SANDBOX-ONLY, READ-ONLY Billit order status
  * refresh for an issued INVOICE document. Company sibling of
  * handleAdminBillitSandboxOrderStatus: identical read-only behaviour and safe
@@ -30529,6 +30723,48 @@ export default {
             const message = String(err?.message || "internal_error");
             console.log(
               `[COMPANY_DOCUMENT_LIST][ERR] ${safeStr(message, 200) || "unknown"}`,
+            );
+            return json({ ok: false, error: "internal_error" }, 500);
+          }
+        }
+      }
+
+      // GET /company/documents/:documentId/billit-payload-preview
+      // B12-G1: COMPANY-authenticated (company session OR admin token),
+      // READ-ONLY Peppol readiness preview for ONE issued document. Company
+      // sibling of GET /admin/documents/:documentId/billit-payload-preview with
+      // a trimmed safe response (peppol.ready + reasons only). Reuses
+      // buildIssuedDocumentBillitPayloadPreview. NEVER writes KV, NEVER calls
+      // Billit API/Peppol send, NEVER returns full payloads or PII snapshots.
+      if (
+        request.method === "GET" &&
+        url.pathname.startsWith("/company/documents/") &&
+        url.pathname.endsWith("/billit-payload-preview")
+      ) {
+        const companyBillitPreviewSegments = url.pathname.split("/").filter(Boolean);
+        // Only the exact shape:
+        //   ["company","documents","<documentId>","billit-payload-preview"]
+        if (
+          companyBillitPreviewSegments.length === 4 &&
+          companyBillitPreviewSegments[0] === "company" &&
+          companyBillitPreviewSegments[1] === "documents" &&
+          companyBillitPreviewSegments[3] === "billit-payload-preview"
+        ) {
+          try {
+            const documentId =
+              safeStr(
+                decodeURIComponent(companyBillitPreviewSegments[2]),
+                200,
+              ) || "";
+            return await handleCompanyBillitPeppolPayloadPreview({
+              request,
+              url,
+              env,
+              documentId,
+            });
+          } catch (err) {
+            console.log(
+              `[COMPANY_BILLIT_PAYLOAD_PREVIEW][ERR] ${safeStr(err?.message, 160) || "unknown"}`,
             );
             return json({ ok: false, error: "internal_error" }, 500);
           }
