@@ -1025,6 +1025,238 @@ export async function fetchBillitSandboxOrderById(config, accessToken, partyId, 
   return { ok: true, status: statusCode, order: sanitizeBillitOrderReadResponse(data) };
 }
 
+/* Billit PATCH payment-status: confirmed-safe PaymentMethod enum (Billit docs). */
+const BILLIT_PATCH_PAYMENT_METHOD_WIRED = "Wired";
+
+/* Defensive Fluxidi → Billit PaymentMethod mapping. Returns null when uncertain
+ * so the PATCH omits PaymentMethod and never fails solely on an unknown enum. */
+export function mapFluxidiPaymentMethodToBillitPaymentMethod(
+  paymentMethod,
+  paymentProvider,
+  paymentSource,
+) {
+  const method = safeStr(paymentMethod, 80).toLowerCase();
+  const provider = safeStr(paymentProvider, 40).toLowerCase();
+  const source = safeStr(paymentSource, 40).toLowerCase();
+
+  if (
+    method === "bancontact" ||
+    method === "bancontact_qr" ||
+    method === "belfius" ||
+    method === "kbc" ||
+    method === "kbc_cbc" ||
+    method === "ideal" ||
+    method === "card" ||
+    method === "creditcard" ||
+    method === "card_payment" ||
+    method === "cartes_bancaires" ||
+    method === "paypal" ||
+    method === "applepay" ||
+    method === "googlepay" ||
+    method === "online_payment" ||
+    method === "online" ||
+    method === "mollie"
+  ) {
+    return BILLIT_PATCH_PAYMENT_METHOD_WIRED;
+  }
+  if (provider === "mollie") {
+    return BILLIT_PATCH_PAYMENT_METHOD_WIRED;
+  }
+  if (
+    method === "qr_code" ||
+    method === "bank_transfer" ||
+    method === "wire_transfer" ||
+    method === "sepa" ||
+    source === "qr"
+  ) {
+    return BILLIT_PATCH_PAYMENT_METHOD_WIRED;
+  }
+  // cash / in-car / manual: omit PaymentMethod (Paid + PaidDate are sufficient).
+  if (
+    method === "cash" ||
+    method === "in_vehicle_card" ||
+    method === "pay_in_car" ||
+    method === "in_car" ||
+    provider === "manual" ||
+    source === "in_car"
+  ) {
+    return null;
+  }
+  return null;
+}
+
+/* Billit expects PaidDate with date + time (no timezone suffix required). */
+export function formatBillitPaidDateForPatch(paidAtIso) {
+  const s = safeStr(paidAtIso, 40);
+  if (!s) return new Date().toISOString().slice(0, 19);
+  const ms = Date.parse(s);
+  if (!Number.isFinite(ms)) return new Date().toISOString().slice(0, 19);
+  return new Date(ms).toISOString().slice(0, 19);
+}
+
+/* Pure builder for PATCH /v1/orders/{orderId} payment sync (P1-C-A). */
+export function buildBillitSandboxOrderPaymentPatchBody({
+  paidAt,
+  paymentMethod,
+  paymentProvider,
+  paymentSource,
+  internalInfo,
+} = {}) {
+  const body = {
+    Paid: true,
+    PaidDate: formatBillitPaidDateForPatch(paidAt),
+  };
+  const billitMethod = mapFluxidiPaymentMethodToBillitPaymentMethod(
+    paymentMethod,
+    paymentProvider,
+    paymentSource,
+  );
+  if (billitMethod) {
+    body.PaymentMethod = billitMethod;
+  }
+  const info = safeStr(internalInfo, 200);
+  if (info) {
+    body.InternalInfo = info;
+  }
+  return body;
+}
+
+/* PATCH {api_base_url}/v1/orders/{orderId} — sandbox payment-state sync (P1-C-A).
+ * Same auth/header pattern as fetchBillitSandboxOrderById. Never logs tokens or
+ * raw provider bodies. */
+export async function patchBillitSandboxOrderPaymentStatus(
+  config,
+  accessToken,
+  partyId,
+  orderId,
+  patchBody,
+) {
+  const base = String(config.api_base_url || "").replace(/\/+$/, "");
+  const safeOrderId = safeStr(orderId, 120);
+  if (!safeOrderId) {
+    return {
+      ok: false,
+      status_code: 400,
+      error: "billit_order_payment_patch_failed",
+      billit_error_code: "missing_order_id",
+      billit_error_description: null,
+    };
+  }
+  const body =
+    patchBody && typeof patchBody === "object" && !Array.isArray(patchBody)
+      ? patchBody
+      : null;
+  if (!body || body.Paid !== true) {
+    return {
+      ok: false,
+      status_code: 400,
+      error: "billit_order_payment_patch_failed",
+      billit_error_code: "invalid_patch_body",
+      billit_error_description: null,
+    };
+  }
+  const patchUrl = `${base}/v1/orders/${encodeURIComponent(safeOrderId)}`;
+  let resp;
+  try {
+    resp = await fetch(patchUrl, {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        PartyID: safeStr(partyId, 120),
+      },
+      body: JSON.stringify(body),
+    });
+  } catch (_) {
+    return {
+      ok: false,
+      status_code: null,
+      error: "billit_order_payment_patch_failed",
+      billit_error_code: "order_payment_patch_request_failed",
+      billit_error_description: null,
+    };
+  }
+  const statusCode = resp.status;
+  let data = null;
+  try {
+    const text = await resp.text();
+    if (text && text.trim()) {
+      data = JSON.parse(text);
+    }
+  } catch (_) {
+    data = null;
+  }
+  const isObj = data && typeof data === "object" && !Array.isArray(data);
+  const firstError =
+    isObj && Array.isArray(data.errors) && data.errors.length > 0 &&
+    data.errors[0] && typeof data.errors[0] === "object"
+      ? data.errors[0]
+      : null;
+  if (!resp.ok) {
+    const billitErrorCode = isObj
+      ? safeStr(
+          (firstError && (firstError.Code ?? firstError.code)) ??
+            data.error ??
+            data.Error ??
+            data.code ??
+            data.Code ??
+            data.error_code,
+          80,
+        ) || null
+      : null;
+    const billitErrorDescription = isObj
+      ? safeStr(
+          (firstError && (firstError.Description ?? firstError.description)) ??
+            data.error_description ??
+            data.message ??
+            data.Message,
+          200,
+        ) || null
+      : null;
+    return {
+      ok: false,
+      status_code: statusCode,
+      error: "billit_order_payment_patch_failed",
+      billit_error_code: billitErrorCode,
+      billit_error_description: billitErrorDescription,
+    };
+  }
+  return { ok: true, status_code: statusCode };
+}
+
+/* Merge payment-sync envelope fields onto an existing billit_export object.
+ * Never mutates sent/peppol_sent to true. */
+export function mergeBillitExportPaymentSyncFields(existingExport, syncFields = {}) {
+  const base =
+    existingExport && typeof existingExport === "object" && !Array.isArray(existingExport)
+      ? { ...existingExport }
+      : {};
+  const nowIso = safeStr(syncFields.billit_payment_synced_at, 40) || new Date().toISOString();
+  return {
+    ...base,
+    billit_paid:
+      typeof syncFields.billit_paid === "boolean" ? syncFields.billit_paid : base.billit_paid ?? null,
+    billit_paid_date:
+      safeStr(syncFields.billit_paid_date, 40) || safeStr(base.billit_paid_date, 40) || null,
+    billit_payment_sync_status:
+      safeStr(syncFields.billit_payment_sync_status, 40) ||
+      safeStr(base.billit_payment_sync_status, 40) ||
+      null,
+    billit_payment_synced_at:
+      safeStr(syncFields.billit_payment_synced_at, 40) ||
+      safeStr(base.billit_payment_synced_at, 40) ||
+      null,
+    billit_payment_sync_error:
+      safeStr(syncFields.billit_payment_sync_error, 120) ||
+      safeStr(base.billit_payment_sync_error, 120) ||
+      null,
+    sent: base.sent === true,
+    peppol_sent: base.peppol_sent === true,
+    updated_at: nowIso,
+  };
+}
+
 /* Pure builder (Patch B7) for the Billit sandbox order SEND command request.
  * Fail-closed: the transport type allowlist is intentionally ["Peppol"] ONLY —
  * SMTP/email and Letter are deliberately unsupported. Returns null on any
@@ -1303,6 +1535,10 @@ export function buildSafeBillitExportProjection(recordOrExport) {
     billit_status: safeStr(exp.billit_status, 80) || null,
     billit_is_sent: typeof exp.billit_is_sent === "boolean" ? exp.billit_is_sent : null,
     billit_paid: typeof exp.billit_paid === "boolean" ? exp.billit_paid : null,
+    billit_paid_date: safeStr(exp.billit_paid_date ?? exp.billitPaidDate, 40) || null,
+    billit_payment_sync_status: safeStr(exp.billit_payment_sync_status, 40) || null,
+    billit_payment_synced_at: safeStr(exp.billit_payment_synced_at, 40) || null,
+    billit_payment_sync_error: safeStr(exp.billit_payment_sync_error, 120) || null,
     transport_type: safeStr(exp.transport_type ?? exp.transportType, 24) || null,
     sent_at: safeStr(exp.sent_at ?? exp.sentAt, 40) || null,
     peppol_sent_at: safeStr(exp.peppol_sent_at ?? exp.peppolSentAt, 40) || null,
