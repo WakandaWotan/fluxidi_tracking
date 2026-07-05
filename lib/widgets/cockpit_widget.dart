@@ -311,10 +311,14 @@ class _CockpitWidgetState extends State<CockpitWidget>
     required String km,
     required String price,
   }) {
+    final stripHeight = widget.navActive ? 72.0 : 84.0;
     return SizedBox(
-      height: 84,
+      height: stripHeight,
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+        padding: EdgeInsets.symmetric(
+          horizontal: 8,
+          vertical: widget.navActive ? 4 : 6,
+        ),
         child: Row(
           children: [
             _stripItem('ETA', eta),

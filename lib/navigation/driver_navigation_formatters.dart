@@ -185,25 +185,62 @@ IconData driverManeuverIconData(
   String? modifier,
   String instruction,
 ) {
+  final t = (type ?? '').toLowerCase();
+  final mod = (modifier ?? '').toLowerCase();
+  final combined = '$mod $instruction'.toLowerCase();
+
   if (driverNavTypeIsArrival(type)) return Icons.flag_rounded;
   if (driverNavTypeIsRoundabout(type)) return Icons.roundabout_right_rounded;
-  final combined = '${modifier ?? ''} $instruction'.toLowerCase();
-  if (combined.contains('slight left')) return Icons.turn_slight_left_rounded;
-  if (combined.contains('slight right')) return Icons.turn_slight_right_rounded;
-  if (combined.contains('left') ||
+  if (t.contains('depart')) return Icons.navigation_rounded;
+  if (t.contains('merge')) return Icons.merge_rounded;
+  if (t.contains('fork')) return Icons.fork_right_rounded;
+  if (t.contains('off ramp') || t.contains('off-ramp')) {
+    return Icons.call_split_rounded;
+  }
+  if (t.contains('on ramp') || t.contains('on-ramp')) {
+    return Icons.alt_route_rounded;
+  }
+  if (t.contains('end of road')) return Icons.u_turn_left_rounded;
+  if (mod.contains('sharp left') || combined.contains('sharp left')) {
+    return Icons.turn_sharp_left_rounded;
+  }
+  if (mod.contains('sharp right') || combined.contains('sharp right')) {
+    return Icons.turn_sharp_right_rounded;
+  }
+  if (mod.contains('slight left') || combined.contains('slight left')) {
+    return Icons.turn_slight_left_rounded;
+  }
+  if (mod.contains('slight right') || combined.contains('slight right')) {
+    return Icons.turn_slight_right_rounded;
+  }
+  if (mod.contains('uturn') ||
+      mod.contains('u-turn') ||
+      combined.contains('u-turn')) {
+    return Icons.u_turn_left_rounded;
+  }
+  if (mod.contains('left') ||
+      combined.contains('left') ||
       combined.contains('links') ||
       combined.contains('gauche')) {
     return Icons.turn_left_rounded;
   }
-  if (combined.contains('right') ||
+  if (mod.contains('right') ||
+      combined.contains('right') ||
       combined.contains('rechts') ||
       combined.contains('droite')) {
     return Icons.turn_right_rounded;
   }
-  if ((type ?? '').toLowerCase().contains('exit') ||
+  if (t.contains('exit') ||
       combined.contains('exit') ||
-      combined.contains('afrit')) {
+      combined.contains('afrit') ||
+      combined.contains('sortie')) {
     return Icons.call_split_rounded;
+  }
+  if (mod.contains('straight') ||
+      mod.contains('forward') ||
+      combined.contains('straight') ||
+      combined.contains('rechtdoor')) {
+    return Icons.straight_rounded;
   }
   return Icons.straight_rounded;
 }

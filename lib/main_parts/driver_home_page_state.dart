@@ -187,6 +187,9 @@ class _DriverHomePageState extends State<DriverHomePage>
   bool _driverTaxiMarkerLoadAttempted = false;
   bool _driverTaxiMarkerAvailable = false;
   bool _driverMarkerUsesTaxiAsset = false;
+  bool _mapboxLocationPuckRestoreEnabled = false;
+  bool _mapboxLocationPuckSuppressedForNav = false;
+  bool? _lastSyncedMapboxPuckHidden;
   late final Widget _stableMapWidget;
   String? _pendingMapStyleUri;
   DateTime? _lastMapWidgetBuildLogAt;
@@ -6109,6 +6112,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     });
     _setNavigationWakelock(true);
     await _applyMapStyleForMode();
+    await _syncMapboxUserLocationPuckVisibility();
     await _forceFollowCameraNow(caller: 'nav_button');
     final b = _activeBooking;
     if (b != null && _activeTripId == null) {
@@ -6291,8 +6295,10 @@ class _DriverHomePageState extends State<DriverHomePage>
   Future<void> _onMapCreated(mb.MapboxMap mapboxMap) async {
     debugPrint('[MAP][CREATED] style=$_activeMapStyleUri');
     _map = mapboxMap;
+    await _syncMapboxUserLocationPuckVisibility();
     await _applyMapStyleForMode();
     await _recreateAnnotationManagers();
+    await _syncMapboxUserLocationPuckVisibility();
 
     final pos = _lastPos;
     if (pos != null) {
@@ -6303,6 +6309,49 @@ class _DriverHomePageState extends State<DriverHomePage>
       if (_cameraMode == _CameraMode.follow) {
         await _followCameraTesla(pos, force: true);
       }
+    }
+  }
+
+  bool _shouldHideMapboxUserLocationPuck() {
+    // Follow + live ride covers the style-reload gap where the taxi marker
+    // flag is cleared before annotations are recreated.
+    return _cameraMode == _CameraMode.follow && _liveRideActive;
+  }
+
+  Future<void> _syncMapboxUserLocationPuckVisibility() async {
+    final map = _map;
+    if (map == null || !_mapSupported) return;
+
+    final hide = _shouldHideMapboxUserLocationPuck();
+    try {
+      if (hide) {
+        if (!_mapboxLocationPuckSuppressedForNav) {
+          final settings = await map.location.getSettings();
+          _mapboxLocationPuckRestoreEnabled = settings.enabled ?? false;
+          _mapboxLocationPuckSuppressedForNav = true;
+        }
+        await map.location.updateSettings(
+          mb.LocationComponentSettings(enabled: false),
+        );
+      } else if (_mapboxLocationPuckSuppressedForNav) {
+        await map.location.updateSettings(
+          mb.LocationComponentSettings(
+            enabled: _mapboxLocationPuckRestoreEnabled,
+          ),
+        );
+        _mapboxLocationPuckSuppressedForNav = false;
+      }
+
+      if (_lastSyncedMapboxPuckHidden != hide) {
+        _lastSyncedMapboxPuckHidden = hide;
+        _logNavBounded(
+          'NAV_PUCK',
+          'hidden=$hide follow=${_cameraMode == _CameraMode.follow} live=$_liveRideActive',
+          intervalMs: 3000,
+        );
+      }
+    } catch (e) {
+      _logNavBounded('NAV_PUCK', 'sync_failed', intervalMs: 5000);
     }
   }
 
@@ -6330,12 +6379,14 @@ class _DriverHomePageState extends State<DriverHomePage>
 
   Future<void> _recreateAnnotationManagers() async {
     if (_map == null) return;
+    await _syncMapboxUserLocationPuckVisibility();
     await _disposeDriverPointAnnotationManager();
     _routeLineManager = await _map!.annotations
         .createPolylineAnnotationManager();
     _pinsPointManager = await _map!.annotations.createPointAnnotationManager();
     _driverPointManager = await _map!.annotations
         .createPointAnnotationManager();
+    await _syncMapboxUserLocationPuckVisibility();
   }
 
   MapThemeMode _effectiveMapThemeFor(_CameraMode mode) {
@@ -6374,6 +6425,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       await _map!.style.setStyleURI(target);
       _activeMapStyleUri = target;
       _mapRedrawCountThisMinute += 1;
+      await _syncMapboxUserLocationPuckVisibility();
       await _recreateAnnotationManagers();
       _driverMarkerUsesTaxiAsset = false;
       _pickupPin = null;
@@ -6389,6 +6441,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         await _syncVisibleRouteLineWithProgress(_lastPos!);
         await _updateDriverMarker(_lastPos!);
       }
+      await _syncMapboxUserLocationPuckVisibility();
       debugPrint(
         '[MAP_THEME] redraw route=${_routeCoords.length >= 2} marker=${_lastPos != null} pins=${_routeCoords.length >= 2}',
       );
@@ -6985,6 +7038,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       _driverMarker!.iconRotate = markerBearing;
       await mgr.update(_driverMarker!);
     }
+    await _syncMapboxUserLocationPuckVisibility();
 
     if (moveCamera && _cameraMode != _CameraMode.follow) {
       await _map?.flyTo(
@@ -7039,9 +7093,17 @@ class _DriverHomePageState extends State<DriverHomePage>
           bearing: heading,
           pitch: zoomPitch.pitch,
           padding: mb.MbxEdgeInsets(
-            top: MediaQuery.of(context).padding.top + 120,
+            top:
+                MediaQuery.of(context).padding.top +
+                (MediaQuery.of(context).orientation == Orientation.landscape
+                    ? 56
+                    : 175),
             left: 24,
-            bottom: MediaQuery.of(context).padding.bottom + 260,
+            bottom:
+                MediaQuery.of(context).padding.bottom +
+                (MediaQuery.of(context).orientation == Orientation.landscape
+                    ? 96
+                    : 240),
             right: 24,
           ),
         ),
@@ -7113,6 +7175,27 @@ class _DriverHomePageState extends State<DriverHomePage>
         'NAV_E2',
         'source=${snapshot.source.name} highway=${snapshot.isHighwayLike} lanes=${snapshot.lanes.length}',
       );
+      if (_nextStepIndex >= 0 && _nextStepIndex < _routeSteps.length) {
+        final step = _routeSteps[_nextStepIndex];
+        final banner = step.banner;
+        final rawPrimary = (banner?.primaryText ?? '').trim();
+        final rawSecondaryLen = (banner?.secondaryText ?? '').trim().length;
+        final displaySnap = applyDriverNavInstructionDisplayLines(
+          snapshot: snapshot,
+          step: step,
+        );
+        final swapped =
+            rawPrimary.isNotEmpty && displaySnap.primaryText.trim() != rawPrimary;
+        final primaryKind = driverNavBannerPrimaryKind(
+          primaryText: displaySnap.primaryText,
+          step: step,
+        );
+        final tgtFrom = driverNavManeuverTargetSource(step);
+        _logNavBounded(
+          'NAV_E3_TEXT',
+          'source=${snapshot.source.name} swapped=$swapped primaryKind=$primaryKind hasBannerSec=${rawSecondaryLen > 0 ? 1 : 0} bannerSecLen=$rawSecondaryLen tgtFrom=$tgtFrom',
+        );
+      }
     }
 
     if (!mounted) {
@@ -7589,6 +7672,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       _lastSmoothedCameraBearing = null;
       _updateRouteSnapState(pos);
       await _syncVisibleRouteLineWithProgress(pos);
+      await _syncMapboxUserLocationPuckVisibility();
       await _followCameraTesla(pos, force: true);
       debugPrint('[GPS][RECENTER][FOLLOW_RESTORED]');
       return;
@@ -7696,8 +7780,50 @@ class _DriverHomePageState extends State<DriverHomePage>
     await _launchExternalNavUri(uri);
   }
 
-  Widget _buildExternalNavButtons() {
+  Widget _buildExternalNavChip({
+    required double height,
+    required IconData icon,
+    required String label,
+    required String tooltip,
+    required VoidCallback onPressed,
+    required Color navAccent,
+    required Color navText,
+    required Color navSurface,
+  }) {
+    return Tooltip(
+      message: tooltip,
+      child: OutlinedButton.icon(
+        style: OutlinedButton.styleFrom(
+          foregroundColor: navText,
+          backgroundColor: navSurface,
+          side: BorderSide(color: navAccent.withOpacity(0.78), width: 1.2),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(999)),
+          minimumSize: Size(0, height),
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          visualDensity: VisualDensity.compact,
+        ),
+        onPressed: onPressed,
+        icon: Icon(icon, size: 16),
+        label: Text(
+          label,
+          style: TextStyle(
+            fontSize: height >= 48 ? 14 : 13,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildExternalNavButtons({bool inlineLandscape = false}) {
     if (_resolveExternalNavTarget() == null) return const SizedBox.shrink();
+    final isTablet = MediaQuery.of(context).size.width >= 600;
+    final isLandscape =
+        MediaQuery.of(context).orientation == Orientation.landscape;
+    final chipHeight = isLandscape
+        ? (isTablet ? 44.0 : 40.0)
+        : (isTablet ? 48.0 : 44.0);
     final isMidnightBlue =
         driverThemeNotifier.value == DriverThemeVariant.midnightBlue;
     final isMiddayGold =
@@ -7711,45 +7837,52 @@ class _DriverHomePageState extends State<DriverHomePage>
     final navSurface = isMidnightBlue
         ? const Color(0xCC07111F)
         : (isMiddayGold ? const Color(0xCC2C2113) : const Color(0xCC0B1326));
-    final buttonStyle = OutlinedButton.styleFrom(
-      foregroundColor: navText,
-      backgroundColor: navSurface,
-      side: BorderSide(color: navAccent.withOpacity(0.78), width: 1.2),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-    );
     return Padding(
-      padding: const EdgeInsets.only(top: 8),
-      child: Wrap(
-        spacing: 8,
-        runSpacing: 8,
-        alignment: WrapAlignment.center,
+      padding: EdgeInsets.only(top: inlineLandscape ? 0 : 6),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        mainAxisSize: MainAxisSize.min,
         children: [
-          OutlinedButton.icon(
-            style: buttonStyle,
+          _buildExternalNavChip(
+            height: chipHeight,
+            icon: Icons.map,
+            label: _tr(
+              nl: 'Google',
+              en: 'Google',
+              fr: 'Google',
+              es: 'Google',
+            ),
+            tooltip: _tr(
+              nl: 'Openen in Google Maps',
+              en: 'Open in Google Maps',
+              fr: 'Ouvrir dans Google Maps',
+              es: 'Abrir en Google Maps',
+            ),
             onPressed: _openInGoogleMaps,
-            icon: const Icon(Icons.map, size: 16),
-            label: Text(
-              _tr(
-                nl: 'Openen in Google Maps',
-                en: 'Open in Google Maps',
-                fr: 'Ouvrir dans Google Maps',
-                es: 'Abrir en Google Maps',
-              ),
-            ),
+            navAccent: navAccent,
+            navText: navText,
+            navSurface: navSurface,
           ),
-          OutlinedButton.icon(
-            style: buttonStyle,
-            onPressed: _openInWaze,
-            icon: const Icon(Icons.alt_route, size: 16),
-            label: Text(
-              _tr(
-                nl: 'Openen in Waze',
-                en: 'Open in Waze',
-                fr: 'Ouvrir dans Waze',
-                es: 'Abrir en Waze',
-              ),
+          const SizedBox(width: 8),
+          _buildExternalNavChip(
+            height: chipHeight,
+            icon: Icons.alt_route,
+            label: _tr(
+              nl: 'Waze',
+              en: 'Waze',
+              fr: 'Waze',
+              es: 'Waze',
             ),
+            tooltip: _tr(
+              nl: 'Openen in Waze',
+              en: 'Open in Waze',
+              fr: 'Ouvrir dans Waze',
+              es: 'Abrir en Waze',
+            ),
+            onPressed: _openInWaze,
+            navAccent: navAccent,
+            navText: navText,
+            navSurface: navSurface,
           ),
         ],
       ),
@@ -13802,34 +13935,111 @@ class _DriverHomePageState extends State<DriverHomePage>
     return _buildPremiumDriverDashboard();
   }
 
-  Widget _buildTurnInstructionBanner({required bool compact}) {
-    final dist = _nextNavDistanceM ?? 0.0;
+  NavInstructionSnapshot _effectiveNavInstructionSnapshot() {
+    final snap = _navInstructionSnapshot;
+    if (snap != null && snap.hasInstruction) {
+      if (_nextStepIndex >= 0 && _nextStepIndex < _routeSteps.length) {
+        return applyDriverNavInstructionDisplayLines(
+          snapshot: snap,
+          step: _routeSteps[_nextStepIndex],
+        );
+      }
+      return snap;
+    }
     final instruction = (_nextNavInstruction ?? '').trim();
     final street = (_nextNavStreet ?? '').trim();
-    final action = _shortNavAction(instruction, _nextNavType, _nextNavModifier);
-    final distanceText = _navDistanceText(dist);
-    final isArrival = _navTypeIsArrival(_nextNavType);
-    final line1 = _navTypeIsArrival(_nextNavType)
-        ? action
-        : _tr(
-            nl: 'Over ${_navDistanceText(dist)} $action',
-            en: 'In ${_navDistanceText(dist)} $action',
-            fr: 'Dans ${_navDistanceText(dist)} $action',
-            es: 'En ${_navDistanceText(dist)} $action',
-          );
-    final icon = _maneuverIconData(_nextNavType, _nextNavModifier, instruction);
+    if (instruction.isEmpty && street.isEmpty) {
+      return snap ?? NavInstructionSnapshot.none;
+    }
+    final pseudoStep = DriverNavStep(
+      lat: 0,
+      lon: 0,
+      instruction: instruction,
+      street: street,
+      type: _nextNavType ?? '',
+      modifier: _nextNavModifier ?? '',
+      distanceAlongRouteM: 0,
+    );
+    final rawPrimary = instruction.isNotEmpty
+        ? instruction
+        : _shortNavAction(instruction, _nextNavType, _nextNavModifier);
+    final normalized = normalizeDriverInstructionDisplayLines(
+      rawPrimary: rawPrimary,
+      rawSecondary: street,
+      step: pseudoStep,
+    );
+    return NavInstructionSnapshot(
+      distanceToManeuverMeters: _nextNavDistanceM ?? 0,
+      primaryText: normalized.primary.isNotEmpty ? normalized.primary : street,
+      secondaryText: normalized.secondary,
+      maneuverType: _nextNavType ?? '',
+      maneuverModifier: _nextNavModifier ?? '',
+      roadName: street,
+      isHighwayLike: false,
+      lanes: const <DriverNavLaneGuidance>[],
+      source: NavInstructionSource.step,
+    );
+  }
+
+  String _navBannerSecondaryFromSnapshot(NavInstructionSnapshot snap) {
+    final secondary = snap.secondaryText.trim();
+    final primary = snap.primaryText.trim();
+    if (secondary.isEmpty || secondary == primary) return '';
+    if (primary.toLowerCase().contains(secondary.toLowerCase())) return '';
+    return secondary;
+  }
+
+  bool _showNavInstructionBanner() {
+    if (_cameraMode != _CameraMode.follow) return false;
+    final snap = _navInstructionSnapshot;
+    if (snap != null && snap.hasInstruction) return true;
+    return (_nextNavInstruction ?? '').trim().isNotEmpty;
+  }
+
+  Widget _buildTurnInstructionBanner({
+    required bool compact,
+    required bool isTablet,
+    bool topRowLandscape = false,
+  }) {
+    final snapshot = _effectiveNavInstructionSnapshot();
+    final distanceText = formatManeuverDistance(
+      snapshot.distanceToManeuverMeters,
+    );
+    final primaryText = snapshot.primaryText.trim();
+    final secondaryText = _navBannerSecondaryFromSnapshot(snapshot);
+    final distancePrefix = _tr(
+      nl: 'Over',
+      en: 'In',
+      fr: 'Dans',
+      es: 'En',
+    );
+    final isArrival = driverNavTypeIsArrival(snapshot.maneuverType);
+    final icon = driverManeuverIconData(
+      snapshot.maneuverType,
+      snapshot.maneuverModifier,
+      primaryText,
+    );
     return DriverTurnInstructionBanner(
       themeListenable: _activeDriverThemeListenable,
       compact: compact,
+      isTablet: isTablet,
+      topRowLandscape: topRowLandscape,
       isArrival: isArrival,
+      isHighwayLike: snapshot.isHighwayLike,
+      distancePrefix: distancePrefix,
       distanceText: distanceText,
-      line1: line1,
-      street: street,
+      primaryText: primaryText,
+      secondaryText: secondaryText,
+      subText: snapshot.subText,
       icon: icon,
     );
   }
 
-  Widget _buildNavLoadingBanner({required bool compact}) {
+  Widget _buildNavLoadingBanner({
+    required bool compact,
+    required bool isTablet,
+    bool topRowLandscape = false,
+  }) {
     final text = _isRerouting
         ? _tr(
             nl: 'Nieuwe route berekenen…',
@@ -13845,15 +14055,139 @@ class _DriverHomePageState extends State<DriverHomePage>
           );
     return DriverNavLoadingBanner(
       compact: compact,
+      isTablet: isTablet,
+      topRowLandscape: topRowLandscape,
       text: text,
       themeListenable: _activeDriverThemeListenable,
     );
   }
 
-  Widget _buildNoNavInstructionsBanner({required bool compact}) {
+  Widget _buildNoNavInstructionsBanner({
+    required bool compact,
+    required bool isTablet,
+    bool topRowLandscape = false,
+  }) {
     return DriverNoNavInstructionsBanner(
       compact: compact,
+      isTablet: isTablet,
+      topRowLandscape: topRowLandscape,
+      text: _tr(
+        nl: 'Volg de route',
+        en: 'Follow the route',
+        fr: 'Suivez l\'itinéraire',
+        es: 'Sigue la ruta',
+      ),
       themeListenable: _activeDriverThemeListenable,
+    );
+  }
+
+  Widget? _buildFollowNavBannerForTopRow({required bool isTablet}) {
+    if (_cameraMode != _CameraMode.follow) return null;
+    if (_showNavInstructionBanner()) {
+      return _buildTurnInstructionBanner(
+        compact: true,
+        isTablet: isTablet,
+        topRowLandscape: true,
+      );
+    }
+    if (_navStepsLoading ||
+        _isRerouting ||
+        _navInstructionSnapshot?.source == NavInstructionSource.loading) {
+      return _buildNavLoadingBanner(
+        compact: true,
+        isTablet: isTablet,
+        topRowLandscape: true,
+      );
+    }
+    if (!_navStepsLoading && !_isRerouting && _routeSteps.isEmpty) {
+      return _buildNoNavInstructionsBanner(
+        compact: true,
+        isTablet: isTablet,
+        topRowLandscape: true,
+      );
+    }
+    return null;
+  }
+
+  Widget _buildCollapsedNavMenuButton() {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(14),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+        child: Container(
+          width: 44,
+          height: 44,
+          decoration: BoxDecoration(
+            color: Colors.black.withOpacity(0.26),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(
+              color: Colors.white.withOpacity(0.14),
+            ),
+          ),
+          child: IconButton(
+            tooltip: 'Menu',
+            onPressed: () => _scaffoldKey.currentState?.openDrawer(),
+            icon: const Icon(Icons.menu_rounded, size: 22),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCollapsedNavLogoCapsule({
+    required bool isLandscape,
+    required bool hasInlineBanner,
+  }) {
+    final logoWidth = isLandscape ? (hasInlineBanner ? 118.0 : 146.0) : 124.0;
+    final logoHeight = isLandscape ? (hasInlineBanner ? 44.0 : 48.0) : 44.0;
+    final imageHeight = isLandscape ? (hasInlineBanner ? 28.0 : 36.0) : 30.0;
+    return IgnorePointer(
+      child: Container(
+        width: logoWidth,
+        height: logoHeight,
+        padding: const EdgeInsets.symmetric(
+          horizontal: 10,
+          vertical: 6,
+        ),
+        decoration: BoxDecoration(
+          color: Colors.black.withOpacity(0.38),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: const Color(0x66FFD36A)),
+        ),
+        child: Center(
+          child: SizedBox(
+            width: double.infinity,
+            child: _tenantLogo(
+              height: imageHeight,
+              fit: BoxFit.contain,
+              fallback: Image.asset(
+                kFluxidiLogoAsset,
+                fit: BoxFit.contain,
+                errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildLandscapeCollapsedNavTopRow({required bool isTablet}) {
+    final banner = _buildFollowNavBannerForTopRow(isTablet: isTablet);
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        _buildCollapsedNavMenuButton(),
+        const SizedBox(width: 8),
+        _buildCollapsedNavLogoCapsule(
+          isLandscape: true,
+          hasInlineBanner: banner != null,
+        ),
+        if (banner != null) ...[
+          const SizedBox(width: 8),
+          Expanded(child: banner),
+        ],
+      ],
     );
   }
 
@@ -13939,18 +14273,23 @@ class _DriverHomePageState extends State<DriverHomePage>
         isLandscape && _cameraMode == _CameraMode.follow;
     final bool collapseTopBarInPortraitNav =
         !isLandscape && _cameraMode == _CameraMode.follow;
-    final double arrowBottom = isLandscape ? 106.0 : 152.0;
+    final double arrowBottom = isLandscape ? 92.0 : 152.0;
     final double safeBottomInset = MediaQuery.of(context).padding.bottom;
     final double recenterBottom = isLandscape
-        ? (showCockpit ? (showExternalNavButtons ? 184.0 : 128.0) : 112.0) +
-              safeBottomInset
-        : (showCockpit ? (showExternalNavButtons ? 266.0 : 188.0) : 150.0) +
+        ? (showCockpit ? 118.0 : 96.0) + safeBottomInset
+        : (showCockpit ? (showExternalNavButtons ? 232.0 : 188.0) : 150.0) +
               safeBottomInset;
-    final double navBannerLandscapeMaxWidth = math.min(760.0, screenW * 0.46);
-    final double navBannerPortraitMaxWidth = math.min(screenW * 0.88, 700.0);
+    final bool isTablet = screenW >= 600;
+    final double navBannerPortraitMaxWidth = math.min(
+      screenW * (isTablet ? 0.94 : 0.92),
+      isTablet ? 820.0 : 700.0,
+    );
+    final bool collapsedNavHeader =
+        collapseTopBarInLandscapeNav || collapseTopBarInPortraitNav;
     final double navBannerTop =
         MediaQuery.of(context).padding.top +
-        (isLandscape ? 8 : (_cameraMode == _CameraMode.follow ? 58 : 74));
+        (collapsedNavHeader ? 58 : 74);
+    final bool hideMapUserPuck = _shouldHideMapboxUserLocationPuck();
     return Scaffold(
       key: _scaffoldKey,
       drawer: _buildDrawer(),
@@ -13981,139 +14320,92 @@ class _DriverHomePageState extends State<DriverHomePage>
           if (showCockpit &&
               (collapseTopBarInLandscapeNav || collapseTopBarInPortraitNav))
             Positioned(
-              top: MediaQuery.of(context).padding.top + 8,
+              top: MediaQuery.of(context).padding.top +
+                  (collapseTopBarInLandscapeNav ? 6 : 8),
               left: 10,
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(14),
-                    child: BackdropFilter(
-                      filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-                      child: Container(
-                        width: 44,
-                        height: 44,
-                        decoration: BoxDecoration(
-                          color: Colors.black.withOpacity(0.26),
-                          borderRadius: BorderRadius.circular(14),
-                          border: Border.all(
-                            color: Colors.white.withOpacity(0.14),
-                          ),
+              right: collapseTopBarInLandscapeNav ? 10 : null,
+              child: collapseTopBarInLandscapeNav
+                  ? _buildLandscapeCollapsedNavTopRow(isTablet: isTablet)
+                  : Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        _buildCollapsedNavMenuButton(),
+                        const SizedBox(width: 8),
+                        _buildCollapsedNavLogoCapsule(
+                          isLandscape: false,
+                          hasInlineBanner: false,
                         ),
-                        child: IconButton(
-                          tooltip: 'Menu',
-                          onPressed: () =>
-                              _scaffoldKey.currentState?.openDrawer(),
-                          icon: const Icon(Icons.menu_rounded, size: 22),
-                        ),
-                      ),
+                      ],
                     ),
+            ),
+          if (_cameraMode == _CameraMode.follow &&
+              _showNavInstructionBanner() &&
+              !collapseTopBarInLandscapeNav)
+            Positioned(
+              top: navBannerTop,
+              left: 12,
+              right: 12,
+              child: Align(
+                alignment: Alignment.topCenter,
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(
+                    maxWidth: navBannerPortraitMaxWidth,
                   ),
-                  const SizedBox(width: 8),
-                  IgnorePointer(
-                    child: Container(
-                      width: isLandscape ? 146 : 124,
-                      height: isLandscape ? 48 : 44,
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 10,
-                        vertical: 6,
-                      ),
-                      decoration: BoxDecoration(
-                        color: Colors.black.withOpacity(0.38),
-                        borderRadius: BorderRadius.circular(14),
-                        border: Border.all(color: const Color(0x66FFD36A)),
-                      ),
-                      child: Center(
-                        child: SizedBox(
-                          width: double.infinity,
-                          child: _tenantLogo(
-                            height: isLandscape ? 36 : 30,
-                            fit: BoxFit.contain,
-                            fallback: Image.asset(
-                              kFluxidiLogoAsset,
-                              fit: BoxFit.contain,
-                              errorBuilder: (_, __, ___) =>
-                                  const SizedBox.shrink(),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
+                  child: _buildTurnInstructionBanner(
+                    compact: false,
+                    isTablet: isTablet,
                   ),
-                ],
+                ),
               ),
             ),
-          if (_cameraMode == _CameraMode.follow && _nextNavInstruction != null)
+          if (_cameraMode == _CameraMode.follow &&
+              !_showNavInstructionBanner() &&
+              (_navStepsLoading ||
+                  _isRerouting ||
+                  _navInstructionSnapshot?.source ==
+                      NavInstructionSource.loading) &&
+              !collapseTopBarInLandscapeNav)
             Positioned(
               top: navBannerTop,
-              left: isLandscape ? 62 : 0,
-              right: isLandscape ? null : 0,
-              child: isLandscape
-                  ? ConstrainedBox(
-                      constraints: BoxConstraints(
-                        maxWidth: navBannerLandscapeMaxWidth,
-                      ),
-                      child: _buildTurnInstructionBanner(compact: true),
-                    )
-                  : Align(
-                      alignment: Alignment.topCenter,
-                      child: ConstrainedBox(
-                        constraints: BoxConstraints(
-                          maxWidth: navBannerPortraitMaxWidth,
-                        ),
-                        child: _buildTurnInstructionBanner(compact: false),
-                      ),
-                    ),
+              left: 12,
+              right: 12,
+              child: Align(
+                alignment: Alignment.topCenter,
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(
+                    maxWidth: navBannerPortraitMaxWidth,
+                  ),
+                  child: _buildNavLoadingBanner(
+                    compact: false,
+                    isTablet: isTablet,
+                  ),
+                ),
+              ),
             ),
           if (_cameraMode == _CameraMode.follow &&
-              _nextNavInstruction == null &&
-              (_navStepsLoading || _isRerouting))
-            Positioned(
-              top: navBannerTop,
-              left: isLandscape ? 62 : 0,
-              right: isLandscape ? null : 0,
-              child: isLandscape
-                  ? ConstrainedBox(
-                      constraints: BoxConstraints(
-                        maxWidth: navBannerLandscapeMaxWidth,
-                      ),
-                      child: _buildNavLoadingBanner(compact: true),
-                    )
-                  : Align(
-                      alignment: Alignment.topCenter,
-                      child: ConstrainedBox(
-                        constraints: BoxConstraints(
-                          maxWidth: navBannerPortraitMaxWidth,
-                        ),
-                        child: _buildNavLoadingBanner(compact: false),
-                      ),
-                    ),
-            ),
-          if (_cameraMode == _CameraMode.follow &&
+              !_showNavInstructionBanner() &&
               !_navStepsLoading &&
-              _routeSteps.isEmpty)
+              !_isRerouting &&
+              _routeSteps.isEmpty &&
+              !collapseTopBarInLandscapeNav)
             Positioned(
               top: navBannerTop,
-              left: isLandscape ? 62 : 0,
-              right: isLandscape ? null : 0,
-              child: isLandscape
-                  ? ConstrainedBox(
-                      constraints: BoxConstraints(
-                        maxWidth: navBannerLandscapeMaxWidth,
-                      ),
-                      child: _buildNoNavInstructionsBanner(compact: true),
-                    )
-                  : Align(
-                      alignment: Alignment.topCenter,
-                      child: ConstrainedBox(
-                        constraints: BoxConstraints(
-                          maxWidth: navBannerPortraitMaxWidth,
-                        ),
-                        child: _buildNoNavInstructionsBanner(compact: false),
-                      ),
-                    ),
+              left: 12,
+              right: 12,
+              child: Align(
+                alignment: Alignment.topCenter,
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(
+                    maxWidth: navBannerPortraitMaxWidth,
+                  ),
+                  child: _buildNoNavInstructionsBanner(
+                    compact: false,
+                    isTablet: isTablet,
+                  ),
+                ),
+              ),
             ),
-          if (_cameraMode == _CameraMode.follow)
+          if (_cameraMode == _CameraMode.follow && !hideMapUserPuck)
             Positioned(
               left: 0,
               right: 0,
@@ -14178,32 +14470,40 @@ class _DriverHomePageState extends State<DriverHomePage>
                               bottom:
                                   MediaQuery.of(context).viewInsets.bottom + 4,
                             ),
-                            child: SizedBox(
-                              width: double.infinity,
-                              child: Column(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  CockpitWidget(
-                                    themeListenable:
-                                        _activeDriverThemeListenable,
-                                    etaText: _etaText,
-                                    kmText: _kmRemainingText,
-                                    priceText: _cockpitPriceText,
-                                    tripStarted: _liveRideActive,
-                                    isWaiting: _isWaiting,
-                                    navActive:
-                                        _cameraMode == _CameraMode.follow,
-                                    onNav: _openNavigation,
-                                    onStart: _handleCockpitStart,
-                                    onStop: _stopTrip,
-                                    onWait: _enterWaitMode,
-                                    onGo: _exitWaitMode,
+                            child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.end,
+                              children: [
+                                Expanded(
+                                  child: Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      CockpitWidget(
+                                        themeListenable:
+                                            _activeDriverThemeListenable,
+                                        etaText: _etaText,
+                                        kmText: _kmRemainingText,
+                                        priceText: _cockpitPriceText,
+                                        tripStarted: _liveRideActive,
+                                        isWaiting: _isWaiting,
+                                        navActive:
+                                            _cameraMode == _CameraMode.follow,
+                                        onNav: _openNavigation,
+                                        onStart: _handleCockpitStart,
+                                        onStop: _stopTrip,
+                                        onWait: _enterWaitMode,
+                                        onGo: _exitWaitMode,
+                                      ),
+                                      _buildDirectRideEstimatePanel(),
+                                    ],
                                   ),
-                                  _buildDirectRideEstimatePanel(),
-                                  if (showExternalNavButtons)
-                                    _buildExternalNavButtons(),
+                                ),
+                                if (showExternalNavButtons) ...[
+                                  const SizedBox(width: 8),
+                                  _buildExternalNavButtons(
+                                    inlineLandscape: true,
+                                  ),
                                 ],
-                              ),
+                              ],
                             ),
                           ),
                         ),

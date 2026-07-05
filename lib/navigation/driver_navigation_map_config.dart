@@ -12,7 +12,7 @@ const String kDriverTaxiMarkerAssetPath =
     'assets/navigation/driver_taxi_top.png';
 
 /// Scales the taxi PNG on screen (490×490 source). Tune after field test.
-const double kDriverTaxiMarkerIconSize = 0.22;
+const double kDriverTaxiMarkerIconSize = 0.52;
 
 const String kDriverMapStyleLight = 'mapbox://styles/mapbox/streets-v12';
 const String kDriverMapStyleDark = 'mapbox://styles/mapbox/navigation-night-v1';
