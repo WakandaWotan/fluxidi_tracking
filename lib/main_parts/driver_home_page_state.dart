@@ -240,6 +240,12 @@ class _DriverHomePageState extends State<DriverHomePage>
   final Map<String, DateTime> _lastNavDebugAt = <String, DateTime>{};
   bool _offRouteLikely = false;
   int _offRouteHitCount = 0;
+  bool _isRerouting = false;
+  DateTime? _lastRerouteAt;
+  String? _rerouteReason;
+  DateTime? _offRouteRerouteDebounceStartedAt;
+  static const Duration _rerouteCooldown = Duration(seconds: 25);
+  static const Duration _offRouteRerouteDebounce = Duration(seconds: 4);
   int _routeCleanupEpoch = 0;
   int _mapRedrawCountThisMinute = 0;
   int _routeRedrawCountThisMinute = 0;
@@ -270,6 +276,9 @@ class _DriverHomePageState extends State<DriverHomePage>
     _lastMarkerLagM = 0.0;
     _offRouteHitCount = 0;
     _offRouteLikely = false;
+    _isRerouting = false;
+    _rerouteReason = null;
+    _offRouteRerouteDebounceStartedAt = null;
   }
 
   bool _isRouteTaskStillValid({
@@ -5915,6 +5924,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       }
 
       _updateRouteSnapState(pos);
+      _evaluateOffRouteReroute();
       await _syncVisibleRouteLineWithProgress(pos);
 
       if (_mapSupported && _map != null && _driverPointManager != null) {
@@ -6483,6 +6493,9 @@ class _DriverHomePageState extends State<DriverHomePage>
     final offRoute = _offRouteHitCount >= 3;
     if (offRoute != _offRouteLikely) {
       _offRouteLikely = offRoute;
+      if (!offRoute) {
+        _offRouteRerouteDebounceStartedAt = null;
+      }
     }
 
     final displayPoint = (_useMatchedVisual && snap != null)
@@ -6502,6 +6515,127 @@ class _DriverHomePageState extends State<DriverHomePage>
           'gpsAccuracyM=${(pos.accuracy.isFinite ? pos.accuracy : -1).toStringAsFixed(1)} '
           'useMatchedVisual=$_useMatchedVisual reason=${canUseMatched ? 'confidence_ok' : 'confidence_low'}',
     );
+  }
+
+  bool _canAttemptOffRouteReroute() {
+    if (!_liveRideActive || _isWaiting) return false;
+    if (_cameraMode != _CameraMode.follow) return false;
+    if (_lastPos == null || _isRerouting) return false;
+    if (_routeCoords.length < 2) return false;
+    if (!_offRouteLikely) return false;
+
+    final lastReroute = _lastRerouteAt;
+    if (lastReroute != null &&
+        DateTime.now().difference(lastReroute) < _rerouteCooldown) {
+      return false;
+    }
+
+    if (_routePhase == _RideRoutePhase.toPickup) {
+      return _activeBooking != null && _activeTripId == null;
+    }
+    if (_routePhase == _RideRoutePhase.trip) {
+      final booking = _activeBooking;
+      if (booking != null && _activeTripId != null) return true;
+      if (_directRideActive &&
+          (_directRideDestinationText ?? '').trim().isNotEmpty) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  void _evaluateOffRouteReroute() {
+    if (!_offRouteLikely) {
+      _offRouteRerouteDebounceStartedAt = null;
+      return;
+    }
+    if (!_canAttemptOffRouteReroute()) return;
+
+    final debounceStart = _offRouteRerouteDebounceStartedAt;
+    if (debounceStart == null) {
+      _offRouteRerouteDebounceStartedAt = DateTime.now();
+      return;
+    }
+    if (DateTime.now().difference(debounceStart) < _offRouteRerouteDebounce) {
+      return;
+    }
+
+    unawaited(_triggerOffRouteReroute(reason: 'off_route'));
+  }
+
+  void _resetOffRouteStateAfterReroute() {
+    _offRouteHitCount = 0;
+    _offRouteLikely = false;
+    _offRouteRerouteDebounceStartedAt = null;
+    _matchEnterHits = 0;
+    _matchExitHits = 0;
+    _useMatchedVisual = false;
+    _lastVisualProgressM = null;
+    _lastRouteSnap = null;
+    _routeLineProgressTrimmed = false;
+    _lastRouteLineTrimProgressM = 0.0;
+    _lastRouteLineTrimAt = null;
+  }
+
+  String _reroutePhaseLabel() {
+    return _routePhase == _RideRoutePhase.toPickup ? 'toPickup' : 'toDropoff';
+  }
+
+  Future<void> _triggerOffRouteReroute({required String reason}) async {
+    if (_isRerouting || !_canAttemptOffRouteReroute()) return;
+
+    _isRerouting = true;
+    _rerouteReason = reason;
+    _lastRerouteAt = DateTime.now();
+    _offRouteRerouteDebounceStartedAt = null;
+    final phaseLabel = _reroutePhaseLabel();
+    debugPrint('[NAV_REROUTE] phase=$phaseLabel reason=$reason start=1');
+    if (mounted) setState(() {});
+
+    var ok = false;
+    try {
+      if (_routePhase == _RideRoutePhase.toPickup) {
+        final booking = _activeBooking;
+        if (booking != null) {
+          await _buildNavRouteToPickup(booking);
+          ok = _routeCoords.length >= 2;
+        }
+      } else {
+        final booking = _activeBooking;
+        if (booking != null && _activeTripId != null) {
+          await _buildNavRouteToDestination(booking);
+          ok = _routeCoords.length >= 2;
+        } else if (_directRideActive) {
+          final destination = (_directRideDestinationText ?? '').trim();
+          if (destination.isNotEmpty) {
+            await _buildDirectRouteToDestination(destination);
+            ok = _routeCoords.length >= 2;
+          }
+        }
+      }
+    } catch (_) {
+      ok = false;
+    } finally {
+      if (ok) {
+        _resetOffRouteStateAfterReroute();
+      }
+      _isRerouting = false;
+      _rerouteReason = null;
+      debugPrint(
+        '[NAV_REROUTE] phase=$phaseLabel reason=$reason result=${ok ? 'ok' : 'fail'}',
+      );
+      if (!ok) {
+        _toast(
+          _tr(
+            nl: 'Route bijwerken mislukt. Probeer Google Maps of Waze.',
+            en: 'Could not update route. Try Google Maps or Waze.',
+            fr: 'Mise a jour de l\'itineraire impossible. Essayez Google Maps ou Waze.',
+            es: 'No se pudo actualizar la ruta. Prueba Google Maps o Waze.',
+          ),
+        );
+      }
+      if (mounted) setState(() {});
+    }
   }
 
   _LonLat _displayRoutePointFor(geo.Position pos) {
@@ -8158,9 +8292,9 @@ class _DriverHomePageState extends State<DriverHomePage>
     _routeLineOutline = await mgr.create(
       mb.PolylineAnnotationOptions(
         geometry: geometry,
-        lineWidth: 15.0,
-        lineOpacity: 0.62,
-        lineColor: 0xCC0B1220,
+        lineWidth: 18.0,
+        lineOpacity: 0.74,
+        lineColor: 0xDD0B1220,
       ),
     );
 
@@ -8168,9 +8302,9 @@ class _DriverHomePageState extends State<DriverHomePage>
     _routeLine = await mgr.create(
       mb.PolylineAnnotationOptions(
         geometry: geometry,
-        lineWidth: 11.0,
-        lineOpacity: 0.98,
-        lineColor: 0xFF2D8CFF,
+        lineWidth: 13.5,
+        lineOpacity: 1.0,
+        lineColor: 0xFF3B9EFF,
       ),
     );
   }
@@ -13371,8 +13505,22 @@ class _DriverHomePageState extends State<DriverHomePage>
   }
 
   Widget _buildNavLoadingBanner({required bool compact}) {
+    final text = _isRerouting
+        ? _tr(
+            nl: 'Nieuwe route berekenen…',
+            en: 'Calculating new route…',
+            fr: 'Calcul de la nouvelle route…',
+            es: 'Calculando nueva ruta…',
+          )
+        : _tr(
+            nl: 'Route-instructies worden geladen…',
+            en: 'Loading route instructions…',
+            fr: 'Chargement des instructions…',
+            es: 'Cargando instrucciones…',
+          );
     return DriverNavLoadingBanner(
       compact: compact,
+      text: text,
       themeListenable: _activeDriverThemeListenable,
     );
   }
@@ -13594,7 +13742,7 @@ class _DriverHomePageState extends State<DriverHomePage>
             ),
           if (_cameraMode == _CameraMode.follow &&
               _nextNavInstruction == null &&
-              _navStepsLoading)
+              (_navStepsLoading || _isRerouting))
             Positioned(
               top: navBannerTop,
               left: isLandscape ? 62 : 0,
