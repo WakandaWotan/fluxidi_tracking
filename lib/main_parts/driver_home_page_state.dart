@@ -8014,7 +8014,9 @@ class _DriverHomePageState extends State<DriverHomePage>
       _nextNavType = null;
       _nextNavModifier = null;
     }
-    debugPrint('[NAV_STEPS] count=${navSteps.length}');
+    debugPrint(
+      '[NAV_E1] steps=${navSteps.length} bannerSteps=${parsed.stepsWithBannerCount} laneSteps=${parsed.stepsWithLaneGuidanceCount}',
+    );
     return (out, parsed.distanceMeters, parsed.durationSeconds);
   }
 

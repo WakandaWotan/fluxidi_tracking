@@ -16,13 +16,140 @@ class DriverRouteParseResult {
   final double distanceMeters;
   final int durationSeconds;
   final List<DriverNavStep> navSteps;
+  final int stepsWithBannerCount;
+  final int stepsWithLaneGuidanceCount;
 
   const DriverRouteParseResult({
     required this.coords,
     required this.distanceMeters,
     required this.durationSeconds,
     required this.navSteps,
+    this.stepsWithBannerCount = 0,
+    this.stepsWithLaneGuidanceCount = 0,
   });
+}
+
+String? _trimmedString(dynamic raw) {
+  if (raw == null) return null;
+  final text = raw.toString().trim();
+  return text.isEmpty ? null : text;
+}
+
+String? _bannerComponentText(dynamic raw) {
+  if (raw is Map<String, dynamic>) {
+    final direct = _trimmedString(raw['text']);
+    if (direct != null) return direct;
+    final components = raw['components'];
+    if (components is List<dynamic>) {
+      final parts = <String>[];
+      for (final component in components) {
+        if (component is! Map<String, dynamic>) continue;
+        final text = _trimmedString(component['text']);
+        if (text != null) parts.add(text);
+      }
+      if (parts.isNotEmpty) return parts.join(' ').trim();
+    }
+    return null;
+  }
+  return _trimmedString(raw);
+}
+
+DriverNavBannerInstruction? _parseStepBannerInstruction(
+  Map<String, dynamic> step,
+) {
+  final bannersAny = step['bannerInstructions'] ?? step['banner_instructions'];
+  if (bannersAny is! List<dynamic> || bannersAny.isEmpty) return null;
+
+  String? primaryText;
+  String? secondaryText;
+  String? subText;
+
+  for (final bannerAny in bannersAny) {
+    if (bannerAny is! Map<String, dynamic>) continue;
+    primaryText ??= _bannerComponentText(bannerAny['primary']);
+    secondaryText ??= _bannerComponentText(bannerAny['secondary']);
+    subText ??= _bannerComponentText(bannerAny['sub']);
+    if (primaryText != null || secondaryText != null || subText != null) {
+      break;
+    }
+  }
+
+  final banner = DriverNavBannerInstruction(
+    primaryText: primaryText,
+    secondaryText: secondaryText,
+    subText: subText,
+  );
+  return banner.hasContent ? banner : null;
+}
+
+String? _parseExitNumber(Map<String, dynamic> maneuver) {
+  final exit = maneuver['exit'];
+  if (exit == null) return null;
+  return _trimmedString(exit);
+}
+
+String? _parseDestinationText(dynamic raw) {
+  if (raw is! List<dynamic> || raw.isEmpty) return null;
+  final parts = <String>[];
+  for (final item in raw) {
+    if (item is String) {
+      final text = item.trim();
+      if (text.isNotEmpty) parts.add(text);
+      continue;
+    }
+    if (item is Map<String, dynamic>) {
+      final text = _trimmedString(item['name'] ?? item['text']);
+      if (text != null) parts.add(text);
+    }
+  }
+  if (parts.isEmpty) return null;
+  return parts.join(' / ');
+}
+
+List<String> _parseLaneIndications(dynamic raw) {
+  if (raw is! List<dynamic>) return const <String>[];
+  final out = <String>[];
+  for (final item in raw) {
+    final text = _trimmedString(item);
+    if (text != null) out.add(text);
+  }
+  return out;
+}
+
+List<DriverNavLaneGuidance> _parseStepLaneGuidance(Map<String, dynamic> step) {
+  final intersectionsAny = step['intersections'];
+  if (intersectionsAny is! List<dynamic>) return const <DriverNavLaneGuidance>[];
+
+  final out = <DriverNavLaneGuidance>[];
+  for (final intersectionAny in intersectionsAny) {
+    if (intersectionAny is! Map<String, dynamic>) continue;
+    final lanesAny = intersectionAny['lanes'];
+    if (lanesAny is! List<dynamic>) continue;
+    for (final laneAny in lanesAny) {
+      if (laneAny is! Map<String, dynamic>) continue;
+      final indications = _parseLaneIndications(laneAny['indications']);
+      final valid = laneAny['valid'];
+      final active = laneAny['active'];
+      final validIndication = _trimmedString(
+        laneAny['valid_indication'] ?? laneAny['validIndication'],
+      );
+      if (indications.isEmpty &&
+          valid == null &&
+          active == null &&
+          validIndication == null) {
+        continue;
+      }
+      out.add(
+        DriverNavLaneGuidance(
+          indications: indications,
+          valid: valid is bool ? valid : null,
+          active: active is bool ? active : null,
+          validIndication: validIndication,
+        ),
+      );
+    }
+  }
+  return out;
 }
 
 DriverRouteParseResult parseDriverDirectionsResponse({
@@ -45,6 +172,8 @@ DriverRouteParseResult parseDriverDirectionsResponse({
     );
   }
   final navSteps = <DriverNavStep>[];
+  var stepsWithBannerCount = 0;
+  var stepsWithLaneGuidanceCount = 0;
   final legs = (r0['legs'] as List<dynamic>? ?? const <dynamic>[]);
   for (final legAny in legs) {
     final leg = (legAny is Map<String, dynamic>) ? legAny : <String, dynamic>{};
@@ -68,6 +197,14 @@ DriverRouteParseResult parseDriverDirectionsResponse({
       final modifier = (maneuver['modifier'] ?? '').toString().trim();
       final stepDistance = (step['distance'] as num?)?.toDouble();
       final stepDuration = (step['duration'] as num?)?.toInt();
+      final banner = _parseStepBannerInstruction(step);
+      final exitNumber = _parseExitNumber(maneuver);
+      final destinationText = _parseDestinationText(step['destinations']);
+      final roadRef = _trimmedString(step['ref']);
+      final drivingSide = _trimmedString(step['driving_side'] ?? step['drivingSide']);
+      final lanes = _parseStepLaneGuidance(step);
+      if (banner != null) stepsWithBannerCount += 1;
+      if (lanes.isNotEmpty) stepsWithLaneGuidanceCount += 1;
       if (instruction.isEmpty && street.isEmpty) continue;
       navSteps.add(
         DriverNavStep(
@@ -83,6 +220,12 @@ DriverRouteParseResult parseDriverDirectionsResponse({
           ),
           distanceM: stepDistance,
           durationSec: stepDuration,
+          banner: banner,
+          exitNumber: exitNumber,
+          destinationText: destinationText,
+          roadRef: roadRef,
+          drivingSide: drivingSide,
+          lanes: lanes,
         ),
       );
     }
@@ -93,6 +236,8 @@ DriverRouteParseResult parseDriverDirectionsResponse({
     distanceMeters: distance,
     durationSeconds: duration,
     navSteps: navSteps,
+    stepsWithBannerCount: stepsWithBannerCount,
+    stepsWithLaneGuidanceCount: stepsWithLaneGuidanceCount,
   );
 }
 

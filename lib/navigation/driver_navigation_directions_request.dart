@@ -17,6 +17,7 @@ Uri buildDriverDirectionsUri({
   return Uri.parse(
     'https://api.mapbox.com/directions/v5/mapbox/driving/$coords'
     '?alternatives=false&geometries=geojson&overview=full&steps=true'
+    '&banner_instructions=true&roundabout_exits=true'
     '&language=$languageCode'
     '&access_token=$accessToken',
   );

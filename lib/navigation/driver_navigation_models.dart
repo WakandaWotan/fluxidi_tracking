@@ -5,6 +5,39 @@ class DriverLonLat {
   const DriverLonLat(this.lon, this.lat);
 }
 
+class DriverNavBannerInstruction {
+  final String? primaryText;
+  final String? secondaryText;
+  final String? subText;
+
+  const DriverNavBannerInstruction({
+    this.primaryText,
+    this.secondaryText,
+    this.subText,
+  });
+
+  bool get hasContent =>
+      (primaryText ?? '').isNotEmpty ||
+      (secondaryText ?? '').isNotEmpty ||
+      (subText ?? '').isNotEmpty;
+}
+
+class DriverNavLaneGuidance {
+  final List<String> indications;
+  final bool? valid;
+  final bool? active;
+  final String? validIndication;
+
+  const DriverNavLaneGuidance({
+    this.indications = const <String>[],
+    this.valid,
+    this.active,
+    this.validIndication,
+  });
+
+  bool get hasContent => indications.isNotEmpty;
+}
+
 class DriverNavStep {
   final double lat;
   final double lon;
@@ -15,6 +48,12 @@ class DriverNavStep {
   final double distanceAlongRouteM;
   final double? distanceM;
   final int? durationSec;
+  final DriverNavBannerInstruction? banner;
+  final String? exitNumber;
+  final String? destinationText;
+  final String? roadRef;
+  final String? drivingSide;
+  final List<DriverNavLaneGuidance> lanes;
 
   const DriverNavStep({
     required this.lat,
@@ -26,6 +65,12 @@ class DriverNavStep {
     required this.distanceAlongRouteM,
     this.distanceM,
     this.durationSec,
+    this.banner,
+    this.exitNumber,
+    this.destinationText,
+    this.roadRef,
+    this.drivingSide,
+    this.lanes = const <DriverNavLaneGuidance>[],
   });
 }
 
