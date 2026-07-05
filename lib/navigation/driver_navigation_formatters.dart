@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import 'driver_navigation_models.dart';
+
 typedef DriverNavTranslate =
     String Function({
       required String nl,
@@ -8,9 +10,56 @@ typedef DriverNavTranslate =
       required String es,
     });
 
-String driverNavDistanceText(double meters) {
+String formatManeuverDistance(double meters) {
   if (meters < 1000) return '${meters.round()} m';
   return '${(meters / 1000.0).toStringAsFixed(1).replaceAll('.', ',')} km';
+}
+
+String driverNavDistanceText(double meters) => formatManeuverDistance(meters);
+
+final RegExp _driverHighwayRefPattern = RegExp(
+  r'\b([EANR]\d+)\b',
+  caseSensitive: false,
+);
+
+bool _looksLikeDriverHighwayRef(String? raw) {
+  final text = (raw ?? '').trim();
+  if (text.isEmpty) return false;
+  return _driverHighwayRefPattern.hasMatch(text.toUpperCase());
+}
+
+bool _bannerSecondarySuggestsHighway(String? raw) {
+  final lower = (raw ?? '').trim().toLowerCase();
+  if (lower.isEmpty) return false;
+  const markers = <String>[
+    'afrit',
+    'exit',
+    'sortie',
+    'toward',
+    'richting',
+    'direction',
+    'vers ',
+    'hacia ',
+  ];
+  for (final marker in markers) {
+    if (lower.contains(marker)) return true;
+  }
+  return false;
+}
+
+bool isDriverHighwayLikeStep(DriverNavStep step) {
+  final type = step.type.toLowerCase();
+  if (type.contains('off ramp') ||
+      type.contains('on ramp') ||
+      type.contains('ramp')) {
+    return true;
+  }
+  if ((step.exitNumber ?? '').trim().isNotEmpty) return true;
+  if ((step.destinationText ?? '').trim().isNotEmpty) return true;
+  if (_looksLikeDriverHighwayRef(step.roadRef)) return true;
+  if (_looksLikeDriverHighwayRef(step.street)) return true;
+  if (_bannerSecondarySuggestsHighway(step.banner?.secondaryText)) return true;
+  return false;
 }
 
 bool driverNavTypeIsArrival(String? type) {

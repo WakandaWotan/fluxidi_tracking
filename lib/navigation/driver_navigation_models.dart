@@ -89,3 +89,72 @@ class DriverRouteSnap {
     required this.segmentT,
   });
 }
+
+enum NavInstructionSource {
+  banner,
+  step,
+  fallback,
+  loading,
+  none,
+}
+
+class NavInstructionSnapshot {
+  final double distanceToManeuverMeters;
+  final String primaryText;
+  final String secondaryText;
+  final String? subText;
+  final String maneuverType;
+  final String maneuverModifier;
+  final String roadName;
+  final String? exitNumber;
+  final String? destinationText;
+  final String? roadRef;
+  final bool isHighwayLike;
+  final List<DriverNavLaneGuidance> lanes;
+  final NavInstructionSource source;
+
+  const NavInstructionSnapshot({
+    required this.distanceToManeuverMeters,
+    required this.primaryText,
+    required this.secondaryText,
+    required this.maneuverType,
+    required this.maneuverModifier,
+    required this.roadName,
+    required this.isHighwayLike,
+    required this.lanes,
+    required this.source,
+    this.subText,
+    this.exitNumber,
+    this.destinationText,
+    this.roadRef,
+  });
+
+  static const NavInstructionSnapshot none = NavInstructionSnapshot(
+    distanceToManeuverMeters: 0,
+    primaryText: '',
+    secondaryText: '',
+    maneuverType: '',
+    maneuverModifier: '',
+    roadName: '',
+    isHighwayLike: false,
+    lanes: <DriverNavLaneGuidance>[],
+    source: NavInstructionSource.none,
+  );
+
+  static const NavInstructionSnapshot loading = NavInstructionSnapshot(
+    distanceToManeuverMeters: 0,
+    primaryText: '',
+    secondaryText: '',
+    maneuverType: '',
+    maneuverModifier: '',
+    roadName: '',
+    isHighwayLike: false,
+    lanes: <DriverNavLaneGuidance>[],
+    source: NavInstructionSource.loading,
+  );
+
+  bool get hasInstruction =>
+      source != NavInstructionSource.none &&
+      source != NavInstructionSource.loading &&
+      primaryText.trim().isNotEmpty;
+}

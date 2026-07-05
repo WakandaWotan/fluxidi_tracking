@@ -2,6 +2,7 @@ import 'dart:math' as math;
 
 import 'package:geolocator/geolocator.dart' as geo;
 
+import 'driver_navigation_formatters.dart';
 import 'driver_navigation_geometry.dart';
 import 'driver_navigation_models.dart';
 
@@ -102,5 +103,109 @@ DriverNavInstructionUpdate computeDriverNextNavInstruction({
     hasInstruction: true,
     progressSource: progressSource,
     logDistanceMeters: distanceM,
+  );
+}
+
+String _snapshotSecondaryFromStep(DriverNavStep step) {
+  final street = step.street.trim();
+  if (street.isNotEmpty) return street;
+  final ref = (step.roadRef ?? '').trim();
+  if (ref.isNotEmpty) return ref;
+  final destination = (step.destinationText ?? '').trim();
+  if (destination.isNotEmpty) return destination;
+  return '';
+}
+
+String? _trimmedOrNull(String? raw) {
+  final text = (raw ?? '').trim();
+  return text.isEmpty ? null : text;
+}
+
+NavInstructionSnapshot buildDriverNavInstructionSnapshot({
+  required List<DriverNavStep> routeSteps,
+  required int nextStepIndex,
+  required double posLat,
+  required double posLon,
+  required DriverRouteSnap? lastRouteSnap,
+  required List<DriverLonLat> routeCoords,
+  required bool useMatchedVisual,
+  required DriverNavTranslate tr,
+  bool navStepsLoading = false,
+}) {
+  if (routeSteps.isEmpty) {
+    return navStepsLoading
+        ? NavInstructionSnapshot.loading
+        : NavInstructionSnapshot.none;
+  }
+
+  final update = computeDriverNextNavInstruction(
+    routeSteps: routeSteps,
+    nextStepIndex: nextStepIndex,
+    posLat: posLat,
+    posLon: posLon,
+    lastRouteSnap: lastRouteSnap,
+    routeCoords: routeCoords,
+    useMatchedVisual: useMatchedVisual,
+  );
+
+  if (update.shouldClear) {
+    return navStepsLoading
+        ? NavInstructionSnapshot.loading
+        : NavInstructionSnapshot.none;
+  }
+
+  final step = routeSteps[update.nextStepIndex];
+  final distanceM = update.distanceMeters ?? 0.0;
+  final banner = step.banner;
+  final bannerPrimary = (banner?.primaryText ?? '').trim();
+
+  late final NavInstructionSource source;
+  late final String primaryText;
+  var secondaryText = '';
+  String? subText;
+
+  if (bannerPrimary.isNotEmpty) {
+    source = NavInstructionSource.banner;
+    primaryText = bannerPrimary;
+    secondaryText = (banner?.secondaryText ?? '').trim();
+    subText = _trimmedOrNull(banner?.subText);
+  } else {
+    final instruction = step.instruction.trim();
+    final shortAction = driverShortNavAction(
+      instruction,
+      step.type,
+      step.modifier,
+      tr: tr,
+    );
+    if (instruction.isNotEmpty) {
+      source = NavInstructionSource.step;
+      primaryText = instruction;
+    } else if (shortAction.trim().isNotEmpty) {
+      source = NavInstructionSource.fallback;
+      primaryText = shortAction.trim();
+    } else {
+      source = NavInstructionSource.fallback;
+      primaryText = '';
+    }
+  }
+
+  if (secondaryText.isEmpty) {
+    secondaryText = _snapshotSecondaryFromStep(step);
+  }
+
+  return NavInstructionSnapshot(
+    distanceToManeuverMeters: distanceM,
+    primaryText: primaryText,
+    secondaryText: secondaryText,
+    subText: subText,
+    maneuverType: step.type,
+    maneuverModifier: step.modifier,
+    roadName: step.street,
+    exitNumber: _trimmedOrNull(step.exitNumber),
+    destinationText: _trimmedOrNull(step.destinationText),
+    roadRef: _trimmedOrNull(step.roadRef),
+    isHighwayLike: isDriverHighwayLikeStep(step),
+    lanes: step.lanes,
+    source: source,
   );
 }

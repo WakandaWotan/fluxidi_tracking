@@ -231,6 +231,7 @@ class _DriverHomePageState extends State<DriverHomePage>
   double? _nextNavDistanceM;
   String? _nextNavType;
   String? _nextNavModifier;
+  NavInstructionSnapshot? _navInstructionSnapshot;
   bool _navStepsLoading = false;
   double _uiArrowBearing = 0.0;
   _RouteSnap? _lastRouteSnap;
@@ -272,6 +273,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     _nextNavDistanceM = null;
     _nextNavType = null;
     _nextNavModifier = null;
+    _navInstructionSnapshot = null;
     _lastRouteSnap = null;
     _lastMovementBearing = null;
     _useMatchedVisual = false;
@@ -7061,13 +7063,26 @@ class _DriverHomePageState extends State<DriverHomePage>
       useMatchedVisual: _useMatchedVisual,
     );
     _nextStepIndex = nextInstruction.nextStepIndex;
+    final snapshot = buildDriverNavInstructionSnapshot(
+      routeSteps: _routeSteps,
+      nextStepIndex: _nextStepIndex,
+      posLat: pos.latitude,
+      posLon: pos.longitude,
+      lastRouteSnap: _lastRouteSnap,
+      routeCoords: _routeCoords,
+      useMatchedVisual: _useMatchedVisual,
+      tr: _tr,
+      navStepsLoading: _navStepsLoading,
+    );
+    _navInstructionSnapshot = snapshot;
 
     if (nextInstruction.shouldClear) {
       if (_nextNavInstruction != null ||
           _nextNavStreet != null ||
           _nextNavDistanceM != null ||
           _nextNavType != null ||
-          _nextNavModifier != null) {
+          _nextNavModifier != null ||
+          _navInstructionSnapshot != NavInstructionSnapshot.none) {
         if (mounted) {
           setState(() {
             _nextNavInstruction = null;
@@ -7075,6 +7090,7 @@ class _DriverHomePageState extends State<DriverHomePage>
             _nextNavDistanceM = null;
             _nextNavType = null;
             _nextNavModifier = null;
+            _navInstructionSnapshot = snapshot;
           });
         } else {
           _nextNavInstruction = null;
@@ -7092,6 +7108,12 @@ class _DriverHomePageState extends State<DriverHomePage>
       'NAV_STEP',
       'progressSource=${nextInstruction.progressSource} nextDistanceM=${distanceM.toStringAsFixed(1)}',
     );
+    if (snapshot.hasInstruction) {
+      _logNavBounded(
+        'NAV_E2',
+        'source=${snapshot.source.name} highway=${snapshot.isHighwayLike} lanes=${snapshot.lanes.length}',
+      );
+    }
 
     if (!mounted) {
       _nextNavInstruction = nextInstruction.instruction;
@@ -8007,12 +8029,14 @@ class _DriverHomePageState extends State<DriverHomePage>
       _nextNavDistanceM = null;
       _nextNavType = navSteps.first.type;
       _nextNavModifier = navSteps.first.modifier;
+      _navInstructionSnapshot = null;
     } else {
       _nextNavInstruction = null;
       _nextNavStreet = null;
       _nextNavDistanceM = null;
       _nextNavType = null;
       _nextNavModifier = null;
+      _navInstructionSnapshot = NavInstructionSnapshot.none;
     }
     debugPrint(
       '[NAV_E1] steps=${navSteps.length} bannerSteps=${parsed.stepsWithBannerCount} laneSteps=${parsed.stepsWithLaneGuidanceCount}',
