@@ -51,6 +51,7 @@ flutter:
   uses-material-design: true
 
   assets:
+    - assets/navigation/
     - assets/fluxidi/
     - assets/fluxidi/onboarding/
     - assets/fluxidi/brochures/

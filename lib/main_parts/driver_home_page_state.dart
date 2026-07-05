@@ -183,6 +183,10 @@ class _DriverHomePageState extends State<DriverHomePage>
   mb.PolylineAnnotation? _routeLineOutline;
   mb.PolylineAnnotation? _routeLine;
   String _driverMarkerIcon = 'triangle-15';
+  Uint8List? _driverTaxiMarkerBytes;
+  bool _driverTaxiMarkerLoadAttempted = false;
+  bool _driverTaxiMarkerAvailable = false;
+  bool _driverMarkerUsesTaxiAsset = false;
   late final Widget _stableMapWidget;
   String? _pendingMapStyleUri;
   DateTime? _lastMapWidgetBuildLogAt;
@@ -205,6 +209,10 @@ class _DriverHomePageState extends State<DriverHomePage>
   bool _allowOverviewCamera = false;
   DateTime? _lastFollowCameraAt;
   bool _followCameraInFlight = false;
+  bool _gpsQualityWeak = false;
+  double? _lastSmoothedCameraBearing;
+  static const double _followCameraStaleGpsMaxAgeSec = 12.0;
+  static const double _followCameraPoorAccuracyM = 65.0;
 
   // Route stats
   List<_LonLat> _routeCoords = [];
@@ -5960,6 +5968,8 @@ class _DriverHomePageState extends State<DriverHomePage>
     _startPos = null;
     _lastFollowCameraAt = null;
     _followCameraInFlight = false;
+    _gpsQualityWeak = false;
+    _lastSmoothedCameraBearing = null;
     if (!_liveRideActive) {
       _startBookingPolling(reason: 'tracking_stopped');
     }
@@ -6294,8 +6304,31 @@ class _DriverHomePageState extends State<DriverHomePage>
     }
   }
 
+  Future<void> _disposeDriverPointAnnotationManager() async {
+    final map = _map;
+    final mgr = _driverPointManager;
+    if (mgr != null) {
+      try {
+        if (map != null) {
+          await map.annotations.removeAnnotationManager(mgr);
+        } else {
+          await mgr.deleteAll();
+        }
+      } catch (_) {
+        try {
+          await mgr.deleteAll();
+        } catch (_) {}
+      }
+    }
+    _driverPointManager = null;
+    _driverMarker = null;
+    _driverMarkerUsesTaxiAsset = false;
+    debugPrint('[NAV_MARKER] lifecycle=driver_manager_disposed');
+  }
+
   Future<void> _recreateAnnotationManagers() async {
     if (_map == null) return;
+    await _disposeDriverPointAnnotationManager();
     _routeLineManager = await _map!.annotations
         .createPolylineAnnotationManager();
     _pinsPointManager = await _map!.annotations.createPointAnnotationManager();
@@ -6340,7 +6373,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       _activeMapStyleUri = target;
       _mapRedrawCountThisMinute += 1;
       await _recreateAnnotationManagers();
-      _driverMarker = null;
+      _driverMarkerUsesTaxiAsset = false;
       _pickupPin = null;
       _dropoffPin = null;
       _routeLine = null;
@@ -6390,6 +6423,72 @@ class _DriverHomePageState extends State<DriverHomePage>
   double _speedKmhFor(geo.Position pos) {
     if (!pos.speed.isFinite || pos.speed < 0) return 0.0;
     return pos.speed * 3.6;
+  }
+
+  double? _gpsFixAgeSec(geo.Position pos) {
+    final ts = pos.timestamp;
+    return DateTime.now().difference(ts).inMilliseconds / 1000.0;
+  }
+
+  bool _isGpsQualityAcceptableForCamera(geo.Position pos) {
+    final ageSec = _gpsFixAgeSec(pos);
+    if (ageSec != null && ageSec > _followCameraStaleGpsMaxAgeSec) {
+      return false;
+    }
+    final accuracy = pos.accuracy;
+    if (accuracy.isFinite && accuracy > _followCameraPoorAccuracyM) {
+      return false;
+    }
+    return true;
+  }
+
+  int _followCameraThrottleMsFor(geo.Position pos) {
+    final speedKmh = _speedKmhFor(pos);
+    if (speedKmh >= 25) return 160;
+    if (speedKmh >= 8) return 200;
+    return 260;
+  }
+
+  int _followCameraAnimMsFor(geo.Position pos) {
+    final speedKmh = _speedKmhFor(pos);
+    if (speedKmh >= 30) return 140;
+    if (speedKmh >= 10) return 180;
+    return 220;
+  }
+
+  ({double zoom, double pitch}) _followCameraZoomPitchFor(geo.Position pos) {
+    final speedKmh = _speedKmhFor(pos);
+    if (speedKmh < 4) return (zoom: 18.0, pitch: 55.0);
+    if (speedKmh < 15) return (zoom: 18.5, pitch: 62.0);
+    return (zoom: 18.9, pitch: 68.0);
+  }
+
+  double _normalizeBearingDeg(double bearing) {
+    var b = bearing % 360.0;
+    if (b < 0) b += 360.0;
+    return b;
+  }
+
+  double _smoothFollowCameraBearing(double target, double speedKmh) {
+    final normalizedTarget = _normalizeBearingDeg(target);
+    final prev = _lastSmoothedCameraBearing;
+    if (prev == null || !prev.isFinite) {
+      _lastSmoothedCameraBearing = normalizedTarget;
+      return normalizedTarget;
+    }
+    var delta = normalizedTarget - prev;
+    while (delta > 180) delta -= 360;
+    while (delta < -180) delta += 360;
+    final maxStep = speedKmh < 4
+        ? 3.5
+        : (speedKmh < 20 ? 14.0 : 28.0);
+    if (delta.abs() <= maxStep) {
+      _lastSmoothedCameraBearing = normalizedTarget;
+      return normalizedTarget;
+    }
+    final next = _normalizeBearingDeg(prev + delta.sign * maxStep);
+    _lastSmoothedCameraBearing = next;
+    return next;
   }
 
   void _logNavBounded(String tag, String message, {int intervalMs = 900}) {
@@ -6645,6 +6744,55 @@ class _DriverHomePageState extends State<DriverHomePage>
     return _LonLat(pos.longitude, pos.latitude);
   }
 
+  ({_LonLat point, String source, double? snapDistM}) _driverMarkerDisplayFor(
+    geo.Position pos,
+  ) {
+    final raw = _LonLat(pos.longitude, pos.latitude);
+    final snap = _lastRouteSnap ?? _snapToRoute(raw);
+    final activeNav =
+        _cameraMode == _CameraMode.follow &&
+        _liveRideActive &&
+        _routeCoords.length >= 2;
+
+    if (!activeNav) {
+      if (_useMatchedVisual && snap != null) {
+        return (
+          point: snap.point,
+          source: 'route_snap',
+          snapDistM: snap.distanceFromRouteM,
+        );
+      }
+      return (point: raw, source: 'fallback', snapDistM: snap?.distanceFromRouteM);
+    }
+
+    if (snap == null) {
+      return (point: raw, source: 'raw', snapDistM: null);
+    }
+
+    if (_offRouteLikely) {
+      return (
+        point: raw,
+        source: 'raw',
+        snapDistM: snap.distanceFromRouteM,
+      );
+    }
+
+    final markerSnapThresholdM = math.max(45.0, _snapThresholdFor(pos));
+    if (snap.distanceFromRouteM <= markerSnapThresholdM) {
+      return (
+        point: snap.point,
+        source: 'route_snap',
+        snapDistM: snap.distanceFromRouteM,
+      );
+    }
+
+    return (
+      point: raw,
+      source: 'raw',
+      snapDistM: snap.distanceFromRouteM,
+    );
+  }
+
   double? _effectiveRouteProgressM(geo.Position pos) {
     final snap =
         _lastRouteSnap ?? _snapToRoute(_LonLat(pos.longitude, pos.latitude));
@@ -6714,6 +6862,86 @@ class _DriverHomePageState extends State<DriverHomePage>
     return driverRouteBearingAtSnap(_routeCoords, snap);
   }
 
+  Future<bool> _ensureDriverTaxiMarkerBytes() async {
+    if (_driverTaxiMarkerLoadAttempted) return _driverTaxiMarkerAvailable;
+    _driverTaxiMarkerLoadAttempted = true;
+    try {
+      final data = await rootBundle.load(kDriverTaxiMarkerAssetPath);
+      _driverTaxiMarkerBytes = data.buffer.asUint8List(
+        data.offsetInBytes,
+        data.lengthInBytes,
+      );
+      _driverTaxiMarkerAvailable = _driverTaxiMarkerBytes!.isNotEmpty;
+      if (_driverTaxiMarkerAvailable) {
+        debugPrint('[NAV_MARKER] taxi_asset=loaded');
+      }
+    } catch (_) {
+      _driverTaxiMarkerAvailable = false;
+      _driverTaxiMarkerBytes = null;
+      debugPrint('[NAV_MARKER] taxi_asset=missing');
+    }
+    return _driverTaxiMarkerAvailable;
+  }
+
+  double _markerBearingFor(geo.Position pos, _RouteSnap? snap) {
+    final speedKmh = _speedKmhFor(pos);
+    final rawBearing = _adaptiveBearingFor(pos, snap: snap).bearing;
+    return _smoothFollowCameraBearing(rawBearing, speedKmh);
+  }
+
+  Future<mb.PointAnnotation?> _createDriverMarkerAnnotation({
+    required mb.PointAnnotationManager mgr,
+    required mb.Point geometry,
+    required double markerBearing,
+  }) async {
+    final taxiReady = await _ensureDriverTaxiMarkerBytes();
+    final taxiBytes = _driverTaxiMarkerBytes;
+    if (taxiReady && taxiBytes != null) {
+      try {
+        final marker = await mgr.create(
+          mb.PointAnnotationOptions(
+            geometry: geometry,
+            image: taxiBytes,
+            iconAnchor: mb.IconAnchor.CENTER,
+            iconSize: kDriverTaxiMarkerIconSize,
+            iconRotate: markerBearing,
+          ),
+        );
+        _driverMarkerUsesTaxiAsset = true;
+        _driverMarkerIcon = 'fluxidi-driver-taxi';
+        debugPrint('[NAV_MARKER] mode=taxi');
+        return marker;
+      } catch (_) {
+        debugPrint('[NAV_MARKER] mode=taxi_fallback_triangle');
+      }
+    }
+
+    _driverMarkerUsesTaxiAsset = false;
+    try {
+      _driverMarkerIcon = 'triangle-15';
+      return await mgr.create(
+        mb.PointAnnotationOptions(
+          geometry: geometry,
+          iconImage: _driverMarkerIcon,
+          iconColor: 0xFFFFD21F,
+          iconSize: 1.5,
+          iconRotate: markerBearing,
+        ),
+      );
+    } catch (_) {
+      _driverMarkerIcon = 'marker-15';
+      return await mgr.create(
+        mb.PointAnnotationOptions(
+          geometry: geometry,
+          iconImage: _driverMarkerIcon,
+          iconColor: 0xFFFFD21F,
+          iconSize: 1.7,
+          iconRotate: markerBearing,
+        ),
+      );
+    }
+  }
+
   Future<void> _updateDriverMarker(
     geo.Position pos, {
     bool moveCamera = false,
@@ -6723,35 +6951,33 @@ class _DriverHomePageState extends State<DriverHomePage>
 
     final snap =
         _lastRouteSnap ?? _snapToRoute(_LonLat(pos.longitude, pos.latitude));
-    final displayPoint = _displayRoutePointFor(pos);
+    final markerDisplay = _driverMarkerDisplayFor(pos);
+    final displayPoint = markerDisplay.point;
     final p = _mbPoint(displayPoint.lon, displayPoint.lat);
-    final bearingData = _adaptiveBearingFor(pos, snap: snap);
-    final markerBearing = bearingData.bearing;
+    final markerBearing = _markerBearingFor(pos, snap);
+    _logNavBounded(
+      'NAV_MARKER',
+      'source=${markerDisplay.source} snapDistM=${markerDisplay.snapDistM?.round() ?? -1}',
+    );
+    final taxiReady = await _ensureDriverTaxiMarkerBytes();
+    final wantsTaxi = taxiReady && _driverTaxiMarkerBytes != null;
+
+    if (_driverMarker != null && _driverMarkerUsesTaxiAsset != wantsTaxi) {
+      try {
+        await mgr.delete(_driverMarker!);
+      } catch (_) {}
+      _driverMarker = null;
+    }
 
     if (_driverMarker == null) {
       try {
-        _driverMarkerIcon = 'triangle-15';
-        _driverMarker = await mgr.create(
-          mb.PointAnnotationOptions(
-            geometry: p,
-            iconImage: _driverMarkerIcon,
-            iconColor: 0xFFFFD21F,
-            iconSize: 1.5,
-            iconRotate: markerBearing,
-          ),
-        );
-      } catch (_) {
-        _driverMarkerIcon = 'marker-15';
-        _driverMarker = await mgr.create(
-          mb.PointAnnotationOptions(
-            geometry: p,
-            iconImage: _driverMarkerIcon,
-            iconColor: 0xFFFFD21F,
-            iconSize: 1.7,
-            iconRotate: markerBearing,
-          ),
-        );
-      }
+        await mgr.deleteAll();
+      } catch (_) {}
+      _driverMarker = await _createDriverMarkerAnnotation(
+        mgr: mgr,
+        geometry: p,
+        markerBearing: markerBearing,
+      );
     } else {
       _driverMarker!.geometry = p;
       _driverMarker!.iconRotate = markerBearing;
@@ -6770,9 +6996,24 @@ class _DriverHomePageState extends State<DriverHomePage>
     geo.Position pos, {
     bool force = false,
   }) async {
+    if (!force && !_isGpsQualityAcceptableForCamera(pos)) {
+      _gpsQualityWeak = true;
+      final ageSec = _gpsFixAgeSec(pos);
+      final acc = pos.accuracy.isFinite ? pos.accuracy : -1.0;
+      _logNavBounded(
+        'NAV_GPS',
+        'cameraSkip=1 ageSec=${ageSec?.toStringAsFixed(1) ?? 'na'} accuracyM=${acc.toStringAsFixed(1)}',
+      );
+      return;
+    }
+    _gpsQualityWeak = false;
+
     final now = DateTime.now();
     final last = _lastFollowCameraAt;
-    if (!force && last != null && now.difference(last).inMilliseconds < 320) {
+    final throttleMs = _followCameraThrottleMsFor(pos);
+    if (!force &&
+        last != null &&
+        now.difference(last).inMilliseconds < throttleMs) {
       return;
     }
     if (!force && _followCameraInFlight) return;
@@ -6782,15 +7023,19 @@ class _DriverHomePageState extends State<DriverHomePage>
         _lastRouteSnap ?? _snapToRoute(_LonLat(pos.longitude, pos.latitude));
     final displayPoint = _displayRoutePointFor(pos);
     final p = _mbPoint(displayPoint.lon, displayPoint.lat);
-    final heading = _adaptiveBearingFor(pos, snap: snap).bearing;
+    final speedKmh = _speedKmhFor(pos);
+    final rawHeading = _adaptiveBearingFor(pos, snap: snap).bearing;
+    final heading = _smoothFollowCameraBearing(rawHeading, speedKmh);
+    final zoomPitch = _followCameraZoomPitchFor(pos);
+    final animMs = force ? 220 : _followCameraAnimMsFor(pos);
 
     try {
       await _map?.flyTo(
         mb.CameraOptions(
           center: p,
-          zoom: 18.8,
+          zoom: zoomPitch.zoom,
           bearing: heading,
-          pitch: 68.0,
+          pitch: zoomPitch.pitch,
           padding: mb.MbxEdgeInsets(
             top: MediaQuery.of(context).padding.top + 120,
             left: 24,
@@ -6798,7 +7043,7 @@ class _DriverHomePageState extends State<DriverHomePage>
             right: 24,
           ),
         ),
-        mb.MapAnimationOptions(duration: 280),
+        mb.MapAnimationOptions(duration: animMs),
       );
     } finally {
       _followCameraInFlight = false;
@@ -7083,6 +7328,8 @@ class _DriverHomePageState extends State<DriverHomePage>
       _toast('GPS-locatie nog niet beschikbaar');
       return;
     }
+    _updateRouteSnapState(pos);
+    await _syncVisibleRouteLineWithProgress(pos);
     await _followCameraTesla(pos, force: true);
   }
 
@@ -7111,9 +7358,39 @@ class _DriverHomePageState extends State<DriverHomePage>
     final movementBearing = _lastMovementBearing;
     final routeBearing = _routeBearingAtSnap(snap);
 
+    if (speedKmh < 3.5) {
+      if (_lastKnownBearing.isFinite && _lastKnownBearing > 0) {
+        _logNavBounded(
+          'NAV_BEARING',
+          'speedKmh=${speedKmh.toStringAsFixed(1)} usedBearing=${_lastKnownBearing.toStringAsFixed(1)} source=last_stable_low_speed',
+        );
+        return (
+          bearing: _lastKnownBearing,
+          source: 'last_stable_low_speed',
+          gpsHeading: gpsHeading,
+          movementBearing: movementBearing,
+          routeBearing: routeBearing,
+        );
+      }
+      if (_useMatchedVisual && routeBearing != null && routeBearing.isFinite) {
+        _lastKnownBearing = routeBearing;
+        _logNavBounded(
+          'NAV_BEARING',
+          'speedKmh=${speedKmh.toStringAsFixed(1)} usedBearing=${routeBearing.toStringAsFixed(1)} source=route_segment_low_speed',
+        );
+        return (
+          bearing: routeBearing,
+          source: 'route_segment_low_speed',
+          gpsHeading: gpsHeading,
+          movementBearing: movementBearing,
+          routeBearing: routeBearing,
+        );
+      }
+    }
+
     if (movementBearing != null &&
         movementBearing.isFinite &&
-        (speedKmh >= 7.0 || (gpsHeading == null && speedKmh >= 3.0))) {
+        (speedKmh >= 8.0 || (gpsHeading == null && speedKmh >= 5.0))) {
       _lastKnownBearing = movementBearing;
       _logNavBounded(
         'NAV_BEARING',
@@ -7128,7 +7405,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         routeBearing: routeBearing,
       );
     }
-    if (gpsHeading != null && speedKmh >= 2.0) {
+    if (gpsHeading != null && speedKmh >= 4.0) {
       _lastKnownBearing = gpsHeading;
       _logNavBounded(
         'NAV_BEARING',
@@ -7272,8 +7549,30 @@ class _DriverHomePageState extends State<DriverHomePage>
       await _updateDriverMarker(pos, moveCamera: false);
     }
 
-    // If NAV is enabled and a trip is active, use navigation follow camera.
-    if (_cameraMode == _CameraMode.follow && _liveRideActive) {
+    if (_liveRideActive) {
+      if (mounted) {
+        setState(() {
+          _cameraMode = _CameraMode.follow;
+          _followCar = true;
+          _hasSwitchedToFollow = true;
+          _allowOverviewCamera = false;
+        });
+      } else {
+        _cameraMode = _CameraMode.follow;
+        _followCar = true;
+        _hasSwitchedToFollow = true;
+        _allowOverviewCamera = false;
+      }
+      await _applyMapStyleForMode();
+      _lastSmoothedCameraBearing = null;
+      _updateRouteSnapState(pos);
+      await _syncVisibleRouteLineWithProgress(pos);
+      await _followCameraTesla(pos, force: true);
+      debugPrint('[GPS][RECENTER][FOLLOW_RESTORED]');
+      return;
+    }
+
+    if (_cameraMode == _CameraMode.follow) {
       await _followCameraTesla(pos, force: true);
       return;
     }
