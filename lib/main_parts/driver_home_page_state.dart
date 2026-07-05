@@ -6743,7 +6743,9 @@ class _DriverHomePageState extends State<DriverHomePage>
     }
     if (_lastPos == null) return;
     final pickupText = (b.from ?? '').trim();
-    if (pickupText.isEmpty) return;
+    final hasStoredPickup =
+        _usableNavLonLat(_extractPreviewEndpoints(b).pickup) != null;
+    if (pickupText.isEmpty && !hasStoredPickup) return;
     if (mounted) {
       setState(() {
         _routePhase = _RideRoutePhase.toPickup;
@@ -6756,7 +6758,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     debugPrint('[NAV_PHASE] toPickup');
     try {
       final fromLL = _LonLat(_lastPos!.longitude, _lastPos!.latitude);
-      final toLL = await _geocodeOne(pickupText);
+      final toLL = await _resolvePickupLonLat(b);
       final route = await _directionsRoute(fromLL, toLL);
       final coords = route.$1;
       if (coords.length < 2) return;
@@ -6811,7 +6813,9 @@ class _DriverHomePageState extends State<DriverHomePage>
     }
     if (_lastPos == null) return;
     final dropoffText = (b.to ?? '').trim();
-    if (dropoffText.isEmpty) return;
+    final hasStoredDropoff =
+        _usableNavLonLat(_extractPreviewEndpoints(b).dropoff) != null;
+    if (dropoffText.isEmpty && !hasStoredDropoff) return;
     if (mounted) {
       setState(() {
         _routePhase = _RideRoutePhase.trip;
@@ -6824,7 +6828,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     debugPrint('[NAV_PHASE] trip');
     try {
       final fromLL = _LonLat(_lastPos!.longitude, _lastPos!.latitude);
-      final toLL = await _geocodeOne(dropoffText);
+      final toLL = await _resolveDropoffLonLat(b);
       final route = await _directionsRoute(fromLL, toLL);
       final coords = route.$1;
       if (coords.length < 2) return;
@@ -7311,14 +7315,54 @@ class _DriverHomePageState extends State<DriverHomePage>
       return;
     }
     if (!_mapSupported || _map == null) return;
-    if ((b.from ?? '').isEmpty || (b.to ?? '').isEmpty) return;
+    final endpoints = _extractPreviewEndpoints(b);
+    final storedPickup = _usableNavLonLat(endpoints.pickup);
+    final storedDropoff = _usableNavLonLat(endpoints.dropoff);
+    final pickupText = (b.from ?? '').trim();
+    final dropoffText = (b.to ?? '').trim();
+    if (pickupText.isEmpty &&
+        storedPickup == null &&
+        dropoffText.isEmpty &&
+        storedDropoff == null) {
+      return;
+    }
+    if ((pickupText.isEmpty && storedPickup == null) ||
+        (dropoffText.isEmpty && storedDropoff == null)) {
+      return;
+    }
 
     try {
-      final pickupText = (b.from ?? '').trim();
-      final dropoffText = (b.to ?? '').trim();
       // Preview must always represent booked ride path: pickup -> destination.
       // Never use current GPS here.
       await _clearRouteAndPinAnnotationsOnly();
+
+      if (storedPickup != null && storedDropoff != null) {
+        debugPrint('[NAV_COORD] overview=stored_both');
+        final route = await _directionsRoute(storedPickup, storedDropoff);
+        final coords = route.$1;
+        if (coords.length >= 2 &&
+            _isRouteTaskStillValid(
+              epoch: epoch,
+              expectedBookingId: expectedBookingId,
+            )) {
+          setState(() {
+            _routeCoords = coords;
+            _routeKm = route.$2 / 1000.0;
+            _routeDurationSec = route.$3;
+            _routePhase = _RideRoutePhase.trip;
+          });
+          await _drawPins(storedPickup, storedDropoff);
+          await _drawRouteLine(coords);
+          final allowFit =
+              _allowOverviewCamera &&
+              _cameraMode == _CameraMode.overview &&
+              _activeTripId == null;
+          if (allowFit) {
+            await _fitBoundsToRoute(coords);
+          }
+          return;
+        }
+      }
 
       // Prefer server-side routing (Worker) so the app never needs to call Mapbox Directions directly.
       await _tryWorkerRouteFallback(
@@ -7340,8 +7384,8 @@ class _DriverHomePageState extends State<DriverHomePage>
         return;
       }
 
-      final fromLL = await _geocodeOne(pickupText);
-      final toLL = await _geocodeOne(dropoffText);
+      final fromLL = await _resolvePickupLonLat(b);
+      final toLL = await _resolveDropoffLonLat(b);
 
       final route = await _directionsRoute(fromLL, toLL);
       final coords = route.$1;
@@ -7606,11 +7650,44 @@ class _DriverHomePageState extends State<DriverHomePage>
       }
     }
     if (lat == null || lon == null) return null;
-    final latD = lat.toDouble();
-    final lonD = lon.toDouble();
-    if (!latD.isFinite || !lonD.isFinite) return null;
-    if (latD.abs() > 90 || lonD.abs() > 180) return null;
-    return _LonLat(lonD, latD);
+    return _usableNavLonLat(_LonLat(lon.toDouble(), lat.toDouble()));
+  }
+
+  /// NAV-B: stored booking coordinates are preferred over geocoded address text.
+  _LonLat? _usableNavLonLat(_LonLat? point) {
+    if (point == null) return null;
+    if (!point.lat.isFinite || !point.lon.isFinite) return null;
+    if (point.lat.abs() > 90 || point.lon.abs() > 180) return null;
+    if (point.lat == 0 && point.lon == 0) return null;
+    return point;
+  }
+
+  Future<_LonLat> _resolvePickupLonLat(BookingItem booking) async {
+    final stored = _usableNavLonLat(_extractPreviewEndpoints(booking).pickup);
+    if (stored != null) {
+      debugPrint('[NAV_COORD] pickup=stored');
+      return stored;
+    }
+    final text = (booking.from ?? '').trim();
+    if (text.isEmpty) {
+      throw Exception('Pickup coordinates and address are missing.');
+    }
+    debugPrint('[NAV_COORD] pickup=geocode');
+    return _geocodeOne(text);
+  }
+
+  Future<_LonLat> _resolveDropoffLonLat(BookingItem booking) async {
+    final stored = _usableNavLonLat(_extractPreviewEndpoints(booking).dropoff);
+    if (stored != null) {
+      debugPrint('[NAV_COORD] dropoff=stored');
+      return stored;
+    }
+    final text = (booking.to ?? '').trim();
+    if (text.isEmpty) {
+      throw Exception('Dropoff coordinates and address are missing.');
+    }
+    debugPrint('[NAV_COORD] dropoff=geocode');
+    return _geocodeOne(text);
   }
 
   ({_LonLat? pickup, _LonLat? dropoff}) _extractPreviewEndpoints(
