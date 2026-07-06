@@ -16,7 +16,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:flutter/foundation.dart' show ValueListenable, kIsWeb;
+import 'package:flutter/foundation.dart'
+    show ValueListenable, kDebugMode, kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:fluxidi_tracking/app_config.dart';
@@ -355,11 +356,42 @@ class _CalculatorVisualTheme {
   final bool isDark;
 }
 
+bool _calculatorUsesDriverVisualTheme({
+  required BookingEntryContext entryContext,
+  required bool useDriverVisualTheme,
+}) {
+  return entryContext == BookingEntryContext.driver || useDriverVisualTheme;
+}
+
+void _logCalculatorVisualThemeResolution({
+  required String surface,
+  required BookingEntryContext entryContext,
+  required bool useDriverVisualTheme,
+}) {
+  if (!kDebugMode) return;
+  final visualSource = _calculatorUsesDriverVisualTheme(
+    entryContext: entryContext,
+    useDriverVisualTheme: useDriverVisualTheme,
+  )
+      ? 'driver'
+      : (entryContext == BookingEntryContext.companyAdmin
+            ? 'business'
+            : 'customer');
+  debugPrint(
+    '[DRIVER_THEME] surface=$surface visual_source=$visualSource '
+    'entryContext=${entryContext.name}',
+  );
+}
+
 _CalculatorVisualTheme _calculatorVisualThemeForContext(
   BookingEntryContext entryContext,
-  ValueListenable<DriverThemeVariant> driverThemeListenable,
-) {
-  if (entryContext == BookingEntryContext.driver) {
+  ValueListenable<DriverThemeVariant> driverThemeListenable, {
+  bool useDriverVisualTheme = false,
+}) {
+  if (_calculatorUsesDriverVisualTheme(
+    entryContext: entryContext,
+    useDriverVisualTheme: useDriverVisualTheme,
+  )) {
     return _CalculatorVisualTheme.fromDriver(
       paletteForDriverTheme(driverThemeListenable.value),
     );
@@ -569,6 +601,7 @@ class CalculatorPage extends StatefulWidget {
     this.initialToLng,
     this.initialServiceId,
     this.driverThemeListenable,
+    this.useDriverVisualTheme = false,
     this.previewAssignedDriverId,
     this.previewAssignedVehicleId,
   });
@@ -591,6 +624,10 @@ class CalculatorPage extends StatefulWidget {
   final double? initialToLng;
   final String? initialServiceId;
   final ValueListenable<DriverThemeVariant>? driverThemeListenable;
+
+  /// When true, visual chrome follows [driverThemeListenable] even if
+  /// [entryContext] is [BookingEntryContext.companyAdmin] for booking scope.
+  final bool useDriverVisualTheme;
 
   /// Business/admin chauffeur preview assignment only (not standalone auth).
   final String? previewAssignedDriverId;
@@ -666,9 +703,14 @@ class _CalculatorPageState extends State<CalculatorPage> {
     }
   }
 
+  bool get _usesBusinessThemeForVisuals =>
+      widget.entryContext == BookingEntryContext.companyAdmin &&
+      !widget.useDriverVisualTheme;
+
   _CalculatorVisualTheme get _visualTheme => _calculatorVisualThemeForContext(
     widget.entryContext,
     _driverThemeListenable,
+    useDriverVisualTheme: widget.useDriverVisualTheme,
   );
   bool get _isDarkTheme => _visualTheme.isDark;
   Color get _calcScaffoldColor => _visualTheme.background;
@@ -1256,6 +1298,7 @@ class _CalculatorPageState extends State<CalculatorPage> {
           persistToCustomerBookings: widget.persistToCustomerBookings,
           entryContext: widget.entryContext,
           driverThemeListenable: _driverThemeListenable,
+          useDriverVisualTheme: widget.useDriverVisualTheme,
           onGoToStartPage: widget.onGoToStartPage,
           currencySymbol: _currencySymbol,
           distanceUnitLabel: appConfig.distanceUnitLabel,
@@ -1274,9 +1317,16 @@ class _CalculatorPageState extends State<CalculatorPage> {
   @override
   void initState() {
     super.initState();
+    _logCalculatorVisualThemeResolution(
+      surface: 'calculator',
+      entryContext: widget.entryContext,
+      useDriverVisualTheme: widget.useDriverVisualTheme,
+    );
     customerThemeNotifier.addListener(_onThemeChanged);
     _driverThemeListenable.addListener(_onThemeChanged);
-    businessThemeNotifier.addListener(_onThemeChanged);
+    if (_usesBusinessThemeForVisuals) {
+      businessThemeNotifier.addListener(_onThemeChanged);
+    }
     appLanguageNotifier.addListener(_onLanguageChanged);
     businessSettingsNotifier.addListener(_onBusinessSettingsChanged);
     localBackendTaxProfileNotifier.addListener(_onVatProfileChanged);
@@ -1344,7 +1394,9 @@ class _CalculatorPageState extends State<CalculatorPage> {
   void dispose() {
     customerThemeNotifier.removeListener(_onThemeChanged);
     _driverThemeListenable.removeListener(_onThemeChanged);
-    businessThemeNotifier.removeListener(_onThemeChanged);
+    if (_usesBusinessThemeForVisuals) {
+      businessThemeNotifier.removeListener(_onThemeChanged);
+    }
     appLanguageNotifier.removeListener(_onLanguageChanged);
     businessSettingsNotifier.removeListener(_onBusinessSettingsChanged);
     localBackendTaxProfileNotifier.removeListener(_onVatProfileChanged);
@@ -3192,6 +3244,7 @@ class _BookingConfirmationPage extends StatefulWidget {
     required this.persistToCustomerBookings,
     required this.entryContext,
     required this.driverThemeListenable,
+    this.useDriverVisualTheme = false,
     this.onGoToStartPage,
     required this.currencySymbol,
     required this.distanceUnitLabel,
@@ -3209,6 +3262,7 @@ class _BookingConfirmationPage extends StatefulWidget {
   final bool persistToCustomerBookings;
   final BookingEntryContext entryContext;
   final ValueListenable<DriverThemeVariant> driverThemeListenable;
+  final bool useDriverVisualTheme;
   final VoidCallback? onGoToStartPage;
   final String currencySymbol;
   final String distanceUnitLabel;
@@ -3264,9 +3318,13 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
   bool _paymentConfirmed = false;
   bool _postPaymentNavigated = false;
   String _selectedPaymentMethodId = PaymentMethodIds.inVehicleCard;
+  bool get _usesBusinessThemeForVisuals =>
+      widget.entryContext == BookingEntryContext.companyAdmin &&
+      !widget.useDriverVisualTheme;
   _CalculatorVisualTheme get _visualTheme => _calculatorVisualThemeForContext(
     widget.entryContext,
     widget.driverThemeListenable,
+    useDriverVisualTheme: widget.useDriverVisualTheme,
   );
   bool get _isDarkTheme => _visualTheme.isDark;
   Color get _bg => _visualTheme.background;
@@ -3296,9 +3354,16 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
   @override
   void initState() {
     super.initState();
+    _logCalculatorVisualThemeResolution(
+      surface: 'calculator_confirmation',
+      entryContext: widget.entryContext,
+      useDriverVisualTheme: widget.useDriverVisualTheme,
+    );
     customerThemeNotifier.addListener(_onThemeChanged);
     widget.driverThemeListenable.addListener(_onThemeChanged);
-    businessThemeNotifier.addListener(_onThemeChanged);
+    if (_usesBusinessThemeForVisuals) {
+      businessThemeNotifier.addListener(_onThemeChanged);
+    }
     fluxidiPendingPaymentNotifier.addListener(_onPendingPaymentChanged);
     _logPaymentPickerResolution();
     if (_allowsCustomerSessionLink) {
@@ -3594,7 +3659,9 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
   void dispose() {
     customerThemeNotifier.removeListener(_onThemeChanged);
     widget.driverThemeListenable.removeListener(_onThemeChanged);
-    businessThemeNotifier.removeListener(_onThemeChanged);
+    if (_usesBusinessThemeForVisuals) {
+      businessThemeNotifier.removeListener(_onThemeChanged);
+    }
     fluxidiPendingPaymentNotifier.removeListener(_onPendingPaymentChanged);
     _nameCtrl.dispose();
     _phoneCtrl.dispose();

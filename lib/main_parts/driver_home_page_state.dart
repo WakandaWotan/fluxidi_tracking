@@ -17132,6 +17132,7 @@ class _DriverHomePageState extends State<DriverHomePage>
               ? BookingEntryContext.companyAdmin
               : BookingEntryContext.driver,
           driverThemeListenable: _activeDriverThemeListenable,
+          useDriverVisualTheme: true,
           previewAssignedDriverId: isBusinessPreview
               ? _effectiveActiveDriverIdForRideScope()
               : null,
@@ -17166,6 +17167,7 @@ class _DriverHomePageState extends State<DriverHomePage>
               ? BookingEntryContext.companyAdmin
               : BookingEntryContext.driver,
           driverThemeListenable: _activeDriverThemeListenable,
+          useDriverVisualTheme: true,
           previewAssignedDriverId: isBusinessPreview
               ? _effectiveActiveDriverIdForRideScope()
               : null,
