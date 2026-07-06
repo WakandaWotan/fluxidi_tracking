@@ -37,6 +37,7 @@ class CockpitWidget extends StatefulWidget {
   final bool tripStarted;
   final bool isWaiting;
   final bool navActive;
+  final bool embedded;
 
   final VoidCallback onNav;
   final VoidCallback onStart;
@@ -44,6 +45,10 @@ class CockpitWidget extends StatefulWidget {
   final VoidCallback onWait;
   final VoidCallback onGo;
   final ValueListenable<DriverThemeVariant>? themeListenable;
+
+  /// NAV-UI-R6F: compact icon-only map actions (recenter, satellite, offline,
+  /// diagnostics, more…) integrated into the cockpit bar during route/nav.
+  final List<Widget> secondaryActions;
 
   const CockpitWidget({
     super.key,
@@ -58,7 +63,9 @@ class CockpitWidget extends StatefulWidget {
     required this.onStop,
     required this.onWait,
     required this.onGo,
+    this.embedded = false,
     this.themeListenable,
+    this.secondaryActions = const <Widget>[],
   });
 
   @override
@@ -71,6 +78,8 @@ class _CockpitWidgetState extends State<CockpitWidget>
   _CockpitThemeTokens _activeTheme = _themeForVariant(
     DriverThemeVariant.nightGold,
   );
+
+  static const double _minTapSize = 44.0;
 
   static _CockpitThemeTokens _themeForVariant(DriverThemeVariant variant) {
     if (variant == DriverThemeVariant.midnightBlue) {
@@ -194,12 +203,16 @@ class _CockpitWidgetState extends State<CockpitWidget>
           },
         );
 
+        if (widget.embedded) {
+          return panel;
+        }
+
         return SafeArea(
           bottom: true,
           child: Align(
             alignment: Alignment.bottomCenter,
             child: Padding(
-              padding: const EdgeInsets.fromLTRB(10, 2, 10, 6),
+              padding: const EdgeInsets.fromLTRB(8, 0, 8, 0),
               child: panel,
             ),
           ),
@@ -214,93 +227,90 @@ class _CockpitWidgetState extends State<CockpitWidget>
     required String price,
   }) {
     const gap = 4.0;
-    const verticalPadding = 3.0;
+    final hasSecondary = widget.secondaryActions.isNotEmpty;
     return SizedBox(
-      height: 108,
+      height: hasSecondary ? 88 + _minTapSize + gap : 88,
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(
-          8,
-          verticalPadding,
-          8,
-          verticalPadding,
-        ),
+        padding: const EdgeInsets.fromLTRB(6, 4, 6, 4),
         child: Column(
           children: [
             Expanded(
-              flex: 3,
+              flex: 6,
               child: Row(
                 children: [
-                  _metric(
-                    'ETA',
-                    eta,
-                    verticalPadding: 4,
-                    titleSize: 9,
-                    valueSize: 15,
-                  ),
+                  _metricTile('ETA', eta),
                   const SizedBox(width: gap),
-                  _metric(
-                    'KM',
-                    km,
-                    verticalPadding: 4,
-                    titleSize: 9,
-                    valueSize: 15,
-                  ),
+                  _metricTile('KM', km),
                   const SizedBox(width: gap),
-                  _metric(
-                    '€',
-                    price,
-                    verticalPadding: 4,
-                    titleSize: 9,
-                    valueSize: 15,
-                  ),
+                  _metricTile('€', price),
                 ],
               ),
             ),
             const SizedBox(height: gap),
             Expanded(
-              flex: 2,
+              flex: 5,
               child: Row(
                 children: [
-                  _btn(
+                  _iconBtn(
                     keyId: 'nav',
-                    label: widget.navActive ? 'NAV ON' : 'NAV',
+                    label: widget.navActive ? 'Navigation on' : 'Navigation',
                     icon: widget.navActive
                         ? Icons.navigation
                         : Icons.navigation_outlined,
                     onTap: widget.onNav,
                     hot: widget.navActive,
-                    height: 0,
-                    iconSize: 12,
-                    fontSize: 10,
                   ),
                   const SizedBox(width: gap),
-                  _btn(
+                  _iconBtn(
                     keyId: 'primary',
-                    label: widget.tripStarted ? 'STOP' : 'START',
+                    label: widget.tripStarted ? 'Stop trip' : 'Start trip',
                     icon: widget.tripStarted
                         ? Icons.stop_circle_outlined
                         : Icons.play_circle_outline,
                     onTap: widget.tripStarted ? widget.onStop : widget.onStart,
                     hot: widget.tripStarted,
-                    height: 0,
-                    iconSize: 12,
-                    fontSize: 10,
                   ),
                   const SizedBox(width: gap),
-                  _btn(
+                  _iconBtn(
                     keyId: 'wait',
-                    label: widget.isWaiting ? 'GA' : 'WACHT',
+                    label: widget.isWaiting
+                        ? 'Resume driving'
+                        : 'Pause / wait',
                     icon: widget.isWaiting ? Icons.play_arrow : Icons.pause,
                     onTap: widget.isWaiting ? widget.onGo : widget.onWait,
                     hot: widget.isWaiting,
-                    height: 0,
-                    iconSize: 12,
-                    fontSize: 10,
                   ),
                 ],
               ),
             ),
+            if (hasSecondary) ...[
+              const SizedBox(height: gap),
+              SizedBox(
+                height: _minTapSize,
+                child: _secondaryActionsRow(),
+              ),
+            ],
           ],
+        ),
+      ),
+    );
+  }
+
+  Widget _secondaryActionsRow() {
+    final children = <Widget>[];
+    for (final action in widget.secondaryActions) {
+      if (children.isNotEmpty) children.add(const SizedBox(width: 6));
+      children.add(action);
+    }
+    // Centered when it fits; scrolls if the expanded set (Google/Waze)
+    // exceeds narrow screens.
+    return Center(
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        physics: const BouncingScrollPhysics(),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: children,
         ),
       ),
     );
@@ -311,156 +321,131 @@ class _CockpitWidgetState extends State<CockpitWidget>
     required String km,
     required String price,
   }) {
-    final stripHeight = widget.navActive ? 72.0 : 84.0;
     return SizedBox(
-      height: stripHeight,
+      height: 62,
       child: Padding(
-        padding: EdgeInsets.symmetric(
-          horizontal: 8,
-          vertical: widget.navActive ? 4 : 6,
-        ),
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
         child: Row(
           children: [
-            _stripItem('ETA', eta),
-            const SizedBox(width: 6),
-            _stripItem('KM', km),
-            const SizedBox(width: 6),
-            _stripItem('€', price),
-            const SizedBox(width: 6),
-            _btn(
-              keyId: 'nav',
-              label: widget.navActive ? 'NAV ON' : 'NAV',
-              icon: widget.navActive
-                  ? Icons.navigation
-                  : Icons.navigation_outlined,
-              onTap: widget.onNav,
-              hot: widget.navActive,
-              height: 0,
-              iconSize: 12,
-              fontSize: 10,
+            Expanded(
+              flex: 6,
+              child: Row(
+                children: [
+                  Expanded(child: _metricTile('ETA', eta, compact: true)),
+                  const SizedBox(width: 4),
+                  Expanded(child: _metricTile('KM', km, compact: true)),
+                  const SizedBox(width: 4),
+                  Expanded(child: _metricTile('€', price, compact: true)),
+                ],
+              ),
             ),
-            const SizedBox(width: 6),
-            _btn(
-              keyId: 'primary',
-              label: widget.tripStarted ? 'STOP' : 'START',
-              icon: widget.tripStarted
-                  ? Icons.stop_circle_outlined
-                  : Icons.play_circle_outline,
-              onTap: widget.tripStarted ? widget.onStop : widget.onStart,
-              hot: widget.tripStarted,
-              height: 0,
-              iconSize: 12,
-              fontSize: 10,
+            const SizedBox(width: 4),
+            Expanded(
+              flex: 5,
+              child: Row(
+                children: [
+                  _iconBtn(
+                    keyId: 'nav',
+                    label: widget.navActive ? 'Navigation on' : 'Navigation',
+                    icon: widget.navActive
+                        ? Icons.navigation
+                        : Icons.navigation_outlined,
+                    onTap: widget.onNav,
+                    hot: widget.navActive,
+                  ),
+                  const SizedBox(width: 4),
+                  _iconBtn(
+                    keyId: 'primary',
+                    label: widget.tripStarted ? 'Stop trip' : 'Start trip',
+                    icon: widget.tripStarted
+                        ? Icons.stop_circle_outlined
+                        : Icons.play_circle_outline,
+                    onTap: widget.tripStarted ? widget.onStop : widget.onStart,
+                    hot: widget.tripStarted,
+                  ),
+                  const SizedBox(width: 4),
+                  _iconBtn(
+                    keyId: 'wait',
+                    label: widget.isWaiting
+                        ? 'Resume driving'
+                        : 'Pause / wait',
+                    icon: widget.isWaiting ? Icons.play_arrow : Icons.pause,
+                    onTap: widget.isWaiting ? widget.onGo : widget.onWait,
+                    hot: widget.isWaiting,
+                  ),
+                ],
+              ),
             ),
-            const SizedBox(width: 6),
-            _btn(
-              keyId: 'wait',
-              label: widget.isWaiting ? 'GA' : 'WACHT',
-              icon: widget.isWaiting ? Icons.play_arrow : Icons.pause,
-              onTap: widget.isWaiting ? widget.onGo : widget.onWait,
-              hot: widget.isWaiting,
-              height: 0,
-              iconSize: 12,
-              fontSize: 10,
-            ),
+            if (widget.secondaryActions.isNotEmpty) ...[
+              const SizedBox(width: 6),
+              _secondaryActionsRow(),
+            ],
           ],
         ),
       ),
     );
   }
 
-  Widget _stripItem(String label, String value) {
-    return Expanded(
-      child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 5),
-        decoration: BoxDecoration(
-          color: _activeTheme.tileBackground.withOpacity(0.92),
-          borderRadius: BorderRadius.circular(11),
-          border: Border.all(color: _activeTheme.tileBorder.withOpacity(0.85)),
-        ),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Text(
-              label,
-              style: TextStyle(
-                color: _activeTheme.mutedText.withOpacity(0.86),
-                fontSize: 8.5,
-                fontWeight: FontWeight.w800,
-                letterSpacing: 0.6,
-              ),
-            ),
-            const SizedBox(height: 3),
-            Text(
-              value,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: _activeTheme.primaryText,
-                fontSize: 13,
-                fontWeight: FontWeight.w900,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
+  Widget _metricTile(String label, String value, {bool compact = false}) {
+    final valueFontSize = compact ? 12.0 : 13.0;
+    final labelFontSize = compact ? 8.0 : 8.5;
 
-  Widget _metric(
-    String label,
-    String value, {
-    required double verticalPadding,
-    required double titleSize,
-    required double valueSize,
-  }) {
     return Expanded(
       child: LayoutBuilder(
         builder: (context, constraints) {
-          return Container(
-            padding: const EdgeInsets.symmetric(vertical: 0.5),
-            decoration: BoxDecoration(
-              color: _activeTheme.tileBackground.withOpacity(0.94),
-              borderRadius: BorderRadius.circular(11),
-              border: Border.all(
-                color: _activeTheme.tileBorder.withOpacity(0.88),
+          return ClipRRect(
+            borderRadius: BorderRadius.circular(11),
+            child: Container(
+              constraints: BoxConstraints(
+                minHeight: constraints.maxHeight,
+                maxHeight: constraints.maxHeight,
               ),
-            ),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Flexible(
-                  child: FittedBox(
-                    fit: BoxFit.scaleDown,
-                    child: Text(
-                      label,
-                      maxLines: 1,
-                      style: TextStyle(
-                        color: _activeTheme.mutedText.withOpacity(0.86),
-                        fontSize: titleSize.clamp(0, 11),
-                        fontWeight: FontWeight.w800,
-                        letterSpacing: 0.7,
+              padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 2),
+              decoration: BoxDecoration(
+                color: _activeTheme.tileBackground.withOpacity(0.94),
+                borderRadius: BorderRadius.circular(11),
+                border: Border.all(
+                  color: _activeTheme.tileBorder.withOpacity(0.88),
+                ),
+              ),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(
+                    label,
+                    maxLines: 1,
+                    overflow: TextOverflow.clip,
+                    style: TextStyle(
+                      color: _activeTheme.mutedText.withOpacity(0.86),
+                      fontSize: labelFontSize,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 0.5,
+                      height: 1.0,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Expanded(
+                    child: SizedBox(
+                      width: constraints.maxWidth,
+                      child: FittedBox(
+                        fit: BoxFit.scaleDown,
+                        alignment: Alignment.center,
+                        child: Text(
+                          value,
+                          maxLines: 1,
+                          softWrap: false,
+                          style: TextStyle(
+                            color: _activeTheme.primaryText,
+                            fontSize: valueFontSize,
+                            fontWeight: FontWeight.w900,
+                            height: 1.0,
+                          ),
+                        ),
                       ),
                     ),
                   ),
-                ),
-                const SizedBox(height: 2),
-                Flexible(
-                  child: FittedBox(
-                    fit: BoxFit.scaleDown,
-                    child: Text(
-                      value,
-                      maxLines: 1,
-                      style: TextStyle(
-                        color: _activeTheme.primaryText,
-                        fontSize: valueSize.clamp(0, 16),
-                        fontWeight: FontWeight.w900,
-                      ),
-                    ),
-                  ),
-                ),
-              ],
+                ],
+              ),
             ),
           );
         },
@@ -468,17 +453,14 @@ class _CockpitWidgetState extends State<CockpitWidget>
     );
   }
 
-  Widget _btn({
+  Widget _iconBtn({
     required String keyId,
     required String label,
     required IconData icon,
     required VoidCallback onTap,
     required bool hot,
-    required double height,
-    required double iconSize,
-    required double fontSize,
   }) {
-    final isStop = keyId == 'primary' && label == 'STOP';
+    final isStop = keyId == 'primary' && widget.tripStarted;
     final isNavActive = keyId == 'nav' && hot;
     final isWait = keyId == 'wait';
     final accent = isStop ? const Color(0xFFFF6B5F) : _activeTheme.accent;
@@ -496,66 +478,45 @@ class _CockpitWidgetState extends State<CockpitWidget>
         : _activeTheme.primaryText.withOpacity(isWait ? 0.76 : 0.88);
 
     return Expanded(
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(12),
-        child: SizedBox.expand(
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 200),
-            curve: Curves.easeOut,
-            height: height > 0 ? height : null,
-            decoration: BoxDecoration(
-              color: background.withOpacity(bgOpacity),
+      child: Semantics(
+        button: true,
+        label: label,
+        child: Tooltip(
+          message: label,
+          child: Material(
+            color: Colors.transparent,
+            child: InkWell(
+              onTap: onTap,
               borderRadius: BorderRadius.circular(12),
-              border: Border.all(
-                color: accent.withOpacity(borderOpacity),
-                width: isStop ? 1.4 : 1.0,
-              ),
-              boxShadow: hot
-                  ? [
-                      BoxShadow(
-                        color: accent.withOpacity(isStop ? 0.22 : 0.12),
-                        blurRadius: isStop ? 8 : 5,
-                        spreadRadius: 0.1,
-                      ),
-                    ]
-                  : [],
-            ),
-            child: Center(
-              child: FittedBox(
-                fit: BoxFit.scaleDown,
-                child: AnimatedSwitcher(
-                  duration: const Duration(milliseconds: 180),
-                  switchInCurve: Curves.easeOut,
-                  switchOutCurve: Curves.easeIn,
-                  transitionBuilder: (child, anim) {
-                    return FadeTransition(
-                      opacity: anim,
-                      child: ScaleTransition(
-                        scale: Tween<double>(
-                          begin: 0.97,
-                          end: 1.0,
-                        ).animate(anim),
-                        child: child,
-                      ),
-                    );
-                  },
-                  child: Row(
-                    key: ValueKey<String>('${keyId}_$label'),
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(icon, size: iconSize, color: contentColor),
-                      const SizedBox(width: 6),
-                      Text(
-                        label,
-                        style: TextStyle(
-                          fontSize: fontSize,
-                          fontWeight: FontWeight.w900,
-                          letterSpacing: 0.4,
-                          color: contentColor,
-                        ),
-                      ),
-                    ],
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(minHeight: _minTapSize),
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 200),
+                  curve: Curves.easeOut,
+                  decoration: BoxDecoration(
+                    color: background.withOpacity(bgOpacity),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                      color: accent.withOpacity(borderOpacity),
+                      width: isStop ? 1.4 : 1.0,
+                    ),
+                    boxShadow: hot
+                        ? [
+                            BoxShadow(
+                              color: accent.withOpacity(isStop ? 0.22 : 0.12),
+                              blurRadius: isStop ? 8 : 5,
+                              spreadRadius: 0.1,
+                            ),
+                          ]
+                        : [],
+                  ),
+                  child: Center(
+                    child: Icon(
+                      icon,
+                      key: ValueKey<String>('${keyId}_$label'),
+                      size: 20,
+                      color: contentColor,
+                    ),
                   ),
                 ),
               ),

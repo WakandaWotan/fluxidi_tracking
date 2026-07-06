@@ -192,6 +192,13 @@ class _DriverHomePageState extends State<DriverHomePage>
   bool? _lastSyncedMapboxPuckHidden;
   late final Widget _stableMapWidget;
   String? _pendingMapStyleUri;
+  bool _mapStyleChanging = false;
+  // NAV-UI-R6D: compact expandable "more" chip for portrait nav quick actions.
+  bool _navQuickActionsMoreExpanded = false;
+  // NAV-UI-R6E: taxi visual captured just before setStyleURI so the marker can
+  // be recreated immediately after style load without waiting for GPS.
+  ({double lat, double lon, double bearing, String source})?
+      _taxiVisualSnapshotForStyleSwap;
   DateTime? _lastMapWidgetBuildLogAt;
   DateTime? _lastDriverBuildLogAt;
 
@@ -287,6 +294,10 @@ class _DriverHomePageState extends State<DriverHomePage>
   DateTime? _lastNavValidationSampleAt;
   bool _navValidationPendingCameraFollowed = false;
   String? _navValidationPendingCameraSkipReason;
+  DateTime? _lastNavDiagGpsAt;
+  DateTime? _lastNavDiagMarkerAt;
+  NavR9OfflineUiState? _lastNavDiagR9State;
+  DateTime? _lastNavDiagR9EnteredAt;
   bool _offRouteLikely = false;
   int _offRouteHitCount = 0;
   bool _isRerouting = false;
@@ -294,7 +305,6 @@ class _DriverHomePageState extends State<DriverHomePage>
   String? _rerouteReason;
   DateTime? _offRouteRerouteDebounceStartedAt;
   static const Duration _rerouteCooldown = Duration(seconds: 25);
-  static const Duration _offRouteRerouteDebounce = Duration(seconds: 4);
   int _routeCleanupEpoch = 0;
   NavigationWorkerOfflineCorridorMetadata? _lastOfflineCorridorMetadata;
   bool _offlineCorridorMetadataLoading = false;
@@ -378,7 +388,26 @@ class _DriverHomePageState extends State<DriverHomePage>
         'label=${report.summaryLabel.logLabel} '
         'reason=$reason',
       );
+      unawaited(
+        NavDiagnosticsRecorder.instance.recordValidationReport(
+          durationSec: report.durationSec,
+          sampleCount: report.sampleCount,
+          overallScore: report.overallDriverOsScore,
+          gpsScore: report.avgGpsScore,
+          routeConfidence: report.avgRouteConfidence,
+          overallConfidence: report.avgOverallConfidence,
+          snapAvgM: report.avgSnapDistanceM,
+          predictionEvents: report.predictionEvents,
+          offRouteEvents: report.offRouteEvents,
+          cameraSkips: report.cameraSkipEvents,
+          label: report.summaryLabel.logLabel,
+          reason: reason,
+        ),
+      );
     }
+    unawaited(
+      NavDiagnosticsRecorder.instance.endSessionIfActive(reason: reason),
+    );
     _driverNavValidationEngine.reset();
     _lastNavValidationSampleAt = null;
     _navValidationPendingCameraFollowed = false;
@@ -1534,6 +1563,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       curve: Curves.easeInOut,
     );
 
+    unawaited(NavDiagnosticsRecorder.instance.ensureInitialized());
     _bootStartedAt = DateTime.now();
     // Minimum splash duration so it feels intentional (not a flicker)
     // Christophe wants it to linger a bit longer for a more premium feel.
@@ -1861,6 +1891,9 @@ class _DriverHomePageState extends State<DriverHomePage>
     _activePulseCtrl.dispose();
     _stopMeterTicker();
     _stopTrackingInternal();
+    unawaited(
+      NavDiagnosticsRecorder.instance.endSessionIfActive(reason: 'dispose'),
+    );
     _stopBookingPolling(reason: 'dispose');
     _renderDebugWindowTimer?.cancel();
     _renderDebugWindowTimer = null;
@@ -6342,8 +6375,20 @@ class _DriverHomePageState extends State<DriverHomePage>
       _updateRouteSnapState(pos);
       _evaluateOffRouteReroute();
       await _syncVisibleRouteLineWithProgress(pos);
+      _syncNavDiagSession();
+      _recordNavDiagGpsUpdate(pos, prev, metersFromPrev: prev != null
+          ? geo.Geolocator.distanceBetween(
+              prev.latitude,
+              prev.longitude,
+              pos.latitude,
+              pos.longitude,
+            )
+          : null);
 
-      if (_mapSupported && _map != null && _driverPointManager != null) {
+      if (_mapSupported &&
+          _map != null &&
+          !_mapStyleChanging &&
+          _driverPointManager != null) {
         _refreshNavEngineForPosition(pos);
         await _updateDriverMarker(pos);
         if (_cameraMode == _CameraMode.follow) {
@@ -6727,9 +6772,33 @@ class _DriverHomePageState extends State<DriverHomePage>
     }
   }
 
+  bool _hasActiveDriverTaxiMarker() {
+    return _driverMarker != null &&
+        _driverPointManager != null &&
+        !_mapStyleChanging;
+  }
+
+  bool _isFluxidiRoutePreviewOrNav() {
+    return _liveRideActive ||
+        _directRideActive ||
+        _directRideDraft ||
+        _activeBooking != null ||
+        _routeCoords.length >= 2 ||
+        _cameraMode == _CameraMode.follow;
+  }
+
+  String _puckHideReason() {
+    if (_isFluxidiRoutePreviewOrNav()) return 'route_context';
+    if (_hasActiveDriverTaxiMarker()) return 'has_taxi_marker';
+    if (_cameraMode == _CameraMode.follow && _liveRideActive) {
+      return 'follow_live';
+    }
+    return 'idle';
+  }
+
   bool _shouldHideMapboxUserLocationPuck() {
-    // Follow + live ride covers the style-reload gap where the taxi marker
-    // flag is cleared before annotations are recreated.
+    if (_isFluxidiRoutePreviewOrNav()) return true;
+    if (_hasActiveDriverTaxiMarker()) return true;
     return _cameraMode == _CameraMode.follow && _liveRideActive;
   }
 
@@ -6738,6 +6807,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     if (map == null || !_mapSupported) return;
 
     final hide = _shouldHideMapboxUserLocationPuck();
+    final reason = _puckHideReason();
     try {
       if (hide) {
         if (!_mapboxLocationPuckSuppressedForNav) {
@@ -6746,7 +6816,12 @@ class _DriverHomePageState extends State<DriverHomePage>
           _mapboxLocationPuckSuppressedForNav = true;
         }
         await map.location.updateSettings(
-          mb.LocationComponentSettings(enabled: false),
+          mb.LocationComponentSettings(
+            enabled: false,
+            pulsingEnabled: false,
+            showAccuracyRing: false,
+            puckBearingEnabled: false,
+          ),
         );
       } else if (_mapboxLocationPuckSuppressedForNav) {
         await map.location.updateSettings(
@@ -6760,14 +6835,46 @@ class _DriverHomePageState extends State<DriverHomePage>
       if (_lastSyncedMapboxPuckHidden != hide) {
         _lastSyncedMapboxPuckHidden = hide;
         _logNavBounded(
-          'NAV_PUCK',
-          'hidden=$hide follow=${_cameraMode == _CameraMode.follow} live=$_liveRideActive',
+          'NAV_UI_R6D_PUCK',
+          'hidden=$hide reason=$reason follow=${_cameraMode == _CameraMode.follow} live=$_liveRideActive',
           intervalMs: 3000,
         );
       }
-    } catch (e) {
-      _logNavBounded('NAV_PUCK', 'sync_failed', intervalMs: 5000);
+    } catch (_) {
+      _logNavBounded(
+        'NAV_UI_R6D_PUCK',
+        'hidden=$hide reason=sync_failed',
+        intervalMs: 5000,
+      );
     }
+  }
+
+  bool get _canUpdateDriverMarker =>
+      !_mapStyleChanging && _map != null && _driverPointManager != null;
+
+  bool _isMapboxAnnotationManagerLost(Object e) {
+    final blob = e.toString().toLowerCase();
+    if (e is PlatformException) {
+      final message = (e.message ?? '').toLowerCase();
+      final details = (e.details?.toString() ?? '').toLowerCase();
+      return blob.contains('no manager found') ||
+          message.contains('no manager found') ||
+          details.contains('no manager found');
+    }
+    return blob.contains('no manager found');
+  }
+
+  void _resetDriverMarkerOnNativeError(String reason) {
+    debugPrint('[NAV_MARKER] manager_reset reason=$reason');
+    unawaited(
+      NavDiagnosticsRecorder.instance.recordException(
+        context: 'marker_manager_reset',
+        error: StateError(reason),
+      ),
+    );
+    _driverPointManager = null;
+    _driverMarker = null;
+    _driverMarkerUsesTaxiAsset = false;
   }
 
   Future<void> _disposeDriverPointAnnotationManager() async {
@@ -6840,12 +6947,28 @@ class _DriverHomePageState extends State<DriverHomePage>
       return;
     }
     _pendingMapStyleUri = target;
+    _mapStyleChanging = true;
+    debugPrint(
+      '[NAV_MAPSTYLE] switching=${driverMapVisualModeLogLabel(_driverMapVisualMode)} target=$target',
+    );
+    debugPrint('[NAV_MARKER] paused_for_style_change');
+    unawaited(
+      NavDiagnosticsRecorder.instance.recordMapStyleChange(
+        mode: driverMapVisualModeLogLabel(_driverMapVisualMode),
+        phase: 'started',
+      ),
+    );
     try {
+      // NAV-UI-R6E: capture last taxi visual BEFORE the style swap and keep
+      // the visible marker alive until the style itself replaces it; the
+      // manager is disposed after setStyleURI so there is no early blank gap.
+      _captureTaxiVisualSnapshotForStyleSwap();
       debugPrint(
         '[MAP_THEME] selected=${theme == MapThemeMode.light ? 'light' : 'dark'} style=$target',
       );
       await _map!.style.setStyleURI(target);
       _activeMapStyleUri = target;
+      await _disposeDriverPointAnnotationManager();
       await applyDriverMapVisualClarity(
         style: _map!.style,
         visualMode: _driverMapVisualMode,
@@ -6859,23 +6982,46 @@ class _DriverHomePageState extends State<DriverHomePage>
       _dropoffPin = null;
       _routeLine = null;
       _routeLineOutline = null;
-      if (_routeCoords.length >= 2) {
-        await _drawRouteLine(_routeCoords);
-        await _drawPins(_routeCoords.first, _routeCoords.last);
-      }
-      if (_lastPos != null) {
-        _updateRouteSnapState(_lastPos!);
-        await _syncVisibleRouteLineWithProgress(_lastPos!);
-        await _updateDriverMarker(_lastPos!);
-      }
+      // Managers are ready again: unblock marker updates BEFORE the restore,
+      // otherwise the restore is a no-op and the taxi vanishes until the next
+      // GPS callback (NAV-UI-R6E root cause).
+      _mapStyleChanging = false;
+      final restore = await _restoreDriverVisualsAfterStyleChange(
+        reason: 'style_swap',
+      );
+      _scheduleTaxiMarkerRestoreRetries(reason: 'style_swap');
       await _syncMapboxUserLocationPuckVisibility();
       debugPrint(
-        '[MAP_THEME] redraw route=${_routeCoords.length >= 2} marker=${_lastPos != null} pins=${_routeCoords.length >= 2}',
+        '[NAV_UI_R6D_STYLE_RESTORE] route=${restore.route} taxi=${restore.taxi} reason=style_swap',
+      );
+      debugPrint('[NAV_MARKER] recreated_after_style');
+      unawaited(
+        NavDiagnosticsRecorder.instance.recordMapStyleChange(
+          mode: driverMapVisualModeLogLabel(_driverMapVisualMode),
+          phase: 'completed',
+        ),
+      );
+      debugPrint(
+        '[MAP_THEME] redraw route=${restore.route} marker=${restore.taxi} pins=${_routeCoords.length >= 2}',
       );
       debugPrint('[MAP][STYLE_DONE] target=$target');
     } catch (e) {
       debugPrint('[MAP][STYLE_SKIP] reason=error target=$target error=$e');
+      unawaited(
+        NavDiagnosticsRecorder.instance.recordMapStyleChange(
+          mode: driverMapVisualModeLogLabel(_driverMapVisualMode),
+          phase: 'failed',
+          error: e.toString(),
+        ),
+      );
+      unawaited(
+        NavDiagnosticsRecorder.instance.recordException(
+          context: 'map_style_change',
+          error: e,
+        ),
+      );
     } finally {
+      _mapStyleChanging = false;
       if (_pendingMapStyleUri == target) {
         _pendingMapStyleUri = null;
       }
@@ -6886,6 +7032,207 @@ class _DriverHomePageState extends State<DriverHomePage>
     if (!mounted) return;
     setState(() => _mapThemeOverride = theme);
     await _applyMapStyleForMode();
+  }
+
+  /// Restore route line + taxi marker immediately after a style change or
+  /// annotation-manager recreation. Uses the last known visual position (nav
+  /// interpolator, GPS, or route start) so the driver never sees a bare map
+  /// while waiting 3–4 seconds for the next GPS callback.
+  Future<({bool route, bool taxi})> _restoreDriverVisualsAfterStyleChange({
+    required String reason,
+  }) async {
+    var restoredRoute = false;
+
+    if (_routeCoords.length >= 2) {
+      try {
+        await _drawRouteLine(_routeCoords, force: true);
+        await _drawPins(_routeCoords.first, _routeCoords.last);
+        restoredRoute = true;
+      } catch (_) {
+        restoredRoute = false;
+      }
+    }
+
+    final restoredTaxi = await _attemptTaxiMarkerRestore(
+      attempt: 0,
+      reason: reason,
+    );
+
+    if (_lastPos != null) {
+      try {
+        _updateRouteSnapState(_lastPos!);
+        await _syncVisibleRouteLineWithProgress(_lastPos!);
+      } catch (_) {}
+    }
+
+    unawaited(
+      NavDiagnosticsRecorder.instance.recordNavEngineEvent(
+        tag: 'NAV_UI_R6D_STYLE_RESTORE',
+        fields: <String, dynamic>{
+          'route': restoredRoute,
+          'taxi': restoredTaxi || _driverMarker != null,
+          'reason': reason,
+          'hasGps': _lastPos != null,
+        },
+      ),
+    );
+
+    return (route: restoredRoute, taxi: restoredTaxi || _driverMarker != null);
+  }
+
+  /// NAV-UI-R6E: snapshot the currently visible taxi marker (interpolated
+  /// visual, marker geometry, GPS, or route head) before the style is swapped.
+  void _captureTaxiVisualSnapshotForStyleSwap() {
+    if (_navR3VisualLat != null && _navR3VisualLon != null) {
+      _taxiVisualSnapshotForStyleSwap = (
+        lat: _navR3VisualLat!,
+        lon: _navR3VisualLon!,
+        bearing: _navR3VisualBearing,
+        source: 'snapshot',
+      );
+      return;
+    }
+    final marker = _driverMarker;
+    if (marker != null) {
+      final coords = marker.geometry.coordinates;
+      _taxiVisualSnapshotForStyleSwap = (
+        lat: coords.lat.toDouble(),
+        lon: coords.lng.toDouble(),
+        bearing: marker.iconRotate ??
+            (_lastKnownBearing.isFinite ? _lastKnownBearing : 0.0),
+        source: 'snapshot',
+      );
+      return;
+    }
+    _taxiVisualSnapshotForStyleSwap = null;
+  }
+
+  /// Best-effort taxi visual for restore: style-swap snapshot > live nav
+  /// visual > last GPS fix > route start.
+  ({double lat, double lon, double bearing, String source})?
+      _lastKnownTaxiVisualForRestore() {
+    final snapshot = _taxiVisualSnapshotForStyleSwap;
+    if (snapshot != null) return snapshot;
+    if (_navR3VisualLat != null && _navR3VisualLon != null) {
+      return (
+        lat: _navR3VisualLat!,
+        lon: _navR3VisualLon!,
+        bearing: _navR3VisualBearing,
+        source: 'snapshot',
+      );
+    }
+    final pos = _lastPos;
+    if (pos != null) {
+      return (
+        lat: pos.latitude,
+        lon: pos.longitude,
+        bearing: _lastKnownBearing.isFinite ? _lastKnownBearing : 0.0,
+        source: 'last_pos',
+      );
+    }
+    if (_routeCoords.length >= 2) {
+      final head = _routeCoords.first;
+      return (
+        lat: head.lat,
+        lon: head.lon,
+        bearing: _lastKnownBearing.isFinite ? _lastKnownBearing : 0.0,
+        source: 'route_start',
+      );
+    }
+    return null;
+  }
+
+  /// NAV-UI-R6E: create the taxi marker (fallback icon instantly if the PNG is
+  /// not ready — `_createDriverMarkerAnnotation` handles that swap) from the
+  /// best known visual, without waiting for a GPS callback.
+  Future<bool> _attemptTaxiMarkerRestore({
+    required int attempt,
+    required String reason,
+  }) async {
+    if (_driverMarker != null) return true;
+    final visual = _lastKnownTaxiVisualForRestore();
+    final source = visual?.source ?? 'fallback';
+    var success = false;
+    if (visual != null && _map != null && !_mapStyleChanging) {
+      try {
+        var mgr = _driverPointManager;
+        mgr ??= _driverPointManager =
+            await _map!.annotations.createPointAnnotationManager();
+        _driverMarker = await _createDriverMarkerAnnotation(
+          mgr: mgr,
+          geometry: _mbPoint(visual.lon, visual.lat),
+          markerBearing: visual.bearing,
+        );
+        success = _driverMarker != null;
+      } catch (e) {
+        if (_isMapboxAnnotationManagerLost(e)) {
+          _resetDriverMarkerOnNativeError('taxi_restore_attempt$attempt');
+        }
+      }
+    }
+    debugPrint(
+      '[NAV_UI_R6E_TAXI_RESTORE] attempt=$attempt success=$success source=$source reason=$reason',
+    );
+    unawaited(
+      NavDiagnosticsRecorder.instance.recordNavEngineEvent(
+        tag: 'NAV_UI_R6E_TAXI_RESTORE',
+        fields: <String, dynamic>{
+          'attempt': attempt,
+          'success': success,
+          'source': source,
+          'reason': reason,
+        },
+      ),
+    );
+    return success;
+  }
+
+  /// NAV-UI-R6E: retry marker restore at 100/300/700 ms after style load in
+  /// case the immediate restore raced native style loading. Also upgrades a
+  /// temporary fallback marker to the taxi PNG once the asset is available.
+  /// Each attempt re-forces the puck hidden.
+  void _scheduleTaxiMarkerRestoreRetries({required String reason}) {
+    for (final entry in const <(int, int)>[(1, 100), (2, 300), (3, 700)]) {
+      final (attempt, delayMs) = entry;
+      Future<void>.delayed(Duration(milliseconds: delayMs), () async {
+        if (!mounted || _map == null || _mapStyleChanging) return;
+        if (_driverMarker == null) {
+          await _attemptTaxiMarkerRestore(attempt: attempt, reason: reason);
+        } else if (!_driverMarkerUsesTaxiAsset && _driverTaxiMarkerAvailable) {
+          await _upgradeFallbackMarkerToTaxi(attempt: attempt, reason: reason);
+        }
+        await _syncMapboxUserLocationPuckVisibility();
+      });
+    }
+  }
+
+  /// Replace a temporary fallback marker with the taxi PNG in place.
+  Future<void> _upgradeFallbackMarkerToTaxi({
+    required int attempt,
+    required String reason,
+  }) async {
+    final mgr = _driverPointManager;
+    final marker = _driverMarker;
+    if (mgr == null || marker == null) return;
+    final geometry = marker.geometry;
+    final bearing = marker.iconRotate ??
+        (_lastKnownBearing.isFinite ? _lastKnownBearing : 0.0);
+    try {
+      await mgr.delete(marker);
+      _driverMarker = null;
+      _driverMarker = await _createDriverMarkerAnnotation(
+        mgr: mgr,
+        geometry: geometry,
+        markerBearing: bearing,
+      );
+      debugPrint(
+        '[NAV_UI_R6E_TAXI_RESTORE] attempt=$attempt success=${_driverMarker != null} source=fallback reason=${reason}_asset_upgrade',
+      );
+    } catch (e) {
+      if (_isMapboxAnnotationManagerLost(e)) {
+        _resetDriverMarkerOnNativeError('taxi_asset_upgrade');
+      }
+    }
   }
 
   void _logNavMapStyle({required String reason}) {
@@ -6911,6 +7258,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       predictionActive: prediction?.predictionActive ?? false,
       predictionConfidence: prediction?.confidence,
       weakGps: _isWeakGpsForPrediction(_lastPos),
+      gapSinceLastEngineMs: _gapSinceLastNavEngineMs(),
     );
   }
 
@@ -6923,6 +7271,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       'state=${NavR9OfflineReadiness.logStateLabel(state)} reason=$reason',
       intervalMs: 2500,
     );
+    _recordNavDiagR9OfflineTransition(state: state, reason: reason);
   }
 
   Widget _buildNavR9DataOffStatusChip({
@@ -6998,6 +7347,7 @@ class _DriverHomePageState extends State<DriverHomePage>
   }
 
   Future<void> _syncDriverMarkerIconSizeForZoom() async {
+    if (!_canUpdateDriverMarker) return;
     final mgr = _driverPointManager;
     final marker = _driverMarker;
     if (mgr == null || marker == null) return;
@@ -7009,7 +7359,11 @@ class _DriverHomePageState extends State<DriverHomePage>
     marker.iconSize = size;
     try {
       await mgr.update(marker);
-    } catch (_) {}
+    } catch (e) {
+      if (_isMapboxAnnotationManagerLost(e)) {
+        _resetDriverMarkerOnNativeError('sync_icon_size');
+      }
+    }
   }
 
   mb.Point _mbPoint(double lon, double lat) =>
@@ -7137,6 +7491,134 @@ class _DriverHomePageState extends State<DriverHomePage>
       return;
     _lastNavDebugAt[tag] = now;
     debugPrint('[$tag] $message');
+  }
+
+  void _syncNavDiagSession() {
+    if (_isActiveDriverNavEngineContext()) {
+      unawaited(
+        NavDiagnosticsRecorder.instance.beginSessionIfNeeded(
+          trigger: 'follow_nav',
+        ),
+      );
+    } else {
+      unawaited(
+        NavDiagnosticsRecorder.instance.endSessionIfActive(
+          reason: 'nav_context_end',
+        ),
+      );
+    }
+  }
+
+  void _recordNavDiagGpsUpdate(
+    geo.Position pos,
+    geo.Position? prev, {
+    double? metersFromPrev,
+  }) {
+    if (!NavDiagnosticsRecorder.instance.hasActiveSession) return;
+    final now = DateTime.now();
+    final last = _lastNavDiagGpsAt;
+    final dtMs = last == null ? 0 : now.difference(last).inMilliseconds;
+    _lastNavDiagGpsAt = now;
+    final distanceFromLastM =
+        metersFromPrev != null && metersFromPrev.isFinite && metersFromPrev > 0
+        ? metersFromPrev
+        : null;
+    unawaited(
+      NavDiagnosticsRecorder.instance.recordGpsUpdate(
+        dtMs: dtMs,
+        speedKmh: _speedKmhFor(pos),
+        accuracyM: pos.accuracy.isFinite && pos.accuracy > 0
+            ? pos.accuracy
+            : -1,
+        heading: pos.heading.isFinite && pos.heading >= 0 ? pos.heading : null,
+        distanceFromLastM: distanceFromLastM,
+      ),
+    );
+  }
+
+  void _recordNavDiagR9OfflineTransition({
+    required NavR9OfflineUiState state,
+    required String reason,
+  }) {
+    final prev = _lastNavDiagR9State;
+    _lastNavDiagR9State = state;
+    if (prev == state) return;
+    final now = DateTime.now();
+    if (state == NavR9OfflineUiState.prediction ||
+        state == NavR9OfflineUiState.gpsReacquire) {
+      _lastNavDiagR9EnteredAt = now;
+      unawaited(
+        NavDiagnosticsRecorder.instance.recordOfflineMode(
+          transition: 'entered',
+          reason: reason,
+          state: NavR9OfflineReadiness.logStateLabel(state),
+        ),
+      );
+      return;
+    }
+    if (prev == NavR9OfflineUiState.prediction ||
+        prev == NavR9OfflineUiState.gpsReacquire) {
+      final entered = _lastNavDiagR9EnteredAt;
+      final durationMs = entered == null
+          ? null
+          : now.difference(entered).inMilliseconds;
+      _lastNavDiagR9EnteredAt = null;
+      unawaited(
+        NavDiagnosticsRecorder.instance.recordOfflineMode(
+          transition: 'exited',
+          reason: reason,
+          durationMs: durationMs,
+          state: prev == null
+              ? null
+              : NavR9OfflineReadiness.logStateLabel(prev),
+        ),
+      );
+    }
+  }
+
+  Future<void> _shareNavDiagnostics() async {
+    try {
+      final file = await NavDiagnosticsRecorder.instance.exportLatestSessions(
+        count: 2,
+        asText: false,
+      );
+      if (file == null) {
+        _toast(
+          _tr(
+            nl: 'Geen navigatie-diagnose beschikbaar.',
+            en: 'No navigation diagnostics available.',
+            fr: 'Aucun diagnostic de navigation disponible.',
+            es: 'No hay diagnostico de navegacion disponible.',
+          ),
+        );
+        return;
+      }
+      await Share.shareXFiles(
+        <XFile>[XFile(file.path)],
+        subject: 'Fluxidi navigatie-diagnose',
+        text: _tr(
+          nl: 'Fluxidi navigatie-diagnose (geen PII).',
+          en: 'Fluxidi navigation diagnostics (no PII).',
+          fr: 'Diagnostic navigation Fluxidi (sans PII).',
+          es: 'Diagnostico de navegacion Fluxidi (sin PII).',
+        ),
+      );
+    } catch (e) {
+      unawaited(
+        NavDiagnosticsRecorder.instance.recordException(
+          context: 'share_nav_diag',
+          error: e,
+        ),
+      );
+      _toast(
+        _tr(
+          nl: 'Diagnose delen mislukt.',
+          en: 'Could not share diagnostics.',
+          fr: 'Partage du diagnostic impossible.',
+          es: 'No se pudo compartir el diagnostico.',
+        ),
+      );
+    }
   }
 
   ({double enterThresholdM, double exitThresholdM}) _matchThresholdsFor(
@@ -7290,6 +7772,24 @@ class _DriverHomePageState extends State<DriverHomePage>
         'reason=${output.reason}',
         intervalMs: 1500,
       );
+      unawaited(
+        NavDiagnosticsRecorder.instance.recordNavEngineEvent(
+          tag: 'NAV_R6_CONFIDENCE',
+          fields: <String, dynamic>{
+            'overall': output.overallScore.round(),
+            'gps': output.gpsScore.round(),
+            'route': output.routeScore.round(),
+            'heading': output.headingScore.round(),
+            'motion': output.motionScore.round(),
+            'camera': output.cameraScore.round(),
+            'instruction': output.instructionScore.round(),
+            'trustSnap': output.trustRouteSnap,
+            'trustBearing': output.trustBearing,
+            'trustInstruction': output.trustInstruction,
+            'reason': output.reason,
+          },
+        ),
+      );
     } catch (_) {
       _lastNavConfidence = null;
     }
@@ -7374,6 +7874,17 @@ class _DriverHomePageState extends State<DriverHomePage>
         'tilt=${tilt.toStringAsFixed(1)} '
         'follow=$shouldFollow reason=$reason',
         intervalMs: 2000,
+      );
+      unawaited(
+        NavDiagnosticsRecorder.instance.recordNavEngineEvent(
+          tag: 'NAV_R5_CAMERA_POLICY',
+          fields: <String, dynamic>{
+            'zoom': zoom,
+            'tilt': tilt,
+            'follow': shouldFollow,
+            'reason': reason,
+          },
+        ),
       );
       return (
         shouldFollow: shouldFollow,
@@ -7464,6 +7975,19 @@ class _DriverHomePageState extends State<DriverHomePage>
         'reason=${output.reason}',
         intervalMs: 1500,
       );
+      unawaited(
+        NavDiagnosticsRecorder.instance.recordNavEngineEvent(
+          tag: 'NAV_R4_PROGRESS',
+          fields: <String, dynamic>{
+            'segment': output.segmentIndex ?? -1,
+            'confidence': output.confidence.round(),
+            'snapDistM': output.snapDistanceM,
+            'forward': output.forwardProgress,
+            'offRoute': output.offRouteLikely,
+            'reason': output.reason,
+          },
+        ),
+      );
       return output;
     } catch (_) {
       _lastNavRouteProgress = null;
@@ -7553,7 +8077,9 @@ class _DriverHomePageState extends State<DriverHomePage>
     } else {
       _offRouteHitCount = 0;
     }
-    final offRoute = _offRouteHitCount >= 3;
+    final offRouteHitsRequired =
+        (progress?.offRouteLikely == true || snapDistance > 55.0) ? 2 : 3;
+    final offRoute = _offRouteHitCount >= offRouteHitsRequired;
     if (offRoute != _offRouteLikely) {
       _offRouteLikely = offRoute;
       if (!offRoute) {
@@ -7607,6 +8133,21 @@ class _DriverHomePageState extends State<DriverHomePage>
     return false;
   }
 
+  Duration _offRouteRerouteDebounceFor() {
+    final progress = _lastNavRouteProgress;
+    if (progress != null && progress.offRouteLikely) {
+      final snapDist = progress.snapDistanceM;
+      final conf = progress.confidence;
+      if (snapDist > 55.0 && conf < 45.0) {
+        return const Duration(milliseconds: 1200);
+      }
+      if (snapDist > 45.0 || conf < 55.0) {
+        return const Duration(milliseconds: 1800);
+      }
+    }
+    return const Duration(milliseconds: 2500);
+  }
+
   void _evaluateOffRouteReroute() {
     if (!_offRouteLikely) {
       _offRouteRerouteDebounceStartedAt = null;
@@ -7619,7 +8160,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       _offRouteRerouteDebounceStartedAt = DateTime.now();
       return;
     }
-    if (DateTime.now().difference(debounceStart) < _offRouteRerouteDebounce) {
+    if (DateTime.now().difference(debounceStart) < _offRouteRerouteDebounceFor()) {
       return;
     }
 
@@ -7652,7 +8193,15 @@ class _DriverHomePageState extends State<DriverHomePage>
     _lastRerouteAt = DateTime.now();
     _offRouteRerouteDebounceStartedAt = null;
     final phaseLabel = _reroutePhaseLabel();
+    final rerouteStartedAt = DateTime.now();
     debugPrint('[NAV_REROUTE] phase=$phaseLabel reason=$reason start=1');
+    unawaited(
+      NavDiagnosticsRecorder.instance.recordRerouteEvent(
+        offRoute: _offRouteLikely,
+        triggerReason: reason,
+        phase: phaseLabel,
+      ),
+    );
     if (kDebugMode) {
       debugPrint('[NAV_REROUTE] ui=loading reason=rerouting');
     }
@@ -7689,6 +8238,17 @@ class _DriverHomePageState extends State<DriverHomePage>
       _rerouteReason = null;
       debugPrint(
         '[NAV_REROUTE] phase=$phaseLabel reason=$reason result=${ok ? 'ok' : 'fail'}',
+      );
+      unawaited(
+        NavDiagnosticsRecorder.instance.recordRerouteEvent(
+          offRoute: _offRouteLikely,
+          triggerReason: reason,
+          durationMs: DateTime.now()
+              .difference(rerouteStartedAt)
+              .inMilliseconds,
+          success: ok,
+          phase: phaseLabel,
+        ),
       );
       if (!ok) {
         _toast(
@@ -7950,10 +8510,25 @@ class _DriverHomePageState extends State<DriverHomePage>
         'NAV_ENGINE_OUT',
         'source=${output.markerSource} animate=${output.shouldAnimateMarker} '
         'bearing=${output.bearing.toStringAsFixed(1)} '
+        'bearingSource=${_driverNavEngine.lastBearingSource} '
         'speedKmh=${output.speedKmh?.toStringAsFixed(1) ?? 'na'} '
         'accuracyM=${output.accuracyM?.toStringAsFixed(1) ?? 'na'} '
         'cameraReason=${output.cameraReason}',
         intervalMs: 2000,
+      );
+      unawaited(
+        NavDiagnosticsRecorder.instance.recordNavEngineEvent(
+          tag: 'NAV_ENGINE_OUT',
+          fields: <String, dynamic>{
+            'source': output.markerSource,
+            'animate': output.shouldAnimateMarker,
+            'bearing': output.bearing.round(),
+            'bearingSource': _driverNavEngine.lastBearingSource,
+            'speedKmh': output.speedKmh?.round(),
+            'accuracyM': output.accuracyM?.round(),
+            'cameraReason': output.cameraReason,
+          },
+        ),
       );
     } catch (_) {
       _driverNavEngine.reset();
@@ -8059,6 +8634,17 @@ class _DriverHomePageState extends State<DriverHomePage>
         'reason=${result.reason}',
         intervalMs: 1200,
       );
+      unawaited(
+        NavDiagnosticsRecorder.instance.recordNavEngineEvent(
+          tag: 'NAV_R7_PREDICTION',
+          fields: <String, dynamic>{
+            'active': result.predictionActive,
+            'durationMs': _gapSinceLastNavEngineMs(),
+            'confidence': result.confidence.round(),
+            'reason': result.reason,
+          },
+        ),
+      );
       return result;
     } catch (_) {
       _lastNavMotionPrediction = null;
@@ -8098,19 +8684,25 @@ class _DriverHomePageState extends State<DriverHomePage>
     NavEngineOutput output,
     NavEngineOutput? priorOutput,
   ) {
-    var intervalMs = 1000;
+    var intervalMs = 800;
     if (priorOutput != null) {
       intervalMs = output.timestamp
           .difference(priorOutput.timestamp)
           .inMilliseconds;
     }
-    intervalMs = intervalMs.clamp(400, 4000);
-    final intervalT = (intervalMs - 400) / 3600.0;
-    var durationMs = (800 + intervalT * 400).round();
+    intervalMs = intervalMs.clamp(280, 3200);
+    final intervalT = (intervalMs - 280) / 2920.0;
+    var durationMs = (360 + intervalT * 420).round();
     final speed = output.speedKmh ?? 0.0;
-    if (speed > 35) durationMs -= 80;
-    if (speed < 8) durationMs += 60;
-    return Duration(milliseconds: durationMs.clamp(800, 1200));
+    if (speed > 50) {
+      durationMs -= 180;
+    } else if (speed > 35) {
+      durationMs -= 130;
+    } else if (speed > 20) {
+      durationMs -= 70;
+    }
+    if (speed < 8) durationMs += 90;
+    return Duration(milliseconds: durationMs.clamp(320, 820));
   }
 
   static double _shortestBearingDelta(double from, double to) {
@@ -8145,6 +8737,28 @@ class _DriverHomePageState extends State<DriverHomePage>
     final fromLon = fromVisual?.lon ?? toLon;
     final fromBearing = fromVisual?.bearing ?? output.bearing;
     final toBearing = speed < 3.0 ? fromBearing : output.bearing;
+
+    if (output.shouldAnimateMarker && priorOutput != null) {
+      final intervalMs = output.timestamp
+          .difference(priorOutput.timestamp)
+          .inMilliseconds;
+      if (intervalMs < 480 && speed > 28) {
+        _navR3VisualLat = toLat;
+        _navR3VisualLon = toLon;
+        _navR3VisualBearing = toBearing;
+        _navR3MotionActive = false;
+        _navR3AnimStartedAt = null;
+        _stopNavR3MotionTimer();
+        _logNavR3Motion(
+          state: 'fast_snap',
+          durationMs: 0,
+          progress: 1.0,
+          animate: false,
+        );
+        _startNavMotionTimerIfNeeded();
+        return;
+      }
+    }
 
     if (!output.shouldAnimateMarker) {
       _navR3VisualLat = toLat;
@@ -8234,6 +8848,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     }
     if (!_isActiveDriverNavEngineContext() ||
         _map == null ||
+        _mapStyleChanging ||
         _driverPointManager == null ||
         _driverMarker == null) {
       _resetNavR3MotionState();
@@ -8304,6 +8919,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     double lon,
     double bearing,
   ) async {
+    if (!_canUpdateDriverMarker) return;
     final mgr = _driverPointManager;
     final marker = _driverMarker;
     if (mgr == null || marker == null) return;
@@ -8312,7 +8928,11 @@ class _DriverHomePageState extends State<DriverHomePage>
     marker.iconRotate = bearing;
     try {
       await mgr.update(marker);
-    } catch (_) {}
+    } catch (e) {
+      if (_isMapboxAnnotationManagerLost(e)) {
+        _resetDriverMarkerOnNativeError('visual_only_update');
+      }
+    }
   }
 
   ({_LonLat point, double bearing}) _resolveNavVisualForLiveNav(
@@ -8454,6 +9074,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     geo.Position pos, {
     bool moveCamera = false,
   }) async {
+    if (!_canUpdateDriverMarker) return;
     final mgr = _driverPointManager;
     if (mgr == null) return;
 
@@ -8470,32 +9091,88 @@ class _DriverHomePageState extends State<DriverHomePage>
     }
     final p = _mbPoint(visual.point.lon, visual.point.lat);
     final markerBearing = visual.bearing;
+    // Fresh GPS-driven visual supersedes any pre-style-swap snapshot.
+    _taxiVisualSnapshotForStyleSwap = null;
     final taxiReady = await _ensureDriverTaxiMarkerBytes();
+    if (!_canUpdateDriverMarker || _driverPointManager != mgr) return;
     final wantsTaxi = taxiReady && _driverTaxiMarkerBytes != null;
 
     if (_driverMarker != null && _driverMarkerUsesTaxiAsset != wantsTaxi) {
       try {
         await mgr.delete(_driverMarker!);
-      } catch (_) {}
+      } catch (e) {
+        if (_isMapboxAnnotationManagerLost(e)) {
+          _resetDriverMarkerOnNativeError('delete_for_asset_swap');
+          return;
+        }
+      }
       _driverMarker = null;
     }
 
     if (_driverMarker == null) {
       try {
         await mgr.deleteAll();
-      } catch (_) {}
-      _driverMarker = await _createDriverMarkerAnnotation(
-        mgr: mgr,
-        geometry: p,
-        markerBearing: markerBearing,
-      );
+      } catch (e) {
+        if (_isMapboxAnnotationManagerLost(e)) {
+          _resetDriverMarkerOnNativeError('delete_all_before_create');
+          return;
+        }
+      }
+      try {
+        _driverMarker = await _createDriverMarkerAnnotation(
+          mgr: mgr,
+          geometry: p,
+          markerBearing: markerBearing,
+        );
+      } catch (e) {
+        if (_isMapboxAnnotationManagerLost(e)) {
+          _resetDriverMarkerOnNativeError('create_marker');
+        }
+        return;
+      }
     } else {
-      _driverMarker!.geometry = p;
-      _driverMarker!.iconRotate = markerBearing;
-      await mgr.update(_driverMarker!);
+      try {
+        _driverMarker!.geometry = p;
+        _driverMarker!.iconRotate = markerBearing;
+        await mgr.update(_driverMarker!);
+      } catch (e) {
+        if (_isMapboxAnnotationManagerLost(e)) {
+          _resetDriverMarkerOnNativeError('update_marker');
+        }
+        return;
+      }
     }
     await _syncDriverMarkerIconSizeForZoom();
     await _syncMapboxUserLocationPuckVisibility();
+
+    final markerDisplay = _driverMarkerDisplayFor(pos);
+    final markerNow = DateTime.now();
+    final markerLagMs = _lastNavDiagMarkerAt == null
+        ? null
+        : markerNow.difference(_lastNavDiagMarkerAt!).inMilliseconds;
+    _lastNavDiagMarkerAt = markerNow;
+    final String bearingSource;
+    final double? bearingDeltaDeg;
+    if (_isActiveDriverNavEngineContext() && _lastNavEngineOutput != null) {
+      bearingSource = _driverNavEngine.lastBearingSource;
+      bearingDeltaDeg = pos.heading.isFinite && pos.heading >= 0
+          ? NavBearingSmoother.bearingDelta(pos.heading, markerBearing)
+          : null;
+    } else {
+      final meta = _adaptiveBearingFor(pos, snap: snap);
+      bearingSource = meta.source;
+      bearingDeltaDeg = meta.bearingDeltaDeg;
+    }
+    unawaited(
+      NavDiagnosticsRecorder.instance.recordMarkerUpdate(
+        source: markerDisplay.source,
+        snapDistM: markerDisplay.snapDistM,
+        bearing: markerBearing,
+        markerLagMs: markerLagMs,
+        bearingSource: bearingSource,
+        bearingDeltaDeg: bearingDeltaDeg,
+      ),
+    );
 
     if (moveCamera && _cameraMode != _CameraMode.follow) {
       await _map?.flyTo(
@@ -8505,11 +9182,38 @@ class _DriverHomePageState extends State<DriverHomePage>
     }
   }
 
+  void _recordNavDiagCameraUpdate({
+    required bool follow,
+    String? skippedReason,
+    double? zoom,
+    double? tilt,
+    double? bearing,
+  }) {
+    if (!NavDiagnosticsRecorder.instance.hasActiveSession) return;
+    unawaited(
+      NavDiagnosticsRecorder.instance.recordCameraUpdate(
+        follow: follow,
+        skippedReason: skippedReason,
+        zoom: zoom,
+        tilt: tilt,
+        bearing: bearing,
+      ),
+    );
+  }
+
   Future<void> _followCameraTesla(
     geo.Position pos, {
     bool force = false,
     String cameraReason = 'normal_follow',
   }) async {
+    if (_mapStyleChanging) {
+      _navValidationPendingCameraSkipReason = 'style_changing';
+      _recordNavDiagCameraUpdate(
+        follow: false,
+        skippedReason: 'style_changing',
+      );
+      return;
+    }
     _navValidationPendingCameraFollowed = false;
     _navValidationPendingCameraSkipReason = null;
 
@@ -8528,6 +9232,12 @@ class _DriverHomePageState extends State<DriverHomePage>
         'follow=false reason=${policy.reason}',
         intervalMs: 2000,
       );
+      _recordNavDiagCameraUpdate(
+        follow: false,
+        skippedReason: policy.reason,
+        zoom: policy.zoom,
+        tilt: policy.tilt,
+      );
       return;
     }
 
@@ -8540,6 +9250,12 @@ class _DriverHomePageState extends State<DriverHomePage>
         'NAV_GPS',
         'cameraSkip=1 ageSec=${ageSec?.toStringAsFixed(1) ?? 'na'} accuracyM=${acc.toStringAsFixed(1)}',
       );
+      _recordNavDiagCameraUpdate(
+        follow: false,
+        skippedReason: 'gps_weak',
+        zoom: policy.zoom,
+        tilt: policy.tilt,
+      );
       return;
     }
     _gpsQualityWeak = false;
@@ -8551,10 +9267,22 @@ class _DriverHomePageState extends State<DriverHomePage>
         last != null &&
         now.difference(last).inMilliseconds < throttleMs) {
       _navValidationPendingCameraSkipReason = 'throttled';
+      _recordNavDiagCameraUpdate(
+        follow: false,
+        skippedReason: 'throttled',
+        zoom: policy.zoom,
+        tilt: policy.tilt,
+      );
       return;
     }
     if (!force && _followCameraInFlight) {
       _navValidationPendingCameraSkipReason = 'in_flight';
+      _recordNavDiagCameraUpdate(
+        follow: false,
+        skippedReason: 'in_flight',
+        zoom: policy.zoom,
+        tilt: policy.tilt,
+      );
       return;
     }
     _lastFollowCameraAt = now;
@@ -8617,6 +9345,12 @@ class _DriverHomePageState extends State<DriverHomePage>
       );
       _navValidationPendingCameraFollowed = true;
       _navValidationPendingCameraSkipReason = null;
+      _recordNavDiagCameraUpdate(
+        follow: true,
+        zoom: policy.zoom,
+        tilt: policy.tilt,
+        bearing: heading,
+      );
     } finally {
       _followCameraInFlight = false;
     }
@@ -8677,6 +9411,13 @@ class _DriverHomePageState extends State<DriverHomePage>
     _logNavBounded(
       'NAV_STEP',
       'progressSource=${nextInstruction.progressSource} nextDistanceM=${distanceM.toStringAsFixed(1)}',
+    );
+    unawaited(
+      NavDiagnosticsRecorder.instance.recordManeuverProgress(
+        distanceToNextM: distanceM,
+        instructionType: nextInstruction.type,
+        modifier: nextInstruction.modifier,
+      ),
     );
     if (snapshot.hasInstruction) {
       _logNavBounded(
@@ -8957,12 +9698,26 @@ class _DriverHomePageState extends State<DriverHomePage>
     return 0.0;
   }
 
+  bool _hasReliableRouteSnapForBearing() {
+    if (!_isActiveDriverNavEngineContext()) {
+      return _useMatchedVisual;
+    }
+    final progress = _lastNavRouteProgress;
+    final confidence = _lastNavConfidence;
+    return progress != null &&
+        progress.hasReliableSnap &&
+        progress.forwardProgress &&
+        !progress.offRouteLikely &&
+        (confidence?.trustRouteSnap ?? true);
+  }
+
   ({
     double bearing,
     String source,
     double? gpsHeading,
     double? movementBearing,
     double? routeBearing,
+    double? bearingDeltaDeg,
   })
   _adaptiveBearingFor(geo.Position pos, {_RouteSnap? snap}) {
     final speedKmh = _speedKmhFor(pos);
@@ -8970,116 +9725,78 @@ class _DriverHomePageState extends State<DriverHomePage>
         ? pos.heading
         : null;
     final movementBearing = _lastMovementBearing;
-    final routeBearing = _routeBearingAtSnap(snap);
+    final routeBearing = _routeBearingFromProgress(_lastNavRouteProgress) ??
+        _routeBearingAtSnap(snap);
+    final reliableSnap = _hasReliableRouteSnapForBearing();
+
+    double bearing;
+    String source;
 
     if (speedKmh < 3.5) {
       if (_lastKnownBearing.isFinite && _lastKnownBearing > 0) {
-        _logNavBounded(
-          'NAV_BEARING',
-          'speedKmh=${speedKmh.toStringAsFixed(1)} usedBearing=${_lastKnownBearing.toStringAsFixed(1)} source=last_stable_low_speed',
-        );
-        return (
-          bearing: _lastKnownBearing,
-          source: 'last_stable_low_speed',
-          gpsHeading: gpsHeading,
-          movementBearing: movementBearing,
-          routeBearing: routeBearing,
-        );
-      }
-      if (_useMatchedVisual && routeBearing != null && routeBearing.isFinite) {
+        bearing = _lastKnownBearing;
+        source = 'last_stable_low_speed';
+      } else if (reliableSnap && routeBearing != null && routeBearing.isFinite) {
         _lastKnownBearing = routeBearing;
-        _logNavBounded(
-          'NAV_BEARING',
-          'speedKmh=${speedKmh.toStringAsFixed(1)} usedBearing=${routeBearing.toStringAsFixed(1)} source=route_segment_low_speed',
-        );
-        return (
-          bearing: routeBearing,
-          source: 'route_segment_low_speed',
-          gpsHeading: gpsHeading,
-          movementBearing: movementBearing,
-          routeBearing: routeBearing,
-        );
+        bearing = routeBearing;
+        source = 'route_segment_low_speed';
+      } else {
+        bearing = routeBearing ??
+            movementBearing ??
+            gpsHeading ??
+            (_lastKnownBearing.isFinite ? _lastKnownBearing : 0.0);
+        source = 'safe_fallback';
+        _lastKnownBearing = bearing;
       }
-    }
-
-    if (movementBearing != null &&
+    } else if (reliableSnap && routeBearing != null && routeBearing.isFinite) {
+      _lastKnownBearing = routeBearing;
+      bearing = routeBearing;
+      source = 'route_segment';
+    } else if (gpsHeading != null && speedKmh >= 4.0) {
+      _lastKnownBearing = gpsHeading;
+      bearing = gpsHeading;
+      source = 'gps_heading';
+    } else if (movementBearing != null &&
         movementBearing.isFinite &&
         (speedKmh >= 8.0 || (gpsHeading == null && speedKmh >= 5.0))) {
       _lastKnownBearing = movementBearing;
-      _logNavBounded(
-        'NAV_BEARING',
-        'gpsHeading=${gpsHeading?.toStringAsFixed(1) ?? 'na'} movementBearing=${movementBearing.toStringAsFixed(1)} '
-            'routeBearing=${routeBearing?.toStringAsFixed(1) ?? 'na'} usedBearing=${movementBearing.toStringAsFixed(1)} source=movement',
-      );
-      return (
-        bearing: movementBearing,
-        source: 'movement',
-        gpsHeading: gpsHeading,
-        movementBearing: movementBearing,
-        routeBearing: routeBearing,
-      );
+      bearing = movementBearing;
+      source = 'movement';
+    } else if (_lastKnownBearing.isFinite && _lastKnownBearing > 0) {
+      bearing = _lastKnownBearing;
+      source = 'last_stable';
+    } else {
+      bearing = routeBearing ??
+          movementBearing ??
+          gpsHeading ??
+          (_lastKnownBearing.isFinite ? _lastKnownBearing : 0.0);
+      source = 'safe_fallback';
+      _lastKnownBearing = bearing;
     }
-    if (gpsHeading != null && speedKmh >= 4.0) {
-      _lastKnownBearing = gpsHeading;
-      _logNavBounded(
-        'NAV_BEARING',
-        'gpsHeading=${gpsHeading.toStringAsFixed(1)} movementBearing=${movementBearing?.toStringAsFixed(1) ?? 'na'} '
-            'routeBearing=${routeBearing?.toStringAsFixed(1) ?? 'na'} usedBearing=${gpsHeading.toStringAsFixed(1)} source=gps_heading',
-      );
-      return (
-        bearing: gpsHeading,
-        source: 'gps_heading',
-        gpsHeading: gpsHeading,
-        movementBearing: movementBearing,
-        routeBearing: routeBearing,
-      );
+
+    double? bearingDeltaDeg;
+    if (gpsHeading != null &&
+        gpsHeading.isFinite &&
+        routeBearing != null &&
+        routeBearing.isFinite) {
+      bearingDeltaDeg = NavBearingSmoother.bearingDelta(gpsHeading, bearing);
     }
-    if (_useMatchedVisual && routeBearing != null && routeBearing.isFinite) {
-      _lastKnownBearing = routeBearing;
-      _logNavBounded(
-        'NAV_BEARING',
-        'gpsHeading=${gpsHeading?.toStringAsFixed(1) ?? 'na'} movementBearing=${movementBearing?.toStringAsFixed(1) ?? 'na'} '
-            'routeBearing=${routeBearing.toStringAsFixed(1)} usedBearing=${routeBearing.toStringAsFixed(1)} source=route_segment',
-      );
-      return (
-        bearing: routeBearing,
-        source: 'route_segment',
-        gpsHeading: gpsHeading,
-        movementBearing: movementBearing,
-        routeBearing: routeBearing,
-      );
-    }
-    if (_lastKnownBearing.isFinite && _lastKnownBearing > 0) {
-      _logNavBounded(
-        'NAV_BEARING',
-        'gpsHeading=${gpsHeading?.toStringAsFixed(1) ?? 'na'} movementBearing=${movementBearing?.toStringAsFixed(1) ?? 'na'} '
-            'routeBearing=${routeBearing?.toStringAsFixed(1) ?? 'na'} usedBearing=${_lastKnownBearing.toStringAsFixed(1)} source=last_stable',
-      );
-      return (
-        bearing: _lastKnownBearing,
-        source: 'last_stable',
-        gpsHeading: gpsHeading,
-        movementBearing: movementBearing,
-        routeBearing: routeBearing,
-      );
-    }
-    final safeFallback =
-        routeBearing ??
-        movementBearing ??
-        gpsHeading ??
-        (_lastKnownBearing.isFinite ? _lastKnownBearing : 0.0);
-    _lastKnownBearing = safeFallback;
+
     _logNavBounded(
       'NAV_BEARING',
-      'gpsHeading=${gpsHeading?.toStringAsFixed(1) ?? 'na'} movementBearing=${movementBearing?.toStringAsFixed(1) ?? 'na'} '
-          'routeBearing=${routeBearing?.toStringAsFixed(1) ?? 'na'} usedBearing=${safeFallback.toStringAsFixed(1)} source=safe_fallback',
+      'speedKmh=${speedKmh.toStringAsFixed(1)} '
+          'gpsHeading=${gpsHeading?.toStringAsFixed(1) ?? 'na'} '
+          'routeBearing=${routeBearing?.toStringAsFixed(1) ?? 'na'} '
+          'usedBearing=${bearing.toStringAsFixed(1)} source=$source '
+          'deltaDeg=${bearingDeltaDeg?.toStringAsFixed(1) ?? 'na'}',
     );
     return (
-      bearing: safeFallback,
-      source: 'safe_fallback',
+      bearing: bearing,
+      source: source,
       gpsHeading: gpsHeading,
       movementBearing: movementBearing,
       routeBearing: routeBearing,
+      bearingDeltaDeg: bearingDeltaDeg,
     );
   }
 
@@ -9293,100 +10010,98 @@ class _DriverHomePageState extends State<DriverHomePage>
     await _launchExternalNavUri(uri);
   }
 
-  Widget _buildExternalNavChip({
-    required double height,
+  Widget _buildCompactNavIconChip({
     required IconData icon,
-    required String label,
     required String tooltip,
     required VoidCallback onPressed,
     required Color navAccent,
     required Color navText,
     required Color navSurface,
+    double size = 40,
   }) {
     return Tooltip(
       message: tooltip,
-      child: OutlinedButton.icon(
-        style: OutlinedButton.styleFrom(
-          foregroundColor: navText,
-          backgroundColor: navSurface,
-          side: BorderSide(color: navAccent.withOpacity(0.78), width: 1.2),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(999)),
-          minimumSize: Size(0, height),
-          padding: const EdgeInsets.symmetric(horizontal: 12),
-          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-          visualDensity: VisualDensity.compact,
-        ),
-        onPressed: onPressed,
-        icon: Icon(icon, size: 16),
-        label: Text(
-          label,
-          style: TextStyle(
-            fontSize: height >= 48 ? 14 : 13,
-            fontWeight: FontWeight.w800,
+      child: Material(
+        color: navSurface,
+        borderRadius: BorderRadius.circular(12),
+        child: InkWell(
+          onTap: onPressed,
+          borderRadius: BorderRadius.circular(12),
+          child: Container(
+            width: size,
+            height: size,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: navAccent.withOpacity(0.72),
+                width: 1.1,
+              ),
+            ),
+            child: Icon(icon, size: 18, color: navText),
           ),
         ),
       ),
     );
   }
 
-  Widget _buildNavQuickActionButtons({bool inlineLandscape = false}) {
+  ({Color accent, Color text, Color surface}) _navActionThemeColors() {
+    final isMidnightBlue =
+        driverThemeNotifier.value == DriverThemeVariant.midnightBlue;
+    final isMiddayGold =
+        driverThemeNotifier.value == DriverThemeVariant.highContrast;
+    return (
+      accent: isMidnightBlue
+          ? _midnightBlueAccent()
+          : (isMiddayGold ? const Color(0xFFE8C57E) : kFluxidiYellow),
+      text: isMidnightBlue
+          ? _midnightBlueTextPrimary()
+          : (isMiddayGold ? _middayGoldTextPrimary() : Colors.white),
+      surface: isMidnightBlue
+          ? const Color(0xCC07111F)
+          : (isMiddayGold ? const Color(0xCC2C2113) : const Color(0xCC0B1326)),
+    );
+  }
+
+  /// NAV-UI-R6F: compact icon-only map actions rendered inside the bottom
+  /// cockpit bar during route preview / navigation: recenter, satellite,
+  /// offline, diagnostics, more (Google/Waze expand from "more").
+  List<Widget> _buildCockpitSecondaryActions() {
     final hasExternal = _resolveExternalNavTarget() != null;
     final showNavMapTools =
         _cameraMode == _CameraMode.follow || _routeCoords.length >= 2;
     final showMapStyleToggle =
         kDriverMapSatelliteToggleEnabled && showNavMapTools;
     final showOffline = showNavMapTools;
-    if (!hasExternal && !showOffline && !showMapStyleToggle) {
-      return const SizedBox.shrink();
-    }
-
-    final isTablet = MediaQuery.of(context).size.width >= 600;
-    final isLandscape =
-        MediaQuery.of(context).orientation == Orientation.landscape;
+    final showNavDiagExport = !kReleaseMode && showNavMapTools;
     final inFollowNav = _cameraMode == _CameraMode.follow;
-    final chipHeight = isLandscape
-        ? (isTablet ? 44.0 : 40.0)
-        : (isTablet ? 48.0 : (inFollowNav ? 46.0 : 44.0));
-    final isMidnightBlue =
-        driverThemeNotifier.value == DriverThemeVariant.midnightBlue;
-    final isMiddayGold =
-        driverThemeNotifier.value == DriverThemeVariant.highContrast;
-    final navAccent = isMidnightBlue
-        ? _midnightBlueAccent()
-        : (isMiddayGold ? const Color(0xFFE8C57E) : kFluxidiYellow);
-    final navText = isMidnightBlue
-        ? _midnightBlueTextPrimary()
-        : (isMiddayGold ? _middayGoldTextPrimary() : Colors.white);
-    final navSurface = isMidnightBlue
-        ? const Color(0xCC07111F)
-        : (isMiddayGold ? const Color(0xCC2C2113) : const Color(0xCC0B1326));
 
-    final r9 = _navR9OfflineReadiness();
-    _logNavR9Offline(state: r9.state, reason: r9.reason);
-    if (inFollowNav && showOffline && kUseNavigationWorker && _routeCoords.length >= 2) {
+    final colors = _navActionThemeColors();
+    const iconSize = 44.0;
+
+    if (inFollowNav &&
+        showOffline &&
+        kUseNavigationWorker &&
+        _routeCoords.length >= 2) {
       unawaited(_maybeFetchOfflineCorridorMetadata());
     }
 
-    final chips = <Widget>[];
+    final chips = <Widget>[
+      _buildCompactNavIconChip(
+        icon: Icons.my_location,
+        tooltip: kCenterOnMeLabel,
+        onPressed: _centerOnMe,
+        navAccent: colors.accent,
+        navText: colors.text,
+        navSurface: colors.surface,
+        size: iconSize,
+      ),
+    ];
+
     if (showMapStyleToggle) {
       final isSatellite = _driverMapVisualMode == DriverMapVisualMode.satellite;
       chips.add(
-        _buildExternalNavChip(
-          height: chipHeight,
+        _buildCompactNavIconChip(
           icon: isSatellite ? Icons.map_outlined : Icons.satellite_alt_outlined,
-          label: isSatellite
-              ? _tr(
-                  nl: 'Kaart',
-                  en: 'Map',
-                  fr: 'Carte',
-                  es: 'Mapa',
-                )
-              : _tr(
-                  nl: 'Satelliet',
-                  en: 'Satellite',
-                  fr: 'Satellite',
-                  es: 'Satélite',
-                ),
           tooltip: isSatellite
               ? _tr(
                   nl: 'Terug naar kaartweergave',
@@ -9401,150 +10116,136 @@ class _DriverHomePageState extends State<DriverHomePage>
                   es: 'Vista satélite',
                 ),
           onPressed: _toggleDriverMapVisualMode,
-          navAccent: navAccent,
-          navText: navText,
-          navSurface: navSurface,
+          navAccent: colors.accent,
+          navText: colors.text,
+          navSurface: colors.surface,
+          size: iconSize,
         ),
       );
     }
     if (showOffline) {
-      if (chips.isNotEmpty) chips.add(const SizedBox(width: 8));
       chips.add(
-        _buildExternalNavChip(
-          height: chipHeight,
+        _buildCompactNavIconChip(
           icon: Icons.wifi_off_rounded,
-          label: _tr(
+          tooltip: _tr(
             nl: 'Offline kaarten',
             en: 'Offline maps',
             fr: 'Cartes hors ligne',
             es: 'Mapas sin conexión',
           ),
-          tooltip: _tr(
-            nl:
-                'Offline kaarten — basistegels (voorbereiding Driver OS, geen volledige offline navigatie)',
-            en:
-                'Offline maps — basemap tiles (Driver OS preparation, not full offline navigation)',
-            fr:
-                'Cartes hors ligne — tuiles (preparation Driver OS)',
-            es:
-                'Mapas sin conexion — teselas (preparacion Driver OS)',
-          ),
           onPressed: _openOfflineMaps,
-          navAccent: navAccent,
-          navText: navText,
-          navSurface: navSurface,
+          navAccent: colors.accent,
+          navText: colors.text,
+          navSurface: colors.surface,
+          size: iconSize,
+        ),
+      );
+    }
+    if (showNavDiagExport) {
+      chips.add(
+        _buildCompactNavIconChip(
+          icon: Icons.bug_report_outlined,
+          tooltip: _tr(
+            nl: 'Deel navigatie-diagnose',
+            en: 'Share nav diagnostics',
+            fr: 'Partager diagnostic navigation',
+            es: 'Compartir diagnostico de navegacion',
+          ),
+          onPressed: _shareNavDiagnostics,
+          navAccent: colors.accent,
+          navText: colors.text,
+          navSurface: colors.surface,
+          size: iconSize,
         ),
       );
     }
     if (hasExternal) {
-      if (chips.isNotEmpty) chips.add(const SizedBox(width: 8));
+      final moreExpanded = _navQuickActionsMoreExpanded;
       chips.add(
-        _buildExternalNavChip(
-          height: chipHeight,
-          icon: Icons.map,
-          label: _tr(
-            nl: 'Google',
-            en: 'Google',
-            fr: 'Google',
-            es: 'Google',
-          ),
-          tooltip: _tr(
-            nl: 'Openen in Google Maps',
-            en: 'Open in Google Maps',
-            fr: 'Ouvrir dans Google Maps',
-            es: 'Abrir en Google Maps',
-          ),
-          onPressed: _openInGoogleMaps,
-          navAccent: navAccent,
-          navText: navText,
-          navSurface: navSurface,
+        _buildCompactNavIconChip(
+          icon: moreExpanded ? Icons.close : Icons.more_horiz,
+          tooltip: moreExpanded
+              ? _tr(
+                  nl: 'Minder acties',
+                  en: 'Fewer actions',
+                  fr: 'Moins d\u2019actions',
+                  es: 'Menos acciones',
+                )
+              : _tr(
+                  nl: 'Meer acties',
+                  en: 'More actions',
+                  fr: 'Plus d\u2019actions',
+                  es: 'Mas acciones',
+                ),
+          onPressed: () {
+            if (mounted) {
+              setState(() {
+                _navQuickActionsMoreExpanded = !_navQuickActionsMoreExpanded;
+              });
+            } else {
+              _navQuickActionsMoreExpanded = !_navQuickActionsMoreExpanded;
+            }
+          },
+          navAccent: colors.accent,
+          navText: colors.text,
+          navSurface: colors.surface,
+          size: iconSize,
         ),
       );
-      chips.add(const SizedBox(width: 8));
-      chips.add(
-        _buildExternalNavChip(
-          height: chipHeight,
-          icon: Icons.alt_route,
-          label: _tr(
-            nl: 'Waze',
-            en: 'Waze',
-            fr: 'Waze',
-            es: 'Waze',
+      if (moreExpanded) {
+        chips.add(
+          _buildCompactNavIconChip(
+            icon: Icons.map,
+            tooltip: _tr(
+              nl: 'Openen in Google Maps',
+              en: 'Open in Google Maps',
+              fr: 'Ouvrir dans Google Maps',
+              es: 'Abrir en Google Maps',
+            ),
+            onPressed: _openInGoogleMaps,
+            navAccent: colors.accent,
+            navText: colors.text,
+            navSurface: colors.surface,
+            size: iconSize,
           ),
-          tooltip: _tr(
-            nl: 'Openen in Waze',
-            en: 'Open in Waze',
-            fr: 'Ouvrir dans Waze',
-            es: 'Abrir en Waze',
+        );
+        chips.add(
+          _buildCompactNavIconChip(
+            icon: Icons.alt_route,
+            tooltip: _tr(
+              nl: 'Openen in Waze',
+              en: 'Open in Waze',
+              fr: 'Ouvrir dans Waze',
+              es: 'Abrir en Waze',
+            ),
+            onPressed: _openInWaze,
+            navAccent: colors.accent,
+            navText: colors.text,
+            navSurface: colors.surface,
+            size: iconSize,
           ),
-          onPressed: _openInWaze,
-          navAccent: navAccent,
-          navText: navText,
-          navSurface: navSurface,
-        ),
-      );
+        );
+      }
     }
+    return chips;
+  }
 
-    return Padding(
-      padding: EdgeInsets.only(top: inlineLandscape ? 0 : 6),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          if (inFollowNav)
-            _buildNavR9DataOffStatusChip(
-              showTunnelChip: r9.showTunnelChip,
-              showGpsReacquireChip: r9.showGpsReacquireChip,
-              navText: navText,
-              navSurface: navSurface,
-              navAccent: navAccent,
-            ),
-          if (inFollowNav && showOffline)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 6),
-              child: _buildNavOfflineCorridorPrepPanel(navText: navText),
-            ),
-          if (inFollowNav && hasExternal)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 4),
-              child: Text(
-                _tr(
-                  nl: 'Externe navigatie',
-                  en: 'External navigation',
-                  fr: 'Navigation externe',
-                  es: 'Navegación externa',
-                ),
-                style: TextStyle(
-                  color: navText.withOpacity(0.78),
-                  fontSize: 11,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-            ),
-          if (inFollowNav && hasExternal)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 4),
-              child: Text(
-                _tr(
-                  nl: 'Google Maps / Waze vereisen internet op dit toestel.',
-                  en: 'Google Maps / Waze require internet on this device.',
-                  fr: 'Google Maps / Waze necessitent Internet sur cet appareil.',
-                  es: 'Google Maps / Waze requieren internet en este dispositivo.',
-                ),
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  color: navText.withOpacity(0.62),
-                  fontSize: 10,
-                  height: 1.2,
-                ),
-              ),
-            ),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            mainAxisSize: MainAxisSize.min,
-            children: chips,
-          ),
-        ],
-      ),
+  /// NAV-UI-R6F: R9 tunnel / GPS-reacquire status chip shown centered above
+  /// the cockpit bar during follow navigation.
+  Widget _buildCockpitR9StatusChip() {
+    final r9 = _navR9OfflineReadiness();
+    _logNavR9Offline(state: r9.state, reason: r9.reason);
+    if (_cameraMode != _CameraMode.follow) return const SizedBox.shrink();
+    if (!r9.showTunnelChip && !r9.showGpsReacquireChip) {
+      return const SizedBox.shrink();
+    }
+    final colors = _navActionThemeColors();
+    return _buildNavR9DataOffStatusChip(
+      showTunnelChip: r9.showTunnelChip,
+      showGpsReacquireChip: r9.showGpsReacquireChip,
+      navText: colors.text,
+      navSurface: colors.surface,
+      navAccent: colors.accent,
     );
   }
 
@@ -10540,6 +11241,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         lineColor: kDriverRouteLineColor,
       ),
     );
+    await _syncMapboxUserLocationPuckVisibility();
   }
 
   Future<void> _fitBoundsToRoute(List<_LonLat> coords) async {
@@ -16069,7 +16771,6 @@ class _DriverHomePageState extends State<DriverHomePage>
         (_cameraMode == _CameraMode.follow ||
             _resolveExternalNavTarget() != null ||
             _routeCoords.length >= 2);
-    final bool showExternalNavButtons = showNavQuickActions;
     final screenH = MediaQuery.of(context).size.height;
     final screenW = MediaQuery.of(context).size.width;
     final bool isLandscape =
@@ -16078,12 +16779,13 @@ class _DriverHomePageState extends State<DriverHomePage>
         isLandscape && _cameraMode == _CameraMode.follow;
     final bool collapseTopBarInPortraitNav =
         !isLandscape && _cameraMode == _CameraMode.follow;
-    final double arrowBottom = isLandscape ? 92.0 : 152.0;
+    final double arrowBottom = isLandscape ? 88.0 : 138.0;
     final double safeBottomInset = MediaQuery.of(context).padding.bottom;
+    // NAV-UI-R6F: floating recenter only exists outside route/nav context
+    // (map actions are inside the cockpit bar there).
     final double recenterBottom = isLandscape
-        ? (showCockpit ? 118.0 : 96.0) + safeBottomInset
-        : (showCockpit ? (showExternalNavButtons ? 232.0 : 188.0) : 150.0) +
-              safeBottomInset;
+        ? (showCockpit ? 96.0 : 80.0) + safeBottomInset
+        : (showCockpit ? 148.0 : 120.0) + safeBottomInset;
     final bool isTablet = screenW >= 600;
     final double navBannerPortraitMaxWidth = math.min(
       screenW * (isTablet ? 0.94 : 0.92),
@@ -16210,7 +16912,7 @@ class _DriverHomePageState extends State<DriverHomePage>
                 ),
               ),
             ),
-          if (_cameraMode == _CameraMode.follow && !hideMapUserPuck)
+          if (!hideMapUserPuck)
             Positioned(
               left: 0,
               right: 0,
@@ -16247,7 +16949,9 @@ class _DriverHomePageState extends State<DriverHomePage>
                 ),
               ),
             ),
-          if (_mapSupported)
+          // NAV-UI-R6F: map actions live inside the bottom cockpit bar during
+          // route/nav context; only the idle map keeps a floating recenter.
+          if (_mapSupported && !showNavQuickActions)
             Positioned(
               right: 14,
               bottom: recenterBottom,
@@ -16263,93 +16967,50 @@ class _DriverHomePageState extends State<DriverHomePage>
                 duration: const Duration(milliseconds: 180),
                 switchInCurve: Curves.easeOut,
                 switchOutCurve: Curves.easeOut,
-                child: isLandscape
-                    ? SafeArea(
-                        key: const ValueKey<String>('landscape_cockpit'),
-                        child: Align(
-                          alignment: Alignment.bottomCenter,
-                          child: Padding(
-                            padding: EdgeInsets.only(
-                              left: 10,
-                              right: 10,
-                              bottom:
-                                  MediaQuery.of(context).viewInsets.bottom + 4,
-                            ),
-                            child: Row(
-                              crossAxisAlignment: CrossAxisAlignment.end,
-                              children: [
-                                Expanded(
-                                  child: Column(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      CockpitWidget(
-                                        themeListenable:
-                                            _activeDriverThemeListenable,
-                                        etaText: _etaText,
-                                        kmText: _kmRemainingText,
-                                        priceText: _cockpitPriceText,
-                                        tripStarted: _liveRideActive,
-                                        isWaiting: _isWaiting,
-                                        navActive:
-                                            _cameraMode == _CameraMode.follow,
-                                        onNav: _openNavigation,
-                                        onStart: _handleCockpitStart,
-                                        onStop: _stopTrip,
-                                        onWait: _enterWaitMode,
-                                        onGo: _exitWaitMode,
-                                      ),
-                                      _buildDirectRideEstimatePanel(),
-                                    ],
-                                  ),
-                                ),
-                                if (showExternalNavButtons) ...[
-                                  const SizedBox(width: 8),
-                                  _buildNavQuickActionButtons(
-                                    inlineLandscape: true,
-                                  ),
-                                ],
-                              ],
-                            ),
-                          ),
-                        ),
-                      )
-                    : SafeArea(
-                        key: const ValueKey<String>('portrait_cockpit'),
-                        minimum: const EdgeInsets.only(bottom: 6),
-                        child: Align(
-                          alignment: Alignment.bottomCenter,
-                          child: Padding(
-                            padding: EdgeInsets.only(
-                              left: 12,
-                              right: 12,
-                              bottom:
-                                  MediaQuery.of(context).viewInsets.bottom + 6,
-                            ),
-                            child: Column(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                CockpitWidget(
-                                  themeListenable: _activeDriverThemeListenable,
-                                  etaText: _etaText,
-                                  kmText: _kmRemainingText,
-                                  priceText: _cockpitPriceText,
-                                  tripStarted: _liveRideActive,
-                                  isWaiting: _isWaiting,
-                                  navActive: _cameraMode == _CameraMode.follow,
-                                  onNav: _openNavigation,
-                                  onStart: _handleCockpitStart,
-                                  onStop: _stopTrip,
-                                  onWait: _enterWaitMode,
-                                  onGo: _exitWaitMode,
-                                ),
-                                _buildDirectRideEstimatePanel(),
-                                if (showExternalNavButtons)
-                                  _buildNavQuickActionButtons(),
-                              ],
-                            ),
-                          ),
-                        ),
+                // NAV-UI-R6F: cockpit is full width in both orientations and
+                // hosts the compact map action icons (recenter, satellite,
+                // offline, diagnostics, more) during route/nav context.
+                child: SafeArea(
+                  key: ValueKey<String>(
+                    isLandscape ? 'landscape_cockpit' : 'portrait_cockpit',
+                  ),
+                  minimum: EdgeInsets.zero,
+                  child: Align(
+                    alignment: Alignment.bottomCenter,
+                    child: Padding(
+                      padding: EdgeInsets.only(
+                        left: 8,
+                        right: 8,
+                        bottom: MediaQuery.of(context).viewInsets.bottom,
                       ),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (showNavQuickActions) _buildCockpitR9StatusChip(),
+                          CockpitWidget(
+                            embedded: true,
+                            themeListenable: _activeDriverThemeListenable,
+                            etaText: _etaText,
+                            kmText: _kmRemainingText,
+                            priceText: _cockpitPriceText,
+                            tripStarted: _liveRideActive,
+                            isWaiting: _isWaiting,
+                            navActive: _cameraMode == _CameraMode.follow,
+                            onNav: _openNavigation,
+                            onStart: _handleCockpitStart,
+                            onStop: _stopTrip,
+                            onWait: _enterWaitMode,
+                            onGo: _exitWaitMode,
+                            secondaryActions: showNavQuickActions
+                                ? _buildCockpitSecondaryActions()
+                                : const <Widget>[],
+                          ),
+                          _buildDirectRideEstimatePanel(),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
               ),
             ),
         ],
