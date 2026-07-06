@@ -244,3 +244,128 @@ IconData driverManeuverIconData(
   }
   return Icons.straight_rounded;
 }
+
+/// Compact arrow glyph for a Mapbox lane [indication] string.
+String driverLaneIndicationArrow(String indication) {
+  final lower = indication.trim().toLowerCase().replaceAll('_', ' ');
+  if (lower.isEmpty) return '·';
+  if (lower.contains('uturn') || lower.contains('u-turn')) return '↩';
+  if (lower.contains('sharp left')) return '↙';
+  if (lower.contains('sharp right')) return '↘';
+  if (lower.contains('slight left')) return '↖';
+  if (lower.contains('slight right')) return '↗';
+  if (lower.contains('merge')) {
+    if (lower.contains('left')) return '↖';
+    if (lower.contains('right')) return '↗';
+    return '↗';
+  }
+  if (lower.contains('left')) return '←';
+  if (lower.contains('right')) return '→';
+  if (lower.contains('straight') ||
+      lower.contains('forward') ||
+      lower == 'none') {
+    return '↑';
+  }
+  return '·';
+}
+
+/// Short English maneuver word for accessibility labels.
+String driverLaneIndicationLabel(String indication) {
+  final lower = indication.trim().toLowerCase().replaceAll('_', ' ');
+  if (lower.isEmpty) return 'unknown';
+  if (lower.contains('uturn') || lower.contains('u-turn')) return 'u-turn';
+  if (lower.contains('sharp left')) return 'sharp left';
+  if (lower.contains('sharp right')) return 'sharp right';
+  if (lower.contains('slight left')) return 'slight left';
+  if (lower.contains('slight right')) return 'slight right';
+  if (lower.contains('merge')) return 'merge';
+  if (lower.contains('left')) return 'left';
+  if (lower.contains('right')) return 'right';
+  if (lower.contains('straight') ||
+      lower.contains('forward') ||
+      lower == 'none') {
+    return 'straight';
+  }
+  return lower;
+}
+
+bool driverLaneIsRecommended(DriverNavLaneGuidance lane) {
+  if (lane.valid == true) return true;
+  if (lane.active == true) return true;
+  return false;
+}
+
+/// Picks the lane indication glyph to show, preferring maneuver alignment.
+String? driverLaneIndicationForDisplay(
+  DriverNavLaneGuidance lane, {
+  String? maneuverModifier,
+}) {
+  final indications = lane.indications;
+  final validHint = (lane.validIndication ?? '').trim().toLowerCase();
+  if (validHint.isNotEmpty) {
+    for (final indication in indications) {
+      final lower = indication.toLowerCase();
+      if (lower == validHint || lower.contains(validHint)) {
+        return indication;
+      }
+    }
+  }
+  final mod = (maneuverModifier ?? '').trim().toLowerCase();
+  if (mod.isNotEmpty) {
+    for (final indication in indications) {
+      final lower = indication.toLowerCase();
+      if (mod.contains('left') && lower.contains('left')) return indication;
+      if (mod.contains('right') && lower.contains('right')) return indication;
+      if ((mod.contains('straight') || mod.contains('forward')) &&
+          (lower.contains('straight') ||
+              lower.contains('forward') ||
+              lower == 'none')) {
+        return indication;
+      }
+      if (mod.contains('uturn') &&
+          (lower.contains('uturn') || lower.contains('u-turn'))) {
+        return indication;
+      }
+      if (mod.contains('merge') && lower.contains('merge')) return indication;
+    }
+  }
+  if (indications.isEmpty) return null;
+  return indications.first;
+}
+
+String driverLaneSemanticLabel(
+  DriverNavLaneGuidance lane, {
+  String? maneuverModifier,
+}) {
+  final indication = driverLaneIndicationForDisplay(
+    lane,
+    maneuverModifier: maneuverModifier,
+  );
+  final label = driverLaneIndicationLabel(indication ?? '');
+  if (indication == null || indication.trim().isEmpty) {
+    return driverLaneIsRecommended(lane)
+        ? 'Recommended lane'
+        : 'Lane';
+  }
+  return driverLaneIsRecommended(lane)
+      ? 'Recommended lane: $label'
+      : 'Lane: $label';
+}
+
+/// Lanes worth rendering in the navigation banner.
+List<DriverNavLaneGuidance> driverNavLanesForBannerDisplay(
+  List<DriverNavLaneGuidance> lanes,
+) {
+  if (lanes.isEmpty) return const <DriverNavLaneGuidance>[];
+  final out = <DriverNavLaneGuidance>[];
+  for (final lane in lanes) {
+    if (lane.indications.isNotEmpty) {
+      out.add(lane);
+      continue;
+    }
+    if (lane.valid == true || lane.active == true) {
+      out.add(lane);
+    }
+  }
+  return out;
+}

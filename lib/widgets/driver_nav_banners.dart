@@ -1,9 +1,11 @@
 import 'dart:ui' show ImageFilter;
 
-import 'package:flutter/foundation.dart' show ValueListenable;
+import 'package:flutter/foundation.dart' show ValueListenable, kDebugMode;
 import 'package:flutter/material.dart';
 import 'package:fluxidi_tracking/driver_theme_palette.dart';
 import 'package:fluxidi_tracking/driver_theme_store.dart';
+import 'package:fluxidi_tracking/navigation/driver_navigation_formatters.dart';
+import 'package:fluxidi_tracking/navigation/driver_navigation_models.dart';
 
 class DriverTurnInstructionBanner extends StatelessWidget {
   final bool compact;
@@ -17,6 +19,8 @@ class DriverTurnInstructionBanner extends StatelessWidget {
   final String secondaryText;
   final String? subText;
   final IconData icon;
+  final List<DriverNavLaneGuidance> lanes;
+  final String maneuverModifier;
   final ValueListenable<DriverThemeVariant>? themeListenable;
 
   const DriverTurnInstructionBanner({
@@ -32,6 +36,8 @@ class DriverTurnInstructionBanner extends StatelessWidget {
     required this.secondaryText,
     this.subText,
     required this.icon,
+    this.lanes = const <DriverNavLaneGuidance>[],
+    this.maneuverModifier = '',
     this.themeListenable,
   });
 
@@ -107,6 +113,30 @@ class DriverTurnInstructionBanner extends StatelessWidget {
     return isTablet ? 112 : 96;
   }
 
+  List<DriverNavLaneGuidance> get _displayLanes =>
+      driverNavLanesForBannerDisplay(lanes);
+
+  bool get _showLaneGuidance => _displayLanes.isNotEmpty;
+
+  double get _laneRowHeight {
+    if (_useLandscapeTopRow) return isTablet ? 22 : 20;
+    if (_useLandscapeCompactRow) return isTablet ? 24 : 22;
+    if (compact) return isTablet ? 26 : 24;
+    return isTablet ? 28 : 26;
+  }
+
+  double get _lanePillMinWidth {
+    if (_useLandscapeTopRow) return isTablet ? 24 : 22;
+    if (compact) return isTablet ? 28 : 26;
+    return isTablet ? 32 : 28;
+  }
+
+  double get _laneArrowFontSize {
+    if (_useLandscapeTopRow) return isTablet ? 13 : 12;
+    if (compact) return isTablet ? 15 : 14;
+    return isTablet ? 17 : 16;
+  }
+
   @override
   Widget build(BuildContext context) {
     return ValueListenableBuilder<DriverThemeVariant>(
@@ -118,6 +148,17 @@ class DriverTurnInstructionBanner extends StatelessWidget {
             : palette.border.withOpacity(palette.isDark ? 0.68 : 0.9);
         final secondaryLine = _secondaryLine();
         final showSecondary = _shouldShowSecondaryLine(secondaryLine);
+        final displayLanes = _displayLanes;
+        final showLaneGuidance = displayLanes.isNotEmpty;
+        if (showLaneGuidance && kDebugMode) {
+          final recommendedCount = displayLanes
+              .where(driverLaneIsRecommended)
+              .length;
+          debugPrint(
+            '[NAV_E4] lanes=${displayLanes.length} '
+            'recommended=$recommendedCount source=snapshot',
+          );
+        }
 
         return ClipRRect(
           borderRadius: BorderRadius.circular(
@@ -131,7 +172,10 @@ class DriverTurnInstructionBanner extends StatelessWidget {
               sigmaY: compact ? 10 : 12,
             ),
             child: Container(
-              constraints: BoxConstraints(minHeight: _minBannerHeight),
+              constraints: BoxConstraints(
+                minHeight: _minBannerHeight +
+                    (showLaneGuidance ? (_laneRowHeight + 4) : 0),
+              ),
               padding: EdgeInsets.symmetric(
                 horizontal: _useLandscapeTopRow
                     ? 6
@@ -167,40 +211,59 @@ class DriverTurnInstructionBanner extends StatelessWidget {
                   ),
                 ],
               ),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.center,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  _buildManeuverIcon(palette),
-                  SizedBox(
-                    width: _useLandscapeTopRow
-                        ? 6
-                        : (_useLandscapeCompactRow
-                              ? 8
-                              : (compact
-                                    ? 10
-                                    : (_usePhonePortraitStack ? 10 : 12))),
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      _buildManeuverIcon(palette),
+                      SizedBox(
+                        width: _useLandscapeTopRow
+                            ? 6
+                            : (_useLandscapeCompactRow
+                                  ? 8
+                                  : (compact
+                                        ? 10
+                                        : (_usePhonePortraitStack ? 10 : 12))),
+                      ),
+                      Expanded(
+                        child: _usePhonePortraitStack
+                            ? _buildPhonePortraitTextColumn(
+                                palette: palette,
+                                secondaryLine: secondaryLine,
+                                showSecondary: showSecondary,
+                              )
+                            : _useLandscapeTopRow
+                            ? _buildLandscapeTopRowTextBlock(palette: palette)
+                            : _useLandscapeCompactRow
+                            ? _buildLandscapeCompactTextBlock(
+                                palette: palette,
+                                secondaryLine: secondaryLine,
+                                showSecondary: showSecondary,
+                              )
+                            : _buildDefaultTextColumn(
+                                palette: palette,
+                                secondaryLine: secondaryLine,
+                                showSecondary: showSecondary,
+                              ),
+                      ),
+                    ],
                   ),
-                  Expanded(
-                    child: _usePhonePortraitStack
-                        ? _buildPhonePortraitTextColumn(
-                            palette: palette,
-                            secondaryLine: secondaryLine,
-                            showSecondary: showSecondary,
-                          )
-                        : _useLandscapeTopRow
-                        ? _buildLandscapeTopRowTextBlock(palette: palette)
-                        : _useLandscapeCompactRow
-                        ? _buildLandscapeCompactTextBlock(
-                            palette: palette,
-                            secondaryLine: secondaryLine,
-                            showSecondary: showSecondary,
-                          )
-                        : _buildDefaultTextColumn(
-                            palette: palette,
-                            secondaryLine: secondaryLine,
-                            showSecondary: showSecondary,
-                          ),
-                  ),
+                  if (showLaneGuidance) ...[
+                    SizedBox(height: _useLandscapeTopRow ? 3 : 4),
+                    _LaneGuidanceRow(
+                      lanes: displayLanes,
+                      palette: palette,
+                      isHighwayLike: isHighwayLike,
+                      maneuverModifier: maneuverModifier,
+                      rowHeight: _laneRowHeight,
+                      pillMinWidth: _lanePillMinWidth,
+                      arrowFontSize: _laneArrowFontSize,
+                      compact: compact || _useLandscapeTopRow,
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -405,6 +468,132 @@ class DriverTurnInstructionBanner extends StatelessWidget {
     if (secondary.isNotEmpty) parts.add(secondary);
     if (sub.isNotEmpty && sub != secondary) parts.add(sub);
     return parts.join(' • ');
+  }
+}
+
+class _LaneGuidanceRow extends StatelessWidget {
+  const _LaneGuidanceRow({
+    required this.lanes,
+    required this.palette,
+    required this.isHighwayLike,
+    required this.maneuverModifier,
+    required this.rowHeight,
+    required this.pillMinWidth,
+    required this.arrowFontSize,
+    required this.compact,
+  });
+
+  final List<DriverNavLaneGuidance> lanes;
+  final DriverThemePalette palette;
+  final bool isHighwayLike;
+  final String maneuverModifier;
+  final double rowHeight;
+  final double pillMinWidth;
+  final double arrowFontSize;
+  final bool compact;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: rowHeight,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        physics: lanes.length > 6
+            ? const BouncingScrollPhysics()
+            : const NeverScrollableScrollPhysics(),
+        padding: EdgeInsets.only(left: compact ? 2 : 4),
+        itemCount: lanes.length,
+        separatorBuilder: (_, __) => SizedBox(width: compact ? 4 : 5),
+        itemBuilder: (context, index) {
+          return _LanePill(
+            lane: lanes[index],
+            palette: palette,
+            isHighwayLike: isHighwayLike,
+            maneuverModifier: maneuverModifier,
+            minWidth: pillMinWidth,
+            arrowFontSize: arrowFontSize,
+            compact: compact,
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _LanePill extends StatelessWidget {
+  const _LanePill({
+    required this.lane,
+    required this.palette,
+    required this.isHighwayLike,
+    required this.maneuverModifier,
+    required this.minWidth,
+    required this.arrowFontSize,
+    required this.compact,
+  });
+
+  final DriverNavLaneGuidance lane;
+  final DriverThemePalette palette;
+  final bool isHighwayLike;
+  final String maneuverModifier;
+  final double minWidth;
+  final double arrowFontSize;
+  final bool compact;
+
+  @override
+  Widget build(BuildContext context) {
+    final recommended = driverLaneIsRecommended(lane);
+    final indication = driverLaneIndicationForDisplay(
+      lane,
+      maneuverModifier: maneuverModifier,
+    );
+    final hasArrow = (indication ?? '').trim().isNotEmpty;
+    if (!hasArrow && !recommended) {
+      return const SizedBox.shrink();
+    }
+    final arrow = hasArrow
+        ? driverLaneIndicationArrow(indication!)
+        : '—';
+    final semanticLabel = driverLaneSemanticLabel(
+      lane,
+      maneuverModifier: maneuverModifier,
+    );
+    final accent = isHighwayLike ? const Color(0xFFFFD36A) : palette.accent;
+    final bgOpacity = recommended
+        ? (palette.isDark ? 0.34 : 0.28)
+        : (palette.isDark ? 0.10 : 0.08);
+    final borderOpacity = recommended
+        ? (isHighwayLike ? 0.92 : 0.78)
+        : (palette.isDark ? 0.22 : 0.18);
+    final textOpacity = recommended ? 0.98 : 0.42;
+
+    return Semantics(
+      label: semanticLabel,
+      child: Container(
+        constraints: BoxConstraints(minWidth: minWidth),
+        padding: EdgeInsets.symmetric(
+          horizontal: compact ? 5 : 6,
+          vertical: compact ? 1 : 2,
+        ),
+        decoration: BoxDecoration(
+          color: accent.withOpacity(bgOpacity),
+          borderRadius: BorderRadius.circular(compact ? 6 : 7),
+          border: Border.all(
+            color: accent.withOpacity(borderOpacity),
+            width: recommended ? 1.4 : 1.0,
+          ),
+        ),
+        alignment: Alignment.center,
+        child: Text(
+          arrow,
+          style: TextStyle(
+            fontSize: arrowFontSize,
+            fontWeight: recommended ? FontWeight.w900 : FontWeight.w600,
+            color: palette.textPrimary.withOpacity(textOpacity),
+            height: 1.0,
+          ),
+        ),
+      ),
+    );
   }
 }
 

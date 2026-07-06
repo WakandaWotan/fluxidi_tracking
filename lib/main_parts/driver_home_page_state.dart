@@ -14032,6 +14032,8 @@ class _DriverHomePageState extends State<DriverHomePage>
       secondaryText: secondaryText,
       subText: snapshot.subText,
       icon: icon,
+      lanes: snapshot.lanes,
+      maneuverModifier: snapshot.maneuverModifier,
     );
   }
 
