@@ -45,10 +45,16 @@
 //     ON ride_lessons (tenant_scope_hash, company_scope_hash, country,
 //                      ride_type, airport_code, weekday, hour_bucket);
 //
+// Service auth (CLOUD-LEARN-3): all non-health endpoints require
+//   Authorization: Bearer <LEARNING_SERVICE_TOKEN>
+// The token is a Worker secret (wrangler secret put LEARNING_SERVICE_TOKEN),
+// never stored in Git, never logged, never echoed. Auth is checked before the
+// request body is read, so unauthenticated callers cannot probe validation.
+//
 // Endpoints:
-//   GET  /health
-//   POST /ride-lessons/ingest
-//   POST /insights/summary
+//   GET  /health                (public)
+//   POST /ride-lessons/ingest   (service auth required)
+//   POST /insights/summary      (service auth required)
 
 const SERVICE_NAME = "fluxidi-learning";
 const SERVICE_VERSION = "cloud-learn-1";
@@ -251,6 +257,77 @@ function logCloudLearn(endpoint, { result = "ok", country = "na", reason = "na" 
   console.log(
     `[${DIAG_TAG}] endpoint=${safeEndpoint} result=${safeResult} country=${safeCountry} reason=${safeReason}`,
   );
+}
+
+// ---------------------------------------------------------------------------
+// Service-to-service auth (CLOUD-LEARN-3)
+// ---------------------------------------------------------------------------
+
+/**
+ * Timing-resistant full-string comparison. Always scans the longest length so
+ * neither a length mismatch nor a partial prefix match can short-circuit.
+ */
+function timingSafeEqualStr(a, b) {
+  if (typeof a !== "string" || typeof b !== "string") return false;
+  const enc = new TextEncoder();
+  const ab = enc.encode(a);
+  const bb = enc.encode(b);
+  let diff = ab.length === bb.length ? 0 : 1;
+  const len = Math.max(ab.length, bb.length, 1);
+  for (let i = 0; i < len; i += 1) {
+    const x = i < ab.length ? ab[i] : 0;
+    const y = i < bb.length ? bb[i] : 0;
+    diff |= x ^ y;
+  }
+  return diff === 0;
+}
+
+/**
+ * Requires `Authorization: Bearer <LEARNING_SERVICE_TOKEN>`. The token is
+ * only ever accepted from the header — never query string or body. Neither
+ * the expected token nor the presented value is logged or echoed.
+ * Returns { ok:true } or { ok:false, status, error, reason }.
+ */
+function requireServiceAuth(request, env) {
+  const expected = typeof env?.LEARNING_SERVICE_TOKEN === "string"
+    ? env.LEARNING_SERVICE_TOKEN
+    : "";
+  if (!expected) {
+    return {
+      ok: false,
+      status: 503,
+      error: "service_auth_not_configured",
+      reason: "service_auth_not_configured",
+    };
+  }
+  const header = request.headers.get("authorization");
+  if (!header) {
+    return {
+      ok: false,
+      status: 401,
+      error: "unauthorized",
+      reason: "service_auth_missing",
+    };
+  }
+  const prefix = "Bearer ";
+  if (!header.startsWith(prefix)) {
+    return {
+      ok: false,
+      status: 401,
+      error: "unauthorized",
+      reason: "service_auth_invalid",
+    };
+  }
+  const presented = header.slice(prefix.length);
+  if (!presented || !timingSafeEqualStr(presented, expected)) {
+    return {
+      ok: false,
+      status: 401,
+      error: "unauthorized",
+      reason: "service_auth_invalid",
+    };
+  }
+  return { ok: true };
 }
 
 // ---------------------------------------------------------------------------
@@ -769,12 +846,24 @@ export default {
         if (request.method !== "POST") {
           return jsonResponse({ ok: false, error: "Method Not Allowed" }, 405);
         }
+        // Auth before body read/validation/D1 — no unauthenticated probing.
+        const auth = requireServiceAuth(request, env);
+        if (!auth.ok) {
+          logCloudLearn("ingest", { result: "error", reason: auth.reason });
+          return jsonResponse({ ok: false, error: auth.error }, auth.status);
+        }
         return await handleIngest(request, env);
       }
 
       if (url.pathname === "/insights/summary") {
         if (request.method !== "POST") {
           return jsonResponse({ ok: false, error: "Method Not Allowed" }, 405);
+        }
+        // Auth before body read/validation/D1 — no unauthenticated probing.
+        const auth = requireServiceAuth(request, env);
+        if (!auth.ok) {
+          logCloudLearn("insights", { result: "error", reason: auth.reason });
+          return jsonResponse({ ok: false, error: auth.error }, auth.status);
         }
         return await handleInsightsSummary(request, env);
       }
