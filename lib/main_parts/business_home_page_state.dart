@@ -2033,6 +2033,161 @@ class _BusinessHomePageState extends State<BusinessHomePage>
     );
   }
 
+  bool _isBusinessHomeAssetRef(String value) =>
+      value.trim().toLowerCase().startsWith('assets/');
+
+  bool _isBusinessHomeHttpImageRef(String value) {
+    final lower = value.trim().toLowerCase();
+    return lower.startsWith('https://') || lower.startsWith('http://');
+  }
+
+  String _normalizeBusinessHomeLogoRefForCompare(String raw) =>
+      raw.trim().replaceAll('\\', '/').toLowerCase();
+
+  /// True for empty paths and any known packaged/default Fluxidi logo reference.
+  bool _isDefaultFluxidiLogoRefForBusinessHome(String raw) {
+    final norm = _normalizeBusinessHomeLogoRefForCompare(raw);
+    if (norm.isEmpty) return true;
+    final config = _normalizeBusinessHomeLogoRefForCompare(kFluxidiLogoAsset);
+    if (norm == config) return true;
+    if (norm == 'assets/fluxidi/fluxidi_logo.png') return true;
+    if (norm == 'fluxidi_logo.png') return true;
+    if (norm.endsWith('/fluxidi_logo.png')) return true;
+    if (norm.contains('assets/fluxidi/fluxidi_logo.png')) return true;
+    return false;
+  }
+
+  String? _normalizeBusinessHomeLogoRef(String? raw) {
+    final text = (raw ?? '').trim();
+    if (text.isEmpty || _isDefaultFluxidiLogoRefForBusinessHome(text)) {
+      return null;
+    }
+    if (_isBusinessHomeAssetRef(text)) return text;
+    final resolved = resolvePublicHttpsMediaUrl(text);
+    if (resolved.isNotEmpty) return resolved;
+    final lower = text.toLowerCase();
+    if (lower.startsWith('https://') || lower.startsWith('http://')) {
+      return text;
+    }
+    if (lower.startsWith('/public/media/') ||
+        lower.startsWith('public-media/')) {
+      return null;
+    }
+    if (kIsWeb) return null;
+    try {
+      if (File(text).existsSync()) return text;
+    } catch (_) {}
+    return null;
+  }
+
+  ({String ref, String source}) _resolveBusinessHomeLogoRef({
+    required BusinessSettingsState businessSettings,
+    required BackendBusinessProfile? backendProfile,
+  }) {
+    final rawLocal = businessSettings.logoAssetPath;
+    final rawPublic = backendProfile?.publicLogoUrl ?? '';
+    final hasCompanyLogo =
+        rawLocal.trim().isNotEmpty &&
+        !_isDefaultFluxidiLogoRefForBusinessHome(rawLocal);
+    final hasPublicLogo =
+        rawPublic.trim().isNotEmpty &&
+        !_isDefaultFluxidiLogoRefForBusinessHome(rawPublic);
+
+    final localLogo = hasCompanyLogo
+        ? _normalizeBusinessHomeLogoRef(rawLocal)
+        : null;
+    if (localLogo != null) {
+      if (kDebugMode) {
+        debugPrint(
+          '[COMPANY_LOGO] surface=business_home source=business_local '
+          'hasCompanyLogo=true hasPublicLogo=$hasPublicLogo',
+        );
+      }
+      return (ref: localLogo, source: 'business_local');
+    }
+
+    final publicLogo = hasPublicLogo
+        ? _normalizeBusinessHomeLogoRef(rawPublic)
+        : null;
+    if (publicLogo != null) {
+      if (kDebugMode) {
+        debugPrint(
+          '[COMPANY_LOGO] surface=business_home source=public_backend '
+          'hasCompanyLogo=false hasPublicLogo=true',
+        );
+      }
+      return (ref: publicLogo, source: 'public_backend');
+    }
+
+    if (kDebugMode) {
+      debugPrint(
+        '[COMPANY_LOGO] surface=business_home source=fallback '
+        'hasCompanyLogo=false hasPublicLogo=false',
+      );
+    }
+    return (ref: kFluxidiLogoAsset, source: 'fallback');
+  }
+
+  Widget _businessHomeFluxidiLogoFallback({required double width}) {
+    return Image.asset(
+      kFluxidiLogoAsset,
+      width: width,
+      fit: BoxFit.contain,
+      alignment: Alignment.topLeft,
+      errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+    );
+  }
+
+  Widget _businessHomeLogo({required double width}) {
+    return ValueListenableBuilder<BusinessSettingsState>(
+      valueListenable: businessSettingsNotifier,
+      builder: (context, businessSettings, _) {
+        return ValueListenableBuilder<BackendBusinessProfile?>(
+          valueListenable: localBackendBusinessProfileNotifier,
+          builder: (context, backendProfile, __) {
+            final resolution = _resolveBusinessHomeLogoRef(
+              businessSettings: businessSettings,
+              backendProfile: backendProfile,
+            );
+            final ref = resolution.ref;
+            final fallback = _businessHomeFluxidiLogoFallback(width: width);
+
+            if (resolution.source == 'fallback' ||
+                ref.trim() == kFluxidiLogoAsset) {
+              return fallback;
+            }
+            if (_isBusinessHomeAssetRef(ref)) {
+              return Image.asset(
+                ref,
+                width: width,
+                fit: BoxFit.contain,
+                alignment: Alignment.topLeft,
+                errorBuilder: (_, ___, ____) => fallback,
+              );
+            }
+            if (_isBusinessHomeHttpImageRef(ref)) {
+              return Image.network(
+                ref,
+                width: width,
+                fit: BoxFit.contain,
+                alignment: Alignment.topLeft,
+                errorBuilder: (_, ___, ____) => fallback,
+              );
+            }
+            if (kIsWeb) return fallback;
+            return Image.file(
+              File(ref),
+              width: width,
+              fit: BoxFit.contain,
+              alignment: Alignment.topLeft,
+              errorBuilder: (_, ___, ____) => fallback,
+            );
+          },
+        );
+      },
+    );
+  }
+
   Widget _topBar(BuildContext context, CompanyProfile? profile) {
     final palette = _businessThemePalette;
     final themeVariant = businessThemeNotifier.value;
@@ -2109,13 +2264,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
 
     return Row(
       children: [
-        Image.asset(
-          kFluxidiLogoAsset,
-          width: businessLogoWidth,
-          fit: BoxFit.contain,
-          alignment: Alignment.topLeft,
-          errorBuilder: (_, __, ___) => const SizedBox.shrink(),
-        ),
+        _businessHomeLogo(width: businessLogoWidth),
         const Spacer(),
         PopupMenuButton<String>(
           color: isCleanProfessional
