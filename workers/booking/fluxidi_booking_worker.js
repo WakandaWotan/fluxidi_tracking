@@ -80,6 +80,10 @@ import {
   emitComplianceEventBestEffort,
 } from "./modules/compliance_events.js";
 import {
+  buildLearningRideLessonPreview,
+  logLearningRideLessonDryRun,
+} from "./modules/learning_lesson.js";
+import {
   CHIRON_CONFIG_STATUS_PATH,
   CHIRON_CONFIG_TEST_CREDENTIALS_PATH,
   CHIRON_CONFIG_TEST_CREDENTIALS_CLEAR_PATH,
@@ -74432,6 +74436,17 @@ async function updateBookingStatusAuthoritative(
     }
   }
   await env.BOOKING_KV.put(key, JSON.stringify(rec));
+  // CLOUD-LEARN-4B: dry-run anonymized lesson preview on genuine COMPLETED
+  // transitions only. Pure local extraction — no network, no KV/D1 write,
+  // no record mutation, no Learning Worker call, best-effort only.
+  if (normalized === "COMPLETED" && previousStatusNormalized !== "COMPLETED") {
+    try {
+      const lessonPreview = buildLearningRideLessonPreview(rec, { nowIso });
+      logLearningRideLessonDryRun(lessonPreview);
+    } catch (_) {
+      console.log("[CLOUD_LEARN_4] mode=dry_run result=error reason=preview_builder_exception");
+    }
+  }
   if (isTerminalLifecycleStatus(normalized)) {
     await removeBookingDemandIndexBestEffort(
       env,
