@@ -1,0 +1,5 @@
+*.txt
+*_BACKUP_*.js
+.wrangler/
+node_modules/
+.dev.vars

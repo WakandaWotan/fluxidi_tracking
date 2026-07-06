@@ -1,0 +1,19 @@
+name = "fluxidi-dispatch-intelligence-api"
+main = "fluxidi_dispatch_intelligence_worker.js"
+compatibility_date = "2026-04-30"
+workers_dev = true
+preview_urls = false
+
+[observability.logs]
+enabled = true
+
+# CLOUD-AI-1: deterministic rules only — no secrets required for v1.
+#
+# Optional Workers AI flag (deterministic advice is always returned in v1;
+# even when true, no model runs until the AI binding below is enabled):
+[vars]
+USE_WORKERS_AI = "false"
+
+# Future Workers AI binding — do NOT enable in CLOUD-AI-1:
+# [ai]
+# binding = "AI"
