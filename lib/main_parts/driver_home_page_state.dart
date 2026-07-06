@@ -17042,6 +17042,22 @@ class _DriverHomePageState extends State<DriverHomePage>
     _openTripHistoryFromDashboard();
   }
 
+  void _openOfflineMaps() {
+    if (!_canAccessDriverOpsScreens()) {
+      Navigator.pop(context);
+      _denyRoleAccess();
+      return;
+    }
+    Navigator.pop(context);
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => DriverOfflineMapsPage(
+          themeListenable: _activeDriverThemeListenable,
+        ),
+      ),
+    );
+  }
+
   Future<void> _openTripHistoryFromDashboard() async {
     if (!_canAccessDriverOpsScreens()) {
       _denyRoleAccess();
@@ -17620,6 +17636,17 @@ class _DriverHomePageState extends State<DriverHomePage>
                         es: 'Historial',
                       ),
                       onTap: _openTripHistory,
+                    ),
+                  if (canSeeDriverOps)
+                    cockpitRailButton(
+                      icon: Icons.wifi_off_rounded,
+                      semanticLabel: _tr(
+                        nl: 'Offline kaarten',
+                        en: 'Offline maps',
+                        fr: 'Cartes hors ligne',
+                        es: 'Mapas sin conexión',
+                      ),
+                      onTap: _openOfflineMaps,
                     ),
                   if (canSeeCustomerBooking)
                     cockpitRailButton(

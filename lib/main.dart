@@ -70,6 +70,7 @@ import 'package:fluxidi_tracking/local_ride_assignment_cache.dart';
 import 'package:fluxidi_tracking/driver_documents_store.dart';
 import 'package:fluxidi_tracking/driver_document_sheet.dart';
 import 'package:fluxidi_tracking/driver_my_documents_page.dart';
+import 'package:fluxidi_tracking/navigation/driver_offline_maps_page.dart';
 import 'package:fluxidi_tracking/driver_theme_palette.dart';
 import 'package:fluxidi_tracking/company_driver_view_theme_store.dart';
 import 'package:fluxidi_tracking/driver_app_theme_store.dart';
