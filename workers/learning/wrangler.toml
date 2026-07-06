@@ -1,0 +1,20 @@
+name = "fluxidi-learning-api"
+main = "fluxidi_learning_worker.js"
+compatibility_date = "2026-04-30"
+workers_dev = true
+preview_urls = false
+
+[observability.logs]
+enabled = true
+
+# CLOUD-LEARN-1: no secrets required for v1. No KV — long-term analytics
+# storage is D1 only.
+#
+# TODO: create the D1 database, then enable this binding:
+#   wrangler d1 create fluxidi-learning-db
+#   (apply the ride_lessons schema from the header of fluxidi_learning_worker.js)
+#
+# [[d1_databases]]
+# binding = "LEARNING_DB"
+# database_name = "fluxidi-learning-db"
+# database_id = "TODO_CREATE_D1_DB"
