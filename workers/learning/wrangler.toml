@@ -10,11 +10,8 @@ enabled = true
 # CLOUD-LEARN-1: no secrets required for v1. No KV — long-term analytics
 # storage is D1 only.
 #
-# TODO: create the D1 database, then enable this binding:
-#   wrangler d1 create fluxidi-learning-db
-#   (apply the ride_lessons schema from the header of fluxidi_learning_worker.js)
-#
-# [[d1_databases]]
-# binding = "LEARNING_DB"
-# database_name = "fluxidi-learning-db"
-# database_id = "TODO_CREATE_D1_DB"
+# CLOUD-LEARN-2: D1 database created (region WEUR); schema in schema.sql.
+[[d1_databases]]
+binding = "LEARNING_DB"
+database_name = "fluxidi-learning-db"
+database_id = "fdc0a4c1-1cb7-4c13-8e30-6eafb228161a"
